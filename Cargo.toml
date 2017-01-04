@@ -29,9 +29,3 @@ arch_x86_64 = { path = "arch/x86_64" }
 [features]
 default = []
 live = []
-
-[profile.dev]
-panic = "unwind"
-
-[profile.release]
-panic = "abort"
