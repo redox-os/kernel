@@ -133,31 +133,59 @@ impl Context {
                                    .iter().rposition(|&b| b == b'/' || b == b':')
                                    .map_or(cwd.len(), |i| i + 1)]
                    .to_vec()
-            } else if path.starts_with(b"./") {
-                let mut canon = cwd.clone();
-                if ! canon.ends_with(b"/") {
-                    canon.push(b'/');
-                }
-                canon.extend_from_slice(&path[2..]);
-                canon
-            } else if path.starts_with(b"../") {
-                let mut canon = cwd[..cwd[..cwd.len() - 1]
-                                   .iter().rposition(|&b| b == b'/' || b == b':')
-                                   .map_or(cwd.len(), |i| i + 1)]
-                   .to_vec();
-                canon.extend_from_slice(&path[3..]);
-                canon
-            } else if path.starts_with(b"/") {
-                let mut canon = cwd[..cwd.iter().position(|&b| b == b':').map_or(1, |i| i + 1)].to_vec();
-                canon.extend_from_slice(&path);
-                canon
             } else {
-                let mut canon = cwd.clone();
-                if ! canon.ends_with(b"/") {
-                    canon.push(b'/');
-                }
+                let mut canon = if !path.starts_with(b"/") {
+                    let mut c = cwd.clone();
+                    if ! c.ends_with(b"/") {
+                        c.push(b'/');
+                    }
+                    c
+                } else {
+                    cwd[..cwd.iter().position(|&b| b == b':').map_or(1, |i| i + 1)].to_vec()
+                };
+
                 canon.extend_from_slice(&path);
-                canon
+                // NOTE: assumes the scheme does not include anything like "../" or "./"
+                let mut result = {
+                    let parts = canon.split(|&c| c == b'/')
+                        .filter(|&part| part != b".")
+                        .rev()
+                        .scan(0, |nskip, part| {
+                            if part == b".." {
+                                *nskip += 1;
+                                Some(None)
+                            } else {
+                                if *nskip > 0 {
+                                    *nskip -= 1;
+                                    Some(None)
+                                } else {
+                                    Some(Some(part))
+                                }
+                            }
+                        })
+                        .filter_map(|x| x)
+                        .collect::<Vec<_>>();
+                    parts
+                        .iter()
+                        .rev()
+                        .fold(Vec::new(), |mut vec, &part| {
+                            vec.extend_from_slice(part);
+                            vec.push(b'/');
+                            vec
+                        })
+                };
+                result.pop(); // remove extra '/'
+
+                // replace with the root of the schema if it's empty
+                if result.len() == 0 {
+                    let pos = canon.iter()
+                                    .position(|&b| b == b':')
+                                    .map_or(canon.len(), |p| p + 1);
+                    canon.truncate(pos);
+                    canon
+                } else {
+                    result
+                }
             }
         } else {
             path.to_vec()
