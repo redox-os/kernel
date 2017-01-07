@@ -144,34 +144,46 @@ impl Context {
                 }
                 canon.extend_from_slice(&path);
                 // NOTE: assumes the scheme does not include anything like "../" or "./"
-                let rparts = canon.split(|&c| c == b'/')
-                    .filter(|&part| part != b".")
-                    .rev()
-                    .scan(0, |nskip, part| {
-                        if part == b".." {
-                            *nskip += 1;
-                            Some(None)
-                        } else {
-                            if *nskip > 0 {
-                                *nskip -= 1;
-                                Some(None)
+                let mut result = {
+                    let rparts = canon.split(|&c| c == b'/')
+                        .filter(|&part| part != b".")
+                        .rev()
+                        .scan(0, |nskip, part| {
+                            if part == b".." {
+                                *nskip += 1;
+                                Some(None) 
                             } else {
-                                Some(Some(part))
+                                if *nskip > 0 {
+                                    *nskip -= 1;
+                                    Some(None)
+                                } else {
+                                    Some(Some(part))
+                                }
                             }
-                        }
-                    })
-                    .filter_map(|x| x)
-                    .collect::<Vec<_>>();
-                let mut result = rparts
-                    .iter()
-                    .rev()
-                    .fold(Vec::new(), |mut vec, &part| {
-                        vec.extend_from_slice(part);
-                        vec.push(b'/');
-                        vec
-                    });
+                        })
+                        .filter_map(|x| x)
+                        .collect::<Vec<_>>();
+                    rparts
+                        .iter()
+                        .rev()
+                        .fold(Vec::new(), |mut vec, &part| {
+                            vec.extend_from_slice(part);
+                            vec.push(b'/');
+                            vec
+                        })
+                };
                 result.pop(); // remove extra '/'
-                result
+                if result.len() == 0 {
+                    // replace with the root of the schema if it's empty
+                    let pos = canon.iter()
+                                   .position(|&b| b == b':')
+                                   .map_or(canon.len(), |p| p + 1);
+                    canon.truncate(pos);
+                    canon
+                } else {
+                    result
+                }
+            }
         } else {
             path.to_vec()
         }
