@@ -10,7 +10,7 @@ crate-type = ["staticlib"]
 [dependencies]
 bitflags = "*"
 spin = "*"
-redox_syscall = { path = "../syscall/" }
+redox_syscall = { git = "https://github.com/redox-os/syscall.git" }
 
 [dependencies.goblin]
 git = "https://github.com/m4b/goblin.git"
