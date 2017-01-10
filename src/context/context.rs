@@ -124,7 +124,7 @@ impl Context {
     /// "/foo" will turn into "scheme:/foo"
     /// "bar:/foo" will be used directly, as it is already absolute
     pub fn canonicalize(&self, path: &[u8]) -> Vec<u8> {
-        if path.iter().position(|&b| b == b':').is_none() {
+        let mut canon = if path.iter().position(|&b| b == b':').is_none() {
             let cwd = self.cwd.lock();
             if path == b"." {
                 cwd.clone()
@@ -145,50 +145,54 @@ impl Context {
                 };
 
                 canon.extend_from_slice(&path);
-                // NOTE: assumes the scheme does not include anything like "../" or "./"
-                let mut result = {
-                    let parts = canon.split(|&c| c == b'/')
-                        .filter(|&part| part != b".")
-                        .rev()
-                        .scan(0, |nskip, part| {
-                            if part == b".." {
-                                *nskip += 1;
-                                Some(None)
-                            } else {
-                                if *nskip > 0 {
-                                    *nskip -= 1;
-                                    Some(None)
-                                } else {
-                                    Some(Some(part))
-                                }
-                            }
-                        })
-                        .filter_map(|x| x)
-                        .collect::<Vec<_>>();
-                    parts
-                        .iter()
-                        .rev()
-                        .fold(Vec::new(), |mut vec, &part| {
-                            vec.extend_from_slice(part);
-                            vec.push(b'/');
-                            vec
-                        })
-                };
-                result.pop(); // remove extra '/'
-
-                // replace with the root of the schema if it's empty
-                if result.len() == 0 {
-                    let pos = canon.iter()
-                                    .position(|&b| b == b':')
-                                    .map_or(canon.len(), |p| p + 1);
-                    canon.truncate(pos);
-                    canon
-                } else {
-                    result
-                }
+                canon
             }
         } else {
             path.to_vec()
+        };
+
+        // NOTE: assumes the scheme does not include anything like "../" or "./"
+        let mut result = {
+            let parts = canon.split(|&c| c == b'/')
+                .filter(|&part| part != b".")
+                .rev()
+                .scan(0, |nskip, part| {
+                    if part == b"." {
+                        Some(None)
+                    } else if part == b".." {
+                        *nskip += 1;
+                        Some(None)
+                    } else {
+                        if *nskip > 0 {
+                            *nskip -= 1;
+                            Some(None)
+                        } else {
+                            Some(Some(part))
+                        }
+                    }
+                })
+                .filter_map(|x| x)
+                .collect::<Vec<_>>();
+            parts
+                .iter()
+                .rev()
+                .fold(Vec::new(), |mut vec, &part| {
+                    vec.extend_from_slice(part);
+                    vec.push(b'/');
+                    vec
+                })
+        };
+        result.pop(); // remove extra '/'
+
+        // replace with the root of the scheme if it's empty
+        if result.len() == 0 {
+            let pos = canon.iter()
+                            .position(|&b| b == b':')
+                            .map_or(canon.len(), |p| p + 1);
+            canon.truncate(pos);
+            canon
+        } else {
+            result
         }
     }
 
