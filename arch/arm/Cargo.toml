@@ -3,6 +3,6 @@ name = "arch_arm"
 version = "0.1.0"
 
 [dependencies]
+alloc_kernel = { path = "../../alloc_kernel" }
 bitflags = "*"
-hole_list_allocator = { path = "../../../crates/hole_list_allocator"}
 spin = "*"

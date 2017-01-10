@@ -5,7 +5,7 @@
 #![feature(naked_functions)]
 #![no_std]
 
-extern crate hole_list_allocator as allocator;
+extern crate alloc_kernel as allocator;
 #[macro_use]
 extern crate bitflags;
 extern crate spin;

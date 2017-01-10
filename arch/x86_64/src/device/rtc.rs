@@ -1,4 +1,4 @@
-use io::{Io, Pio};
+use syscall::io::{Io, Pio};
 use time;
 
 pub fn init() {

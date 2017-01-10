@@ -1,7 +1,7 @@
 use core::fmt::{self, Write};
 use spin::Mutex;
 
-use io::{Io, Pio, ReadOnly};
+use syscall::io::{Io, Pio, ReadOnly};
 
 pub static COM1: Mutex<SerialPort> = Mutex::new(SerialPort::new(0x3F8));
 pub static COM2: Mutex<SerialPort> = Mutex::new(SerialPort::new(0x2F8));

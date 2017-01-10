@@ -3,12 +3,11 @@ name = "arch_x86_64"
 version = "0.1.0"
 
 [dependencies]
+alloc_kernel = { path = "../../alloc_kernel/" }
 bitflags = "*"
-hole_list_allocator = { path = "../../../crates/hole_list_allocator/" }
-io = { path = "../../../crates/io/" }
 raw-cpuid = { git = "https://github.com/gz/rust-cpuid" }
 spin = "*"
-redox_syscall = { path = "../../../syscall/" }
+redox_syscall = { git = "https://github.com/redox-os/syscall" }
 
 [dependencies.x86]
 version = "0.7"

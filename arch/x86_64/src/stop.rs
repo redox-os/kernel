@@ -1,4 +1,4 @@
-use io::{Io, Pio};
+use syscall::io::{Io, Pio};
 
 #[no_mangle]
 pub unsafe extern fn kstop() -> ! {
