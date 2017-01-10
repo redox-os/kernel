@@ -126,27 +126,19 @@ impl Context {
     pub fn canonicalize(&self, path: &[u8]) -> Vec<u8> {
         let mut canon = if path.iter().position(|&b| b == b':').is_none() {
             let cwd = self.cwd.lock();
-            if path == b"." {
-                cwd.clone()
-            } else if path == b".." {
-                cwd[..cwd[..cwd.len() - 1]
-                                   .iter().rposition(|&b| b == b'/' || b == b':')
-                                   .map_or(cwd.len(), |i| i + 1)]
-                   .to_vec()
-            } else {
-                let mut canon = if !path.starts_with(b"/") {
-                    let mut c = cwd.clone();
-                    if ! c.ends_with(b"/") {
-                        c.push(b'/');
-                    }
-                    c
-                } else {
-                    cwd[..cwd.iter().position(|&b| b == b':').map_or(1, |i| i + 1)].to_vec()
-                };
 
-                canon.extend_from_slice(&path);
-                canon
-            }
+            let mut canon = if !path.starts_with(b"/") {
+                let mut c = cwd.clone();
+                if ! c.ends_with(b"/") {
+                    c.push(b'/');
+                }
+                c
+            } else {
+                cwd[..cwd.iter().position(|&b| b == b':').map_or(1, |i| i + 1)].to_vec()
+            };
+
+            canon.extend_from_slice(&path);
+            canon
         } else {
             path.to_vec()
         };
