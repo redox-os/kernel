@@ -897,7 +897,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 
 fn reap(pid: ContextId) -> Result<ContextId> {
     // Spin until not running
-    let mut running = false;
+    let mut running = true;
     while running {
         {
             let contexts = context::contexts();
