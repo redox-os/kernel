@@ -4,5 +4,5 @@ version = "0.1.0"
 
 [dependencies]
 alloc_kernel = { path = "../../alloc_kernel" }
-bitflags = "*"
-spin = "*"
+bitflags = "0.7"
+spin = "0.4"

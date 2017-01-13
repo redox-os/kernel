@@ -8,9 +8,9 @@ path = "src/lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
-bitflags = "*"
-spin = "*"
-redox_syscall = { git = "https://github.com/redox-os/syscall.git" }
+bitflags = "0.7"
+spin = "0.4"
+redox_syscall = "0.1"
 
 [dependencies.goblin]
 git = "https://github.com/m4b/goblin.git"

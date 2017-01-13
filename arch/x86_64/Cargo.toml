@@ -4,10 +4,10 @@ version = "0.1.0"
 
 [dependencies]
 alloc_kernel = { path = "../../alloc_kernel/" }
-bitflags = "*"
-raw-cpuid = { git = "https://github.com/gz/rust-cpuid" }
-spin = "*"
-redox_syscall = { git = "https://github.com/redox-os/syscall" }
+bitflags = "0.7"
+raw-cpuid = "2.0"
+spin = "0.4"
+redox_syscall = "0.1"
 
 [dependencies.x86]
 version = "0.7"
