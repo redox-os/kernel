@@ -37,7 +37,6 @@ extern crate alloc;
 #[macro_use]
 extern crate collections;
 
-#[macro_use]
 extern crate bitflags;
 extern crate goblin;
 extern crate spin;
