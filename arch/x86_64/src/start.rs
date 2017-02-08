@@ -120,6 +120,9 @@ pub unsafe extern fn kstart() -> ! {
         // Read ACPI tables, starts APs
         acpi::init(&mut active_table);
 
+        // Clear pending IRQs
+        interrupt::irq::acknowledge(8);
+
         BSP_READY.store(true, Ordering::SeqCst);
     }
 
