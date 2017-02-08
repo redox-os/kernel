@@ -121,6 +121,7 @@ pub unsafe extern fn kstart() -> ! {
         acpi::init(&mut active_table);
 
         // Clear pending IRQs
+        // TODO: Remove this and ack all IRQs without listeners
         interrupt::irq::acknowledge(8);
 
         BSP_READY.store(true, Ordering::SeqCst);
