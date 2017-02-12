@@ -17,8 +17,8 @@ pub unsafe fn init() {
     SLAVE.data.write(2);
 
     // Set up interrupt mode (1 is manual, 2 is auto EOI)
-    MASTER.data.write(1);
-    SLAVE.data.write(1);
+    MASTER.data.write(2);
+    SLAVE.data.write(2);
 
     // Unmask interrupts
     MASTER.data.write(0);
@@ -44,5 +44,21 @@ impl Pic {
 
     pub fn ack(&mut self) {
         self.cmd.write(0x20);
+    }
+
+    pub fn mask_set(&mut self, irq: u8) {
+        assert!(irq < 8);
+
+        let mut mask = self.data.read();
+        mask |= 1 << irq;
+        self.data.write(mask);
+    }
+
+    pub fn mask_clear(&mut self, irq: u8) {
+        assert!(irq < 8);
+
+        let mut mask = self.data.read();
+        mask &= !(1 << irq);
+        self.data.write(mask);
     }
 }

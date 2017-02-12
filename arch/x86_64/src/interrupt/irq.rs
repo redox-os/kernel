@@ -1,115 +1,100 @@
-use x86::io;
-
+use device::pic;
 use device::serial::{COM1, COM2};
 use time;
 
-extern {
-    fn irq_trigger(irq: u8);
-}
+unsafe fn trigger(irq: u8) {
+    extern {
+        fn irq_trigger(irq: u8);
+    }
 
-#[inline(always)]
-unsafe fn master_ack() {
-    io::outb(0x20, 0x20);
-}
+    if irq < 16 {
+        if irq >= 8 {
+            pic::SLAVE.mask_set(irq - 8);
+        } else {
+            pic::MASTER.mask_set(irq);
+        }
+    }
 
-#[inline(always)]
-unsafe fn slave_ack() {
-    io::outb(0xA0, 0x20);
-    master_ack();
+    irq_trigger(irq);
 }
 
 pub unsafe fn acknowledge(irq: usize) {
-    if irq >= 8 {
-        slave_ack();
-    } else {
-        master_ack();
+    if irq < 16 {
+        if irq >= 8 {
+            pic::SLAVE.mask_clear(irq as u8 - 8);
+        } else {
+            pic::MASTER.mask_clear(irq as u8);
+        }
     }
 }
 
 interrupt!(pit, {
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
-    {
-        const PIT_RATE: u64 = 2250286;
+    const PIT_RATE: u64 = 2250286;
 
-        let mut offset = time::OFFSET.lock();
-        let sum = offset.1 + PIT_RATE;
-        offset.1 = sum % 1000000000;
-        offset.0 += sum / 1000000000;
-    }
-
-    master_ack();
+    let mut offset = time::OFFSET.lock();
+    let sum = offset.1 + PIT_RATE;
+    offset.1 = sum % 1000000000;
+    offset.0 += sum / 1000000000;
 });
 
 interrupt!(keyboard, {
-    irq_trigger(1);
+    trigger(1);
 });
 
 interrupt!(cascade, {
-    irq_trigger(2);
-    master_ack();
+    // No need to do any operations on cascade
 });
 
 interrupt!(com2, {
-    irq_trigger(3);
     COM2.lock().on_receive();
-    master_ack();
 });
 
 interrupt!(com1, {
-    irq_trigger(4);
     COM1.lock().on_receive();
-    master_ack();
 });
 
 interrupt!(lpt2, {
-    irq_trigger(5);
-    master_ack();
+    trigger(5);
 });
 
 interrupt!(floppy, {
-    irq_trigger(6);
-    master_ack();
+    trigger(6);
 });
 
 interrupt!(lpt1, {
-    irq_trigger(7);
-    master_ack();
+    trigger(7);
 });
 
 interrupt!(rtc, {
-    irq_trigger(8);
-    slave_ack();
+    trigger(8);
 });
 
 interrupt!(pci1, {
-    irq_trigger(9);
-    slave_ack();
+    trigger(9);
 });
 
 interrupt!(pci2, {
-    irq_trigger(10);
+    trigger(10);
 });
 
 interrupt!(pci3, {
-    irq_trigger(11);
+    trigger(11);
 });
 
 interrupt!(mouse, {
-    irq_trigger(12);
+    trigger(12);
 });
 
 interrupt!(fpu, {
-    irq_trigger(13);
-    slave_ack();
+    trigger(13);
 });
 
 interrupt!(ata1, {
-    irq_trigger(14);
-    slave_ack();
+    trigger(14);
 });
 
 interrupt!(ata2, {
-    irq_trigger(15);
-    slave_ack();
+    trigger(15);
 });
