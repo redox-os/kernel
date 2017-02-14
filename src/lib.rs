@@ -153,7 +153,8 @@ pub extern fn kmain(cpus: usize) {
 pub extern fn kmain_ap(_id: usize) {
     // Disable APs for now
     loop {
-        unsafe { interrupt::enable_and_halt(); }
+        unsafe { interrupt::disable(); }
+        unsafe { interrupt::halt(); }
     }
 
     /*
