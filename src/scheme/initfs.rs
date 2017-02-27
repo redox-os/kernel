@@ -15,8 +15,7 @@ mod gen {
 }
 
 #[cfg(not(test))]
-#[path="../../../build/userspace/initfs.rs"]
-mod gen;
+include!(concat!(env!("OUT_DIR"), "/gen.rs"));
 
 struct Handle {
     path: &'static [u8],
