@@ -5,7 +5,7 @@ version = "0.1.0"
 [dependencies]
 alloc_kernel = { path = "../../alloc_kernel/" }
 bitflags = "0.7"
-raw-cpuid = "2.0"
+raw-cpuid = { git = "https://github.com/gz/rust-cpuid", branch = "master" }
 spin = "0.4"
 redox_syscall = "0.1"
 
