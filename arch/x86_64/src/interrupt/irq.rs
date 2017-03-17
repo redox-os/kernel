@@ -10,8 +10,11 @@ unsafe fn trigger(irq: u8) {
     if irq < 16 {
         if irq >= 8 {
             pic::SLAVE.mask_set(irq - 8);
+            pic::MASTER.ack();
+            pic::SLAVE.ack();
         } else {
             pic::MASTER.mask_set(irq);
+            pic::MASTER.ack();
         }
     }
 
@@ -37,6 +40,8 @@ interrupt!(pit, {
     let sum = offset.1 + PIT_RATE;
     offset.1 = sum % 1000000000;
     offset.0 += sum / 1000000000;
+
+    pic::MASTER.ack();
 });
 
 interrupt!(keyboard, {

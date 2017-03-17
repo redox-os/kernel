@@ -16,9 +16,9 @@ pub unsafe fn init() {
     MASTER.data.write(4);
     SLAVE.data.write(2);
 
-    // Set up interrupt mode (1 is manual, 2 is auto EOI)
-    MASTER.data.write(2);
-    SLAVE.data.write(2);
+    // Set up interrupt mode (1 is 8086/88 mode, 2 is auto EOI)
+    MASTER.data.write(1);
+    SLAVE.data.write(1);
 
     // Unmask interrupts
     MASTER.data.write(0);
