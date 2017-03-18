@@ -4,6 +4,8 @@
 use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
 
+use spin::Mutex;
+
 use device::local_apic::LOCAL_APIC;
 use interrupt;
 use memory::{allocate_frames, Frame};
@@ -173,7 +175,7 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option
 }
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(active_table: &mut ActivePageTable) -> Option<Acpi> {
+pub unsafe fn init(active_table: &mut ActivePageTable) {
     let start_addr = 0xE0000;
     let end_addr = 0xFFFFF;
 
@@ -266,15 +268,15 @@ pub unsafe fn init(active_table: &mut ActivePageTable) -> Option<Acpi> {
     }
 
     if let Some(fadt) = theFADT {
-        Some(Acpi { fadt: fadt })
-    } else {
-        None
+        ACPI_TABLE.lock().fadt = Some(fadt);
     }
 }
 
 pub struct Acpi {
-    pub fadt: Fadt
+    pub fadt: Option<Fadt>
 }
+
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
