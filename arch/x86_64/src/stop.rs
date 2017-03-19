@@ -1,18 +1,32 @@
+use acpi;
 use syscall::io::{Io, Pio};
 
 #[no_mangle]
 pub unsafe extern fn kstop() -> ! {
-    // (phony) ACPI shutdown (http://forum.osdev.org/viewtopic.php?t=16990)
-    // Works for qemu and bochs.
-    for &port in [0x604, 0xB004].iter() {
-        println!("Shutdown with outw(0x{:X}, 0x{:X})", port, 0x2000);
-        Pio::<u16>::new(port).write(0x2000);
+    println!("kstop");
+
+    // ACPI shutdown
+    {
+        let acpi = acpi::ACPI_TABLE.lock();
+        if let Some(ref fadt) = acpi.fadt {
+            let port = fadt.pm1a_control_block as u16;
+            let mut val = 1 << 13;
+            if let Some(ref dsdt) = acpi.dsdt {
+                if let Some((a, b)) = dsdt.slp_typ() {
+                    println!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", a, b);
+                    val |= a;
+                }
+            }
+            println!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
+            Pio::<u16>::new(port).write(val);
+        }
     }
 
     // Magic shutdown code for bochs and qemu (older versions).
     for c in "Shutdown".bytes() {
-        println!("Shutdown with outb(0x{:X}, '{}')", 0x8900, c as char);
-        Pio::<u8>::new(0x8900).write(c);
+        let port = 0x8900;
+        println!("Shutdown with outb(0x{:X}, '{}')", port, c as char);
+        Pio::<u8>::new(port).write(c);
     }
 
     // Magic code for VMWare. Also a hard lock.

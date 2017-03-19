@@ -855,6 +855,16 @@ pub fn exit(status: usize) -> ! {
                 println!("{:?} not found for exit vfork unblock", ppid);
             }
         }
+
+        if pid == ContextId::from(1) {
+            println!("Main kernel thread exited with status {:X}, calling kstop", status);
+
+            extern {
+                fn kstop() -> !;
+            }
+
+            unsafe { kstop(); }
+        }
     }
 
     unsafe { context::switch(); }

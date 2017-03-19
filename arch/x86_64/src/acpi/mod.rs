@@ -13,6 +13,7 @@ use paging::{entry, ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 use start::{kstart_ap, CPU_COUNT, AP_READY};
 
 use self::dmar::{Dmar, DmarEntry};
+use self::dsdt::Dsdt;
 use self::fadt::Fadt;
 use self::madt::{Madt, MadtEntry};
 use self::rsdt::Rsdt;
@@ -20,6 +21,7 @@ use self::sdt::Sdt;
 use self::xsdt::Xsdt;
 
 pub mod dmar;
+pub mod dsdt;
 pub mod fadt;
 pub mod madt;
 pub mod rsdt;
@@ -29,21 +31,48 @@ pub mod xsdt;
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
 
-pub enum AcpiTable {
-    Fadt(Fadt),
-    Madt(Madt),
-    Dmar(Dmar)
+fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
+    {
+        let page = Page::containing_address(VirtualAddress::new(sdt_address));
+        if active_table.translate_page(page).is_none() {
+            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
+            let result = active_table.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE);
+            result.flush(active_table);
+        }
+    }
+
+    let sdt = unsafe { &*(sdt_address as *const Sdt) };
+
+    // Map extra SDT frames if required
+    {
+        let start_page = Page::containing_address(VirtualAddress::new(sdt_address + 4096));
+        let end_page = Page::containing_address(VirtualAddress::new(sdt_address + sdt.length as usize));
+        for page in Page::range_inclusive(start_page, end_page) {
+            if active_table.translate_page(page).is_none() {
+                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
+                let result = active_table.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE);
+                result.flush(active_table);
+            }
+        }
+    }
+
+    sdt
 }
 
-pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option<AcpiTable> {
+fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
     print!("  ");
     for &c in sdt.signature.iter() {
         print!("{}", c as char);
     }
 
     if let Some(fadt) = Fadt::new(sdt) {
-        println!(": {:#?}", fadt);
-        Some(AcpiTable::Fadt(fadt))
+        println!(": {:X}", fadt.dsdt);
+        let dsdt = get_sdt(fadt.dsdt as usize, active_table);
+        parse_sdt(dsdt, active_table);
+        ACPI_TABLE.lock().fadt = Some(fadt);
+    } else if let Some(dsdt) = Dsdt::new(sdt) {
+        println!(": {}", dsdt.data().len());
+        ACPI_TABLE.lock().dsdt = Some(dsdt);
     } else if let Some(madt) = Madt::new(sdt) {
         println!(": {:>08X}: {}", madt.local_address, madt.flags);
 
@@ -147,7 +176,6 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option
         // Unmap trampoline
         let result = active_table.unmap(trampoline_page);
         result.flush(active_table);
-        Some(AcpiTable::Madt(madt))
     } else if let Some(dmar) = Dmar::new(sdt) {
         println!(": {}: {}", dmar.addr_width, dmar.flags);
 
@@ -167,10 +195,8 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option
                 _ => ()
             }
         }
-        Some(AcpiTable::Dmar(dmar))
     } else {
         println!(": Unknown");
-        None
     }
 }
 
@@ -178,8 +204,6 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option
 pub unsafe fn init(active_table: &mut ActivePageTable) {
     let start_addr = 0xE0000;
     let end_addr = 0xFFFFF;
-
-    let mut fadt_opt: Option<Fadt> = None;
 
     // Map all of the ACPI RSDP space
     {
@@ -194,30 +218,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
 
     // Search for RSDP
     if let Some(rsdp) = RSDP::search(start_addr, end_addr) {
-        let get_sdt = |sdt_address: usize, active_table: &mut ActivePageTable| -> (&'static Sdt, bool) {
-            let mapped = if active_table.translate_page(Page::containing_address(VirtualAddress::new(sdt_address))).is_none() {
-                let sdt_frame = Frame::containing_address(PhysicalAddress::new(sdt_address));
-                let sdt_page = Page::containing_address(VirtualAddress::new(sdt_address));
-                let result = active_table.map_to(sdt_page, sdt_frame, entry::PRESENT | entry::NO_EXECUTE);
-                result.flush(active_table);
-                true
-            } else {
-                false
-            };
-            (&*(sdt_address as *const Sdt), mapped)
-        };
-
-        let drop_sdt = |sdt: &'static Sdt, mapped: bool, active_table: &mut ActivePageTable| {
-            let sdt_address = sdt as *const Sdt as usize;
-            drop(sdt);
-            if mapped {
-                let sdt_page = Page::containing_address(VirtualAddress::new(sdt_address));
-                let result = active_table.unmap(sdt_page);
-                result.flush(active_table);
-            }
-        };
-
-        let (rxsdt, rxmapped) = get_sdt(rsdp.sdt_address(), active_table);
+        let rxsdt = get_sdt(rsdp.sdt_address(), active_table);
 
         for &c in rxsdt.signature.iter() {
             print!("{}", c as char);
@@ -225,37 +226,22 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         println!(":");
         if let Some(rsdt) = Rsdt::new(rxsdt) {
             for sdt_address in rsdt.iter() {
-                let (sdt, mapped) = get_sdt(sdt_address, active_table);
-
-                // If we find the FADT, rather than drop it, save a copy of the pointer, as this is needed elsewhere.
-                // TODO: Eventually, save pointers to all tables containing pertinent information to other parts of
-                // the kernel
-                match init_sdt(sdt, active_table) {
-                    Some(AcpiTable::Fadt(fadt)) => fadt_opt = Some(fadt),
-                    _ => drop_sdt(sdt, mapped, active_table)
-                }
+                let sdt = get_sdt(sdt_address, active_table);
+                parse_sdt(sdt, active_table);
             }
         } else if let Some(xsdt) = Xsdt::new(rxsdt) {
             for sdt_address in xsdt.iter() {
-                let (sdt, mapped) = get_sdt(sdt_address, active_table);
-
-                // If we find the FADT, rather than drop it, save a copy of the pointer, as this is needed elsewhere.
-                // TODO: Eventually, save pointers to all tables containing pertinent information to other parts of
-                // the kernel
-                match init_sdt(sdt, active_table) {
-                    Some(AcpiTable::Fadt(fadt)) => fadt_opt = Some(fadt),
-                    _ => drop_sdt(sdt, mapped, active_table)
-                }
+                let sdt = get_sdt(sdt_address, active_table);
+                parse_sdt(sdt, active_table);
             }
         } else {
             println!("UNKNOWN RSDT OR XSDT SIGNATURE");
         }
-
-        drop_sdt(rxsdt, rxmapped, active_table);
     } else {
         println!("NO RSDP FOUND");
     }
 
+    /* TODO: Cleanup mapping when looking for RSDP
     // Unmap all of the ACPI RSDP space
     {
         let start_frame = Frame::containing_address(PhysicalAddress::new(start_addr));
@@ -266,17 +252,15 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
             result.flush(active_table);
         }
     }
-
-    if let Some(fadt) = fadt_opt {
-        ACPI_TABLE.lock().fadt = Some(fadt);
-    }
+    */
 }
 
 pub struct Acpi {
-    pub fadt: Option<Fadt>
+    pub fadt: Option<Fadt>,
+    pub dsdt: Option<Dsdt>,
 }
 
-pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None });
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, dsdt: None });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]

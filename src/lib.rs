@@ -3,7 +3,7 @@
 //! The Redox OS Kernel is a hybrid kernel that supports X86_64 systems and
 //! provides Unix-like syscalls for primarily Rust applications
 
-#![deny(warnings)]
+//#![deny(warnings)]
 #![feature(alloc)]
 #![feature(asm)]
 #![feature(collections)]
