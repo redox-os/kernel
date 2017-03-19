@@ -1,6 +1,8 @@
 use syscall::io::{Io, Pio};
 use time;
 
+use acpi;
+
 pub fn init() {
     let mut rtc = Rtc::new();
     time::START.lock().0 = rtc.time();
@@ -45,7 +47,15 @@ impl Rtc {
         let mut day;
         let mut month;
         let mut year;
+        let mut century;
         let register_b;
+
+        let century_register = if let Some(ref fadt) = acpi::ACPI_TABLE.lock().fadt {
+            Some(fadt.century)
+        } else {
+            None
+        };
+        
         unsafe {
             self.wait();
             second = self.read(0) as usize;
@@ -54,6 +64,11 @@ impl Rtc {
             day = self.read(7) as usize;
             month = self.read(8) as usize;
             year = self.read(9) as usize;
+            century = if let Some(century_reg) = century_register {
+                self.read(century_reg) as usize
+            } else {
+                20 as usize
+            };
             register_b = self.read(0xB);
         }
 
@@ -64,14 +79,18 @@ impl Rtc {
             day = cvt_bcd(day);
             month = cvt_bcd(month);
             year = cvt_bcd(year);
+            century = if let Some(century_reg) = century_register {
+                cvt_bcd(century)
+            } else {
+                century
+            };
         }
 
         if register_b & 2 != 2 || hour & 0x80 == 0x80 {
             hour = ((hour & 0x7F) + 12) % 24;
         }
 
-        // TODO: Century Register
-        year += 2000;
+        year += century * 100;
 
         // Unix time from clock
         let mut secs: u64 = (year as u64 - 1970) * 31536000;

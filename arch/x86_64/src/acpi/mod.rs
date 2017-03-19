@@ -4,6 +4,8 @@
 use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
 
+use spin::Mutex;
+
 use device::local_apic::LOCAL_APIC;
 use interrupt;
 use memory::{allocate_frames, Frame};
@@ -27,7 +29,13 @@ pub mod xsdt;
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
 
-pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
+pub enum AcpiTable {
+    fadt(Fadt),
+    madt(Madt),
+    dmar(Dmar)
+}
+
+pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option<AcpiTable> {
     print!("  ");
     for &c in sdt.signature.iter() {
         print!("{}", c as char);
@@ -35,6 +43,7 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
 
     if let Some(fadt) = Fadt::new(sdt) {
         println!(": {:#?}", fadt);
+        Some(AcpiTable::fadt(fadt))
     } else if let Some(madt) = Madt::new(sdt) {
         println!(": {:>08X}: {}", madt.local_address, madt.flags);
 
@@ -138,6 +147,7 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         // Unmap trampoline
         let result = active_table.unmap(trampoline_page);
         result.flush(active_table);
+        Some(AcpiTable::madt(madt))
     } else if let Some(dmar) = Dmar::new(sdt) {
         println!(": {}: {}", dmar.addr_width, dmar.flags);
 
@@ -157,15 +167,19 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
                 _ => ()
             }
         }
+        Some(AcpiTable::dmar(dmar))
     } else {
         println!(": Unknown");
+        None
     }
 }
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(active_table: &mut ActivePageTable) -> Option<Acpi> {
+pub unsafe fn init(active_table: &mut ActivePageTable) {
     let start_addr = 0xE0000;
     let end_addr = 0xFFFFF;
+
+    let mut theFADT: Option<Fadt> = None;
 
     // Map all of the ACPI RSDP space
     {
@@ -212,14 +226,26 @@ pub unsafe fn init(active_table: &mut ActivePageTable) -> Option<Acpi> {
         if let Some(rsdt) = Rsdt::new(rxsdt) {
             for sdt_address in rsdt.iter() {
                 let (sdt, mapped) = get_sdt(sdt_address, active_table);
-                init_sdt(sdt, active_table);
-                drop_sdt(sdt, mapped, active_table);
+
+                // If we find the FADT, rather than drop it, save a copy of the pointer, as this is needed elsewhere.
+                // TODO: Eventually, save pointers to all tables containing pertinent information to other parts of
+                // the kernel
+                match init_sdt(sdt, active_table) {
+                    Some(AcpiTable::fadt(fadt)) => theFADT = Some(fadt),
+                    _ => drop_sdt(sdt, mapped, active_table)
+                }
             }
         } else if let Some(xsdt) = Xsdt::new(rxsdt) {
             for sdt_address in xsdt.iter() {
                 let (sdt, mapped) = get_sdt(sdt_address, active_table);
-                init_sdt(sdt, active_table);
-                drop_sdt(sdt, mapped, active_table);
+
+                // If we find the FADT, rather than drop it, save a copy of the pointer, as this is needed elsewhere.
+                // TODO: Eventually, save pointers to all tables containing pertinent information to other parts of
+                // the kernel
+                match init_sdt(sdt, active_table) {
+                    Some(AcpiTable::fadt(fadt)) => theFADT = Some(fadt),
+                    _ => drop_sdt(sdt, mapped, active_table)
+                }
             }
         } else {
             println!("UNKNOWN RSDT OR XSDT SIGNATURE");
@@ -241,10 +267,16 @@ pub unsafe fn init(active_table: &mut ActivePageTable) -> Option<Acpi> {
         }
     }
 
-    None
+    if let Some(fadt) = theFADT {
+        ACPI_TABLE.lock().fadt = Some(fadt);
+    }
 }
 
-pub struct Acpi;
+pub struct Acpi {
+    pub fadt: Option<Fadt>
+}
+
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]

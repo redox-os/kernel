@@ -113,12 +113,15 @@ pub unsafe extern fn kstart() -> ! {
             // Init the allocator
             allocator::init(::KERNEL_HEAP_OFFSET, ::KERNEL_HEAP_SIZE);
         }
-
+        
         // Initialize devices
         device::init(&mut active_table);
 
         // Read ACPI tables, starts APs
         acpi::init(&mut active_table);
+
+        // Initialize all of the non-core devices not otherwise needed to complete initialization
+        device::init_noncore();
 
         BSP_READY.store(true, Ordering::SeqCst);
     }
