@@ -127,6 +127,7 @@ impl Context {
     }
 }
 
+#[allow(dead_code)]
 #[repr(packed)]
 pub struct SignalHandlerStack {
     r11: usize,

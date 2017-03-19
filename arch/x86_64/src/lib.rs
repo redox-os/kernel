@@ -1,5 +1,6 @@
 //! Architecture support for x86_64
 
+//#![deny(warnings)]
 #![deny(unused_must_use)]
 #![feature(asm)]
 #![feature(concat_idents)]
@@ -148,6 +149,7 @@ macro_rules! interrupt {
     };
 }
 
+#[allow(dead_code)]
 #[repr(packed)]
 pub struct InterruptStack {
     fs: usize,
@@ -214,6 +216,7 @@ macro_rules! interrupt_stack {
     };
 }
 
+#[allow(dead_code)]
 #[repr(packed)]
 pub struct InterruptErrorStack {
     fs: usize,

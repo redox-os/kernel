@@ -55,7 +55,7 @@ impl Rtc {
         } else {
             None
         };
-        
+
         unsafe {
             self.wait();
             second = self.read(0) as usize;
@@ -79,7 +79,7 @@ impl Rtc {
             day = cvt_bcd(day);
             month = cvt_bcd(month);
             year = cvt_bcd(year);
-            century = if let Some(century_reg) = century_register {
+            century = if century_register.is_some() {
                 cvt_bcd(century)
             } else {
                 century

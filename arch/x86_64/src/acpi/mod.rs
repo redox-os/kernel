@@ -30,9 +30,9 @@ const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
 
 pub enum AcpiTable {
-    fadt(Fadt),
-    madt(Madt),
-    dmar(Dmar)
+    Fadt(Fadt),
+    Madt(Madt),
+    Dmar(Dmar)
 }
 
 pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option<AcpiTable> {
@@ -43,7 +43,7 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option
 
     if let Some(fadt) = Fadt::new(sdt) {
         println!(": {:#?}", fadt);
-        Some(AcpiTable::fadt(fadt))
+        Some(AcpiTable::Fadt(fadt))
     } else if let Some(madt) = Madt::new(sdt) {
         println!(": {:>08X}: {}", madt.local_address, madt.flags);
 
@@ -147,7 +147,7 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option
         // Unmap trampoline
         let result = active_table.unmap(trampoline_page);
         result.flush(active_table);
-        Some(AcpiTable::madt(madt))
+        Some(AcpiTable::Madt(madt))
     } else if let Some(dmar) = Dmar::new(sdt) {
         println!(": {}: {}", dmar.addr_width, dmar.flags);
 
@@ -167,7 +167,7 @@ pub fn init_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option
                 _ => ()
             }
         }
-        Some(AcpiTable::dmar(dmar))
+        Some(AcpiTable::Dmar(dmar))
     } else {
         println!(": Unknown");
         None
@@ -179,7 +179,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     let start_addr = 0xE0000;
     let end_addr = 0xFFFFF;
 
-    let mut theFADT: Option<Fadt> = None;
+    let mut fadt_opt: Option<Fadt> = None;
 
     // Map all of the ACPI RSDP space
     {
@@ -231,7 +231,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
                 // TODO: Eventually, save pointers to all tables containing pertinent information to other parts of
                 // the kernel
                 match init_sdt(sdt, active_table) {
-                    Some(AcpiTable::fadt(fadt)) => theFADT = Some(fadt),
+                    Some(AcpiTable::Fadt(fadt)) => fadt_opt = Some(fadt),
                     _ => drop_sdt(sdt, mapped, active_table)
                 }
             }
@@ -243,7 +243,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
                 // TODO: Eventually, save pointers to all tables containing pertinent information to other parts of
                 // the kernel
                 match init_sdt(sdt, active_table) {
-                    Some(AcpiTable::fadt(fadt)) => theFADT = Some(fadt),
+                    Some(AcpiTable::Fadt(fadt)) => fadt_opt = Some(fadt),
                     _ => drop_sdt(sdt, mapped, active_table)
                 }
             }
@@ -267,7 +267,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         }
     }
 
-    if let Some(fadt) = theFADT {
+    if let Some(fadt) = fadt_opt {
         ACPI_TABLE.lock().fadt = Some(fadt);
     }
 }
