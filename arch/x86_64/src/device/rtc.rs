@@ -64,9 +64,10 @@ impl Rtc {
             day = self.read(7) as usize;
             month = self.read(8) as usize;
             year = self.read(9) as usize;
-            century = if let Some(century_reg) = century_register {
+            century = /* TODO: Fix invalid value from VirtualBox
+            if let Some(century_reg) = century_register {
                 self.read(century_reg) as usize
-            } else {
+            } else */ {
                 20 as usize
             };
             register_b = self.read(0xB);
@@ -79,9 +80,10 @@ impl Rtc {
             day = cvt_bcd(day);
             month = cvt_bcd(month);
             year = cvt_bcd(year);
-            century = if century_register.is_some() {
+            century = /* TODO: Fix invalid value from VirtualBox
+            if century_register.is_some() {
                 cvt_bcd(century)
-            } else {
+            } else */ {
                 century
             };
         }
