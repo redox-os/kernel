@@ -45,6 +45,7 @@ pub unsafe fn switch() -> bool {
 
                 let current = arch::time::monotonic();
                 if current.0 > wake.0 || (current.0 == wake.0 && current.1 >= wake.1) {
+                    context.wake = None;
                     context.unblock();
                 }
             }

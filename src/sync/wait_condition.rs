@@ -12,7 +12,7 @@ pub struct WaitCondition {
 impl WaitCondition {
     pub fn new() -> WaitCondition {
         WaitCondition {
-            contexts: Mutex::new(Vec::with_capacity(16))
+            contexts: Mutex::new(Vec::new())
         }
     }
 
