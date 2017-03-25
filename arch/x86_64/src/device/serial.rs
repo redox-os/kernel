@@ -85,13 +85,15 @@ impl SerialPort {
     }
 
     pub fn on_receive(&mut self) {
-        let data = self.data.read();
+        while self.line_sts().contains(INPUT_FULL) {
+            let data = self.data.read();
 
-        extern {
-            fn debug_input(byte: u8);
+            extern {
+                fn debug_input(byte: u8);
+            }
+
+            unsafe { debug_input(data) };
         }
-
-        unsafe { debug_input(data) };
     }
 }
 

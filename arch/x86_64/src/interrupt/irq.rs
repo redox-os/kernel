@@ -50,14 +50,17 @@ interrupt!(keyboard, {
 
 interrupt!(cascade, {
     // No need to do any operations on cascade
+    pic::MASTER.ack();
 });
 
 interrupt!(com2, {
     COM2.lock().on_receive();
+    pic::MASTER.ack();
 });
 
 interrupt!(com1, {
     COM1.lock().on_receive();
+    pic::MASTER.ack();
 });
 
 interrupt!(lpt2, {
