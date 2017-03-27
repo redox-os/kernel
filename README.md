@@ -26,7 +26,7 @@ careful comments for anything non-trivial.
 
 ## Guidelines
 
-### A rotten house is built on a rotten fundament.
+### A rotten house is built on a rotten foundation.
 
 Don't fool yourself. You are likely not getting back to the ugly code. Write it
 the right way **first time**, and make sure you only move on when it's
@@ -45,7 +45,7 @@ Every public item should contain API documentation.
 Abusing debug assertions is a wonderful way to catch bugs, and it is very much
 encouraged.
 
-### Statical checking
+### Static checking
 
 Rust provides a lot of type-system features which can be used to create
 wonderful safe abstractions, and you should use them whenever you get the chance.
@@ -65,5 +65,5 @@ and be careful.
 ### Commits
 
 Use descriptive commits. One way to force yourself to do that is to not pass the
-`-m` flag, which will make your editor pop up, so that you can conviniently
-write long commit messages.
+`-m` flag, which will make your editor pop up, so you can conveniently write long
+commit messages.
