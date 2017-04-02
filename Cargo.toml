@@ -14,7 +14,7 @@ spin = "0.4"
 redox_syscall = "0.1"
 
 [dependencies.goblin]
-git = "https://github.com/m4b/goblin.git"
+verion = "0.0.8"
 default-features = false
 features = ["elf32", "elf64"]
 
