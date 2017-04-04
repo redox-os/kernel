@@ -57,7 +57,7 @@ impl Dsdt {
             }
         }
 
-        let SLP_TYPa = (data[i] as u16) << 10;
+        let a = (data[i] as u16) << 10;
         i += 1;
         if i >= data.len() {
             return None;
@@ -70,9 +70,9 @@ impl Dsdt {
             }
         }
 
-        let SLP_TYPb = (data[i] as u16) << 10;
+        let b = (data[i] as u16) << 10;
 
-        Some((SLP_TYPa, SLP_TYPb))
+        Some((a, b))
     }
 
 }

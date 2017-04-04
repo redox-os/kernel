@@ -8,6 +8,9 @@ pub use self::list::ContextList;
 pub use self::switch::switch;
 pub use context::context::ContextId;
 
+#[path = "arch/x86_64.rs"]
+mod arch;
+
 /// Context struct
 mod context;
 

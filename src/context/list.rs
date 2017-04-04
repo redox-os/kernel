@@ -3,9 +3,9 @@ use alloc::boxed::Box;
 use collections::BTreeMap;
 use core::mem;
 use core::sync::atomic::Ordering;
+use paging;
 use spin::RwLock;
 
-use arch;
 use syscall::error::{Result, Error, EAGAIN};
 use super::context::{Context, ContextId};
 
@@ -76,7 +76,7 @@ impl ContextList {
                 let func_ptr = stack.as_mut_ptr().offset(offset as isize);
                 *(func_ptr as *mut usize) = func as usize;
             }
-            context.arch.set_page_table(unsafe { arch::paging::ActivePageTable::new().address() });
+            context.arch.set_page_table(unsafe { paging::ActivePageTable::new().address() });
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
             context.kfx = Some(fx);

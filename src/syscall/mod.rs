@@ -2,7 +2,7 @@
 
 extern crate syscall;
 
-pub use self::syscall::{data, error, flag, number, scheme};
+pub use self::syscall::{data, error, flag, io, number, scheme};
 
 pub use self::driver::*;
 pub use self::fs::*;

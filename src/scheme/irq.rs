@@ -2,7 +2,7 @@ use core::{mem, str};
 use core::sync::atomic::Ordering;
 use spin::Mutex;
 
-use arch::interrupt::irq::acknowledge;
+use interrupt::irq::acknowledge;
 use context;
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use syscall::error::*;

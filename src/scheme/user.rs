@@ -4,9 +4,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::{mem, slice, usize};
 use spin::{Mutex, RwLock};
 
-use arch;
-use arch::paging::{InactivePageTable, Page, VirtualAddress, entry};
-use arch::paging::temporary_page::TemporaryPage;
+use paging::{InactivePageTable, Page, VirtualAddress, entry};
+use paging::temporary_page::TemporaryPage;
 use context::{self, Context};
 use context::memory::Grant;
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
@@ -91,12 +90,12 @@ impl UserInner {
             let mut grants = context.grants.lock();
 
             let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(arch::USER_TMP_GRANT_OFFSET)));
+            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
 
             let from_address = (address/4096) * 4096;
             let offset = address - from_address;
             let full_size = ((offset + size + 4095)/4096) * 4096;
-            let mut to_address = arch::USER_GRANT_OFFSET;
+            let mut to_address = ::USER_GRANT_OFFSET;
 
             let mut flags = entry::PRESENT | entry::NO_EXECUTE | entry::USER_ACCESSIBLE;
             if writable {
@@ -146,7 +145,7 @@ impl UserInner {
             let mut grants = context.grants.lock();
 
             let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(arch::USER_TMP_GRANT_OFFSET)));
+            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
 
             for i in 0 .. grants.len() {
                 let start = grants[i].start_address().get();

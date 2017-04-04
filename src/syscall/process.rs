@@ -6,11 +6,11 @@ use core::{intrinsics, mem, str};
 use core::ops::DerefMut;
 use spin::Mutex;
 
-use arch;
-use arch::memory::allocate_frames;
-use arch::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, entry};
-use arch::paging::temporary_page::TemporaryPage;
-use arch::start::usermode;
+use memory::allocate_frames;
+use paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, entry};
+use paging::temporary_page::TemporaryPage;
+use start::usermode;
+use interrupt;
 use context;
 use context::ContextId;
 use elf::{self, program_header};
@@ -40,11 +40,11 @@ pub fn brk(address: usize) -> Result<usize> {
     if address == 0 {
         //println!("Brk query {:X}", current);
         Ok(current)
-    } else if address >= arch::USER_HEAP_OFFSET {
+    } else if address >= ::USER_HEAP_OFFSET {
         //TODO: out of memory errors
         if let Some(ref heap_shared) = context.heap {
             heap_shared.with(|heap| {
-                heap.resize(address - arch::USER_HEAP_OFFSET, true);
+                heap.resize(address - ::USER_HEAP_OFFSET, true);
             });
         } else {
             panic!("user heap not initialized");
@@ -118,7 +118,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
                 unsafe {
                     let func_ptr = new_stack.as_mut_ptr().offset(offset as isize);
-                    *(func_ptr as *mut usize) = arch::interrupt::syscall::clone_ret as usize;
+                    *(func_ptr as *mut usize) = interrupt::syscall::clone_ret as usize;
                 }
 
                 kstack_option = Some(new_stack);
@@ -136,7 +136,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 for memory_shared in context.image.iter() {
                     memory_shared.with(|memory| {
                         let mut new_memory = context::memory::Memory::new(
-                            VirtualAddress::new(memory.start_address().get() + arch::USER_TMP_OFFSET),
+                            VirtualAddress::new(memory.start_address().get() + ::USER_TMP_OFFSET),
                             memory.size(),
                             entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
                             false
@@ -156,7 +156,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 if let Some(ref heap_shared) = context.heap {
                     heap_shared.with(|heap| {
                         let mut new_heap = context::memory::Memory::new(
-                            VirtualAddress::new(arch::USER_TMP_HEAP_OFFSET),
+                            VirtualAddress::new(::USER_TMP_HEAP_OFFSET),
                             heap.size(),
                             entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
                             false
@@ -176,7 +176,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             if let Some(ref stack) = context.stack {
                 let mut new_stack = context::memory::Memory::new(
-                    VirtualAddress::new(arch::USER_TMP_STACK_OFFSET),
+                    VirtualAddress::new(::USER_TMP_STACK_OFFSET),
                     stack.size(),
                     entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
                     false
@@ -197,7 +197,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                     master: tls.master,
                     file_size: tls.file_size,
                     mem: context::memory::Memory::new(
-                        VirtualAddress::new(arch::USER_TMP_TLS_OFFSET),
+                        VirtualAddress::new(::USER_TMP_TLS_OFFSET),
                         tls.mem.size(),
                         entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
                         true
@@ -321,7 +321,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             let mut active_table = unsafe { ActivePageTable::new() };
 
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(arch::USER_TMP_MISC_OFFSET)));
+            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_MISC_OFFSET)));
 
             let mut new_table = {
                 let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
@@ -393,7 +393,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
                     let size = unsafe { & __tbss_end as *const _ as usize - & __tdata_start as *const _ as usize };
 
-                    let start = arch::KERNEL_PERCPU_OFFSET + arch::KERNEL_PERCPU_SIZE * cpu_id;
+                    let start = ::KERNEL_PERCPU_OFFSET + ::KERNEL_PERCPU_SIZE * cpu_id;
                     let end = start + size;
 
                     let start_page = Page::containing_address(VirtualAddress::new(start));
@@ -411,7 +411,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 // Move copy of image
                 for memory_shared in image.iter_mut() {
                     memory_shared.with(|memory| {
-                        let start = VirtualAddress::new(memory.start_address().get() - arch::USER_TMP_OFFSET + arch::USER_OFFSET);
+                        let start = VirtualAddress::new(memory.start_address().get() - ::USER_TMP_OFFSET + ::USER_OFFSET);
                         memory.move_to(start, &mut new_table, &mut temporary_page);
                     });
                 }
@@ -420,7 +420,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 // Move copy of heap
                 if let Some(heap_shared) = heap_option {
                     heap_shared.with(|heap| {
-                        heap.move_to(VirtualAddress::new(arch::USER_HEAP_OFFSET), &mut new_table, &mut temporary_page);
+                        heap.move_to(VirtualAddress::new(::USER_HEAP_OFFSET), &mut new_table, &mut temporary_page);
                     });
                     context.heap = Some(heap_shared);
                 }
@@ -428,13 +428,13 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Setup user stack
             if let Some(mut stack) = stack_option {
-                stack.move_to(VirtualAddress::new(arch::USER_STACK_OFFSET), &mut new_table, &mut temporary_page);
+                stack.move_to(VirtualAddress::new(::USER_STACK_OFFSET), &mut new_table, &mut temporary_page);
                 context.stack = Some(stack);
             }
 
             // Setup user TLS
             if let Some(mut tls) = tls_option {
-                tls.mem.move_to(VirtualAddress::new(arch::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
+                tls.mem.move_to(VirtualAddress::new(::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
                 context.tls = Some(tls);
             }
 
@@ -478,7 +478,7 @@ fn empty(context: &mut context::Context, reaping: bool) {
                 println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
-                let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(arch::USER_TMP_GRANT_OFFSET)));
+                let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
 
                 grant.unmap_inactive(&mut new_table, &mut temporary_page);
             } else {
@@ -490,7 +490,7 @@ fn empty(context: &mut context::Context, reaping: bool) {
 
 pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
     let entry;
-    let mut sp = arch::USER_STACK_OFFSET + arch::USER_STACK_SIZE - 256;
+    let mut sp = ::USER_STACK_OFFSET + ::USER_STACK_SIZE - 256;
 
     {
         let mut args = Vec::new();
@@ -592,13 +592,13 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                             context.image.push(memory.to_shared());
                         } else if segment.p_type == program_header::PT_TLS {
                             let memory = context::memory::Memory::new(
-                                VirtualAddress::new(arch::USER_TCB_OFFSET),
+                                VirtualAddress::new(::USER_TCB_OFFSET),
                                 4096,
                                 entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
                                 true
                             );
 
-                            unsafe { *(arch::USER_TCB_OFFSET as *mut usize) = arch::USER_TLS_OFFSET + segment.p_memsz as usize; }
+                            unsafe { *(::USER_TCB_OFFSET as *mut usize) = ::USER_TLS_OFFSET + segment.p_memsz as usize; }
 
                             context.image.push(memory.to_shared());
 
@@ -612,7 +612,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
 
                     // Map heap
                     context.heap = Some(context::memory::Memory::new(
-                        VirtualAddress::new(arch::USER_HEAP_OFFSET),
+                        VirtualAddress::new(::USER_HEAP_OFFSET),
                         0,
                         entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
                         true
@@ -620,8 +620,8 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
 
                     // Map stack
                     context.stack = Some(context::memory::Memory::new(
-                        VirtualAddress::new(arch::USER_STACK_OFFSET),
-                        arch::USER_STACK_SIZE,
+                        VirtualAddress::new(::USER_STACK_OFFSET),
+                        ::USER_STACK_SIZE,
                         entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
                         true
                     ));
@@ -632,7 +632,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                             master: master,
                             file_size: file_size,
                             mem: context::memory::Memory::new(
-                                VirtualAddress::new(arch::USER_TLS_OFFSET),
+                                VirtualAddress::new(::USER_TLS_OFFSET),
                                 size,
                                 entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
                                 true
@@ -653,7 +653,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     let mut arg_size = 0;
                     for arg in args.iter().rev() {
                         sp -= mem::size_of::<usize>();
-                        unsafe { *(sp as *mut usize) = arch::USER_ARG_OFFSET + arg_size; }
+                        unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
                         sp -= mem::size_of::<usize>();
                         unsafe { *(sp as *mut usize) = arg.len(); }
 
@@ -665,7 +665,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
 
                     if arg_size > 0 {
                         let mut memory = context::memory::Memory::new(
-                            VirtualAddress::new(arch::USER_ARG_OFFSET),
+                            VirtualAddress::new(::USER_ARG_OFFSET),
                             arg_size,
                             entry::NO_EXECUTE | entry::WRITABLE,
                             true
@@ -675,7 +675,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                         for arg in args.iter().rev() {
                             unsafe {
                                 intrinsics::copy(arg.as_ptr(),
-                                       (arch::USER_ARG_OFFSET + arg_offset) as *mut u8,
+                                       (::USER_ARG_OFFSET + arg_offset) as *mut u8,
                                        arg.len());
                             }
 
@@ -916,7 +916,7 @@ fn reap(pid: ContextId) -> Result<ContextId> {
             running = context.running;
         }
 
-        arch::interrupt::pause();
+        interrupt::pause();
     }
 
     let mut contexts = context::contexts_mut();
