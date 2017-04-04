@@ -7,7 +7,7 @@ use core::ops::DerefMut;
 use spin::Mutex;
 
 use arch;
-use arch::memory::allocate_frame;
+use arch::memory::allocate_frames;
 use arch::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, entry};
 use arch::paging::temporary_page::TemporaryPage;
 use arch::start::usermode;
@@ -324,7 +324,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(arch::USER_TMP_MISC_OFFSET)));
 
             let mut new_table = {
-                let frame = allocate_frame().expect("no more frames in syscall::clone new_table");
+                let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
                 InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
             };
 

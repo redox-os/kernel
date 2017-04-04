@@ -1,11 +1,11 @@
 //! # Paging
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
-use core::mem;
+use core::{mem, ptr};
 use core::ops::{Deref, DerefMut};
 use x86::{msr, tlb};
 
-use memory::{allocate_frame, Frame};
+use memory::{allocate_frames, Frame};
 
 use self::entry::{EntryFlags, PRESENT, GLOBAL, WRITABLE, NO_EXECUTE};
 use self::mapper::Mapper;
@@ -67,8 +67,8 @@ unsafe fn init_tcb(cpu_id: usize) -> usize {
         let end = start + size;
         tcb_offset = end - mem::size_of::<usize>();
 
-        ::externs::memcpy(start as *mut u8, & __tdata_start as *const u8, tbss_offset);
-        ::externs::memset((start + tbss_offset) as *mut u8, 0, size - tbss_offset);
+        ptr::copy(& __tdata_start as *const u8, start as *mut u8, tbss_offset);
+        ptr::write_bytes((start + tbss_offset) as *mut u8, 0, size - tbss_offset);
 
         *(tcb_offset as *mut usize) = end;
     }
@@ -113,7 +113,7 @@ pub unsafe fn init(cpu_id: usize, stack_start: usize, stack_end: usize) -> (Acti
     let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_MISC_OFFSET)));
 
     let mut new_table = {
-        let frame = allocate_frame().expect("no more frames in paging::init new_table");
+        let frame = allocate_frames(1).expect("no more frames in paging::init new_table");
         InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
     };
 

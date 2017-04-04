@@ -54,6 +54,9 @@ pub mod context;
 /// ELF file parsing
 pub mod elf;
 
+/// External functions
+pub mod externs;
+
 /// Schemes, filesystem handlers
 pub mod scheme;
 
@@ -150,14 +153,7 @@ pub extern fn kmain(cpus: usize) {
 
 /// This is the main kernel entry point for secondary CPUs
 #[no_mangle]
-pub extern fn kmain_ap(_id: usize) {
-    // Disable APs for now
-    loop {
-        unsafe { interrupt::disable(); }
-        unsafe { interrupt::halt(); }
-    }
-
-    /*
+pub extern fn kmain_ap(id: usize) {
     CPU_ID.store(id, Ordering::SeqCst);
 
     context::init();
@@ -176,5 +172,4 @@ pub extern fn kmain_ap(_id: usize) {
             }
         }
     }
-*/
 }

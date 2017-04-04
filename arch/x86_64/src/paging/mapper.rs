@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::Unique;
 
-use memory::{allocate_frame, deallocate_frame, Frame};
+use memory::{allocate_frames, deallocate_frames, Frame};
 
 use super::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
 use super::entry::{self, EntryFlags};
@@ -113,7 +113,7 @@ impl Mapper {
 
     /// Map a page to the next free frame
     pub fn map(&mut self, page: Page, flags: EntryFlags) -> MapperFlush {
-        let frame = allocate_frame().expect("out of frames");
+        let frame = allocate_frames(1).expect("out of frames");
         self.map_to(page, frame, flags)
     }
 
@@ -143,7 +143,7 @@ impl Mapper {
         let frame = p1[page.p1_index()].pointed_frame().unwrap();
         p1[page.p1_index()].set_unused();
         // TODO free p(1,2,3) table if empty
-        deallocate_frame(frame);
+        deallocate_frames(frame, 1);
         MapperFlush::new(page)
     }
 

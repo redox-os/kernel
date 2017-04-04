@@ -3,11 +3,11 @@
 
 pub use paging::{PAGE_SIZE, PhysicalAddress};
 
-use self::area_frame_allocator::AreaFrameAllocator;
+use self::bump::BumpAllocator;
 
 use spin::Mutex;
 
-pub mod area_frame_allocator;
+pub mod bump;
 
 /// The current memory map. It's size is maxed out to 512 entries, due to it being
 /// from 0x500 to 0x5000 (800 is the absolute total)
@@ -64,7 +64,7 @@ impl Iterator for MemoryAreaIter {
     }
 }
 
-static ALLOCATOR: Mutex<Option<AreaFrameAllocator>> = Mutex::new(None);
+static ALLOCATOR: Mutex<Option<BumpAllocator>> = Mutex::new(None);
 
 /// Init memory module
 /// Must be called once, and only once,
@@ -77,17 +77,7 @@ pub unsafe fn init(kernel_start: usize, kernel_end: usize) {
         }
     }
 
-    *ALLOCATOR.lock() = Some(AreaFrameAllocator::new(kernel_start, kernel_end, MemoryAreaIter::new(MEMORY_AREA_FREE)));
-}
-
-/// Allocate a frame
-pub fn allocate_frame() -> Option<Frame> {
-    allocate_frames(1)
-}
-
-/// Deallocate a frame
-pub fn deallocate_frame(frame: Frame) {
-    deallocate_frames(frame, 1)
+    *ALLOCATOR.lock() = Some(BumpAllocator::new(kernel_start, kernel_end, MemoryAreaIter::new(MEMORY_AREA_FREE)));
 }
 
 /// Get the number of frames available

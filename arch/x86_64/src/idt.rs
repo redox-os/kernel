@@ -81,23 +81,6 @@ bitflags! {
     }
 }
 
-#[repr(packed)]
-pub struct IdtDescriptor {
-    size: u16,
-    offset: u64
-}
-
-impl IdtDescriptor {
-    pub fn set_slice(&mut self, slice: &'static [IdtEntry]) {
-        self.size = (slice.len() * mem::size_of::<IdtEntry>() - 1) as u16;
-        self.offset = slice.as_ptr() as u64;
-    }
-
-    pub unsafe fn load(&self) {
-        asm!("lidt [rax]" : : "{rax}"(self as *const _ as usize) : : "intel", "volatile");
-    }
-}
-
 #[derive(Copy, Clone, Debug)]
 #[repr(packed)]
 pub struct IdtEntry {
