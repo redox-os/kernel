@@ -3,12 +3,12 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 
+use core::ptr;
 use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use acpi;
 use allocator;
 use device;
-use externs::memset;
 use gdt;
 use idt;
 use interrupt;
@@ -58,7 +58,7 @@ pub unsafe extern fn kstart() -> ! {
 
             if start_ptr as usize <= end_ptr {
                 let size = end_ptr - start_ptr as usize;
-                memset(start_ptr, 0, size);
+                ptr::write_bytes(start_ptr, 0, size);
             }
 
             assert_eq!(BSS_TEST_ZERO, 0);
@@ -113,7 +113,7 @@ pub unsafe extern fn kstart() -> ! {
             // Init the allocator
             allocator::init(::KERNEL_HEAP_OFFSET, ::KERNEL_HEAP_SIZE);
         }
-        
+
         // Initialize devices
         device::init(&mut active_table);
 

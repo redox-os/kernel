@@ -3,9 +3,10 @@ use alloc::boxed::Box;
 use collections::{BTreeMap, Vec, VecDeque};
 use spin::Mutex;
 
-use arch;
+use context::arch;
 use context::file::File;
 use context::memory::{Grant, Memory, SharedMemory, Tls};
+use device;
 use scheme::{SchemeNamespace, FileHandle};
 use syscall::data::Event;
 use sync::{WaitMap, WaitQueue};
@@ -57,7 +58,7 @@ pub struct Context {
     /// Context should wake up at specified time
     pub wake: Option<(u64, u64)>,
     /// The architecture specific context
-    pub arch: arch::context::Context,
+    pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
     pub kfx: Option<Box<[u8]>>,
     /// Kernel stack
@@ -102,7 +103,7 @@ impl Context {
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),
             wake: None,
-            arch: arch::context::Context::new(),
+            arch: arch::Context::new(),
             kfx: None,
             kstack: None,
             image: Vec::new(),
@@ -206,7 +207,7 @@ impl Context {
                 if cpu_id != ::cpu_id() {
                     // Send IPI if not on current CPU
                     // TODO: Make this more architecture independent
-                    unsafe { arch::device::local_apic::LOCAL_APIC.ipi(cpu_id) };
+                    unsafe { device::local_apic::LOCAL_APIC.ipi(cpu_id) };
                 }
             }
             true

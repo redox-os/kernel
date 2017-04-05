@@ -12,31 +12,21 @@
 #![feature(drop_types_in_const)]
 #![feature(heap_api)]
 #![feature(integer_atomics)]
+#![feature(lang_items)]
+#![feature(naked_functions)]
 #![feature(never_type)]
 #![feature(thread_local)]
+#![feature(unique)]
 #![no_std]
 
-use arch::interrupt;
-
-/// Architecture specific items (test)
-#[cfg(test)]
-#[macro_use]
-extern crate arch_test as arch;
-
-/// Architecture specific items (ARM)
-#[cfg(all(not(test), target_arch = "arm"))]
-#[macro_use]
-extern crate arch_arm as arch;
-
-/// Architecture specific items (x86_64)
-#[cfg(all(not(test), target_arch = "x86_64"))]
-#[macro_use]
-extern crate arch_x86_64 as arch;
+extern crate alloc_kernel as allocator;
+pub extern crate x86;
 
 extern crate alloc;
 #[macro_use]
 extern crate collections;
 
+#[macro_use]
 extern crate bitflags;
 extern crate goblin;
 extern crate spin;
@@ -44,24 +34,72 @@ extern crate spin;
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use scheme::FileHandle;
 
+pub use consts::*;
+
 #[macro_use]
 /// Shared data structures
 pub mod common;
 
+/// Macros like print, println, and interrupt
+#[macro_use]
+pub mod macros;
+
+/// Constants like memory locations
+pub mod consts;
+
+/// ACPI table parsing
+mod acpi;
+
+/// Console handling
+pub mod console;
+
 /// Context management
 pub mod context;
+
+/// Devices
+pub mod device;
 
 /// ELF file parsing
 pub mod elf;
 
+/// External functions
+pub mod externs;
+
+/// Global descriptor table
+pub mod gdt;
+
+/// Interrupt descriptor table
+mod idt;
+
+/// Interrupt instructions
+pub mod interrupt;
+
+/// Memory management
+pub mod memory;
+
+/// Paging
+pub mod paging;
+
+/// Panic
+pub mod panic;
+
 /// Schemes, filesystem handlers
 pub mod scheme;
+
+/// Initialization and start function
+pub mod start;
+
+/// Shutdown function
+pub mod stop;
 
 /// Synchronization primitives
 pub mod sync;
 
 /// Syscall handlers
 pub mod syscall;
+
+/// Time
+pub mod time;
 
 /// Tests
 #[cfg(test)]
@@ -100,20 +138,6 @@ pub extern fn userspace_init() {
     panic!("init returned");
 }
 
-/// Allow exception handlers to send signal to arch-independant kernel
-#[no_mangle]
-pub extern fn ksignal(signal: usize) {
-    println!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
-    {
-        let contexts = context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
-            println!("NAME {}", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) });
-        }
-    }
-    syscall::exit(signal & 0x7F);
-}
-
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 #[no_mangle]
 pub extern fn kmain(cpus: usize) {
@@ -150,14 +174,7 @@ pub extern fn kmain(cpus: usize) {
 
 /// This is the main kernel entry point for secondary CPUs
 #[no_mangle]
-pub extern fn kmain_ap(_id: usize) {
-    // Disable APs for now
-    loop {
-        unsafe { interrupt::disable(); }
-        unsafe { interrupt::halt(); }
-    }
-
-    /*
+pub extern fn kmain_ap(id: usize) {
     CPU_ID.store(id, Ordering::SeqCst);
 
     context::init();
@@ -176,5 +193,18 @@ pub extern fn kmain_ap(_id: usize) {
             }
         }
     }
-*/
+}
+
+/// Allow exception handlers to send signal to arch-independant kernel
+#[no_mangle]
+pub extern fn ksignal(signal: usize) {
+    println!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
+    {
+        let contexts = context::contexts();
+        if let Some(context_lock) = contexts.current() {
+            let context = context_lock.read();
+            println!("NAME {}", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) });
+        }
+    }
+    syscall::exit(signal & 0x7F);
 }

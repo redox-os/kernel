@@ -1,6 +1,6 @@
 use collections::Vec;
 
-use arch::device::cpu::cpu_info;
+use device::cpu::cpu_info;
 use syscall::error::{Error, EIO, Result};
 
 pub fn resource() -> Result<Vec<u8>> {

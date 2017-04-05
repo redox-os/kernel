@@ -20,13 +20,13 @@ use self::rsdt::Rsdt;
 use self::sdt::Sdt;
 use self::xsdt::Xsdt;
 
-pub mod dmar;
-pub mod dsdt;
-pub mod fadt;
-pub mod madt;
-pub mod rsdt;
-pub mod sdt;
-pub mod xsdt;
+mod dmar;
+mod dsdt;
+mod fadt;
+mod madt;
+mod rsdt;
+mod sdt;
+mod xsdt;
 
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;

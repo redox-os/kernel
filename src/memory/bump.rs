@@ -6,7 +6,7 @@ use paging::PhysicalAddress;
 use super::{Frame, FrameAllocator, MemoryArea, MemoryAreaIter};
 
 
-pub struct AreaFrameAllocator {
+pub struct BumpAllocator {
     next_free_frame: Frame,
     current_area: Option<&'static MemoryArea>,
     areas: MemoryAreaIter,
@@ -14,9 +14,9 @@ pub struct AreaFrameAllocator {
     kernel_end: Frame
 }
 
-impl AreaFrameAllocator {
-    pub fn new(kernel_start: usize, kernel_end: usize, memory_areas: MemoryAreaIter) -> AreaFrameAllocator {
-        let mut allocator = AreaFrameAllocator {
+impl BumpAllocator {
+    pub fn new(kernel_start: usize, kernel_end: usize, memory_areas: MemoryAreaIter) -> BumpAllocator {
+        let mut allocator = BumpAllocator {
             next_free_frame: Frame::containing_address(PhysicalAddress::new(0)),
             current_area: None,
             areas: memory_areas,
@@ -42,7 +42,7 @@ impl AreaFrameAllocator {
     }
 }
 
-impl FrameAllocator for AreaFrameAllocator {
+impl FrameAllocator for BumpAllocator {
     fn free_frames(&self) -> usize {
         let mut count = 0;
 
@@ -121,7 +121,7 @@ impl FrameAllocator for AreaFrameAllocator {
         }
     }
 
-    fn deallocate_frames(&mut self, frame: Frame, count: usize) {
-        //panic!("AreaFrameAllocator::deallocate_frame: not supported: {:?}", frame);
+    fn deallocate_frames(&mut self, _frame: Frame, _count: usize) {
+        //panic!("BumpAllocator::deallocate_frame: not supported: {:?}", frame);
     }
 }

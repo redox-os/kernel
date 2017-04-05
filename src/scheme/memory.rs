@@ -1,4 +1,4 @@
-use arch::memory::{free_frames, used_frames};
+use memory::{free_frames, used_frames};
 
 use syscall::data::StatVfs;
 use syscall::error::*;

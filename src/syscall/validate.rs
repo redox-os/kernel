@@ -1,6 +1,6 @@
 use core::{mem, slice};
 
-use arch::paging::{ActivePageTable, Page, VirtualAddress, entry};
+use paging::{ActivePageTable, Page, VirtualAddress, entry};
 use syscall::error::*;
 
 fn validate(address: usize, size: usize, flags: entry::EntryFlags) -> Result<()> {

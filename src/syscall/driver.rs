@@ -1,6 +1,5 @@
-use arch;
-use arch::memory::{allocate_frames, deallocate_frames, Frame};
-use arch::paging::{entry, ActivePageTable, PhysicalAddress, VirtualAddress};
+use memory::{allocate_frames, deallocate_frames, Frame};
+use paging::{entry, ActivePageTable, PhysicalAddress, VirtualAddress};
 use context;
 use context::memory::Grant;
 use syscall::error::{Error, EFAULT, ENOMEM, EPERM, ESRCH, Result};
@@ -54,7 +53,7 @@ pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usi
         let from_address = (physical_address/4096) * 4096;
         let offset = physical_address - from_address;
         let full_size = ((offset + size + 4095)/4096) * 4096;
-        let mut to_address = arch::USER_GRANT_OFFSET;
+        let mut to_address = ::USER_GRANT_OFFSET;
 
         let mut entry_flags = entry::PRESENT | entry::NO_EXECUTE | entry::USER_ACCESSIBLE;
         if flags & MAP_WRITE == MAP_WRITE {

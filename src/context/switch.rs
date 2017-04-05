@@ -1,8 +1,10 @@
 use core::sync::atomic::Ordering;
 
-use arch;
-use context::{contexts, Context, Status, CONTEXT_ID};
+use context::{arch, contexts, Context, Status, CONTEXT_ID};
+use gdt;
+use interrupt;
 use syscall;
+use time;
 
 /// Switch to the next context
 ///
@@ -13,8 +15,8 @@ pub unsafe fn switch() -> bool {
     use core::ops::DerefMut;
 
     // Set the global lock to avoid the unsafe operations below from causing issues
-    while arch::context::CONTEXT_SWITCH_LOCK.compare_and_swap(false, true, Ordering::SeqCst) {
-        arch::interrupt::pause();
+    while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(false, true, Ordering::SeqCst) {
+        interrupt::pause();
     }
 
     let cpu_id = ::cpu_id();
@@ -43,7 +45,7 @@ pub unsafe fn switch() -> bool {
             if context.status == Status::Blocked && context.wake.is_some() {
                 let wake = context.wake.expect("context::switch: wake not set");
 
-                let current = arch::time::monotonic();
+                let current = time::monotonic();
                 if current.0 > wake.0 || (current.0 == wake.0 && current.1 >= wake.1) {
                     context.wake = None;
                     context.unblock();
@@ -86,19 +88,19 @@ pub unsafe fn switch() -> bool {
 
     if to_ptr as usize == 0 {
         // Unset global lock if no context found
-        arch::context::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
         return false;
     }
 
     (&mut *from_ptr).running = false;
     (&mut *to_ptr).running = true;
     if let Some(ref stack) = (*to_ptr).kstack {
-        arch::gdt::TSS.rsp[0] = (stack.as_ptr() as usize + stack.len() - 256) as u64;
+        gdt::TSS.rsp[0] = (stack.as_ptr() as usize + stack.len() - 256) as u64;
     }
     CONTEXT_ID.store((&mut *to_ptr).id, Ordering::SeqCst);
 
     // Unset global lock before switch, as arch is only usable by the current CPU at this time
-    arch::context::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
     if let Some(sig) = to_sig {
         println!("Handle {}", sig);

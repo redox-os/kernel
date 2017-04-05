@@ -9,8 +9,10 @@ path = "src/lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
+alloc_kernel = { path = "alloc_kernel" }
 bitflags = "0.7"
 spin = "0.4"
+raw-cpuid = { git = "https://github.com/gz/rust-cpuid", branch = "master" }
 redox_syscall = "0.1"
 
 [dependencies.goblin]
@@ -18,14 +20,9 @@ verion = "0.0.8"
 default-features = false
 features = ["elf32", "elf64"]
 
-[dev-dependencies]
-arch_test = { path = "arch/test" }
-
-[target.'cfg(target_arch = "arm")'.dependencies]
-arch_arm = { path = "arch/arm" }
-
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-arch_x86_64 = { path = "arch/x86_64" }
+[dependencies.x86]
+version = "0.7"
+default-features = false
 
 [features]
 default = []

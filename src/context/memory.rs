@@ -3,11 +3,11 @@ use collections::VecDeque;
 use core::intrinsics;
 use spin::Mutex;
 
-use arch::memory::Frame;
-use arch::paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
-use arch::paging::entry::{self, EntryFlags};
-use arch::paging::mapper::MapperFlushAll;
-use arch::paging::temporary_page::TemporaryPage;
+use memory::Frame;
+use paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
+use paging::entry::{self, EntryFlags};
+use paging::mapper::MapperFlushAll;
+use paging::temporary_page::TemporaryPage;
 
 #[derive(Debug)]
 pub struct Grant {

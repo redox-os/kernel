@@ -4,7 +4,7 @@
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
 
-use memory::allocate_frame;
+use memory::allocate_frames;
 
 use super::entry::*;
 use super::ENTRY_COUNT;
@@ -65,7 +65,7 @@ impl<L> Table<L> where L: HierarchicalLevel {
         if self.next_table(index).is_none() {
             assert!(!self[index].flags().contains(HUGE_PAGE),
                     "next_table_create does not support huge pages");
-            let frame = allocate_frame().expect("no frames available");
+            let frame = allocate_frames(1).expect("no frames available");
             self[index].set(frame, PRESENT | WRITABLE | USER_ACCESSIBLE /* Allow users to go down the page table, implement permissions at the page level */);
             self.next_table_mut(index).unwrap().zero();
         }
