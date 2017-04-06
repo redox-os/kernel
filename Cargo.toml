@@ -16,7 +16,7 @@ raw-cpuid = { git = "https://github.com/gz/rust-cpuid", branch = "master" }
 redox_syscall = "0.1"
 
 [dependencies.goblin]
-verion = "0.0.8"
+version = "0.0.8"
 default-features = false
 features = ["elf32", "elf64"]
 
