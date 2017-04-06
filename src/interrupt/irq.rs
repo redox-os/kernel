@@ -54,12 +54,12 @@ interrupt!(cascade, {
 });
 
 interrupt!(com2, {
-    COM2.lock().on_receive();
+    COM2.lock().receive();
     pic::MASTER.ack();
 });
 
 interrupt!(com1, {
-    COM1.lock().on_receive();
+    COM1.lock().receive();
     pic::MASTER.ack();
 });
 

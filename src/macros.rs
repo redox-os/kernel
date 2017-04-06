@@ -3,7 +3,7 @@
 macro_rules! print {
     ($($arg:tt)*) => ({
         use core::fmt::Write;
-        let _ = write!($crate::console::CONSOLE.lock(), $($arg)*);
+        let _ = write!($crate::device::serial::COM1.lock(), $($arg)*);
     });
 }
 

@@ -1,8 +1,8 @@
-use core::str;
 use core::sync::atomic::Ordering;
 use spin::Once;
 
 use context;
+use device::serial::COM1;
 use scheme::*;
 use sync::WaitQueue;
 use syscall::flag::EVENT_READ;
@@ -19,10 +19,8 @@ fn init_input() -> WaitQueue<u8> {
 }
 
 /// Add to the input queue
-#[no_mangle]
-pub extern fn debug_input(b: u8) {
+pub fn debug_input(b: u8) {
     let len = INPUT.call_once(init_input).send(b);
-
     context::event::trigger(DEBUG_SCHEME_ID.load(Ordering::SeqCst), 0, EVENT_READ, len);
 }
 
@@ -55,8 +53,10 @@ impl Scheme for DebugScheme {
     ///
     /// Returns the number of bytes written
     fn write(&self, _file: usize, buffer: &[u8]) -> Result<usize> {
-        //TODO: Write bytes, do not convert to str
-        print!("{}", unsafe { str::from_utf8_unchecked(buffer) });
+        let mut com = COM1.lock();
+        for &byte in buffer.iter() {
+            com.send(byte);
+        }
         Ok(buffer.len())
     }
 

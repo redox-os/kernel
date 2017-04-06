@@ -50,9 +50,6 @@ pub mod consts;
 /// ACPI table parsing
 mod acpi;
 
-/// Console handling
-pub mod console;
-
 /// Context management
 pub mod context;
 

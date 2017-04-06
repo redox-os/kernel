@@ -1,6 +1,7 @@
 use core::fmt::{self, Write};
 use spin::Mutex;
 
+use scheme::debug::debug_input;
 use syscall::io::{Io, Pio, ReadOnly};
 
 pub static COM1: Mutex<SerialPort> = Mutex::new(SerialPort::new(0x3F8));
@@ -63,15 +64,6 @@ impl SerialPort {
         }
     }
 
-    fn line_sts(&self) -> LineStsFlags {
-        LineStsFlags::from_bits_truncate(self.line_sts.read())
-    }
-
-    fn write(&mut self, data: u8) {
-        while ! self.line_sts().contains(OUTPUT_EMPTY) {}
-        self.data.write(data)
-    }
-
     fn init(&mut self) {
         //TODO: Cleanup
         self.int_en.write(0x00);
@@ -84,15 +76,30 @@ impl SerialPort {
         self.int_en.write(0x01);
     }
 
-    pub fn on_receive(&mut self) {
+    fn line_sts(&self) -> LineStsFlags {
+        LineStsFlags::from_bits_truncate(self.line_sts.read())
+    }
+
+    pub fn receive(&mut self) {
         while self.line_sts().contains(INPUT_FULL) {
-            let data = self.data.read();
+            debug_input(self.data.read());
+        }
+    }
 
-            extern {
-                fn debug_input(byte: u8);
+    pub fn send(&mut self, data: u8) {
+        match data {
+            8 | 0x7F => {
+                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                self.data.write(8);
+                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                self.data.write(b' ');
+                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                self.data.write(8);
+            },
+            _ => {
+                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                self.data.write(data);
             }
-
-            unsafe { debug_input(data) };
         }
     }
 }
@@ -100,16 +107,7 @@ impl SerialPort {
 impl Write for SerialPort {
     fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
         for byte in s.bytes() {
-            match byte {
-                8 | 0x7F => {
-                    self.write(8);
-                    self.write(b' ');
-                    self.write(8);
-                },
-                _ => {
-                    self.write(byte);
-                }
-            }
+            self.send(byte);
         }
 
         Ok(())
