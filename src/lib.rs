@@ -172,6 +172,13 @@ pub extern fn kmain(cpus: usize) {
 /// This is the main kernel entry point for secondary CPUs
 #[no_mangle]
 pub extern fn kmain_ap(id: usize) {
+    loop {
+        unsafe {
+            interrupt::disable();
+            interrupt::halt();
+        }
+    }
+    /*
     CPU_ID.store(id, Ordering::SeqCst);
 
     context::init();
@@ -190,6 +197,7 @@ pub extern fn kmain_ap(id: usize) {
             }
         }
     }
+    */
 }
 
 /// Allow exception handlers to send signal to arch-independant kernel
