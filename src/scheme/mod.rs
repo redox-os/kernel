@@ -25,6 +25,7 @@ use self::null::NullScheme;
 use self::pipe::PipeScheme;
 use self::root::RootScheme;
 use self::sys::SysScheme;
+use self::time::TimeScheme;
 use self::zero::ZeroScheme;
 
 /// `debug:` - provides access to serial console
@@ -60,6 +61,9 @@ pub mod root;
 
 /// `sys:` - system information, such as the context list and scheme list
 pub mod sys;
+
+/// `time:` - allows reading time, setting timeouts and getting events when they are met
+pub mod time;
 
 /// A wrapper around userspace schemes, tightly dependent on `root`
 pub mod user;
@@ -114,6 +118,7 @@ impl SchemeList {
         self.insert(ns, Box::new(*b"memory"), |_| Arc::new(Box::new(MemoryScheme))).unwrap();
         self.insert(ns, Box::new(*b"null"), |_| Arc::new(Box::new(NullScheme))).unwrap();
         self.insert(ns, Box::new(*b"sys"), |_| Arc::new(Box::new(SysScheme::new()))).unwrap();
+        self.insert(ns, Box::new(*b"time"), |scheme_id| Arc::new(Box::new(TimeScheme::new(scheme_id)))).unwrap();
         self.insert(ns, Box::new(*b"zero"), |_| Arc::new(Box::new(ZeroScheme))).unwrap();
 
         ns

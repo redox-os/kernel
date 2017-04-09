@@ -3,10 +3,9 @@ use alloc::boxed::Box;
 use core::sync::atomic::Ordering;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub use self::context::{Context, Status};
+pub use self::context::{Context, ContextId, Status};
 pub use self::list::ContextList;
 pub use self::switch::switch;
-pub use context::context::ContextId;
 
 #[path = "arch/x86_64.rs"]
 mod arch;
@@ -28,6 +27,9 @@ pub mod file;
 
 /// Memory struct - contains a set of pages for a context
 pub mod memory;
+
+/// Timeout handling
+pub mod timeout;
 
 /// Limit on number of contexts
 pub const CONTEXT_MAX_CONTEXTS: usize = usize::max_value() - 1;

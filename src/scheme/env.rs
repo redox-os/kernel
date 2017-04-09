@@ -33,7 +33,7 @@ impl EnvScheme {
 
 impl Scheme for EnvScheme {
     fn open(&self, path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let path = str::from_utf8(path).map_err(|_err| Error::new(ENOENT))?.trim_matches('/');
+        let path = str::from_utf8(path).or(Err(Error::new(ENOENT)))?.trim_matches('/');
 
         let env_lock = {
             let contexts = context::contexts();

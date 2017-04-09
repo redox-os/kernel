@@ -5,21 +5,15 @@ use syscall::error::*;
 use syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
 
 pub fn clock_gettime(clock: usize, time: &mut TimeSpec) -> Result<usize> {
-    match clock {
-        CLOCK_REALTIME => {
-            let arch_time = time::realtime();
-            time.tv_sec = arch_time.0 as i64;
-            time.tv_nsec = arch_time.1 as i32;
-            Ok(0)
-        },
-        CLOCK_MONOTONIC => {
-            let arch_time = time::monotonic();
-            time.tv_sec = arch_time.0 as i64;
-            time.tv_nsec = arch_time.1 as i32;
-            Ok(0)
-        },
-        _ => Err(Error::new(EINVAL))
-    }
+    let arch_time = match clock {
+        CLOCK_REALTIME => time::realtime(),
+        CLOCK_MONOTONIC => time::monotonic(),
+        _ => return Err(Error::new(EINVAL))
+    };
+
+    time.tv_sec = arch_time.0 as i64;
+    time.tv_nsec = arch_time.1 as i32;
+    Ok(0)
 }
 
 pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize> {

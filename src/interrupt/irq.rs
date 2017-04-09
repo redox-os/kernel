@@ -1,3 +1,4 @@
+use context::timeout;
 use device::pic;
 use device::serial::{COM1, COM2};
 use time;
@@ -36,12 +37,17 @@ interrupt!(pit, {
 
     const PIT_RATE: u64 = 2250286;
 
-    let mut offset = time::OFFSET.lock();
-    let sum = offset.1 + PIT_RATE;
-    offset.1 = sum % 1000000000;
-    offset.0 += sum / 1000000000;
+    {
+        let mut offset = time::OFFSET.lock();
+        let sum = offset.1 + PIT_RATE;
+        offset.1 = sum % 1000000000;
+        offset.0 += sum / 1000000000;
+    }
 
     pic::MASTER.ack();
+
+    // Any better way of doing this?
+    timeout::trigger();
 });
 
 interrupt!(keyboard, {

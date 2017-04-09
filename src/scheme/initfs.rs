@@ -42,7 +42,7 @@ impl InitFsScheme {
 
 impl Scheme for InitFsScheme {
     fn open(&self, path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let path_utf8 = str::from_utf8(path).map_err(|_err| Error::new(ENOENT))?;
+        let path_utf8 = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
         let path_trimmed = path_utf8.trim_matches('/');
 
         //Have to iterate to get the path without allocation
