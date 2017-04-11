@@ -66,6 +66,7 @@ fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), (Error)> {
         let sub = folders.get(*dir).unwrap();
         let mut first = true;
         for child in sub.iter() {
+            let idx = child.rfind('/').unwrap() + 1;
             let (_, c) = child.split_at(idx);
             if first {
                 write!(f, "{}", c)?;
