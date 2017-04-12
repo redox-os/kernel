@@ -488,6 +488,14 @@ fn empty(context: &mut context::Context, reaping: bool) {
     }
 }
 
+struct ExecFile(FileHandle);
+
+impl Drop for ExecFile {
+    fn drop(&mut self) {
+        let _ = syscall::close(self.0);
+    }
+}
+
 pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
     let entry;
     let mut sp = ::USER_STACK_OFFSET + ::USER_STACK_SIZE - 256;
@@ -499,37 +507,62 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
             args.push(arg.to_vec()); // Must be moved into kernel space before exec unmaps all memory
         }
 
-        let (uid, gid, canonical) = {
+        let (uid, gid, mut canonical) = {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
             (context.euid, context.egid, context.canonicalize(path))
         };
 
-        let file = syscall::open(&canonical, syscall::flag::O_RDONLY)?;
-        let mut stat = Stat::default();
-        syscall::file_op_mut_slice(syscall::number::SYS_FSTAT, file, &mut stat)?;
+        let mut stat: Stat;
+        let mut data: Vec<u8>;
+        loop {
+            let file = ExecFile(syscall::open(&canonical, syscall::flag::O_RDONLY)?);
 
-        let mut perm = stat.st_mode & 0o7;
-        if stat.st_uid == uid {
-            perm |= (stat.st_mode >> 6) & 0o7;
-        }
-        if stat.st_gid == gid {
-            perm |= (stat.st_mode >> 3) & 0o7;
-        }
-        if uid == 0 {
-            perm |= 0o7;
-        }
+            stat = Stat::default();
+            syscall::file_op_mut_slice(syscall::number::SYS_FSTAT, file.0, &mut stat)?;
 
-        if perm & 0o1 != 0o1 {
-            let _ = syscall::close(file);
-            return Err(Error::new(EACCES));
-        }
+            let mut perm = stat.st_mode & 0o7;
+            if stat.st_uid == uid {
+                perm |= (stat.st_mode >> 6) & 0o7;
+            }
+            if stat.st_gid == gid {
+                perm |= (stat.st_mode >> 3) & 0o7;
+            }
+            if uid == 0 {
+                perm |= 0o7;
+            }
 
-        //TODO: Only read elf header, not entire file. Then read required segments
-        let mut data = vec![0; stat.st_size as usize];
-        syscall::file_op_mut_slice(syscall::number::SYS_READ, file, &mut data)?;
-        let _ = syscall::close(file);
+            if perm & 0o1 != 0o1 {
+                return Err(Error::new(EACCES));
+            }
+
+            //TODO: Only read elf header, not entire file. Then read required segments
+            data = vec![0; stat.st_size as usize];
+            syscall::file_op_mut_slice(syscall::number::SYS_READ, file.0, &mut data)?;
+            drop(file);
+
+            if data.starts_with(b"#!") {
+                if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
+                    if ! args.is_empty() {
+                        args.remove(0);
+                    }
+                    args.insert(0, canonical);
+                    args.insert(0, line.to_vec());
+                    canonical = {
+                        let contexts = context::contexts();
+                        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+                        let context = context_lock.read();
+                        context.canonicalize(line)
+                    };
+                } else {
+                    println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
+                    return Err(Error::new(ENOEXEC));
+                }
+            } else {
+                break;
+            }
+        }
 
         match elf::Elf::from(&data) {
             Ok(elf) => {
