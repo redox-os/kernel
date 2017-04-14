@@ -13,12 +13,10 @@ pub unsafe extern fn memcpy(dest: *mut u8, src: *const u8,
 
     // Copy 8 bytes at a time
     while i < n_64 {
-        *((dest as usize + i*8) as *mut u64) =
-            *((src as usize + i*8) as *const u64);
-        i += 1;
+        *((dest as usize + i) as *mut u64) =
+            *((src as usize + i) as *const u64);
+        i += 8;
     }
-
-    let mut i: usize = i*8;
 
     // Copy 1 byte at a time
     while i < n {
@@ -39,12 +37,12 @@ pub unsafe extern fn memcpy(dest: *mut u8, src: *const u8,
 
     // Copy 4 bytes at a time
     while i < n_32 {
-        *((dest as usize + i*4) as *mut u32) =
-            *((src as usize + i*4) as *const u32);
-        i += 1;
+        *((dest as usize + i) as *mut u32) =
+            *((src as usize + i) as *const u32);
+        i += 4;
     }
 
-    let mut i: usize = i*4;
+    // Copy 1 byte at a time
     while i < n {
         *((dest as usize + i) as *mut u8) = *((src as usize + i) as *const u8);
         i += 1;
@@ -69,9 +67,9 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
 
         // Copy 8 bytes at a time
         while i != 0 {
-            i -= 1;
-            *((dest as usize + i*8) as *mut u64) =
-                *((src as usize + i*8) as *const u64);
+            i -= 8;
+            *((dest as usize + i) as *mut u64) =
+                *((src as usize + i) as *const u64);
         }
 
         let mut i: usize = n;
@@ -88,12 +86,10 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
 
         // Copy 8 bytes at a time
         while i < n_64 {
-            *((dest as usize + i*8) as *mut u64) =
-                *((src as usize + i*8) as *const u64);
-            i += 1;
+            *((dest as usize + i) as *mut u64) =
+                *((src as usize + i) as *const u64);
+            i += 8;
         }
-
-        let mut i: usize = i*8;
 
         // Copy 1 byte at a time
         while i < n {
@@ -117,9 +113,9 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
 
         // Copy 4 bytes at a time
         while i != 0 {
-            i -= 1;
-            *((dest as usize + i*4) as *mut u32) =
-                *((src as usize + i*4) as *const u32);
+            i -= 4;
+            *((dest as usize + i) as *mut u32) =
+                *((src as usize + i) as *const u32);
         }
 
         let mut i: usize = n;
@@ -136,12 +132,10 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
 
         // Copy 4 bytes at a time
         while i < n_32 {
-            *((dest as usize + i*4) as *mut u32) =
-                *((src as usize + i*4) as *const u32);
-            i += 1;
+            *((dest as usize + i) as *mut u32) =
+                *((src as usize + i) as *const u32);
+            i += 4;
         }
-
-        let mut i: usize = i*4;
 
         // Copy 1 byte at a time
         while i < n {
@@ -171,12 +165,11 @@ pub unsafe extern fn memset(dest: *mut u8, c: i32, n: usize) -> *mut u8 {
 
     // Set 8 bytes at a time
     while i < n_64 {
-        *((dest as usize + i*8) as *mut u64) = c;
-        i += 1;
+        *((dest as usize + i) as *mut u64) = c;
+        i += 8;
     }
 
     let c = c as u8;
-    let mut i: usize = i*8;
 
     // Set 1 byte at a time
     while i < n {
@@ -198,12 +191,11 @@ pub unsafe extern fn memset(dest: *mut u8, c: i32, n: usize) -> *mut u8 {
 
     // Set 4 bytes at a time
     while i < n_32 {
-        *((dest as usize + i*4) as *mut u32) = c;
-        i += 1;
+        *((dest as usize + i) as *mut u32) = c;
+        i += 4;
     }
 
     let c = c as u8;
-    let mut i: usize = i*4;
 
     // Set 1 byte at a time
     while i < n {
@@ -227,10 +219,9 @@ pub unsafe extern fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
     let mut i: usize = 0;
 
     while i < n_64 {
-        let a = *((s1 as usize + i*8) as *const u64);
-        let b = *((s2 as usize + i*8) as *const u64);
+        let a = *((s1 as usize + i) as *const u64);
+        let b = *((s2 as usize + i) as *const u64);
         if a != b {
-            let mut i: usize = i*8;
             let n: usize = i + 8;
             // Find the one byte that is not equal
             while i < n {
@@ -242,10 +233,8 @@ pub unsafe extern fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
                 i += 1;
             }
         }
-        i += 1;
+        i += 8;
     }
-
-    let mut i: usize = i*8;
 
     while i < n {
         let a = *((s1 as usize + i) as *const u8);
@@ -266,10 +255,9 @@ pub unsafe extern fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
     let mut i: usize = 0;
 
     while i < n_32 {
-        let a = *((s1 as usize + i*4) as *const u32);
-        let b = *((s2 as usize + i*4) as *const u32);
+        let a = *((s1 as usize + i) as *const u32);
+        let b = *((s2 as usize + i) as *const u32);
         if a != b {
-            let mut i: usize = i*4;
             let n: usize = i + 4;
             // Find the one byte that is not equal
             while i < n {
@@ -281,10 +269,8 @@ pub unsafe extern fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
                 i += 1;
             }
         }
-        i += 1;
+        i += 4;
     }
-
-    let mut i: usize = i*4;
 
     while i < n {
         let a = *((s1 as usize + i) as *const u8);
