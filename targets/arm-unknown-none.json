@@ -7,6 +7,7 @@
     "os": "none",
     "env": "",
     "vendor": "unknown",
+    "linker-flavor": "gcc",
     "target-family": "redox",
     "pre-link-args": ["-nostdlib", "-static"],
     "features": "+soft-float",
