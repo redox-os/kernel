@@ -40,9 +40,10 @@ impl Scheme for RootScheme {
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
             let inner = {
+                let path_box = path.to_vec().into_boxed_slice();
                 let mut schemes = scheme::schemes_mut();
-                let inner = Arc::new(UserInner::new(self.scheme_id, id, flags, context));
-                schemes.insert(self.scheme_ns, path.to_vec().into_boxed_slice(), |scheme_id| {
+                let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
+                schemes.insert(self.scheme_ns, path_box, |scheme_id| {
                     inner.scheme_id.store(scheme_id, Ordering::SeqCst);
                     Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
                 })?;
@@ -98,6 +99,30 @@ impl Scheme for RootScheme {
         };
 
         inner.fevent(flags)
+    }
+
+    fn fpath(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
+        let inner = {
+            let handles = self.handles.read();
+            let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
+            inner.clone()
+        };
+
+        let mut i = 0;
+        let scheme_path = b":";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+
+        let mut j = 0;
+        while i < buf.len() && j < inner.name.len() {
+            buf[i] = inner.name[j];
+            i += 1;
+            j += 1;
+        }
+
+        Ok(i)
     }
 
     fn fsync(&self, file: usize) -> Result<usize> {

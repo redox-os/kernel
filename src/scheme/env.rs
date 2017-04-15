@@ -154,6 +154,17 @@ impl Scheme for EnvScheme {
         Ok(handle.seek)
     }
 
+    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let mut i = 0;
+        //TODO: Get env name
+        let scheme_path = b"env:";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
     fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;

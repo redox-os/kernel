@@ -31,6 +31,16 @@ impl Scheme for ZeroScheme {
         Ok(buffer.len())
     }
 
+    fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
+        let mut i = 0;
+        let scheme_path = b"zero:";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
     fn fsync(&self, _file: usize) -> Result<usize> {
         Ok(0)
     }

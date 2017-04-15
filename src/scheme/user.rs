@@ -1,4 +1,5 @@
 use alloc::arc::{Arc, Weak};
+use alloc::boxed::Box;
 use collections::BTreeMap;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::{mem, slice, usize};
@@ -19,6 +20,7 @@ use syscall::scheme::Scheme;
 pub struct UserInner {
     root_id: SchemeId,
     handle_id: usize,
+    pub name: Box<[u8]>,
     flags: usize,
     pub scheme_id: AtomicSchemeId,
     next_id: AtomicU64,
@@ -29,10 +31,11 @@ pub struct UserInner {
 }
 
 impl UserInner {
-    pub fn new(root_id: SchemeId, handle_id: usize, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
+    pub fn new(root_id: SchemeId, handle_id: usize, name: Box<[u8]>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
         UserInner {
             root_id: root_id,
             handle_id: handle_id,
+            name: name,
             flags: flags,
             scheme_id: ATOMIC_SCHEMEID_INIT,
             next_id: AtomicU64::new(1),

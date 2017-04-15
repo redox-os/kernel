@@ -91,6 +91,16 @@ impl Scheme for IrqScheme {
         Ok(file)
     }
 
+    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let mut i = 0;
+        let scheme_path = format!("irq:{}", id).into_bytes();
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
     fn fsync(&self, _file: usize) -> Result<usize> {
         Ok(0)
     }

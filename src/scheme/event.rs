@@ -62,6 +62,16 @@ impl Scheme for EventScheme {
         Ok(handle.receive_into(event_buf, true) * mem::size_of::<Event>())
     }
 
+    fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
+        let mut i = 0;
+        let scheme_path = b"event:";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
     fn fsync(&self, id: usize) -> Result<usize> {
         let handles = self.handles.read();
         let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;

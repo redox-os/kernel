@@ -102,6 +102,21 @@ impl Scheme for TimeScheme {
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(id))
     }
 
+    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let clock = {
+            let handles = self.handles.read();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        let mut i = 0;
+        let scheme_path = format!("time:{}", clock).into_bytes();
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
     fn fsync(&self, id: usize) -> Result<usize> {
         let handles = self.handles.read();
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))

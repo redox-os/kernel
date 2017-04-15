@@ -23,6 +23,16 @@ impl Scheme for MemoryScheme {
         Ok(0)
     }
 
+    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let mut i = 0;
+        let scheme_path = b"memory:";
+        while i < buf.len() && i < scheme_path.len() {
+            buf[i] = scheme_path[i];
+            i += 1;
+        }
+        Ok(i)
+    }
+
     /// Close the file `number`
     fn close(&self, _file: usize) -> Result<usize> {
         Ok(0)
