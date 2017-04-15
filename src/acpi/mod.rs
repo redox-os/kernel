@@ -86,6 +86,7 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
             println!("    XAPIC {}: {:>08X}", me, local_apic.address);
         }
 
+        /*
         let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
         let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
 
@@ -174,8 +175,9 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         }
 
         // Unmap trampoline
-        let result = active_table.unmap(trampoline_page);
+        let (result, _frame) = active_table.unmap_return(trampoline_page);
         result.flush(active_table);
+        */
     } else if let Some(dmar) = Dmar::new(sdt) {
         println!(": {}: {}", dmar.addr_width, dmar.flags);
 
