@@ -75,39 +75,36 @@ impl<T: FrameAllocator> FrameAllocator for RecycleAllocator<T> {
     }
 
     fn allocate_frames(&mut self, count: usize) -> Option<Frame> {
-        if count == 1 {
-            if ! self.free.is_empty() {
-                let mut i = 0;
-                {
-                    let mut small = self.free[i];
-                    for j in 1..self.free.len() {
-                        let free = self.free[j];
-                        // Later entries can be removed faster
-                        if free.1 <= small.1 {
-                            i = j;
-                            small = free;
-                        }
+        let mut small_i = None;
+        {
+            let mut small = (0, 0);
+            for i in 0..self.free.len() {
+                let free = self.free[i];
+                // Later entries can be removed faster
+                if free.1 >= count {
+                    if free.1 <= small.1 || small_i.is_none() {
+                        small_i = Some(i);
+                        small = free;
                     }
                 }
-
-                let (address, remove) = {
-                    let free = &mut self.free[i];
-                    free.1 -= 1;
-                    (free.0 + free.1 * 4096, free.1 == 0)
-                };
-
-                if remove {
-                    self.free.remove(i);
-                }
-                
-                //println!("Restoring frame {:?}, {}", frame, count);
-                Some(Frame::containing_address(PhysicalAddress::new(address)))
-            } else {
-                //println!("No saved frames {}", count);
-                self.inner.allocate_frames(count)
             }
+        }
+
+        if let Some(i) = small_i {
+            let (address, remove) = {
+                let free = &mut self.free[i];
+                free.1 -= 1;
+                (free.0 + free.1 * 4096, free.1 == 0)
+            };
+
+            if remove {
+                self.free.remove(i);
+            }
+
+            //println!("Restoring frame {:?}, {}", frame, count);
+            Some(Frame::containing_address(PhysicalAddress::new(address)))
         } else {
-            println!("Could not restore frame {}", count);
+            //println!("No saved frames {}", count);
             self.inner.allocate_frames(count)
         }
     }
@@ -119,7 +116,7 @@ impl<T: FrameAllocator> FrameAllocator for RecycleAllocator<T> {
                 self.free.push((address, count));
             }
         } else {
-            println!("Could not save frame {:?}, {}", frame, count);
+            //println!("Could not save frame {:?}, {}", frame, count);
             self.inner.deallocate_frames(frame, count);
         }
     }
