@@ -63,7 +63,7 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
                              n: usize) -> *mut u8 {
     if src < dest as *const u8 {
         let n_64: usize = n/8; // Number of 64-bit groups
-        let mut i: usize = n_64;
+        let mut i: usize = n_64*8;
 
         // Copy 8 bytes at a time
         while i != 0 {
@@ -109,7 +109,7 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
                              n: usize) -> *mut u8 {
     if src < dest as *const u8 {
         let n_32: usize = n/4; // Number of 32-bit groups
-        let mut i: usize = n_32;
+        let mut i: usize = n_32*4;
 
         // Copy 4 bytes at a time
         while i != 0 {
