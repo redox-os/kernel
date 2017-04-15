@@ -123,6 +123,9 @@ pub unsafe extern fn kstart() -> ! {
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
 
+        // Initialize memory functions after core has loaded
+        memory::init_noncore();
+
         BSP_READY.store(true, Ordering::SeqCst);
     }
 

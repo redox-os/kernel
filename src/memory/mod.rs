@@ -4,10 +4,12 @@
 pub use paging::{PAGE_SIZE, PhysicalAddress};
 
 use self::bump::BumpAllocator;
+use self::recycle::RecycleAllocator;
 
 use spin::Mutex;
 
 pub mod bump;
+pub mod recycle;
 
 /// The current memory map. It's size is maxed out to 512 entries, due to it being
 /// from 0x500 to 0x5000 (800 is the absolute total)
@@ -64,7 +66,7 @@ impl Iterator for MemoryAreaIter {
     }
 }
 
-static ALLOCATOR: Mutex<Option<BumpAllocator>> = Mutex::new(None);
+static ALLOCATOR: Mutex<Option<RecycleAllocator<BumpAllocator>>> = Mutex::new(None);
 
 /// Init memory module
 /// Must be called once, and only once,
@@ -77,7 +79,17 @@ pub unsafe fn init(kernel_start: usize, kernel_end: usize) {
         }
     }
 
-    *ALLOCATOR.lock() = Some(BumpAllocator::new(kernel_start, kernel_end, MemoryAreaIter::new(MEMORY_AREA_FREE)));
+    *ALLOCATOR.lock() = Some(RecycleAllocator::new(BumpAllocator::new(kernel_start, kernel_end, MemoryAreaIter::new(MEMORY_AREA_FREE))));
+}
+
+/// Init memory module after core
+/// Must be called once, and only once,
+pub unsafe fn init_noncore() {
+    if let Some(ref mut allocator) = *ALLOCATOR.lock() {
+        allocator.set_noncore(true)
+    } else {
+        panic!("frame allocator not initialized");
+    }
 }
 
 /// Get the number of frames available
@@ -172,6 +184,7 @@ impl Iterator for FrameIter {
 }
 
 pub trait FrameAllocator {
+    fn set_noncore(&mut self, noncore: bool);
     fn free_frames(&self) -> usize;
     fn used_frames(&self) -> usize;
     fn allocate_frames(&mut self, size: usize) -> Option<Frame>;

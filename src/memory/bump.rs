@@ -1,4 +1,4 @@
-//! # Area frame allocator
+//! # Bump frame allocator
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
 use paging::PhysicalAddress;
@@ -15,8 +15,8 @@ pub struct BumpAllocator {
 }
 
 impl BumpAllocator {
-    pub fn new(kernel_start: usize, kernel_end: usize, memory_areas: MemoryAreaIter) -> BumpAllocator {
-        let mut allocator = BumpAllocator {
+    pub fn new(kernel_start: usize, kernel_end: usize, memory_areas: MemoryAreaIter) -> Self {
+        let mut allocator = Self {
             next_free_frame: Frame::containing_address(PhysicalAddress::new(0)),
             current_area: None,
             areas: memory_areas,
@@ -43,6 +43,8 @@ impl BumpAllocator {
 }
 
 impl FrameAllocator for BumpAllocator {
+    fn set_noncore(&mut self, noncore: bool) {}
+    
     fn free_frames(&self) -> usize {
         let mut count = 0;
 
