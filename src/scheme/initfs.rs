@@ -65,16 +65,12 @@ impl Scheme for InitFsScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&self, id: usize, _buf: &[u8]) -> Result<usize> {
         let (path, flags, data, mode, seek) = {
             let handles = self.handles.read();
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             (handle.path, handle.flags, handle.data, handle.mode, handle.seek)
         };
-
-        if buf == b"exec" && flags & O_CLOEXEC == O_CLOEXEC {
-            return Err(Error::new(EBADF));
-        }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         self.handles.write().insert(id, Handle {

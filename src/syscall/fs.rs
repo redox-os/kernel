@@ -6,7 +6,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{Packet, Stat};
 use syscall::error::*;
-use syscall::flag::{MODE_DIR, MODE_FILE};
+use syscall::flag::{F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let (file, pid, uid, gid) = {
@@ -112,6 +112,7 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
     context.add_file(::context::file::File {
         scheme: scheme_id,
         number: file_id,
+        flags: flags,
         event: None,
     }).ok_or(Error::new(EMFILE))
 }
@@ -128,12 +129,14 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
         let read_fd = context.add_file(::context::file::File {
             scheme: scheme_id,
             number: read_id,
+            flags: O_RDONLY | flags & !O_ACCMODE,
             event: None,
         }).ok_or(Error::new(EMFILE))?;
 
         let write_fd = context.add_file(::context::file::File {
             scheme: scheme_id,
             number: write_id,
+            flags: O_WRONLY | flags & !O_ACCMODE,
             event: None,
         }).ok_or(Error::new(EMFILE))?;
 
@@ -259,6 +262,7 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
     context.add_file(::context::file::File {
         scheme: file.scheme,
         number: new_id,
+        flags: file.flags,
         event: None,
     }).ok_or(Error::new(EMFILE))
 }
@@ -293,9 +297,42 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
         context.insert_file(new_fd, ::context::file::File {
             scheme: file.scheme,
             number: new_id,
+            flags: file.flags,
             event: None,
         }).ok_or(Error::new(EBADF))
     }
+}
+
+// File descriptor controls
+pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
+    let file = {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        let file = context.get_file(fd).ok_or(Error::new(EBADF))?;
+        file
+    };
+
+    let res = {
+        let scheme = {
+            let schemes = scheme::schemes();
+            let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
+            scheme.clone()
+        };
+        scheme.fcntl(file.number, cmd, arg)?
+    };
+
+    if cmd == F_SETFL {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        let mut files = context.files.lock();
+        let mut file = files.get_mut(fd.into()).ok_or(Error::new(EBADF))?.ok_or(Error::new(EBADF))?;
+        let accmode = file.flags & O_ACCMODE;
+        file.flags = accmode | arg & !O_ACCMODE;
+    }
+
+    Ok(res)
 }
 
 /// Register events for file

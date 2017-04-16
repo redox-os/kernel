@@ -6,7 +6,7 @@ use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 
 use sync::WaitCondition;
 use syscall::error::{Error, Result, EAGAIN, EBADF, EINVAL, EPIPE};
-use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_CLOEXEC, O_NONBLOCK};
+use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
 use syscall::scheme::Scheme;
 
 /// Pipes list
@@ -50,11 +50,11 @@ impl PipeScheme {
 }
 
 impl Scheme for PipeScheme {
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&self, id: usize, _buf: &[u8]) -> Result<usize> {
         let mut pipes = pipes_mut();
 
         let read_option = if let Some(pipe) = pipes.0.get(&id) {
-            Some(pipe.dup(buf)?)
+            Some(pipe.dup()?)
         } else {
             None
         };
@@ -65,7 +65,7 @@ impl Scheme for PipeScheme {
         }
 
         let write_option = if let Some(pipe) = pipes.1.get(&id) {
-            Some(pipe.dup(buf)?)
+            Some(pipe.dup()?)
         } else {
             None
         };
@@ -152,20 +152,12 @@ impl PipeRead {
         }
     }
 
-    fn dup(&self, buf: &[u8]) -> Result<Self> {
-        if buf == b"exec" && self.flags.load(Ordering::SeqCst) & O_CLOEXEC == O_CLOEXEC {
-            Err(Error::new(EBADF))
-        } else {
-            let mut flags = self.flags.load(Ordering::SeqCst);
-            if buf.is_empty() {
-                flags &= ! O_CLOEXEC;
-            }
-            Ok(PipeRead {
-                flags: AtomicUsize::new(flags),
-                condition: self.condition.clone(),
-                vec: self.vec.clone()
-            })
-        }
+    fn dup(&self) -> Result<Self> {
+        Ok(PipeRead {
+            flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
+            condition: self.condition.clone(),
+            vec: self.vec.clone()
+        })
     }
 
     fn fcntl(&self, cmd: usize, arg: usize) -> Result<usize> {
@@ -226,20 +218,12 @@ impl PipeWrite {
         }
     }
 
-    fn dup(&self, buf: &[u8]) -> Result<Self> {
-        if buf == b"exec" && self.flags.load(Ordering::SeqCst) & O_CLOEXEC == O_CLOEXEC {
-            Err(Error::new(EBADF))
-        } else {
-            let mut flags = self.flags.load(Ordering::SeqCst);
-            if buf.is_empty() {
-                flags &= ! O_CLOEXEC;
-            }
-            Ok(PipeWrite {
-                flags: AtomicUsize::new(flags),
-                condition: self.condition.clone(),
-                vec: self.vec.clone()
-            })
-        }
+    fn dup(&self) -> Result<Self> {
+        Ok(PipeWrite {
+            flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
+            condition: self.condition.clone(),
+            vec: self.vec.clone()
+        })
     }
 
     fn fcntl(&self, cmd: usize, arg: usize) -> Result<usize> {

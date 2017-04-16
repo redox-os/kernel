@@ -18,7 +18,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::Stat;
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, WNOHANG};
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, O_CLOEXEC, WNOHANG};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
@@ -268,6 +268,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                             Some(context::file::File {
                                 scheme: file.scheme,
                                 number: new_number,
+                                flags: file.flags,
                                 event: None,
                             })
                         },
@@ -733,15 +734,19 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     let new_file_option = if let Some(file) = *file_option {
                         // Duplicate
                         let result = {
-                            let scheme_option = {
-                                let schemes = scheme::schemes();
-                                schemes.get(file.scheme).map(|scheme| scheme.clone())
-                            };
-                            if let Some(scheme) = scheme_option {
-                                let result = scheme.dup(file.number, b"exec");
-                                result
-                            } else {
+                            if file.flags & O_CLOEXEC == O_CLOEXEC {
                                 Err(Error::new(EBADF))
+                            } else {
+                                let scheme_option = {
+                                    let schemes = scheme::schemes();
+                                    schemes.get(file.scheme).map(|scheme| scheme.clone())
+                                };
+                                if let Some(scheme) = scheme_option {
+                                    let result = scheme.dup(file.number, b"exec");
+                                    result
+                                } else {
+                                    Err(Error::new(EBADF))
+                                }
                             }
                         };
 
@@ -766,6 +771,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                                 Some(context::file::File {
                                     scheme: file.scheme,
                                     number: new_number,
+                                    flags: file.flags,
                                     event: None,
                                 })
                             },

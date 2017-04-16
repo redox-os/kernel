@@ -6,7 +6,6 @@ use spin::RwLock;
 
 use context;
 use syscall::error::*;
-use syscall::flag::O_CLOEXEC;
 use syscall::scheme::Scheme;
 use scheme::{self, SchemeNamespace, SchemeId};
 use scheme::user::{UserInner, UserScheme};
@@ -59,16 +58,12 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn dup(&self, file: usize, buf: &[u8]) -> Result<usize> {
+    fn dup(&self, file: usize, _buf: &[u8]) -> Result<usize> {
         let mut handles = self.handles.write();
         let inner = {
             let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
             inner.clone()
         };
-
-        if buf == b"exec" && inner.flags & O_CLOEXEC == O_CLOEXEC {
-            return Err(Error::new(EBADF));
-        }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         handles.insert(id, inner);

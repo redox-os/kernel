@@ -10,6 +10,8 @@ pub struct File {
     pub scheme: SchemeId,
     /// The number the scheme uses to refer to this file
     pub number: usize,
+    /// The flags passed to open or fcntl(SETFL)
+    pub flags: usize,
     /// If events are on, this is the event ID
     pub event: Option<usize>,
 }
