@@ -133,29 +133,69 @@ impl Mapper {
         self.map_to(page, frame, flags)
     }
 
+    fn unmap_inner(&mut self, page: &Page) -> Frame {
+        let frame;
+
+        let p4 = self.p4_mut();
+        {
+            let p3 = p4.next_table_mut(page.p4_index()).expect("unmap_inner: p3 not found");
+            {
+                let p2 = p3.next_table_mut(page.p3_index()).expect("unmap_inner: p2 not found");
+                {
+                    let p1 = p2.next_table_mut(page.p2_index()).expect("unmap_inner: p1 not found");
+
+                    frame = p1[page.p1_index()].pointed_frame().expect("unmap_inner: frame not found");
+                    p1[page.p1_index()].set_unused();
+
+                    if ! p1.is_unused() {
+                        return frame;
+                    }
+                }
+
+                {
+                    let p1_frame = p2[page.p2_index()].pointed_frame().expect("unmap_inner: p1 frame not found");
+                    println!("Free p1 {:?}", p1_frame);
+                    p2[page.p2_index()].set_unused();
+                    deallocate_frames(p1_frame, 1);
+                }
+
+                if ! p2.is_unused() {
+                    return frame;
+                }
+            }
+
+            {
+                let p2_frame = p3[page.p3_index()].pointed_frame().expect("unmap_inner: p2 frame not found");
+                println!("Free p2 {:?}", p2_frame);
+                p3[page.p3_index()].set_unused();
+                deallocate_frames(p2_frame, 1);
+            }
+
+            if ! p3.is_unused() {
+                return frame;
+            }
+        }
+
+        {
+            let p3_frame = p4[page.p4_index()].pointed_frame().expect("unmap_inner: p3 frame not found");
+            println!("Free p3 {:?}", p3_frame);
+            p4[page.p2_index()].set_unused();
+            deallocate_frames(p3_frame, 1);
+        }
+
+        frame
+    }
+
     /// Unmap a page
     pub fn unmap(&mut self, page: Page) -> MapperFlush {
-        let p1 = self.p4_mut()
-                     .next_table_mut(page.p4_index())
-                     .and_then(|p3| p3.next_table_mut(page.p3_index()))
-                     .and_then(|p2| p2.next_table_mut(page.p2_index()))
-                     .expect("unmap does not support huge pages");
-        let frame = p1[page.p1_index()].pointed_frame().unwrap();
-        p1[page.p1_index()].set_unused();
-        // TODO free p(1,2,3) table if empty
+        let frame = self.unmap_inner(&page);
         deallocate_frames(frame, 1);
         MapperFlush::new(page)
     }
 
     /// Unmap a page, return frame without free
     pub fn unmap_return(&mut self, page: Page) -> (MapperFlush, Frame) {
-        let p1 = self.p4_mut()
-                     .next_table_mut(page.p4_index())
-                     .and_then(|p3| p3.next_table_mut(page.p3_index()))
-                     .and_then(|p2| p2.next_table_mut(page.p2_index()))
-                     .expect("unmap_return does not support huge pages");
-        let frame = p1[page.p1_index()].pointed_frame().unwrap();
-        p1[page.p1_index()].set_unused();
+        let frame = self.unmap_inner(&page);
         (MapperFlush::new(page), frame)
     }
 

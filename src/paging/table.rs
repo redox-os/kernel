@@ -45,6 +45,16 @@ pub struct Table<L: TableLevel> {
 }
 
 impl<L> Table<L> where L: TableLevel {
+    pub fn is_unused(&self) -> bool {
+        for entry in self.entries.iter() {
+            if ! entry.is_unused() {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub fn zero(&mut self) {
         for entry in self.entries.iter_mut() {
             entry.set_unused();
