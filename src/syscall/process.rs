@@ -784,10 +784,10 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     if let Some(context_lock) = contexts.get(ppid) {
                         let mut context = context_lock.write();
                         if ! context.unblock() {
-                            println!("{:?} not blocked for exec vfork unblock", ppid);
+                            println!("{} not blocked for exec vfork unblock", ppid.into());
                         }
                     } else {
-                        println!("{:?} not found for exec vfork unblock", ppid);
+                        println!("{} not found for exec vfork unblock", ppid.into());
                     }
                 }
             },
@@ -811,7 +811,7 @@ pub fn exit(status: usize) -> ! {
         };
 
         let mut close_files = Vec::new();
-        let (pid, ppid) = {
+        let pid = {
             let mut context = context_lock.write();
             // FIXME: Looks like a race condition.
             // Is it possible for Arc::strong_count to return 1 to two contexts that exit at the
@@ -820,7 +820,7 @@ pub fn exit(status: usize) -> ! {
                 mem::swap(context.files.lock().deref_mut(), &mut close_files);
             }
             context.files = Arc::new(Mutex::new(Vec::new()));
-            (context.id, context.ppid)
+            context.id
         };
 
         /// Files must be closed while context is valid so that messages can be passed
@@ -839,6 +839,12 @@ pub fn exit(status: usize) -> ! {
                 }
             }
         }
+
+        /// PPID must be grabbed after close, as context switches could change PPID if parent exits
+        let ppid = {
+            let context = context_lock.read();
+            context.ppid
+        };
 
         /// Transfer child processes to parent
         {
@@ -874,7 +880,7 @@ pub fn exit(status: usize) -> ! {
                     let mut parent = parent_lock.write();
                     if vfork {
                         if ! parent.unblock() {
-                            println!("{:?} not blocked for exit vfork unblock", ppid);
+                            println!("{}: {} not blocked for exit vfork unblock", pid.into(), ppid.into());
                         }
                     }
                     parent.waitpid.clone()
@@ -885,7 +891,7 @@ pub fn exit(status: usize) -> ! {
                 }
                 waitpid.send(pid, status);
             } else {
-                println!("{:?} not found for exit vfork unblock", ppid);
+                println!("{}: {} not found for exit vfork unblock", pid.into(), ppid.into());
             }
         }
 
