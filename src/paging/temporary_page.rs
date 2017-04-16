@@ -39,7 +39,7 @@ impl TemporaryPage {
 
     /// Unmaps the temporary page in the active table.
     pub fn unmap(&mut self, active_table: &mut ActivePageTable) {
-        let (result, _frame) = active_table.unmap_return(self.page);
+        let (result, _frame) = active_table.unmap_return(self.page, true);
         result.flush(active_table);
     }
 }

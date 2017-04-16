@@ -175,7 +175,7 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         }
 
         // Unmap trampoline
-        let (result, _frame) = active_table.unmap_return(trampoline_page);
+        let (result, _frame) = active_table.unmap_return(trampoline_page, false);
         result.flush(active_table);
         */
     } else if let Some(dmar) = Dmar::new(sdt) {

@@ -94,7 +94,7 @@ impl Grant {
         let start_page = Page::containing_address(self.start);
         let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
-            let (result, _frame) = active_table.unmap_return(page);
+            let (result, _frame) = active_table.unmap_return(page, false);
             flush_all.consume(result);
         }
 
@@ -112,7 +112,7 @@ impl Grant {
             let start_page = Page::containing_address(self.start);
             let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
-                let (result, _frame) = mapper.unmap_return(page);
+                let (result, _frame) = mapper.unmap_return(page, false);
                 // This is not the active table, so the flush can be ignored
                 unsafe { result.ignore(); }
             }
@@ -240,7 +240,7 @@ impl Memory {
         let mut flush_all = MapperFlushAll::new();
 
         for page in self.pages() {
-            let (result, frame) = active_table.unmap_return(page);
+            let (result, frame) = active_table.unmap_return(page, false);
             flush_all.consume(result);
 
             active_table.with(new_table, temporary_page, |mapper| {

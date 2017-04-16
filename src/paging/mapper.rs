@@ -133,7 +133,7 @@ impl Mapper {
         self.map_to(page, frame, flags)
     }
 
-    fn unmap_inner(&mut self, page: &Page) -> Frame {
+    fn unmap_inner(&mut self, page: &Page, keep_parents: bool) -> Frame {
         let frame;
 
         let p4 = self.p4_mut();
@@ -147,39 +147,39 @@ impl Mapper {
                     frame = p1[page.p1_index()].pointed_frame().expect("unmap_inner: frame not found");
                     p1[page.p1_index()].set_unused();
 
-                    if ! p1.is_unused() {
+                    if keep_parents || ! p1.is_unused() {
                         return frame;
                     }
                 }
 
                 {
                     let p1_frame = p2[page.p2_index()].pointed_frame().expect("unmap_inner: p1 frame not found");
-                    println!("Free p1 {:?}", p1_frame);
+                    //println!("Free p1 {:?}", p1_frame);
                     p2[page.p2_index()].set_unused();
                     deallocate_frames(p1_frame, 1);
                 }
 
-                if ! p2.is_unused() {
+                if keep_parents || ! p2.is_unused() {
                     return frame;
                 }
             }
 
             {
                 let p2_frame = p3[page.p3_index()].pointed_frame().expect("unmap_inner: p2 frame not found");
-                println!("Free p2 {:?}", p2_frame);
+                //println!("Free p2 {:?}", p2_frame);
                 p3[page.p3_index()].set_unused();
                 deallocate_frames(p2_frame, 1);
             }
 
-            if ! p3.is_unused() {
+            if keep_parents || ! p3.is_unused() {
                 return frame;
             }
         }
 
         {
             let p3_frame = p4[page.p4_index()].pointed_frame().expect("unmap_inner: p3 frame not found");
-            println!("Free p3 {:?}", p3_frame);
-            p4[page.p2_index()].set_unused();
+            //println!("Free p3 {:?}", p3_frame);
+            p4[page.p4_index()].set_unused();
             deallocate_frames(p3_frame, 1);
         }
 
@@ -188,14 +188,14 @@ impl Mapper {
 
     /// Unmap a page
     pub fn unmap(&mut self, page: Page) -> MapperFlush {
-        let frame = self.unmap_inner(&page);
+        let frame = self.unmap_inner(&page, false);
         deallocate_frames(frame, 1);
         MapperFlush::new(page)
     }
 
     /// Unmap a page, return frame without free
-    pub fn unmap_return(&mut self, page: Page) -> (MapperFlush, Frame) {
-        let frame = self.unmap_inner(&page);
+    pub fn unmap_return(&mut self, page: Page, keep_parents: bool) -> (MapperFlush, Frame) {
+        let frame = self.unmap_inner(&page, keep_parents);
         (MapperFlush::new(page), frame)
     }
 
