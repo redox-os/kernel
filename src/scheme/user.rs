@@ -21,7 +21,7 @@ pub struct UserInner {
     root_id: SchemeId,
     handle_id: usize,
     pub name: Box<[u8]>,
-    flags: usize,
+    pub flags: usize,
     pub scheme_id: AtomicSchemeId,
     next_id: AtomicU64,
     context: Weak<RwLock<Context>>,

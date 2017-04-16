@@ -5,7 +5,7 @@ use spin::RwLock;
 
 use syscall::data::Stat;
 use syscall::error::*;
-use syscall::flag::{MODE_DIR, MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
+use syscall::flag::{O_CLOEXEC, MODE_DIR, MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
 use syscall::scheme::Scheme;
 
 #[cfg(test)]
@@ -19,6 +19,7 @@ include!(concat!(env!("OUT_DIR"), "/gen.rs"));
 
 struct Handle {
     path: &'static [u8],
+    flags: usize,
     data: &'static [u8],
     mode: u16,
     seek: usize
@@ -41,7 +42,7 @@ impl InitFsScheme {
 }
 
 impl Scheme for InitFsScheme {
-    fn open(&self, path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, path: &[u8], flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let path_utf8 = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
         let path_trimmed = path_utf8.trim_matches('/');
 
@@ -51,6 +52,7 @@ impl Scheme for InitFsScheme {
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);
                 self.handles.write().insert(id, Handle {
                     path: entry.0,
+                    flags: flags,
                     data: (entry.1).0,
                     mode: if (entry.1).1 { MODE_DIR |  0o755 } else { MODE_FILE | 0o744 },
                     seek: 0
@@ -63,16 +65,21 @@ impl Scheme for InitFsScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn dup(&self, id: usize, _buf: &[u8]) -> Result<usize> {
-        let (path, data, mode, seek) = {
+    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
+        let (path, flags, data, mode, seek) = {
             let handles = self.handles.read();
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-            (handle.path, handle.data, handle.mode, handle.seek)
+            (handle.path, handle.flags, handle.data, handle.mode, handle.seek)
         };
+
+        if buf == b"exec" && flags & O_CLOEXEC == O_CLOEXEC {
+            return Err(Error::new(EBADF));
+        }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         self.handles.write().insert(id, Handle {
             path: path,
+            flags: flags,
             data: data,
             mode: mode,
             seek: seek
