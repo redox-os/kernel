@@ -4,6 +4,7 @@
 #![allocator]
 #![no_std]
 
+use core::ptr;
 use spin::Mutex;
 use linked_list_allocator::Heap;
 
@@ -23,6 +24,15 @@ pub extern fn __rust_allocate(size: usize, align: usize) -> *mut u8 {
     } else {
         panic!("__rust_allocate: heap not initialized");
     }
+}
+
+#[no_mangle]
+pub extern fn __rust_allocate_zeroed(size: usize, align: usize) -> *mut u8 {
+    let ptr = __rust_allocate(size, align);
+    unsafe {
+        ptr::write_bytes(ptr, 0, size);
+    }
+    ptr
 }
 
 #[no_mangle]
