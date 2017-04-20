@@ -15,7 +15,8 @@ pub fn resource() -> Result<Vec<u8>> {
     let mut data = Vec::new();
 
     let schemes = scheme::schemes();
-    for (name, _scheme_id) in schemes.iter_name(scheme_ns) {
+    for (name, &scheme_id) in schemes.iter_name(scheme_ns) {
+        data.extend_from_slice(format!("{:>4}: ", scheme_id.into()).as_bytes());
         data.extend_from_slice(name);
         data.push(b'\n');
     }

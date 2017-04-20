@@ -112,7 +112,7 @@ impl Scheme for PipeScheme {
         Err(Error::new(EBADF))
     }
 
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+    fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
         let mut i = 0;
         let scheme_path = b"pipe:";
         while i < buf.len() && i < scheme_path.len() {

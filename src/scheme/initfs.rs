@@ -5,7 +5,7 @@ use spin::RwLock;
 
 use syscall::data::Stat;
 use syscall::error::*;
-use syscall::flag::{O_CLOEXEC, MODE_DIR, MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
+use syscall::flag::{MODE_DIR, MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
 use syscall::scheme::Scheme;
 
 #[cfg(test)]
@@ -112,6 +112,13 @@ impl Scheme for InitFsScheme {
         Ok(handle.seek)
     }
 
+    fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+        let handles = self.handles.read();
+        let _handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        Ok(0)
+    }
+
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -146,7 +153,9 @@ impl Scheme for InitFsScheme {
         Ok(0)
     }
 
-    fn fsync(&self, _id: usize) -> Result<usize> {
+    fn fsync(&self, id: usize) -> Result<usize> {
+        let handles = self.handles.read();
+        let _handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         Ok(0)
     }
 

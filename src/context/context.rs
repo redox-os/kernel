@@ -239,7 +239,7 @@ impl Context {
     pub fn get_file(&self, i: FileHandle) -> Option<File> {
         let files = self.files.lock();
         if i.into() < files.len() {
-            files[i.into()]
+            files[i.into()].clone()
         } else {
             None
         }

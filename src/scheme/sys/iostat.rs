@@ -28,7 +28,7 @@ pub fn resource() -> Result<Vec<u8>> {
             for (fd, f) in row.2.iter().enumerate() {
                 let file = match *f {
                     None => continue,
-                    Some(file) => file
+                    Some(ref file) => file.clone()
                 };
 
                 let scheme = {

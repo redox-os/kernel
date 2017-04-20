@@ -87,6 +87,10 @@ impl Scheme for IrqScheme {
         }
     }
 
+    fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+        Ok(0)
+    }
+
     fn fevent(&self, file: usize, _flags: usize) -> Result<usize> {
         Ok(file)
     }

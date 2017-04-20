@@ -154,7 +154,17 @@ impl Scheme for EnvScheme {
         Ok(handle.seek)
     }
 
+    fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+        let handles = self.handles.read();
+        let _handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        Ok(0)
+    }
+
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        let handles = self.handles.read();
+        let _handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
         let mut i = 0;
         //TODO: Get env name
         let scheme_path = b"env:";

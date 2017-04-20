@@ -4,7 +4,7 @@ use scheme::SchemeId;
 
 /// A file
 //TODO: Close on exec
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct File {
     /// The scheme that this file refers to
     pub scheme: SchemeId,

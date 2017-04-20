@@ -14,6 +14,7 @@ mod cpu;
 mod exe;
 mod iostat;
 mod scheme;
+mod scheme_num;
 //mod interrupt;
 //mod log;
 //mod test;
@@ -43,6 +44,7 @@ impl SysScheme {
         files.insert(b"exe", Box::new(move || exe::resource()));
         files.insert(b"iostat", Box::new(move || iostat::resource()));
         files.insert(b"scheme", Box::new(move || scheme::resource()));
+        files.insert(b"scheme_num", Box::new(move || scheme_num::resource()));
         //files.insert(b"interrupt", Box::new(move || interrupt::resource()));
         //files.insert(b"log", Box::new(move || log::resource()));
         //files.insert(b"test", Box::new(move || test::resource()));

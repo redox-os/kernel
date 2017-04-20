@@ -26,6 +26,10 @@ impl Scheme for NullScheme {
         Ok(buffer.len())
     }
 
+    fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+        Ok(0)
+    }
+
     fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
         let mut i = 0;
         let scheme_path = b"null:";

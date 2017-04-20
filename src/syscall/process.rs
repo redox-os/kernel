@@ -253,15 +253,14 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         // This has to be done outside the context lock to prevent deadlocks
         if flags & CLONE_FILES == 0 {
             for (_fd, mut file_option) in files.lock().iter_mut().enumerate() {
-                let new_file_option = if let Some(file) = *file_option {
+                let new_file_option = if let Some(ref file) = *file_option {
                     let result = {
                         let scheme = {
                             let schemes = scheme::schemes();
                             let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
                             scheme.clone()
                         };
-                        let result = scheme.dup(file.number, b"clone");
-                        result
+                        scheme.dup(file.number, b"clone")
                     };
                     match result {
                         Ok(new_number) => {
@@ -731,7 +730,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
 
                 // Duplicate current files using b"exec", close previous
                 for (fd, mut file_option) in files.lock().iter_mut().enumerate() {
-                    let new_file_option = if let Some(file) = *file_option {
+                    let new_file_option = if let Some(ref file) = *file_option {
                         // Duplicate
                         let result = {
                             if file.flags & O_CLOEXEC == O_CLOEXEC {
@@ -742,8 +741,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                                     schemes.get(file.scheme).map(|scheme| scheme.clone())
                                 };
                                 if let Some(scheme) = scheme_option {
-                                    let result = scheme.dup(file.number, b"exec");
-                                    result
+                                    scheme.dup(file.number, b"exec")
                                 } else {
                                     Err(Error::new(EBADF))
                                 }

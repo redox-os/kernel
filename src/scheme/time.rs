@@ -97,6 +97,10 @@ impl Scheme for TimeScheme {
         Ok(i * mem::size_of::<TimeSpec>())
     }
 
+    fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+        Ok(0)
+    }
+
     fn fevent(&self, id: usize, _flags: usize) ->  Result<usize> {
         let handles = self.handles.read();
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(id))

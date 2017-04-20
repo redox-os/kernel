@@ -6,7 +6,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{Packet, Stat};
 use syscall::error::*;
-use syscall::flag::{F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE};
+use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let (file, pid, uid, gid) = {
@@ -303,7 +303,7 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
     }
 }
 
-// File descriptor controls
+/// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     let file = {
         let contexts = context::contexts();
@@ -313,6 +313,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         file
     };
 
+    // Communicate fcntl with scheme
     let res = {
         let scheme = {
             let schemes = scheme::schemes();
@@ -322,17 +323,29 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         scheme.fcntl(file.number, cmd, arg)?
     };
 
-    if cmd == F_SETFL {
+    // Perform kernel operation if scheme agrees
+    {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
         let mut files = context.files.lock();
-        let mut file = files.get_mut(fd.into()).ok_or(Error::new(EBADF))?.ok_or(Error::new(EBADF))?;
-        let accmode = file.flags & O_ACCMODE;
-        file.flags = accmode | arg & !O_ACCMODE;
+        match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
+            Some(ref mut file) => match cmd {
+                F_GETFL => {
+                    Ok(file.flags)
+                },
+                F_SETFL => {
+                    let new_flags = (file.flags & O_ACCMODE) | (arg & ! O_ACCMODE);
+                    file.flags = new_flags;
+                    Ok(0)
+                },
+                _ => {
+                    Err(Error::new(EINVAL))
+                }
+            },
+            None => Err(Error::new(EBADF))
+        }
     }
-
-    Ok(res)
 }
 
 /// Register events for file
@@ -342,12 +355,16 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
         let mut files = context.files.lock();
-        let mut file = files.get_mut(fd.into()).ok_or(Error::new(EBADF))?.ok_or(Error::new(EBADF))?;
-        if let Some(event_id) = file.event.take() {
-            println!("{:?}: {:?}:{}: events already registered: {}", fd, file.scheme, file.number, event_id);
-            context::event::unregister(fd, file.scheme, event_id);
+        match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
+            Some(ref mut file) => {
+                if let Some(event_id) = file.event.take() {
+                    println!("{:?}: {:?}:{}: events already registered: {}", fd, file.scheme, file.number, event_id);
+                    context::event::unregister(fd, file.scheme, event_id);
+                }
+                file.clone()
+            },
+            None => return Err(Error::new(EBADF))
         }
-        file.clone()
     };
 
     let scheme = {
@@ -361,8 +378,10 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
         let mut files = context.files.lock();
-        let mut file = files.get_mut(fd.into()).ok_or(Error::new(EBADF))?.ok_or(Error::new(EBADF))?;
-        file.event = Some(event_id);
+        match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
+            Some(ref mut file) => file.event = Some(event_id),
+            None => return Err(Error::new(EBADF)),
+        }
     }
     context::event::register(fd, file.scheme, event_id);
     Ok(0)

@@ -62,6 +62,12 @@ impl Scheme for EventScheme {
         Ok(handle.receive_into(event_buf, true) * mem::size_of::<Event>())
     }
 
+    fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;
+        handle_weak.upgrade().ok_or(Error::new(EBADF)).and(Ok(0))
+    }
+
     fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
         let mut i = 0;
         let scheme_path = b"event:";
