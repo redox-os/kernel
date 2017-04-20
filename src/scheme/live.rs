@@ -112,7 +112,7 @@ impl Scheme for DiskScheme {
         Ok(handle.seek)
     }
 
-    fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+    fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         let handles = self.handles.read();
         let _handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
