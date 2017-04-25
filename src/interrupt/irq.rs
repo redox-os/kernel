@@ -51,7 +51,9 @@ interrupt!(pit, {
 
     pic::MASTER.ack();
 
-    if PIT_TICKS.fetch_add(1, Ordering::SeqCst) % 10 == 0 {
+    if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
+        PIT_TICKS.store(0, Ordering::SeqCst);
+        assert_eq!(PIT_TICKS.load(Ordering::SeqCst), 0);
         context::switch();
     }
 
