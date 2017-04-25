@@ -1,7 +1,12 @@
 use context::timeout;
 use device::pic;
 use device::serial::{COM1, COM2};
+use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+
 use time;
+use context;
+
+static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
 
 unsafe fn trigger(irq: u8) {
     extern {
@@ -45,6 +50,10 @@ interrupt!(pit, {
     }
 
     pic::MASTER.ack();
+
+    if PIT_TICKS.fetch_add(1, Ordering::SeqCst) % 10 == 0 {
+        context::switch();
+    }
 
     // Any better way of doing this?
     timeout::trigger();
