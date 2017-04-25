@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
-
 use context::{arch, contexts, Context, Status, CONTEXT_ID};
+use interrupt::irq::PIT_TICKS;
+
 use gdt;
 use interrupt;
 use syscall;
@@ -13,6 +14,10 @@ use time;
 /// Do not call this while holding locks!
 pub unsafe fn switch() -> bool {
     use core::ops::DerefMut;
+
+    //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
+    PIT_TICKS.store(0, Ordering::SeqCst);
+    assert_eq!(PIT_TICKS.load(Ordering::SeqCst), 0);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
     while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(false, true, Ordering::SeqCst) {
@@ -27,7 +32,9 @@ pub unsafe fn switch() -> bool {
     {
         let contexts = contexts();
         {
-            let context_lock = contexts.current().expect("context::switch: not inside of context");
+            let context_lock = contexts
+                .current()
+                .expect("context::switch: not inside of context");
             let mut context = context_lock.write();
             from_ptr = context.deref_mut() as *mut Context;
         }
@@ -38,7 +45,7 @@ pub unsafe fn switch() -> bool {
                 // println!("{}: take {} {}", cpu_id, context.id, ::core::str::from_utf8_unchecked(&context.name.lock()));
             }
 
-            if context.status == Status::Blocked && ! context.pending.is_empty() {
+            if context.status == Status::Blocked && !context.pending.is_empty() {
                 context.unblock();
             }
 
@@ -53,7 +60,7 @@ pub unsafe fn switch() -> bool {
             }
 
             if context.cpu_id == Some(cpu_id) {
-                if context.status == Status::Runnable && ! context.running {
+                if context.status == Status::Runnable && !context.running {
                     return true;
                 }
             }
@@ -112,7 +119,7 @@ pub unsafe fn switch() -> bool {
     true
 }
 
-extern fn signal_handler(signal: usize) {
+extern "C" fn signal_handler(signal: usize) {
     println!("Signal handler: {}", signal);
     syscall::exit(signal);
 }
