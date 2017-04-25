@@ -6,7 +6,8 @@ use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use time;
 use context;
 
-static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
+//resets to 0 in context::switch()
+pub static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
 
 unsafe fn trigger(irq: u8) {
     extern {
@@ -52,8 +53,6 @@ interrupt!(pit, {
     pic::MASTER.ack();
 
     if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
-        PIT_TICKS.store(0, Ordering::SeqCst);
-        assert_eq!(PIT_TICKS.load(Ordering::SeqCst), 0);
         context::switch();
     }
 
