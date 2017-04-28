@@ -10,17 +10,12 @@ use syscall::scheme::Scheme;
 use scheme::{self, SchemeNamespace, SchemeId};
 use scheme::user::{UserInner, UserScheme};
 
-#[derive(Clone)]
-enum UserOrListHandle {
-    User(Arc<UserInner>),
-    List(AtomicUsize)
-}
-
 pub struct RootScheme {
     scheme_ns: SchemeNamespace,
     scheme_id: SchemeId,
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, UserOrListHandle>>,
+    handles: RwLock<BTreeMap<usize, Arc<UserInner>>>,
+    ls_handles: RwLock<BTreeMap<usize, AtomicUsize>>,
 }
 
 impl RootScheme {
@@ -29,21 +24,22 @@ impl RootScheme {
             scheme_ns: scheme_ns,
             scheme_id: scheme_id,
             next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
+            ls_handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
 
 impl Scheme for RootScheme {
     fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        use syscall::*;
+        use syscall::syscall::*;
         if uid == 0 {
-            if flags & O_DIRECTORY = O_DIRECTORY {
+            if flags & O_DIRECTORY == O_DIRECTORY {
                 if flags & O_ACCMODE != O_RDONLY {
                     return Err(Error::new(EACCES));
                 }
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                self.ls_handles.write().insert(id, UserOrListHandle::List(0));
+                self.ls_handles.write().insert(id, AtomicUsize::new(0));
                 return Ok(id);
             }
             
@@ -56,6 +52,7 @@ impl Scheme for RootScheme {
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
             let inner = {
+                use scheme;
                 let path_box = path.to_vec().into_boxed_slice();
                 let mut schemes = scheme::schemes_mut();
                 let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
@@ -66,7 +63,7 @@ impl Scheme for RootScheme {
                 inner
             };
 
-            self.handles.write().insert(id, UserOrListHandler::User(inner));
+            self.handles.write().insert(id, inner);
 
             Ok(id)
         } else {
@@ -114,7 +111,7 @@ impl Scheme for RootScheme {
                     i += 1;
                 }
                 
-                num.fetch_add(1, Ordering::SeqCst)
+                num.fetch_add(1, Ordering::SeqCst);
                 
                 Ok(i)
             }
@@ -128,10 +125,7 @@ impl Scheme for RootScheme {
             inner.clone()
         };
         
-        match &*inner {
-            UserOrListInner::User(ref inner) => inner.write(buf),
-            UserOrListInner::List(_) => Err(Error::new(::syscall::EBADF))
-        }
+        inner.write(buf)
     }
 
     fn fevent(&self, file: usize, flags: usize) -> Result<usize> {
