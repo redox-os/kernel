@@ -53,7 +53,6 @@ impl Scheme for RootScheme {
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
             let inner = {
-                use scheme;
                 let path_box = path.to_vec().into_boxed_slice();
                 let mut schemes = scheme::schemes_mut();
                 let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
