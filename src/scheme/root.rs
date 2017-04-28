@@ -10,11 +10,17 @@ use syscall::scheme::Scheme;
 use scheme::{self, SchemeNamespace, SchemeId};
 use scheme::user::{UserInner, UserScheme};
 
+#[derive(Clone)]
+enum UserOrListHandle {
+    User(Arc<UserInner>),
+    List(AtomicUsize)
+}
+
 pub struct RootScheme {
     scheme_ns: SchemeNamespace,
     scheme_id: SchemeId,
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Arc<UserInner>>>
+    handles: RwLock<BTreeMap<usize, UserOrListHandle>>,
 }
 
 impl RootScheme {
@@ -30,7 +36,17 @@ impl RootScheme {
 
 impl Scheme for RootScheme {
     fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+        use syscall::*;
         if uid == 0 {
+            if flags & O_DIRECTORY = O_DIRECTORY {
+                if flags & O_ACCMODE != O_RDONLY {
+                    return Err(Error::new(EACCES));
+                }
+                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                self.ls_handles.write().insert(id, UserOrListHandle::List(0));
+                return Ok(id);
+            }
+            
             let context = {
                 let contexts = context::contexts();
                 let context = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -50,7 +66,7 @@ impl Scheme for RootScheme {
                 inner
             };
 
-            self.handles.write().insert(id, inner);
+            self.handles.write().insert(id, UserOrListHandler::User(inner));
 
             Ok(id)
         } else {
@@ -77,8 +93,32 @@ impl Scheme for RootScheme {
             let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
             inner.clone()
         };
-
-        inner.read(buf)
+        
+        match &*inner {
+            UserOrListInner::User(ref inner) => inner.read(buf),
+            UserOrListInner::List(ref num) => {
+                let scheme_ns = {
+                    let contexts = context::contexts();
+                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+                    let context = context_lock.read();
+                    context.ens
+                };
+                
+                let schemes = scheme::schemes();
+                
+                let scheme_name = schemes.iterName(scheme_ns).nth(num.load(Ordering::SeqCst)).0.as_bytes();
+                
+                let mut i = 0;
+                while i < buf.len() && i < scheme_name.len() {
+                    buf[i] = scheme_name[i];
+                    i += 1;
+                }
+                
+                num.fetch_add(1, Ordering::SeqCst)
+                
+                Ok(i)
+            }
+        }
     }
 
     fn write(&self, file: usize, buf: &[u8]) -> Result<usize> {
@@ -87,8 +127,11 @@ impl Scheme for RootScheme {
             let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
             inner.clone()
         };
-
-        inner.write(buf)
+        
+        match &*inner {
+            UserOrListInner::User(ref inner) => inner.write(buf),
+            UserOrListInner::List(_) => Err(Error::new(::syscall::EBADF))
+        }
     }
 
     fn fevent(&self, file: usize, flags: usize) -> Result<usize> {
