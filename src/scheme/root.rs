@@ -32,7 +32,8 @@ impl RootScheme {
 
 impl Scheme for RootScheme {
     fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        use syscall::syscall::*;
+        use syscall::flag::*;
+
         if uid == 0 {
             if flags & O_DIRECTORY == O_DIRECTORY {
                 if flags & O_ACCMODE != O_RDONLY {
@@ -42,7 +43,7 @@ impl Scheme for RootScheme {
                 self.ls_handles.write().insert(id, AtomicUsize::new(0));
                 return Ok(id);
             }
-            
+
             let context = {
                 let contexts = context::contexts();
                 let context = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -57,9 +58,9 @@ impl Scheme for RootScheme {
                 let mut schemes = scheme::schemes_mut();
                 let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
                 schemes.insert(self.scheme_ns, path_box, |scheme_id| {
-                    inner.scheme_id.store(scheme_id, Ordering::SeqCst);
-                    Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
-                })?;
+                        inner.scheme_id.store(scheme_id, Ordering::SeqCst);
+                        Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
+                    })?;
                 inner
             };
 
@@ -87,33 +88,44 @@ impl Scheme for RootScheme {
     fn read(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
         let inner = {
             let handles = self.handles.read();
-            let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-            inner.clone()
+            handles.get(&file).map(Clone::clone)
         };
-        
-        match &*inner {
-            UserOrListInner::User(ref inner) => inner.read(buf),
-            UserOrListInner::List(ref num) => {
-                let scheme_ns = {
-                    let contexts = context::contexts();
-                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    let context = context_lock.read();
-                    context.ens
-                };
-                
-                let schemes = scheme::schemes();
-                
-                let scheme_name = schemes.iterName(scheme_ns).nth(num.load(Ordering::SeqCst)).0.as_bytes();
-                
+
+        if let Some(inner) = inner {
+            inner.read(buf)
+        } else {
+            let scheme_ns = {
+                let contexts = context::contexts();
+                let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+                let context = context_lock.read();
+                context.ens
+            };
+
+            let schemes = scheme::schemes();
+            let mut schemes_iter = schemes.iter_name(scheme_ns);
+
+            let num = {
+                let handles = self.ls_handles.read();
+                let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
+                inner.load(Ordering::SeqCst)
+            };
+
+            if let Some(scheme) = schemes_iter.nth(num) {
                 let mut i = 0;
-                while i < buf.len() && i < scheme_name.len() {
-                    buf[i] = scheme_name[i];
+                while i < buf.len() && i < scheme.0.len() {
+                    buf[i] = scheme.0[i];
                     i += 1;
                 }
-                
-                num.fetch_add(1, Ordering::SeqCst);
-                
+
+                {
+                    let handles = self.ls_handles.read();
+                    let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
+                    inner.fetch_add(1, Ordering::SeqCst)
+                };
+
                 Ok(i)
+            } else {
+                Ok(0)
             }
         }
     }
@@ -124,7 +136,7 @@ impl Scheme for RootScheme {
             let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
             inner.clone()
         };
-        
+
         inner.write(buf)
     }
 
