@@ -49,15 +49,15 @@ pub fn register(fd: FileHandle, scheme_id: SchemeId, event_id: usize) -> bool {
     };
 
     let mut registry = registry_mut();
-    let entry = registry.entry(RegKey {
-        scheme_id: scheme_id,
-        event_id: event_id
-    }).or_insert_with(|| {
-        BTreeMap::new()
-    });
+    let entry = registry
+        .entry(RegKey {
+                   scheme_id: scheme_id,
+                   event_id: event_id,
+               })
+        .or_insert_with(|| BTreeMap::new());
     let process_key = ProcessKey {
         context_id: context_id,
-        fd: fd
+        fd: fd,
     };
     if entry.contains_key(&process_key) {
         false
@@ -73,7 +73,7 @@ pub fn unregister(fd: FileHandle, scheme_id: SchemeId, event_id: usize) {
     let mut remove = false;
     let key = RegKey {
         scheme_id: scheme_id,
-        event_id: event_id
+        event_id: event_id,
     };
     if let Some(entry) = registry.get_mut(&key) {
         let process_key = ProcessKey {
@@ -96,16 +96,16 @@ pub fn trigger(scheme_id: SchemeId, event_id: usize, flags: usize, data: usize) 
     let registry = registry();
     let key = RegKey {
         scheme_id: scheme_id,
-        event_id: event_id
+        event_id: event_id,
     };
     if let Some(event_lists) = registry.get(&key) {
         for entry in event_lists.iter() {
             if let Some(event_list) = entry.1.upgrade() {
                 event_list.send(Event {
-                    id: (entry.0).fd.into(),
-                    flags: flags,
-                    data: data
-                });
+                                    id: (entry.0).fd.into(),
+                                    flags: flags,
+                                    data: data,
+                                });
             }
         }
     }

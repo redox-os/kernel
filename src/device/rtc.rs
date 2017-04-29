@@ -22,9 +22,9 @@ impl Rtc {
     /// Create new empty RTC
     pub fn new() -> Self {
         return Rtc {
-            addr: Pio::<u8>::new(0x70),
-            data: Pio::<u8>::new(0x71),
-        };
+                   addr: Pio::<u8>::new(0x70),
+                   data: Pio::<u8>::new(0x71),
+               };
     }
 
     /// Read

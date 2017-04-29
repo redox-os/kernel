@@ -32,7 +32,7 @@ impl<T: FrameAllocator> RecycleAllocator<T> {
     }
 
     fn merge(&mut self, address: usize, count: usize) -> bool {
-        for i in 0 .. self.free.len() {
+        for i in 0..self.free.len() {
             let changed = {
                 let mut free = &mut self.free[i];
                 if address + count * 4096 == free.0 {
@@ -112,7 +112,7 @@ impl<T: FrameAllocator> FrameAllocator for RecycleAllocator<T> {
     fn deallocate_frames(&mut self, frame: Frame, count: usize) {
         if self.noncore {
             let address = frame.start_address().get();
-            if ! self.merge(address, count) {
+            if !self.merge(address, count) {
                 self.free.push((address, count));
             }
         } else {

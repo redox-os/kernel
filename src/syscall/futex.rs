@@ -49,10 +49,12 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                 futexes.push_back((addr as *mut i32 as usize, context_lock));
             }
 
-            unsafe { context::switch(); }
+            unsafe {
+                context::switch();
+            }
 
             Ok(0)
-        },
+        }
         FUTEX_WAKE => {
             let mut woken = 0;
 
@@ -73,9 +75,10 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
             }
 
             Ok(woken)
-        },
+        }
         FUTEX_REQUEUE => {
-            let addr2_safe = validate_slice_mut(addr2, 1).map(|addr2_safe| &mut addr2_safe[0])?;
+            let addr2_safe = validate_slice_mut(addr2, 1)
+                .map(|addr2_safe| &mut addr2_safe[0])?;
 
             let mut woken = 0;
             let mut requeued = 0;
@@ -104,7 +107,7 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
             }
 
             Ok(woken)
-        },
-        _ => Err(Error::new(EINVAL))
+        }
+        _ => Err(Error::new(EINVAL)),
     }
 }

@@ -14,11 +14,15 @@ extern "C" fn panic_fmt(fmt: ::core::fmt::Arguments, file: &str, line: u32) -> !
     println!("FILE: {}", file);
     println!("LINE: {}", line);
 
-    unsafe { interrupt::stack_trace(); }
+    unsafe {
+        interrupt::stack_trace();
+    }
 
     println!("HALT");
     loop {
-        unsafe { interrupt::halt(); }
+        unsafe {
+            interrupt::halt();
+        }
     }
 }
 
@@ -27,6 +31,8 @@ extern "C" fn panic_fmt(fmt: ::core::fmt::Arguments, file: &str, line: u32) -> !
 /// Required to handle panics
 pub extern "C" fn _Unwind_Resume() -> ! {
     loop {
-        unsafe { interrupt::halt(); }
+        unsafe {
+            interrupt::halt();
+        }
     }
 }

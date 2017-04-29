@@ -32,12 +32,14 @@ pub fn resource() -> Result<Vec<u8>> {
             match context.status {
                 context::Status::Runnable => {
                     stat_string.push('R');
-                },
-                context::Status::Blocked => if context.wake.is_some() {
-                    stat_string.push('S');
-                } else {
-                    stat_string.push('B');
-                },
+                }
+                context::Status::Blocked => {
+                    if context.wake.is_some() {
+                        stat_string.push('S');
+                    } else {
+                        stat_string.push('B');
+                    }
+                }
                 context::Status::Exited(_status) => {
                     stat_string.push('Z');
                 }
@@ -60,14 +62,10 @@ pub fn resource() -> Result<Vec<u8>> {
                 memory += kstack.len();
             }
             for shared_mem in context.image.iter() {
-                shared_mem.with(|mem| {
-                    memory += mem.size();
-                });
+                shared_mem.with(|mem| { memory += mem.size(); });
             }
             if let Some(ref heap) = context.heap {
-                heap.with(|heap| {
-                    memory += heap.size();
-                });
+                heap.with(|heap| { memory += heap.size(); });
             }
             if let Some(ref stack) = context.stack {
                 memory += stack.size();
@@ -87,18 +85,18 @@ pub fn resource() -> Result<Vec<u8>> {
             let name = str::from_utf8(&name_bytes).unwrap_or("");
 
             string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{}\n",
-                               context.id.into(),
-                               context.ppid.into(),
-                               context.ruid,
-                               context.rgid,
-                               context.rns.into(),
-                               context.euid,
-                               context.egid,
-                               context.ens.into(),
-                               stat_string,
-                               cpu_string,
-                               memory_string,
-                               name));
+                                     context.id.into(),
+                                     context.ppid.into(),
+                                     context.ruid,
+                                     context.rgid,
+                                     context.rns.into(),
+                                     context.euid,
+                                     context.egid,
+                                     context.ens.into(),
+                                     stat_string,
+                                     cpu_string,
+                                     memory_string,
+                                     name));
         }
     }
 

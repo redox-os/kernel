@@ -17,9 +17,12 @@ static COUNTS: Mutex<[usize; 16]> = Mutex::new([0; 16]);
 
 /// Add to the input queue
 #[no_mangle]
-pub extern fn irq_trigger(irq: u8) {
+pub extern "C" fn irq_trigger(irq: u8) {
     COUNTS.lock()[irq as usize] += 1;
-    context::event::trigger(IRQ_SCHEME_ID.load(Ordering::SeqCst), irq as usize, EVENT_READ, mem::size_of::<usize>());
+    context::event::trigger(IRQ_SCHEME_ID.load(Ordering::SeqCst),
+                            irq as usize,
+                            EVENT_READ,
+                            mem::size_of::<usize>());
 }
 
 pub struct IrqScheme;
@@ -60,7 +63,9 @@ impl Scheme for IrqScheme {
             if ack != current {
                 // Safe if the length of the buffer is larger than the size of a usize
                 assert!(buffer.len() >= mem::size_of::<usize>());
-                unsafe { *(buffer.as_mut_ptr() as *mut usize) = current; }
+                unsafe {
+                    *(buffer.as_mut_ptr() as *mut usize) = current;
+                }
                 Ok(mem::size_of::<usize>())
             } else {
                 Ok(0)
@@ -77,7 +82,9 @@ impl Scheme for IrqScheme {
             let current = COUNTS.lock()[file];
             if ack == current {
                 ACKS.lock()[file] = ack;
-                unsafe { acknowledge(file); }
+                unsafe {
+                    acknowledge(file);
+                }
                 Ok(mem::size_of::<usize>())
             } else {
                 Ok(0)

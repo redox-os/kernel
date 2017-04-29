@@ -13,7 +13,12 @@ pub mod recycle;
 
 /// The current memory map. It's size is maxed out to 512 entries, due to it being
 /// from 0x500 to 0x5000 (800 is the absolute total)
-static mut MEMORY_MAP: [MemoryArea; 512] = [MemoryArea { base_addr: 0, length: 0, _type: 0, acpi: 0 }; 512];
+static mut MEMORY_MAP: [MemoryArea; 512] = [MemoryArea {
+    base_addr: 0,
+    length: 0,
+    _type: 0,
+    acpi: 0,
+}; 512];
 
 /// Memory does not exist
 pub const MEMORY_AREA_NULL: u32 = 0;
@@ -34,21 +39,18 @@ pub struct MemoryArea {
     pub base_addr: u64,
     pub length: u64,
     pub _type: u32,
-    pub acpi: u32
+    pub acpi: u32,
 }
 
 #[derive(Clone)]
 pub struct MemoryAreaIter {
     _type: u32,
-    i: usize
+    i: usize,
 }
 
 impl MemoryAreaIter {
     fn new(_type: u32) -> Self {
-        MemoryAreaIter {
-            _type: _type,
-            i: 0
-        }
+        MemoryAreaIter { _type: _type, i: 0 }
     }
 }
 
@@ -79,7 +81,10 @@ pub unsafe fn init(kernel_start: usize, kernel_end: usize) {
         }
     }
 
-    *ALLOCATOR.lock() = Some(RecycleAllocator::new(BumpAllocator::new(kernel_start, kernel_end, MemoryAreaIter::new(MEMORY_AREA_FREE))));
+    *ALLOCATOR.lock() =
+        Some(RecycleAllocator::new(BumpAllocator::new(kernel_start,
+                                                      kernel_end,
+                                                      MemoryAreaIter::new(MEMORY_AREA_FREE))));
 }
 
 /// Init memory module after core
@@ -132,7 +137,7 @@ pub fn deallocate_frames(frame: Frame, count: usize) {
 /// Do not add more derives, or make anything `pub`!
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Frame {
-    number: usize
+    number: usize,
 }
 
 impl Frame {
@@ -143,16 +148,12 @@ impl Frame {
 
     //TODO: Set private
     pub fn clone(&self) -> Frame {
-        Frame {
-            number: self.number
-        }
+        Frame { number: self.number }
     }
 
     /// Create a frame containing `address`
     pub fn containing_address(address: PhysicalAddress) -> Frame {
-        Frame {
-            number: address.get() / PAGE_SIZE
-        }
+        Frame { number: address.get() / PAGE_SIZE }
     }
 
     //TODO: Set private

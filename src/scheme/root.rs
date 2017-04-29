@@ -14,7 +14,7 @@ pub struct RootScheme {
     scheme_ns: SchemeNamespace,
     scheme_id: SchemeId,
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Arc<UserInner>>>
+    handles: RwLock<BTreeMap<usize, Arc<UserInner>>>,
 }
 
 impl RootScheme {
@@ -23,7 +23,7 @@ impl RootScheme {
             scheme_ns: scheme_ns,
             scheme_id: scheme_id,
             next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -42,11 +42,13 @@ impl Scheme for RootScheme {
             let inner = {
                 let path_box = path.to_vec().into_boxed_slice();
                 let mut schemes = scheme::schemes_mut();
-                let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
-                schemes.insert(self.scheme_ns, path_box, |scheme_id| {
-                    inner.scheme_id.store(scheme_id, Ordering::SeqCst);
-                    Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
-                })?;
+                let inner =
+                    Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
+                schemes
+                    .insert(self.scheme_ns, path_box, |scheme_id| {
+                        inner.scheme_id.store(scheme_id, Ordering::SeqCst);
+                        Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
+                    })?;
                 inner
             };
 
@@ -136,6 +138,10 @@ impl Scheme for RootScheme {
     }
 
     fn close(&self, file: usize) -> Result<usize> {
-        self.handles.write().remove(&file).ok_or(Error::new(EBADF)).and(Ok(0))
+        self.handles
+            .write()
+            .remove(&file)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 }

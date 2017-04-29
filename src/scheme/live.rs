@@ -17,13 +17,13 @@ struct Handle {
     path: &'static [u8],
     data: Arc<RwLock<Vec<u8>>>,
     mode: u16,
-    seek: usize
+    seek: usize,
 }
 
 pub struct DiskScheme {
     next_id: AtomicUsize,
     data: Arc<RwLock<Vec<u8>>>,
-    handles: RwLock<BTreeMap<usize, Handle>>
+    handles: RwLock<BTreeMap<usize, Handle>>,
 }
 
 impl DiskScheme {
@@ -31,7 +31,7 @@ impl DiskScheme {
         DiskScheme {
             next_id: AtomicUsize::new(0),
             data: Arc::new(RwLock::new(FILESYSTEM.to_vec())),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -39,12 +39,15 @@ impl DiskScheme {
 impl Scheme for DiskScheme {
     fn open(&self, _path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Handle {
-            path: b"0",
-            data: self.data.clone(),
-            mode: MODE_FILE | 0o744,
-            seek: 0
-        });
+        self.handles
+            .write()
+            .insert(id,
+                    Handle {
+                        path: b"0",
+                        data: self.data.clone(),
+                        mode: MODE_FILE | 0o744,
+                        seek: 0,
+                    });
 
         Ok(id)
     }
@@ -57,12 +60,15 @@ impl Scheme for DiskScheme {
         };
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Handle {
-            path: path,
-            data: data,
-            mode: mode,
-            seek: seek
-        });
+        self.handles
+            .write()
+            .insert(id,
+                    Handle {
+                        path: path,
+                        data: data,
+                        mode: mode,
+                        seek: seek,
+                    });
 
         Ok(id)
     }
@@ -104,9 +110,17 @@ impl Scheme for DiskScheme {
 
         handle.seek = match whence {
             SEEK_SET => cmp::min(data.len(), pos),
-            SEEK_CUR => cmp::max(0, cmp::min(data.len() as isize, handle.seek as isize + pos as isize)) as usize,
-            SEEK_END => cmp::max(0, cmp::min(data.len() as isize, data.len() as isize + pos as isize)) as usize,
-            _ => return Err(Error::new(EINVAL))
+            SEEK_CUR => {
+                cmp::max(0,
+                         cmp::min(data.len() as isize, handle.seek as isize + pos as isize)) as
+                usize
+            }
+            SEEK_END => {
+                cmp::max(0,
+                         cmp::min(data.len() as isize, data.len() as isize + pos as isize)) as
+                usize
+            }
+            _ => return Err(Error::new(EINVAL)),
         };
 
         Ok(handle.seek)
@@ -162,6 +176,10 @@ impl Scheme for DiskScheme {
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        self.handles
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 }

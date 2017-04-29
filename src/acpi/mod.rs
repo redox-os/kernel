@@ -46,10 +46,12 @@ fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static S
     // Map extra SDT frames if required
     {
         let start_page = Page::containing_address(VirtualAddress::new(sdt_address + 4096));
-        let end_page = Page::containing_address(VirtualAddress::new(sdt_address + sdt.length as usize));
+        let end_page = Page::containing_address(VirtualAddress::new(sdt_address +
+                                                                    sdt.length as usize));
         for page in Page::range_inclusive(start_page, end_page) {
             if active_table.translate_page(page).is_none() {
-                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
+                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address()
+                                                                               .get()));
                 let result = active_table.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE);
                 result.flush(active_table);
             }
@@ -193,8 +195,8 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
                     println!("GCMD: {:X}", drhd.gl_cmd);
                     println!("GSTS: {:X}", drhd.gl_sts);
                     println!("RT: {:X}", drhd.root_table);
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
     } else {
@@ -262,7 +264,10 @@ pub struct Acpi {
     pub dsdt: Option<Dsdt>,
 }
 
-pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, dsdt: None });
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi {
+                                                    fadt: None,
+                                                    dsdt: None,
+                                                });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
@@ -276,13 +281,13 @@ pub struct RSDP {
     length: u32,
     xsdt_address: u64,
     extended_checksum: u8,
-    reserved: [u8; 3]
+    reserved: [u8; 3],
 }
 
 impl RSDP {
     /// Search for the RSDP
     pub fn search(start_addr: usize, end_addr: usize) -> Option<RSDP> {
-        for i in 0 .. (end_addr + 1 - start_addr)/16 {
+        for i in 0..(end_addr + 1 - start_addr) / 16 {
             let rsdp = unsafe { &*((start_addr + i * 16) as *const RSDP) };
             if &rsdp.signature == b"RSD PTR " {
                 return Some(*rsdp);

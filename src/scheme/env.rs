@@ -14,26 +14,28 @@ use syscall::scheme::Scheme;
 struct Handle {
     data: Arc<Mutex<Vec<u8>>>,
     mode: u16,
-    seek: usize
+    seek: usize,
 }
 
 pub struct EnvScheme {
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Handle>>
+    handles: RwLock<BTreeMap<usize, Handle>>,
 }
 
 impl EnvScheme {
     pub fn new() -> EnvScheme {
         EnvScheme {
             next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
 
 impl Scheme for EnvScheme {
     fn open(&self, path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let path = str::from_utf8(path).or(Err(Error::new(ENOENT)))?.trim_matches('/');
+        let path = str::from_utf8(path)
+            .or(Err(Error::new(ENOENT)))?
+            .trim_matches('/');
 
         let env_lock = {
             let contexts = context::contexts();
@@ -47,7 +49,7 @@ impl Scheme for EnvScheme {
             {
                 let env = env_lock.lock();
                 for entry in env.iter() {
-                    if ! list.is_empty() {
+                    if !list.is_empty() {
                         list.push(b'\n');
                     }
                     list.extend_from_slice(&entry.0);
@@ -57,11 +59,14 @@ impl Scheme for EnvScheme {
             }
 
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            self.handles.write().insert(id, Handle {
-                data: Arc::new(Mutex::new(list)),
-                mode: MODE_FILE,
-                seek: 0
-            });
+            self.handles
+                .write()
+                .insert(id,
+                        Handle {
+                            data: Arc::new(Mutex::new(list)),
+                            mode: MODE_FILE,
+                            seek: 0,
+                        });
 
             Ok(id)
         } else {
@@ -69,7 +74,9 @@ impl Scheme for EnvScheme {
                 let mut env = env_lock.lock();
                 if env.contains_key(path.as_bytes()) {
                     env[path.as_bytes()].clone()
-                } else /*if flags & O_CREAT == O_CREAT*/ {
+                } else
+                /*if flags & O_CREAT == O_CREAT*/
+                {
                     let name = path.as_bytes().to_vec().into_boxed_slice();
                     let data = Arc::new(Mutex::new(Vec::new()));
                     env.insert(name, data.clone());
@@ -78,11 +85,14 @@ impl Scheme for EnvScheme {
             };
 
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            self.handles.write().insert(id, Handle {
-                data: data,
-                mode: MODE_FILE,
-                seek: 0
-            });
+            self.handles
+                .write()
+                .insert(id,
+                        Handle {
+                            data: data,
+                            mode: MODE_FILE,
+                            seek: 0,
+                        });
 
             Ok(id)
         }
@@ -146,9 +156,13 @@ impl Scheme for EnvScheme {
         let len = handle.data.lock().len();
         handle.seek = match whence {
             SEEK_SET => cmp::min(len, pos),
-            SEEK_CUR => cmp::max(0, cmp::min(len as isize, handle.seek as isize + pos as isize)) as usize,
+            SEEK_CUR => {
+                cmp::max(0,
+                         cmp::min(len as isize, handle.seek as isize + pos as isize)) as
+                usize
+            }
             SEEK_END => cmp::max(0, cmp::min(len as isize, len as isize + pos as isize)) as usize,
-            _ => return Err(Error::new(EINVAL))
+            _ => return Err(Error::new(EINVAL)),
         };
 
         Ok(handle.seek)
@@ -209,6 +223,10 @@ impl Scheme for EnvScheme {
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        self.handles
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 }

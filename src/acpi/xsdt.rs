@@ -15,22 +15,19 @@ impl Xsdt {
     }
 
     pub fn iter(&self) -> XsdtIter {
-        XsdtIter {
-            sdt: self.0,
-            i: 0
-        }
+        XsdtIter { sdt: self.0, i: 0 }
     }
 }
 
 pub struct XsdtIter {
     sdt: &'static Sdt,
-    i: usize
+    i: usize,
 }
 
 impl Iterator for XsdtIter {
     type Item = usize;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i < self.sdt.data_len()/mem::size_of::<u64>() {
+        if self.i < self.sdt.data_len() / mem::size_of::<u64>() {
             let item = unsafe { *(self.sdt.data_address() as *const u64).offset(self.i as isize) };
             self.i += 1;
             Some(item as usize)

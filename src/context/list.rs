@@ -12,7 +12,7 @@ use super::context::{Context, ContextId};
 /// Context list type
 pub struct ContextList {
     map: BTreeMap<ContextId, Arc<RwLock<Context>>>,
-    next_id: usize
+    next_id: usize,
 }
 
 impl ContextList {
@@ -20,7 +20,7 @@ impl ContextList {
     pub fn new() -> Self {
         ContextList {
             map: BTreeMap::new(),
-            next_id: 1
+            next_id: 1,
         }
     }
 
@@ -55,17 +55,22 @@ impl ContextList {
         let id = ContextId::from(self.next_id);
         self.next_id += 1;
 
-        assert!(self.map.insert(id, Arc::new(RwLock::new(Context::new(id)))).is_none());
+        assert!(self.map
+                    .insert(id, Arc::new(RwLock::new(Context::new(id))))
+                    .is_none());
 
-        Ok(self.map.get(&id).expect("Failed to insert new context. ID is out of bounds."))
+        Ok(self.map
+               .get(&id)
+               .expect("Failed to insert new context. ID is out of bounds."))
     }
 
     /// Spawn a context from a function.
-    pub fn spawn(&mut self, func: extern fn()) -> Result<&Arc<RwLock<Context>>> {
+    pub fn spawn(&mut self, func: extern "C" fn()) -> Result<&Arc<RwLock<Context>>> {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let mut fx = unsafe { Box::from_raw(::alloc::heap::allocate(512, 16) as *mut [u8; 512]) };
+            let mut fx =
+                unsafe { Box::from_raw(::alloc::heap::allocate(512, 16) as *mut [u8; 512]) };
             for b in fx.iter_mut() {
                 *b = 0;
             }
@@ -76,7 +81,9 @@ impl ContextList {
                 let func_ptr = stack.as_mut_ptr().offset(offset as isize);
                 *(func_ptr as *mut usize) = func as usize;
             }
-            context.arch.set_page_table(unsafe { paging::ActivePageTable::new().address() });
+            context
+                .arch
+                .set_page_table(unsafe { paging::ActivePageTable::new().address() });
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
             context.kfx = Some(fx);

@@ -31,7 +31,7 @@ pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
         a: a,
         b: file.number,
         c: c,
-        d: d
+        d: d,
     };
 
     scheme.handle(&mut packet);
@@ -99,22 +99,27 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
         let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
         let (scheme_id, scheme) = {
             let schemes = scheme::schemes();
-            let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+            let (scheme_id, scheme) = schemes
+                .get_name(scheme_ns, scheme_name)
+                .ok_or(Error::new(ENODEV))?;
             (scheme_id, scheme.clone())
         };
-        let file_id = scheme.open(reference_opt.unwrap_or(b""), flags, uid, gid)?;
+        let file_id = scheme
+            .open(reference_opt.unwrap_or(b""), flags, uid, gid)?;
         (scheme_id, file_id)
     };
 
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let context = context_lock.read();
-    context.add_file(::context::file::File {
-        scheme: scheme_id,
-        number: file_id,
-        flags: flags,
-        event: None,
-    }).ok_or(Error::new(EMFILE))
+    context
+        .add_file(::context::file::File {
+                      scheme: scheme_id,
+                      number: file_id,
+                      flags: flags,
+                      event: None,
+                  })
+        .ok_or(Error::new(EMFILE))
 }
 
 pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
@@ -126,19 +131,23 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let read_fd = context.add_file(::context::file::File {
-            scheme: scheme_id,
-            number: read_id,
-            flags: O_RDONLY | flags & !O_ACCMODE,
-            event: None,
-        }).ok_or(Error::new(EMFILE))?;
+        let read_fd = context
+            .add_file(::context::file::File {
+                          scheme: scheme_id,
+                          number: read_id,
+                          flags: O_RDONLY | flags & !O_ACCMODE,
+                          event: None,
+                      })
+            .ok_or(Error::new(EMFILE))?;
 
-        let write_fd = context.add_file(::context::file::File {
-            scheme: scheme_id,
-            number: write_id,
-            flags: O_WRONLY | flags & !O_ACCMODE,
-            event: None,
-        }).ok_or(Error::new(EMFILE))?;
+        let write_fd = context
+            .add_file(::context::file::File {
+                          scheme: scheme_id,
+                          number: write_id,
+                          flags: O_WRONLY | flags & !O_ACCMODE,
+                          event: None,
+                      })
+            .ok_or(Error::new(EMFILE))?;
 
         fds[0] = read_fd.into();
         fds[1] = write_fd.into();
@@ -165,7 +174,9 @@ pub fn chmod(path: &[u8], mode: u16) -> Result<usize> {
     let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
     let scheme = {
         let schemes = scheme::schemes();
-        let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+        let (_scheme_id, scheme) = schemes
+            .get_name(scheme_ns, scheme_name)
+            .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
     scheme.chmod(reference_opt.unwrap_or(b""), mode, uid, gid)
@@ -187,7 +198,9 @@ pub fn rmdir(path: &[u8]) -> Result<usize> {
     let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
     let scheme = {
         let schemes = scheme::schemes();
-        let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+        let (_scheme_id, scheme) = schemes
+            .get_name(scheme_ns, scheme_name)
+            .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
     scheme.rmdir(reference_opt.unwrap_or(b""), uid, gid)
@@ -209,7 +222,9 @@ pub fn unlink(path: &[u8]) -> Result<usize> {
     let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
     let scheme = {
         let schemes = scheme::schemes();
-        let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+        let (_scheme_id, scheme) = schemes
+            .get_name(scheme_ns, scheme_name)
+            .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
     scheme.unlink(reference_opt.unwrap_or(b""), uid, gid)
@@ -259,12 +274,14 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let context = context_lock.read();
-    context.add_file(::context::file::File {
-        scheme: file.scheme,
-        number: new_id,
-        flags: file.flags,
-        event: None,
-    }).ok_or(Error::new(EMFILE))
+    context
+        .add_file(::context::file::File {
+                      scheme: file.scheme,
+                      number: new_id,
+                      flags: file.flags,
+                      event: None,
+                  })
+        .ok_or(Error::new(EMFILE))
 }
 
 /// Duplicate file descriptor, replacing another
@@ -294,12 +311,15 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        context.insert_file(new_fd, ::context::file::File {
-            scheme: file.scheme,
-            number: new_id,
-            flags: file.flags,
-            event: None,
-        }).ok_or(Error::new(EBADF))
+        context
+            .insert_file(new_fd,
+                         ::context::file::File {
+                             scheme: file.scheme,
+                             number: new_id,
+                             flags: file.flags,
+                             event: None,
+                         })
+            .ok_or(Error::new(EBADF))
     }
 }
 
@@ -330,20 +350,18 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let context = context_lock.read();
         let mut files = context.files.lock();
         match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
-            Some(ref mut file) => match cmd {
-                F_GETFL => {
-                    Ok(file.flags)
-                },
-                F_SETFL => {
-                    let new_flags = (file.flags & O_ACCMODE) | (arg & ! O_ACCMODE);
-                    file.flags = new_flags;
-                    Ok(0)
-                },
-                _ => {
-                    Err(Error::new(EINVAL))
+            Some(ref mut file) => {
+                match cmd {
+                    F_GETFL => Ok(file.flags),
+                    F_SETFL => {
+                        let new_flags = (file.flags & O_ACCMODE) | (arg & !O_ACCMODE);
+                        file.flags = new_flags;
+                        Ok(0)
+                    }
+                    _ => Err(Error::new(EINVAL)),
                 }
-            },
-            None => Err(Error::new(EBADF))
+            }
+            None => Err(Error::new(EBADF)),
         }
     }
 }
@@ -358,12 +376,16 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
         match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => {
                 if let Some(event_id) = file.event.take() {
-                    println!("{:?}: {:?}:{}: events already registered: {}", fd, file.scheme, file.number, event_id);
+                    println!("{:?}: {:?}:{}: events already registered: {}",
+                             fd,
+                             file.scheme,
+                             file.number,
+                             event_id);
                     context::event::unregister(fd, file.scheme, event_id);
                 }
                 file.clone()
-            },
-            None => return Err(Error::new(EBADF))
+            }
+            None => return Err(Error::new(EBADF)),
         }
     };
 
@@ -397,7 +419,7 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
 
         let mut grants = context.grants.lock();
 
-        for i in 0 .. grants.len() {
+        for i in 0..grants.len() {
             let start = grants[i].start_address().get();
             let end = start + grants[i].size();
             if virtual_address >= start && virtual_address < end {

@@ -26,13 +26,16 @@ pub fn iopl(_level: usize, _stack_base: usize) -> Result<usize> {
 pub fn physalloc(size: usize) -> Result<usize> {
     enforce_root()?;
 
-    allocate_frames((size + 4095)/4096).ok_or(Error::new(ENOMEM)).map(|frame| frame.start_address().get())
+    allocate_frames((size + 4095) / 4096)
+        .ok_or(Error::new(ENOMEM))
+        .map(|frame| frame.start_address().get())
 }
 
 pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
     enforce_root()?;
 
-    deallocate_frames(Frame::containing_address(PhysicalAddress::new(physical_address)), (size + 4095)/4096);
+    deallocate_frames(Frame::containing_address(PhysicalAddress::new(physical_address)),
+                      (size + 4095) / 4096);
     //TODO: Check that no double free occured
     Ok(0)
 }
@@ -50,9 +53,9 @@ pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usi
 
         let mut grants = context.grants.lock();
 
-        let from_address = (physical_address/4096) * 4096;
+        let from_address = (physical_address / 4096) * 4096;
         let offset = physical_address - from_address;
-        let full_size = ((offset + size + 4095)/4096) * 4096;
+        let full_size = ((offset + size + 4095) / 4096) * 4096;
         let mut to_address = ::USER_GRANT_OFFSET;
 
         let mut entry_flags = entry::PRESENT | entry::NO_EXECUTE | entry::USER_ACCESSIBLE;
@@ -63,15 +66,14 @@ pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usi
             entry_flags |= entry::HUGE_PAGE;
         }
 
-        for i in 0 .. grants.len() {
+        for i in 0..grants.len() {
             let start = grants[i].start_address().get();
             if to_address + full_size < start {
-                grants.insert(i, Grant::physmap(
-                    PhysicalAddress::new(from_address),
-                    VirtualAddress::new(to_address),
-                    full_size,
-                    entry_flags
-                ));
+                grants.insert(i,
+                              Grant::physmap(PhysicalAddress::new(from_address),
+                                             VirtualAddress::new(to_address),
+                                             full_size,
+                                             entry_flags));
 
                 return Ok(to_address + offset);
             } else {
@@ -81,12 +83,10 @@ pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usi
             }
         }
 
-        grants.push(Grant::physmap(
-            PhysicalAddress::new(from_address),
-            VirtualAddress::new(to_address),
-            full_size,
-            entry_flags
-        ));
+        grants.push(Grant::physmap(PhysicalAddress::new(from_address),
+                                   VirtualAddress::new(to_address),
+                                   full_size,
+                                   entry_flags));
 
         Ok(to_address + offset)
     }
@@ -104,7 +104,7 @@ pub fn physunmap(virtual_address: usize) -> Result<usize> {
 
         let mut grants = context.grants.lock();
 
-        for i in 0 .. grants.len() {
+        for i in 0..grants.len() {
             let start = grants[i].start_address().get();
             let end = start + grants[i].size();
             if virtual_address >= start && virtual_address < end {
@@ -124,6 +124,6 @@ pub fn virttophys(virtual_address: usize) -> Result<usize> {
     let active_table = unsafe { ActivePageTable::new() };
     match active_table.translate(VirtualAddress::new(virtual_address)) {
         Some(physical_address) => Ok(physical_address.get()),
-        None => Err(Error::new(EFAULT))
+        None => Err(Error::new(EFAULT)),
     }
 }

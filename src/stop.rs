@@ -2,7 +2,7 @@ use acpi;
 use syscall::io::{Io, Pio};
 
 #[no_mangle]
-pub unsafe extern fn kstop() -> ! {
+pub unsafe extern "C" fn kstop() -> ! {
     println!("kstop");
 
     // ACPI shutdown

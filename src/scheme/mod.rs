@@ -90,7 +90,7 @@ pub struct SchemeList {
     map: BTreeMap<SchemeId, Arc<Box<Scheme + Send + Sync>>>,
     names: BTreeMap<SchemeNamespace, BTreeMap<Box<[u8]>, SchemeId>>,
     next_ns: usize,
-    next_id: usize
+    next_id: usize,
 }
 
 impl SchemeList {
@@ -100,7 +100,7 @@ impl SchemeList {
             map: BTreeMap::new(),
             names: BTreeMap::new(),
             next_ns: 0,
-            next_id: 1
+            next_id: 1,
         };
         list.new_root();
         list
@@ -112,14 +112,34 @@ impl SchemeList {
         self.next_ns += 1;
         self.names.insert(ns, BTreeMap::new());
 
-        self.insert(ns, Box::new(*b""), |scheme_id| Arc::new(Box::new(RootScheme::new(ns, scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"event"), |_| Arc::new(Box::new(EventScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"env"), |_| Arc::new(Box::new(EnvScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"memory"), |_| Arc::new(Box::new(MemoryScheme))).unwrap();
-        self.insert(ns, Box::new(*b"null"), |_| Arc::new(Box::new(NullScheme))).unwrap();
-        self.insert(ns, Box::new(*b"sys"), |_| Arc::new(Box::new(SysScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"time"), |scheme_id| Arc::new(Box::new(TimeScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"zero"), |_| Arc::new(Box::new(ZeroScheme))).unwrap();
+        self.insert(ns,
+                    Box::new(*b""),
+                    |scheme_id| Arc::new(Box::new(RootScheme::new(ns, scheme_id))))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"event"),
+                    |_| Arc::new(Box::new(EventScheme::new())))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"env"),
+                    |_| Arc::new(Box::new(EnvScheme::new())))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"memory"),
+                    |_| Arc::new(Box::new(MemoryScheme)))
+            .unwrap();
+        self.insert(ns, Box::new(*b"null"), |_| Arc::new(Box::new(NullScheme)))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"sys"),
+                    |_| Arc::new(Box::new(SysScheme::new())))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"time"),
+                    |scheme_id| Arc::new(Box::new(TimeScheme::new(scheme_id))))
+            .unwrap();
+        self.insert(ns, Box::new(*b"zero"), |_| Arc::new(Box::new(ZeroScheme)))
+            .unwrap();
 
         ns
     }
@@ -131,10 +151,22 @@ impl SchemeList {
         let ns = self.new_ns();
 
         // Debug, Initfs and IRQ are only available in the root namespace. Pipe is special
-        self.insert(ns, Box::new(*b"debug"), |scheme_id| Arc::new(Box::new(DebugScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"initfs"), |_| Arc::new(Box::new(InitFsScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"irq"), |scheme_id| Arc::new(Box::new(IrqScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"pipe"), |scheme_id| Arc::new(Box::new(PipeScheme::new(scheme_id)))).unwrap();
+        self.insert(ns,
+                    Box::new(*b"debug"),
+                    |scheme_id| Arc::new(Box::new(DebugScheme::new(scheme_id))))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"initfs"),
+                    |_| Arc::new(Box::new(InitFsScheme::new())))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"irq"),
+                    |scheme_id| Arc::new(Box::new(IrqScheme::new(scheme_id))))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"pipe"),
+                    |scheme_id| Arc::new(Box::new(PipeScheme::new(scheme_id))))
+            .unwrap();
     }
 
     /// Initialize the root namespace - with live disk
@@ -144,11 +176,26 @@ impl SchemeList {
         let ns = self.new_ns();
 
         // Debug, Disk, Initfs and IRQ are only available in the root namespace. Pipe is special
-        self.insert(ns, Box::new(*b"debug"), |scheme_id| Arc::new(Box::new(DebugScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"disk"), |_| Arc::new(Box::new(self::live::DiskScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"initfs"), |_| Arc::new(Box::new(InitFsScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"irq"), |scheme_id| Arc::new(Box::new(IrqScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"pipe"), |scheme_id| Arc::new(Box::new(PipeScheme::new(scheme_id)))).unwrap();
+        self.insert(ns,
+                    Box::new(*b"debug"),
+                    |scheme_id| Arc::new(Box::new(DebugScheme::new(scheme_id))))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"disk"),
+                    |_| Arc::new(Box::new(self::live::DiskScheme::new())))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"initfs"),
+                    |_| Arc::new(Box::new(InitFsScheme::new())))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"irq"),
+                    |scheme_id| Arc::new(Box::new(IrqScheme::new(scheme_id))))
+            .unwrap();
+        self.insert(ns,
+                    Box::new(*b"pipe"),
+                    |scheme_id| Arc::new(Box::new(PipeScheme::new(scheme_id))))
+            .unwrap();
     }
 
     pub fn make_ns(&mut self, from: SchemeNamespace, names: &[&[u8]]) -> Result<SchemeNamespace> {
@@ -164,7 +211,9 @@ impl SchemeList {
             };
 
             if let Some(ref mut names) = self.names.get_mut(&to) {
-                assert!(names.insert(name.to_vec().into_boxed_slice(), id).is_none());
+                assert!(names
+                            .insert(name.to_vec().into_boxed_slice(), id)
+                            .is_none());
             } else {
                 panic!("scheme namespace not found");
             }
@@ -177,7 +226,9 @@ impl SchemeList {
         self.map.iter()
     }
 
-    pub fn iter_name(&self, ns: SchemeNamespace) -> ::collections::btree_map::Iter<Box<[u8]>, SchemeId> {
+    pub fn iter_name(&self,
+                     ns: SchemeNamespace)
+                     -> ::collections::btree_map::Iter<Box<[u8]>, SchemeId> {
         self.names[&ns].iter()
     }
 
@@ -186,7 +237,10 @@ impl SchemeList {
         self.map.get(&id)
     }
 
-    pub fn get_name(&self, ns: SchemeNamespace, name: &[u8]) -> Option<(SchemeId, &Arc<Box<Scheme + Send + Sync>>)> {
+    pub fn get_name(&self,
+                    ns: SchemeNamespace,
+                    name: &[u8])
+                    -> Option<(SchemeId, &Arc<Box<Scheme + Send + Sync>>)> {
         if let Some(&id) = self.names[&ns].get(name) {
             self.get(id).map(|scheme| (id, scheme))
         } else {
@@ -195,7 +249,11 @@ impl SchemeList {
     }
 
     /// Create a new scheme.
-    pub fn insert<F>(&mut self, ns: SchemeNamespace, name: Box<[u8]>, scheme_fn: F) -> Result<SchemeId>
+    pub fn insert<F>(&mut self,
+                     ns: SchemeNamespace,
+                     name: Box<[u8]>,
+                     scheme_fn: F)
+                     -> Result<SchemeId>
         where F: Fn(SchemeId) -> Arc<Box<Scheme + Send + Sync>>
     {
         if self.names[&ns].contains_key(&name) {

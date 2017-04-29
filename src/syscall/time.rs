@@ -8,7 +8,7 @@ pub fn clock_gettime(clock: usize, time: &mut TimeSpec) -> Result<usize> {
     let arch_time = match clock {
         CLOCK_REALTIME => time::realtime(),
         CLOCK_MONOTONIC => time::monotonic(),
-        _ => return Err(Error::new(EINVAL))
+        _ => return Err(Error::new(EINVAL)),
     };
 
     time.tv_sec = arch_time.0 as i64;
@@ -30,7 +30,9 @@ pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize
         context.block();
     }
 
-    unsafe { context::switch(); }
+    unsafe {
+        context::switch();
+    }
 
     if let Some(mut rem) = rem_opt {
         //TODO let current = time::monotonic();
@@ -42,6 +44,8 @@ pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize
 }
 
 pub fn sched_yield() -> Result<usize> {
-    unsafe { context::switch(); }
+    unsafe {
+        context::switch();
+    }
     Ok(0)
 }

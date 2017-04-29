@@ -33,49 +33,71 @@ pub const GDT_F_PAGE_SIZE: u8 = 1 << 7;
 pub const GDT_F_PROTECTED_MODE: u8 = 1 << 6;
 pub const GDT_F_LONG_MODE: u8 = 1 << 5;
 
-static mut INIT_GDTR: DescriptorTablePointer = DescriptorTablePointer {
-    limit: 0,
-    base: 0
-};
+static mut INIT_GDTR: DescriptorTablePointer = DescriptorTablePointer { limit: 0, base: 0 };
 
-static mut INIT_GDT: [GdtEntry; 4] = [
-    // Null
-    GdtEntry::new(0, 0, 0, 0),
-    // Kernel code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // Kernel data
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // Kernel TLS
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE)
-];
+static mut INIT_GDT: [GdtEntry; 4] =
+    [// Null
+     GdtEntry::new(0, 0, 0, 0),
+     // Kernel code
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE |
+                   GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // Kernel data
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // Kernel TLS
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE)];
 
 #[thread_local]
-pub static mut GDTR: DescriptorTablePointer = DescriptorTablePointer {
-    limit: 0,
-    base: 0
-};
+pub static mut GDTR: DescriptorTablePointer = DescriptorTablePointer { limit: 0, base: 0 };
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 9] = [
-    // Null
-    GdtEntry::new(0, 0, 0, 0),
-    // Kernel code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // Kernel data
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // Kernel TLS
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // User code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // User data
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // User TLS
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // TSS
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
-    // TSS must be 16 bytes long, twice the normal size
-    GdtEntry::new(0, 0, 0, 0),
-];
+pub static mut GDT: [GdtEntry; 9] =
+    [// Null
+     GdtEntry::new(0, 0, 0, 0),
+     // Kernel code
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE |
+                   GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // Kernel data
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // Kernel TLS
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // User code
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE |
+                   GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // User data
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // User TLS
+     GdtEntry::new(0,
+                   0,
+                   GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+                   GDT_F_LONG_MODE),
+     // TSS
+     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
+     // TSS must be 16 bytes long, twice the normal size
+     GdtEntry::new(0, 0, 0, 0)];
 
 #[thread_local]
 pub static mut TSS: TaskStateSegment = TaskStateSegment {
@@ -85,7 +107,7 @@ pub static mut TSS: TaskStateSegment = TaskStateSegment {
     ist: [0; 7],
     reserved3: 0,
     reserved4: 0,
-    iomap_base: 0xFFFF
+    iomap_base: 0xFFFF,
 };
 
 /// Initialize GDT
@@ -149,7 +171,7 @@ pub struct GdtEntry {
     pub offsetm: u8,
     pub access: u8,
     pub flags_limith: u8,
-    pub offseth: u8
+    pub offseth: u8,
 }
 
 impl GdtEntry {
@@ -160,7 +182,7 @@ impl GdtEntry {
             offsetm: (offset >> 16) as u8,
             access: access,
             flags_limith: flags & 0xF0 | ((limit >> 16) as u8) & 0x0F,
-            offseth: (offset >> 24) as u8
+            offseth: (offset >> 24) as u8,
         }
     }
 

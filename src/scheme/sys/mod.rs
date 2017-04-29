@@ -23,7 +23,7 @@ struct Handle {
     path: &'static [u8],
     data: Vec<u8>,
     mode: u16,
-    seek: usize
+    seek: usize,
 }
 
 type SysFn = Fn() -> Result<Vec<u8>> + Send + Sync;
@@ -32,7 +32,7 @@ type SysFn = Fn() -> Result<Vec<u8>> + Send + Sync;
 pub struct SysScheme {
     next_id: AtomicUsize,
     files: BTreeMap<&'static [u8], Box<SysFn>>,
-    handles: RwLock<BTreeMap<usize, Handle>>
+    handles: RwLock<BTreeMap<usize, Handle>>,
 }
 
 impl SysScheme {
@@ -52,7 +52,7 @@ impl SysScheme {
         SysScheme {
             next_id: AtomicUsize::new(0),
             files: files,
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -65,32 +65,38 @@ impl Scheme for SysScheme {
         if path_trimmed.is_empty() {
             let mut data = Vec::new();
             for entry in self.files.iter() {
-                if ! data.is_empty() {
+                if !data.is_empty() {
                     data.push(b'\n');
                 }
                 data.extend_from_slice(entry.0);
             }
 
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            self.handles.write().insert(id, Handle {
-                path: b"",
-                data: data,
-                mode: MODE_DIR | 0o444,
-                seek: 0
-            });
-            return Ok(id)
+            self.handles
+                .write()
+                .insert(id,
+                        Handle {
+                            path: b"",
+                            data: data,
+                            mode: MODE_DIR | 0o444,
+                            seek: 0,
+                        });
+            return Ok(id);
         } else {
             //Have to iterate to get the path without allocation
             for entry in self.files.iter() {
                 if entry.0 == &path_trimmed.as_bytes() {
                     let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                    self.handles.write().insert(id, Handle {
-                        path: entry.0,
-                        data: entry.1()?,
-                        mode: MODE_FILE | 0o444,
-                        seek: 0
-                    });
-                    return Ok(id)
+                    self.handles
+                        .write()
+                        .insert(id,
+                                Handle {
+                                    path: entry.0,
+                                    data: entry.1()?,
+                                    mode: MODE_FILE | 0o444,
+                                    seek: 0,
+                                });
+                    return Ok(id);
                 }
             }
         }
@@ -106,12 +112,15 @@ impl Scheme for SysScheme {
         };
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Handle {
-            path: path,
-            data: data,
-            mode: mode,
-            seek: seek
-        });
+        self.handles
+            .write()
+            .insert(id,
+                    Handle {
+                        path: path,
+                        data: data,
+                        mode: mode,
+                        seek: seek,
+                    });
 
         Ok(id)
     }
@@ -136,9 +145,18 @@ impl Scheme for SysScheme {
 
         handle.seek = match whence {
             SEEK_SET => cmp::min(handle.data.len(), pos),
-            SEEK_CUR => cmp::max(0, cmp::min(handle.data.len() as isize, handle.seek as isize + pos as isize)) as usize,
-            SEEK_END => cmp::max(0, cmp::min(handle.data.len() as isize, handle.data.len() as isize + pos as isize)) as usize,
-            _ => return Err(Error::new(EINVAL))
+            SEEK_CUR => {
+                cmp::max(0,
+                         cmp::min(handle.data.len() as isize,
+                                  handle.seek as isize + pos as isize)) as usize
+            }
+            SEEK_END => {
+                cmp::max(0,
+                         cmp::min(handle.data.len() as isize,
+                                  handle.data.len() as isize + pos as isize)) as
+                usize
+            }
+            _ => return Err(Error::new(EINVAL)),
         };
 
         Ok(handle.seek)
@@ -182,6 +200,10 @@ impl Scheme for SysScheme {
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        self.handles
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 }
