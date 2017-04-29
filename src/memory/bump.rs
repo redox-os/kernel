@@ -43,6 +43,7 @@ impl BumpAllocator {
 }
 
 impl FrameAllocator for BumpAllocator {
+    #[allow(unused)]
     fn set_noncore(&mut self, noncore: bool) {}
     
     fn free_frames(&self) -> usize {
