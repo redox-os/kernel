@@ -14,11 +14,15 @@ pub struct Grant {
     start: VirtualAddress,
     size: usize,
     flags: EntryFlags,
-    mapped: bool
+    mapped: bool,
 }
 
 impl Grant {
-    pub fn physmap(from: PhysicalAddress, to: VirtualAddress, size: usize, flags: EntryFlags) -> Grant {
+    pub fn physmap(from: PhysicalAddress,
+                   to: VirtualAddress,
+                   size: usize,
+                   flags: EntryFlags)
+                   -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         let mut flush_all = MapperFlushAll::new();
@@ -26,7 +30,9 @@ impl Grant {
         let start_page = Page::containing_address(to);
         let end_page = Page::containing_address(VirtualAddress::new(to.get() + size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
-            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() - to.get() + from.get()));
+            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() -
+                                                                       to.get() +
+                                                                       from.get()));
             let result = active_table.map_to(page, frame, flags);
             flush_all.consume(result);
         }
@@ -37,11 +43,17 @@ impl Grant {
             start: to,
             size: size,
             flags: flags,
-            mapped: true
+            mapped: true,
         }
     }
 
-    pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
+    pub fn map_inactive(from: VirtualAddress,
+                        to: VirtualAddress,
+                        size: usize,
+                        flags: EntryFlags,
+                        new_table: &mut InactivePageTable,
+                        temporary_page: &mut TemporaryPage)
+                        -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         let mut frames = VecDeque::new();
@@ -49,7 +61,9 @@ impl Grant {
         let start_page = Page::containing_address(from);
         let end_page = Page::containing_address(VirtualAddress::new(from.get() + size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
-            let frame = active_table.translate_page(page).expect("grant references unmapped memory");
+            let frame = active_table
+                .translate_page(page)
+                .expect("grant references unmapped memory");
             frames.push_back(frame);
         }
 
@@ -57,10 +71,14 @@ impl Grant {
             let start_page = Page::containing_address(to);
             let end_page = Page::containing_address(VirtualAddress::new(to.get() + size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
-                let frame = frames.pop_front().expect("grant did not find enough frames");
+                let frame = frames
+                    .pop_front()
+                    .expect("grant did not find enough frames");
                 let result = mapper.map_to(page, frame, flags);
                 // Ignore result due to mapping on inactive table
-                unsafe { result.ignore(); }
+                unsafe {
+                    result.ignore();
+                }
             }
         });
 
@@ -68,7 +86,7 @@ impl Grant {
             start: to,
             size: size,
             flags: flags,
-            mapped: true
+            mapped: true,
         }
     }
 
@@ -92,7 +110,8 @@ impl Grant {
         let mut flush_all = MapperFlushAll::new();
 
         let start_page = Page::containing_address(self.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size -
+                                                                    1));
         for page in Page::range_inclusive(start_page, end_page) {
             let (result, _frame) = active_table.unmap_return(page, false);
             flush_all.consume(result);
@@ -103,18 +122,23 @@ impl Grant {
         self.mapped = false;
     }
 
-    pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
+    pub fn unmap_inactive(mut self,
+                          new_table: &mut InactivePageTable,
+                          temporary_page: &mut TemporaryPage) {
         assert!(self.mapped);
 
         let mut active_table = unsafe { ActivePageTable::new() };
 
         active_table.with(new_table, temporary_page, |mapper| {
             let start_page = Page::containing_address(self.start);
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+            let end_page =
+                Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 let (result, _frame) = mapper.unmap_return(page, false);
                 // This is not the active table, so the flush can be ignored
-                unsafe { result.ignore(); }
+                unsafe {
+                    result.ignore();
+                }
             }
         });
 
@@ -131,18 +155,22 @@ impl Drop for Grant {
 #[derive(Clone, Debug)]
 pub enum SharedMemory {
     Owned(Arc<Mutex<Memory>>),
-    Borrowed(Weak<Mutex<Memory>>)
+    Borrowed(Weak<Mutex<Memory>>),
 }
 
 impl SharedMemory {
-    pub fn with<F, T>(&self, f: F) -> T where F: FnOnce(&mut Memory) -> T {
+    pub fn with<F, T>(&self, f: F) -> T
+        where F: FnOnce(&mut Memory) -> T
+    {
         match *self {
             SharedMemory::Owned(ref memory_lock) => {
                 let mut memory = memory_lock.lock();
                 f(&mut *memory)
-            },
+            }
             SharedMemory::Borrowed(ref memory_weak) => {
-                let memory_lock = memory_weak.upgrade().expect("SharedMemory::Borrowed no longer valid");
+                let memory_lock = memory_weak
+                    .upgrade()
+                    .expect("SharedMemory::Borrowed no longer valid");
                 let mut memory = memory_lock.lock();
                 f(&mut *memory)
             }
@@ -151,8 +179,10 @@ impl SharedMemory {
 
     pub fn borrow(&self) -> SharedMemory {
         match *self {
-            SharedMemory::Owned(ref memory_lock) => SharedMemory::Borrowed(Arc::downgrade(memory_lock)),
-            SharedMemory::Borrowed(ref memory_lock) => SharedMemory::Borrowed(memory_lock.clone())
+            SharedMemory::Owned(ref memory_lock) => {
+                SharedMemory::Borrowed(Arc::downgrade(memory_lock))
+            }
+            SharedMemory::Borrowed(ref memory_lock) => SharedMemory::Borrowed(memory_lock.clone()),
         }
     }
 }
@@ -161,7 +191,7 @@ impl SharedMemory {
 pub struct Memory {
     start: VirtualAddress,
     size: usize,
-    flags: EntryFlags
+    flags: EntryFlags,
 }
 
 impl Memory {
@@ -169,7 +199,7 @@ impl Memory {
         let mut memory = Memory {
             start: start,
             size: size,
-            flags: flags
+            flags: flags,
         };
 
         memory.map(clear);
@@ -195,7 +225,8 @@ impl Memory {
 
     pub fn pages(&self) -> PageIter {
         let start_page = Page::containing_address(self.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size -
+                                                                    1));
         Page::range_inclusive(start_page, end_page)
     }
 
@@ -234,7 +265,10 @@ impl Memory {
 
     /// A complicated operation to move a piece of memory to a new page table
     /// It also allows for changing the address at the same time
-    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
+    pub fn move_to(&mut self,
+                   new_start: VirtualAddress,
+                   new_table: &mut InactivePageTable,
+                   temporary_page: &mut TemporaryPage) {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         let mut flush_all = MapperFlushAll::new();
@@ -244,10 +278,15 @@ impl Memory {
             flush_all.consume(result);
 
             active_table.with(new_table, temporary_page, |mapper| {
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address()
+                                                                                .get() -
+                                                                            self.start.get() +
+                                                                            new_start.get()));
                 let result = mapper.map_to(new_page, frame, self.flags);
                 // This is not the active table, so the flush can be ignored
-                unsafe { result.ignore(); }
+                unsafe {
+                    result.ignore();
+                }
             });
         }
 
@@ -278,8 +317,10 @@ impl Memory {
         if new_size > self.size {
             let mut flush_all = MapperFlushAll::new();
 
-            let start_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size));
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + new_size - 1));
+            let start_page = Page::containing_address(VirtualAddress::new(self.start.get() +
+                                                                          self.size));
+            let end_page =
+                Page::containing_address(VirtualAddress::new(self.start.get() + new_size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 if active_table.translate_page(page).is_none() {
                     let result = active_table.map(page, self.flags);
@@ -291,14 +332,18 @@ impl Memory {
 
             if clear {
                 unsafe {
-                    intrinsics::write_bytes((self.start.get() + self.size) as *mut u8, 0, new_size - self.size);
+                    intrinsics::write_bytes((self.start.get() + self.size) as *mut u8,
+                                            0,
+                                            new_size - self.size);
                 }
             }
         } else if new_size < self.size {
             let mut flush_all = MapperFlushAll::new();
 
-            let start_page = Page::containing_address(VirtualAddress::new(self.start.get() + new_size));
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+            let start_page = Page::containing_address(VirtualAddress::new(self.start.get() +
+                                                                          new_size));
+            let end_page =
+                Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 if active_table.translate_page(page).is_some() {
                     let result = active_table.unmap(page);
@@ -323,5 +368,5 @@ impl Drop for Memory {
 pub struct Tls {
     pub master: VirtualAddress,
     pub file_size: usize,
-    pub mem: Memory
+    pub mem: Memory,
 }

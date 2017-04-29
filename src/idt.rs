@@ -3,10 +3,7 @@ use x86::dtables::{self, DescriptorTablePointer};
 
 use interrupt::*;
 
-pub static mut IDTR: DescriptorTablePointer = DescriptorTablePointer {
-    limit: 0,
-    base: 0
-};
+pub static mut IDTR: DescriptorTablePointer = DescriptorTablePointer { limit: 0, base: 0 };
 
 pub static mut IDT: [IdtEntry; 256] = [IdtEntry::new(); 256];
 
@@ -90,7 +87,7 @@ pub struct IdtEntry {
     attribute: u8,
     offsetm: u16,
     offseth: u32,
-    zero2: u32
+    zero2: u32,
 }
 
 impl IdtEntry {
@@ -102,7 +99,7 @@ impl IdtEntry {
             attribute: 0,
             offsetm: 0,
             offseth: 0,
-            zero2: 0
+            zero2: 0,
         }
     }
 
@@ -118,7 +115,7 @@ impl IdtEntry {
     }
 
     // A function to set the offset more easily
-    pub fn set_func(&mut self, func: unsafe extern fn()) {
+    pub fn set_func(&mut self, func: unsafe extern "C" fn()) {
         self.set_flags(IDT_PRESENT | IDT_RING_0 | IDT_INTERRUPT);
         self.set_offset(8, func as usize);
     }

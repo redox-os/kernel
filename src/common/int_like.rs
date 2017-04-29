@@ -91,7 +91,7 @@ macro_rules! int_like {
 #[cfg(test)]
 fn test() {
     use core::mem::size_of;
-    use ::core::sync::atomic::AtomicUsize;
+    use core::sync::atomic::AtomicUsize;
 
     // Generate type `usize_like`.
     int_like!(UsizeLike, usize);
@@ -104,5 +104,3 @@ fn test() {
     assert_eq!(size_of::<UsizeLike2>(), size_of::<usize>());
     assert_eq!(size_of::<AtomicUsizeLike>(), size_of::<AtomicUsize>());
 }
-
-

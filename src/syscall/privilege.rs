@@ -73,15 +73,8 @@ pub fn setregid(rgid: u32, egid: u32) -> Result<usize> {
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let mut context = context_lock.write();
 
-    if (context.euid == 0
-    || rgid as i32 == -1
-    || rgid == context.egid
-    || rgid == context.rgid)
-    && (context.euid == 0
-    || egid as i32 == -1
-    || egid == context.egid
-    || egid == context.rgid)
-    {
+    if (context.euid == 0 || rgid as i32 == -1 || rgid == context.egid || rgid == context.rgid) &&
+       (context.euid == 0 || egid as i32 == -1 || egid == context.egid || egid == context.rgid) {
         if rgid as i32 != -1 {
             context.rgid = rgid;
         }
@@ -99,15 +92,10 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let mut context = context_lock.write();
 
-    if (context.euid == 0
-    || rns.into() as isize == -1
-    || rns == context.ens
-    || rns == context.rns)
-    && (context.euid == 0
-    || ens.into() as isize == -1
-    || ens == context.ens
-    || ens == context.rns)
-    {
+    if (context.euid == 0 || rns.into() as isize == -1 || rns == context.ens ||
+        rns == context.rns) &&
+       (context.euid == 0 || ens.into() as isize == -1 || ens == context.ens ||
+        ens == context.rns) {
         if rns.into() as isize != -1 {
             context.rns = rns;
         }
@@ -125,15 +113,8 @@ pub fn setreuid(ruid: u32, euid: u32) -> Result<usize> {
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let mut context = context_lock.write();
 
-    if (context.euid == 0
-    || ruid as i32 == -1
-    || ruid == context.euid
-    || ruid == context.ruid)
-    && (context.euid == 0
-    || euid as i32 == -1
-    || euid == context.euid
-    || euid == context.ruid)
-    {
+    if (context.euid == 0 || ruid as i32 == -1 || ruid == context.euid || ruid == context.ruid) &&
+       (context.euid == 0 || euid as i32 == -1 || euid == context.euid || euid == context.ruid) {
         if ruid as i32 != -1 {
             context.ruid = ruid;
         }

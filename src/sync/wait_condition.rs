@@ -6,14 +6,12 @@ use context::{self, Context};
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<Vec<Arc<RwLock<Context>>>>
+    contexts: Mutex<Vec<Arc<RwLock<Context>>>>,
 }
 
 impl WaitCondition {
     pub fn new() -> WaitCondition {
-        WaitCondition {
-            contexts: Mutex::new(Vec::new())
-        }
+        WaitCondition { contexts: Mutex::new(Vec::new()) }
     }
 
     pub fn notify(&self) -> usize {
@@ -29,7 +27,9 @@ impl WaitCondition {
         {
             let context_lock = {
                 let contexts = context::contexts();
-                let context_lock = contexts.current().expect("WaitCondition::wait: no context");
+                let context_lock = contexts
+                    .current()
+                    .expect("WaitCondition::wait: no context");
                 context_lock.clone()
             };
 
@@ -37,12 +37,14 @@ impl WaitCondition {
 
             self.contexts.lock().push(context_lock);
         }
-        unsafe { context::switch(); }
+        unsafe {
+            context::switch();
+        }
     }
 }
 
 impl Drop for WaitCondition {
-    fn drop(&mut self){
+    fn drop(&mut self) {
         self.notify();
     }
 }

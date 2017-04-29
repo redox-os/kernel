@@ -11,7 +11,9 @@ use syscall::scheme::Scheme;
 #[cfg(test)]
 mod gen {
     use collections::BTreeMap;
-    pub fn gen() -> BTreeMap<&'static [u8], (&'static [u8], bool)> { BTreeMap::new() }
+    pub fn gen() -> BTreeMap<&'static [u8], (&'static [u8], bool)> {
+        BTreeMap::new()
+    }
 }
 
 #[cfg(not(test))]
@@ -22,13 +24,13 @@ struct Handle {
     flags: usize,
     data: &'static [u8],
     mode: u16,
-    seek: usize
+    seek: usize,
 }
 
 pub struct InitFsScheme {
     next_id: AtomicUsize,
     files: BTreeMap<&'static [u8], (&'static [u8], bool)>,
-    handles: RwLock<BTreeMap<usize, Handle>>
+    handles: RwLock<BTreeMap<usize, Handle>>,
 }
 
 impl InitFsScheme {
@@ -36,7 +38,7 @@ impl InitFsScheme {
         InitFsScheme {
             next_id: AtomicUsize::new(0),
             files: gen::gen(),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -50,13 +52,20 @@ impl Scheme for InitFsScheme {
         for entry in self.files.iter() {
             if entry.0 == &path_trimmed.as_bytes() {
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                self.handles.write().insert(id, Handle {
-                    path: entry.0,
-                    flags: flags,
-                    data: (entry.1).0,
-                    mode: if (entry.1).1 { MODE_DIR |  0o755 } else { MODE_FILE | 0o744 },
-                    seek: 0
-                });
+                self.handles
+                    .write()
+                    .insert(id,
+                            Handle {
+                                path: entry.0,
+                                flags: flags,
+                                data: (entry.1).0,
+                                mode: if (entry.1).1 {
+                                    MODE_DIR | 0o755
+                                } else {
+                                    MODE_FILE | 0o744
+                                },
+                                seek: 0,
+                            });
 
                 return Ok(id);
             }
@@ -73,13 +82,16 @@ impl Scheme for InitFsScheme {
         };
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Handle {
-            path: path,
-            flags: flags,
-            data: data,
-            mode: mode,
-            seek: seek
-        });
+        self.handles
+            .write()
+            .insert(id,
+                    Handle {
+                        path: path,
+                        flags: flags,
+                        data: data,
+                        mode: mode,
+                        seek: seek,
+                    });
 
         Ok(id)
     }
@@ -104,9 +116,18 @@ impl Scheme for InitFsScheme {
 
         handle.seek = match whence {
             SEEK_SET => cmp::min(handle.data.len(), pos),
-            SEEK_CUR => cmp::max(0, cmp::min(handle.data.len() as isize, handle.seek as isize + pos as isize)) as usize,
-            SEEK_END => cmp::max(0, cmp::min(handle.data.len() as isize, handle.data.len() as isize + pos as isize)) as usize,
-            _ => return Err(Error::new(EINVAL))
+            SEEK_CUR => {
+                cmp::max(0,
+                         cmp::min(handle.data.len() as isize,
+                                  handle.seek as isize + pos as isize)) as usize
+            }
+            SEEK_END => {
+                cmp::max(0,
+                         cmp::min(handle.data.len() as isize,
+                                  handle.data.len() as isize + pos as isize)) as
+                usize
+            }
+            _ => return Err(Error::new(EINVAL)),
         };
 
         Ok(handle.seek)
@@ -160,6 +181,10 @@ impl Scheme for InitFsScheme {
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        self.handles
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 }

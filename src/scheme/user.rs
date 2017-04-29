@@ -27,11 +27,16 @@ pub struct UserInner {
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, usize)>>,
-    done: WaitMap<u64, usize>
+    done: WaitMap<u64, usize>,
 }
 
 impl UserInner {
-    pub fn new(root_id: SchemeId, handle_id: usize, name: Box<[u8]>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
+    pub fn new(root_id: SchemeId,
+               handle_id: usize,
+               name: Box<[u8]>,
+               flags: usize,
+               context: Weak<RwLock<Context>>)
+               -> UserInner {
         UserInner {
             root_id: root_id,
             handle_id: handle_id,
@@ -42,7 +47,7 @@ impl UserInner {
             context: context,
             todo: WaitQueue::new(),
             fmap: Mutex::new(BTreeMap::new()),
-            done: WaitMap::new()
+            done: WaitMap::new(),
         }
     }
 
@@ -55,22 +60,25 @@ impl UserInner {
         };
 
         self.call_inner(Packet {
-            id: self.next_id.fetch_add(1, Ordering::SeqCst),
-            pid: pid.into(),
-            uid: uid,
-            gid: gid,
-            a: a,
-            b: b,
-            c: c,
-            d: d
-        })
+                            id: self.next_id.fetch_add(1, Ordering::SeqCst),
+                            pid: pid.into(),
+                            uid: uid,
+                            gid: gid,
+                            a: a,
+                            b: b,
+                            c: c,
+                            d: d,
+                        })
     }
 
     fn call_inner(&self, packet: Packet) -> Result<usize> {
         let id = packet.id;
 
         let len = self.todo.send(packet);
-        context::event::trigger(self.root_id, self.handle_id, EVENT_READ, mem::size_of::<Packet>() * len);
+        context::event::trigger(self.root_id,
+                                self.handle_id,
+                                EVENT_READ,
+                                mem::size_of::<Packet>() * len);
 
         Error::demux(self.done.receive(&id))
     }
@@ -83,7 +91,11 @@ impl UserInner {
         UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), true)
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, writable: bool) -> Result<usize> {
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>,
+                     address: usize,
+                     size: usize,
+                     writable: bool)
+                     -> Result<usize> {
         if size == 0 {
             Ok(0)
         } else {
@@ -92,12 +104,13 @@ impl UserInner {
 
             let mut grants = context.grants.lock();
 
-            let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
+            let mut new_table =
+                unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
 
-            let from_address = (address/4096) * 4096;
+            let from_address = (address / 4096) * 4096;
             let offset = address - from_address;
-            let full_size = ((offset + size + 4095)/4096) * 4096;
+            let full_size = ((offset + size + 4095) / 4096) * 4096;
             let mut to_address = ::USER_GRANT_OFFSET;
 
             let mut flags = entry::PRESENT | entry::NO_EXECUTE | entry::USER_ACCESSIBLE;
@@ -105,17 +118,16 @@ impl UserInner {
                 flags |= entry::WRITABLE;
             }
 
-            for i in 0 .. grants.len() {
+            for i in 0..grants.len() {
                 let start = grants[i].start_address().get();
                 if to_address + full_size < start {
-                    grants.insert(i, Grant::map_inactive(
-                        VirtualAddress::new(from_address),
-                        VirtualAddress::new(to_address),
-                        full_size,
-                        flags,
-                        &mut new_table,
-                        &mut temporary_page
-                    ));
+                    grants.insert(i,
+                                  Grant::map_inactive(VirtualAddress::new(from_address),
+                                                      VirtualAddress::new(to_address),
+                                                      full_size,
+                                                      flags,
+                                                      &mut new_table,
+                                                      &mut temporary_page));
 
                     return Ok(to_address + offset);
                 } else {
@@ -125,14 +137,12 @@ impl UserInner {
                 }
             }
 
-            grants.push(Grant::map_inactive(
-                VirtualAddress::new(from_address),
-                VirtualAddress::new(to_address),
-                full_size,
-                flags,
-                &mut new_table,
-                &mut temporary_page
-            ));
+            grants.push(Grant::map_inactive(VirtualAddress::new(from_address),
+                                            VirtualAddress::new(to_address),
+                                            full_size,
+                                            flags,
+                                            &mut new_table,
+                                            &mut temporary_page));
 
             Ok(to_address + offset)
         }
@@ -147,14 +157,17 @@ impl UserInner {
 
             let mut grants = context.grants.lock();
 
-            let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
+            let mut new_table =
+                unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
 
-            for i in 0 .. grants.len() {
+            for i in 0..grants.len() {
                 let start = grants[i].start_address().get();
                 let end = start + grants[i].size();
                 if address >= start && address < end {
-                    grants.remove(i).unmap_inactive(&mut new_table, &mut temporary_page);
+                    grants
+                        .remove(i)
+                        .unmap_inactive(&mut new_table, &mut temporary_page);
 
                     return Ok(());
                 }
@@ -165,25 +178,38 @@ impl UserInner {
     }
 
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        let packet_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Packet, buf.len()/mem::size_of::<Packet>()) };
-        Ok(self.todo.receive_into(packet_buf, self.flags & O_NONBLOCK != O_NONBLOCK) * mem::size_of::<Packet>())
+        let packet_buf = unsafe {
+            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Packet,
+                                      buf.len() / mem::size_of::<Packet>())
+        };
+        Ok(self.todo
+               .receive_into(packet_buf, self.flags & O_NONBLOCK != O_NONBLOCK) *
+           mem::size_of::<Packet>())
     }
 
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
         let packet_size = mem::size_of::<Packet>();
-        let len = buf.len()/packet_size;
+        let len = buf.len() / packet_size;
         let mut i = 0;
         while i < len {
             let mut packet = unsafe { *(buf.as_ptr() as *const Packet).offset(i as isize) };
             if packet.id == 0 {
                 match packet.a {
-                    SYS_FEVENT => context::event::trigger(self.scheme_id.load(Ordering::SeqCst), packet.b, packet.c, packet.d),
-                    _ => println!("Unknown scheme -> kernel message {}", packet.a)
+                    SYS_FEVENT => {
+                        context::event::trigger(self.scheme_id.load(Ordering::SeqCst),
+                                                packet.b,
+                                                packet.c,
+                                                packet.d)
+                    }
+                    _ => println!("Unknown scheme -> kernel message {}", packet.a),
                 }
             } else {
                 if let Some((context_weak, size)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
-                        packet.a = Error::mux(UserInner::capture_inner(&context_weak, address, size, true));
+                        packet.a = Error::mux(UserInner::capture_inner(&context_weak,
+                                                                       address,
+                                                                       size,
+                                                                       true));
                     }
                 }
 
@@ -206,14 +232,12 @@ impl UserInner {
 
 /// UserInner has to be wrapped
 pub struct UserScheme {
-    inner: Weak<UserInner>
+    inner: Weak<UserInner>,
 }
 
 impl UserScheme {
     pub fn new(inner: Weak<UserInner>) -> UserScheme {
-        UserScheme {
-            inner: inner
-        }
+        UserScheme { inner: inner }
     }
 }
 
@@ -304,15 +328,15 @@ impl Scheme for UserScheme {
         inner.fmap.lock().insert(id, (context_lock, size));
 
         inner.call_inner(Packet {
-            id: id,
-            pid: pid.into(),
-            uid: uid,
-            gid: gid,
-            a: SYS_FMAP,
-            b: file,
-            c: offset,
-            d: size
-        })
+                             id: id,
+                             pid: pid.into(),
+                             uid: uid,
+                             gid: gid,
+                             a: SYS_FMAP,
+                             b: file,
+                             c: offset,
+                             d: size,
+                         })
     }
 
     fn fpath(&self, file: usize, buf: &mut [u8]) -> Result<usize> {

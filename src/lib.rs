@@ -102,6 +102,9 @@ pub mod time;
 #[cfg(test)]
 pub mod tests;
 
+#[cfg(feature = "multi_core")]
+static MULTI_CORE_IS_NOT_SUPPORTED_AT_THE_MOMENT: u8 = ();
+
 /// A unique number that identifies the current CPU - used for scheduling
 #[thread_local]
 static CPU_ID: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -113,7 +116,7 @@ pub fn cpu_id() -> usize {
 }
 
 /// The count of all CPUs that can have work scheduled
-static CPU_COUNT : AtomicUsize = ATOMIC_USIZE_INIT;
+static CPU_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
 
 /// Get the number of CPUs currently active
 #[inline(always)]
@@ -123,12 +126,15 @@ pub fn cpu_count() -> usize {
 
 /// Initialize userspace by running the initfs:bin/init process
 /// This function will also set the CWD to initfs:bin and open debug: as stdio
-pub extern fn userspace_init() {
+pub extern "C" fn userspace_init() {
     assert_eq!(syscall::chdir(b"initfs:"), Ok(0));
 
-    assert_eq!(syscall::open(b"debug:", syscall::flag::O_RDONLY).map(FileHandle::into), Ok(0));
-    assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
-    assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
+    assert_eq!(syscall::open(b"debug:", syscall::flag::O_RDONLY).map(FileHandle::into),
+               Ok(0));
+    assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into),
+               Ok(1));
+    assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into),
+               Ok(2));
 
     syscall::exec(b"/bin/init", &[]).expect("failed to execute init");
 
@@ -137,7 +143,7 @@ pub extern fn userspace_init() {
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 #[no_mangle]
-pub extern fn kmain(cpus: usize) {
+pub extern "C" fn kmain(cpus: usize) {
     CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
 
@@ -150,7 +156,7 @@ pub extern fn kmain(cpus: usize) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
             context.status = context::Status::Runnable;
-        },
+        }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
         }
@@ -171,44 +177,51 @@ pub extern fn kmain(cpus: usize) {
 
 /// This is the main kernel entry point for secondary CPUs
 #[no_mangle]
-pub extern fn kmain_ap(id: usize) {
+#[allow(unreachable_code, unused_variables)]
+pub extern "C" fn kmain_ap(id: usize) {
     loop {
         unsafe {
             interrupt::disable();
             interrupt::halt();
         }
     }
-    /*
-    CPU_ID.store(id, Ordering::SeqCst);
 
-    context::init();
+    if cfg!(feature = "multi_core") {
+        CPU_ID.store(id, Ordering::SeqCst);
 
-    let pid = syscall::getpid();
-    println!("AP {}: {:?}", id, pid);
+        context::init();
 
-    loop {
-        unsafe {
-            interrupt::disable();
-            if context::switch() {
-                interrupt::enable_and_nop();
-            } else {
-                // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                interrupt::enable_and_halt();
+        let pid = syscall::getpid();
+        println!("AP {}: {:?}", id, pid);
+
+        loop {
+            unsafe {
+                interrupt::disable();
+                if context::switch() {
+                    interrupt::enable_and_nop();
+                } else {
+                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
+                    interrupt::enable_and_halt();
+                }
             }
         }
     }
-    */
+
 }
 
 /// Allow exception handlers to send signal to arch-independant kernel
 #[no_mangle]
-pub extern fn ksignal(signal: usize) {
-    println!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
+pub extern "C" fn ksignal(signal: usize) {
+    println!("SIGNAL {}, CPU {}, PID {:?}",
+             signal,
+             cpu_id(),
+             context::context_id());
     {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            println!("NAME {}", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) });
+            println!("NAME {}",
+                     unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) });
         }
     }
     syscall::exit(signal & 0x7F);

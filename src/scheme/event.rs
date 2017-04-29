@@ -12,14 +12,14 @@ use syscall::scheme::Scheme;
 
 pub struct EventScheme {
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Weak<WaitQueue<Event>>>>
+    handles: RwLock<BTreeMap<usize, Weak<WaitQueue<Event>>>>,
 }
 
 impl EventScheme {
     pub fn new() -> EventScheme {
         EventScheme {
             next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -47,7 +47,9 @@ impl Scheme for EventScheme {
         };
 
         let new_id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(new_id, Arc::downgrade(&handle));
+        self.handles
+            .write()
+            .insert(new_id, Arc::downgrade(&handle));
         Ok(new_id)
     }
 
@@ -58,14 +60,20 @@ impl Scheme for EventScheme {
             handle_weak.upgrade().ok_or(Error::new(EBADF))?
         };
 
-        let event_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Event, buf.len()/mem::size_of::<Event>()) };
+        let event_buf = unsafe {
+            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Event,
+                                      buf.len() / mem::size_of::<Event>())
+        };
         Ok(handle.receive_into(event_buf, true) * mem::size_of::<Event>())
     }
 
     fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         let handles = self.handles.read();
         let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;
-        handle_weak.upgrade().ok_or(Error::new(EBADF)).and(Ok(0))
+        handle_weak
+            .upgrade()
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 
     fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -81,10 +89,17 @@ impl Scheme for EventScheme {
     fn fsync(&self, id: usize) -> Result<usize> {
         let handles = self.handles.read();
         let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;
-        handle_weak.upgrade().ok_or(Error::new(EBADF)).and(Ok(0))
+        handle_weak
+            .upgrade()
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        self.handles
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 }

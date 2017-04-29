@@ -51,7 +51,7 @@ impl Dsdt {
         }
 
         if data[i] == 0x0A {
-            i += 1;   // skip byteprefix
+            i += 1; // skip byteprefix
             if i >= data.len() {
                 return None;
             }
@@ -64,7 +64,7 @@ impl Dsdt {
         }
 
         if data[i] == 0x0A {
-            i += 1;   // skip byteprefix
+            i += 1; // skip byteprefix
             if i >= data.len() {
                 return None;
             }
@@ -74,5 +74,4 @@ impl Dsdt {
 
         Some((a, b))
     }
-
 }

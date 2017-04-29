@@ -1,9 +1,16 @@
 #[naked]
-pub unsafe extern fn syscall() {
+pub unsafe extern "C" fn syscall() {
     #[inline(never)]
     unsafe fn inner() {
-        extern {
-            fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack: usize) -> usize;
+        extern "C" {
+            fn syscall(a: usize,
+                       b: usize,
+                       c: usize,
+                       d: usize,
+                       e: usize,
+                       f: usize,
+                       stack: usize)
+                       -> usize;
         }
 
         let mut a;
@@ -54,8 +61,8 @@ pub unsafe extern fn syscall() {
 }
 
 #[naked]
-pub unsafe extern fn clone_ret() -> usize {
+pub unsafe extern "C" fn clone_ret() -> usize {
     asm!("pop rbp"
         : : : : "intel", "volatile");
-        0
+    0
 }

@@ -12,7 +12,8 @@ use syscall::scheme::Scheme;
 /// Pipes list
 pub static PIPE_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
 static PIPE_NEXT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
-static PIPES: Once<RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)>> = Once::new();
+static PIPES: Once<RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)>> =
+    Once::new();
 
 /// Initialize pipes, called if needed
 fn init_pipes() -> RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> {
@@ -20,12 +21,18 @@ fn init_pipes() -> RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<P
 }
 
 /// Get the global pipes list, const
-fn pipes() -> RwLockReadGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> {
+fn pipes
+    ()
+    -> RwLockReadGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)>
+{
     PIPES.call_once(init_pipes).read()
 }
 
 /// Get the global schemes list, mutable
-fn pipes_mut() -> RwLockWriteGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> {
+fn pipes_mut
+    ()
+    -> RwLockWriteGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)>
+{
     PIPES.call_once(init_pipes).write()
 }
 
@@ -82,7 +89,11 @@ impl Scheme for PipeScheme {
         // Clone to prevent deadlocks
         let pipe = {
             let pipes = pipes();
-            pipes.0.get(&id).map(|pipe| pipe.clone()).ok_or(Error::new(EBADF))?
+            pipes
+                .0
+                .get(&id)
+                .map(|pipe| pipe.clone())
+                .ok_or(Error::new(EBADF))?
         };
 
         pipe.read(buf)
@@ -92,7 +103,11 @@ impl Scheme for PipeScheme {
         // Clone to prevent deadlocks
         let pipe = {
             let pipes = pipes();
-            pipes.1.get(&id).map(|pipe| pipe.clone()).ok_or(Error::new(EBADF))?
+            pipes
+                .1
+                .get(&id)
+                .map(|pipe| pipe.clone())
+                .ok_or(Error::new(EBADF))?
         };
 
         pipe.write(buf)
@@ -140,7 +155,7 @@ impl Scheme for PipeScheme {
 pub struct PipeRead {
     flags: AtomicUsize,
     condition: Arc<WaitCondition>,
-    vec: Arc<Mutex<VecDeque<u8>>>
+    vec: Arc<Mutex<VecDeque<u8>>>,
 }
 
 impl PipeRead {
@@ -154,20 +169,20 @@ impl PipeRead {
 
     fn dup(&self) -> Result<Self> {
         Ok(PipeRead {
-            flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
-            condition: self.condition.clone(),
-            vec: self.vec.clone()
-        })
+               flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
+               condition: self.condition.clone(),
+               vec: self.vec.clone(),
+           })
     }
 
     fn fcntl(&self, cmd: usize, arg: usize) -> Result<usize> {
         match cmd {
             F_GETFL => Ok(self.flags.load(Ordering::SeqCst)),
             F_SETFL => {
-                self.flags.store(arg & ! O_ACCMODE, Ordering::SeqCst);
+                self.flags.store(arg & !O_ACCMODE, Ordering::SeqCst);
                 Ok(0)
-            },
-            _ => Err(Error::new(EINVAL))
+            }
+            _ => Err(Error::new(EINVAL)),
         }
     }
 
@@ -206,7 +221,7 @@ impl PipeRead {
 pub struct PipeWrite {
     flags: AtomicUsize,
     condition: Arc<WaitCondition>,
-    vec: Option<Weak<Mutex<VecDeque<u8>>>>
+    vec: Option<Weak<Mutex<VecDeque<u8>>>>,
 }
 
 impl PipeWrite {
@@ -220,20 +235,20 @@ impl PipeWrite {
 
     fn dup(&self) -> Result<Self> {
         Ok(PipeWrite {
-            flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
-            condition: self.condition.clone(),
-            vec: self.vec.clone()
-        })
+               flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
+               condition: self.condition.clone(),
+               vec: self.vec.clone(),
+           })
     }
 
     fn fcntl(&self, cmd: usize, arg: usize) -> Result<usize> {
         match cmd {
             F_GETFL => Ok(self.flags.load(Ordering::SeqCst)),
             F_SETFL => {
-                self.flags.store(arg & ! O_ACCMODE, Ordering::SeqCst);
+                self.flags.store(arg & !O_ACCMODE, Ordering::SeqCst);
                 Ok(0)
-            },
-            _ => Err(Error::new(EINVAL))
+            }
+            _ => Err(Error::new(EINVAL)),
         }
     }
 

@@ -28,7 +28,7 @@ pub fn resource() -> Result<Vec<u8>> {
             for (fd, f) in row.2.iter().enumerate() {
                 let file = match *f {
                     None => continue,
-                    Some(ref file) => file.clone()
+                    Some(ref file) => file.clone(),
                 };
 
                 let scheme = {
@@ -36,7 +36,12 @@ pub fn resource() -> Result<Vec<u8>> {
                     match schemes.get(file.scheme) {
                         Some(scheme) => scheme.clone(),
                         None => {
-                            let _ = writeln!(string, "  {:>4}: {:>8} {:>8} {:>08X}: no scheme", fd, file.scheme.into(), file.number, file.flags);
+                            let _ = writeln!(string,
+                                             "  {:>4}: {:>8} {:>8} {:>08X}: no scheme",
+                                             fd,
+                                             file.scheme.into(),
+                                             file.number,
+                                             file.flags);
                             continue;
                         }
                     }
@@ -46,10 +51,22 @@ pub fn resource() -> Result<Vec<u8>> {
                 match scheme.fpath(file.number, &mut fpath) {
                     Ok(path_len) => {
                         let fname = str::from_utf8(&fpath[..path_len]).unwrap_or("?");
-                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, file.scheme.into(), file.number, file.flags, fname);
-                    },
+                        let _ = writeln!(string,
+                                         "{:>6}: {:>8} {:>8} {:>08X}: {}",
+                                         fd,
+                                         file.scheme.into(),
+                                         file.number,
+                                         file.flags,
+                                         fname);
+                    }
                     Err(err) => {
-                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, file.scheme.into(), file.number, file.flags, err);
+                        let _ = writeln!(string,
+                                         "{:>6}: {:>8} {:>8} {:>08X}: {}",
+                                         fd,
+                                         file.scheme.into(),
+                                         file.number,
+                                         file.flags,
+                                         err);
                     }
                 }
             }

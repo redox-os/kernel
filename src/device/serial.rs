@@ -60,7 +60,7 @@ impl SerialPort {
             line_ctrl: Pio::new(base + 3),
             modem_ctrl: Pio::new(base + 4),
             line_sts: ReadOnly::new(Pio::new(base + 5)),
-            modem_sts: ReadOnly::new(Pio::new(base + 6))
+            modem_sts: ReadOnly::new(Pio::new(base + 6)),
         }
     }
 
@@ -89,15 +89,15 @@ impl SerialPort {
     pub fn send(&mut self, data: u8) {
         match data {
             8 | 0x7F => {
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while !self.line_sts().contains(OUTPUT_EMPTY) {}
                 self.data.write(8);
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while !self.line_sts().contains(OUTPUT_EMPTY) {}
                 self.data.write(b' ');
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while !self.line_sts().contains(OUTPUT_EMPTY) {}
                 self.data.write(8);
-            },
+            }
             _ => {
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while !self.line_sts().contains(OUTPUT_EMPTY) {}
                 self.data.write(data);
             }
         }

@@ -44,10 +44,12 @@ pub struct Table<L: TableLevel> {
     level: PhantomData<L>,
 }
 
-impl<L> Table<L> where L: TableLevel {
+impl<L> Table<L>
+    where L: TableLevel
+{
     pub fn is_unused(&self) -> bool {
         for entry in self.entries.iter() {
-            if ! entry.is_unused() {
+            if !entry.is_unused() {
                 return false;
             }
         }
@@ -62,13 +64,17 @@ impl<L> Table<L> where L: TableLevel {
     }
 }
 
-impl<L> Table<L> where L: HierarchicalLevel {
+impl<L> Table<L>
+    where L: HierarchicalLevel
+{
     pub fn next_table(&self, index: usize) -> Option<&Table<L::NextLevel>> {
-        self.next_table_address(index).map(|address| unsafe { &*(address as *const _) })
+        self.next_table_address(index)
+            .map(|address| unsafe { &*(address as *const _) })
     }
 
     pub fn next_table_mut(&mut self, index: usize) -> Option<&mut Table<L::NextLevel>> {
-        self.next_table_address(index).map(|address| unsafe { &mut *(address as *mut _) })
+        self.next_table_address(index)
+            .map(|address| unsafe { &mut *(address as *mut _) })
     }
 
     pub fn next_table_create(&mut self, index: usize) -> &mut Table<L::NextLevel> {
@@ -93,7 +99,9 @@ impl<L> Table<L> where L: HierarchicalLevel {
     }
 }
 
-impl<L> Index<usize> for Table<L> where L: TableLevel {
+impl<L> Index<usize> for Table<L>
+    where L: TableLevel
+{
     type Output = Entry;
 
     fn index(&self, index: usize) -> &Entry {
@@ -101,7 +109,9 @@ impl<L> Index<usize> for Table<L> where L: TableLevel {
     }
 }
 
-impl<L> IndexMut<usize> for Table<L> where L: TableLevel {
+impl<L> IndexMut<usize> for Table<L>
+    where L: TableLevel
+{
     fn index_mut(&mut self, index: usize) -> &mut Entry {
         &mut self.entries[index]
     }

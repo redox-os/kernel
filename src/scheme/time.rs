@@ -14,7 +14,7 @@ use time;
 pub struct TimeScheme {
     scheme_id: SchemeId,
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, usize>>
+    handles: RwLock<BTreeMap<usize, usize>>,
 }
 
 impl TimeScheme {
@@ -22,7 +22,7 @@ impl TimeScheme {
         TimeScheme {
             scheme_id: scheme_id,
             next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -36,7 +36,7 @@ impl Scheme for TimeScheme {
         match clock {
             CLOCK_REALTIME => (),
             CLOCK_MONOTONIC => (),
-            _ => return Err(Error::new(ENOENT))
+            _ => return Err(Error::new(ENOENT)),
         }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
@@ -62,14 +62,17 @@ impl Scheme for TimeScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        let time_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut TimeSpec, buf.len()/mem::size_of::<TimeSpec>()) };
+        let time_buf = unsafe {
+            slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut TimeSpec,
+                                      buf.len() / mem::size_of::<TimeSpec>())
+        };
 
         let mut i = 0;
         while i < time_buf.len() {
             let arch_time = match clock {
                 CLOCK_REALTIME => time::realtime(),
                 CLOCK_MONOTONIC => time::monotonic(),
-                _ => return Err(Error::new(EINVAL))
+                _ => return Err(Error::new(EINVAL)),
             };
             time_buf[i].tv_sec = arch_time.0 as i64;
             time_buf[i].tv_nsec = arch_time.1 as i32;
@@ -85,7 +88,10 @@ impl Scheme for TimeScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        let time_buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const TimeSpec, buf.len()/mem::size_of::<TimeSpec>()) };
+        let time_buf = unsafe {
+            slice::from_raw_parts(buf.as_ptr() as *const TimeSpec,
+                                  buf.len() / mem::size_of::<TimeSpec>())
+        };
 
         let mut i = 0;
         while i < time_buf.len() {
@@ -101,7 +107,7 @@ impl Scheme for TimeScheme {
         Ok(0)
     }
 
-    fn fevent(&self, id: usize, _flags: usize) ->  Result<usize> {
+    fn fevent(&self, id: usize, _flags: usize) -> Result<usize> {
         let handles = self.handles.read();
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(id))
     }
@@ -127,6 +133,10 @@ impl Scheme for TimeScheme {
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        self.handles
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(0))
     }
 }

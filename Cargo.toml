@@ -27,3 +27,4 @@ default-features = false
 [features]
 default = []
 live = []
+multi_core = []

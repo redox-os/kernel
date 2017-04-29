@@ -51,7 +51,9 @@ pub unsafe fn halt() {
 /// Safe because it is similar to a NOP, and has no memory effects
 #[inline(always)]
 pub fn pause() {
-    unsafe { asm!("pause" : : : : "intel", "volatile"); }
+    unsafe {
+        asm!("pause" : : : : "intel", "volatile");
+    }
 }
 
 /// Get a stack trace
@@ -66,7 +68,12 @@ pub unsafe fn stack_trace() {
     let active_table = ActivePageTable::new();
     for _frame in 0..64 {
         if let Some(rip_rbp) = rbp.checked_add(mem::size_of::<usize>()) {
-            if active_table.translate(VirtualAddress::new(rbp)).is_some() && active_table.translate(VirtualAddress::new(rip_rbp)).is_some() {
+            if active_table
+                   .translate(VirtualAddress::new(rbp))
+                   .is_some() &&
+               active_table
+                   .translate(VirtualAddress::new(rip_rbp))
+                   .is_some() {
                 let rip = *(rip_rbp as *const usize);
                 if rip == 0 {
                     println!(" {:>016X}: EMPTY RETURN", rbp);

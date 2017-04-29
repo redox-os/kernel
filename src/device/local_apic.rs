@@ -7,7 +7,7 @@ use paging::{entry, ActivePageTable, PhysicalAddress, Page, VirtualAddress};
 
 pub static mut LOCAL_APIC: LocalApic = LocalApic {
     address: 0,
-    x2: false
+    x2: false,
 };
 
 pub unsafe fn init(active_table: &mut ActivePageTable) {
@@ -21,7 +21,7 @@ pub unsafe fn init_ap() {
 /// Local APIC
 pub struct LocalApic {
     pub address: usize,
-    pub x2: bool
+    pub x2: bool,
 }
 
 impl LocalApic {
@@ -29,10 +29,14 @@ impl LocalApic {
         self.address = (rdmsr(IA32_APIC_BASE) as usize & 0xFFFF0000) + ::KERNEL_OFFSET;
         self.x2 = CpuId::new().get_feature_info().unwrap().has_x2apic();
 
-        if ! self.x2 {
+        if !self.x2 {
             let page = Page::containing_address(VirtualAddress::new(self.address));
-            let frame = Frame::containing_address(PhysicalAddress::new(self.address - ::KERNEL_OFFSET));
-            let result = active_table.map_to(page, frame, entry::PRESENT | entry::WRITABLE | entry::NO_EXECUTE);
+            let frame = Frame::containing_address(PhysicalAddress::new(self.address -
+                                                                       ::KERNEL_OFFSET));
+            let result =
+                active_table.map_to(page,
+                                    frame,
+                                    entry::PRESENT | entry::WRITABLE | entry::NO_EXECUTE);
             result.flush(active_table);
         }
 
@@ -76,15 +80,15 @@ impl LocalApic {
         if self.x2 {
             unsafe { rdmsr(IA32_X2APIC_ICR) }
         } else {
-            unsafe {
-                (self.read(0x310) as u64) << 32 | self.read(0x300) as u64
-            }
+            unsafe { (self.read(0x310) as u64) << 32 | self.read(0x300) as u64 }
         }
     }
 
     pub fn set_icr(&mut self, value: u64) {
         if self.x2 {
-            unsafe { wrmsr(IA32_X2APIC_ICR, value); }
+            unsafe {
+                wrmsr(IA32_X2APIC_ICR, value);
+            }
         } else {
             unsafe {
                 while self.read(0x300) & 1 << 12 == 1 << 12 {}

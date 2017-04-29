@@ -83,9 +83,7 @@ pub struct Mapper {
 impl Mapper {
     /// Create a new page table
     pub unsafe fn new() -> Mapper {
-        Mapper {
-            p4: Unique::new(table::P4),
-        }
+        Mapper { p4: Unique::new(table::P4) }
     }
 
     pub fn p4(&self) -> &Table<Level4> {
@@ -103,10 +101,12 @@ impl Mapper {
         let mut p1 = p2.next_table_create(page.p2_index());
 
         assert!(p1[page.p1_index()].is_unused(),
-            "{:X}: Set to {:X}: {:?}, requesting {:X}: {:?}",
-            page.start_address().get(),
-            p1[page.p1_index()].address().get(), p1[page.p1_index()].flags(),
-            frame.start_address().get(), flags);
+                "{:X}: Set to {:X}: {:?}, requesting {:X}: {:?}",
+                page.start_address().get(),
+                p1[page.p1_index()].address().get(),
+                p1[page.p1_index()].flags(),
+                frame.start_address().get(),
+                flags);
         p1[page.p1_index()].set(frame, flags | entry::PRESENT);
         MapperFlush::new(page)
     }
@@ -119,10 +119,16 @@ impl Mapper {
 
     /// Update flags for a page
     pub fn remap(&mut self, page: Page, flags: EntryFlags) -> MapperFlush {
-        let mut p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("failed to remap: no p3");
-        let mut p2 = p3.next_table_mut(page.p3_index()).expect("failed to remap: no p2");
-        let mut p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
-        let frame = p1[page.p1_index()].pointed_frame().expect("failed to remap: not mapped");
+        let mut p3 = self.p4_mut()
+            .next_table_mut(page.p4_index())
+            .expect("failed to remap: no p3");
+        let mut p2 = p3.next_table_mut(page.p3_index())
+            .expect("failed to remap: no p2");
+        let mut p1 = p2.next_table_mut(page.p2_index())
+            .expect("failed to remap: no p1");
+        let frame = p1[page.p1_index()]
+            .pointed_frame()
+            .expect("failed to remap: not mapped");
         p1[page.p1_index()].set(frame, flags | entry::PRESENT);
         MapperFlush::new(page)
     }
@@ -138,46 +144,57 @@ impl Mapper {
 
         let p4 = self.p4_mut();
         {
-            let p3 = p4.next_table_mut(page.p4_index()).expect("unmap_inner: p3 not found");
+            let p3 = p4.next_table_mut(page.p4_index())
+                .expect("unmap_inner: p3 not found");
             {
-                let p2 = p3.next_table_mut(page.p3_index()).expect("unmap_inner: p2 not found");
+                let p2 = p3.next_table_mut(page.p3_index())
+                    .expect("unmap_inner: p2 not found");
                 {
-                    let p1 = p2.next_table_mut(page.p2_index()).expect("unmap_inner: p1 not found");
+                    let p1 = p2.next_table_mut(page.p2_index())
+                        .expect("unmap_inner: p1 not found");
 
-                    frame = p1[page.p1_index()].pointed_frame().expect("unmap_inner: frame not found");
+                    frame = p1[page.p1_index()]
+                        .pointed_frame()
+                        .expect("unmap_inner: frame not found");
                     p1[page.p1_index()].set_unused();
 
-                    if keep_parents || ! p1.is_unused() {
+                    if keep_parents || !p1.is_unused() {
                         return frame;
                     }
                 }
 
                 {
-                    let p1_frame = p2[page.p2_index()].pointed_frame().expect("unmap_inner: p1 frame not found");
+                    let p1_frame = p2[page.p2_index()]
+                        .pointed_frame()
+                        .expect("unmap_inner: p1 frame not found");
                     //println!("Free p1 {:?}", p1_frame);
                     p2[page.p2_index()].set_unused();
                     deallocate_frames(p1_frame, 1);
                 }
 
-                if keep_parents || ! p2.is_unused() {
+                if keep_parents || !p2.is_unused() {
                     return frame;
                 }
             }
 
             {
-                let p2_frame = p3[page.p3_index()].pointed_frame().expect("unmap_inner: p2 frame not found");
+                let p2_frame = p3[page.p3_index()]
+                    .pointed_frame()
+                    .expect("unmap_inner: p2 frame not found");
                 //println!("Free p2 {:?}", p2_frame);
                 p3[page.p3_index()].set_unused();
                 deallocate_frames(p2_frame, 1);
             }
 
-            if keep_parents || ! p3.is_unused() {
+            if keep_parents || !p3.is_unused() {
                 return frame;
             }
         }
 
         {
-            let p3_frame = p4[page.p4_index()].pointed_frame().expect("unmap_inner: p3 frame not found");
+            let p3_frame = p4[page.p4_index()]
+                .pointed_frame()
+                .expect("unmap_inner: p3 frame not found");
             //println!("Free p3 {:?}", p3_frame);
             p4[page.p4_index()].set_unused();
             deallocate_frames(p3_frame, 1);
@@ -200,14 +217,16 @@ impl Mapper {
     }
 
     pub fn translate_page(&self, page: Page) -> Option<Frame> {
-        self.p4().next_table(page.p4_index())
+        self.p4()
+            .next_table(page.p4_index())
             .and_then(|p3| p3.next_table(page.p3_index()))
             .and_then(|p2| p2.next_table(page.p2_index()))
             .and_then(|p1| p1[page.p1_index()].pointed_frame())
     }
 
     pub fn translate_page_flags(&self, page: Page) -> Option<EntryFlags> {
-        self.p4().next_table(page.p4_index())
+        self.p4()
+            .next_table(page.p4_index())
             .and_then(|p3| p3.next_table(page.p3_index()))
             .and_then(|p2| p2.next_table(page.p2_index()))
             .and_then(|p1| Some(p1[page.p1_index()].flags()))

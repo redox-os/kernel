@@ -26,7 +26,7 @@ pub fn debug_input(b: u8) {
 
 pub struct DebugScheme {
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, usize>>
+    handles: RwLock<BTreeMap<usize, usize>>,
 }
 
 impl DebugScheme {
@@ -34,7 +34,7 @@ impl DebugScheme {
         DEBUG_SCHEME_ID.store(scheme_id, Ordering::SeqCst);
         DebugScheme {
             next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
+            handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
@@ -42,7 +42,7 @@ impl DebugScheme {
 impl Scheme for DebugScheme {
     fn open(&self, _path: &[u8], flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, flags & ! O_ACCMODE);
+        self.handles.write().insert(id, flags & !O_ACCMODE);
 
         Ok(id)
     }
@@ -68,7 +68,9 @@ impl Scheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        Ok(INPUT.call_once(init_input).receive_into(buf, flags & O_NONBLOCK != O_NONBLOCK))
+        Ok(INPUT
+               .call_once(init_input)
+               .receive_into(buf, flags & O_NONBLOCK != O_NONBLOCK))
     }
 
     /// Write the `buffer` to the `file`
@@ -94,10 +96,10 @@ impl Scheme for DebugScheme {
             match cmd {
                 F_GETFL => Ok(*flags),
                 F_SETFL => {
-                    *flags = arg & ! O_ACCMODE;
+                    *flags = arg & !O_ACCMODE;
                     Ok(0)
-                },
-                _ => Err(Error::new(EINVAL))
+                }
+                _ => Err(Error::new(EINVAL)),
             }
         } else {
             Err(Error::new(EBADF))

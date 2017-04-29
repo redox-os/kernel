@@ -46,10 +46,12 @@ fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static S
     // Map extra SDT frames if required
     {
         let start_page = Page::containing_address(VirtualAddress::new(sdt_address + 4096));
-        let end_page = Page::containing_address(VirtualAddress::new(sdt_address + sdt.length as usize));
+        let end_page = Page::containing_address(VirtualAddress::new(sdt_address +
+                                                                    sdt.length as usize));
         for page in Page::range_inclusive(start_page, end_page) {
             if active_table.translate_page(page).is_none() {
-                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
+                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address()
+                                                                               .get()));
                 let result = active_table.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE);
                 result.flush(active_table);
             }
@@ -76,7 +78,7 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
     } else if let Some(madt) = Madt::new(sdt) {
         println!(": {:>08X}: {}", madt.local_address, madt.flags);
 
-        let mut local_apic = unsafe { &mut LOCAL_APIC };
+        let local_apic = unsafe { &mut LOCAL_APIC };
 
         let me = local_apic.id() as u8;
 
@@ -86,98 +88,108 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
             println!("    XAPIC {}: {:>08X}", me, local_apic.address);
         }
 
-        /*
-        let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
-        let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
+        if cfg!(feature = "multi_core") {
+            let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
+            let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
 
-        // Map trampoline
-        let result = active_table.map_to(trampoline_page, trampoline_frame, entry::PRESENT | entry::WRITABLE);
-        result.flush(active_table);
+            // Map trampoline
+            let result = active_table.map_to(trampoline_page,
+                                             trampoline_frame,
+                                             entry::PRESENT | entry::WRITABLE);
+            result.flush(active_table);
 
-        for madt_entry in madt.iter() {
-            println!("      {:?}", madt_entry);
-            match madt_entry {
-                MadtEntry::LocalApic(ap_local_apic) => if ap_local_apic.id == me {
-                    println!("        This is my local APIC");
-                } else {
-                    if ap_local_apic.flags & 1 == 1 {
-                        // Increase CPU ID
-                        CPU_COUNT.fetch_add(1, Ordering::SeqCst);
+            for madt_entry in madt.iter() {
+                println!("      {:?}", madt_entry);
+                match madt_entry {
+                    MadtEntry::LocalApic(ap_local_apic) => {
+                        if ap_local_apic.id == me {
+                            println!("        This is my local APIC");
+                        } else {
+                            if ap_local_apic.flags & 1 == 1 {
+                                // Increase CPU ID
+                                CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 
-                        // Allocate a stack
-                        let stack_start = allocate_frames(64).expect("no more frames in acpi stack_start").start_address().get() + ::KERNEL_OFFSET;
-                        let stack_end = stack_start + 64 * 4096;
+                                // Allocate a stack
+                                let stack_start = allocate_frames(64)
+                                    .expect("no more frames in acpi stack_start")
+                                    .start_address()
+                                    .get() +
+                                                  ::KERNEL_OFFSET;
+                                let stack_end = stack_start + 64 * 4096;
 
-                        let ap_ready = TRAMPOLINE as *mut u64;
-                        let ap_cpu_id = unsafe { ap_ready.offset(1) };
-                        let ap_page_table = unsafe { ap_ready.offset(2) };
-                        let ap_stack_start = unsafe { ap_ready.offset(3) };
-                        let ap_stack_end = unsafe { ap_ready.offset(4) };
-                        let ap_code = unsafe { ap_ready.offset(5) };
+                                let ap_ready = TRAMPOLINE as *mut u64;
+                                let ap_cpu_id = unsafe { ap_ready.offset(1) };
+                                let ap_page_table = unsafe { ap_ready.offset(2) };
+                                let ap_stack_start = unsafe { ap_ready.offset(3) };
+                                let ap_stack_end = unsafe { ap_ready.offset(4) };
+                                let ap_code = unsafe { ap_ready.offset(5) };
 
-                        // Set the ap_ready to 0, volatile
-                        unsafe { atomic_store(ap_ready, 0) };
-                        unsafe { atomic_store(ap_cpu_id, ap_local_apic.id as u64) };
-                        unsafe { atomic_store(ap_page_table, active_table.address() as u64) };
-                        unsafe { atomic_store(ap_stack_start, stack_start as u64) };
-                        unsafe { atomic_store(ap_stack_end, stack_end as u64) };
-                        unsafe { atomic_store(ap_code, kstart_ap as u64) };
-                        AP_READY.store(false, Ordering::SeqCst);
+                                // Set the ap_ready to 0, volatile
+                                unsafe { atomic_store(ap_ready, 0) };
+                                unsafe { atomic_store(ap_cpu_id, ap_local_apic.id as u64) };
+                                unsafe {
+                                    atomic_store(ap_page_table, active_table.address() as u64)
+                                };
+                                unsafe { atomic_store(ap_stack_start, stack_start as u64) };
+                                unsafe { atomic_store(ap_stack_end, stack_end as u64) };
+                                unsafe { atomic_store(ap_code, kstart_ap as u64) };
+                                AP_READY.store(false, Ordering::SeqCst);
 
-                        print!("        AP {}:", ap_local_apic.id);
+                                print!("        AP {}:", ap_local_apic.id);
 
-                        // Send INIT IPI
-                        {
-                            let mut icr = 0x4500;
-                            if local_apic.x2 {
-                                icr |= (ap_local_apic.id as u64) << 32;
+                                // Send INIT IPI
+                                {
+                                    let mut icr = 0x4500;
+                                    if local_apic.x2 {
+                                        icr |= (ap_local_apic.id as u64) << 32;
+                                    } else {
+                                        icr |= (ap_local_apic.id as u64) << 56;
+                                    }
+                                    print!(" IPI...");
+                                    local_apic.set_icr(icr);
+                                }
+
+                                // Send START IPI
+                                {
+                                    //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
+                                    let ap_segment = (AP_STARTUP >> 12) & 0xFF;
+                                    let mut icr = 0x4600 | ap_segment as u64;
+
+                                    if local_apic.x2 {
+                                        icr |= (ap_local_apic.id as u64) << 32;
+                                    } else {
+                                        icr |= (ap_local_apic.id as u64) << 56;
+                                    }
+
+                                    print!(" SIPI...");
+                                    local_apic.set_icr(icr);
+                                }
+
+                                // Wait for trampoline ready
+                                print!(" Wait...");
+                                while unsafe { atomic_load(ap_ready) } == 0 {
+                                    interrupt::pause();
+                                }
+                                print!(" Trampoline...");
+                                while !AP_READY.load(Ordering::SeqCst) {
+                                    interrupt::pause();
+                                }
+                                println!(" Ready");
+
+                                active_table.flush_all();
                             } else {
-                                icr |= (ap_local_apic.id as u64) << 56;
+                                println!("        CPU Disabled");
                             }
-                            print!(" IPI...");
-                            local_apic.set_icr(icr);
                         }
-
-                        // Send START IPI
-                        {
-                            //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
-                            let ap_segment = (AP_STARTUP >> 12) & 0xFF;
-                            let mut icr = 0x4600 | ap_segment as u64;
-
-                            if local_apic.x2 {
-                                icr |= (ap_local_apic.id as u64) << 32;
-                            } else {
-                                icr |= (ap_local_apic.id as u64) << 56;
-                            }
-
-                            print!(" SIPI...");
-                            local_apic.set_icr(icr);
-                        }
-
-                        // Wait for trampoline ready
-                        print!(" Wait...");
-                        while unsafe { atomic_load(ap_ready) } == 0 {
-                            interrupt::pause();
-                        }
-                        print!(" Trampoline...");
-                        while ! AP_READY.load(Ordering::SeqCst) {
-                            interrupt::pause();
-                        }
-                        println!(" Ready");
-
-                        active_table.flush_all();
-                    } else {
-                        println!("        CPU Disabled");
                     }
-                },
-                _ => ()
+                    _ => (),
+                }
             }
-        }
 
-        // Unmap trampoline
-        let (result, _frame) = active_table.unmap_return(trampoline_page, false);
-        result.flush(active_table);
-        */
+            // Unmap trampoline
+            let (result, _frame) = active_table.unmap_return(trampoline_page, false);
+            result.flush(active_table);
+        }
     } else if let Some(dmar) = Dmar::new(sdt) {
         println!(": {}: {}", dmar.addr_width, dmar.flags);
 
@@ -193,8 +205,8 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
                     println!("GCMD: {:X}", drhd.gl_cmd);
                     println!("GSTS: {:X}", drhd.gl_sts);
                     println!("RT: {:X}", drhd.root_table);
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
     } else {
@@ -262,7 +274,10 @@ pub struct Acpi {
     pub dsdt: Option<Dsdt>,
 }
 
-pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, dsdt: None });
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi {
+                                                    fadt: None,
+                                                    dsdt: None,
+                                                });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
@@ -276,13 +291,13 @@ pub struct RSDP {
     length: u32,
     xsdt_address: u64,
     extended_checksum: u8,
-    reserved: [u8; 3]
+    reserved: [u8; 3],
 }
 
 impl RSDP {
     /// Search for the RSDP
     pub fn search(start_addr: usize, end_addr: usize) -> Option<RSDP> {
-        for i in 0 .. (end_addr + 1 - start_addr)/16 {
+        for i in 0..(end_addr + 1 - start_addr) / 16 {
             let rsdp = unsafe { &*((start_addr + i * 16) as *const RSDP) };
             if &rsdp.signature == b"RSD PTR " {
                 return Some(*rsdp);

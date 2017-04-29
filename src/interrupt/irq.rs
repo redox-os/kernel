@@ -10,7 +10,7 @@ use context;
 pub static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
 
 unsafe fn trigger(irq: u8) {
-    extern {
+    extern "C" {
         fn irq_trigger(irq: u8);
     }
 

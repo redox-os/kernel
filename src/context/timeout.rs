@@ -33,11 +33,11 @@ fn registry() -> MutexGuard<'static, Registry> {
 pub fn register(scheme_id: SchemeId, event_id: usize, clock: usize, time: TimeSpec) {
     let mut registry = registry();
     registry.push_back(Timeout {
-        scheme_id:  scheme_id,
-        event_id: event_id,
-        clock: clock,
-        time: (time.tv_sec as u64, time.tv_nsec as u64)
-    });
+                           scheme_id: scheme_id,
+                           event_id: event_id,
+                           clock: clock,
+                           time: (time.tv_sec as u64, time.tv_nsec as u64),
+                       });
 }
 
 pub fn trigger() {
@@ -52,11 +52,11 @@ pub fn trigger() {
             CLOCK_MONOTONIC => {
                 let time = registry[i].time;
                 mono.0 > time.0 || (mono.0 == time.0 && mono.1 >= time.1)
-            },
+            }
             CLOCK_REALTIME => {
                 let time = registry[i].time;
                 real.0 > time.0 || (real.0 == time.0 && real.1 >= time.1)
-            },
+            }
             clock => {
                 println!("timeout::trigger: unknown clock {}", clock);
                 true
@@ -65,7 +65,10 @@ pub fn trigger() {
 
         if trigger {
             let timeout = registry.remove(i).unwrap();
-            event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ, mem::size_of::<TimeSpec>());
+            event::trigger(timeout.scheme_id,
+                           timeout.event_id,
+                           EVENT_READ,
+                           mem::size_of::<TimeSpec>());
         } else {
             i += 1;
         }

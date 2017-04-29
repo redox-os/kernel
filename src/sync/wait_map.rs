@@ -7,14 +7,16 @@ use sync::WaitCondition;
 #[derive(Debug)]
 pub struct WaitMap<K, V> {
     inner: Mutex<BTreeMap<K, V>>,
-    condition: WaitCondition
+    condition: WaitCondition,
 }
 
-impl<K, V> WaitMap<K, V> where K: Clone + Ord {
+impl<K, V> WaitMap<K, V>
+    where K: Clone + Ord
+{
     pub fn new() -> WaitMap<K, V> {
         WaitMap {
             inner: Mutex::new(BTreeMap::new()),
-            condition: WaitCondition::new()
+            condition: WaitCondition::new(),
         }
     }
 

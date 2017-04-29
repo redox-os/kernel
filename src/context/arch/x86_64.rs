@@ -30,7 +30,7 @@ pub struct Context {
     /// Base pointer
     rbp: usize,
     /// Stack pointer
-    rsp: usize
+    rsp: usize,
 }
 
 impl Context {
@@ -46,7 +46,7 @@ impl Context {
             r14: 0,
             r15: 0,
             rbp: 0,
-            rsp: 0
+            rsp: 0,
         }
     }
 
@@ -66,7 +66,7 @@ impl Context {
         self.rsp = address;
     }
 
-    pub unsafe fn signal_stack(&mut self, handler: extern fn(usize), sig: u8) {
+    pub unsafe fn signal_stack(&mut self, handler: extern "C" fn(usize), sig: u8) {
         self.push_stack(sig as usize);
         self.push_stack(handler as usize);
         self.push_stack(signal_handler_wrapper as usize);
@@ -92,7 +92,7 @@ impl Context {
         self.loadable = true;
         if next.loadable {
             asm!("fxrstor [$0]" : : "r"(next.fx) : "memory" : "intel", "volatile");
-        }else{
+        } else {
             asm!("fninit" : : : "memory" : "intel", "volatile");
         }
 
@@ -139,13 +139,13 @@ pub struct SignalHandlerStack {
     rdx: usize,
     rcx: usize,
     rax: usize,
-    handler: extern fn(usize),
+    handler: extern "C" fn(usize),
     sig: usize,
     rip: usize,
 }
 
 #[naked]
-unsafe extern fn signal_handler_wrapper() {
+unsafe extern "C" fn signal_handler_wrapper() {
     #[inline(never)]
     unsafe fn inner(stack: &SignalHandlerStack) {
         (stack.handler)(stack.sig);

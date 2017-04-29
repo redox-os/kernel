@@ -12,7 +12,7 @@ use syscall::data::Event;
 use sync::{WaitMap, WaitQueue};
 
 /// Unique identifier for a context (i.e. `pid`).
-use ::core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicUsize;
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
@@ -21,7 +21,7 @@ int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 pub enum Status {
     Runnable,
     Blocked,
-    Exited(usize)
+    Exited(usize),
 }
 
 /// A context, which identifies either a process or a thread
@@ -82,7 +82,7 @@ pub struct Context {
     /// The process environment
     pub env: Arc<Mutex<BTreeMap<Box<[u8]>, Arc<Mutex<Vec<u8>>>>>>,
     /// The open files in the scheme
-    pub files: Arc<Mutex<Vec<Option<File>>>>
+    pub files: Arc<Mutex<Vec<Option<File>>>>,
 }
 
 impl Context {
@@ -115,7 +115,7 @@ impl Context {
             cwd: Arc::new(Mutex::new(Vec::new())),
             events: Arc::new(WaitQueue::new()),
             env: Arc::new(Mutex::new(BTreeMap::new())),
-            files: Arc::new(Mutex::new(Vec::new()))
+            files: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -130,7 +130,7 @@ impl Context {
 
             let mut canon = if !path.starts_with(b"/") {
                 let mut c = cwd.clone();
-                if ! c.ends_with(b"/") {
+                if !c.ends_with(b"/") {
                     c.push(b'/');
                 }
                 c
@@ -146,22 +146,21 @@ impl Context {
 
         // NOTE: assumes the scheme does not include anything like "../" or "./"
         let mut result = {
-            let parts = canon.split(|&c| c == b'/')
+            let parts = canon
+                .split(|&c| c == b'/')
                 .filter(|&part| part != b".")
                 .rev()
-                .scan(0, |nskip, part| {
-                    if part == b"." {
-                        Some(None)
-                    } else if part == b".." {
-                        *nskip += 1;
+                .scan(0, |nskip, part| if part == b"." {
+                    Some(None)
+                } else if part == b".." {
+                    *nskip += 1;
+                    Some(None)
+                } else {
+                    if *nskip > 0 {
+                        *nskip -= 1;
                         Some(None)
                     } else {
-                        if *nskip > 0 {
-                            *nskip -= 1;
-                            Some(None)
-                        } else {
-                            Some(Some(part))
-                        }
+                        Some(Some(part))
                     }
                 })
                 .filter_map(|x| x)
@@ -179,9 +178,10 @@ impl Context {
 
         // replace with the root of the scheme if it's empty
         if result.len() == 0 {
-            let pos = canon.iter()
-                            .position(|&b| b == b':')
-                            .map_or(canon.len(), |p| p + 1);
+            let pos = canon
+                .iter()
+                .position(|&b| b == b':')
+                .map_or(canon.len(), |p| p + 1);
             canon.truncate(pos);
             canon
         } else {

@@ -13,14 +13,16 @@ impl<T> WaitQueue<T> {
     pub fn new() -> WaitQueue<T> {
         WaitQueue {
             inner: Mutex::new(VecDeque::new()),
-            condition: WaitCondition::new()
+            condition: WaitCondition::new(),
         }
     }
 
-    pub fn clone(&self) -> WaitQueue<T> where T: Clone {
+    pub fn clone(&self) -> WaitQueue<T>
+        where T: Clone
+    {
         WaitQueue {
             inner: Mutex::new(self.inner.lock().clone()),
-            condition: WaitCondition::new()
+            condition: WaitCondition::new(),
         }
     }
 
@@ -70,7 +72,9 @@ impl<T> WaitQueue<T> {
         len
     }
 
-    pub fn send_from(&self, buf: &[T]) -> usize where T: Copy {
+    pub fn send_from(&self, buf: &[T]) -> usize
+        where T: Copy
+    {
         let len = {
             let mut inner = self.inner.lock();
             inner.extend(buf.iter());

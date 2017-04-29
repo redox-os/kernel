@@ -8,6 +8,6 @@ pub fn resource() -> Result<Vec<u8>> {
 
     match cpu_info(&mut string) {
         Ok(()) => Ok(string.into_bytes()),
-        Err(_) => Err(Error::new(EIO))
+        Err(_) => Err(Error::new(EIO)),
     }
 }
