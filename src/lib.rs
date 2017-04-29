@@ -185,8 +185,8 @@ pub extern "C" fn kmain_ap(id: usize) {
             interrupt::halt();
         }
     }
-    
-    if cfg!(feature = "multi_core"){
+
+    if cfg!(feature = "multi_core") {
         CPU_ID.store(id, Ordering::SeqCst);
 
         context::init();
