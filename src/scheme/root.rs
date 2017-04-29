@@ -184,6 +184,9 @@ impl Scheme for RootScheme {
     }
 
     fn close(&self, file: usize) -> Result<usize> {
-        self.handles.write().remove(&file).ok_or(Error::new(EBADF)).and(Ok(0))
+        if self.handles.write().remove(&file).is_none() {
+            self.ls_handles.write().remove(&file).ok_or(Error::new(EBADF))?;
+        }
+        Ok(0)
     }
 }
