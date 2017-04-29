@@ -5,7 +5,7 @@ use collections::Vec;
 
 use paging::PhysicalAddress;
 
-use super::{Frame, FrameAllocator, MemoryArea, MemoryAreaIter};
+use super::{Frame, FrameAllocator};
 
 pub struct RecycleAllocator<T: FrameAllocator> {
     inner: T,

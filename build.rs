@@ -109,6 +109,10 @@ mod gen {
     match src {
         Ok(v) => fill_from_location(&mut f, Path::new(&v)).unwrap(),
         Err(e) => {
+            f.write_all(
+b"        files.clear();" // Silence mutability warning
+)
+                .unwrap();
             println!("cargo:warning=location not found: {}, please set proper INITFS_FOLDER.",
                      e)
         }
