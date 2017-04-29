@@ -17,7 +17,6 @@ pub unsafe fn switch() -> bool {
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
     PIT_TICKS.store(0, Ordering::SeqCst);
-    assert_eq!(PIT_TICKS.load(Ordering::SeqCst), 0);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
     while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(false, true, Ordering::SeqCst) {
