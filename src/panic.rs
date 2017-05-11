@@ -4,12 +4,13 @@ use interrupt;
 
 #[cfg(not(test))]
 #[lang = "eh_personality"]
-extern "C" fn eh_personality() {}
+pub extern "C" fn eh_personality() {}
 
 #[cfg(not(test))]
 /// Required to handle panics
 #[lang = "panic_fmt"]
-extern "C" fn panic_fmt(fmt: ::core::fmt::Arguments, file: &str, line: u32) -> ! {
+#[no_mangle]
+pub extern "C" fn rust_begin_unwind(fmt: ::core::fmt::Arguments, file: &str, line: u32) -> ! {
     println!("PANIC: {}", fmt);
     println!("FILE: {}", file);
     println!("LINE: {}", line);
