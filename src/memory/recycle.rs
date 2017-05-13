@@ -27,7 +27,6 @@ impl<T: FrameAllocator> RecycleAllocator<T> {
         for free in self.free.iter() {
             count += free.1;
         }
-        println!("Free count: {} in {} entries", count, self.free.len());
         count
     }
 
