@@ -1,6 +1,7 @@
 use core::slice;
 
 use super::sdt::Sdt;
+use super::aml::parse_aml_table;
 
 #[derive(Debug)]
 pub struct Dsdt(&'static Sdt);
@@ -16,6 +17,17 @@ impl Dsdt {
 
     pub fn data(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.0.data_address() as *const u8, self.0.data_len()) }
+    }
+
+    pub fn load_aml(&self) {
+        let data = self.data();
+        let tbl = parse_aml_table(data);
+        
+        if let Some(parsed_table) = tbl {
+            println!("{}", parsed_table.len());
+        } else {
+            println!("Nope");
+        }
     }
 
     pub fn slp_typ(&self) -> Option<(u16, u16)> {
