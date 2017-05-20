@@ -27,6 +27,7 @@ mod madt;
 mod rsdt;
 mod sdt;
 mod xsdt;
+mod aml;
 
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
@@ -72,6 +73,7 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         ACPI_TABLE.lock().fadt = Some(fadt);
     } else if let Some(dsdt) = Dsdt::new(sdt) {
         println!(": {}", dsdt.data().len());
+        dsdt.load_aml();
         ACPI_TABLE.lock().dsdt = Some(dsdt);
     } else if let Some(madt) = Madt::new(sdt) {
         println!(": {:>08X}: {}", madt.local_address, madt.flags);
