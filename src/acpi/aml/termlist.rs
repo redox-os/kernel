@@ -1,23 +1,9 @@
 use collections::vec::Vec;
 
-use super::sdt::Sdt;
+use super::AmlError;
+use super::namespacemodifier::parse_namespace_modifier;
 
-pub enum AmlError {
-    AmlParseError
-}
-
-pub struct AmlTables;
-
-pub enum AmlValue {
-    NothingToSeeHere,
-    MoveAlongCitizen
-}
-
-pub fn parse_aml_table(data: &[u8]) -> Result<Vec<u8>, AmlError> {
-    parse_term_list(data)
-}
-
-fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
+pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     let mut terms: Vec<u8> = vec!();
     let mut current_offset: usize = 0;
 
@@ -60,10 +46,6 @@ fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     }
 
     Ok(terms)
-}
-
-fn parse_namespace_modifier(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
 }
 
 fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
