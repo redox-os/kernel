@@ -23,7 +23,7 @@ impl Dsdt {
         let data = self.data();
         let tbl = parse_aml_table(data);
         
-        if let Some(parsed_table) = tbl {
+        if let Ok(parsed_table) = tbl {
             println!("{}", parsed_table.len());
         } else {
             println!("Nope");
