@@ -6,6 +6,13 @@ use super::namestring::parse_name_string;
 use super::termlist::parse_term_list;
 
 pub fn parse_namespace_modifier(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_scope_op(data) {
+        Ok(res) => Ok(res),
+        Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+    }
+}
+
+fn parse_scope_op(data: &[u8]) -> Result<(u8, usize), AmlError> {
     if data[0] != 0x10 {
         return Err(AmlError::AmlParseError);
     }
