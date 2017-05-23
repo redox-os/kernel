@@ -49,29 +49,29 @@ pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
 
     match name_string {
         Ok(s) => Ok((s.clone(), s.clone().len() + control_bytes)),
-        Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+        Err(_) => Err(AmlError::AmlParseError)
     }
 }
 
 fn parse_name_seg(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     match data[0] {
         0x41 ... 0x5A | 0x5F => (),
-        _ => Err(AmlError::AmlParseError)
+        _ => return Err(AmlError::AmlParseError)
     }
 
     match data[1] {
         0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
-        _ => Err(AmlError::AmlParseError)
+        _ => return Err(AmlError::AmlParseError)
     }
 
     match data[2] {
         0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
-        _ => Err(AmlError::AmlParseError)
+        _ => return Err(AmlError::AmlParseError)
     }
 
     match data[3] {
         0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
-        _ => Err(AmlError::AmlParseError)
+        _ => return Err(AmlError::AmlParseError)
     }
 
     Ok(vec!(data[0], data[1], data[2], data[3]))
