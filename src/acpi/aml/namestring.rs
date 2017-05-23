@@ -21,28 +21,25 @@ pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
 
     match parse_name_seg(&data[starting_index..]) {
         Ok(mut v) => characters.append(&mut v),
-        Err(AmlError::AmlParseError) => ()
-    }
-
-    match parse_dual_name_path(&data[starting_index..]) {
-        Ok(mut v) => {
-            characters.append(&mut v);
-            control_bytes = 1;
-        },
-        Err(AmlError::AmlParseError) => ()
-    }
-
-    match parse_multi_name_path(&data[starting_index..]) {
-        Ok(mut v) => {
-            characters.append(&mut v);
-            control_bytes = 2;
-        },
-        Err(AmlError::AmlParseError) => ()
-    }
-
-    match data[starting_index] {
-        0x00 => control_bytes = 1,
-        _ => return Err(AmlError::AmlParseError)
+        Err(AmlError::AmlParseError) => 
+            match parse_dual_name_path(&data[starting_index..]) {
+                Ok(mut v) => {
+                    characters.append(&mut v);
+                    control_bytes = 1;
+                },
+                Err(AmlError::AmlParseError) => 
+                    match parse_multi_name_path(&data[starting_index..]) {
+                        Ok(mut v) => {
+                            characters.append(&mut v);
+                            control_bytes = 2;
+                        },
+                        Err(AmlError::AmlParseError) => 
+                            match data[starting_index] {
+                                0x00 => control_bytes = 1,
+                                _ => return Err(AmlError::AmlParseError)
+                            }
+                    }
+            }
     }
 
     let name_string = String::from_utf8(characters);

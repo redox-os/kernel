@@ -2,13 +2,14 @@ use collections::vec::Vec;
 
 use super::AmlError;
 use super::namespacemodifier::parse_namespace_modifier;
+use super::namedobj::parse_named_obj;
 
 pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     let mut terms: Vec<u8> = vec!();
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        println!("{} {}", data[current_offset], data[current_offset + 1]);
+//        println!("{} {}", data[current_offset], data[current_offset + 1]);
         match parse_namespace_modifier(&data[current_offset..]) {
             Ok((namespace_modifier, length)) => {
                 terms.push(namespace_modifier);
@@ -47,10 +48,6 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     }
 
     Ok(terms)
-}
-
-fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
 }
 
 fn parse_type1_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
