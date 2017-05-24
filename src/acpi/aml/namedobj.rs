@@ -3,10 +3,9 @@ use collections::string::String;
 
 use super::AmlError;
 
-use super::namestring::parse_name_string;
-use super::termlist::parse_term_arg;
+use super::namestring::{parse_name_string, parse_name_seg};
+use super::termlist::{parse_term_arg, parse_term_list};
 use super::pkglength::parse_pkg_length;
-use super::namestring::parse_name_seg;
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     match parse_def_op_region(data) {
@@ -15,6 +14,11 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     }
 
     match parse_def_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    match parse_def_method(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
     }
@@ -114,4 +118,19 @@ fn parse_extended_access_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
 
 fn parse_connect_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
     Err(AmlError::AmlParseError)
+}
+
+fn parse_def_method(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x14 {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (pkg_len, pkg_len_len) = parse_pkg_length(&data[1..])?;
+    let (name, name_len) = parse_name_string(&data[1 + pkg_len_len..])?;
+    let method_flags = data[1 + pkg_len_len + name_len];
+
+    println!("Method {}", name);
+    let term_list = parse_term_list(&data[2 + pkg_len_len + name_len .. 1 + pkg_len])?;
+
+    Ok((7, pkg_len + 1))
 }
