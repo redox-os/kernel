@@ -19,6 +19,7 @@ pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
         }
     }
 
+    // TODO: Ew. Clean this shit up
     match parse_name_seg(&data[starting_index..]) {
         Ok(mut v) => characters.append(&mut v),
         Err(AmlError::AmlParseError) => 
@@ -50,7 +51,7 @@ pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
     }
 }
 
-fn parse_name_seg(data: &[u8]) -> Result<Vec<u8>, AmlError> {
+pub fn parse_name_seg(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     match data[0] {
         0x41 ... 0x5A | 0x5F => (),
         _ => return Err(AmlError::AmlParseError)
