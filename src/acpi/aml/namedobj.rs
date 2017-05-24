@@ -1,18 +1,27 @@
+use collections::vec::Vec;
+
 use super::AmlError;
 
 use super::namestring::parse_name_string;
 use super::termlist::parse_term_arg;
+use super::pkglength::parse_pkg_length;
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     match parse_def_op_region(data) {
-        Ok((result, length)) => Ok((result, length)),
-        Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
     }
+
+    match parse_def_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+    
+    Err(AmlError::AmlParseError)
 }
 
 fn parse_def_op_region(data: &[u8]) -> Result<(u8, usize), AmlError> {
     if data[0] != 0x5B && data[1] != 0x80 {
-        // ExtOpPrefix, OpRegionOp
         return Err(AmlError::AmlParseError);
     }
 
@@ -25,8 +34,37 @@ fn parse_def_op_region(data: &[u8]) -> Result<(u8, usize), AmlError> {
     let (offset, offset_len) = parse_term_arg(&data[3 + name_len..])?;
     let (len, len_len) = parse_term_arg(&data[3 + name_len + offset_len..])?;
 
-    println!("Operation Region Found: {}\n\tSpace: {}\n\tOffset: {}\n\tLength:{}\n",
-             name, region, offset, len);
-
     Ok((32, 3 + name_len + offset_len + len_len))
+}
+
+fn parse_def_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x5B && data[1] != 0x81 {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
+    let (name, name_len) = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length])?;
+
+    println!("{}", name);
+    let field_flags = data[2 + pkg_length_len + name_len];
+    let field_list = parse_field_list(&data[3 + pkg_length_len + name_len .. 2 + pkg_length])?;
+
+    Ok((42, 2 + pkg_length))
+}
+
+fn parse_field_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
+    let mut terms: Vec<u8> = vec!();
+    let mut current_offset: usize = 0;
+
+    while current_offset < data.len() {
+        let (res, len) = parse_field_element(&data[current_offset..])?;
+        terms.push(res);
+        current_offset += len;
+    }
+
+    Ok(terms)
+}
+
+fn parse_field_element(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    Err(AmlError::AmlParseError)
 }
