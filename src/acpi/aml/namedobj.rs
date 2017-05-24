@@ -1,10 +1,12 @@
 use collections::vec::Vec;
+use collections::string::String;
 
 use super::AmlError;
 
 use super::namestring::parse_name_string;
 use super::termlist::parse_term_arg;
 use super::pkglength::parse_pkg_length;
+use super::namestring::parse_name_seg;
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     match parse_def_op_region(data) {
@@ -45,7 +47,6 @@ fn parse_def_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let (name, name_len) = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length])?;
 
-    println!("{}", name);
     let field_flags = data[2 + pkg_length_len + name_len];
     let field_list = parse_field_list(&data[3 + pkg_length_len + name_len .. 2 + pkg_length])?;
 
@@ -90,7 +91,13 @@ fn parse_field_element(data: &[u8]) -> Result<(u8, usize), AmlError> {
 }
 
 fn parse_named_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
+    let name = match String::from_utf8(parse_name_seg(&data[0..4])?) {
+        Ok(s) => s,
+        Err(_) => return Err(AmlError::AmlParseError)
+    };
+    let (length, length_len) = parse_pkg_length(&data[4..])?;
+
+    Ok((1, 4 + length_len))
 }
 
 fn parse_reserved_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
