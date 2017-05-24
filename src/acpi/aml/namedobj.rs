@@ -66,5 +66,45 @@ fn parse_field_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
 }
 
 fn parse_field_element(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_named_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    match parse_reserved_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    match parse_access_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    match parse_extended_access_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    parse_connect_field(data)
+}
+
+fn parse_named_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    Err(AmlError::AmlParseError)
+}
+
+fn parse_reserved_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    Err(AmlError::AmlParseError)
+}
+
+fn parse_access_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    Err(AmlError::AmlParseError)
+}
+
+fn parse_extended_access_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    Err(AmlError::AmlParseError)
+}
+
+fn parse_connect_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
     Err(AmlError::AmlParseError)
 }
