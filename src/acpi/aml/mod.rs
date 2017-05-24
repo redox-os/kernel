@@ -10,6 +10,7 @@ mod namespacemodifier;
 mod pkglength;
 mod namestring;
 mod namedobj;
+mod dataobj;
 
 use self::termlist::parse_term_list;
 
