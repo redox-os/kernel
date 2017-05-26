@@ -8,6 +8,11 @@ use super::termlist::{parse_term_arg, parse_term_list, parse_object_list};
 use super::pkglength::parse_pkg_length;
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_def_create_dword_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+    
     match parse_def_device(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
@@ -31,6 +36,21 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     Err(AmlError::AmlParseError)
 }
 
+fn parse_def_create_dword_field(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x8A {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
+    let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
+    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
+
+    println!("{}", name);
+
+    Ok((1, 1 + source_buf_len + byte_index_len + name_len))
+}
+
+
 fn parse_def_device(data: &[u8]) -> Result<(u8, usize), AmlError> {
     if data[0] != 0x5B && data[1] != 0x82 {
         return Err(AmlError::AmlParseError);
@@ -42,7 +62,6 @@ fn parse_def_device(data: &[u8]) -> Result<(u8, usize), AmlError> {
     
     Ok((32, 2 + pkg_length_len))
 }
-
 
 fn parse_def_op_region(data: &[u8]) -> Result<(u8, usize), AmlError> {
     if data[0] != 0x5B && data[1] != 0x80 {
