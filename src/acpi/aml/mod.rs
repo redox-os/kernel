@@ -11,6 +11,7 @@ mod pkglength;
 mod namestring;
 mod namedobj;
 mod dataobj;
+mod type1opcode;
 mod type2opcode;
 
 use self::termlist::parse_term_list;
