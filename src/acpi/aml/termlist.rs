@@ -4,6 +4,7 @@ use super::AmlError;
 use super::namespacemodifier::parse_namespace_modifier;
 use super::namedobj::parse_named_obj;
 use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj};
+use super::type2opcode::parse_type2_opcode;
 
 pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     let mut terms: Vec<u8> = vec!();
@@ -59,9 +60,5 @@ fn parse_term_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
 }
 
 fn parse_type1_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
-}
-
-fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
     Err(AmlError::AmlParseError)
 }

@@ -11,11 +11,17 @@ pub fn parse_data_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
 }
 
 pub fn parse_arg_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
+    match data[0] {
+        0x68 ... 0x6E => Ok((2, 1 as usize)),
+        _ => Err(AmlError::AmlParseError)
+    }
 }
 
 pub fn parse_local_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
+    match data[0] {
+        0x60 ... 0x67 => Ok((1, 1 as usize)),
+        _ => Err(AmlError::AmlParseError)
+    }
 }
 
 fn parse_computational_data(data: &[u8]) -> Result<(u8, usize), AmlError> {
