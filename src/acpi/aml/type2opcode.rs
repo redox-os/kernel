@@ -8,6 +8,11 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
     }
+
+    match parse_def_index(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
     
     match parse_def_lless(data) {
         Ok(res) => return Ok(res),
@@ -49,8 +54,19 @@ fn parse_def_deref_of(data: &[u8]) -> Result<(u8, usize), AmlError> {
 
     let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
 
-    println!("DerefOf");
     Ok((5, obj_reference_len + 1))
+}
+
+fn parse_def_index(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x88 {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (obj, obj_len) = parse_term_arg(&data[1..])?;
+    let (idx, idx_len) = parse_term_arg(&data[1 + obj_len..])?;
+    let (target, target_len) = parse_super_name(&data[1 + obj_len + idx_len..])?;
+
+    Ok((1, 1 + obj_len + idx_len + target_len))
 }
 
 fn parse_def_lless(data: &[u8]) -> Result<(u8, usize), AmlError> {
