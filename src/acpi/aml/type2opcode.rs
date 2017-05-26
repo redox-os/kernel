@@ -4,6 +4,11 @@ use super::termlist::parse_term_arg;
 use super::namestring::parse_super_name;
 
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_def_lless(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+    
     match parse_def_size_of(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
@@ -30,6 +35,17 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
     }
     
     Err(AmlError::AmlParseError)
+}
+
+fn parse_def_lless(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x95 {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+
+    Ok((12, 1 + lhs_len + rhs_len))
 }
 
 fn parse_def_to_hex_string(data: &[u8]) -> Result<(u8, usize), AmlError> {
