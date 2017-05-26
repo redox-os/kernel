@@ -4,6 +4,7 @@ use super::AmlError;
 use super::namespacemodifier::parse_namespace_modifier;
 use super::namedobj::parse_named_obj;
 use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj};
+use super::type1opcode::parse_type1_opcode;
 use super::type2opcode::parse_type2_opcode;
 
 pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
@@ -22,6 +23,7 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
 }
 
 pub fn parse_term_arg(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    println!("{}", data[0]);
     match parse_type2_opcode(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
@@ -57,8 +59,4 @@ fn parse_term_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     }
 
     parse_type2_opcode(data)
-}
-
-fn parse_type1_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
 }
