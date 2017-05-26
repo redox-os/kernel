@@ -4,6 +4,11 @@ use super::termlist::parse_term_arg;
 use super::namestring::parse_super_name;
 
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_def_deref_of(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+    
     match parse_def_lless(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
@@ -35,6 +40,17 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
     }
     
     Err(AmlError::AmlParseError)
+}
+
+fn parse_def_deref_of(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x83 {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
+
+    println!("DerefOf");
+    Ok((5, obj_reference_len + 1))
 }
 
 fn parse_def_lless(data: &[u8]) -> Result<(u8, usize), AmlError> {
