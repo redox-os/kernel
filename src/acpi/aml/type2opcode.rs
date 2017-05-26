@@ -9,6 +9,11 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
         Err(AmlError::AmlParseError) => ()
     }
 
+    match parse_def_increment(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
     match parse_def_index(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
@@ -55,6 +60,15 @@ fn parse_def_deref_of(data: &[u8]) -> Result<(u8, usize), AmlError> {
     let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
 
     Ok((5, obj_reference_len + 1))
+}
+
+fn parse_def_increment(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x75 {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (obj, obj_len) = parse_super_name(&data[1..])?;
+    Ok((obj, obj_len + 1))
 }
 
 fn parse_def_index(data: &[u8]) -> Result<(u8, usize), AmlError> {
