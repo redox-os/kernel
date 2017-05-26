@@ -3,6 +3,8 @@ use collections::string::String;
 
 use super::AmlError;
 
+use super::dataobj::{parse_arg_obj, parse_local_obj};
+
 pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
     let mut characters: Vec<u8> = vec!();
     let mut starting_index: usize = 0;
@@ -118,4 +120,30 @@ fn parse_multi_name_path(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     }
 
     Ok(characters)
+}
+
+pub fn parse_super_name(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_simple_name(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    Err(AmlError::AmlParseError)
+}
+
+fn parse_simple_name(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_name_string(data) {
+        Ok((name, name_len)) => {
+            println!("{}", name);
+            return Ok((2, name_len))
+        },
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    match parse_arg_obj(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    parse_local_obj(data)
 }
