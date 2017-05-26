@@ -66,5 +66,6 @@ fn parse_def_size_of(data: &[u8]) -> Result<(u8, usize), AmlError> {
         return Err(AmlError::AmlParseError);
     }
 
-    parse_super_name(&data[1..])
+    let (name, name_len) = parse_super_name(&data[1..]);
+    Ok((name, name_len + 1))
 }
