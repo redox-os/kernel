@@ -10,6 +10,16 @@ pub fn parse_data_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
         // Rest currently isn't implemented
 }
 
+pub fn parse_data_ref_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    println!("{}", data[0]);
+    match parse_data_obj(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+    
+    Err(AmlError::AmlParseError)
+}
+
 pub fn parse_arg_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     match data[0] {
         0x68 ... 0x6E => Ok((2, 1 as usize)),
