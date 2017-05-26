@@ -4,10 +4,15 @@ use collections::string::String;
 use super::AmlError;
 
 use super::namestring::{parse_name_string, parse_name_seg};
-use super::termlist::{parse_term_arg, parse_term_list};
+use super::termlist::{parse_term_arg, parse_term_list, parse_object_list};
 use super::pkglength::parse_pkg_length;
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    match parse_def_device(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlError::AmlParseError) => ()
+    }
+    
     match parse_def_op_region(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
@@ -25,6 +30,19 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
     
     Err(AmlError::AmlParseError)
 }
+
+fn parse_def_device(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    if data[0] != 0x5B && data[1] != 0x82 {
+        return Err(AmlError::AmlParseError);
+    }
+
+    let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
+    let (name, name_len) = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length])?;
+    let obj_list = parse_object_list(&data[2 + pkg_length_len + name_len .. 2 + pkg_length])?;
+    
+    Ok((32, 2 + pkg_length_len))
+}
+
 
 fn parse_def_op_region(data: &[u8]) -> Result<(u8, usize), AmlError> {
     if data[0] != 0x5B && data[1] != 0x80 {
