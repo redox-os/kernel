@@ -1,14 +1,39 @@
 use collections::vec::Vec;
+use collections::boxed::Box;
 
 use super::AmlError;
-use super::namespacemodifier::parse_namespace_modifier;
-use super::namedobj::parse_named_obj;
-use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj};
-use super::type1opcode::parse_type1_opcode;
-use super::type2opcode::parse_type2_opcode;
+use super::namespacemodifier::{parse_namespace_modifier, NamespaceModifier};
+use super::namedobj::{parse_named_obj, NamedObj};
+use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj, DataObj, ArgObj, LocalObj};
+use super::type1opcode::{parse_type1_opcode, Type1OpCode};
+use super::type2opcode::{parse_type2_opcode, Type2OpCode};
+use super::namestring::parse_name_string;
 
-pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
-    let mut terms: Vec<u8> = vec!();
+pub enum TermArg {
+    LocalObj(Box<LocalObj>),
+    DataObj(Box<DataObj>),
+    ArgObj(Box<ArgObj>),
+    Type2Opcode(Box<Type2OpCode>)
+}
+
+pub enum TermObj {
+    NamespaceModifier(Box<NamespaceModifier>),
+    NamedObj(Box<NamedObj>),
+    Type1Opcode(Box<Type1OpCode>),
+    Type2Opcode(Box<Type2OpCode>)
+}
+
+pub enum Object {
+    NamespaceModifier(Box<NamespaceModifier>),
+    NamedObj(Box<NamedObj>)
+}
+
+pub struct MethodInvocation {
+
+}
+
+pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
+    let mut terms: Vec<TermObj> = vec!();
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
@@ -22,28 +47,33 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     Ok(terms)
 }
 
-pub fn parse_term_arg(data: &[u8]) -> Result<(u8, usize), AmlError> {
+pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlError> {
     println!("{}", data[0]);
-    match parse_type2_opcode(data) {
-        Ok(res) => return Ok(res),
+    match parse_local_obj(data) {
+        Ok((res, size)) => return Ok((TermArg::LocalObj(Box::new(res)), size)),
         Err(AmlError::AmlParseError) => ()
     }
 
     match parse_data_obj(data) {
-        Ok(res) => return Ok(res),
+        Ok((res, size)) => return Ok((TermArg::DataObj(Box::new(res)), size)),
         Err(AmlError::AmlParseError) => ()
     }
     
     match parse_arg_obj(data) {
-        Ok(res) => return Ok(res),
+        Ok((res, size)) => return Ok((TermArg::ArgObj(Box::new(res)), size)),
         Err(AmlError::AmlParseError) => ()
     }
 
-    parse_local_obj(data)
+    match parse_type2_opcode(data) {
+        Ok((res, size)) => return Ok((TermArg::Type2Opcode(Box::new(res)), size)),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    Err(AmlError::AmlParseError)
 }
 
-pub fn parse_object_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
-    let mut terms: Vec<u8> = vec!();
+pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlError> {
+    let mut terms: Vec<Object> = vec!();
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
@@ -57,30 +87,45 @@ pub fn parse_object_list(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     Ok(terms)
 }
 
-fn parse_object(data: &[u8]) -> Result<(u8, usize), AmlError> {
+fn parse_object(data: &[u8]) -> Result<(Object, usize), AmlError> {
     match parse_namespace_modifier(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlError::AmlParseError) => ()
-    }
-
-    parse_named_obj(data)
-}
-
-fn parse_term_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    match parse_namespace_modifier(data) {
-        Ok(res) => return Ok(res),
+        Ok((ns, size)) => return Ok((Object::NamespaceModifier(Box::new(ns)), size)),
         Err(AmlError::AmlParseError) => ()
     }
 
     match parse_named_obj(data) {
-        Ok(res) => return Ok(res),
+        Ok((obj, size)) => Ok((Object::NamedObj(Box::new(obj)), size)),
+        Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+    }
+}
+
+pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize), AmlError> {
+    let (name, name_len) = parse_name_string(data)?;
+    println!("Name: {}", name);
+    Ok((MethodInvocation {}, data.len()))
+        // We can't parse these yet. Method invocations are to be handled when the AST is rendered to a CET
+}
+
+fn parse_term_obj(data: &[u8]) -> Result<(TermObj, usize), AmlError> {
+    match parse_namespace_modifier(data) {
+        Ok((res, size)) => return Ok((TermObj::NamespaceModifier(Box::new(res)), size)),
         Err(AmlError::AmlParseError) => ()
     }
 
+    match parse_named_obj(data) {
+        Ok((res, size)) => return Ok((TermObj::NamedObj(Box::new(res)), size)),
+        Err(AmlError::AmlParseError) => ()
+    }
+    
     match parse_type1_opcode(data) {
-        Ok(res) => return Ok(res),
+        Ok((res, size)) => return Ok((TermObj::Type1Opcode(Box::new(res)), size)),
         Err(AmlError::AmlParseError) => ()
     }
 
-    parse_type2_opcode(data)
+    match parse_type2_opcode(data) {
+        Ok((res, size)) => return Ok((TermObj::Type2Opcode(Box::new(res)), size)),
+        Err(AmlError::AmlParseError) => ()
+    }
+
+    Err(AmlError::AmlParseError)
 }
