@@ -3,7 +3,18 @@ use collections::string::String;
 
 use super::AmlError;
 
-use super::dataobj::{parse_arg_obj, parse_local_obj};
+use super::dataobj::{parse_arg_obj, parse_local_obj, ArgObj, LocalObj};
+
+pub enum SuperName {
+    NameString(String),
+    ArgObj(ArgObj),
+    LocalObj(LocalObj)
+}
+
+pub enum Target {
+    SuperName(SuperName),
+    Null
+}
 
 pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
     let mut characters: Vec<u8> = vec!();
@@ -122,7 +133,7 @@ fn parse_multi_name_path(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     Ok(characters)
 }
 
-pub fn parse_super_name(data: &[u8]) -> Result<(u8, usize), AmlError> {
+pub fn parse_super_name(data: &[u8]) -> Result<(SuperName, usize), AmlError> {
     match parse_simple_name(data) {
         Ok(res) => return Ok(res),
         Err(AmlError::AmlParseError) => ()
@@ -131,19 +142,30 @@ pub fn parse_super_name(data: &[u8]) -> Result<(u8, usize), AmlError> {
     Err(AmlError::AmlParseError)
 }
 
-fn parse_simple_name(data: &[u8]) -> Result<(u8, usize), AmlError> {
+fn parse_simple_name(data: &[u8]) -> Result<(SuperName, usize), AmlError> {
     match parse_name_string(data) {
-        Ok((name, name_len)) => {
-            println!("{}", name);
-            return Ok((2, name_len))
-        },
+        Ok((name, name_len)) => return Ok((SuperName::NameString(name), name_len)),
         Err(AmlError::AmlParseError) => ()
     }
 
     match parse_arg_obj(data) {
-        Ok(res) => return Ok(res),
+        Ok((arg, arg_len)) => return Ok((SuperName::ArgObj(arg), arg_len)),
         Err(AmlError::AmlParseError) => ()
     }
 
-    parse_local_obj(data)
+    match parse_local_obj(data) {
+        Ok((local, local_len)) => Ok((SuperName::LocalObj(local), local_len)),
+        Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+    }
+}
+
+pub fn parse_target(data: &[u8]) -> Result<(Target, usize), AmlError> {
+    if data[0] == 0x00 {
+        Ok((Target::Null, 1 as usize))
+    } else {
+        match parse_super_name(data) {
+            Ok((name, name_len)) => Ok((Target::SuperName(name), name_len)),
+            Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+        }
+    }
 }
