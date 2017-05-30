@@ -37,7 +37,7 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        println!("{} {}", data[current_offset], data[current_offset + 1]);
+        println!("t{} {}", data[current_offset], data[current_offset + 1]);
         
         let (res, len) = parse_term_obj(&data[current_offset..])?;
         terms.push(res);
@@ -48,7 +48,7 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
 }
 
 pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
-    println!("{}", data[0]);
+    println!("t{}", data[0]);
     match parse_local_obj(data) {
         Ok((res, size)) => return Ok((TermArg::LocalObj(Box::new(res)), size)),
         Err(AmlInternalError::AmlParseError) => (),
@@ -81,13 +81,13 @@ pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlInternalError> {
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        println!("{} {}", data[current_offset], data[current_offset + 1]);
+        println!("o{} {}", data[current_offset], data[current_offset + 1]);
         
         let (res, len) = parse_object(&data[current_offset..])?;
         terms.push(res);
         current_offset += len;
     }
-
+    
     Ok(terms)
 }
 
@@ -107,7 +107,6 @@ fn parse_object(data: &[u8]) -> Result<(Object, usize), AmlInternalError> {
 
 pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize), AmlInternalError> {
     let (name, name_len) = parse_name_string(data)?;
-    println!("Name: {}", name);
     Err(AmlInternalError::AmlDeferredLoad)
 }
 

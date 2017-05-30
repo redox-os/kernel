@@ -86,7 +86,7 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
-    
+
     match parse_def_device(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -129,7 +129,7 @@ fn parse_def_create_dword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInt
 
 
 fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B && data[1] != 0x82 {
+    if data[0] != 0x5B || data[1] != 0x82 {
         return Err(AmlInternalError::AmlParseError);
     }
 
@@ -140,18 +140,19 @@ fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> 
         Err(AmlInternalError::AmlDeferredLoad) =>
             return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
     };
+
     let obj_list = match parse_object_list(&data[2 + pkg_length_len + name_len .. 2 + pkg_length]) {
         Ok(p) => p,
         Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
             return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
     };
-    
+
     Ok((NamedObj::DefDevice {name, obj_list}, 2 + pkg_length_len))
 }
 
 fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B && data[1] != 0x80 {
+    if data[0] != 0x5B || data[1] != 0x80 {
         return Err(AmlInternalError::AmlParseError);
     }
 
@@ -178,7 +179,7 @@ fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
 }
 
 fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B && data[1] != 0x81 {
+    if data[0] != 0x5B || data[1] != 0x81 {
         return Err(AmlInternalError::AmlParseError);
     }
 
