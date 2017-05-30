@@ -77,6 +77,9 @@ enum FieldElement {
     NamedField {
         name: String,
         length: usize
+    },
+    ReservedField {
+        length: usize
     }
 }
 
@@ -273,7 +276,12 @@ fn parse_named_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalEr
 }
 
 fn parse_reserved_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    Err(AmlInternalError::AmlParseError)
+    if data[0] != 0x00 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+    
+    let (length, length_len) = parse_pkg_length(&data[1..])?;
+    Ok((FieldElement::ReservedField {length}, 1 + length_len))
 }
 
 fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
