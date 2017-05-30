@@ -1,7 +1,7 @@
 use collections::vec::Vec;
 use collections::boxed::Box;
 
-use super::AmlError;
+use super::AmlInternalError;
 use super::namespacemodifier::{parse_namespace_modifier, NamespaceModifier};
 use super::namedobj::{parse_named_obj, NamedObj};
 use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj, DataObj, ArgObj, LocalObj};
@@ -32,7 +32,7 @@ pub struct MethodInvocation {
 
 }
 
-pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
+pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
     let mut terms: Vec<TermObj> = vec!();
     let mut current_offset: usize = 0;
 
@@ -47,32 +47,36 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
     Ok(terms)
 }
 
-pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlError> {
+pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
     println!("{}", data[0]);
     match parse_local_obj(data) {
         Ok((res, size)) => return Ok((TermArg::LocalObj(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_data_obj(data) {
         Ok((res, size)) => return Ok((TermArg::DataObj(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
     match parse_arg_obj(data) {
         Ok((res, size)) => return Ok((TermArg::ArgObj(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_type2_opcode(data) {
         Ok((res, size)) => return Ok((TermArg::Type2Opcode(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
-    Err(AmlError::AmlParseError)
+    Err(AmlInternalError::AmlParseError)
 }
 
-pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlError> {
+pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlInternalError> {
     let mut terms: Vec<Object> = vec!();
     let mut current_offset: usize = 0;
 
@@ -87,45 +91,50 @@ pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlError> {
     Ok(terms)
 }
 
-fn parse_object(data: &[u8]) -> Result<(Object, usize), AmlError> {
+fn parse_object(data: &[u8]) -> Result<(Object, usize), AmlInternalError> {
     match parse_namespace_modifier(data) {
         Ok((ns, size)) => return Ok((Object::NamespaceModifier(Box::new(ns)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_named_obj(data) {
         Ok((obj, size)) => Ok((Object::NamedObj(Box::new(obj)), size)),
-        Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
     }
 }
 
-pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize), AmlError> {
+pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize), AmlInternalError> {
     let (name, name_len) = parse_name_string(data)?;
     println!("Name: {}", name);
-    Ok((MethodInvocation {}, data.len()))
-        // We can't parse these yet. Method invocations are to be handled when the AST is rendered to a CET
+    Err(AmlInternalError::AmlDeferredLoad)
 }
 
-fn parse_term_obj(data: &[u8]) -> Result<(TermObj, usize), AmlError> {
+fn parse_term_obj(data: &[u8]) -> Result<(TermObj, usize), AmlInternalError> {
     match parse_namespace_modifier(data) {
         Ok((res, size)) => return Ok((TermObj::NamespaceModifier(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_named_obj(data) {
         Ok((res, size)) => return Ok((TermObj::NamedObj(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
     match parse_type1_opcode(data) {
         Ok((res, size)) => return Ok((TermObj::Type1Opcode(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_type2_opcode(data) {
         Ok((res, size)) => return Ok((TermObj::Type2Opcode(Box::new(res)), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
-    Err(AmlError::AmlParseError)
+    Err(AmlInternalError::AmlParseError)
 }

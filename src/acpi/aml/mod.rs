@@ -16,6 +16,12 @@ mod type2opcode;
 
 use self::termlist::{parse_term_list, TermObj};
 
+// TODO: make private
+pub enum AmlInternalError {
+    AmlParseError,
+    AmlDeferredLoad
+}
+
 pub enum AmlError {
     AmlParseError
 }
@@ -28,5 +34,8 @@ pub enum AmlValue {
 }
 
 pub fn parse_aml_table(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
-    parse_term_list(data)
+    match parse_term_list(data) {
+        Ok(res) => Ok(res),
+        Err(_) => Err(AmlError::AmlParseError)
+    }
 }

@@ -1,6 +1,6 @@
-use super::AmlError;
+use super::AmlInternalError;
 
-pub fn parse_pkg_length(data: &[u8]) -> Result<(usize, usize), AmlError> {
+pub fn parse_pkg_length(data: &[u8]) -> Result<(usize, usize), AmlInternalError> {
     let lead_byte = data[0];
     let count_bytes: usize = (lead_byte >> 6) as usize;
 
@@ -10,7 +10,7 @@ pub fn parse_pkg_length(data: &[u8]) -> Result<(usize, usize), AmlError> {
 
     let upper_two = (lead_byte >> 4) & 0x03;
     if upper_two != 0 {
-        return Err(AmlError::AmlParseError);
+        return Err(AmlInternalError::AmlParseError);
     }
 
     let mut current_byte = 0;

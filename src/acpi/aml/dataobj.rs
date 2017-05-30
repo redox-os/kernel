@@ -1,4 +1,4 @@
-use super::AmlError;
+use super::AmlInternalError;
 
 pub enum DataObj {
     ComputationalData(ComputationalData)
@@ -22,40 +22,42 @@ enum ComputationalData {
     Ones
 }
 
-pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlError> {
+pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError> {
     match parse_computational_data(data) {
         Ok((res, size)) => return Ok((DataObj::ComputationalData(res), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
-    Err(AmlError::AmlParseError)
+    Err(AmlInternalError::AmlParseError)
         // Rest currently isn't implemented
 }
 
-pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlError> {
+pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInternalError> {
     match parse_data_obj(data) {
         Ok((res, size)) => return Ok((DataRefObj::DataObj(res), size)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
-    Err(AmlError::AmlParseError)
+    Err(AmlInternalError::AmlParseError)
 }
 
-pub fn parse_arg_obj(data: &[u8]) -> Result<(ArgObj, usize), AmlError> {
+pub fn parse_arg_obj(data: &[u8]) -> Result<(ArgObj, usize), AmlInternalError> {
     match data[0] {
         0x68 ... 0x6E => Ok((ArgObj(data[0] - 0x68), 1 as usize)),
-        _ => Err(AmlError::AmlParseError)
+        _ => Err(AmlInternalError::AmlParseError)
     }
 }
 
-pub fn parse_local_obj(data: &[u8]) -> Result<(LocalObj, usize), AmlError> {
+pub fn parse_local_obj(data: &[u8]) -> Result<(LocalObj, usize), AmlInternalError> {
     match data[0] {
         0x60 ... 0x67 => Ok((LocalObj(data[0] - 0x60), 1 as usize)),
-        _ => Err(AmlError::AmlParseError)
+        _ => Err(AmlInternalError::AmlParseError)
     }
 }
 
-fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), AmlError> {
+fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), AmlInternalError> {
     match data[0] {
         0x0A => Ok((ComputationalData::Byte(data[1]), 2 as usize)),
         0x0B => {
@@ -84,6 +86,6 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
         0x00 => Ok((ComputationalData::Zero, 1 as usize)),
         0x01 => Ok((ComputationalData::One, 1 as usize)),
         0xFF => Ok((ComputationalData::Ones, 1 as usize)),
-        _ => Err(AmlError::AmlParseError)
+        _ => Err(AmlInternalError::AmlParseError)
     }
 }

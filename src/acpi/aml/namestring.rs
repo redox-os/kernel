@@ -1,7 +1,7 @@
 use collections::vec::Vec;
 use collections::string::String;
 
-use super::AmlError;
+use super::AmlInternalError;
 
 use super::dataobj::{parse_arg_obj, parse_local_obj, ArgObj, LocalObj};
 
@@ -16,7 +16,7 @@ pub enum Target {
     Null
 }
 
-pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
+pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlInternalError> {
     let mut characters: Vec<u8> = vec!();
     let mut starting_index: usize = 0;
 
@@ -35,96 +35,104 @@ pub fn parse_name_string(data: &[u8]) -> Result<(String, usize), AmlError> {
     // TODO: Ew. Clean this shit up
     match parse_name_seg(&data[starting_index..]) {
         Ok(mut v) => characters.append(&mut v),
-        Err(AmlError::AmlParseError) => 
+        Err(AmlInternalError::AmlParseError) => 
             match parse_dual_name_path(&data[starting_index..]) {
                 Ok(mut v) => {
                     characters.append(&mut v);
                     control_bytes = 1;
                 },
-                Err(AmlError::AmlParseError) => 
+                Err(AmlInternalError::AmlParseError) => 
                     match parse_multi_name_path(&data[starting_index..]) {
                         Ok(mut v) => {
                             characters.append(&mut v);
                             control_bytes = 2;
                         },
-                        Err(AmlError::AmlParseError) => 
+                        Err(AmlInternalError::AmlParseError) => 
                             match data[starting_index] {
                                 0x00 => control_bytes = 1,
-                                _ => return Err(AmlError::AmlParseError)
-                            }
-                    }
-            }
+                                _ => return Err(AmlInternalError::AmlParseError)
+                            },
+                        Err(AmlInternalError::AmlDeferredLoad) =>
+                            return Err(AmlInternalError::AmlDeferredLoad)
+                    },
+                Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+            },
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     let name_string = String::from_utf8(characters);
 
     match name_string {
         Ok(s) => Ok((s.clone(), s.clone().len() + control_bytes)),
-        Err(_) => Err(AmlError::AmlParseError)
+        Err(_) => Err(AmlInternalError::AmlParseError)
     }
 }
 
-pub fn parse_name_seg(data: &[u8]) -> Result<Vec<u8>, AmlError> {
+pub fn parse_name_seg(data: &[u8]) -> Result<Vec<u8>, AmlInternalError> {
     match data[0] {
         0x41 ... 0x5A | 0x5F => (),
-        _ => return Err(AmlError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError)
     }
 
     match data[1] {
         0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
-        _ => return Err(AmlError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError)
     }
 
     match data[2] {
         0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
-        _ => return Err(AmlError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError)
     }
 
     match data[3] {
         0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
-        _ => return Err(AmlError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError)
     }
 
     Ok(vec!(data[0], data[1], data[2], data[3]))
 }
 
-fn parse_dual_name_path(data: &[u8]) -> Result<Vec<u8>, AmlError> {
+fn parse_dual_name_path(data: &[u8]) -> Result<Vec<u8>, AmlInternalError> {
     if data[0] != 0x2E {
-        return Err(AmlError::AmlParseError);
+        return Err(AmlInternalError::AmlParseError);
     }
 
     let mut characters: Vec<u8> = vec!();
 
     match parse_name_seg(&data[1..5]) {
         Ok(mut v) => characters.append(&mut v),
-        Err(AmlError::AmlParseError) => return Err(AmlError::AmlParseError)
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_name_seg(&data[5..9]) {
         Ok(mut v) => characters.append(&mut v),
-        Err(AmlError::AmlParseError) => return Err(AmlError::AmlParseError)
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     Ok(characters)
 }
 
-fn parse_multi_name_path(data: &[u8]) -> Result<Vec<u8>, AmlError> {
+fn parse_multi_name_path(data: &[u8]) -> Result<Vec<u8>, AmlInternalError> {
     if data[0] != 0x2F {
-        return Err(AmlError::AmlParseError);
+        return Err(AmlInternalError::AmlParseError);
     }
 
     let seg_count = data[1];
     if seg_count == 0x00 {
-        return Err(AmlError::AmlParseError);
+        return Err(AmlInternalError::AmlParseError);
     }
 
     let mut current_seg = 0;
     let mut characters: Vec<u8> = vec!();
     
     while current_seg < seg_count {
-        match parse_name_seg(&data[(current_seg as usize * 4) + 2 .. ((current_seg as usize + 1) * 4) + 2]) {
+        match parse_name_seg(&data[(current_seg as usize * 4) + 2 ..
+                                   ((current_seg as usize + 1) * 4) + 2]) {
             Ok(mut v) => characters.append(&mut v),
-            Err(AmlError::AmlParseError) => return Err(AmlError::AmlParseError)
+            Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+            Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
         }
 
         current_seg += 1;
@@ -133,39 +141,44 @@ fn parse_multi_name_path(data: &[u8]) -> Result<Vec<u8>, AmlError> {
     Ok(characters)
 }
 
-pub fn parse_super_name(data: &[u8]) -> Result<(SuperName, usize), AmlError> {
+pub fn parse_super_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
     match parse_simple_name(data) {
         Ok(res) => return Ok(res),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
-    Err(AmlError::AmlParseError)
+    Err(AmlInternalError::AmlParseError)
 }
 
-fn parse_simple_name(data: &[u8]) -> Result<(SuperName, usize), AmlError> {
+fn parse_simple_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
     match parse_name_string(data) {
         Ok((name, name_len)) => return Ok((SuperName::NameString(name), name_len)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_arg_obj(data) {
         Ok((arg, arg_len)) => return Ok((SuperName::ArgObj(arg), arg_len)),
-        Err(AmlError::AmlParseError) => ()
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
     match parse_local_obj(data) {
         Ok((local, local_len)) => Ok((SuperName::LocalObj(local), local_len)),
-        Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
     }
 }
 
-pub fn parse_target(data: &[u8]) -> Result<(Target, usize), AmlError> {
+pub fn parse_target(data: &[u8]) -> Result<(Target, usize), AmlInternalError> {
     if data[0] == 0x00 {
         Ok((Target::Null, 1 as usize))
     } else {
         match parse_super_name(data) {
             Ok((name, name_len)) => Ok((Target::SuperName(name), name_len)),
-            Err(AmlError::AmlParseError) => Err(AmlError::AmlParseError)
+            Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
+            Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
         }
     }
 }
