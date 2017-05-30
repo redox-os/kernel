@@ -1,5 +1,7 @@
 use super::AmlInternalError;
 
+use super::type2opcode::{parse_def_buffer, DefBuffer};
+
 pub enum DataObj {
     ComputationalData(ComputationalData)
 }
@@ -19,7 +21,8 @@ enum ComputationalData {
     QWord(u64),
     Zero,
     One,
-    Ones
+    Ones,
+    DefBuffer(DefBuffer)
 }
 
 pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError> {
@@ -34,6 +37,7 @@ pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError>
 }
 
 pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInternalError> {
+    println!("{}", data[0]);
     match parse_data_obj(data) {
         Ok((res, size)) => return Ok((DataRefObj::DataObj(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
@@ -86,6 +90,14 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
         0x00 => Ok((ComputationalData::Zero, 1 as usize)),
         0x01 => Ok((ComputationalData::One, 1 as usize)),
         0xFF => Ok((ComputationalData::Ones, 1 as usize)),
-        _ => Err(AmlInternalError::AmlParseError)
+        _ => {
+            match parse_def_buffer(data) {
+                Ok((res, size)) => return Ok((ComputationalData::DefBuffer(res), size)),
+                Err(AmlInternalError::AmlParseError) => (),
+                Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+            }
+
+            Err(AmlInternalError::AmlParseError)
+        }
     }
 }

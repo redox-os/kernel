@@ -50,12 +50,9 @@ pub enum Type2OpCode {
     DeferredLoad(Vec<u8>)
 }
 
-pub enum DefBuffer {
-    Buffer {
-        buffer_size: TermArg,
-        byte_list: Vec<u8>
-    },
-    DeferredLoad(Vec<u8>)
+pub struct DefBuffer {
+    buffer_size: TermArg,
+    byte_list: Vec<u8>
 }
 
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -147,13 +144,13 @@ pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalEr
     let (buffer_size, buffer_size_len) = match parse_term_arg(&data[1 + pkg_length_len..]) {
         Ok(s) => s,
         Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefBuffer::DeferredLoad(
+        Err(AmlInternalError::AmlDeferredLoad) => return Ok((Type2OpCode::DeferredLoad(
             data[0 .. 1 + pkg_length].to_vec()
         ), 1 + pkg_length))
     };
     let byte_list = data[1 + pkg_length_len + buffer_size_len .. 1 + pkg_length].to_vec();
     
-    Ok((DefBuffer::Buffer {buffer_size, byte_list}, pkg_length + 1))
+    Ok((DefBuffer {buffer_size, byte_list}, pkg_length + 1))
 }
 
 
