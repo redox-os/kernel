@@ -14,6 +14,7 @@ pub enum Type1OpCode {
         predicate: TermArg,
         block: Vec<TermObj>
     },
+    DefReturn(TermArg),
     DeferredLoad(Vec<u8>)
 }
 
@@ -29,6 +30,12 @@ pub enum IfBlock {
 
 pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     match parse_def_if_else(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_return(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -98,4 +105,14 @@ fn parse_def_while(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError
     };
 
     Ok((Type1OpCode::DefWhile {predicate, block}, pkg_length + 1))
+}
+
+fn parse_def_return(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
+    if data[0] != 0xA4 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (arg_object, arg_object_len) = parse_term_arg(&data[1..])?;
+
+    Ok((Type1OpCode::DefReturn(arg_object), 1 + arg_object_len))
 }
