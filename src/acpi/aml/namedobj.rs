@@ -138,13 +138,13 @@ fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> 
         Ok(p) => p,
         Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
     };
     let obj_list = match parse_object_list(&data[2 + pkg_length_len + name_len .. 2 + pkg_length]) {
         Ok(p) => p,
         Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
     };
     
     Ok((NamedObj::DefDevice {name, obj_list}, 2 + pkg_length_len))
@@ -187,7 +187,7 @@ fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
         Ok(p) => p,
         Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
     };
 
     let flags_raw = data[2 + pkg_length_len + name_len];
@@ -214,7 +214,7 @@ fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
         Ok(p) => p,
         Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
     };
 
     Ok((NamedObj::DefField {name, flags, field_list}, 2 + pkg_length))

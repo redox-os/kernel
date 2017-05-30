@@ -74,7 +74,7 @@ fn parse_def_else(data: &[u8]) -> Result<(IfBlock, usize), AmlInternalError> {
         Ok(term_list) => Ok((IfBlock::Else(term_list), pkg_length)),
         Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            Ok((IfBlock::DeferredLoad(data[0 .. pkg_length + 1].to_vec()), pkg_length))
+            Ok((IfBlock::DeferredLoad(data[0 .. pkg_length + 1].to_vec()), 1 + pkg_length))
     }
 }
 
