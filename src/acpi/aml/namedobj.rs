@@ -35,6 +35,10 @@ pub enum NamedObj {
         sync_level: u8,
         term_list: Vec<TermObj>
     },
+    DefMutex {
+        name: String,
+        sync_level: u8
+    },
     DeferredLoad(Vec<u8>)
 }
 
@@ -109,6 +113,12 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     }
 
     match parse_def_method(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_mutex(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -322,4 +332,20 @@ fn parse_def_method(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> 
     };
 
     Ok((NamedObj::DefMethod {name, arg_count, serialized, sync_level, term_list}, pkg_len + 1))
+}
+
+fn parse_def_mutex(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x01 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (name, name_len) = match parse_name_string(&data[2 ..]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    };
+    let flags = data[2 + name_len];
+    let sync_level = flags & 0x0F;
+
+    Ok((NamedObj::DefMutex {name, sync_level}, name_len + 3))
 }
