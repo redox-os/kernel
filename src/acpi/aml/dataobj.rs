@@ -5,20 +5,25 @@ use super::AmlInternalError;
 
 use super::type2opcode::{parse_def_buffer, parse_def_package, DefBuffer, DefPackage};
 
+#[derive(Debug)]
 pub enum DataObj {
     ComputationalData(ComputationalData),
     DefPackage(DefPackage)
 }
 
+#[derive(Debug)]
 pub enum DataRefObj {
     DataObj(DataObj)
 }
 
+#[derive(Debug)]
 pub struct ArgObj(u8);
+#[derive(Debug)]
 pub struct LocalObj(u8);
 // Not actually doing anything to contain data, but does give us type guarantees, which is useful
 
-enum ComputationalData {
+#[derive(Debug)]
+pub enum ComputationalData {
     Byte(u8),
     Word(u16),
     DWord(u32),
@@ -27,7 +32,8 @@ enum ComputationalData {
     Zero,
     One,
     Ones,
-    DefBuffer(DefBuffer)
+    DefBuffer(DefBuffer),
+    RevisionOp
 }
 
 pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError> {
@@ -113,6 +119,11 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
         },
         0x00 => Ok((ComputationalData::Zero, 1 as usize)),
         0x01 => Ok((ComputationalData::One, 1 as usize)),
+        0x5B => if data[1] == 0x30 {
+            Ok((ComputationalData::RevisionOp, 2 as usize))
+        } else {
+            Err(AmlInternalError::AmlParseError)
+        },
         0xFF => Ok((ComputationalData::Ones, 1 as usize)),
         _ => {
             match parse_def_buffer(data) {

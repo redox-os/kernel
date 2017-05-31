@@ -7,6 +7,7 @@ use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
 use super::pkglength::parse_pkg_length;
 
+#[derive(Debug)]
 pub enum NamedObj {
     DefCreateDWordField {
         name: String,
@@ -42,7 +43,8 @@ pub enum NamedObj {
     DeferredLoad(Vec<u8>)
 }
 
-enum RegionSpace {
+#[derive(Debug)]
+pub enum RegionSpace {
     SystemMemory,
     SystemIO,
     PCIConfig,
@@ -56,13 +58,15 @@ enum RegionSpace {
     UserDefined(u8)
 }
 
-struct FieldFlags {
+#[derive(Debug)]
+pub struct FieldFlags {
     access_type: AccessType,
     lock_rule: bool,
     update_rule: UpdateRule
 }
 
-enum AccessType {
+#[derive(Debug)]
+pub enum AccessType {
     AnyAcc,
     ByteAcc,
     WordAcc,
@@ -71,13 +75,15 @@ enum AccessType {
     BufferAcc
 }
 
-enum UpdateRule {
+#[derive(Debug)]
+pub enum UpdateRule {
     Preserve,
     WriteAsOnes,
     WriteAsZeros
 }
 
-enum FieldElement {
+#[derive(Debug)]
+pub enum FieldElement {
     NamedField {
         name: String,
         length: usize

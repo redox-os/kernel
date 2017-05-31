@@ -9,6 +9,7 @@ use super::type1opcode::{parse_type1_opcode, Type1OpCode};
 use super::type2opcode::{parse_type2_opcode, Type2OpCode};
 use super::namestring::parse_name_string;
 
+#[derive(Debug)]
 pub enum TermArg {
     LocalObj(Box<LocalObj>),
     DataObj(Box<DataObj>),
@@ -16,6 +17,7 @@ pub enum TermArg {
     Type2Opcode(Box<Type2OpCode>)
 }
 
+#[derive(Debug)]
 pub enum TermObj {
     NamespaceModifier(Box<NamespaceModifier>),
     NamedObj(Box<NamedObj>),
@@ -23,11 +25,13 @@ pub enum TermObj {
     Type2Opcode(Box<Type2OpCode>)
 }
 
+#[derive(Debug)]
 pub enum Object {
     NamespaceModifier(Box<NamespaceModifier>),
     NamedObj(Box<NamedObj>)
 }
 
+#[derive(Debug)]
 pub struct MethodInvocation {
 
 }
@@ -37,8 +41,6 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        println!("t{} {}", data[current_offset], data[current_offset + 1]);
-        
         let (res, len) = parse_term_obj(&data[current_offset..])?;
         terms.push(res);
         current_offset += len;
@@ -48,7 +50,6 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
 }
 
 pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
-    println!("t{}", data[0]);
     match parse_local_obj(data) {
         Ok((res, size)) => return Ok((TermArg::LocalObj(Box::new(res)), size)),
         Err(AmlInternalError::AmlParseError) => (),
@@ -81,8 +82,6 @@ pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlInternalError> {
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        println!("o{} {}", data[current_offset], data[current_offset + 1]);
-        
         let (res, len) = parse_object(&data[current_offset..])?;
         terms.push(res);
         current_offset += len;

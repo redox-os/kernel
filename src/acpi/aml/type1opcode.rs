@@ -5,6 +5,7 @@ use super::AmlInternalError;
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list, TermObj, TermArg};
 
+#[derive(Debug)]
 pub enum Type1OpCode {
     DefIfElse {
         if_block: IfBlock,
@@ -18,6 +19,7 @@ pub enum Type1OpCode {
     DeferredLoad(Vec<u8>)
 }
 
+#[derive(Debug)]
 pub enum IfBlock {
     If {
         predicate: TermArg,
