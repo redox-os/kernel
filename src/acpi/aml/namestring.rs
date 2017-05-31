@@ -9,7 +9,8 @@ use super::dataobj::{parse_arg_obj, parse_local_obj, ArgObj, LocalObj};
 pub enum SuperName {
     NameString(String),
     ArgObj(ArgObj),
-    LocalObj(LocalObj)
+    LocalObj(LocalObj),
+    DebugObj
 }
 
 #[derive(Debug)]
@@ -150,6 +151,10 @@ pub fn parse_super_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalEr
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
+    if data[0] == 0x5B && data[1] == 0x31 {
+        return Ok((SuperName::DebugObj, 2 as usize));
+    }
+    
     Err(AmlInternalError::AmlParseError)
 }
 
