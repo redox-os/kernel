@@ -13,6 +13,7 @@ pub enum Type2OpCode {
     DefBuffer(DefBuffer),
     DefPackage(DefPackage),
     DefDerefOf(TermArg),
+    DefRefOf(SuperName),
     DefIncrement(SuperName),
     DefIndex {
         obj: TermArg,
@@ -97,6 +98,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
     
     match parse_def_deref_of(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_ref_of(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -231,6 +238,15 @@ pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalEr
     Ok((DefBuffer::Buffer {buffer_size, byte_list}, pkg_length + 1))
 }
 
+fn parse_def_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x71 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (obj_reference, obj_reference_len) = parse_super_name(&data[1..])?;
+
+    Ok((Type2OpCode::DefRefOf(obj_reference), obj_reference_len + 1))
+}
 
 fn parse_def_deref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x83 {
