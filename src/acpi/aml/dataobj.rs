@@ -1,9 +1,13 @@
+use collections::vec::Vec;
+use collections::string::String;
+
 use super::AmlInternalError;
 
-use super::type2opcode::{parse_def_buffer, DefBuffer};
+use super::type2opcode::{parse_def_buffer, parse_def_package, DefBuffer, DefPackage};
 
 pub enum DataObj {
-    ComputationalData(ComputationalData)
+    ComputationalData(ComputationalData),
+    DefPackage(DefPackage)
 }
 
 pub enum DataRefObj {
@@ -19,6 +23,7 @@ enum ComputationalData {
     Word(u16),
     DWord(u32),
     QWord(u64),
+    String(String),
     Zero,
     One,
     Ones,
@@ -28,6 +33,12 @@ enum ComputationalData {
 pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError> {
     match parse_computational_data(data) {
         Ok((res, size)) => return Ok((DataObj::ComputationalData(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_package(data) {
+        Ok((res, size)) => return Ok((DataObj::DefPackage(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -75,6 +86,20 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
                 ((data[3] as u32) << 16) +
                 ((data[4] as u32) << 24);
             Ok((ComputationalData::DWord(res), 5 as usize))
+        },
+        0x0D => {
+            let mut cur_ptr: usize = 1;
+            let mut cur_string: Vec<u8> = vec!();
+
+            while data[cur_ptr] != 0x00 {
+                cur_string.push(data[cur_ptr]);
+                cur_ptr += 1;
+            }
+
+            match String::from_utf8(cur_string) {
+                Ok(s) => Ok((ComputationalData::String(s.clone()), s.clone().len() + 2)),
+                Err(_) => Err(AmlInternalError::AmlParseError)
+            }
         },
         0x0E => {
             let res = (data[1] as u64) +

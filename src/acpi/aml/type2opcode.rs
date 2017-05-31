@@ -1,13 +1,16 @@
 use collections::vec::Vec;
+use collections::string::String;
 
 use super::AmlInternalError;
 
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_method_invocation, TermArg, MethodInvocation};
-use super::namestring::{parse_super_name, parse_target, SuperName, Target};
+use super::namestring::{parse_super_name, parse_target, parse_name_string, SuperName, Target};
+use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
 pub enum Type2OpCode {
     DefBuffer(DefBuffer),
+    DefPackage(DefPackage),
     DefDerefOf(TermArg),
     DefIncrement(SuperName),
     DefIndex {
@@ -41,6 +44,11 @@ pub enum Type2OpCode {
         operand: TermArg,
         target: Target
     },
+    DefAnd {
+        lhs: TermArg,
+        rhs: TermArg,
+        target: Target
+    },
     DefOr {
         lhs: TermArg,
         rhs: TermArg,
@@ -58,9 +66,28 @@ pub enum DefBuffer {
     DeferredLoad(Vec<u8>)
 }
 
+pub enum DefPackage {
+    Package {
+        num_elements: u8,
+        elements: Vec<PackageElement>
+    },
+    DeferredLoad(Vec<u8>)
+}
+
+pub enum PackageElement {
+    DataRefObj(DataRefObj),
+    NameString(String)
+}
+
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     match parse_def_buffer(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefBuffer(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_package(data) {
+        Ok((res, size)) => return Ok((Type2OpCode::DefPackage(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -125,6 +152,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
+    match parse_def_and(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
     match parse_def_or(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -136,6 +169,44 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
         Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
     }
+}
+
+pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternalError> {
+    if data[0] != 0x12 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
+    let num_elements = data[1 + pkg_length_len];
+
+    let mut current_offset: usize = 2 + pkg_length_len;
+    let mut elements: Vec<PackageElement> = vec!();
+    
+    while current_offset < pkg_length {
+        match parse_data_ref_obj(&data[current_offset ..
+                                       1 + pkg_length]) {
+            Ok((data_ref_obj, data_ref_obj_len)) => {
+                elements.push(PackageElement::DataRefObj(data_ref_obj));
+                current_offset += data_ref_obj_len;
+            },
+            Err(AmlInternalError::AmlParseError) => 
+                match parse_name_string(&data[current_offset .. 1 + pkg_length]) {
+                    Ok((name_string, name_string_len)) => {
+                        elements.push(PackageElement::NameString(name_string));
+                        current_offset += name_string_len;
+                    },
+                    Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+                    Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefPackage::DeferredLoad(
+                        data[0 .. 1 + pkg_length].to_vec()
+                    ), 1 + pkg_length))
+                },
+            Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefPackage::DeferredLoad(
+                data[0 .. 1 + pkg_length].to_vec()
+            ), 1 + pkg_length))
+        }
+    }
+
+    Ok((DefPackage::Package {num_elements, elements}, 1 + pkg_length))
 }
 
 pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalError> {
@@ -274,4 +345,16 @@ fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
     Ok((Type2OpCode::DefOr {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+}
+
+fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x7B {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+
+    Ok((Type2OpCode::DefAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len))
 }
