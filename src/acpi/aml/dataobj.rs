@@ -48,7 +48,6 @@ pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError>
 }
 
 pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInternalError> {
-    println!("{}", data[0]);
     match parse_data_obj(data) {
         Ok((res, size)) => return Ok((DataRefObj::DataObj(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
