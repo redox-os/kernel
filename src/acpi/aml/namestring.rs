@@ -5,12 +5,14 @@ use super::AmlInternalError;
 
 use super::dataobj::{parse_arg_obj, parse_local_obj, ArgObj, LocalObj};
 
+#[derive(Debug)]
 pub enum SuperName {
     NameString(String),
     ArgObj(ArgObj),
     LocalObj(LocalObj)
 }
 
+#[derive(Debug)]
 pub enum Target {
     SuperName(SuperName),
     Null

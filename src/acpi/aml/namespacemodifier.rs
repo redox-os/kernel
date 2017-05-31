@@ -7,6 +7,7 @@ use super::namestring::parse_name_string;
 use super::termlist::{parse_term_list, TermObj};
 use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
+#[derive(Debug)]
 pub enum NamespaceModifier {
     Name {
         name: String,
@@ -16,10 +17,20 @@ pub enum NamespaceModifier {
         name: String,
         terms: Vec<TermObj>
     },
+    Alias {
+        source_name: String,
+        alias_name: String
+    },
     DeferredLoad(Vec<u8>)
 }
 
 pub fn parse_namespace_modifier(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
+    match parse_alias_op(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_scope_op(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -31,6 +42,17 @@ pub fn parse_namespace_modifier(data: &[u8]) -> Result<(NamespaceModifier, usize
         Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
     }
+}
+
+fn parse_alias_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
+    if data[0] != 0x06 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (source_name, source_name_len) = parse_name_string(&data[1..])?;
+    let (alias_name, alias_name_len) = parse_name_string(&data[1 + source_name_len..])?;
+    
+    Ok((NamespaceModifier::Alias {source_name, alias_name}, 1 + source_name_len + alias_name_len))
 }
 
 fn parse_name_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {

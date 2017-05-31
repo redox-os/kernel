@@ -8,6 +8,7 @@ use super::termlist::{parse_term_arg, parse_method_invocation, TermArg, MethodIn
 use super::namestring::{parse_super_name, parse_target, parse_name_string, SuperName, Target};
 use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
+#[derive(Debug)]
 pub enum Type2OpCode {
     DefBuffer(DefBuffer),
     DefPackage(DefPackage),
@@ -58,6 +59,7 @@ pub enum Type2OpCode {
     DeferredLoad(Vec<u8>)
 }
 
+#[derive(Debug)]
 pub enum DefBuffer {
     Buffer {
         buffer_size: TermArg,
@@ -66,6 +68,7 @@ pub enum DefBuffer {
     DeferredLoad(Vec<u8>)
 }
 
+#[derive(Debug)]
 pub enum DefPackage {
     Package {
         num_elements: u8,
@@ -74,6 +77,7 @@ pub enum DefPackage {
     DeferredLoad(Vec<u8>)
 }
 
+#[derive(Debug)]
 pub enum PackageElement {
     DataRefObj(DataRefObj),
     NameString(String)
