@@ -4,13 +4,15 @@ use collections::string::String;
 use super::AmlInternalError;
 
 use super::dataobj::{parse_arg_obj, parse_local_obj, ArgObj, LocalObj};
+use super::type2opcode::{parse_type6_opcode, Type6OpCode};
 
 #[derive(Debug)]
 pub enum SuperName {
     NameString(String),
     ArgObj(ArgObj),
     LocalObj(LocalObj),
-    DebugObj
+    DebugObj,
+    Type6OpCode(Type6OpCode)
 }
 
 #[derive(Debug)]
@@ -150,12 +152,18 @@ pub fn parse_super_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalEr
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
+    
+    match parse_type6_opcode(data) {
+        Ok((op, len)) => return Ok((SuperName::Type6OpCode(op), len)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
 
     if data[0] == 0x5B && data[1] == 0x31 {
-        return Ok((SuperName::DebugObj, 2 as usize));
+        Ok((SuperName::DebugObj, 2 as usize))
+    } else {
+        Err(AmlInternalError::AmlParseError)
     }
-    
-    Err(AmlInternalError::AmlParseError)
 }
 
 fn parse_simple_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
