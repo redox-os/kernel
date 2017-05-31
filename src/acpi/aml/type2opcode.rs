@@ -1,5 +1,6 @@
 use collections::vec::Vec;
 use collections::string::String;
+use collections::boxed::Box;
 
 use super::AmlInternalError;
 
@@ -15,11 +16,7 @@ pub enum Type2OpCode {
     DefDerefOf(TermArg),
     DefRefOf(SuperName),
     DefIncrement(SuperName),
-    DefIndex {
-        obj: TermArg,
-        idx: TermArg,
-        target: Target
-    },
+    DefIndex(DefIndex),
     DefLEqual {
         lhs: TermArg,
         rhs: TermArg
@@ -61,6 +58,21 @@ pub enum Type2OpCode {
 }
 
 #[derive(Debug)]
+pub enum Type6OpCode {
+    DefDerefOf(TermArg),
+    DefRefOf(Box<SuperName>),
+    DefIndex(DefIndex),
+    MethodInvocation(MethodInvocation)
+}
+
+#[derive(Debug)]
+pub struct DefIndex {
+    obj: TermArg,
+    idx: TermArg,
+    target: Box<Target>
+}
+
+#[derive(Debug)]
 pub enum DefBuffer {
     Buffer {
         buffer_size: TermArg,
@@ -98,13 +110,13 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
     
     match parse_def_deref_of(data) {
-        Ok(res) => return Ok(res),
+        Ok((res, size)) => return Ok((Type2OpCode::DefDerefOf(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
     match parse_def_ref_of(data) {
-        Ok(res) => return Ok(res),
+        Ok((res, size)) => return Ok((Type2OpCode::DefRefOf(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -116,7 +128,7 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_index(data) {
-        Ok(res) => return Ok(res),
+        Ok((res, size)) => return Ok((Type2OpCode::DefIndex(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -182,6 +194,33 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 }
 
+pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlInternalError> {
+    match parse_def_deref_of(data) {
+        Ok((res, size)) => return Ok((Type6OpCode::DefDerefOf(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_ref_of(data) {
+        Ok((res, size)) => return Ok((Type6OpCode::DefRefOf(Box::new(res)), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_index(data) {
+        Ok((res, size)) => return Ok((Type6OpCode::DefIndex(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_method_invocation(data) {
+        // UserTermObj is a method call. Would've been nice to be consistent about this...
+        Ok((mi, size)) => Ok((Type6OpCode::MethodInvocation(mi), size)),
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+    }
+}
+
 pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternalError> {
     if data[0] != 0x12 {
         return Err(AmlInternalError::AmlParseError);
@@ -238,24 +277,24 @@ pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalEr
     Ok((DefBuffer::Buffer {buffer_size, byte_list}, pkg_length + 1))
 }
 
-fn parse_def_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_ref_of(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
     if data[0] != 0x71 {
         return Err(AmlInternalError::AmlParseError);
     }
 
     let (obj_reference, obj_reference_len) = parse_super_name(&data[1..])?;
 
-    Ok((Type2OpCode::DefRefOf(obj_reference), obj_reference_len + 1))
+    Ok((obj_reference, obj_reference_len + 1))
 }
 
-fn parse_def_deref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
     if data[0] != 0x83 {
         return Err(AmlInternalError::AmlParseError);
     }
 
     let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
 
-    Ok((Type2OpCode::DefDerefOf(obj_reference), obj_reference_len + 1))
+    Ok((obj_reference, obj_reference_len + 1))
 }
 
 fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -267,7 +306,7 @@ fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
     Ok((Type2OpCode::DefIncrement(obj), obj_len + 1))
 }
 
-fn parse_def_index(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
     if data[0] != 0x88 {
         return Err(AmlInternalError::AmlParseError);
     }
@@ -276,7 +315,7 @@ fn parse_def_index(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
     let (idx, idx_len) = parse_term_arg(&data[1 + obj_len..])?;
     let (target, target_len) = parse_target(&data[1 + obj_len + idx_len..])?;
 
-    Ok((Type2OpCode::DefIndex {obj, idx, target}, 1 + obj_len + idx_len + target_len))
+    Ok((DefIndex {obj, idx, target: Box::new(target)}, 1 + obj_len + idx_len + target_len))
 }
 
 fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
