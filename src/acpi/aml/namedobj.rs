@@ -6,6 +6,7 @@ use super::AmlInternalError;
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
 use super::pkglength::parse_pkg_length;
+use super::type2opcode::{parse_def_buffer, DefBuffer};
 
 #[derive(Debug)]
 pub enum NamedObj {
@@ -101,7 +102,9 @@ pub enum FieldElement {
     AccessField {
         access_type: AccessType,
         access_attrib: AccessAttrib
-    }
+    },
+    ConnectFieldNameString(String),
+    ConnectFieldBufferData(DefBuffer)
 }
 
 #[derive(Debug)]
@@ -439,7 +442,21 @@ fn parse_extended_access_field(data: &[u8]) -> Result<(FieldElement, usize), Aml
 }
 
 fn parse_connect_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    Err(AmlInternalError::AmlParseError)
+    if data[0] != 0x02 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    match parse_def_buffer(&data[1..]) {
+        Ok((buf, buf_len)) => return Ok((FieldElement::ConnectFieldBufferData(buf), buf_len + 1)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_name_string(&data[1..]) {
+        Ok((name, name_len)) => Ok((FieldElement::ConnectFieldNameString(name), name_len + 1)),
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+    }    
 }
 
 fn parse_def_method(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
