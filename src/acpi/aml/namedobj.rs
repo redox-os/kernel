@@ -37,6 +37,11 @@ pub enum NamedObj {
         source_buf: TermArg,
         byte_index: TermArg
     },
+    DefCreateQWordField {
+        name: String,
+        source_buf: TermArg,
+        byte_index: TermArg
+    },
     DefDevice {
         name: String,
         obj_list: Vec<Object>
@@ -149,7 +154,25 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
+    match parse_def_create_byte_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_create_word_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_def_create_dword_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_create_qword_field(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -303,6 +326,19 @@ fn parse_def_create_dword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInt
     let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
 
     Ok((NamedObj::DefCreateDWordField {name, source_buf, byte_index},
+        1 + source_buf_len + byte_index_len + name_len))
+}
+
+fn parse_def_create_qword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x8F {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
+    let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
+    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
+
+    Ok((NamedObj::DefCreateQWordField {name, source_buf, byte_index},
         1 + source_buf_len + byte_index_len + name_len))
 }
 
