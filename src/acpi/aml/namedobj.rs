@@ -42,6 +42,12 @@ pub enum NamedObj {
         source_buf: TermArg,
         byte_index: TermArg
     },
+    DefCreateField {
+        name: String,
+        source_buf: TermArg,
+        bit_index: TermArg,
+        num_bits: TermArg
+    },
     DefDevice {
         name: String,
         obj_list: Vec<Object>
@@ -173,6 +179,12 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     }
     
     match parse_def_create_qword_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_create_field(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -340,6 +352,21 @@ fn parse_def_create_qword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInt
 
     Ok((NamedObj::DefCreateQWordField {name, source_buf, byte_index},
         1 + source_buf_len + byte_index_len + name_len))
+}
+
+fn parse_def_create_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x13 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (source_buf, source_buf_len) = parse_term_arg(&data[2..])?;
+    let (bit_index, bit_index_len) = parse_term_arg(&data[2 + source_buf_len..])?;
+    let (num_bits, num_bits_len) = parse_term_arg(&data[2 + source_buf_len + bit_index_len..])?;
+    let (name, name_len) = parse_name_string(
+        &data[1 + source_buf_len + bit_index_len + num_bits_len..])?;
+
+    Ok((NamedObj::DefCreateField {name, source_buf, bit_index, num_bits},
+        2 + source_buf_len + bit_index_len + num_bits_len + name_len))
 }
 
 fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
