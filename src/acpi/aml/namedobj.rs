@@ -9,6 +9,13 @@ use super::pkglength::parse_pkg_length;
 
 #[derive(Debug)]
 pub enum NamedObj {
+    DefBankField {
+        region_name: String,
+        bank_name: String,
+        bank_value: TermArg,
+        flags: FieldFlags,
+        field_list: Vec<FieldElement>
+    },
     DefCreateDWordField {
         name: String,
         source_buf: TermArg,
@@ -94,6 +101,12 @@ pub enum FieldElement {
 }
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    match parse_def_bank_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_def_create_dword_field(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -131,6 +144,72 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     }
     
     Err(AmlInternalError::AmlParseError)
+}
+
+fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x87 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
+    let (region_name, region_name_len) = match parse_name_string(
+            &data[2 + pkg_length_len .. 2 + pkg_length]) {
+        Ok(res) => res,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => return Ok((NamedObj::DeferredLoad(
+            data[0 .. 2 + pkg_length].to_vec()
+        ), 2 + pkg_length))
+    };
+
+    let (bank_name, bank_name_len) = match parse_name_string(
+            &data[2 + pkg_length_len + region_name_len .. 2 + pkg_length]) {
+        Ok(res) => res,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => return Ok((NamedObj::DeferredLoad(
+            data[0 .. 2 + pkg_length].to_vec()
+        ), 2 + pkg_length))
+    };
+
+    let (bank_value, bank_value_len) = match parse_term_arg(
+            &data[2 + pkg_length_len + region_name_len .. 2 + pkg_length]) {
+        Ok(res) => res,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => return Ok((NamedObj::DeferredLoad(
+            data[0 .. 2 + pkg_length].to_vec()
+        ), 2 + pkg_length))
+    };
+
+    let flags_raw = data[2 + pkg_length_len + region_name_len + bank_name_len + bank_value_len];
+    let flags = FieldFlags {
+        access_type: match flags_raw & 0x0F {
+            0 => AccessType::AnyAcc,
+            1 => AccessType::ByteAcc,
+            2 => AccessType::WordAcc,
+            3 => AccessType::DWordAcc,
+            4 => AccessType::QWordAcc,
+            5 => AccessType::BufferAcc,
+            _ => return Err(AmlInternalError::AmlParseError)
+        },
+        lock_rule: (flags_raw & 0x10) == 0x10,
+        update_rule: match (flags_raw & 0x60) >> 5 {
+            0 => UpdateRule::Preserve,
+            1 => UpdateRule::WriteAsOnes,
+            2 => UpdateRule::WriteAsZeros,
+            _ => return Err(AmlInternalError::AmlParseError)
+        }
+    };
+    
+    let field_list = match parse_field_list(
+        &data[3 + pkg_length_len + region_name_len + bank_name_len + bank_value_len ..
+              2 + pkg_length]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+    };
+    
+    Ok((NamedObj::DefBankField {region_name, bank_name, bank_value, flags, field_list},
+        2 + pkg_length))
 }
 
 fn parse_def_create_dword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
