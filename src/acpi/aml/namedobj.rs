@@ -48,6 +48,12 @@ pub enum NamedObj {
         bit_index: TermArg,
         num_bits: TermArg
     },
+    DefDataRegion {
+        name: String,
+        signature: TermArg,
+        oem_id: TermArg,
+        oem_table_id: TermArg
+    },
     DefDevice {
         name: String,
         obj_list: Vec<Object>
@@ -185,6 +191,12 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     }
     
     match parse_def_create_field(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_data_region(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -363,10 +375,25 @@ fn parse_def_create_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalE
     let (bit_index, bit_index_len) = parse_term_arg(&data[2 + source_buf_len..])?;
     let (num_bits, num_bits_len) = parse_term_arg(&data[2 + source_buf_len + bit_index_len..])?;
     let (name, name_len) = parse_name_string(
-        &data[1 + source_buf_len + bit_index_len + num_bits_len..])?;
+        &data[2 + source_buf_len + bit_index_len + num_bits_len..])?;
 
     Ok((NamedObj::DefCreateField {name, source_buf, bit_index, num_bits},
         2 + source_buf_len + bit_index_len + num_bits_len + name_len))
+}
+
+fn parse_def_data_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x88 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (name, name_len) = parse_name_string(&data[2..])?;
+    let (signature, signature_len) = parse_term_arg(&data[2 + name_len..])?;
+    let (oem_id, oem_id_len) = parse_term_arg(&data[2 + name_len + signature_len..])?;
+    let (oem_table_id, oem_table_id_len) = parse_term_arg(
+        &data[2 + name_len + signature_len + oem_id_len..])?;
+
+    Ok((NamedObj::DefDataRegion {name, signature, oem_id, oem_table_id},
+        2 + name_len + signature_len + oem_id_len + oem_table_id_len))
 }
 
 fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
