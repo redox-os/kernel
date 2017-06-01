@@ -7,6 +7,10 @@ use super::termlist::{parse_term_arg, parse_term_list, TermObj, TermArg};
 
 #[derive(Debug)]
 pub enum Type1OpCode {
+    DefBreak,
+    DefBreakPoint,
+    DefContinue,
+    DefNoop,
     DefIfElse {
         if_block: IfBlock,
         else_block: IfBlock
@@ -31,6 +35,14 @@ pub enum IfBlock {
 }
 
 pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
+    match data[0] {
+        0xA5 => return Ok((Type1OpCode::DefBreak, 1 as usize)),
+        0xCC => return Ok((Type1OpCode::DefBreakPoint, 1 as usize)),
+        0x9F => return Ok((Type1OpCode::DefContinue, 1 as usize)),
+        0xA3 => return Ok((Type1OpCode::DefNoop, 1 as usize)),
+        _ => ()
+    }
+    
     match parse_def_if_else(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
