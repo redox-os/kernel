@@ -102,6 +102,10 @@ pub enum NamedObj {
         p_blk_len: u8,
         obj_list: Vec<Object>
     },
+    DefThermalZone {
+        name: String,
+        obj_list: Vec<Object>
+    },
     DeferredLoad(Vec<u8>)
 }
 
@@ -278,7 +282,11 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
-    Err(AmlInternalError::AmlParseError)
+    match parse_def_thermal_zone(data) {
+        Ok(res) => Ok(res),
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+    }
 }
 
 fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
@@ -817,3 +825,27 @@ fn parse_def_processor(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
 
     Ok((NamedObj::DefProcessor {name, proc_id, p_blk_addr, p_blk_len, obj_list}, 2 + pkg_len))
 }
+
+fn parse_def_thermal_zone(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x85 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
+    let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+    };
+    
+    let obj_list = match parse_object_list(&data[2 + pkg_len_len + name_len .. 2 + pkg_len]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 2 + pkg_len))
+    };
+
+    Ok((NamedObj::DefThermalZone {name, obj_list}, 2 + pkg_len))
+}
+
