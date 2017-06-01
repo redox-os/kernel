@@ -95,6 +95,13 @@ pub enum NamedObj {
         resource_order: u16,
         obj_list: Vec<Object>
     },
+    DefProcessor {
+        name: String,
+        proc_id: u8,
+        p_blk_addr: u32,
+        p_blk_len: u8,
+        obj_list: Vec<Object>
+    },
     DeferredLoad(Vec<u8>)
 }
 
@@ -260,6 +267,12 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     }
 
     match parse_def_power_res(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_processor(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -773,4 +786,34 @@ fn parse_def_power_res(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     };
 
     Ok((NamedObj::DefPowerRes {name, system_level, resource_order, obj_list}, 2 + pkg_len))
+}
+
+fn parse_def_processor(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x83 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
+    let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+    };
+    
+    let proc_id = data[2 + pkg_len_len + name_len];
+    let p_blk_addr: u32 = (data[3 + pkg_len_len + name_len] as u32) +
+        ((data[4 + pkg_len_len + name_len] as u32) << 8) +
+        ((data[5 + pkg_len_len + name_len] as u32) << 16) +
+        ((data[6 + pkg_len_len + name_len] as u32) << 24);
+    let p_blk_len = data[7 + pkg_len_len + name_len];
+
+    let obj_list = match parse_object_list(&data[8 + pkg_len_len + name_len .. 2 + pkg_len]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 2 + pkg_len))
+    };
+
+    Ok((NamedObj::DefProcessor {name, proc_id, p_blk_addr, p_blk_len, obj_list}, 2 + pkg_len))
 }
