@@ -89,6 +89,12 @@ pub enum NamedObj {
         name: String,
         sync_level: u8
     },
+    DefPowerRes {
+        name: String,
+        system_level: u8,
+        resource_order: u16,
+        obj_list: Vec<Object>
+    },
     DeferredLoad(Vec<u8>)
 }
 
@@ -248,6 +254,12 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     }
 
     match parse_def_mutex(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_power_res(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -734,4 +746,31 @@ fn parse_def_mutex(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
     let sync_level = flags & 0x0F;
 
     Ok((NamedObj::DefMutex {name, sync_level}, name_len + 3))
+}
+
+fn parse_def_power_res(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x84 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
+    let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+    };
+    
+    let system_level = data[2 + pkg_len_len + name_len];
+    let resource_order: u16 = (data[3 + pkg_len_len + name_len] as u16) +
+        ((data[4 + pkg_len_len + name_len] as u16) << 8);
+
+    let obj_list = match parse_object_list(&data[5 + pkg_len_len + name_len .. 2 + pkg_len]) {
+        Ok(p) => p,
+        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 2 + pkg_len))
+    };
+
+    Ok((NamedObj::DefPowerRes {name, system_level, resource_order, obj_list}, 2 + pkg_len))
 }
