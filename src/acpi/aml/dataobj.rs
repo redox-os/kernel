@@ -4,7 +4,8 @@ use collections::string::String;
 
 use super::AmlInternalError;
 
-use super::type2opcode::{parse_def_buffer, parse_def_package, DefBuffer, DefPackage};
+use super::type2opcode::{parse_def_buffer, parse_def_package, parse_def_var_package,
+                         DefBuffer, DefPackage, DefVarPackage};
 use super::termlist::{parse_term_arg, TermArg};
 use super::namestring::{parse_super_name, SuperName};
 
@@ -12,7 +13,8 @@ use super::namestring::{parse_super_name, SuperName};
 #[derive(Debug)]
 pub enum DataObj {
     ComputationalData(ComputationalData),
-    DefPackage(DefPackage)
+    DefPackage(DefPackage),
+    DefVarPackage(DefVarPackage)
 }
 
 #[derive(Debug)]
@@ -55,8 +57,11 @@ pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError>
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
-    Err(AmlInternalError::AmlParseError)
-        // Rest currently isn't implemented
+    match parse_def_var_package(data) {
+        Ok((res, size)) => Ok((DataObj::DefVarPackage(res), size)),
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlDeferredLoad),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+    }
 }
 
 pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInternalError> {

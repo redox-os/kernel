@@ -13,6 +13,7 @@ use super::dataobj::{parse_data_ref_obj, DataRefObj};
 pub enum Type2OpCode {
     DefBuffer(DefBuffer),
     DefPackage(DefPackage),
+    DefVarPackage(DefVarPackage),
     DefDerefOf(TermArg),
     DefRefOf(SuperName),
     DefIncrement(SuperName),
@@ -91,6 +92,15 @@ pub enum DefPackage {
 }
 
 #[derive(Debug)]
+pub enum DefVarPackage {
+    Package {
+        num_elements: TermArg,
+        elements: Vec<PackageElement>
+    },
+    DeferredLoad(Vec<u8>)
+}
+
+#[derive(Debug)]
 pub enum PackageElement {
     DataRefObj(DataRefObj),
     NameString(String)
@@ -105,6 +115,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     
     match parse_def_package(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefPackage(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_var_package(data) {
+        Ok((res, size)) => return Ok((Type2OpCode::DefVarPackage(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -233,8 +249,7 @@ pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternal
     let mut elements: Vec<PackageElement> = vec!();
     
     while current_offset < pkg_length {
-        match parse_data_ref_obj(&data[current_offset ..
-                                       1 + pkg_length]) {
+        match parse_data_ref_obj(&data[current_offset .. 1 + pkg_length]) {
             Ok((data_ref_obj, data_ref_obj_len)) => {
                 elements.push(PackageElement::DataRefObj(data_ref_obj));
                 current_offset += data_ref_obj_len;
@@ -257,6 +272,43 @@ pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternal
     }
 
     Ok((DefPackage::Package {num_elements, elements}, 1 + pkg_length))
+}
+
+pub fn parse_def_var_package(data: &[u8]) -> Result<(DefVarPackage, usize), AmlInternalError> {
+    if data[0] != 0x13 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
+    let (num_elements, num_elements_len) = parse_term_arg(&data[1 + pkg_length_len ..])?;
+
+    let mut current_offset: usize = 1 + pkg_length_len + num_elements_len;
+    let mut elements: Vec<PackageElement> = vec!();
+    
+    while current_offset < pkg_length {
+        match parse_data_ref_obj(&data[current_offset .. 1 + pkg_length]) {
+            Ok((data_ref_obj, data_ref_obj_len)) => {
+                elements.push(PackageElement::DataRefObj(data_ref_obj));
+                current_offset += data_ref_obj_len;
+            },
+            Err(AmlInternalError::AmlParseError) => 
+                match parse_name_string(&data[current_offset .. 1 + pkg_length]) {
+                    Ok((name_string, name_string_len)) => {
+                        elements.push(PackageElement::NameString(name_string));
+                        current_offset += name_string_len;
+                    },
+                    Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+                    Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefVarPackage::DeferredLoad(
+                        data[0 .. 1 + pkg_length].to_vec()
+                    ), 1 + pkg_length))
+                },
+            Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefVarPackage::DeferredLoad(
+                data[0 .. 1 + pkg_length].to_vec()
+            ), 1 + pkg_length))
+        }
+    }
+
+    Ok((DefVarPackage::Package {num_elements, elements}, 1 + pkg_length))
 }
 
 pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalError> {
