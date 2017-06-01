@@ -1,9 +1,13 @@
+
 use collections::vec::Vec;
 use collections::string::String;
 
 use super::AmlInternalError;
 
 use super::type2opcode::{parse_def_buffer, parse_def_package, DefBuffer, DefPackage};
+use super::termlist::{parse_term_arg, TermArg};
+use super::namestring::{parse_super_name, SuperName};
+
 
 #[derive(Debug)]
 pub enum DataObj {
@@ -13,7 +17,9 @@ pub enum DataObj {
 
 #[derive(Debug)]
 pub enum DataRefObj {
-    DataObj(DataObj)
+    DataObj(DataObj),
+    ObjectReference(TermArg),
+    DDBHandle(SuperName)
 }
 
 #[derive(Debug)]
@@ -59,8 +65,18 @@ pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInterna
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
-    
-    Err(AmlInternalError::AmlParseError)
+
+    match parse_term_arg(data) {
+        Ok((res, size)) => return Ok((DataRefObj::ObjectReference(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_super_name(data) {
+        Ok((res, size)) => return Ok((DataRefObj::DDBHandle(res), size)),
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlDeferredLoad),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+    }
 }
 
 pub fn parse_arg_obj(data: &[u8]) -> Result<(ArgObj, usize), AmlInternalError> {
