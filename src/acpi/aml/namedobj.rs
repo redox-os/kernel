@@ -162,7 +162,8 @@ pub enum FieldElement {
         access_attrib: AccessAttrib
     },
     ConnectFieldNameString(String),
-    ConnectFieldBufferData(DefBuffer)
+    ConnectFieldBufferData(DefBuffer),
+    ExtendedAccessField(AccessAttrib)
 }
 
 #[derive(Debug)]
@@ -638,12 +639,6 @@ fn parse_field_element(data: &[u8]) -> Result<(FieldElement, usize), AmlInternal
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
 
-    match parse_extended_access_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
     parse_connect_field(data)
 }
 
@@ -667,7 +662,7 @@ fn parse_reserved_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInterna
 }
 
 fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    if data[0] != 0x01 {
+    if data[0] != 0x01 && data[0] != 0x03 {
         return Err(AmlInternalError::AmlParseError);
     }
     
@@ -689,8 +684,11 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
             0x06 => AccessAttrib::AttribByte,
             0x08 => AccessAttrib::AttribWord,
             0x0A => AccessAttrib::AttribBlock,
+            0x0B => AccessAttrib::AttribBytes(data[3]),
             0x0C => AccessAttrib::AttribProcessCall,
             0x0D => AccessAttrib::AttribBlockProcessCall,
+            0x0E => AccessAttrib::AttribRawBytes(data[3]),
+            0x0F => AccessAttrib::AttribRawProcessBytes(data[3]),
             _ => return Err(AmlInternalError::AmlParseError)
         },
         1 => AccessAttrib::AttribBytes(data[2]),
@@ -700,11 +698,11 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
             // This should never happen but the compiler bitches if I don't cover this
     };
 
-    return Ok((FieldElement::AccessField {access_type, access_attrib}, 3 as usize))
-}
-
-fn parse_extended_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    Err(AmlInternalError::AmlParseError)
+    return Ok((FieldElement::AccessField {access_type, access_attrib}, if data[0] == 0x01 {
+        3 as usize
+    } else {
+        4 as usize
+    }))
 }
 
 fn parse_connect_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
