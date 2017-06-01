@@ -58,6 +58,9 @@ pub enum NamedObj {
         name: String,
         obj_list: Vec<Object>
     },
+    DefEvent {
+        name: String
+    },
     DefOpRegion {
         name: String,
         region: RegionSpace,
@@ -197,6 +200,12 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
     }
     
     match parse_def_data_region(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_event(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -394,6 +403,16 @@ fn parse_def_data_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalEr
 
     Ok((NamedObj::DefDataRegion {name, signature, oem_id, oem_table_id},
         2 + name_len + signature_len + oem_id_len + oem_table_id_len))
+}
+
+fn parse_def_event(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x02 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (name, name_len) = parse_name_string(&data[2..])?;
+
+    Ok((NamedObj::DefEvent {name}, 2 + name_len))
 }
 
 fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
