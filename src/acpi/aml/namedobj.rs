@@ -97,7 +97,25 @@ pub enum FieldElement {
     },
     ReservedField {
         length: usize
+    },
+    AccessField {
+        access_type: AccessType,
+        access_attrib: AccessAttrib
     }
+}
+
+#[derive(Debug)]
+pub enum AccessAttrib {
+    AttribBytes(u8),
+    AttribRawBytes(u8),
+    AttribRawProcessBytes(u8),
+    AttribQuick,
+    AttribSendReceive,
+    AttribByte,
+    AttribWord,
+    AttribBlock,
+    AttribProcessCall,
+    AttribBlockProcessCall
 }
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
@@ -380,7 +398,40 @@ fn parse_reserved_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInterna
 }
 
 fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    Err(AmlInternalError::AmlParseError)
+    if data[0] != 0x01 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+    
+    let flags_raw = data[1];
+    let access_type = match flags_raw & 0x0F {
+        0 => AccessType::AnyAcc,
+        1 => AccessType::ByteAcc,
+        2 => AccessType::WordAcc,
+        3 => AccessType::DWordAcc,
+        4 => AccessType::QWordAcc,
+        5 => AccessType::BufferAcc,
+        _ => return Err(AmlInternalError::AmlParseError)
+    };
+
+    let access_attrib = match (flags_raw & 0xC0) >> 6 {
+        0 => match data[2] {
+            0x02 => AccessAttrib::AttribQuick,
+            0x04 => AccessAttrib::AttribSendReceive,
+            0x06 => AccessAttrib::AttribByte,
+            0x08 => AccessAttrib::AttribWord,
+            0x0A => AccessAttrib::AttribBlock,
+            0x0C => AccessAttrib::AttribProcessCall,
+            0x0D => AccessAttrib::AttribBlockProcessCall,
+            _ => return Err(AmlInternalError::AmlParseError)
+        },
+        1 => AccessAttrib::AttribBytes(data[2]),
+        2 => AccessAttrib::AttribRawBytes(data[2]),
+        3 => AccessAttrib::AttribRawProcessBytes(data[2]),
+        _ => return Err(AmlInternalError::AmlParseError)
+            // This should never happen but the compiler bitches if I don't cover this
+    };
+
+    return Ok((FieldElement::AccessField {access_type, access_attrib}, 3 as usize))
 }
 
 fn parse_extended_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
