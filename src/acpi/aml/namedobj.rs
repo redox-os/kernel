@@ -27,6 +27,11 @@ pub enum NamedObj {
         source_buf: TermArg,
         byte_index: TermArg
     },
+    DefCreateWordField {
+        name: String,
+        source_buf: TermArg,
+        byte_index: TermArg
+    },
     DefCreateDWordField {
         name: String,
         source_buf: TermArg,
@@ -272,6 +277,19 @@ fn parse_def_create_byte_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInte
     let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
 
     Ok((NamedObj::DefCreateByteField {name, source_buf, byte_index},
+        1 + source_buf_len + byte_index_len + name_len))
+}
+
+fn parse_def_create_word_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+    if data[0] != 0x8B {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
+    let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
+    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
+
+    Ok((NamedObj::DefCreateWordField {name, source_buf, byte_index},
         1 + source_buf_len + byte_index_len + name_len))
 }
 
