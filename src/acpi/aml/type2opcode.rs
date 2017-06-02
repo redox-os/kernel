@@ -11,6 +11,10 @@ use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
 #[derive(Debug)]
 pub enum Type2OpCode {
+    DefAcquire {
+        object: SuperName,
+        timeout: u16
+    },
     DefBuffer(DefBuffer),
     DefPackage(DefPackage),
     DefVarPackage(DefVarPackage),
@@ -107,6 +111,12 @@ pub enum PackageElement {
 }
 
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    match parse_def_acquire(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_def_buffer(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefBuffer(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
@@ -347,6 +357,18 @@ fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError>
     let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
 
     Ok((obj_reference, obj_reference_len + 1))
+}
+
+fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x23 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (object, object_len) = parse_super_name(&data[2..])?;
+    let timeout = (data[2 + object_len] as u16) +
+        ((data[3 + object_len] as u16) << 8);
+    
+    Ok((Type2OpCode::DefAcquire {object, timeout}, object_len + 4))
 }
 
 fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
