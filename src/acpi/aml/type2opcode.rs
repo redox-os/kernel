@@ -48,6 +48,11 @@ pub enum Type2OpCode {
         operand: TermArg,
         target: Target
     },
+    DefAdd {
+        lhs: TermArg,
+        rhs: TermArg,
+        target: Target
+    },
     DefAnd {
         lhs: TermArg,
         rhs: TermArg,
@@ -196,6 +201,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
     
     match parse_def_to_hex_string(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_add(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -478,6 +489,18 @@ fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
     Ok((Type2OpCode::DefOr {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+}
+
+fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x72 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+
+    Ok((Type2OpCode::DefAdd {lhs, rhs, target}, 1 + lhs_len + rhs_len))
 }
 
 fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
