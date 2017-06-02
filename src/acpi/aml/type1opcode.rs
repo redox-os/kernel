@@ -1,9 +1,11 @@
 use collections::vec::Vec;
+use collections::string::String;
 
 use super::AmlInternalError;
 
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list, TermObj, TermArg};
+use super::namestring::{parse_name_string, parse_super_name, SuperName};
 
 #[derive(Debug)]
 pub enum Type1OpCode {
@@ -19,6 +21,10 @@ pub enum Type1OpCode {
     DefIfElse {
         if_block: IfBlock,
         else_block: IfBlock
+    },
+    DefLoad {
+        name: String,
+        ddb_handle_object: SuperName
     },
     DefWhile {
         predicate: TermArg,
@@ -60,6 +66,12 @@ pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlIntern
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
+    match parse_def_load(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_def_return(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -80,6 +92,17 @@ fn parse_def_fatal(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError
     let (fatal_arg, fatal_arg_len) = parse_term_arg(&data[5..])?;
 
     Ok((Type1OpCode::DefFatal {fatal_type, fatal_code, fatal_arg}, fatal_arg_len + 5))
+}
+
+fn parse_def_load(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x20 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (name, name_len) = parse_name_string(&data[2..])?;
+    let (ddb_handle_object, ddb_handle_object_len) = parse_super_name(&data[2 + name_len..])?;
+
+    Ok((Type1OpCode::DefLoad {name, ddb_handle_object}, 2 + name_len + ddb_handle_object_len))
 }
 
 fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
