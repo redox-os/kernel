@@ -538,7 +538,7 @@ fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 }
 
 fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x73 {
+    if data[0] != 0x84 {
         return Err(AmlInternalError::AmlParseError);
     }
 
@@ -550,7 +550,7 @@ fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 }
 
 fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x84 {
+    if data[0] != 0x73 {
         return Err(AmlInternalError::AmlParseError);
     }
 
