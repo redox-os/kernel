@@ -33,6 +33,7 @@ pub enum Type1OpCode {
     DefRelease(SuperName),
     DefReset(SuperName),
     DefSignal(SuperName),
+    DefSleep(TermArg),
     DefWhile {
         predicate: TermArg,
         block: Vec<TermObj>
@@ -98,6 +99,12 @@ pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlIntern
     }
     
     match parse_def_signal(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_sleep(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -175,6 +182,16 @@ fn parse_def_signal(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErro
     let (object, object_len) = parse_super_name(&data[2..])?;
 
     Ok((Type1OpCode::DefSignal(object), 2 + object_len))
+}
+
+fn parse_def_sleep(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x22 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (time, time_len) = parse_term_arg(&data[2..])?;
+
+    Ok((Type1OpCode::DefSleep(time), 2 + time_len))
 }
 
 fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
