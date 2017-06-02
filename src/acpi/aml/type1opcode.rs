@@ -26,6 +26,10 @@ pub enum Type1OpCode {
         name: String,
         ddb_handle_object: SuperName
     },
+    DefNotify {
+        object: SuperName,
+        value: TermArg
+    },
     DefWhile {
         predicate: TermArg,
         block: Vec<TermObj>
@@ -72,6 +76,12 @@ pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlIntern
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
+    match parse_def_notify(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_def_return(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -103,6 +113,17 @@ fn parse_def_load(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError>
     let (ddb_handle_object, ddb_handle_object_len) = parse_super_name(&data[2 + name_len..])?;
 
     Ok((Type1OpCode::DefLoad {name, ddb_handle_object}, 2 + name_len + ddb_handle_object_len))
+}
+
+fn parse_def_notify(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
+    if data[0] != 0x86 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (object, object_len) = parse_super_name(&data[1..])?;
+    let (value, value_len) = parse_term_arg(&data[1 + object_len..])?;
+
+    Ok((Type1OpCode::DefNotify {object, value}, 1 + object_len + value_len))
 }
 
 fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
