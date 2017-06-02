@@ -10,6 +10,11 @@ pub enum Type1OpCode {
     DefBreak,
     DefBreakPoint,
     DefContinue,
+    DefFatal {
+        fatal_type: u8,
+        fatal_code: u16,
+        fatal_arg: TermArg
+    },
     DefNoop,
     DefIfElse {
         if_block: IfBlock,
@@ -43,6 +48,12 @@ pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlIntern
         _ => ()
     }
     
+    match parse_def_fatal(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_def_if_else(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -56,6 +67,19 @@ pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlIntern
     }
     
     parse_def_while(data)
+}
+
+fn parse_def_fatal(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x32 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let fatal_type = data[2];
+    let fatal_code: u16 = (data[3] as u16) +
+        ((data[4] as u16) << 8);
+    let (fatal_arg, fatal_arg_len) = parse_term_arg(&data[5..])?;
+
+    Ok((Type1OpCode::DefFatal {fatal_type, fatal_code, fatal_arg}, fatal_arg_len + 5))
 }
 
 fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
