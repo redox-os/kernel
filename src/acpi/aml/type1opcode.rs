@@ -30,6 +30,7 @@ pub enum Type1OpCode {
         object: SuperName,
         value: TermArg
     },
+    DefRelease(SuperName),
     DefWhile {
         predicate: TermArg,
         block: Vec<TermObj>
@@ -82,6 +83,12 @@ pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlIntern
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
     
+    match parse_def_release(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
     match parse_def_return(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
@@ -124,6 +131,16 @@ fn parse_def_notify(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErro
     let (value, value_len) = parse_term_arg(&data[1 + object_len..])?;
 
     Ok((Type1OpCode::DefNotify {object, value}, 1 + object_len + value_len))
+}
+
+fn parse_def_release(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x27 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (object, object_len) = parse_super_name(&data[2..])?;
+
+    Ok((Type1OpCode::DefRelease(object), 2 + object_len))
 }
 
 fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
