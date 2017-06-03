@@ -256,7 +256,8 @@ fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErr
 }
 
 fn parse_def_else(data: &[u8]) -> Result<(IfBlock, usize), AmlInternalError> {
-    if data[0] != 0xA1 {
+    if data.len() == 0 || data[0] != 0xA1 {
+        // We might be at the very end of a buffer, in which case there isn't an else
         return Ok((IfBlock::NoBlock, 0));
     }
 

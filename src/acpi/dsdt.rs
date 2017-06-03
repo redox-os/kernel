@@ -24,7 +24,7 @@ impl Dsdt {
         let tbl = parse_aml_table(data);
         
         if let Ok(parsed_table) = tbl {
-            println!("Parsed! {:#?}", parsed_table);
+            println!("Parsed the DSDT AML");
         } else {
             println!("Nope");
         }
