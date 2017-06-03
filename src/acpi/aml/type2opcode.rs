@@ -114,6 +114,14 @@ pub enum Type2OpCode {
         rhs: TermArg,
         target: Target
     },
+    DefLoadTable {
+        signature: TermArg,
+        oem_id: TermArg,
+        oem_table_id: TermArg,
+        root_path: TermArg,
+        parameter_path: TermArg,
+        parameter_data: TermArg
+    },
     MethodInvocation(MethodInvocation),
     DeferredLoad(Vec<u8>)
 }
@@ -348,6 +356,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_from_bcd(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_load_table(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -777,6 +791,28 @@ fn parse_def_find_set_right_bit(data: &[u8]) -> Result<(Type2OpCode, usize), Aml
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
 
     Ok((Type2OpCode::DefFindSetRightBit {operand, target}, 1 + operand_len + target_len))
+}
+
+fn parse_def_load_table(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x1F {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (signature, signature_len) = parse_term_arg(&data[1..])?;
+    let (oem_id, oem_id_len) = parse_term_arg(&data[1 + signature_len..])?;
+    let (oem_table_id, oem_table_id_len) = parse_term_arg(&data[1 + signature_len + oem_id_len..])?;
+    let (root_path, root_path_len) =
+        parse_term_arg(&data[1 + signature_len + oem_id_len + oem_table_id_len..])?;
+    let (parameter_path, parameter_path_len) =
+        parse_term_arg(&data[1 + signature_len + oem_id_len + oem_table_id_len + root_path_len..])?;
+    let (parameter_data, parameter_data_len) =
+        parse_term_arg(&data[1 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
+                             parameter_path_len..])?;
+
+    Ok((Type2OpCode::DefLoadTable {signature, oem_id, oem_table_id, root_path,
+                                   parameter_path, parameter_data},
+        1 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
+        parameter_path_len + parameter_data_len))
 }
 
 fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
