@@ -22,6 +22,10 @@ pub enum Type2OpCode {
     DefRefOf(SuperName),
     DefIncrement(SuperName),
     DefIndex(DefIndex),
+    DefCondRefOf {
+        operand: SuperName,
+        target: Target
+    },
     DefLEqual {
         lhs: TermArg,
         rhs: TermArg
@@ -241,6 +245,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_concat(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_cond_ref_of(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -547,6 +557,17 @@ fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
     Ok((Type2OpCode::DefConcatRes {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+}
+
+fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x12 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (operand, operand_len) = parse_super_name(&data[2..])?;
+    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
+
+    Ok((Type2OpCode::DefCondRefOf {operand, target}, 2 + operand_len + target_len))
 }
 
 fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
