@@ -58,6 +58,10 @@ pub enum Type2OpCode {
         lhs: TermArg,
         rhs: TermArg
     },
+    DefLGreater {
+        lhs: TermArg,
+        rhs: TermArg
+    },
     DefLLess {
         lhs: TermArg,
         rhs: TermArg
@@ -213,6 +217,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
     
     match parse_def_lequal(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_lgreater(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -525,6 +535,17 @@ fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
 
     Ok((Type2OpCode::DefLEqual {lhs, rhs}, 1 + lhs_len + rhs_len))
+}
+
+fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x94 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+
+    Ok((Type2OpCode::DefLGreater {lhs, rhs}, 1 + lhs_len + rhs_len))
 }
 
 fn parse_def_lless(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
