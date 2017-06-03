@@ -192,6 +192,10 @@ pub enum Type2OpCode {
         length: TermArg,
         target: Target
     },
+    DefWait {
+        event_object: SuperName,
+        operand: TermArg
+    },
     DefObjectType(DefObjectType),
     DefTimer,
     MethodInvocation(MethodInvocation),
@@ -315,6 +319,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
 
     match parse_def_index(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefIndex(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_wait(data) {
+        Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -1004,6 +1014,18 @@ fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
     Ok((Type2OpCode::DefConcatRes {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+}
+
+fn parse_def_wait(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x25 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (event_object, event_object_len) = parse_super_name(&data[2..])?;
+    let (operand, operand_len) = parse_term_arg(&data[2 + event_object_len..])?;
+
+
+    Ok((Type2OpCode::DefWait {event_object, operand}, 2 + event_object_len + operand_len))
 }
 
 fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
