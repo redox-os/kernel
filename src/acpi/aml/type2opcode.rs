@@ -129,6 +129,11 @@ pub enum Type2OpCode {
         rhs: TermArg,
         target: Target
     },
+    DefNOr {
+        lhs: TermArg,
+        rhs: TermArg,
+        target: Target
+    },
     DefLoadTable {
         signature: TermArg,
         oem_id: TermArg,
@@ -431,6 +436,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_nand(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_nor(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -980,4 +991,16 @@ fn parse_def_nand(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
     Ok((Type2OpCode::DefNAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+}
+
+fn parse_def_nor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x7E {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+
+    Ok((Type2OpCode::DefNOr {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
 }
