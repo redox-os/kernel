@@ -166,7 +166,7 @@ pub fn parse_super_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalEr
     }
 }
 
-fn parse_simple_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
+pub fn parse_simple_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
     match parse_name_string(data) {
         Ok((name, name_len)) => return Ok((SuperName::NameString(name), name_len)),
         Err(AmlInternalError::AmlParseError) => (),
