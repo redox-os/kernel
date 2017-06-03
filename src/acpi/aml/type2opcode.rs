@@ -24,6 +24,12 @@ pub enum Type2OpCode {
     DefIncrement(SuperName),
     DefIndex(DefIndex),
     DefDecrement(SuperName),
+    DefDivide {
+        dividend: TermArg,
+        divisor: TermArg,
+        remainder: Target,
+        quotient: Target
+    },
     DefCondRefOf {
         operand: SuperName,
         target: Target
@@ -269,6 +275,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_decrement(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_divide(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -538,7 +550,7 @@ fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
-    Ok((Type2OpCode::DefOr {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+    Ok((Type2OpCode::DefOr {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
 }
 
 fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -550,7 +562,7 @@ fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
-    Ok((Type2OpCode::DefAdd {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+    Ok((Type2OpCode::DefAdd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
 }
 
 fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -562,7 +574,7 @@ fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
-    Ok((Type2OpCode::DefAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+    Ok((Type2OpCode::DefAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
 }
 
 fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -574,7 +586,7 @@ fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
-    Ok((Type2OpCode::DefConcatRes {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+    Ok((Type2OpCode::DefConcatRes {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
 }
 
 fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -608,7 +620,7 @@ fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
-    Ok((Type2OpCode::DefConcat {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+    Ok((Type2OpCode::DefConcat {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
 }
 
 fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -619,4 +631,18 @@ fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
     let (target, target_len) = parse_super_name(&data[1..])?;
 
     Ok((Type2OpCode::DefDecrement(target), 1 + target_len))
+}
+
+fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x78 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
+    let (divisor, divisor_len) = parse_term_arg(&data[1 + dividend_len..])?;
+    let (remainder, remainder_len) = parse_target(&data[1 + dividend_len + divisor_len..])?;
+    let (quotient, quotient_len) = parse_target(&data[1 + dividend_len + divisor_len + remainder_len..])?;
+
+    Ok((Type2OpCode::DefDivide {dividend, divisor, remainder, quotient},
+        1 + dividend_len + divisor_len + remainder_len + quotient_len))
 }
