@@ -122,8 +122,26 @@ pub enum Type2OpCode {
         parameter_path: TermArg,
         parameter_data: TermArg
     },
+    DefMatch {
+        search_pkg: TermArg,
+        first_operation: MatchOpcode,
+        first_operand: TermArg,
+        second_operation: MatchOpcode,
+        second_operand: TermArg,
+        start_index: TermArg
+    },
     MethodInvocation(MethodInvocation),
     DeferredLoad(Vec<u8>)
+}
+
+#[derive(Debug)]
+pub enum MatchOpcode {
+    MTR,
+    MEQ,
+    MLE,
+    MLT,
+    MGE,
+    MGT
 }
 
 #[derive(Debug)]
@@ -362,6 +380,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_load_table(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_match(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -798,21 +822,58 @@ fn parse_def_load_table(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
         return Err(AmlInternalError::AmlParseError);
     }
 
-    let (signature, signature_len) = parse_term_arg(&data[1..])?;
-    let (oem_id, oem_id_len) = parse_term_arg(&data[1 + signature_len..])?;
-    let (oem_table_id, oem_table_id_len) = parse_term_arg(&data[1 + signature_len + oem_id_len..])?;
+    let (signature, signature_len) = parse_term_arg(&data[2..])?;
+    let (oem_id, oem_id_len) = parse_term_arg(&data[2 + signature_len..])?;
+    let (oem_table_id, oem_table_id_len) = parse_term_arg(&data[2 + signature_len + oem_id_len..])?;
     let (root_path, root_path_len) =
-        parse_term_arg(&data[1 + signature_len + oem_id_len + oem_table_id_len..])?;
+        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len..])?;
     let (parameter_path, parameter_path_len) =
-        parse_term_arg(&data[1 + signature_len + oem_id_len + oem_table_id_len + root_path_len..])?;
+        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len + root_path_len..])?;
     let (parameter_data, parameter_data_len) =
-        parse_term_arg(&data[1 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
+        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
                              parameter_path_len..])?;
 
     Ok((Type2OpCode::DefLoadTable {signature, oem_id, oem_table_id, root_path,
                                    parameter_path, parameter_data},
-        1 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
+        2 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
         parameter_path_len + parameter_data_len))
+}
+
+fn parse_def_match(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x89 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (search_pkg, search_pkg_len) = parse_term_arg(&data[1..])?;
+    let first_operation = match data[1 + search_pkg_len] {
+        0 => MatchOpcode::MTR,
+        1 => MatchOpcode::MEQ,
+        2 => MatchOpcode::MLE,
+        3 => MatchOpcode::MLT,
+        4 => MatchOpcode::MGE,
+        5 => MatchOpcode::MGT,
+        _ => return Err(AmlInternalError::AmlParseError)
+    };
+    let (first_operand, first_operand_len) = parse_term_arg(&data[2 + search_pkg_len..])?;
+
+    let second_operation = match data[2 + search_pkg_len + first_operand_len] {
+        0 => MatchOpcode::MTR,
+        1 => MatchOpcode::MEQ,
+        2 => MatchOpcode::MLE,
+        3 => MatchOpcode::MLT,
+        4 => MatchOpcode::MGE,
+        5 => MatchOpcode::MGT,
+        _ => return Err(AmlInternalError::AmlParseError)
+    };
+    let (second_operand, second_operand_len) =
+        parse_term_arg(&data[3 + search_pkg_len + first_operand_len..])?;
+
+    let (start_index, start_index_len) =
+        parse_term_arg(&data[3 + search_pkg_len + first_operand_len + second_operand_len..])?;
+
+    Ok((Type2OpCode::DefMatch {search_pkg, first_operation, first_operand,
+                               second_operation, second_operand, start_index},
+        3 + search_pkg_len + first_operand_len + second_operand_len + start_index_len))
 }
 
 fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
@@ -820,8 +881,8 @@ fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
         return Err(AmlInternalError::AmlParseError);
     }
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let (operand, operand_len) = parse_term_arg(&data[2..])?;
+    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
 
-    Ok((Type2OpCode::DefFromBCD {operand, target}, 1 + operand_len + target_len))
+    Ok((Type2OpCode::DefFromBCD {operand, target}, 2 + operand_len + target_len))
 }
