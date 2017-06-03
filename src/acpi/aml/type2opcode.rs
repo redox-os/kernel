@@ -6,7 +6,8 @@ use super::AmlInternalError;
 
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_method_invocation, TermArg, MethodInvocation};
-use super::namestring::{parse_super_name, parse_target, parse_name_string, SuperName, Target};
+use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name,
+                        SuperName, Target};
 use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
 #[derive(Debug)]
@@ -22,9 +23,14 @@ pub enum Type2OpCode {
     DefRefOf(SuperName),
     DefIncrement(SuperName),
     DefIndex(DefIndex),
+    DefDecrement(SuperName),
     DefCondRefOf {
         operand: SuperName,
         target: Target
+    },
+    DefCopyObject {
+        source: TermArg,
+        destination: SuperName
     },
     DefLEqual {
         lhs: TermArg,
@@ -251,6 +257,18 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_cond_ref_of(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_copy_object(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_decrement(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -570,6 +588,17 @@ fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
     Ok((Type2OpCode::DefCondRefOf {operand, target}, 2 + operand_len + target_len))
 }
 
+fn parse_def_copy_object(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x9D {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (source, source_len) = parse_term_arg(&data[1..])?;
+    let (destination, destination_len) = parse_simple_name(&data[1 + source_len..])?;
+
+    Ok((Type2OpCode::DefCopyObject {source, destination}, 1 + source_len + destination_len))
+}
+
 fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x73 {
         return Err(AmlInternalError::AmlParseError);
@@ -580,4 +609,14 @@ fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
 
     Ok((Type2OpCode::DefConcat {lhs, rhs, target}, 1 + lhs_len + rhs_len))
+}
+
+fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x76 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (target, target_len) = parse_super_name(&data[1..])?;
+
+    Ok((Type2OpCode::DefDecrement(target), 1 + target_len))
 }
