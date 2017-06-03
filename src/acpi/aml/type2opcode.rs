@@ -50,6 +50,10 @@ pub enum Type2OpCode {
         source: TermArg,
         destination: SuperName
     },
+    DefLAnd {
+        lhs: TermArg,
+        rhs: TermArg
+    },
     DefLEqual {
         lhs: TermArg,
         rhs: TermArg
@@ -198,6 +202,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
 
     match parse_def_index(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefIndex(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_land(data) {
+        Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -493,6 +503,17 @@ fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
     let (target, target_len) = parse_target(&data[1 + obj_len + idx_len..])?;
 
     Ok((DefIndex {obj, idx, target: Box::new(target)}, 1 + obj_len + idx_len + target_len))
+}
+
+fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x90 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+
+    Ok((Type2OpCode::DefLAnd {lhs, rhs}, 1 + lhs_len + rhs_len))
 }
 
 fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
