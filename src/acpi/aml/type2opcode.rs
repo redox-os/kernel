@@ -24,6 +24,10 @@ pub enum Type2OpCode {
     DefIncrement(SuperName),
     DefIndex(DefIndex),
     DefDecrement(SuperName),
+    DefFindSetLeftBit {
+        operand: TermArg,
+        target: Target
+    },
     DefDivide {
         dividend: TermArg,
         divisor: TermArg,
@@ -281,6 +285,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_divide(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_find_set_left_bit(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -645,4 +655,15 @@ fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 
     Ok((Type2OpCode::DefDivide {dividend, divisor, remainder, quotient},
         1 + dividend_len + divisor_len + remainder_len + quotient_len))
+}
+
+fn parse_def_find_set_left_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x81 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (operand, operand_len) = parse_term_arg(&data[1..])?;
+    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+
+    Ok((Type2OpCode::DefFindSetLeftBit {operand, target}, 1 + operand_len + target_len))
 }
