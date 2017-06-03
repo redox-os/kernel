@@ -171,6 +171,7 @@ pub enum Type2OpCode {
         target: Target
     },
     DefObjectType(DefObjectType),
+    DefTimer,
     MethodInvocation(MethodInvocation),
     DeferredLoad(Vec<u8>)
 }
@@ -489,6 +490,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
     
     match parse_def_not(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_timer(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -1111,4 +1118,12 @@ fn parse_def_not(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
 
     Ok((Type2OpCode::DefNot {operand, target}, 1 + operand_len + target_len))
+}
+
+fn parse_def_timer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x33 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    Ok((Type2OpCode::DefTimer, 2 as usize))
 }
