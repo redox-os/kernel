@@ -104,6 +104,11 @@ pub enum Type2OpCode {
         rhs: TermArg,
         target: Target
     },
+    DefMultiply {
+        lhs: TermArg,
+        rhs: TermArg,
+        target: Target
+    },
     DefMod {
         dividend: TermArg,
         divisor: TermArg,
@@ -409,6 +414,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_mid(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_multiply(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -934,4 +945,16 @@ fn parse_def_mod(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
     let (target, target_len) = parse_target(&data[1 + dividend_len + divisor_len..])?;
 
     Ok((Type2OpCode::DefMod {dividend, divisor, target}, 1 + dividend_len + divisor_len + target_len))
+}
+
+fn parse_def_multiply(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x77 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+
+    Ok((Type2OpCode::DefMultiply {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
 }
