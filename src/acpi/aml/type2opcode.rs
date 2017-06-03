@@ -130,6 +130,12 @@ pub enum Type2OpCode {
         second_operand: TermArg,
         start_index: TermArg
     },
+    DefMid {
+        source: TermArg,
+        index: TermArg,
+        length: TermArg,
+        target: Target
+    },
     MethodInvocation(MethodInvocation),
     DeferredLoad(Vec<u8>)
 }
@@ -386,6 +392,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_match(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_mid(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -885,4 +897,18 @@ fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
     let (target, target_len) = parse_target(&data[2 + operand_len..])?;
 
     Ok((Type2OpCode::DefFromBCD {operand, target}, 2 + operand_len + target_len))
+}
+
+fn parse_def_mid(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x9E {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (source, source_len) = parse_term_arg(&data[1..])?;
+    let (index, index_len) = parse_term_arg(&data[1 + source_len..])?;
+    let (length, length_len) = parse_term_arg(&data[1 + source_len + index_len..])?;
+    let (target, target_len) = parse_target(&data[1 + source_len + index_len + length_len..])?;
+
+    Ok((Type2OpCode::DefMid {source, index, length, target},
+        1 + source_len + index_len + length_len + target_len))
 }
