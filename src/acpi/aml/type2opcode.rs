@@ -89,6 +89,23 @@ pub enum Type2OpCode {
         operand: TermArg,
         target: Target
     },
+    DefToBCD {
+        operand: TermArg,
+        target: Target
+    },
+    DefToDecimalString {
+        operand: TermArg,
+        target: Target
+    },
+    DefToInteger {
+        operand: TermArg,
+        target: Target
+    },
+    DefToString {
+        operand: TermArg,
+        length: TermArg,
+        target: Target
+    },
     DefConcat {
         lhs: TermArg,
         rhs: TermArg,
@@ -358,6 +375,30 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
     
     match parse_def_to_hex_string(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_to_bcd(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_to_decimal_string(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_to_integer(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_to_string(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -791,6 +832,51 @@ fn parse_def_to_buffer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
 
     Ok((Type2OpCode::DefToBuffer {operand, target}, 1 + operand_len + target_len))
+}
+
+fn parse_def_to_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x5B || data[1] != 0x29 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (operand, operand_len) = parse_term_arg(&data[2..])?;
+    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
+
+    Ok((Type2OpCode::DefToBCD {operand, target}, 2 + operand_len + target_len))
+}
+
+fn parse_def_to_decimal_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x97 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (operand, operand_len) = parse_term_arg(&data[1..])?;
+    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+
+    Ok((Type2OpCode::DefToDecimalString {operand, target}, 1 + operand_len + target_len))
+}
+
+fn parse_def_to_integer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x99 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (operand, operand_len) = parse_term_arg(&data[1..])?;
+    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+
+    Ok((Type2OpCode::DefToInteger {operand, target}, 1 + operand_len + target_len))
+}
+
+fn parse_def_to_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x9C {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (operand, operand_len) = parse_term_arg(&data[1..])?;
+    let (length, length_len) = parse_term_arg(&data[1 + operand_len..])?;
+    let (target, target_len) = parse_target(&data[1 + operand_len + length_len..])?;
+
+    Ok((Type2OpCode::DefToString {operand, length, target}, 1 + operand_len + length_len + target_len))
 }
 
 fn parse_def_subtract(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
