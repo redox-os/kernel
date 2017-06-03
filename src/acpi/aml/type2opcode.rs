@@ -28,6 +28,10 @@ pub enum Type2OpCode {
         operand: TermArg,
         target: Target
     },
+    DefFindSetRightBit {
+        operand: TermArg,
+        target: Target
+    },
     DefDivide {
         dividend: TermArg,
         divisor: TermArg,
@@ -291,6 +295,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
 
     match parse_def_find_set_left_bit(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_find_set_right_bit(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -666,4 +676,15 @@ fn parse_def_find_set_left_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlI
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
 
     Ok((Type2OpCode::DefFindSetLeftBit {operand, target}, 1 + operand_len + target_len))
+}
+
+fn parse_def_find_set_right_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x82 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (operand, operand_len) = parse_term_arg(&data[1..])?;
+    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+
+    Ok((Type2OpCode::DefFindSetRightBit {operand, target}, 1 + operand_len + target_len))
 }
