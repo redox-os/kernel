@@ -67,6 +67,10 @@ pub enum Type2OpCode {
         rhs: TermArg
     },
     DefLNot(TermArg),
+    DefLOr {
+        lhs: TermArg,
+        rhs: TermArg
+    },
     DefSizeOf(SuperName),
     DefStore {
         operand: TermArg,
@@ -236,6 +240,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     }
     
     match parse_def_lnot(data) {
+        Ok(res) => return Ok(res),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_lor(data) {
         Ok(res) => return Ok(res),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
@@ -574,6 +584,17 @@ fn parse_def_lnot(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
 
     Ok((Type2OpCode::DefLNot(operand), 1 + operand_len))
+}
+
+fn parse_def_lor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    if data[0] != 0x95 {
+        return Err(AmlInternalError::AmlParseError);
+    }
+
+    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
+    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+
+    Ok((Type2OpCode::DefLOr {lhs, rhs}, 1 + lhs_len + rhs_len))
 }
 
 fn parse_def_to_hex_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
