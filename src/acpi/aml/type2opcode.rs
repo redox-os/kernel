@@ -160,8 +160,17 @@ pub enum Type2OpCode {
         length: TermArg,
         target: Target
     },
+    DefObjectType(DefObjectType),
     MethodInvocation(MethodInvocation),
     DeferredLoad(Vec<u8>)
+}
+
+#[derive(Debug)]
+pub enum DefObjectType {
+    SuperName(SuperName),
+    DefIndex(DefIndex),
+    DefRefOf(SuperName),
+    DefDerefOf(TermArg)
 }
 
 #[derive(Debug)]
@@ -243,6 +252,12 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
     
     match parse_def_var_package(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefVarPackage(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_object_type(data) {
+        Ok((res, size)) => return Ok((Type2OpCode::DefObjectType(res), size)),
         Err(AmlInternalError::AmlParseError) => (),
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
     }
@@ -486,6 +501,32 @@ pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlIntern
     match parse_method_invocation(data) {
         // UserTermObj is a method call. Would've been nice to be consistent about this...
         Ok((mi, size)) => Ok((Type6OpCode::MethodInvocation(mi), size)),
+        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+    }
+}
+
+pub fn parse_def_object_type(data: &[u8]) -> Result<(DefObjectType, usize), AmlInternalError> {
+    match parse_super_name(data) {
+        Ok((res, size)) => return Ok((DefObjectType::SuperName(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_ref_of(data) {
+        Ok((res, size)) => return Ok((DefObjectType::DefRefOf(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+    
+    match parse_def_deref_of(data) {
+        Ok((res, size)) => return Ok((DefObjectType::DefDerefOf(res), size)),
+        Err(AmlInternalError::AmlParseError) => (),
+        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    }
+
+    match parse_def_index(data) {
+        Ok((res, size)) => Ok((DefObjectType::DefIndex(res), size)),
         Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
     }
