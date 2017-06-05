@@ -593,9 +593,12 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     let mut tls_option = None;
                     for segment in elf.segments() {
                         if segment.p_type == program_header::PT_LOAD {
+                            let voff = segment.p_vaddr % 4096;
+                            let vaddr = segment.p_vaddr - voff;
+
                             let mut memory = context::memory::Memory::new(
-                                VirtualAddress::new(segment.p_vaddr as usize),
-                                segment.p_memsz as usize,
+                                VirtualAddress::new(vaddr as usize),
+                                segment.p_memsz as usize + voff as usize,
                                 entry::NO_EXECUTE | entry::WRITABLE,
                                 true
                             );
