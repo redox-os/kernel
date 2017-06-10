@@ -1,4 +1,3 @@
-
 use collections::vec::Vec;
 use collections::string::String;
 
@@ -45,41 +44,25 @@ pub enum ComputationalData {
 }
 
 pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError> {
-    match parse_computational_data(data) {
-        Ok((res, size)) => return Ok((DataObj::ComputationalData(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
+    parser_selector! {
+        data,
+        parser_wrap!(DataObj::ComputationalData, parse_computational_data),
+        parser_wrap!(DataObj::DefPackage, parse_def_package),
+        parser_wrap!(DataObj::DefVarPackage, parse_def_var_package)
+    };
     
-    match parse_def_package(data) {
-        Ok((res, size)) => return Ok((DataObj::DefPackage(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-    
-    match parse_def_var_package(data) {
-        Ok((res, size)) => Ok((DataObj::DefVarPackage(res), size)),
-        Err(e) => Err(e)
-    }
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInternalError> {
-    match parse_data_obj(data) {
-        Ok((res, size)) => return Ok((DataRefObj::DataObj(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-
-    match parse_term_arg(data) {
-        Ok((res, size)) => return Ok((DataRefObj::ObjectReference(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-
-    match parse_super_name(data) {
-        Ok((res, size)) => return Ok((DataRefObj::DDBHandle(res), size)),
-        Err(e) => Err(e)
-    }
+    parser_selector! {
+        data,
+        parser_wrap!(DataRefObj::DataObj, parse_data_obj),
+        parser_wrap!(DataRefObj::ObjectReference, parse_term_arg),
+        parser_wrap!(DataRefObj::DDBHandle, parse_super_name)
+    };
+    
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 pub fn parse_arg_obj(data: &[u8]) -> Result<(ArgObj, usize), AmlInternalError> {
