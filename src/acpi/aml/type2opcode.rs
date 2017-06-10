@@ -326,29 +326,15 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
 }
 
 pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlInternalError> {
-    match parse_def_deref_of(data) {
-        Ok((res, size)) => return Ok((Type6OpCode::DefDerefOf(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
+    parser_selector! {
+        data,
+        parser_wrap!(Type6OpCode::DefDerefOf, parse_def_deref_of),
+        parser_wrap!(Type6OpCode::DefRefOf, parser_wrap!(Box::new, parse_def_ref_of)),
+        parser_wrap!(Type6OpCode::DefIndex, parse_def_index),
+        parser_wrap!(Type6OpCode::MethodInvocation, parse_method_invocation)
+    };
     
-    match parse_def_ref_of(data) {
-        Ok((res, size)) => return Ok((Type6OpCode::DefRefOf(Box::new(res)), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-
-    match parse_def_index(data) {
-        Ok((res, size)) => return Ok((Type6OpCode::DefIndex(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-    
-    match parse_method_invocation(data) {
-        // UserTermObj is a method call. Would've been nice to be consistent about this...
-        Ok((mi, size)) => Ok((Type6OpCode::MethodInvocation(mi), size)),
-        Err(e) => Err(e)
-    }
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 pub fn parse_def_object_type(data: &[u8]) -> Result<(DefObjectType, usize), AmlInternalError> {
