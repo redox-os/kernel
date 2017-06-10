@@ -268,48 +268,6 @@ pub enum PackageElement {
 }
 
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    match parse_def_buffer(data) {
-        Ok((res, size)) => return Ok((Type2OpCode::DefBuffer(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-    
-    match parse_def_package(data) {
-        Ok((res, size)) => return Ok((Type2OpCode::DefPackage(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-    
-    match parse_def_var_package(data) {
-        Ok((res, size)) => return Ok((Type2OpCode::DefVarPackage(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-    
-    match parse_def_object_type(data) {
-        Ok((res, size)) => return Ok((Type2OpCode::DefObjectType(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-    
-    match parse_def_deref_of(data) {
-        Ok((res, size)) => return Ok((Type2OpCode::DefDerefOf(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-    
-    match parse_def_ref_of(data) {
-        Ok((res, size)) => return Ok((Type2OpCode::DefRefOf(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-
-    match parse_def_index(data) {
-        Ok((res, size)) => return Ok((Type2OpCode::DefIndex(res), size)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-
     parser_selector! {
         data,
         parse_def_increment,
@@ -353,13 +311,18 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
         parse_def_nand,
         parse_def_nor,
         parse_def_not,
-        parse_def_timer
+        parse_def_timer,
+        parser_wrap!(Type2OpCode::DefBuffer, parse_def_buffer),
+        parser_wrap!(Type2OpCode::DefPackage, parse_def_package),
+        parser_wrap!(Type2OpCode::DefVarPackage, parse_def_var_package),
+        parser_wrap!(Type2OpCode::DefObjectType, parse_def_object_type),
+        parser_wrap!(Type2OpCode::DefDerefOf, parse_def_deref_of),
+        parser_wrap!(Type2OpCode::DefRefOf, parse_def_ref_of),
+        parser_wrap!(Type2OpCode::DefIndex, parse_def_index),
+        parser_wrap!(Type2OpCode::MethodInvocation, parse_method_invocation)
     };
     
-    match parse_method_invocation(data) {
-        Ok((mi, size)) => Ok((Type2OpCode::MethodInvocation(mi), size)),
-        Err(e) => Err(e)
-    }
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlInternalError> {
