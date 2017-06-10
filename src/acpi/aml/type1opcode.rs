@@ -63,79 +63,29 @@ pub fn parse_type1_opcode(data: &[u8]) -> Result<(Type1OpCode, usize), AmlIntern
         0xA3 => return Ok((Type1OpCode::DefNoop, 1 as usize)),
         _ => ()
     }
-    
-    match parse_def_fatal(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_if_else(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_load(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_notify(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_release(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_reset(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_signal(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_sleep(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_stall(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_return(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_unload(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    parse_def_while(data)
+
+    parser_selector! {
+        data,
+        parse_def_fatal,
+        parse_def_if_else,
+        parse_def_load,
+        parse_def_notify,
+        parse_def_release,
+        parse_def_reset,
+        parse_def_signal,
+        parse_def_sleep,
+        parse_def_stall,
+        parse_def_return,
+        parse_def_unload,
+        parse_def_while
+    };
+
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 fn parse_def_fatal(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x32 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let fatal_type = data[2];
@@ -148,7 +98,7 @@ fn parse_def_fatal(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError
 
 fn parse_def_load(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x20 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (name, name_len) = parse_name_string(&data[2..])?;
@@ -159,7 +109,7 @@ fn parse_def_load(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError>
 
 fn parse_def_notify(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x86 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (object, object_len) = parse_super_name(&data[1..])?;
@@ -170,7 +120,7 @@ fn parse_def_notify(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErro
 
 fn parse_def_release(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x27 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (object, object_len) = parse_super_name(&data[2..])?;
@@ -180,7 +130,7 @@ fn parse_def_release(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErr
 
 fn parse_def_reset(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x26 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (object, object_len) = parse_super_name(&data[2..])?;
@@ -190,7 +140,7 @@ fn parse_def_reset(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError
 
 fn parse_def_signal(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x24 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (object, object_len) = parse_super_name(&data[2..])?;
@@ -200,7 +150,7 @@ fn parse_def_signal(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErro
 
 fn parse_def_sleep(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x22 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (time, time_len) = parse_term_arg(&data[2..])?;
@@ -210,7 +160,7 @@ fn parse_def_sleep(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError
 
 fn parse_def_stall(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x21 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (time, time_len) = parse_term_arg(&data[2..])?;
@@ -220,7 +170,7 @@ fn parse_def_stall(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError
 
 fn parse_def_unload(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x2A {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (object, object_len) = parse_super_name(&data[2..])?;
@@ -230,7 +180,7 @@ fn parse_def_unload(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErro
 
 fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0xA0 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
@@ -239,14 +189,14 @@ fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErr
         Ok((predicate, predicate_len)) => {
             match parse_term_list(&data[1 + pkg_length_len + predicate_len .. 1 + pkg_length]) {
                 Ok(if_block) => IfBlock::If {predicate, if_block},
-                Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
                 Err(AmlInternalError::AmlDeferredLoad) => 
-                    IfBlock::DeferredLoad(data[0 .. pkg_length + 1].to_vec())
+                    IfBlock::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
+                Err(e) => return Err(e)
             }
         },
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            IfBlock::DeferredLoad(data[0 .. pkg_length + 1].to_vec())
+        Err(AmlInternalError::AmlDeferredLoad) => 
+            IfBlock::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
+        Err(e) => return Err(e)
     };
     
     let (else_block, else_block_len) = parse_def_else(&data[1 + pkg_length..])?;
@@ -263,30 +213,30 @@ fn parse_def_else(data: &[u8]) -> Result<(IfBlock, usize), AmlInternalError> {
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     match parse_term_list(&data[1 + pkg_length_len .. 1 + pkg_length]) {
-        Ok(term_list) => Ok((IfBlock::Else(term_list), pkg_length)),
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
+        Ok(term_list) => Ok((IfBlock::Else(term_list), 1 + pkg_length)),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            Ok((IfBlock::DeferredLoad(data[0 .. pkg_length + 1].to_vec()), 1 + pkg_length))
+            Ok((IfBlock::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length)),
+        Err(e) => return Err(e)
     }
 }
 
 fn parse_def_while(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0xA2 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (predicate, predicate_len) = match parse_term_arg(&data[1 + pkg_length_len..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((Type1OpCode::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length))
+            return Ok((Type1OpCode::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length)),
+        Err(e) => return Err(e)
     };
     let block = match parse_term_list(&data[1 + pkg_length_len + predicate_len .. 1 + pkg_length]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((Type1OpCode::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length))
+            return Ok((Type1OpCode::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     Ok((Type1OpCode::DefWhile {predicate, block}, pkg_length + 1))
@@ -294,7 +244,7 @@ fn parse_def_while(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError
 
 fn parse_def_return(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalError> {
     if data[0] != 0xA4 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (arg_object, arg_object_len) = parse_term_arg(&data[1..])?;

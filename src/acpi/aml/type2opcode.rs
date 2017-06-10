@@ -198,8 +198,7 @@ pub enum Type2OpCode {
     },
     DefObjectType(DefObjectType),
     DefTimer,
-    MethodInvocation(MethodInvocation),
-    DeferredLoad(Vec<u8>)
+    MethodInvocation(MethodInvocation)
 }
 
 #[derive(Debug)]
@@ -269,446 +268,214 @@ pub enum PackageElement {
 }
 
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    match parse_def_acquire(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
     match parse_def_buffer(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefBuffer(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_package(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefPackage(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_var_package(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefVarPackage(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_object_type(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefObjectType(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_deref_of(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefDerefOf(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_ref_of(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefRefOf(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_increment(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
 
     match parse_def_index(data) {
         Ok((res, size)) => return Ok((Type2OpCode::DefIndex(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_wait(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_land(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_lequal(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_lgreater(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_lless(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_lnot(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_lor(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_size_of(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
 
-    match parse_def_store(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_subtract(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_to_buffer(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_to_hex_string(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_to_bcd(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_to_decimal_string(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_to_integer(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_to_string(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_add(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_xor(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_shift_left(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_shift_right(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_mod(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_and(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_or(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_concat_res(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_concat(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_cond_ref_of(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_copy_object(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_decrement(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_divide(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_find_set_left_bit(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_find_set_right_bit(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_from_bcd(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_load_table(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_match(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_mid(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_multiply(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_nand(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_nor(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_not(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_timer(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
+    parser_selector! {
+        data,
+        parse_def_increment,
+        parse_def_acquire,
+        parse_def_wait,
+        parse_def_land,
+        parse_def_lequal,
+        parse_def_lgreater,
+        parse_def_lless,
+        parse_def_lnot,
+        parse_def_lor,
+        parse_def_size_of,
+        parse_def_store,
+        parse_def_subtract,
+        parse_def_to_buffer,
+        parse_def_to_hex_string,
+        parse_def_to_bcd,
+        parse_def_to_decimal_string,
+        parse_def_to_integer,
+        parse_def_to_string,
+        parse_def_add,
+        parse_def_xor,
+        parse_def_shift_left,
+        parse_def_shift_right,
+        parse_def_mod,
+        parse_def_and,
+        parse_def_or,
+        parse_def_concat_res,
+        parse_def_concat,
+        parse_def_cond_ref_of,
+        parse_def_copy_object,
+        parse_def_decrement,
+        parse_def_divide,
+        parse_def_find_set_left_bit,
+        parse_def_find_set_right_bit,
+        parse_def_from_bcd,
+        parse_def_load_table,
+        parse_def_match,
+        parse_def_mid,
+        parse_def_multiply,
+        parse_def_nand,
+        parse_def_nor,
+        parse_def_not,
+        parse_def_timer
+    };
     
     match parse_method_invocation(data) {
         Ok((mi, size)) => Ok((Type2OpCode::MethodInvocation(mi), size)),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+        Err(e) => Err(e)
     }
 }
 
 pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlInternalError> {
     match parse_def_deref_of(data) {
         Ok((res, size)) => return Ok((Type6OpCode::DefDerefOf(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_ref_of(data) {
         Ok((res, size)) => return Ok((Type6OpCode::DefRefOf(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
 
     match parse_def_index(data) {
         Ok((res, size)) => return Ok((Type6OpCode::DefIndex(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_method_invocation(data) {
         // UserTermObj is a method call. Would've been nice to be consistent about this...
         Ok((mi, size)) => Ok((Type6OpCode::MethodInvocation(mi), size)),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+        Err(e) => Err(e)
     }
 }
 
 pub fn parse_def_object_type(data: &[u8]) -> Result<(DefObjectType, usize), AmlInternalError> {
-    match parse_super_name(data) {
-        Ok((res, size)) => return Ok((DefObjectType::SuperName(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_ref_of(data) {
-        Ok((res, size)) => return Ok((DefObjectType::DefRefOf(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_deref_of(data) {
-        Ok((res, size)) => return Ok((DefObjectType::DefDerefOf(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+    parser_opcode!(data, 0x8E);
+    parser_selector! {
+        data,
+        parser_wrap!(DefObjectType::SuperName, parse_super_name),
+        parser_wrap!(DefObjectType::DefRefOf, parse_def_ref_of),
+        parser_wrap!(DefObjectType::DefDerefOf, parse_def_deref_of),
+        parser_wrap!(DefObjectType::DefIndex, parse_def_index)
     }
 
-    match parse_def_index(data) {
-        Ok((res, size)) => Ok((DefObjectType::DefIndex(res), size)),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
-    }
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternalError> {
     if data[0] != 0x12 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let num_elements = data[1 + pkg_length_len];
-
-    let mut current_offset: usize = 2 + pkg_length_len;
-    let mut elements: Vec<PackageElement> = vec!();
     
-    while current_offset < pkg_length {
-        match parse_data_ref_obj(&data[current_offset .. 1 + pkg_length]) {
-            Ok((data_ref_obj, data_ref_obj_len)) => {
-                elements.push(PackageElement::DataRefObj(data_ref_obj));
-                current_offset += data_ref_obj_len;
-            },
-            Err(AmlInternalError::AmlParseError) => 
-                match parse_name_string(&data[current_offset .. 1 + pkg_length]) {
-                    Ok((name_string, name_string_len)) => {
-                        elements.push(PackageElement::NameString(name_string));
-                        current_offset += name_string_len;
-                    },
-                    Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-                    Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefPackage::DeferredLoad(
-                        data[0 .. 1 + pkg_length].to_vec()
-                    ), 1 + pkg_length))
-                },
-            Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefPackage::DeferredLoad(
-                data[0 .. 1 + pkg_length].to_vec()
-            ), 1 + pkg_length))
-        }
-    }
+    let elements = match parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length]) {
+        Ok(e) => e,
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((DefPackage::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length)),
+        Err(e) => return Err(e)
+    };
 
     Ok((DefPackage::Package {num_elements, elements}, 1 + pkg_length))
 }
 
 pub fn parse_def_var_package(data: &[u8]) -> Result<(DefVarPackage, usize), AmlInternalError> {
     if data[0] != 0x13 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (num_elements, num_elements_len) = parse_term_arg(&data[1 + pkg_length_len ..])?;
 
-    let mut current_offset: usize = 1 + pkg_length_len + num_elements_len;
+    let elements = match parse_package_elements_list(&data[1 + pkg_length_len + num_elements_len ..
+                                                           1 + pkg_length]) {
+        Ok(e) => e,
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((DefVarPackage::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
+                       1 + pkg_length)),
+        Err(e) => return Err(e)
+    };
+
+    Ok((DefVarPackage::Package {num_elements, elements}, 1 + pkg_length))
+}
+                                                
+fn parse_package_elements_list(data: &[u8]) -> Result<Vec<PackageElement>, AmlInternalError> {
+    let mut current_offset: usize = 0;
     let mut elements: Vec<PackageElement> = vec!();
     
-    while current_offset < pkg_length {
-        match parse_data_ref_obj(&data[current_offset .. 1 + pkg_length]) {
+    while current_offset < data.len() {
+        match parse_data_ref_obj(&data[current_offset ..]) {
             Ok((data_ref_obj, data_ref_obj_len)) => {
                 elements.push(PackageElement::DataRefObj(data_ref_obj));
                 current_offset += data_ref_obj_len;
             },
-            Err(AmlInternalError::AmlParseError) => 
-                match parse_name_string(&data[current_offset .. 1 + pkg_length]) {
+            Err(AmlInternalError::AmlInvalidOpCode) => 
+                match parse_name_string(&data[current_offset ..]) {
                     Ok((name_string, name_string_len)) => {
                         elements.push(PackageElement::NameString(name_string));
                         current_offset += name_string_len;
                     },
-                    Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-                    Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefVarPackage::DeferredLoad(
-                        data[0 .. 1 + pkg_length].to_vec()
-                    ), 1 + pkg_length))
+                    Err(e) => return Err(e)
                 },
-            Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefVarPackage::DeferredLoad(
-                data[0 .. 1 + pkg_length].to_vec()
-            ), 1 + pkg_length))
+            Err(e) => return Err(e)
         }
     }
 
-    Ok((DefVarPackage::Package {num_elements, elements}, 1 + pkg_length))
+    Ok(elements)
 }
-
+                                                
 pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalError> {
     if data[0] != 0x11 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (buffer_size, buffer_size_len) = match parse_term_arg(&data[1 + pkg_length_len..]) {
         Ok(s) => s,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefBuffer::DeferredLoad(
             data[0 .. 1 + pkg_length].to_vec()
-        ), 1 + pkg_length))
+        ), 1 + pkg_length)),
+        Err(e) => return Err(e),
     };
     let byte_list = data[1 + pkg_length_len + buffer_size_len .. 1 + pkg_length].to_vec();
     
@@ -717,7 +484,7 @@ pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalEr
 
 fn parse_def_ref_of(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
     if data[0] != 0x71 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (obj_reference, obj_reference_len) = parse_super_name(&data[1..])?;
@@ -727,7 +494,7 @@ fn parse_def_ref_of(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError>
 
 fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
     if data[0] != 0x83 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
@@ -737,7 +504,7 @@ fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError>
 
 fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x23 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (object, object_len) = parse_super_name(&data[2..])?;
@@ -749,7 +516,7 @@ fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErr
 
 fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x75 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (obj, obj_len) = parse_super_name(&data[1..])?;
@@ -758,7 +525,7 @@ fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
 
 fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
     if data[0] != 0x88 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (obj, obj_len) = parse_term_arg(&data[1..])?;
@@ -770,7 +537,7 @@ fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
 
 fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x90 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -781,7 +548,7 @@ fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 
 fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x93 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -792,7 +559,7 @@ fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 
 fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x94 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -803,7 +570,7 @@ fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
 
 fn parse_def_lless(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x95 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -814,7 +581,7 @@ fn parse_def_lless(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
 
 fn parse_def_lnot(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x92 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -823,8 +590,8 @@ fn parse_def_lnot(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 }
 
 fn parse_def_lor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x95 {
-        return Err(AmlInternalError::AmlParseError);
+    if data[0] != 0x91 {
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -835,7 +602,7 @@ fn parse_def_lor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_to_hex_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x98 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -846,7 +613,7 @@ fn parse_def_to_hex_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInter
 
 fn parse_def_to_buffer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x96 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -857,7 +624,7 @@ fn parse_def_to_buffer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
 
 fn parse_def_to_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x29 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[2..])?;
@@ -868,7 +635,7 @@ fn parse_def_to_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 
 fn parse_def_to_decimal_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x97 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -879,7 +646,7 @@ fn parse_def_to_decimal_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlI
 
 fn parse_def_to_integer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x99 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -890,7 +657,7 @@ fn parse_def_to_integer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 
 fn parse_def_to_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x9C {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -902,7 +669,7 @@ fn parse_def_to_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
 
 fn parse_def_subtract(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x74 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (minuend, minuend_len) = parse_term_arg(&data[1..])?;
@@ -914,7 +681,7 @@ fn parse_def_subtract(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
 
 fn parse_def_size_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x87 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (name, name_len) = parse_super_name(&data[1..])?;
@@ -923,7 +690,7 @@ fn parse_def_size_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErr
 
 fn parse_def_store(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x70 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -934,7 +701,7 @@ fn parse_def_store(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
 
 fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x7D {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -946,7 +713,7 @@ fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
 
 fn parse_def_shift_left(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x79 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -958,7 +725,7 @@ fn parse_def_shift_left(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 
 fn parse_def_shift_right(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x7A {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -970,7 +737,7 @@ fn parse_def_shift_right(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
 
 fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x72 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -982,7 +749,7 @@ fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x7B {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -994,7 +761,7 @@ fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_xor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x7F {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -1006,7 +773,7 @@ fn parse_def_xor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x84 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -1018,7 +785,7 @@ fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 
 fn parse_def_wait(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x25 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (event_object, event_object_len) = parse_super_name(&data[2..])?;
@@ -1030,7 +797,7 @@ fn parse_def_wait(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 
 fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x12 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_super_name(&data[2..])?;
@@ -1041,7 +808,7 @@ fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
 
 fn parse_def_copy_object(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x9D {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (source, source_len) = parse_term_arg(&data[1..])?;
@@ -1052,7 +819,7 @@ fn parse_def_copy_object(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
 
 fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x73 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -1064,7 +831,7 @@ fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 
 fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x76 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (target, target_len) = parse_super_name(&data[1..])?;
@@ -1074,7 +841,7 @@ fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
 
 fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x78 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
@@ -1088,7 +855,7 @@ fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 
 fn parse_def_find_set_left_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x81 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -1099,7 +866,7 @@ fn parse_def_find_set_left_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlI
 
 fn parse_def_find_set_right_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x82 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -1110,7 +877,7 @@ fn parse_def_find_set_right_bit(data: &[u8]) -> Result<(Type2OpCode, usize), Aml
 
 fn parse_def_load_table(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x1F {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (signature, signature_len) = parse_term_arg(&data[2..])?;
@@ -1132,7 +899,7 @@ fn parse_def_load_table(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 
 fn parse_def_match(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x89 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (search_pkg, search_pkg_len) = parse_term_arg(&data[1..])?;
@@ -1143,7 +910,7 @@ fn parse_def_match(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
         3 => MatchOpcode::MLT,
         4 => MatchOpcode::MGE,
         5 => MatchOpcode::MGT,
-        _ => return Err(AmlInternalError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError("DefMatch - Invalid Opcode"))
     };
     let (first_operand, first_operand_len) = parse_term_arg(&data[2 + search_pkg_len..])?;
 
@@ -1154,7 +921,7 @@ fn parse_def_match(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
         3 => MatchOpcode::MLT,
         4 => MatchOpcode::MGE,
         5 => MatchOpcode::MGT,
-        _ => return Err(AmlInternalError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError("DefMatch - Invalid Opcode"))
     };
     let (second_operand, second_operand_len) =
         parse_term_arg(&data[3 + search_pkg_len + first_operand_len..])?;
@@ -1169,7 +936,7 @@ fn parse_def_match(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
 
 fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x28 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[2..])?;
@@ -1180,7 +947,7 @@ fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
 
 fn parse_def_mid(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x9E {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (source, source_len) = parse_term_arg(&data[1..])?;
@@ -1194,7 +961,7 @@ fn parse_def_mid(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_mod(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x85 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
@@ -1206,7 +973,7 @@ fn parse_def_mod(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_multiply(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x77 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -1218,7 +985,7 @@ fn parse_def_multiply(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
 
 fn parse_def_nand(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x7C {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -1230,7 +997,7 @@ fn parse_def_nand(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 
 fn parse_def_nor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x7E {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
@@ -1242,7 +1009,7 @@ fn parse_def_nor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_not(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x80 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode);
     }
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
@@ -1253,7 +1020,7 @@ fn parse_def_not(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 
 fn parse_def_timer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     if data[0] != 0x5B || data[1] != 0x33 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlInvalidOpCode)
     }
 
     Ok((Type2OpCode::DefTimer, 2 as usize))

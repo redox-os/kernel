@@ -10,7 +10,7 @@ pub fn parse_pkg_length(data: &[u8]) -> Result<(usize, usize), AmlInternalError>
 
     let upper_two = (lead_byte >> 4) & 0x03;
     if upper_two != 0 {
-        return Err(AmlInternalError::AmlParseError);
+        return Err(AmlInternalError::AmlParseError("Invalid package length"));
     }
 
     let mut current_byte = 0;

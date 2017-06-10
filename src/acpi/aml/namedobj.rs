@@ -163,7 +163,6 @@ pub enum FieldElement {
     },
     ConnectFieldNameString(String),
     ConnectFieldBufferData(DefBuffer),
-    ExtendedAccessField(AccessAttrib)
 }
 
 #[derive(Debug)]
@@ -181,146 +180,57 @@ pub enum AccessAttrib {
 }
 
 pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    match parse_def_bank_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_create_bit_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_create_byte_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_create_word_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_create_dword_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_create_qword_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_create_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_data_region(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
+    parser_selector! {
+        data,
+        parse_def_bank_field,
+        parse_def_create_bit_field,
+        parse_def_create_byte_field,
+        parse_def_create_word_field,
+        parse_def_create_dword_field,
+        parse_def_create_qword_field,
+        parse_def_create_field,
+        parse_def_data_region,
+        parse_def_event,
+        parse_def_device,
+        parse_def_op_region,
+        parse_def_field,
+        parse_def_index_field,
+        parse_def_method,
+        parse_def_mutex,
+        parse_def_power_res,
+        parse_def_processor,
+        parse_def_thermal_zone
+    };
 
-    match parse_def_event(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_device(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_op_region(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_index_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_method(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_mutex(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_def_power_res(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_processor(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_def_thermal_zone(data) {
-        Ok(res) => Ok(res),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
-    }
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x87 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x87);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let (region_name, region_name_len) = match parse_name_string(
             &data[2 + pkg_length_len .. 2 + pkg_length]) {
         Ok(res) => res,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => return Ok((NamedObj::DeferredLoad(
-            data[0 .. 2 + pkg_length].to_vec()
-        ), 2 + pkg_length))
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     let (bank_name, bank_name_len) = match parse_name_string(
             &data[2 + pkg_length_len + region_name_len .. 2 + pkg_length]) {
         Ok(res) => res,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => return Ok((NamedObj::DeferredLoad(
-            data[0 .. 2 + pkg_length].to_vec()
-        ), 2 + pkg_length))
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     let (bank_value, bank_value_len) = match parse_term_arg(
             &data[2 + pkg_length_len + region_name_len .. 2 + pkg_length]) {
         Ok(res) => res,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => return Ok((NamedObj::DeferredLoad(
-            data[0 .. 2 + pkg_length].to_vec()
-        ), 2 + pkg_length))
+        Err(AmlInternalError::AmlDeferredLoad) =>
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     let flags_raw = data[2 + pkg_length_len + region_name_len + bank_name_len + bank_value_len];
@@ -332,14 +242,14 @@ fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErr
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
             5 => AccessType::BufferAcc,
-            _ => return Err(AmlInternalError::AmlParseError)
+            _ => return Err(AmlInternalError::AmlParseError("BankField - invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
         update_rule: match (flags_raw & 0x60) >> 5 {
             0 => UpdateRule::Preserve,
             1 => UpdateRule::WriteAsOnes,
             2 => UpdateRule::WriteAsZeros,
-            _ => return Err(AmlInternalError::AmlParseError)
+            _ => return Err(AmlInternalError::AmlParseError("BankField - invalid update rule"))
         }
     };
     
@@ -347,9 +257,9 @@ fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErr
         &data[3 + pkg_length_len + region_name_len + bank_name_len + bank_value_len ..
               2 + pkg_length]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
     
     Ok((NamedObj::DefBankField {region_name, bank_name, bank_value, flags, field_list},
@@ -357,9 +267,7 @@ fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErr
 }
 
 fn parse_def_create_bit_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x8D {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x8D);
 
     let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
     let (bit_index, bit_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
@@ -370,9 +278,7 @@ fn parse_def_create_bit_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInter
 }
 
 fn parse_def_create_byte_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x8C {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x8C);
 
     let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
     let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
@@ -383,9 +289,7 @@ fn parse_def_create_byte_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInte
 }
 
 fn parse_def_create_word_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x8B {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x8B);
 
     let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
     let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
@@ -396,9 +300,7 @@ fn parse_def_create_word_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInte
 }
 
 fn parse_def_create_dword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x8A {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x8A);
 
     let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
     let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
@@ -409,9 +311,7 @@ fn parse_def_create_dword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInt
 }
 
 fn parse_def_create_qword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x8F {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x8F);
 
     let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
     let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
@@ -422,9 +322,7 @@ fn parse_def_create_qword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInt
 }
 
 fn parse_def_create_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x13 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x13);
 
     let (source_buf, source_buf_len) = parse_term_arg(&data[2..])?;
     let (bit_index, bit_index_len) = parse_term_arg(&data[2 + source_buf_len..])?;
@@ -437,9 +335,7 @@ fn parse_def_create_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalE
 }
 
 fn parse_def_data_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x88 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x88);
 
     let (name, name_len) = parse_name_string(&data[2..])?;
     let (signature, signature_len) = parse_term_arg(&data[2 + name_len..])?;
@@ -452,9 +348,7 @@ fn parse_def_data_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalEr
 }
 
 fn parse_def_event(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x02 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x02);
 
     let (name, name_len) = parse_name_string(&data[2..])?;
 
@@ -462,33 +356,29 @@ fn parse_def_event(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
 }
 
 fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x82 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x82);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let (name, name_len) = match parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     let obj_list = match parse_object_list(&data[2 + pkg_length_len + name_len .. 2 + pkg_length]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamedObj::DefDevice {name, obj_list}, 2 + pkg_length_len))
 }
 
 fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x80 {
-        return Err(AmlInternalError::AmlParseError);
-    }
-
+    parser_opcode_extended!(data, 0x80);
+    
     let (name, name_len) = parse_name_string(&data[2..])?;
     let region = match data[2 + name_len] {
         0x00 => RegionSpace::SystemMemory,
@@ -502,7 +392,7 @@ fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         0x08 => RegionSpace::GeneralPurposeIO,
         0x09 => RegionSpace::GenericSerialBus,
         0x80 ... 0xFF => RegionSpace::UserDefined(data[2 + name_len]),
-        _ => return Err(AmlInternalError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError("OpRegion - invalid region"))
     };
     
     let (offset, offset_len) = parse_term_arg(&data[3 + name_len..])?;
@@ -512,16 +402,14 @@ fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
 }
 
 fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x81 {
-        return Err(AmlInternalError::AmlParseError);
-    }
-
+    parser_opcode_extended!(data, 0x81);
+    
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let (name, name_len) = match parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length])  {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     let flags_raw = data[2 + pkg_length_len + name_len];
@@ -533,47 +421,45 @@ fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
             5 => AccessType::BufferAcc,
-            _ => return Err(AmlInternalError::AmlParseError)
+            _ => return Err(AmlInternalError::AmlParseError("Field - Invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
         update_rule: match (flags_raw & 0x60) >> 5 {
             0 => UpdateRule::Preserve,
             1 => UpdateRule::WriteAsOnes,
             2 => UpdateRule::WriteAsZeros,
-            _ => return Err(AmlInternalError::AmlParseError)
+            _ => return Err(AmlInternalError::AmlParseError("Field - Invalid update rule"))
         }
     };
     
     let field_list = match parse_field_list(&data[3 + pkg_length_len + name_len .. 2 + pkg_length]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamedObj::DefField {name, flags, field_list}, 2 + pkg_length))
 }
 
 fn parse_def_index_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x86 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x86);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let (idx_name, idx_name_len) = match parse_name_string(
         &data[2 + pkg_length_len .. 2 + pkg_length])  {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     let (data_name, data_name_len) = match parse_name_string(
         &data[2 + pkg_length_len + idx_name_len .. 2 + pkg_length])  {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
     
     let flags_raw = data[2 + pkg_length_len + idx_name_len + data_name_len];
@@ -585,23 +471,23 @@ fn parse_def_index_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalEr
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
             5 => AccessType::BufferAcc,
-            _ => return Err(AmlInternalError::AmlParseError)
+            _ => return Err(AmlInternalError::AmlParseError("IndexField - Invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
         update_rule: match (flags_raw & 0x60) >> 5 {
             0 => UpdateRule::Preserve,
             1 => UpdateRule::WriteAsOnes,
             2 => UpdateRule::WriteAsZeros,
-            _ => return Err(AmlInternalError::AmlParseError)
+            _ => return Err(AmlInternalError::AmlParseError("IndexField - Invalid update rule"))
         }
     };
     
     let field_list = match parse_field_list(
         &data[3 + pkg_length_len + idx_name_len + data_name_len .. 2 + pkg_length]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 2 + pkg_length))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamedObj::DefIndexField {idx_name, data_name, flags, field_list}, 2 + pkg_length))
@@ -612,7 +498,13 @@ fn parse_field_list(data: &[u8]) -> Result<Vec<FieldElement>, AmlInternalError> 
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        let (res, len) = parse_field_element(&data[current_offset..])?;
+        let (res, len) = match parse_field_element(&data[current_offset..]) {
+            Ok(r) => r,
+            Err(AmlInternalError::AmlInvalidOpCode) =>
+                return Err(AmlInternalError::AmlParseError("FieldList - no valid field")),
+            Err(e) => return Err(e)
+        };
+        
         terms.push(res);
         current_offset += len;
     }
@@ -621,31 +513,22 @@ fn parse_field_list(data: &[u8]) -> Result<Vec<FieldElement>, AmlInternalError> 
 }
 
 fn parse_field_element(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    match parse_named_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
+    parser_selector! {
+        data,
+        parse_named_field,
+        parse_reserved_field,
+        parse_access_field,
+        parse_connect_field
+    };
 
-    match parse_reserved_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_access_field(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    parse_connect_field(data)
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 fn parse_named_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    let name = match String::from_utf8(parse_name_seg(&data[0..4])?) {
+    let (name_seg, name_seg_len) = parse_name_seg(&data[0..4])?;
+    let name = match String::from_utf8(name_seg) {
         Ok(s) => s,
-        Err(_) => return Err(AmlInternalError::AmlParseError)
+        Err(_) => return Err(AmlInternalError::AmlParseError("NamedField - invalid name"))
     };
     let (length, length_len) = parse_pkg_length(&data[4..])?;
 
@@ -653,18 +536,14 @@ fn parse_named_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalEr
 }
 
 fn parse_reserved_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    if data[0] != 0x00 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x00);
     
     let (length, length_len) = parse_pkg_length(&data[1..])?;
     Ok((FieldElement::ReservedField {length}, 1 + length_len))
 }
 
 fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    if data[0] != 0x01 && data[0] != 0x03 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x01, 0x03);
     
     let flags_raw = data[1];
     let access_type = match flags_raw & 0x0F {
@@ -674,7 +553,7 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
         3 => AccessType::DWordAcc,
         4 => AccessType::QWordAcc,
         5 => AccessType::BufferAcc,
-        _ => return Err(AmlInternalError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError("AccessField - Invalid access type"))
     };
 
     let access_attrib = match (flags_raw & 0xC0) >> 6 {
@@ -689,12 +568,12 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
             0x0D => AccessAttrib::AttribBlockProcessCall,
             0x0E => AccessAttrib::AttribRawBytes(data[3]),
             0x0F => AccessAttrib::AttribRawProcessBytes(data[3]),
-            _ => return Err(AmlInternalError::AmlParseError)
+            _ => return Err(AmlInternalError::AmlParseError("AccessField - Invalid access attrib"))
         },
         1 => AccessAttrib::AttribBytes(data[2]),
         2 => AccessAttrib::AttribRawBytes(data[2]),
         3 => AccessAttrib::AttribRawProcessBytes(data[2]),
-        _ => return Err(AmlInternalError::AmlParseError)
+        _ => return Err(AmlInternalError::AmlParseError("AccessField - Invalid access attrib"))
             // This should never happen but the compiler bitches if I don't cover this
     };
 
@@ -706,34 +585,30 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
 }
 
 fn parse_connect_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    if data[0] != 0x02 {
-        return Err(AmlInternalError::AmlParseError);
-    }
-
+    parser_opcode!(data, 0x02);
+    
     match parse_def_buffer(&data[1..]) {
         Ok((buf, buf_len)) => return Ok((FieldElement::ConnectFieldBufferData(buf), buf_len + 1)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
 
     match parse_name_string(&data[1..]) {
         Ok((name, name_len)) => Ok((FieldElement::ConnectFieldNameString(name), name_len + 1)),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => Err(AmlInternalError::AmlParseError("ConnectField - unable to match field")),
+        Err(e) => Err(e)
     }
 }
 
 fn parse_def_method(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x14 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x14);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[1..])?;
     let (name, name_len) = match parse_name_string(&data[1 + pkg_len_len..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len)),
+        Err(e) => return Err(e)
     };
     let flags = data[1 + pkg_len_len + name_len];
 
@@ -743,23 +618,20 @@ fn parse_def_method(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> 
 
     let term_list = match parse_term_list(&data[2 + pkg_len_len + name_len .. 1 + pkg_len]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamedObj::DefMethod {name, arg_count, serialized, sync_level, term_list}, pkg_len + 1))
 }
 
 fn parse_def_mutex(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x01 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x01);
 
     let (name, name_len) = match parse_name_string(&data[2 ..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(e) => return Err(e),
     };
     let flags = data[2 + name_len];
     let sync_level = flags & 0x0F;
@@ -768,16 +640,14 @@ fn parse_def_mutex(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
 }
 
 fn parse_def_power_res(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x84 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x84);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
+        Err(e) => return Err(e)
     };
     
     let system_level = data[2 + pkg_len_len + name_len];
@@ -786,25 +656,23 @@ fn parse_def_power_res(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
 
     let obj_list = match parse_object_list(&data[5 + pkg_len_len + name_len .. 2 + pkg_len]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 2 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamedObj::DefPowerRes {name, system_level, resource_order, obj_list}, 2 + pkg_len))
 }
 
 fn parse_def_processor(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x83 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x83);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
+        Err(e) => return Err(e)
     };
     
     let proc_id = data[2 + pkg_len_len + name_len];
@@ -816,34 +684,31 @@ fn parse_def_processor(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
 
     let obj_list = match parse_object_list(&data[8 + pkg_len_len + name_len .. 2 + pkg_len]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 2 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamedObj::DefProcessor {name, proc_id, p_blk_addr, p_blk_len, obj_list}, 2 + pkg_len))
 }
 
 fn parse_def_thermal_zone(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x85 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode_extended!(data, 0x85);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
+        Err(e) => return Err(e)
     };
     
     let obj_list = match parse_object_list(&data[2 + pkg_len_len + name_len .. 2 + pkg_len]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 2 + pkg_len))
+            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamedObj::DefThermalZone {name, obj_list}, 2 + pkg_len))
 }
-

@@ -5,6 +5,9 @@ use collections::vec::Vec;
 
 use super::sdt::Sdt;
 
+#[macro_use]
+mod parsermacros;
+
 mod termlist;
 mod namespacemodifier;
 mod pkglength;
@@ -17,13 +20,15 @@ mod type2opcode;
 use self::termlist::{parse_term_list, TermObj};
 
 // TODO: make private
+#[derive(Debug)]
 pub enum AmlInternalError {
-    AmlParseError,
+    AmlParseError(&'static str),
+    AmlInvalidOpCode,
     AmlDeferredLoad
 }
 
 pub enum AmlError {
-    AmlParseError
+    AmlParseError(&'static str)
 }
 
 pub struct AmlTables;
@@ -36,6 +41,8 @@ pub enum AmlValue {
 pub fn parse_aml_table(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
     match parse_term_list(data) {
         Ok(res) => Ok(res),
-        Err(_) => Err(AmlError::AmlParseError)
+        Err(AmlInternalError::AmlParseError(s)) => Err(AmlError::AmlParseError(s)),
+        Err(AmlInternalError::AmlInvalidOpCode) => Err(AmlError::AmlParseError("Unable to match opcode")),
+        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlError::AmlParseError("Deferred load reached top level"))
     }
 }

@@ -1,7 +1,7 @@
 use core::slice;
 
 use super::sdt::Sdt;
-use super::aml::parse_aml_table;
+use super::aml::{parse_aml_table, AmlError};
 
 #[derive(Debug)]
 pub struct Dsdt(&'static Sdt);
@@ -25,8 +25,8 @@ impl Dsdt {
         
         if let Ok(parsed_table) = tbl {
             println!("Parsed the DSDT AML");
-        } else {
-            println!("Nope");
+        } else if let Err(AmlError::AmlParseError(s)) = tbl {
+            println!("Parse error: {}", s);
         }
     }
 

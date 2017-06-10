@@ -50,31 +50,15 @@ pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
 }
 
 pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
-    match parse_local_obj(data) {
-        Ok((res, size)) => return Ok((TermArg::LocalObj(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
+    parser_selector! {
+        data,
+        parser_wrap!(TermArg::LocalObj, parser_wrap!(Box::new, parse_local_obj)),
+        parser_wrap!(TermArg::DataObj, parser_wrap!(Box::new, parse_data_obj)),
+        parser_wrap!(TermArg::ArgObj, parser_wrap!(Box::new, parse_arg_obj)),
+        parser_wrap!(TermArg::Type2Opcode, parser_wrap!(Box::new, parse_type2_opcode))
+    };
 
-    match parse_data_obj(data) {
-        Ok((res, size)) => return Ok((TermArg::DataObj(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_arg_obj(data) {
-        Ok((res, size)) => return Ok((TermArg::ArgObj(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_type2_opcode(data) {
-        Ok((res, size)) => return Ok((TermArg::Type2Opcode(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    Err(AmlInternalError::AmlParseError)
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlInternalError> {
@@ -91,17 +75,13 @@ pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlInternalError> {
 }
 
 fn parse_object(data: &[u8]) -> Result<(Object, usize), AmlInternalError> {
-    match parse_namespace_modifier(data) {
-        Ok((ns, size)) => return Ok((Object::NamespaceModifier(Box::new(ns)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
+    parser_selector! {
+        data,
+        parser_wrap!(Object::NamespaceModifier, parser_wrap!(Box::new, parse_namespace_modifier)),
+        parser_wrap!(Object::NamedObj, parser_wrap!(Box::new, parse_named_obj))
+    };
 
-    match parse_named_obj(data) {
-        Ok((obj, size)) => Ok((Object::NamedObj(Box::new(obj)), size)),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
-    }
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize), AmlInternalError> {
@@ -110,29 +90,13 @@ pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize),
 }
 
 fn parse_term_obj(data: &[u8]) -> Result<(TermObj, usize), AmlInternalError> {
-    match parse_namespace_modifier(data) {
-        Ok((res, size)) => return Ok((TermObj::NamespaceModifier(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
+    parser_selector! {
+        data,
+        parser_wrap!(TermObj::NamespaceModifier, parser_wrap!(Box::new, parse_namespace_modifier)),
+        parser_wrap!(TermObj::NamedObj, parser_wrap!(Box::new, parse_named_obj)),
+        parser_wrap!(TermObj::Type1Opcode, parser_wrap!(Box::new, parse_type1_opcode)),
+        parser_wrap!(TermObj::Type2Opcode, parser_wrap!(Box::new, parse_type2_opcode))
+    };
 
-    match parse_named_obj(data) {
-        Ok((res, size)) => return Ok((TermObj::NamedObj(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_type1_opcode(data) {
-        Ok((res, size)) => return Ok((TermObj::Type1Opcode(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    match parse_type2_opcode(data) {
-        Ok((res, size)) => return Ok((TermObj::Type2Opcode(Box::new(res)), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-
-    Err(AmlInternalError::AmlParseError)
+    Err(AmlInternalError::AmlInvalidOpCode)
 }

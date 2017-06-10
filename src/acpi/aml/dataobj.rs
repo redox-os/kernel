@@ -47,54 +47,52 @@ pub enum ComputationalData {
 pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError> {
     match parse_computational_data(data) {
         Ok((res, size)) => return Ok((DataObj::ComputationalData(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_package(data) {
         Ok((res, size)) => return Ok((DataObj::DefPackage(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
     
     match parse_def_var_package(data) {
         Ok((res, size)) => Ok((DataObj::DefVarPackage(res), size)),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlDeferredLoad),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+        Err(e) => Err(e)
     }
 }
 
 pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInternalError> {
     match parse_data_obj(data) {
         Ok((res, size)) => return Ok((DataRefObj::DataObj(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
 
     match parse_term_arg(data) {
         Ok((res, size)) => return Ok((DataRefObj::ObjectReference(res), size)),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
+        Err(AmlInternalError::AmlInvalidOpCode) => (),
+        Err(e) => return Err(e)
     }
 
     match parse_super_name(data) {
         Ok((res, size)) => return Ok((DataRefObj::DDBHandle(res), size)),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlDeferredLoad),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
+        Err(e) => Err(e)
     }
 }
 
 pub fn parse_arg_obj(data: &[u8]) -> Result<(ArgObj, usize), AmlInternalError> {
     match data[0] {
         0x68 ... 0x6E => Ok((ArgObj(data[0] - 0x68), 1 as usize)),
-        _ => Err(AmlInternalError::AmlParseError)
+        _ => Err(AmlInternalError::AmlInvalidOpCode)
     }
 }
 
 pub fn parse_local_obj(data: &[u8]) -> Result<(LocalObj, usize), AmlInternalError> {
     match data[0] {
         0x60 ... 0x67 => Ok((LocalObj(data[0] - 0x60), 1 as usize)),
-        _ => Err(AmlInternalError::AmlParseError)
+        _ => Err(AmlInternalError::AmlInvalidOpCode)
     }
 }
 
@@ -124,7 +122,7 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
 
             match String::from_utf8(cur_string) {
                 Ok(s) => Ok((ComputationalData::String(s.clone()), s.clone().len() + 2)),
-                Err(_) => Err(AmlInternalError::AmlParseError)
+                Err(_) => Err(AmlInternalError::AmlParseError("String data - invalid string"))
             }
         },
         0x0E => {
@@ -143,17 +141,12 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
         0x5B => if data[1] == 0x30 {
             Ok((ComputationalData::RevisionOp, 2 as usize))
         } else {
-            Err(AmlInternalError::AmlParseError)
+            Err(AmlInternalError::AmlInvalidOpCode)
         },
         0xFF => Ok((ComputationalData::Ones, 1 as usize)),
-        _ => {
-            match parse_def_buffer(data) {
-                Ok((res, size)) => return Ok((ComputationalData::DefBuffer(res), size)),
-                Err(AmlInternalError::AmlParseError) => (),
-                Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-            }
-
-            Err(AmlInternalError::AmlParseError)
+        _ => match parse_def_buffer(data) {
+            Ok((res, size)) => Ok((ComputationalData::DefBuffer(res), size)),
+            Err(e) => Err(e)
         }
     }
 }

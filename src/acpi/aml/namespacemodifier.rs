@@ -25,30 +25,19 @@ pub enum NamespaceModifier {
 }
 
 pub fn parse_namespace_modifier(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
-    match parse_alias_op(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_scope_op(data) {
-        Ok(res) => return Ok(res),
-        Err(AmlInternalError::AmlParseError) => (),
-        Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlInternalError::AmlDeferredLoad)
-    }
-    
-    match parse_name_op(data) {
-        Ok(res) => Ok(res),
-        Err(AmlInternalError::AmlParseError) => Err(AmlInternalError::AmlParseError),
-        Err(AmlInternalError::AmlDeferredLoad) => Err(AmlInternalError::AmlDeferredLoad)
-    }
+    parser_selector! {
+        data,
+        parse_alias_op,
+        parse_scope_op,
+        parse_name_op
+    };
+
+    Err(AmlInternalError::AmlInvalidOpCode)
 }
 
 fn parse_alias_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
-    if data[0] != 0x06 {
-        return Err(AmlInternalError::AmlParseError);
-    }
-
+    parser_opcode!(data, 0x06);
+    
     let (source_name, source_name_len) = parse_name_string(&data[1..])?;
     let (alias_name, alias_name_len) = parse_name_string(&data[1 + source_name_len..])?;
     
@@ -56,9 +45,7 @@ fn parse_alias_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternal
 }
 
 fn parse_name_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
-    if data[0] != 0x08 {
-        return Err(AmlInternalError::AmlParseError);
-    }
+    parser_opcode!(data, 0x08);
 
     let (name, name_len) = parse_name_string(&data[1..])?;
     let (data_ref_obj, data_ref_obj_len) = parse_data_ref_obj(&data[1 + name_len..])?;
@@ -67,24 +54,22 @@ fn parse_name_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalE
 }
 
 fn parse_scope_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
-    if data[0] != 0x10 {
-        return Err(AmlInternalError::AmlParseError);
-    }
-
+    parser_opcode!(data, 0x10);
+    
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (name, name_len) = match parse_name_string(&data[1 + pkg_length_len..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
             return Ok((NamespaceModifier::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
-                       1 + pkg_length))
+                       1 + pkg_length)),
+        Err(e) => return Err(e)
     };
     let terms = match parse_term_list(&data[1 + pkg_length_len + name_len..]) {
         Ok(p) => p,
-        Err(AmlInternalError::AmlParseError) => return Err(AmlInternalError::AmlParseError),
         Err(AmlInternalError::AmlDeferredLoad) =>
             return Ok((NamespaceModifier::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
-                       1 + pkg_length))
+                       1 + pkg_length)),
+        Err(e) => return Err(e)
     };
 
     Ok((NamespaceModifier::Scope {name, terms}, pkg_length + 1))
