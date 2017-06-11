@@ -351,9 +351,7 @@ pub fn parse_def_object_type(data: &[u8]) -> Result<(DefObjectType, usize), AmlI
 }
 
 pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternalError> {
-    if data[0] != 0x12 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x12);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let num_elements = data[1 + pkg_length_len];
@@ -369,9 +367,7 @@ pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternal
 }
 
 pub fn parse_def_var_package(data: &[u8]) -> Result<(DefVarPackage, usize), AmlInternalError> {
-    if data[0] != 0x13 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x13);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (num_elements, num_elements_len) = parse_term_arg(&data[1 + pkg_length_len ..])?;
@@ -414,10 +410,8 @@ fn parse_package_elements_list(data: &[u8]) -> Result<Vec<PackageElement>, AmlIn
 }
                                                 
 pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalError> {
-    if data[0] != 0x11 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x11);
+    
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (buffer_size, buffer_size_len) = match parse_term_arg(&data[1 + pkg_length_len..]) {
         Ok(s) => s,
@@ -432,30 +426,22 @@ pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalEr
 }
 
 fn parse_def_ref_of(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
-    if data[0] != 0x71 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x71);
     let (obj_reference, obj_reference_len) = parse_super_name(&data[1..])?;
 
     Ok((obj_reference, obj_reference_len + 1))
 }
 
 fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
-    if data[0] != 0x83 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x83);
     let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
 
     Ok((obj_reference, obj_reference_len + 1))
 }
 
 fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x23 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode_extended!(data, 0x23);
+    
     let (object, object_len) = parse_super_name(&data[2..])?;
     let timeout = (data[2 + object_len] as u16) +
         ((data[3 + object_len] as u16) << 8);
@@ -464,19 +450,15 @@ fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErr
 }
 
 fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x75 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x75);
+    
     let (obj, obj_len) = parse_super_name(&data[1..])?;
     Ok((Type2OpCode::DefIncrement(obj), obj_len + 1))
 }
 
 fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
-    if data[0] != 0x88 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x88);
+    
     let (obj, obj_len) = parse_term_arg(&data[1..])?;
     let (idx, idx_len) = parse_term_arg(&data[1 + obj_len..])?;
     let (target, target_len) = parse_target(&data[1 + obj_len + idx_len..])?;
@@ -485,10 +467,8 @@ fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
 }
 
 fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x90 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x90);
+    
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
 
@@ -496,10 +476,8 @@ fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 }
 
 fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x93 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x93);
+    
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
 
@@ -507,10 +485,8 @@ fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 }
 
 fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x94 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x94);
+    
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
 
@@ -518,9 +494,7 @@ fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
 }
 
 fn parse_def_lless(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x95 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x95);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -529,9 +503,7 @@ fn parse_def_lless(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
 }
 
 fn parse_def_lnot(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x92 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x92);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
 
@@ -539,9 +511,7 @@ fn parse_def_lnot(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 }
 
 fn parse_def_lor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x91 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x91);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -550,9 +520,7 @@ fn parse_def_lor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 }
 
 fn parse_def_to_hex_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x98 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x98);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
@@ -561,9 +529,7 @@ fn parse_def_to_hex_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInter
 }
 
 fn parse_def_to_buffer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x96 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x96);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
@@ -572,9 +538,7 @@ fn parse_def_to_buffer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
 }
 
 fn parse_def_to_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x29 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode_extended!(data, 0x29);
 
     let (operand, operand_len) = parse_term_arg(&data[2..])?;
     let (target, target_len) = parse_target(&data[2 + operand_len..])?;
@@ -583,9 +547,7 @@ fn parse_def_to_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 }
 
 fn parse_def_to_decimal_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x97 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x97);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
@@ -594,9 +556,7 @@ fn parse_def_to_decimal_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlI
 }
 
 fn parse_def_to_integer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x99 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x99);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
@@ -605,9 +565,7 @@ fn parse_def_to_integer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 }
 
 fn parse_def_to_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x9C {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x9C);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
     let (length, length_len) = parse_term_arg(&data[1 + operand_len..])?;
@@ -617,9 +575,7 @@ fn parse_def_to_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
 }
 
 fn parse_def_subtract(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x74 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x74);
 
     let (minuend, minuend_len) = parse_term_arg(&data[1..])?;
     let (subtrahend, subtrahend_len) = parse_term_arg(&data[1 + minuend_len..])?;
@@ -629,18 +585,14 @@ fn parse_def_subtract(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalEr
 }
 
 fn parse_def_size_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x87 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x87);
 
     let (name, name_len) = parse_super_name(&data[1..])?;
     Ok((Type2OpCode::DefSizeOf(name), name_len + 1))
 }
 
 fn parse_def_store(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x70 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x70);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
     let (target, target_len) = parse_super_name(&data[1 + operand_len..])?;
@@ -649,9 +601,7 @@ fn parse_def_store(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError
 }
 
 fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7D {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x7D);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -661,9 +611,7 @@ fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
 }
 
 fn parse_def_shift_left(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x79 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x79);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -673,9 +621,7 @@ fn parse_def_shift_left(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 }
 
 fn parse_def_shift_right(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7A {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x7A);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -685,10 +631,8 @@ fn parse_def_shift_right(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
 }
 
 fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x72 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
+    parser_opcode!(data, 0x72);
+    
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
@@ -697,9 +641,7 @@ fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 }
 
 fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7B {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x7B);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -709,9 +651,7 @@ fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 }
 
 fn parse_def_xor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7F {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x7F);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -721,9 +661,7 @@ fn parse_def_xor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> 
 }
 
 fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x84 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x84);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -733,9 +671,7 @@ fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternal
 }
 
 fn parse_def_wait(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x25 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode_extended!(data, 0x25);
 
     let (event_object, event_object_len) = parse_super_name(&data[2..])?;
     let (operand, operand_len) = parse_term_arg(&data[2 + event_object_len..])?;
@@ -745,9 +681,7 @@ fn parse_def_wait(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 }
 
 fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x12 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode_extended!(data, 0x12);
 
     let (operand, operand_len) = parse_super_name(&data[2..])?;
     let (target, target_len) = parse_target(&data[2 + operand_len..])?;
@@ -756,9 +690,7 @@ fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
 }
 
 fn parse_def_copy_object(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x9D {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x9D);
 
     let (source, source_len) = parse_term_arg(&data[1..])?;
     let (destination, destination_len) = parse_simple_name(&data[1 + source_len..])?;
@@ -767,9 +699,7 @@ fn parse_def_copy_object(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
 }
 
 fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x73 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x73);
 
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
@@ -779,9 +709,7 @@ fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 }
 
 fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x76 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x76);
 
     let (target, target_len) = parse_super_name(&data[1..])?;
 
@@ -789,9 +717,7 @@ fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalE
 }
 
 fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x78 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x78);
 
     let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
     let (divisor, divisor_len) = parse_term_arg(&data[1 + dividend_len..])?;
@@ -803,9 +729,7 @@ fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 }
 
 fn parse_def_find_set_left_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x81 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+    parser_opcode!(data, 0x81);
 
     let (operand, operand_len) = parse_term_arg(&data[1..])?;
     let (target, target_len) = parse_target(&data[1 + operand_len..])?;
