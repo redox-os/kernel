@@ -1,4 +1,4 @@
-use core::mem;
+use core::{mem, str};
 
 use paging::{ActivePageTable, VirtualAddress};
 
@@ -33,7 +33,9 @@ pub unsafe fn stack_trace() {
     }
 }
 
-
+/// Get a symbol
+//TODO: Do not create Elf object for every symbol lookup
+#[inline(never)]
 pub unsafe fn symbol_trace(addr: usize) {
     use core::slice;
     use core::sync::atomic::Ordering;
@@ -58,16 +60,20 @@ pub unsafe fn symbol_trace(addr: usize) {
                     println!("    {:>016X}+{:>04X}", sym.st_value, addr - sym.st_value as usize);
 
                     if let Some(strtab) = strtab_opt {
-                        print!("    ");
-                        
-                        for &b in elf.data[strtab.sh_offset as usize + sym.st_name as usize ..].iter() {
+                        let start = strtab.sh_offset as usize + sym.st_name as usize;
+                        let mut end = start;
+                        while end < elf.data.len() {
+                            let b = elf.data[end];
+                            end += 1;
                             if b == 0 {
                                 break;
                             }
-                            print!("{}", b as char);
                         }
 
-                        println!("");
+                        if end > start {
+                            let sym_name = str::from_utf8_unchecked(&elf.data[start .. end]);
+                            println!("    {}", sym_name);
+                        }
                     }
                 }
             }
