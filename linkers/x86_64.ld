@@ -29,6 +29,10 @@ SECTIONS {
         *(.data*)
 		. = ALIGN(4096);
         __data_end = .;
+        __bss_start = .;
+        *(.bss*)
+        . = ALIGN(4096);
+        __bss_end = .;
     }
 
     .tdata : AT(ADDR(.tdata) - KERNEL_OFFSET) {
@@ -41,13 +45,6 @@ SECTIONS {
         . += 8;
         . = ALIGN(4096);
         __tbss_end = .;
-    }
-
-    .bss : AT(ADDR(.bss) - KERNEL_OFFSET) {
-        __bss_start = .;
-        *(.bss*)
-        . = ALIGN(4096);
-        __bss_end = .;
     }
 
     __end = .;

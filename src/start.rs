@@ -3,7 +3,6 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 
-use core::ptr;
 use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use acpi;
@@ -40,43 +39,25 @@ extern {
 
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
-pub unsafe extern fn kstart() -> ! {
+pub unsafe extern fn kstart(kernel_base: usize, kernel_size: usize, stack_base: usize, stack_size: usize) -> ! {
     {
-        extern {
-            /// The starting byte of the _.bss_ (uninitialized data) segment.
-            static mut __bss_start: u8;
-            /// The ending byte of the _.bss_ (uninitialized data) segment.
-            static mut __bss_end: u8;
-            /// The end of the kernel
-            static mut __end: u8;
-        }
-
-        // Zero BSS, this initializes statics that are set to 0
+        // BSS should already be zero
         {
-            let start_ptr = &mut __bss_start as *mut u8;
-            let end_ptr = & __bss_end as *const u8 as usize;
-
-            if start_ptr as usize <= end_ptr {
-                let size = end_ptr - start_ptr as usize;
-                ptr::write_bytes(start_ptr, 0, size);
-            }
-
             assert_eq!(BSS_TEST_ZERO, 0);
             assert_eq!(DATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFF);
         }
 
-        // Initialize memory management
-        memory::init(0, &__end as *const u8 as usize - ::KERNEL_OFFSET);
+        println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
+        println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
 
-        // TODO: allocate a stack
-        let stack_start = 0x00080000 + ::KERNEL_OFFSET;
-        let stack_end = 0x0009F000 + ::KERNEL_OFFSET;
+        // Initialize memory management
+        memory::init(0, kernel_base + ((kernel_size + 4095)/4096) * 4096);
 
         // Initialize paging
-        let (mut active_table, tcb_offset) = paging::init(0, stack_start, stack_end);
+        let (mut active_table, tcb_offset) = paging::init(0, kernel_base, kernel_base + kernel_size, stack_base, stack_base + stack_size);
 
         // Set up GDT
-        gdt::init(tcb_offset, stack_end);
+        gdt::init(tcb_offset, stack_base + stack_size);
 
         // Set up IDT
         idt::init();
