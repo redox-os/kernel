@@ -26,6 +26,8 @@ static mut TBSS_TEST_ZERO: usize = 0;
 #[thread_local]
 static mut TDATA_TEST_NONZERO: usize = 0xFFFFFFFFFFFFFFFF;
 
+pub static KERNEL_BASE: AtomicUsize = ATOMIC_USIZE_INIT;
+pub static KERNEL_SIZE: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static CPU_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static AP_READY: AtomicBool = ATOMIC_BOOL_INIT;
 static BSP_READY: AtomicBool = ATOMIC_BOOL_INIT;
@@ -46,6 +48,9 @@ pub unsafe extern fn kstart(kernel_base: usize, kernel_size: usize, stack_base: 
             assert_eq!(BSS_TEST_ZERO, 0);
             assert_eq!(DATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFF);
         }
+
+        KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
+        KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
 
         println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
         println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
