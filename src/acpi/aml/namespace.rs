@@ -4,7 +4,7 @@ use collections::boxed::Box;
 
 use core::str::FromStr;
 
-use super::namedobj::RegionSpace;
+use super::namedobj::{ RegionSpace, FieldFlags };
 
 #[derive(Debug)]
 pub struct AmlNamespace {
@@ -21,6 +21,12 @@ pub enum AmlNamespaceContents {
         region: RegionSpace,
         offset: AmlValue,
         len: AmlValue
+    },
+    Field {
+        op_region: String,
+        flags: FieldFlags,
+        offset: usize,
+        length: usize
     }
 }
 
@@ -35,7 +41,7 @@ pub enum AmlValue {
     Event,
     FieldUnit,
     Integer,
-    IntegerConstant,
+    IntegerConstant(u64),
     Method,
     Mutex,
     ObjectReference,

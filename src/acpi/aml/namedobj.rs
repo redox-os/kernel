@@ -115,23 +115,43 @@ impl AmlExecutable for NamedObj {
             NamedObj::DefOpRegion { ref name, ref region, ref offset, ref len } => {
                 let local_scope_string = get_namespace_string(scope.clone(), name.clone());
 
-                let resolved_offset = if let Some(r) = offset.execute(namespace, scope.clone()) {
-                    r
-                } else {
-                    return None;
+                let resolved_offset = match offset.execute(namespace, scope.clone()) {
+                    Some(r) => r,
+                    _ => return None
                 };
 
-                let resolved_len = if let Some(r) = len.execute(namespace, scope.clone()) {
-                    r
-                } else {
-                    return None;
+                let resolved_len = match len.execute(namespace, scope.clone()) {
+                    Some(r) => r,
+                    _ => return None
                 };
-
+                
                 namespace.push_to(local_scope_string, AmlNamespaceContents::OpRegion {
                     region: *region,
                     offset: resolved_offset,
                     len: resolved_len
                 });
+            },
+            NamedObj::DefField { ref name, ref flags, ref field_list } => {
+                let mut offset: usize = 0;
+                
+                for f in field_list {
+                    match *f {
+                        FieldElement::ReservedField { length } => offset += length,
+                        FieldElement::NamedField { name: ref field_name, length } => {
+                            let local_scope_string = get_namespace_string(scope.clone(),
+                                                                          field_name.clone());
+                            namespace.push_to(local_scope_string, AmlNamespaceContents::Field {
+                                op_region: name.clone(),
+                                flags: flags.clone(),
+                                offset: offset.clone(),
+                                length: length.clone()
+                            });
+
+                            offset += length;
+                        },
+                        _ => ()
+                    }
+                }
             },
             _ => ()
         }
@@ -155,14 +175,14 @@ pub enum RegionSpace {
     UserDefined(u8)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldFlags {
     access_type: AccessType,
     lock_rule: bool,
     update_rule: UpdateRule
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AccessType {
     AnyAcc,
     ByteAcc,
@@ -172,7 +192,7 @@ pub enum AccessType {
     BufferAcc
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UpdateRule {
     Preserve,
     WriteAsOnes,
