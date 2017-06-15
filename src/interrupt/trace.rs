@@ -1,4 +1,5 @@
 use core::{mem, str};
+use goblin::elf::sym;
 
 use paging::{ActivePageTable, VirtualAddress};
 
@@ -56,7 +57,10 @@ pub unsafe fn symbol_trace(addr: usize) {
 
         if let Some(symbols) = elf.symbols() {
             for sym in symbols {
-                if addr >= sym.st_value as usize && addr < (sym.st_value + sym.st_size) as usize {
+                if sym::st_type(sym.st_info) == sym::STT_FUNC
+                && addr >= sym.st_value as usize
+                && addr < (sym.st_value + sym.st_size) as usize
+                {
                     println!("    {:>016X}+{:>04X}", sym.st_value, addr - sym.st_value as usize);
 
                     if let Some(strtab) = strtab_opt {
@@ -71,8 +75,54 @@ pub unsafe fn symbol_trace(addr: usize) {
                         }
 
                         if end > start {
-                            let sym_name = str::from_utf8_unchecked(&elf.data[start .. end]);
-                            println!("    {}", sym_name);
+                            let sym_name = &elf.data[start .. end];
+
+                            print!("    ");
+
+                            if sym_name.starts_with(b"_ZN") {
+                                // Skip _ZN
+                                let mut i = 3;
+                                let mut first = true;
+                                while i < sym_name.len() {
+                                    // E is the end character
+                                    if sym_name[i] == b'E' {
+                                        break;
+                                    }
+
+                                    // Parse length string
+                                    let mut len = 0;
+                                    while i < sym_name.len() {
+                                        let b = sym_name[i];
+                                        if b >= b'0' && b <= b'9' {
+                                            i += 1;
+                                            len *= 10;
+                                            len += (b - b'0') as usize;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+
+                                    // Print namespace seperator, if required
+                                    if first {
+                                        first = false;
+                                    } else {
+                                        print!("::");
+                                    }
+
+                                    // Print name string
+                                    let end = i + len;
+                                    while i < sym_name.len() && i < end {
+                                        print!("{}", sym_name[i] as char);
+                                        i += 1;
+                                    }
+                                }
+                            } else {
+                                for &b in sym_name.iter() {
+                                    print!("{}", b as char);
+                                }
+                            }
+
+                            println!("");
                         }
                     }
                 }
