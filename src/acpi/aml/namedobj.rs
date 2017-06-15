@@ -8,7 +8,7 @@ use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermAr
 use super::pkglength::parse_pkg_length;
 use super::type2opcode::{parse_def_buffer, DefBuffer};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NamedObj {
     DefBankField {
         region_name: String,
@@ -80,10 +80,7 @@ pub enum NamedObj {
     },
     DefMethod {
         name: String,
-        arg_count: u8,
-        serialized: bool,
-        sync_level: u8,
-        term_list: Vec<TermObj>
+        method: Method
     },
     DefMutex {
         name: String,
@@ -107,6 +104,14 @@ pub enum NamedObj {
         obj_list: Vec<Object>
     },
     DeferredLoad(Vec<u8>)
+}
+
+#[derive(Debug, Clone)]
+pub struct Method {
+    arg_count: u8,
+    serialized: bool,
+    sync_level: u8,
+    term_list: Vec<TermObj>
 }
 
 impl AmlExecutable for NamedObj {
@@ -152,6 +157,11 @@ impl AmlExecutable for NamedObj {
                         _ => ()
                     }
                 }
+            },
+            NamedObj::DefMethod { ref name, ref method } => {
+                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
+                namespace.push_to(local_scope_string, AmlNamespaceContents::Value(
+                                  AmlValue::Method(method.clone())));
             },
             _ => ()
         }
@@ -199,7 +209,7 @@ pub enum UpdateRule {
     WriteAsZeros
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FieldElement {
     NamedField {
         name: String,
@@ -216,7 +226,7 @@ pub enum FieldElement {
     ConnectFieldBufferData(DefBuffer),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AccessAttrib {
     AttribBytes(u8),
     AttribRawBytes(u8),
@@ -674,7 +684,15 @@ fn parse_def_method(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> 
         Err(e) => return Err(e)
     };
 
-    Ok((NamedObj::DefMethod {name, arg_count, serialized, sync_level, term_list}, pkg_len + 1))
+    Ok((NamedObj::DefMethod {
+        name: name,
+        method: Method {
+            arg_count,
+            serialized,
+            sync_level,
+            term_list
+        }
+    }, pkg_len + 1))
 }
 
 fn parse_def_mutex(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {

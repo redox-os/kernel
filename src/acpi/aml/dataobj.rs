@@ -9,27 +9,27 @@ use super::termlist::{parse_term_arg, TermArg};
 use super::namestring::{parse_super_name, SuperName};
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DataObj {
     ComputationalData(ComputationalData),
     DefPackage(DefPackage),
     DefVarPackage(DefVarPackage)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DataRefObj {
     DataObj(DataObj),
     ObjectReference(TermArg),
     DDBHandle(SuperName)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArgObj(u8);
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalObj(u8);
 // Not actually doing anything to contain data, but does give us type guarantees, which is useful
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ComputationalData {
     Byte(u8),
     Word(u16),

@@ -6,7 +6,7 @@ use super::AmlInternalError;
 use super::dataobj::{parse_arg_obj, parse_local_obj, ArgObj, LocalObj};
 use super::type2opcode::{parse_type6_opcode, Type6OpCode};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SuperName {
     NameString(String),
     ArgObj(ArgObj),
@@ -15,7 +15,7 @@ pub enum SuperName {
     Type6OpCode(Type6OpCode)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Target {
     SuperName(SuperName),
     Null

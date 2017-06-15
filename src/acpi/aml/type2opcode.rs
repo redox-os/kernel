@@ -9,7 +9,7 @@ use super::namestring::{parse_super_name, parse_target, parse_name_string, parse
                         SuperName, Target};
 use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type2OpCode {
     DefAcquire {
         object: SuperName,
@@ -206,7 +206,7 @@ impl AmlExecutable for Type2OpCode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DefObjectType {
     SuperName(SuperName),
     DefIndex(DefIndex),
@@ -214,7 +214,7 @@ pub enum DefObjectType {
     DefDerefOf(TermArg)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MatchOpcode {
     MTR,
     MEQ,
@@ -224,7 +224,7 @@ pub enum MatchOpcode {
     MGT
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type6OpCode {
     DefDerefOf(TermArg),
     DefRefOf(Box<SuperName>),
@@ -232,14 +232,14 @@ pub enum Type6OpCode {
     MethodInvocation(MethodInvocation)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DefIndex {
     obj: TermArg,
     idx: TermArg,
     target: Box<Target>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DefBuffer {
     Buffer {
         buffer_size: TermArg,
@@ -248,7 +248,7 @@ pub enum DefBuffer {
     DeferredLoad(Vec<u8>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DefPackage {
     Package {
         num_elements: u8,
@@ -257,7 +257,7 @@ pub enum DefPackage {
     DeferredLoad(Vec<u8>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DefVarPackage {
     Package {
         num_elements: TermArg,
@@ -266,7 +266,7 @@ pub enum DefVarPackage {
     DeferredLoad(Vec<u8>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PackageElement {
     DataRefObj(DataRefObj),
     NameString(String)

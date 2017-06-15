@@ -7,7 +7,7 @@ use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list, TermObj, TermArg};
 use super::namestring::{parse_name_string, parse_super_name, SuperName};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type1OpCode {
     DefBreak,
     DefBreakPoint,
@@ -50,7 +50,7 @@ impl AmlExecutable for Type1OpCode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IfBlock {
     If {
         predicate: TermArg,

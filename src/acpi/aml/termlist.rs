@@ -10,7 +10,7 @@ use super::type1opcode::{parse_type1_opcode, Type1OpCode};
 use super::type2opcode::{parse_type2_opcode, Type2OpCode};
 use super::namestring::parse_name_string;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TermArg {
     LocalObj(Box<LocalObj>),
     DataObj(Box<DataObj>),
@@ -18,7 +18,7 @@ pub enum TermArg {
     Type2Opcode(Box<Type2OpCode>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TermObj {
     NamespaceModifier(Box<NamespaceModifier>),
     NamedObj(Box<NamedObj>),
@@ -26,13 +26,13 @@ pub enum TermObj {
     Type2Opcode(Box<Type2OpCode>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Object {
     NamespaceModifier(Box<NamespaceModifier>),
     NamedObj(Box<NamedObj>)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MethodInvocation {
 
 }

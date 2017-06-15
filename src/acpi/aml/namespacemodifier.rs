@@ -8,7 +8,7 @@ use super::namestring::parse_name_string;
 use super::termlist::{parse_term_list, TermObj};
 use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NamespaceModifier {
     Name {
         name: String,
