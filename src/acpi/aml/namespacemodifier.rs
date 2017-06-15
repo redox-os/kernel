@@ -1,7 +1,8 @@
 use collections::vec::Vec;
 use collections::string::String;
+use collections::boxed::Box;
 
-use super::AmlInternalError;
+use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, get_namespace_string};
 use super::pkglength::parse_pkg_length;
 use super::namestring::parse_name_string;
 use super::termlist::{parse_term_list, TermObj};
@@ -22,6 +23,20 @@ pub enum NamespaceModifier {
         alias_name: String
     },
     DeferredLoad(Vec<u8>)
+}
+
+impl AmlExecutable for NamespaceModifier {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        match *self {
+            NamespaceModifier::Scope { name: ref name, terms: ref terms } => {
+                let local_scope_string = get_namespace_string(scope, name.clone());
+                namespace.push_subordinate_namespace(local_scope_string.clone());
+
+                terms.execute(namespace, local_scope_string)
+            },
+            _ => None
+        }
+    }
 }
 
 pub fn parse_namespace_modifier(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {

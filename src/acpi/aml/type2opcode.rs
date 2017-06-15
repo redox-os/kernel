@@ -2,8 +2,7 @@ use collections::vec::Vec;
 use collections::string::String;
 use collections::boxed::Box;
 
-use super::AmlInternalError;
-
+use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_method_invocation, TermArg, MethodInvocation};
 use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name,
@@ -199,6 +198,12 @@ pub enum Type2OpCode {
     DefObjectType(DefObjectType),
     DefTimer,
     MethodInvocation(MethodInvocation)
+}
+
+impl AmlExecutable for Type2OpCode {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        None
+    }
 }
 
 #[derive(Debug)]

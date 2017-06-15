@@ -1,8 +1,8 @@
 use collections::vec::Vec;
 use collections::string::String;
+use collections::boxed::Box;
 
-use super::AmlInternalError;
-
+use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list, TermObj, TermArg};
 use super::namestring::{parse_name_string, parse_super_name, SuperName};
@@ -42,6 +42,12 @@ pub enum Type1OpCode {
     },
     DefReturn(TermArg),
     DeferredLoad(Vec<u8>)
+}
+
+impl AmlExecutable for Type1OpCode {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        None
+    }
 }
 
 #[derive(Debug)]

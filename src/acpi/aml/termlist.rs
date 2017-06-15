@@ -2,7 +2,7 @@ use collections::vec::Vec;
 use collections::boxed::Box;
 use collections::string::String;
 
-use super::{AmlInternalError, AmlExecutable, AmlScopeVal, AmlValue, AmlTables};
+use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, get_namespace_string};
 use super::namespacemodifier::{parse_namespace_modifier, NamespaceModifier};
 use super::namedobj::{parse_named_obj, NamedObj};
 use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj, DataObj, ArgObj, LocalObj};
@@ -38,7 +38,7 @@ pub struct MethodInvocation {
 }
 
 impl AmlExecutable for Vec<TermObj> {
-    fn execute(&self, namespace: &mut AmlTables, scope: String) -> Option<Box<AmlScopeVal>> {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
         for term in self {
             term.execute(namespace, scope.clone());
         }
@@ -48,8 +48,13 @@ impl AmlExecutable for Vec<TermObj> {
 }
 
 impl AmlExecutable for TermObj {
-    fn execute(&self, namespace: &mut AmlTables, scope: String) -> Option<Box<AmlScopeVal>> {
-        None
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        match *self {
+            TermObj::NamespaceModifier(ref res) => res.execute(namespace, scope.clone()),
+            TermObj::NamedObj(ref res) => res.execute(namespace, scope.clone()),
+            TermObj::Type1Opcode(ref res) => res.execute(namespace, scope.clone()),
+            TermObj::Type2Opcode(ref res) => res.execute(namespace, scope.clone())
+        }
     }
 }
 

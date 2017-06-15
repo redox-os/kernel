@@ -12,6 +12,7 @@ use super::sdt::Sdt;
 #[macro_use]
 mod parsermacros;
 
+mod namespace;
 mod termlist;
 mod namespacemodifier;
 mod pkglength;
@@ -22,10 +23,12 @@ mod type1opcode;
 mod type2opcode;
 
 use self::termlist::{parse_term_list, TermObj};
+pub use self::namespace::{AmlNamespace, AmlValue};
+use self::namespace::AmlNamespaceContents;
 
 // TODO: This should be able to take parameters, and may also return multiple values
 pub trait AmlExecutable {
-    fn execute(&self, namespace: &mut AmlTables, scope: String) -> Option<Box<AmlScopeVal>>;
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue>;
 }
 
 // TODO: make private
@@ -39,47 +42,19 @@ pub enum AmlError {
     AmlParseError(&'static str)
 }
 
-pub trait AmlScopeVal: Debug { }
-
-#[derive(Debug)]
-pub struct AmlTables {
-    name: String,
-    contents: Vec<Box<AmlScopeVal>>
-}
-
-impl AmlTables {
-    fn push(&mut self, val: Box<AmlScopeVal>) {
-        self.contents.push(val);
+pub fn get_namespace_string(current: String, modifier: String) -> String {
+    if modifier.starts_with("\\") {
+        return modifier;
     }
+
+    if modifier.starts_with("^") {
+        // TODO
+    }
+
+    let mut namespace = current.clone();
+    namespace.push('.');
+    namespace + &modifier
 }
-
-impl AmlScopeVal for AmlTables { }
-
-#[derive(Debug)]
-pub enum AmlValue {
-    Uninitialized,
-    Buffer,
-    BufferField,
-    DDBHandle,
-    DebugObject,
-    Device,
-    Event,
-    FieldUnit,
-    Integer,
-    IntegerConstant,
-    Method,
-    Mutex,
-    ObjectReference,
-    OperationRegion,
-    Package,
-    String,
-    PowerResource,
-    Processor,
-    RawDataBuffer,
-    ThermalZone
-}
-
-impl AmlScopeVal for AmlValue { }
 
 pub fn parse_aml_table(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
     let term_list = match parse_term_list(data) {
@@ -89,14 +64,11 @@ pub fn parse_aml_table(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
         Err(AmlInternalError::AmlDeferredLoad) => return Err(AmlError::AmlParseError("Deferred load reached top level"))
     };
 
-    let global_namespace_specifier = String::from_str("/").unwrap();
+    let global_namespace_specifier = String::from_str("\\").unwrap();
     // Unwrap is fine here. I mean come on, if this goes wrong you've got bigger problems than AML
     // not loading...
 
-    let mut global_namespace = AmlTables {
-        name: global_namespace_specifier.clone(),
-        contents: vec!()
-    };
+    let mut global_namespace = AmlNamespace::new_namespace(&global_namespace_specifier);
     term_list.execute(&mut global_namespace, global_namespace_specifier.clone());
 
     println!("{:#?}", global_namespace);

@@ -1,8 +1,8 @@
 use collections::vec::Vec;
 use collections::string::String;
+use collections::boxed::Box;
 
-use super::AmlInternalError;
-
+use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
 use super::pkglength::parse_pkg_length;
@@ -107,6 +107,12 @@ pub enum NamedObj {
         obj_list: Vec<Object>
     },
     DeferredLoad(Vec<u8>)
+}
+
+impl AmlExecutable for NamedObj {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        None
+    }
 }
 
 #[derive(Debug)]

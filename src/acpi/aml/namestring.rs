@@ -83,27 +83,39 @@ pub fn parse_name_seg(data: &[u8]) -> Result<(Vec<u8>, usize), AmlInternalError>
         _ => return Err(AmlInternalError::AmlInvalidOpCode)
     }
 
-    Ok((vec!(data[0], data[1], data[2], data[3]), 4 as usize))
+    let mut name_seg = vec!(data[0], data[1], data[2], data[3]);
+    while *(name_seg.last().unwrap()) == 0x5F {
+        name_seg.pop();
+    }
+
+    Ok((name_seg, 4 as usize))
 }
 
 fn parse_dual_name_path(data: &[u8]) -> Result<(Vec<u8>, usize), AmlInternalError> {
     parser_opcode!(data, 0x2E);
 
     let mut characters: Vec<u8> = vec!();
+    let mut dual_len: usize = 1;
 
     match parse_name_seg(&data[1..5]) {
-        Ok((mut v, len)) => characters.append(&mut v),
+        Ok((mut v, len)) => {
+            characters.append(&mut v);
+            dual_len += len;
+        },
         Err(e) => return Err(e)
     }
+
+    characters.push(0x2E);
 
     match parse_name_seg(&data[5..9]) {
-        Ok((mut v, len)) => characters.append(&mut v),
+        Ok((mut v, len)) => {
+            characters.append(&mut v);
+            dual_len += len;
+        },
         Err(e) => return Err(e)
     }
 
-    let len = 1 + characters.len();
-
-    Ok((characters, len))
+    Ok((characters, dual_len))
 }
 
 fn parse_multi_name_path(data: &[u8]) -> Result<(Vec<u8>, usize), AmlInternalError> {
@@ -116,19 +128,25 @@ fn parse_multi_name_path(data: &[u8]) -> Result<(Vec<u8>, usize), AmlInternalErr
 
     let mut current_seg = 0;
     let mut characters: Vec<u8> = vec!();
+    let mut multi_len: usize = 2;
     
     while current_seg < seg_count {
         match parse_name_seg(&data[(current_seg as usize * 4) + 2 ..]) {
-            Ok((mut v, len)) => characters.append(&mut v),
+            Ok((mut v, len)) => {
+                characters.append(&mut v);
+                multi_len += len;
+            },
             Err(e) => return Err(e)
         }
+
+        characters.push(0x2E);
 
         current_seg += 1;
     }
 
-    let len = 2 + characters.len();
+    characters.pop();
 
-    Ok((characters, len))
+    Ok((characters, multi_len))
 }
 
 pub fn parse_super_name(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
