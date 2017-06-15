@@ -1,6 +1,7 @@
 use core::slice;
 
 use super::sdt::Sdt;
+
 use super::aml::{parse_aml_table, AmlError, AmlValue, AmlNamespace};
 
 #[derive(Debug)]

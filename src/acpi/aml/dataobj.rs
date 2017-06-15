@@ -8,7 +8,6 @@ use super::type2opcode::{parse_def_buffer, parse_def_package, parse_def_var_pack
 use super::termlist::{parse_term_arg, TermArg};
 use super::namestring::{parse_super_name, SuperName};
 
-
 #[derive(Debug, Clone)]
 pub enum DataObj {
     ComputationalData(ComputationalData),
