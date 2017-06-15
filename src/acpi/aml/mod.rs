@@ -56,7 +56,7 @@ pub fn get_namespace_string(current: String, modifier: String) -> String {
     namespace + &modifier
 }
 
-pub fn parse_aml_table(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
+pub fn parse_aml_table(data: &[u8]) -> Result<AmlNamespace, AmlError> {
     let term_list = match parse_term_list(data) {
         Ok(res) => res,
         Err(AmlInternalError::AmlParseError(s)) => return Err(AmlError::AmlParseError(s)),
@@ -73,5 +73,5 @@ pub fn parse_aml_table(data: &[u8]) -> Result<Vec<TermObj>, AmlError> {
 
     println!("{:#?}", global_namespace);
 
-    Ok(term_list)
+    Ok(global_namespace)
 }

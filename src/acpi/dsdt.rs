@@ -1,7 +1,7 @@
 use core::slice;
 
 use super::sdt::Sdt;
-use super::aml::{parse_aml_table, AmlError};
+use super::aml::{parse_aml_table, AmlError, AmlValue, AmlNamespace};
 
 #[derive(Debug)]
 pub struct Dsdt(&'static Sdt);
@@ -19,72 +19,44 @@ impl Dsdt {
         unsafe { slice::from_raw_parts(self.0.data_address() as *const u8, self.0.data_len()) }
     }
 
-    pub fn load_aml(&self) {
+    pub fn load_aml(&self) -> Option<AmlNamespace> {
         let data = self.data();
-        let tbl = parse_aml_table(data);
-        
-        if let Ok(parsed_table) = tbl {
-            println!("Parsed the DSDT AML");
-        } else if let Err(AmlError::AmlParseError(s)) = tbl {
-            println!("Parse error: {}", s);
+        match parse_aml_table(data) {
+            Ok(p) => Some(p),
+            Err(_) => None
         }
     }
 
     pub fn slp_typ(&self) -> Option<(u16, u16)> {
-        // Code from http://forum.osdev.org/viewtopic.php?t=16990, should be adapted
+        let aml = match self.load_aml() {
+            Some(a) => a,
+            None => return None
+        };
+        
+        let s5 = aml.find_str("\\_S5");
 
-        let mut i = 0;
-        let data = self.data();
-
-        // search the \_S5 package in the DSDT
-        let s5_a = b"\x08_S5_\x12";
-        let s5_b = b"\x08\\_S5_\x12";
-        while i < data.len() {
-            if data[i..].starts_with(s5_a) {
-                i += s5_a.len();
-                break;
-            } else if data[i..].starts_with(s5_b) {
-                i += s5_b.len();
-                break;
-            } else {
-                i += 1;
-            }
+        let mut slp_typa: u16 = 0;
+        let mut slp_typb: u16 = 0;
+        
+        match s5 {
+            Some(s) => match s {
+                AmlValue::Package(p) => {
+                    match p[0] {
+                        AmlValue::IntegerConstant(i) => slp_typa = i as u16,
+                        _ => return None
+                    }
+                    
+                    match p[1] {
+                        AmlValue::IntegerConstant(i) => slp_typb = i as u16,
+                        _ => return None
+                    }
+                },
+                _ => return None
+            },
+            None => return None
         }
-
-        if i >= data.len() {
-            return None;
-        }
-
-        // check if \_S5 was found
-        let pkglen = ((data[i] & 0xC0) >> 6) + 2;
-        i += pkglen as usize;
-        if i >= data.len() {
-            return None;
-        }
-
-        if data[i] == 0x0A {
-            i += 1;   // skip byteprefix
-            if i >= data.len() {
-                return None;
-            }
-        }
-
-        let a = (data[i] as u16) << 10;
-        i += 1;
-        if i >= data.len() {
-            return None;
-        }
-
-        if data[i] == 0x0A {
-            i += 1;   // skip byteprefix
-            if i >= data.len() {
-                return None;
-            }
-        }
-
-        let b = (data[i] as u16) << 10;
-
-        Some((a, b))
+        
+        Some((slp_typa, slp_typb))
     }
 
 }

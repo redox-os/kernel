@@ -6,13 +6,13 @@ use core::str::FromStr;
 
 use super::namedobj::{ RegionSpace, FieldFlags, Method };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AmlNamespace {
     name: String,
     contents: AmlNamespaceContents
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AmlNamespaceContents {
     Value(AmlValue),
     SubNamespace(Box<AmlNamespace>),
@@ -30,7 +30,7 @@ pub enum AmlNamespaceContents {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AmlValue {
     Uninitialized,
     Buffer,
@@ -60,6 +60,75 @@ impl AmlNamespace {
             name: name.clone(),
             contents: AmlNamespaceContents::Namespace(vec!())
         }
+    }
+
+    pub fn find_str(&self, scope_str: &str) -> Option<AmlValue> {
+        let scope_string = String::from_str(scope_str).unwrap();
+        self.find(scope_string)
+    }
+    
+    pub fn find(&self, scope_string: String) -> Option<AmlValue> {
+        if scope_string.len() == 0 {
+            match self.contents {
+                AmlNamespaceContents::Value(ref v) => return Some(v.clone()),
+                _ => return None
+            }
+        }
+        
+        let mut scope_string = scope_string.clone();
+        
+        if scope_string.starts_with("\\") {
+            if self.name != "\\" {
+                return None;
+            }
+
+            scope_string.remove(0);
+        }
+
+        if scope_string.starts_with(".") {
+            scope_string.remove(0);
+        }
+        
+        if scope_string.len() == 0 {
+            match self.contents {
+                AmlNamespaceContents::Value(ref v) => return Some(v.clone()),
+                _ => return None
+            }
+        }
+
+        let (current, nextset) = match scope_string.find(".") {
+            Some(s) => {
+                let (x, mut y) = scope_string.split_at(s);
+                y = &y[1..];
+
+                (String::from_str(x).unwrap(), String::from_str(y).unwrap())
+            },
+            None => if scope_string.len() <= 4 {
+                (scope_string, String::from_str("").unwrap())
+            } else {
+                return None;
+            }
+        };
+
+        match self.contents {
+            AmlNamespaceContents::Namespace(ref namespace) => {
+                // TODO: Remove this while loop here, there has to be a more elegant way
+                let mut current_index = 0;
+                while current_index < namespace.len() {
+                    match namespace[current_index] {
+                        AmlNamespaceContents::SubNamespace(ref ns) => if ns.name == current {
+                            return ns.find(nextset);
+                        },
+                        _ => ()
+                    }
+
+                    current_index += 1;
+                }
+            },
+            _ => ()
+        }
+
+        None
     }
     
     pub fn push(&mut self, val: AmlNamespaceContents) {

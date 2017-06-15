@@ -71,7 +71,7 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         let dsdt = get_sdt(fadt.dsdt as usize, active_table);
         parse_sdt(dsdt, active_table);
         ACPI_TABLE.lock().fadt = Some(fadt);
-    } else if let Some(dsdt) = Dsdt::new(sdt) {
+    } else if let Some(mut dsdt) = Dsdt::new(sdt) {
         println!(": {}", dsdt.data().len());
         dsdt.load_aml();
         ACPI_TABLE.lock().dsdt = Some(dsdt);
