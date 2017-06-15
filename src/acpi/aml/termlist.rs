@@ -47,6 +47,12 @@ impl AmlExecutable for Vec<TermObj> {
     }
 }
 
+impl AmlExecutable for TermArg {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        Some(AmlValue::Integer)
+    }
+}
+
 impl AmlExecutable for TermObj {
     fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
         match *self {

@@ -4,6 +4,8 @@ use collections::boxed::Box;
 
 use core::str::FromStr;
 
+use super::namedobj::RegionSpace;
+
 #[derive(Debug)]
 pub struct AmlNamespace {
     name: String,
@@ -14,7 +16,12 @@ pub struct AmlNamespace {
 pub enum AmlNamespaceContents {
     Value(AmlValue),
     SubNamespace(Box<AmlNamespace>),
-    Namespace(Vec<AmlNamespaceContents>)
+    Namespace(Vec<AmlNamespaceContents>),
+    OpRegion {
+        region: RegionSpace,
+        offset: AmlValue,
+        len: AmlValue
+    }
 }
 
 #[derive(Debug)]
@@ -49,14 +56,14 @@ impl AmlNamespace {
         }
     }
     
-    fn push(&mut self, val: AmlNamespaceContents) {
+    pub fn push(&mut self, val: AmlNamespaceContents) {
         match self.contents {
             AmlNamespaceContents::Namespace(ref mut v) => v.push(val),
             _ => () // TODO: Error this
         }
     }
 
-    pub fn push_subordinate_namespace(&mut self, scope_string: String) {
+    pub fn push_to(&mut self, scope_string: String, contents: AmlNamespaceContents) {
         if scope_string.len() == 0 {
             return;
         }
@@ -101,7 +108,7 @@ impl AmlNamespace {
                 while current_index < namespace.len() {
                     match namespace[current_index] {
                         AmlNamespaceContents::SubNamespace(ref mut ns) => if ns.name == current {
-                            ns.push_subordinate_namespace(nextset);
+                            ns.push_to(nextset, contents);
                             return;
                         },
                         _ => ()
@@ -112,13 +119,16 @@ impl AmlNamespace {
                 
                 let mut next = AmlNamespace {
                     name: current,
-                    contents: AmlNamespaceContents::Namespace(vec!())
+                    contents: contents
                 };
-                next.push_subordinate_namespace(nextset);
                 
                 namespace.push(AmlNamespaceContents::SubNamespace(Box::new(next)));
             }
             _ => () // TODO: Error this
         }
+    }
+
+    pub fn push_subordinate_namespace(&mut self, scope_string: String) {
+        self.push_to(scope_string, AmlNamespaceContents::Namespace(vec!()));
     }
 }

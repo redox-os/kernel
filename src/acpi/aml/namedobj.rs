@@ -2,7 +2,7 @@ use collections::vec::Vec;
 use collections::string::String;
 use collections::boxed::Box;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
+use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, AmlNamespaceContents, get_namespace_string};
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
 use super::pkglength::parse_pkg_length;
@@ -111,11 +111,36 @@ pub enum NamedObj {
 
 impl AmlExecutable for NamedObj {
     fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        match *self {
+            NamedObj::DefOpRegion { ref name, ref region, ref offset, ref len } => {
+                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
+
+                let resolved_offset = if let Some(r) = offset.execute(namespace, scope.clone()) {
+                    r
+                } else {
+                    return None;
+                };
+
+                let resolved_len = if let Some(r) = len.execute(namespace, scope.clone()) {
+                    r
+                } else {
+                    return None;
+                };
+
+                namespace.push_to(local_scope_string, AmlNamespaceContents::OpRegion {
+                    region: *region,
+                    offset: resolved_offset,
+                    len: resolved_len
+                });
+            },
+            _ => ()
+        }
+        
         None
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum RegionSpace {
     SystemMemory,
     SystemIO,
