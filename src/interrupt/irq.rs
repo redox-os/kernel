@@ -52,11 +52,9 @@ interrupt!(pit, {
 
     pic::MASTER.ack();
 
-    /*
     if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
         context::switch();
     }
-    */
 
     // Any better way of doing this?
     timeout::trigger();
