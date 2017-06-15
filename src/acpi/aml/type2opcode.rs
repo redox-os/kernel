@@ -272,6 +272,33 @@ pub enum PackageElement {
     NameString(String)
 }
 
+impl AmlExecutable for DefPackage {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        match *self {
+            DefPackage::Package { ref num_elements, ref elements } => {
+                let mut values: Vec<AmlValue> = vec!();
+                
+                for element in elements {
+                    match *element {
+                        PackageElement::DataRefObj(ref d) => {
+                            let elem = match d.execute(namespace, scope.clone()) {
+                                Some(e) => e,
+                                None => continue
+                            };
+
+                            values.push(elem);
+                        },
+                        _ => return None
+                    }
+                }
+
+                Some(AmlValue::Package(values))
+            },
+            _ => None
+        }
+    }
+}
+
 pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     parser_selector! {
         data,

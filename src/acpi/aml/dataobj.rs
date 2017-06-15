@@ -56,6 +56,7 @@ impl AmlExecutable for DataObj {
     fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
         match *self {
             DataObj::ComputationalData(ref cd) => cd.execute(namespace, scope),
+            DataObj::DefPackage(ref pkg) => pkg.execute(namespace, scope),
             _ => Some(AmlValue::Integer)
         }
     }

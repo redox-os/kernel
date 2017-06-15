@@ -46,7 +46,7 @@ pub enum AmlValue {
     Mutex,
     ObjectReference,
     OperationRegion,
-    Package,
+    Package(Vec<AmlValue>),
     String,
     PowerResource,
     Processor,
