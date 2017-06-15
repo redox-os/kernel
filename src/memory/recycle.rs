@@ -92,7 +92,7 @@ impl<T: FrameAllocator> FrameAllocator for RecycleAllocator<T> {
         if let Some(i) = small_i {
             let (address, remove) = {
                 let free = &mut self.free[i];
-                free.1 -= 1;
+                free.1 -= count;
                 (free.0 + free.1 * 4096, free.1 == 0)
             };
 
