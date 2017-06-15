@@ -43,6 +43,15 @@ pub enum ComputationalData {
     RevisionOp
 }
 
+impl AmlExecutable for DataRefObj {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        match *self {
+            DataRefObj::DataObj(ref cd) => cd.execute(namespace, scope),
+            _ => Some(AmlValue::Integer)
+        }
+    }
+}
+
 impl AmlExecutable for DataObj {
     fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
         match *self {

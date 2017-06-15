@@ -2,7 +2,7 @@ use collections::vec::Vec;
 use collections::string::String;
 use collections::boxed::Box;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, get_namespace_string};
+use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, AmlNamespaceContents, get_namespace_string};
 use super::pkglength::parse_pkg_length;
 use super::namestring::parse_name_string;
 use super::termlist::{parse_term_list, TermObj};
@@ -32,10 +32,21 @@ impl AmlExecutable for NamespaceModifier {
                 let local_scope_string = get_namespace_string(scope, name.clone());
                 namespace.push_subordinate_namespace(local_scope_string.clone());
 
-                terms.execute(namespace, local_scope_string)
+                terms.execute(namespace, local_scope_string);
             },
-            _ => None
+            NamespaceModifier::Name { ref name, ref data_ref_obj } => {
+                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
+                let dro = match data_ref_obj.execute(namespace, scope) {
+                    Some(s) => s,
+                    None => return None
+                };
+
+                namespace.push_to(local_scope_string, AmlNamespaceContents::Value(dro));
+            },
+            _ => ()
         }
+
+        None
     }
 }
 
