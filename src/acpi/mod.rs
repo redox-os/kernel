@@ -13,15 +13,15 @@ use paging::{entry, ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 use start::{kstart_ap, CPU_COUNT, AP_READY};
 
 use self::dmar::{Dmar, DmarEntry};
-use self::dsdt::Dsdt;
 use self::fadt::Fadt;
 use self::madt::{Madt, MadtEntry};
 use self::rsdt::Rsdt;
 use self::sdt::Sdt;
 use self::xsdt::Xsdt;
 
+use self::aml::{is_aml_table, parse_aml_table, AmlNamespace, AmlError};
+
 mod dmar;
-mod dsdt;
 mod fadt;
 mod madt;
 mod rsdt;
@@ -71,10 +71,6 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         let dsdt = get_sdt(fadt.dsdt as usize, active_table);
         parse_sdt(dsdt, active_table);
         ACPI_TABLE.lock().fadt = Some(fadt);
-    } else if let Some(mut dsdt) = Dsdt::new(sdt) {
-        println!(": {}", dsdt.data().len());
-        dsdt.load_aml();
-        ACPI_TABLE.lock().dsdt = Some(dsdt);
     } else if let Some(madt) = Madt::new(sdt) {
         println!(": {:>08X}: {}", madt.local_address, madt.flags);
 
@@ -199,6 +195,17 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
                 _ => ()
             }
         }
+    } else if is_aml_table(sdt) {
+        ACPI_TABLE.lock().namespace = match parse_aml_table(sdt) {
+            Ok(res) => {
+                println!(": Parsed");
+                Some(res)
+            },
+            Err(AmlError::AmlParseError(e)) => {
+                println!(": {}", e);
+                None
+            }
+        };
     } else {
         println!(": Unknown");
     }
@@ -261,10 +268,10 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
 
 pub struct Acpi {
     pub fadt: Option<Fadt>,
-    pub dsdt: Option<Dsdt>,
+    pub namespace: Option<AmlNamespace>,
 }
 
-pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, dsdt: None });
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, namespace: None });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]

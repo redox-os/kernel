@@ -1,5 +1,3 @@
-use core::slice;
-
 use super::sdt::Sdt;
 
 use super::aml::{parse_aml_table, AmlError, AmlValue, AmlNamespace};
@@ -16,48 +14,36 @@ impl Dsdt {
         }
     }
 
-    pub fn data(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.0.data_address() as *const u8, self.0.data_len()) }
-    }
-
-    pub fn load_aml(&self) -> Option<AmlNamespace> {
-        let data = self.data();
-        match parse_aml_table(data) {
-            Ok(p) => Some(p),
-            Err(_) => None
-        }
+    pub fn load_aml(&self) -> Result<AmlNamespace, AmlError> {
+        parse_aml_table(self.0)
     }
 
     pub fn slp_typ(&self) -> Option<(u16, u16)> {
         let aml = match self.load_aml() {
-            Some(a) => a,
-            None => return None
+            Ok(a) => a,
+            Err(e) => match e {
+                AmlError::AmlParseError(s) => {
+                    println!("{}", s);
+                    return None;
+                }
+            }
         };
         
-        let s5 = aml.find_str("\\_S5");
-
         let mut slp_typa: u16 = 0;
         let mut slp_typb: u16 = 0;
-        
-        match s5 {
-            Some(s) => match s {
-                AmlValue::Package(p) => {
-                    match p[0] {
-                        AmlValue::IntegerConstant(i) => slp_typa = i as u16,
-                        _ => return None
-                    }
-                    
-                    match p[1] {
-                        AmlValue::IntegerConstant(i) => slp_typb = i as u16,
-                        _ => return None
-                    }
-                },
-                _ => return None
-            },
-            None => return None
+
+        if let Some(s) = aml.find_str("\\_S5") {
+            if let Some(p) = s.get_as_package() {
+                let slp_typa = p[0].get_as_integer();
+                let slp_typb = p[1].get_as_integer();
+
+                if slp_typa.is_some() && slp_typb.is_some() {
+                    return Some((slp_typa.expect("") as u16, slp_typb.expect("") as u16));
+                }
+            }
         }
-        
-        Some((slp_typa, slp_typb))
+
+        None
     }
 
 }

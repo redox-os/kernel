@@ -54,6 +54,22 @@ pub enum AmlValue {
     ThermalZone
 }
 
+impl AmlValue {
+    pub fn get_as_package(&self) -> Option<Vec<AmlValue>> {
+        match *self {
+            AmlValue::Package(ref p) => Some(p.clone()),
+            _ => None
+        }
+    }
+
+    pub fn get_as_integer(&self) -> Option<u64> {
+        match *self {
+            AmlValue::IntegerConstant(ref i) => Some(i.clone()),
+            _ => None
+        }
+    }
+}
+
 impl AmlNamespace {
     pub fn new_namespace(name: &String) -> AmlNamespace {
         AmlNamespace {

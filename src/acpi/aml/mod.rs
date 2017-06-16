@@ -56,7 +56,9 @@ pub fn get_namespace_string(current: String, modifier: String) -> String {
     namespace + &modifier
 }
 
-pub fn parse_aml_table(data: &[u8]) -> Result<AmlNamespace, AmlError> {
+pub fn parse_aml_table(sdt: &'static Sdt) -> Result<AmlNamespace, AmlError> {
+    let data = sdt.data();
+    
     let term_list = match parse_term_list(data) {
         Ok(res) => res,
         Err(AmlInternalError::AmlParseError(s)) => return Err(AmlError::AmlParseError(s)),
@@ -71,7 +73,13 @@ pub fn parse_aml_table(data: &[u8]) -> Result<AmlNamespace, AmlError> {
     let mut global_namespace = AmlNamespace::new_namespace(&global_namespace_specifier);
     term_list.execute(&mut global_namespace, global_namespace_specifier.clone());
 
-    println!("{:#?}", global_namespace);
-
     Ok(global_namespace)
+}
+
+pub fn is_aml_table(sdt: &'static Sdt) -> bool {
+    if &sdt.signature == b"DSDT" {//|| &sdt.signature == b"SSDT" {
+        true
+    } else {
+        false
+    }
 }
