@@ -1,5 +1,0 @@
-use super::AmlError;
-
-fn parse_pkg_len(data: &[u8]) -> Result<(usize, usize), AmlError> {
-    Err(AmlError::AmlParseError)
-}

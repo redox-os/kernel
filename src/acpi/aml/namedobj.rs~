@@ -1,5 +1,0 @@
-use super::AmlError;
-
-fn parse_named_obj(data: &[u8]) -> Result<(u8, usize), AmlError> {
-    Err(AmlError::AmlParseError)
-}

@@ -1,5 +1,0 @@
-use super::AmlError;
-
-fn parse_name_string(data: &[u8]) -> Result<(&str, usize), AmlError> {
-    Err(AmlError::AmlParseError)
-}
