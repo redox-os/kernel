@@ -1,0 +1,5 @@
+use super::AmlError;
+
+pub fn parse_type2_opcode(data: &[u8]) -> Result<(u8, usize), AmlError> {
+    Err(AmlError::AmlParseError)
+}
