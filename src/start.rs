@@ -15,6 +15,8 @@ use memory;
 use paging::{self, entry, Page, VirtualAddress};
 use paging::mapper::MapperFlushAll;
 
+use stop;
+
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
@@ -157,6 +159,7 @@ pub unsafe extern fn kstart_ap(cpu_id: usize, bsp_table: usize, stack_start: usi
 }
 
 pub unsafe fn usermode(ip: usize, sp: usize) -> ! {
+    stop::kstop();
     // Go to usermode
     asm!("mov ds, ax
         mov es, ax

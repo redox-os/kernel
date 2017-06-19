@@ -23,7 +23,7 @@ mod type1opcode;
 mod type2opcode;
 
 use self::termlist::{parse_term_list, TermObj};
-pub use self::namespace::{AmlNamespace, AmlValue};
+pub use self::namespace::{get_namespace_string, AmlNamespace, AmlValue};
 use self::namespace::AmlNamespaceContents;
 
 // TODO: This should be able to take parameters, and may also return multiple values
@@ -42,20 +42,6 @@ pub enum AmlError {
     AmlParseError(&'static str)
 }
 
-pub fn get_namespace_string(current: String, modifier: String) -> String {
-    if modifier.starts_with("\\") {
-        return modifier;
-    }
-
-    if modifier.starts_with("^") {
-        // TODO
-    }
-
-    let mut namespace = current.clone();
-    namespace.push('.');
-    namespace + &modifier
-}
-
 pub fn parse_aml_table(sdt: &'static Sdt) -> Result<AmlNamespace, AmlError> {
     let data = sdt.data();
 
@@ -72,6 +58,8 @@ pub fn parse_aml_table(sdt: &'static Sdt) -> Result<AmlNamespace, AmlError> {
 
     let mut global_namespace = AmlNamespace::new_namespace(&global_namespace_specifier);
     term_list.execute(&mut global_namespace, global_namespace_specifier.clone());
+
+    println!("{:#?}", global_namespace);
 
     Ok(global_namespace)
 }
