@@ -37,6 +37,25 @@ pub struct MethodInvocation {
 
 }
 
+impl AmlExecutable for Vec<Object> {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        for term in self {
+            term.execute(namespace, scope.clone());
+        }
+
+        None
+    }
+}
+
+impl AmlExecutable for Object {
+    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+        match *self {
+            Object::NamespaceModifier(ref d) => d.execute(namespace, scope),
+            Object::NamedObj(ref d) => d.execute(namespace, scope)
+        }
+    }
+}
+
 impl AmlExecutable for Vec<TermObj> {
     fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
         for term in self {

@@ -163,6 +163,14 @@ impl AmlExecutable for NamedObj {
                 namespace.push_to(local_scope_string, AmlNamespaceContents::Value(
                                   AmlValue::Method(method.clone())));
             },
+            NamedObj::DefDevice { ref name, ref obj_list } => {
+                let local_scope_string = get_namespace_string(scope, name.clone());
+                obj_list.execute(namespace, local_scope_string);
+            },
+            NamedObj::DefThermalZone { ref name, ref obj_list } => {
+                let local_scope_string = get_namespace_string(scope, name.clone());
+                obj_list.execute(namespace, local_scope_string);
+            },
             _ => ()
         }
 
