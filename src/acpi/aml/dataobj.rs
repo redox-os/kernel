@@ -71,6 +71,7 @@ impl AmlExecutable for ComputationalData {
             ComputationalData::Zero => Some(AmlValue::IntegerConstant(0)),
             ComputationalData::One => Some(AmlValue::IntegerConstant(1)),
             ComputationalData::Ones => Some(AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF)),
+            ComputationalData::String(ref s) => Some(AmlValue::String(s.clone())),
             _ => Some(AmlValue::Integer)
         }
     }

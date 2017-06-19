@@ -49,7 +49,7 @@ pub enum AmlValue {
     ObjectReference,
     OperationRegion,
     Package(Vec<AmlValue>),
-    String,
+    String(String),
     PowerResource,
     Processor,
     RawDataBuffer,
