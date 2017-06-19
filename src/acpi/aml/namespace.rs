@@ -5,6 +5,7 @@ use collections::vec::Vec;
 use core::str::FromStr;
 
 use super::namedobj::{ RegionSpace, FieldFlags, Method };
+use super::termlist::Object;
 
 #[derive(Debug, Clone)]
 pub struct AmlNamespace {
@@ -38,7 +39,7 @@ pub enum AmlValue {
     BufferField,
     DDBHandle,
     DebugObject,
-    Device,
+    Device(Vec<Object>),
     Event,
     FieldUnit,
     Integer,
