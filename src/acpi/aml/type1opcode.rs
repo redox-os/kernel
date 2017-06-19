@@ -1,6 +1,6 @@
-use collections::vec::Vec;
+use alloc::boxed::Box;
 use collections::string::String;
-use collections::boxed::Box;
+use collections::vec::Vec;
 
 use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
 use super::pkglength::parse_pkg_length;
@@ -195,18 +195,18 @@ fn parse_def_if_else(data: &[u8]) -> Result<(Type1OpCode, usize), AmlInternalErr
         Ok((predicate, predicate_len)) => {
             match parse_term_list(&data[1 + pkg_length_len + predicate_len .. 1 + pkg_length]) {
                 Ok(if_block) => IfBlock::If {predicate, if_block},
-                Err(AmlInternalError::AmlDeferredLoad) => 
+                Err(AmlInternalError::AmlDeferredLoad) =>
                     IfBlock::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
                 Err(e) => return Err(e)
             }
         },
-        Err(AmlInternalError::AmlDeferredLoad) => 
+        Err(AmlInternalError::AmlDeferredLoad) =>
             IfBlock::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
         Err(e) => return Err(e)
     };
-    
+
     let (else_block, else_block_len) = parse_def_else(&data[1 + pkg_length..])?;
-    
+
     return Ok((Type1OpCode::DefIfElse {if_block, else_block},
                pkg_length + else_block_len + 1));
 }

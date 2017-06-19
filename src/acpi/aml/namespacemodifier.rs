@@ -1,6 +1,6 @@
-use collections::vec::Vec;
+use alloc::boxed::Box;
 use collections::string::String;
-use collections::boxed::Box;
+use collections::vec::Vec;
 
 use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, AmlNamespaceContents, get_namespace_string};
 use super::pkglength::parse_pkg_length;
@@ -63,10 +63,10 @@ pub fn parse_namespace_modifier(data: &[u8]) -> Result<(NamespaceModifier, usize
 
 fn parse_alias_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
     parser_opcode!(data, 0x06);
-    
+
     let (source_name, source_name_len) = parse_name_string(&data[1..])?;
     let (alias_name, alias_name_len) = parse_name_string(&data[1 + source_name_len..])?;
-    
+
     Ok((NamespaceModifier::Alias {source_name, alias_name}, 1 + source_name_len + alias_name_len))
 }
 
@@ -75,13 +75,13 @@ fn parse_name_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalE
 
     let (name, name_len) = parse_name_string(&data[1..])?;
     let (data_ref_obj, data_ref_obj_len) = parse_data_ref_obj(&data[1 + name_len..])?;
-    
+
     Ok((NamespaceModifier::Name {name, data_ref_obj}, 1 + name_len + data_ref_obj_len))
 }
 
 fn parse_scope_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
     parser_opcode!(data, 0x10);
-    
+
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (name, name_len) = match parse_name_string(&data[1 + pkg_length_len..]) {
         Ok(p) => p,

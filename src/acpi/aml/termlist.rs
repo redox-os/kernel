@@ -1,6 +1,6 @@
-use collections::vec::Vec;
-use collections::boxed::Box;
+use alloc::boxed::Box;
 use collections::string::String;
+use collections::vec::Vec;
 
 use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, get_namespace_string};
 use super::namespacemodifier::{parse_namespace_modifier, NamespaceModifier};
@@ -103,7 +103,7 @@ pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlInternalError> {
         terms.push(res);
         current_offset += len;
     }
-    
+
     Ok(terms)
 }
 

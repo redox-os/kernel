@@ -1,6 +1,6 @@
-use collections::vec::Vec;
+use alloc::boxed::Box;
 use collections::string::String;
-use collections::boxed::Box;
+use collections::vec::Vec;
 
 use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, AmlNamespaceContents, get_namespace_string};
 use super::namestring::{parse_name_string, parse_name_seg};
@@ -129,7 +129,7 @@ impl AmlExecutable for NamedObj {
                     Some(r) => r,
                     _ => return None
                 };
-                
+
                 namespace.push_to(local_scope_string, AmlNamespaceContents::OpRegion {
                     region: *region,
                     offset: resolved_offset,
@@ -138,7 +138,7 @@ impl AmlExecutable for NamedObj {
             },
             NamedObj::DefField { ref name, ref flags, ref field_list } => {
                 let mut offset: usize = 0;
-                
+
                 for f in field_list {
                     match *f {
                         FieldElement::ReservedField { length } => offset += length,
@@ -165,7 +165,7 @@ impl AmlExecutable for NamedObj {
             },
             _ => ()
         }
-        
+
         None
     }
 }
@@ -313,7 +313,7 @@ fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErr
             _ => return Err(AmlInternalError::AmlParseError("BankField - invalid update rule"))
         }
     };
-    
+
     let field_list = match parse_field_list(
         &data[3 + pkg_length_len + region_name_len + bank_name_len + bank_value_len ..
               2 + pkg_length]) {
@@ -322,7 +322,7 @@ fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErr
             return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
         Err(e) => return Err(e)
     };
-    
+
     Ok((NamedObj::DefBankField {region_name, bank_name, bank_value, flags, field_list},
         2 + pkg_length))
 }
@@ -439,7 +439,7 @@ fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> 
 
 fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
     parser_opcode_extended!(data, 0x80);
-    
+
     let (name, name_len) = parse_name_string(&data[2..])?;
     let region = match data[2 + name_len] {
         0x00 => RegionSpace::SystemMemory,
@@ -455,7 +455,7 @@ fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         0x80 ... 0xFF => RegionSpace::UserDefined(data[2 + name_len]),
         _ => return Err(AmlInternalError::AmlParseError("OpRegion - invalid region"))
     };
-    
+
     let (offset, offset_len) = parse_term_arg(&data[3 + name_len..])?;
     let (len, len_len) = parse_term_arg(&data[3 + name_len + offset_len..])?;
 
@@ -464,7 +464,7 @@ fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
 
 fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
     parser_opcode_extended!(data, 0x81);
-    
+
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let (name, name_len) = match parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length])  {
         Ok(p) => p,
@@ -492,7 +492,7 @@ fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
             _ => return Err(AmlInternalError::AmlParseError("Field - Invalid update rule"))
         }
     };
-    
+
     let field_list = match parse_field_list(&data[3 + pkg_length_len + name_len .. 2 + pkg_length]) {
         Ok(p) => p,
         Err(AmlInternalError::AmlDeferredLoad) =>
@@ -522,7 +522,7 @@ fn parse_def_index_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalEr
             return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
         Err(e) => return Err(e)
     };
-    
+
     let flags_raw = data[2 + pkg_length_len + idx_name_len + data_name_len];
     let flags = FieldFlags {
         access_type: match flags_raw & 0x0F {
@@ -542,7 +542,7 @@ fn parse_def_index_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalEr
             _ => return Err(AmlInternalError::AmlParseError("IndexField - Invalid update rule"))
         }
     };
-    
+
     let field_list = match parse_field_list(
         &data[3 + pkg_length_len + idx_name_len + data_name_len .. 2 + pkg_length]) {
         Ok(p) => p,
@@ -565,7 +565,7 @@ fn parse_field_list(data: &[u8]) -> Result<Vec<FieldElement>, AmlInternalError> 
                 return Err(AmlInternalError::AmlParseError("FieldList - no valid field")),
             Err(e) => return Err(e)
         };
-        
+
         terms.push(res);
         current_offset += len;
     }
@@ -598,14 +598,14 @@ fn parse_named_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalEr
 
 fn parse_reserved_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
     parser_opcode!(data, 0x00);
-    
+
     let (length, length_len) = parse_pkg_length(&data[1..])?;
     Ok((FieldElement::ReservedField {length}, 1 + length_len))
 }
 
 fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
     parser_opcode!(data, 0x01, 0x03);
-    
+
     let flags_raw = data[1];
     let access_type = match flags_raw & 0x0F {
         0 => AccessType::AnyAcc,
@@ -647,7 +647,7 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
 
 fn parse_connect_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
     parser_opcode!(data, 0x02);
-    
+
     match parse_def_buffer(&data[1..]) {
         Ok((buf, buf_len)) => return Ok((FieldElement::ConnectFieldBufferData(buf), buf_len + 1)),
         Err(AmlInternalError::AmlInvalidOpCode) => (),
@@ -718,7 +718,7 @@ fn parse_def_power_res(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
             return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
         Err(e) => return Err(e)
     };
-    
+
     let system_level = data[2 + pkg_len_len + name_len];
     let resource_order: u16 = (data[3 + pkg_len_len + name_len] as u16) +
         ((data[4 + pkg_len_len + name_len] as u16) << 8);
@@ -743,7 +743,7 @@ fn parse_def_processor(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
             return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
         Err(e) => return Err(e)
     };
-    
+
     let proc_id = data[2 + pkg_len_len + name_len];
     let p_blk_addr: u32 = (data[3 + pkg_len_len + name_len] as u32) +
         ((data[4 + pkg_len_len + name_len] as u32) << 8) +
@@ -771,7 +771,7 @@ fn parse_def_thermal_zone(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalE
             return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
         Err(e) => return Err(e)
     };
-    
+
     let obj_list = match parse_object_list(&data[2 + pkg_len_len + name_len .. 2 + pkg_len]) {
         Ok(p) => p,
         Err(AmlInternalError::AmlDeferredLoad) =>

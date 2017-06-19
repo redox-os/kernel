@@ -1,9 +1,9 @@
 //! # AML
 //! Code to parse and execute AML tables
 
-use collections::vec::Vec;
+use alloc::boxed::Box;
 use collections::string::String;
-use collections::boxed::Box;
+use collections::vec::Vec;
 use core::fmt::Debug;
 use core::str::FromStr;
 
@@ -58,7 +58,7 @@ pub fn get_namespace_string(current: String, modifier: String) -> String {
 
 pub fn parse_aml_table(sdt: &'static Sdt) -> Result<AmlNamespace, AmlError> {
     let data = sdt.data();
-    
+
     let term_list = match parse_term_list(data) {
         Ok(res) => res,
         Err(AmlInternalError::AmlParseError(s)) => return Err(AmlError::AmlParseError(s)),

@@ -1,6 +1,6 @@
-use collections::vec::Vec;
+use alloc::boxed::Box;
 use collections::string::String;
-use collections::boxed::Box;
+use collections::vec::Vec;
 
 use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
 use super::pkglength::parse_pkg_length;
@@ -277,7 +277,7 @@ impl AmlExecutable for DefPackage {
         match *self {
             DefPackage::Package { ref num_elements, ref elements } => {
                 let mut values: Vec<AmlValue> = vec!();
-                
+
                 for element in elements {
                     match *element {
                         PackageElement::DataRefObj(ref d) => {
@@ -353,7 +353,7 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
         parser_wrap!(Type2OpCode::DefIndex, parse_def_index),
         parser_wrap!(Type2OpCode::MethodInvocation, parse_method_invocation)
     };
-    
+
     Err(AmlInternalError::AmlInvalidOpCode)
 }
 
@@ -365,7 +365,7 @@ pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlIntern
         parser_wrap!(Type6OpCode::DefIndex, parse_def_index),
         parser_wrap!(Type6OpCode::MethodInvocation, parse_method_invocation)
     };
-    
+
     Err(AmlInternalError::AmlInvalidOpCode)
 }
 
@@ -387,7 +387,7 @@ pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternal
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let num_elements = data[1 + pkg_length_len];
-    
+
     let elements = match parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length]) {
         Ok(e) => e,
         Err(AmlInternalError::AmlDeferredLoad) =>
@@ -415,18 +415,18 @@ pub fn parse_def_var_package(data: &[u8]) -> Result<(DefVarPackage, usize), AmlI
 
     Ok((DefVarPackage::Package {num_elements, elements}, 1 + pkg_length))
 }
-                                                
+
 fn parse_package_elements_list(data: &[u8]) -> Result<Vec<PackageElement>, AmlInternalError> {
     let mut current_offset: usize = 0;
     let mut elements: Vec<PackageElement> = vec!();
-    
+
     while current_offset < data.len() {
         match parse_data_ref_obj(&data[current_offset ..]) {
             Ok((data_ref_obj, data_ref_obj_len)) => {
                 elements.push(PackageElement::DataRefObj(data_ref_obj));
                 current_offset += data_ref_obj_len;
             },
-            Err(AmlInternalError::AmlInvalidOpCode) => 
+            Err(AmlInternalError::AmlInvalidOpCode) =>
                 match parse_name_string(&data[current_offset ..]) {
                     Ok((name_string, name_string_len)) => {
                         elements.push(PackageElement::NameString(name_string));
@@ -440,10 +440,10 @@ fn parse_package_elements_list(data: &[u8]) -> Result<Vec<PackageElement>, AmlIn
 
     Ok(elements)
 }
-                                                
+
 pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalError> {
     parser_opcode!(data, 0x11);
-    
+
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let (buffer_size, buffer_size_len) = match parse_term_arg(&data[1 + pkg_length_len..]) {
         Ok(s) => s,
@@ -453,7 +453,7 @@ pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalEr
         Err(e) => return Err(e),
     };
     let byte_list = data[1 + pkg_length_len + buffer_size_len .. 1 + pkg_length].to_vec();
-    
+
     Ok((DefBuffer::Buffer {buffer_size, byte_list}, pkg_length + 1))
 }
 
@@ -473,24 +473,24 @@ fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError>
 
 fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     parser_opcode_extended!(data, 0x23);
-    
+
     let (object, object_len) = parse_super_name(&data[2..])?;
     let timeout = (data[2 + object_len] as u16) +
         ((data[3 + object_len] as u16) << 8);
-    
+
     Ok((Type2OpCode::DefAcquire {object, timeout}, object_len + 4))
 }
 
 fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     parser_opcode!(data, 0x75);
-    
+
     let (obj, obj_len) = parse_super_name(&data[1..])?;
     Ok((Type2OpCode::DefIncrement(obj), obj_len + 1))
 }
 
 fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
     parser_opcode!(data, 0x88);
-    
+
     let (obj, obj_len) = parse_term_arg(&data[1..])?;
     let (idx, idx_len) = parse_term_arg(&data[1 + obj_len..])?;
     let (target, target_len) = parse_target(&data[1 + obj_len + idx_len..])?;
@@ -500,7 +500,7 @@ fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
 
 fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     parser_opcode!(data, 0x90);
-    
+
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
 
@@ -509,7 +509,7 @@ fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError>
 
 fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     parser_opcode!(data, 0x93);
-    
+
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
 
@@ -518,7 +518,7 @@ fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalErro
 
 fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     parser_opcode!(data, 0x94);
-    
+
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
 
@@ -664,7 +664,7 @@ fn parse_def_shift_right(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInterna
 
 fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
     parser_opcode!(data, 0x72);
-    
+
     let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
     let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
     let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;

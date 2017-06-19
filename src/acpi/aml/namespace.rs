@@ -1,6 +1,6 @@
+use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
-use collections::boxed::Box;
 
 use core::str::FromStr;
 
@@ -82,7 +82,7 @@ impl AmlNamespace {
         let scope_string = String::from_str(scope_str).unwrap();
         self.find(scope_string)
     }
-    
+
     pub fn find(&self, scope_string: String) -> Option<AmlValue> {
         if scope_string.len() == 0 {
             match self.contents {
@@ -90,9 +90,9 @@ impl AmlNamespace {
                 _ => return None
             }
         }
-        
+
         let mut scope_string = scope_string.clone();
-        
+
         if scope_string.starts_with("\\") {
             if self.name != "\\" {
                 return None;
@@ -104,7 +104,7 @@ impl AmlNamespace {
         if scope_string.starts_with(".") {
             scope_string.remove(0);
         }
-        
+
         if scope_string.len() == 0 {
             match self.contents {
                 AmlNamespaceContents::Value(ref v) => return Some(v.clone()),
@@ -146,7 +146,7 @@ impl AmlNamespace {
 
         None
     }
-    
+
     pub fn push(&mut self, val: AmlNamespaceContents) {
         match self.contents {
             AmlNamespaceContents::Namespace(ref mut v) => v.push(val),
@@ -158,9 +158,9 @@ impl AmlNamespace {
         if scope_string.len() == 0 {
             return;
         }
-        
+
         let mut scope_string = scope_string.clone();
-        
+
         if scope_string.starts_with("\\") {
             if self.name != "\\" {
                 return;
@@ -173,7 +173,7 @@ impl AmlNamespace {
         if scope_string.starts_with(".") {
             scope_string.remove(0);
         }
-        
+
         if scope_string.len() == 0 {
             return;
         }
@@ -207,12 +207,12 @@ impl AmlNamespace {
 
                     current_index += 1;
                 }
-                
+
                 let mut next = AmlNamespace {
                     name: current,
                     contents: contents
                 };
-                
+
                 namespace.push(AmlNamespaceContents::SubNamespace(Box::new(next)));
             }
             _ => () // TODO: Error this
