@@ -15,6 +15,8 @@ use memory;
 use paging::{self, entry, Page, VirtualAddress};
 use paging::mapper::MapperFlushAll;
 
+use stop;
+
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.

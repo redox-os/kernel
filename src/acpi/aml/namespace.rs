@@ -17,6 +17,7 @@ pub enum AmlNamespaceContents {
     Value(AmlValue),
     SubNamespace(Box<AmlNamespace>),
     Namespace(Vec<AmlNamespaceContents>),
+    Alias(String),
     OpRegion {
         region: RegionSpace,
         offset: AmlValue,
@@ -222,4 +223,18 @@ impl AmlNamespace {
     pub fn push_subordinate_namespace(&mut self, scope_string: String) {
         self.push_to(scope_string, AmlNamespaceContents::Namespace(vec!()));
     }
+}
+
+pub fn get_namespace_string(current: String, modifier: String) -> String {
+    if modifier.starts_with("\\") {
+        return modifier;
+    }
+
+    if modifier.starts_with("^") {
+        // TODO
+    }
+
+    let mut namespace = current.clone();
+    namespace.push('.');
+    namespace + &modifier
 }

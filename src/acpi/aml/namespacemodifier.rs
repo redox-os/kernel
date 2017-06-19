@@ -43,6 +43,12 @@ impl AmlExecutable for NamespaceModifier {
 
                 namespace.push_to(local_scope_string, AmlNamespaceContents::Value(dro));
             },
+            NamespaceModifier::Alias { ref source_name, ref alias_name } => {
+                let local_scope_string = get_namespace_string(scope.clone(), source_name.clone());
+                let local_alias_string = get_namespace_string(scope.clone(), alias_name.clone());
+
+                namespace.push_to(local_scope_string, AmlNamespaceContents::Alias(local_alias_string));
+            },
             _ => ()
         }
 
