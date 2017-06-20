@@ -7,7 +7,7 @@ use spin::{Mutex, RwLock};
 use context;
 use syscall::data::Stat;
 use syscall::error::*;
-use syscall::flag::{MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
+use syscall::flag::{MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END, O_CREAT};
 use syscall::scheme::Scheme;
 
 #[derive(Clone)]
@@ -32,7 +32,7 @@ impl EnvScheme {
 }
 
 impl Scheme for EnvScheme {
-    fn open(&self, path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, path: &[u8], flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let path = str::from_utf8(path).or(Err(Error::new(ENOENT)))?.trim_matches('/');
 
         let env_lock = {
@@ -69,11 +69,13 @@ impl Scheme for EnvScheme {
                 let mut env = env_lock.lock();
                 if env.contains_key(path.as_bytes()) {
                     env[path.as_bytes()].clone()
-                } else /*if flags & O_CREAT == O_CREAT*/ {
+                } else if flags & O_CREAT == O_CREAT {
                     let name = path.as_bytes().to_vec().into_boxed_slice();
                     let data = Arc::new(Mutex::new(Vec::new()));
                     env.insert(name, data.clone());
                     data
+                } else {
+                    return Err(Error::new(ENOENT));
                 }
             };
 
@@ -210,5 +212,22 @@ impl Scheme for EnvScheme {
 
     fn close(&self, id: usize) -> Result<usize> {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+    }
+
+    fn unlink(&self, path: &[u8], uid: u32, _gid: u32) -> Result<usize> {
+        let env_lock = {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+            context.env.clone()
+        };
+
+        let mut env = env_lock.lock();
+
+        if let Some(_) = env.remove(path) {
+            Ok(0)
+        } else {
+            Err(Error::new(ENOENT))
+        }
     }
 }
