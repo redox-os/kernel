@@ -27,7 +27,7 @@ pub enum AmlValue {
     Integer,
     IntegerConstant(u64),
     Method(Method),
-    Mutex,
+    Mutex(u8),
     ObjectReference(SuperName),
     OperationRegion {
         region: RegionSpace,
