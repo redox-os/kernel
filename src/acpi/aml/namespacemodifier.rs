@@ -1,10 +1,11 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
+use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, AmlNamespaceContents, get_namespace_string};
+use super::{AmlInternalError, AmlExecutable, AmlValue, get_namespace_string};
 use super::pkglength::parse_pkg_length;
-use super::namestring::parse_name_string;
+use super::namestring::{parse_name_string, SuperName};
 use super::termlist::{parse_term_list, TermObj};
 use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
@@ -26,12 +27,10 @@ pub enum NamespaceModifier {
 }
 
 impl AmlExecutable for NamespaceModifier {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             NamespaceModifier::Scope { name: ref name, terms: ref terms } => {
                 let local_scope_string = get_namespace_string(scope, name.clone());
-                namespace.push_subordinate_namespace(local_scope_string.clone());
-
                 terms.execute(namespace, local_scope_string);
             },
             NamespaceModifier::Name { ref name, ref data_ref_obj } => {
@@ -41,13 +40,13 @@ impl AmlExecutable for NamespaceModifier {
                     None => return None
                 };
 
-                namespace.push_to(local_scope_string, AmlNamespaceContents::Value(dro));
+                namespace.insert(local_scope_string, dro);
             },
             NamespaceModifier::Alias { ref source_name, ref alias_name } => {
                 let local_scope_string = get_namespace_string(scope.clone(), source_name.clone());
                 let local_alias_string = get_namespace_string(scope.clone(), alias_name.clone());
 
-                namespace.push_to(local_scope_string, AmlNamespaceContents::Alias(local_alias_string));
+                namespace.insert(local_scope_string, AmlValue::ObjectReference(SuperName::NameString(local_alias_string)));
             },
             _ => ()
         }

@@ -1,8 +1,11 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
+use core::str::FromStr;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, AmlNamespaceContents, get_namespace_string};
+use collections::btree_map::BTreeMap;
+
+use super::{AmlInternalError, AmlExecutable, AmlValue, get_namespace_string};
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
 use super::pkglength::parse_pkg_length;
@@ -115,7 +118,7 @@ pub struct Method {
 }
 
 impl AmlExecutable for NamedObj {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             NamedObj::DefOpRegion { ref name, ref region, ref offset, ref len } => {
                 let local_scope_string = get_namespace_string(scope.clone(), name.clone());
@@ -130,10 +133,10 @@ impl AmlExecutable for NamedObj {
                     _ => return None
                 };
 
-                namespace.push_to(local_scope_string, AmlNamespaceContents::OpRegion {
+                namespace.insert(local_scope_string, AmlValue::OperationRegion {
                     region: *region,
-                    offset: resolved_offset,
-                    len: resolved_len
+                    offset: Box::new(resolved_offset),
+                    len: Box::new(resolved_len)
                 });
             },
             NamedObj::DefField { ref name, ref flags, ref field_list } => {
@@ -145,7 +148,7 @@ impl AmlExecutable for NamedObj {
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
-                            namespace.push_to(local_scope_string, AmlNamespaceContents::Field {
+                            namespace.insert(local_scope_string, AmlValue::FieldUnit {
                                 op_region: name.clone(),
                                 flags: flags.clone(),
                                 offset: offset.clone(),
@@ -160,16 +163,35 @@ impl AmlExecutable for NamedObj {
             },
             NamedObj::DefMethod { ref name, ref method } => {
                 let local_scope_string = get_namespace_string(scope.clone(), name.clone());
-                namespace.push_to(local_scope_string, AmlNamespaceContents::Value(
-                                  AmlValue::Method(method.clone())));
+                namespace.insert(local_scope_string, AmlValue::Method(method.clone()));
             },
             NamedObj::DefDevice { ref name, ref obj_list } => {
                 let local_scope_string = get_namespace_string(scope, name.clone());
-                obj_list.execute(namespace, local_scope_string);
+
+                let mut local_namespace = BTreeMap::new();
+                obj_list.execute(&mut local_namespace, String::new());
+
+                namespace.insert(local_scope_string, AmlValue::Device(local_namespace));
             },
             NamedObj::DefThermalZone { ref name, ref obj_list } => {
                 let local_scope_string = get_namespace_string(scope, name.clone());
-                obj_list.execute(namespace, local_scope_string);
+
+                let mut local_namespace = BTreeMap::new();
+                obj_list.execute(&mut local_namespace, String::new());
+
+                namespace.insert(local_scope_string, AmlValue::ThermalZone(local_namespace));
+            },
+            NamedObj::DefProcessor { ref name, proc_id, p_blk_addr, p_blk_len, ref obj_list } => {
+                let local_scope_string = get_namespace_string(scope, name.clone());
+
+                let mut local_namespace = BTreeMap::new();
+                obj_list.execute(&mut local_namespace, String::new());
+
+                namespace.insert(local_scope_string, AmlValue::Processor {
+                    proc_id: proc_id,
+                    p_blk: if p_blk_len > 0 { Some(p_blk_addr) } else { None },
+                    obj_list: local_namespace
+                });
             },
             _ => ()
         }

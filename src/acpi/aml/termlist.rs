@@ -1,8 +1,9 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
+use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, get_namespace_string};
+use super::{AmlInternalError, AmlExecutable, AmlValue, get_namespace_string};
 use super::namespacemodifier::{parse_namespace_modifier, NamespaceModifier};
 use super::namedobj::{parse_named_obj, NamedObj};
 use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj, DataObj, ArgObj, LocalObj};
@@ -38,7 +39,7 @@ pub struct MethodInvocation {
 }
 
 impl AmlExecutable for Vec<Object> {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         for term in self {
             term.execute(namespace, scope.clone());
         }
@@ -48,7 +49,7 @@ impl AmlExecutable for Vec<Object> {
 }
 
 impl AmlExecutable for Object {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             Object::NamespaceModifier(ref d) => d.execute(namespace, scope),
             Object::NamedObj(ref d) => d.execute(namespace, scope)
@@ -57,7 +58,7 @@ impl AmlExecutable for Object {
 }
 
 impl AmlExecutable for Vec<TermObj> {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         for term in self {
             term.execute(namespace, scope.clone());
         }
@@ -67,7 +68,7 @@ impl AmlExecutable for Vec<TermObj> {
 }
 
 impl AmlExecutable for TermArg {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             TermArg::LocalObj(ref l) => Some(AmlValue::Integer),
             TermArg::DataObj(ref d) => d.execute(namespace, scope),
@@ -78,7 +79,7 @@ impl AmlExecutable for TermArg {
 }
 
 impl AmlExecutable for TermObj {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             TermObj::NamespaceModifier(ref res) => res.execute(namespace, scope.clone()),
             TermObj::NamedObj(ref res) => res.execute(namespace, scope.clone()),

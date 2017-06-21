@@ -1,8 +1,9 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
+use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
+use super::{AmlInternalError, AmlExecutable, AmlValue};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_method_invocation, TermArg, MethodInvocation};
 use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name,
@@ -201,7 +202,7 @@ pub enum Type2OpCode {
 }
 
 impl AmlExecutable for Type2OpCode {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         None
     }
 }
@@ -273,7 +274,7 @@ pub enum PackageElement {
 }
 
 impl AmlExecutable for DefPackage {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             DefPackage::Package { ref num_elements, ref elements } => {
                 let mut values: Vec<AmlValue> = vec!();
