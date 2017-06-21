@@ -205,6 +205,10 @@ impl AmlExecutable for NamedObj {
                     obj_list: local_namespace
                 });
             },
+            NamedObj::DefMutex { ref name, sync_level } => {
+                let local_scope_string = get_namespace_string(scope, name.clone());
+                namespace.insert(local_scope_string, AmlValue::Mutex(sync_level));
+            },
             _ => ()
         }
 
