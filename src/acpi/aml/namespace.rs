@@ -36,7 +36,11 @@ pub enum AmlValue {
     },
     Package(Vec<AmlValue>),
     String(String),
-    PowerResource,
+    PowerResource {
+        system_level: u8,
+        resource_order: u16,
+        obj_list: BTreeMap<String, AmlValue>
+    },
     Processor {
         proc_id: u8,
         p_blk: Option<u32>,
