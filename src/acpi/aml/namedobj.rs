@@ -209,7 +209,11 @@ impl AmlExecutable for NamedObj {
                 let local_scope_string = get_namespace_string(scope, name.clone());
                 namespace.insert(local_scope_string, AmlValue::Mutex(sync_level));
             },
-            _ => ()
+            NamedObj::DefEvent { ref name } => {
+                let local_scope_string = get_namespace_string(scope, name.clone());
+                namespace.insert(local_scope_string, AmlValue::Event);
+            },
+//            _ => ()
         }
 
         None
