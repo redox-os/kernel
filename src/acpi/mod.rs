@@ -3,6 +3,8 @@
 
 use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
+use collections::btree_map::BTreeMap;
+use collections::string::String;
 
 use spin::Mutex;
 
@@ -19,7 +21,7 @@ use self::rsdt::Rsdt;
 use self::sdt::Sdt;
 use self::xsdt::Xsdt;
 
-use self::aml::{is_aml_table, parse_aml_table, AmlNamespace, AmlError};
+use self::aml::{is_aml_table, parse_aml_table, AmlError, AmlValue};
 
 mod dmar;
 mod fadt;
@@ -268,7 +270,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
 
 pub struct Acpi {
     pub fadt: Option<Fadt>,
-    pub namespace: Option<AmlNamespace>,
+    pub namespace: Option<BTreeMap<String, AmlValue>>,
 }
 
 pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, namespace: None });

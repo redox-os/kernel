@@ -4,6 +4,7 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
+use collections::btree_map::BTreeMap;
 use core::fmt::Debug;
 use core::str::FromStr;
 
@@ -23,12 +24,11 @@ mod type1opcode;
 mod type2opcode;
 
 use self::termlist::{parse_term_list, TermObj};
-pub use self::namespace::{get_namespace_string, AmlNamespace, AmlValue};
-use self::namespace::AmlNamespaceContents;
+pub use self::namespace::{get_namespace_string, AmlValue};
 
 // TODO: This should be able to take parameters, and may also return multiple values
 pub trait AmlExecutable {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue>;
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue>;
 }
 
 // TODO: make private
@@ -42,7 +42,7 @@ pub enum AmlError {
     AmlParseError(&'static str)
 }
 
-pub fn parse_aml_table(sdt: &'static Sdt) -> Result<AmlNamespace, AmlError> {
+pub fn parse_aml_table(sdt: &'static Sdt) -> Result<BTreeMap<String, AmlValue>, AmlError> {
     let data = sdt.data();
 
     let term_list = match parse_term_list(data) {
@@ -56,7 +56,7 @@ pub fn parse_aml_table(sdt: &'static Sdt) -> Result<AmlNamespace, AmlError> {
     // Unwrap is fine here. I mean come on, if this goes wrong you've got bigger problems than AML
     // not loading...
 
-    let mut global_namespace = AmlNamespace::new_namespace(&global_namespace_specifier);
+    let mut global_namespace = BTreeMap::new();
     term_list.execute(&mut global_namespace, global_namespace_specifier.clone());
 
     println!("{:#?}", global_namespace);

@@ -1,7 +1,8 @@
 use collections::vec::Vec;
 use collections::string::String;
+use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, get_namespace_string};
+use super::{AmlInternalError, AmlExecutable, AmlValue, get_namespace_string};
 
 use super::type2opcode::{parse_def_buffer, parse_def_package, parse_def_var_package,
                          DefBuffer, DefPackage, DefVarPackage};
@@ -43,7 +44,7 @@ pub enum ComputationalData {
 }
 
 impl AmlExecutable for DataRefObj {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             DataRefObj::DataObj(ref cd) => cd.execute(namespace, scope),
             _ => Some(AmlValue::Integer)
@@ -52,7 +53,7 @@ impl AmlExecutable for DataRefObj {
 }
 
 impl AmlExecutable for DataObj {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             DataObj::ComputationalData(ref cd) => cd.execute(namespace, scope),
             DataObj::DefPackage(ref pkg) => pkg.execute(namespace, scope),
@@ -62,7 +63,7 @@ impl AmlExecutable for DataObj {
 }
 
 impl AmlExecutable for ComputationalData {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             ComputationalData::Byte(b) => Some(AmlValue::IntegerConstant(b as u64)),
             ComputationalData::Word(w) => Some(AmlValue::IntegerConstant(w as u64)),

@@ -1,8 +1,9 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
+use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
+use super::{AmlInternalError, AmlExecutable, AmlValue};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list, TermObj, TermArg};
 use super::namestring::{parse_name_string, parse_super_name, SuperName};
@@ -45,7 +46,7 @@ pub enum Type1OpCode {
 }
 
 impl AmlExecutable for Type1OpCode {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         None
     }
 }
