@@ -193,6 +193,18 @@ impl AmlExecutable for NamedObj {
                     obj_list: local_namespace
                 });
             },
+            NamedObj::DefPowerRes { ref name, system_level, resource_order, ref obj_list } => {
+                let local_scope_string = get_namespace_string(scope, name.clone());
+
+                let mut local_namespace = BTreeMap::new();
+                obj_list.execute(&mut local_namespace, String::new());
+
+                namespace.insert(local_scope_string, AmlValue::PowerResource {
+                    system_level,
+                    resource_order,
+                    obj_list: local_namespace
+                });
+            },
             _ => ()
         }
 
