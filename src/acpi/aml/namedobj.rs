@@ -6,6 +6,7 @@ use core::str::FromStr;
 use collections::btree_map::BTreeMap;
 
 use super::{AmlInternalError, AmlExecutable, AmlValue, get_namespace_string};
+use super::namespace::FieldSelector;
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
 use super::pkglength::parse_pkg_length;
@@ -135,8 +136,35 @@ impl AmlExecutable for NamedObj {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
                             namespace.insert(local_scope_string, AmlValue::FieldUnit {
-                                op_region: region_name.clone(),
-                                bank_selector: Some((bank_name.clone(), bank_val.clone())),
+                                selector: FieldSelector::Bank {
+                                    region: region_name.clone(),
+                                    bank_selector: bank_val.clone()
+                                },
+                                flags: flags.clone(),
+                                offset: offset.clone(),
+                                length: length.clone()
+                            });
+
+                            offset += length;
+                        },
+                        _ => ()
+                    }
+                }
+            },
+            NamedObj::DefIndexField { ref idx_name, ref data_name, ref flags, ref field_list } => {
+                let mut offset: usize = 0;
+
+                for f in field_list {
+                    match *f {
+                        FieldElement::ReservedField { length } => offset += length,
+                        FieldElement::NamedField { name: ref field_name, length } => {
+                            let local_scope_string = get_namespace_string(scope.clone(),
+                                                                          field_name.clone());
+                            namespace.insert(local_scope_string, AmlValue::FieldUnit {
+                                selector: FieldSelector::Index {
+                                    index_selector: idx_name.clone(),
+                                    data_selector: data_name.clone()
+                                },
                                 flags: flags.clone(),
                                 offset: offset.clone(),
                                 length: length.clone()
@@ -289,8 +317,7 @@ impl AmlExecutable for NamedObj {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
                             namespace.insert(local_scope_string, AmlValue::FieldUnit {
-                                op_region: name.clone(),
-                                bank_selector: None,
+                                selector: FieldSelector::Region(name.clone()),
                                 flags: flags.clone(),
                                 offset: offset.clone(),
                                 length: length.clone()
