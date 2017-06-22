@@ -10,6 +10,19 @@ use super::termlist::Object;
 use super::namestring::SuperName;
 
 #[derive(Debug, Clone)]
+pub enum FieldSelector {
+    Region(String),
+    Bank {
+        region: String,
+        bank_selector: Box<AmlValue>
+    },
+    Index {
+        index_selector: String,
+        data_selector: String
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum AmlValue {
     Uninitialized,
     Buffer,
@@ -23,8 +36,7 @@ pub enum AmlValue {
     Device(BTreeMap<String, AmlValue>),
     Event,
     FieldUnit {
-        op_region: String,
-        bank_selector: Option<(String, Box<AmlValue>)>,
+        selector: FieldSelector,
         flags: FieldFlags,
         offset: usize,
         length: usize
