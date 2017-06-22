@@ -8,6 +8,7 @@ use core::str::FromStr;
 use super::namedobj::{ RegionSpace, FieldFlags, Method };
 use super::termlist::Object;
 use super::namestring::SuperName;
+use super::type2opcode::Type2OpCode;
 
 #[derive(Debug, Clone)]
 pub enum FieldSelector {
@@ -34,7 +35,7 @@ pub enum AmlValue {
         index: Box<AmlValue>,
         length: Box<AmlValue>
     },
-    DDBHandle,
+    DDBHandle(u32), // Index into the XSDT
     DebugObject,
     Device(BTreeMap<String, AmlValue>),
     Event,
@@ -45,7 +46,7 @@ pub enum AmlValue {
         offset: usize,
         length: usize
     },
-    Integer,
+    Integer(Type2OpCode),
     IntegerConstant(u64),
     Method(Method),
     Mutex(u8),
@@ -67,7 +68,7 @@ pub enum AmlValue {
         p_blk: Option<u32>,
         obj_list: BTreeMap<String, AmlValue>
     },
-    RawDataBuffer,
+    RawDataBuffer(Vec<u8>),
     ThermalZone(BTreeMap<String, AmlValue>)
 }
 

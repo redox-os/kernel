@@ -70,10 +70,10 @@ impl AmlExecutable for Vec<TermObj> {
 impl AmlExecutable for TermArg {
     fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
-            TermArg::LocalObj(ref l) => Some(AmlValue::Integer),
+            TermArg::LocalObj(ref l) => Some(AmlValue::Uninitialized),
             TermArg::DataObj(ref d) => d.execute(namespace, scope),
-            TermArg::ArgObj(ref a) => Some(AmlValue::Integer),
-            TermArg::Type2Opcode(ref o) => Some(AmlValue::Integer)
+            TermArg::ArgObj(ref a) => Some(AmlValue::Uninitialized),
+            TermArg::Type2Opcode(ref o) => Some(AmlValue::Uninitialized)
         }
     }
 }
