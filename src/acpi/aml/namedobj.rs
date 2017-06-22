@@ -124,6 +124,7 @@ impl AmlExecutable for NamedObj {
             NamedObj::DefBankField { ref region_name, ref bank_name, ref bank_value, ref flags, ref field_list } => {
                 let mut offset: usize = 0;
                 let mut connection = AmlValue::Uninitialized;
+                let mut flags = flags.clone();
                 let bank_val = if let Some(b) = bank_value.execute(namespace, scope.clone()) {
                     Box::new(b)
                 } else {
@@ -141,6 +142,12 @@ impl AmlExecutable for NamedObj {
                                 None => return None
                             };
                         },
+                        FieldElement::AccessField { ref access_type, ref access_attrib } => {
+                            match *access_type {
+                                AccessType::BufferAcc(_) => flags.access_type = AccessType::BufferAcc(access_attrib.clone()),
+                                ref a => flags.access_type = a.clone()
+                            }
+                        },
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
@@ -157,13 +164,13 @@ impl AmlExecutable for NamedObj {
 
                             offset += length;
                         },
-                        _ => ()
                     }
                 }
             },
             NamedObj::DefIndexField { ref idx_name, ref data_name, ref flags, ref field_list } => {
                 let mut offset: usize = 0;
                 let mut connection = AmlValue::Uninitialized;
+                let mut flags = flags.clone();
 
                 for f in field_list {
                     match *f {
@@ -175,6 +182,12 @@ impl AmlExecutable for NamedObj {
                                 Some(c) => c,
                                 None => return None
                             };
+                        },
+                        FieldElement::AccessField { ref access_type, ref access_attrib } => {
+                            match *access_type {
+                                AccessType::BufferAcc(_) => flags.access_type = AccessType::BufferAcc(access_attrib.clone()),
+                                ref a => flags.access_type = a.clone()
+                            }
                         },
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
@@ -191,8 +204,7 @@ impl AmlExecutable for NamedObj {
                             });
 
                             offset += length;
-                        },
-                        _ => ()
+                        }
                     }
                 }
             },
@@ -339,6 +351,7 @@ impl AmlExecutable for NamedObj {
             NamedObj::DefField { ref name, ref flags, ref field_list } => {
                 let mut offset: usize = 0;
                 let mut connection = AmlValue::Uninitialized;
+                let mut flags = flags.clone();
 
                 for f in field_list {
                     match *f {
@@ -350,6 +363,12 @@ impl AmlExecutable for NamedObj {
                                 Some(c) => c,
                                 None => return None
                             };
+                        },
+                        FieldElement::AccessField { ref access_type, ref access_attrib } => {
+                            match *access_type {
+                                AccessType::BufferAcc(_) => flags.access_type = AccessType::BufferAcc(access_attrib.clone()),
+                                ref a => flags.access_type = a.clone()
+                            }
                         },
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
@@ -363,8 +382,7 @@ impl AmlExecutable for NamedObj {
                             });
 
                             offset += length;
-                        },
-                        _ => ()
+                        }
                     }
                 }
             },
@@ -456,7 +474,7 @@ pub enum AccessType {
     WordAcc,
     DWordAcc,
     QWordAcc,
-    BufferAcc
+    BufferAcc(AccessAttrib)
 }
 
 #[derive(Debug, Clone)]
@@ -559,7 +577,7 @@ fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErr
             2 => AccessType::WordAcc,
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
-            5 => AccessType::BufferAcc,
+            5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
             _ => return Err(AmlInternalError::AmlParseError("BankField - invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
@@ -738,7 +756,7 @@ fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
             2 => AccessType::WordAcc,
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
-            5 => AccessType::BufferAcc,
+            5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
             _ => return Err(AmlInternalError::AmlParseError("Field - Invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
@@ -788,7 +806,7 @@ fn parse_def_index_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalEr
             2 => AccessType::WordAcc,
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
-            5 => AccessType::BufferAcc,
+            5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
             _ => return Err(AmlInternalError::AmlParseError("IndexField - Invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
@@ -870,7 +888,7 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
         2 => AccessType::WordAcc,
         3 => AccessType::DWordAcc,
         4 => AccessType::QWordAcc,
-        5 => AccessType::BufferAcc,
+        5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
         _ => return Err(AmlInternalError::AmlParseError("AccessField - Invalid access type"))
     };
 
