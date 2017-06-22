@@ -5,6 +5,7 @@ use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
 use collections::btree_map::BTreeMap;
 use collections::string::String;
+use alloc::boxed::Box;
 
 use spin::Mutex;
 
@@ -203,14 +204,20 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         println!(": {}", hpet.hpet_number);
         ACPI_TABLE.lock().hpet = Some(hpet);
     } else if is_aml_table(sdt) {
-        ACPI_TABLE.lock().namespace = match parse_aml_table(sdt) {
+        match parse_aml_table(sdt) {
             Ok(res) => {
                 println!(": Parsed");
-                Some(res)
+                let ref mut namespace = ACPI_TABLE.lock().namespace;
+
+                if let Some(ref mut ns) = *namespace {
+                    let mut res = res.clone();
+                    ns.append(&mut res);
+                } else {
+                    *namespace = Some(res);
+                }
             },
             Err(AmlError::AmlParseError(e)) => {
                 println!(": {}", e);
-                None
             }
         };
     } else {
