@@ -7,7 +7,7 @@ use collections::btree_map::BTreeMap;
 
 use super::{AmlInternalError, AmlExecutable, AmlValue, get_namespace_string};
 use super::namespace::FieldSelector;
-use super::namestring::{parse_name_string, parse_name_seg};
+use super::namestring::{parse_name_string, parse_name_seg, SuperName};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
 use super::pkglength::parse_pkg_length;
 use super::type2opcode::{parse_def_buffer, DefBuffer};
@@ -123,6 +123,7 @@ impl AmlExecutable for NamedObj {
         match *self {
             NamedObj::DefBankField { ref region_name, ref bank_name, ref bank_value, ref flags, ref field_list } => {
                 let mut offset: usize = 0;
+                let mut connection = AmlValue::Uninitialized;
                 let bank_val = if let Some(b) = bank_value.execute(namespace, scope.clone()) {
                     Box::new(b)
                 } else {
@@ -132,6 +133,8 @@ impl AmlExecutable for NamedObj {
                 for f in field_list {
                     match *f {
                         FieldElement::ReservedField { length } => offset += length,
+                        FieldElement::ConnectFieldNameString(ref name) => connection =
+                            AmlValue::ObjectReference(SuperName::NameString(name.clone())),
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
@@ -140,6 +143,7 @@ impl AmlExecutable for NamedObj {
                                     region: region_name.clone(),
                                     bank_selector: bank_val.clone()
                                 },
+                                connection: Box::new(connection.clone()),
                                 flags: flags.clone(),
                                 offset: offset.clone(),
                                 length: length.clone()
@@ -153,10 +157,13 @@ impl AmlExecutable for NamedObj {
             },
             NamedObj::DefIndexField { ref idx_name, ref data_name, ref flags, ref field_list } => {
                 let mut offset: usize = 0;
+                let mut connection = AmlValue::Uninitialized;
 
                 for f in field_list {
                     match *f {
                         FieldElement::ReservedField { length } => offset += length,
+                        FieldElement::ConnectFieldNameString(ref name) => connection =
+                            AmlValue::ObjectReference(SuperName::NameString(name.clone())),
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
@@ -165,6 +172,7 @@ impl AmlExecutable for NamedObj {
                                     index_selector: idx_name.clone(),
                                     data_selector: data_name.clone()
                                 },
+                                connection: Box::new(connection.clone()),
                                 flags: flags.clone(),
                                 offset: offset.clone(),
                                 length: length.clone()
@@ -318,15 +326,19 @@ impl AmlExecutable for NamedObj {
             },
             NamedObj::DefField { ref name, ref flags, ref field_list } => {
                 let mut offset: usize = 0;
+                let mut connection = AmlValue::Uninitialized;
 
                 for f in field_list {
                     match *f {
                         FieldElement::ReservedField { length } => offset += length,
+                        FieldElement::ConnectFieldNameString(ref name) => connection =
+                            AmlValue::ObjectReference(SuperName::NameString(name.clone())),
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
                             namespace.insert(local_scope_string, AmlValue::FieldUnit {
                                 selector: FieldSelector::Region(name.clone()),
+                                connection: Box::new(connection.clone()),
                                 flags: flags.clone(),
                                 offset: offset.clone(),
                                 length: length.clone()

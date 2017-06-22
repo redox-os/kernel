@@ -37,6 +37,7 @@ pub enum AmlValue {
     Event,
     FieldUnit {
         selector: FieldSelector,
+        connection: Box<AmlValue>,
         flags: FieldFlags,
         offset: usize,
         length: usize
