@@ -135,6 +135,12 @@ impl AmlExecutable for NamedObj {
                         FieldElement::ReservedField { length } => offset += length,
                         FieldElement::ConnectFieldNameString(ref name) => connection =
                             AmlValue::ObjectReference(SuperName::NameString(name.clone())),
+                        FieldElement::ConnectFieldBufferData(ref buf) => {
+                            connection = match buf.execute(namespace, scope.clone()) {
+                                Some(c) => c,
+                                None => return None
+                            };
+                        },
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
@@ -164,6 +170,12 @@ impl AmlExecutable for NamedObj {
                         FieldElement::ReservedField { length } => offset += length,
                         FieldElement::ConnectFieldNameString(ref name) => connection =
                             AmlValue::ObjectReference(SuperName::NameString(name.clone())),
+                        FieldElement::ConnectFieldBufferData(ref buf) => {
+                            connection = match buf.execute(namespace, scope.clone()) {
+                                Some(c) => c,
+                                None => return None
+                            };
+                        },
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());
@@ -333,6 +345,12 @@ impl AmlExecutable for NamedObj {
                         FieldElement::ReservedField { length } => offset += length,
                         FieldElement::ConnectFieldNameString(ref name) => connection =
                             AmlValue::ObjectReference(SuperName::NameString(name.clone())),
+                        FieldElement::ConnectFieldBufferData(ref buf) => {
+                            connection = match buf.execute(namespace, scope.clone()) {
+                                Some(c) => c,
+                                None => return None
+                            };
+                        },
                         FieldElement::NamedField { name: ref field_name, length } => {
                             let local_scope_string = get_namespace_string(scope.clone(),
                                                                           field_name.clone());

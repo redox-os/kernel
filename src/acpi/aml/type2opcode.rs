@@ -207,6 +207,25 @@ impl AmlExecutable for Type2OpCode {
     }
 }
 
+impl AmlExecutable for DefBuffer {
+    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
+        match *self {
+            DefBuffer::Buffer { ref buffer_size, ref byte_list } => {
+                let length = match buffer_size.execute(namespace, scope.clone()) {
+                    Some(l) => Box::new(l),
+                    _ => return None
+                };
+                
+                Some(AmlValue::Buffer {
+                    length: length,
+                    byte_list: byte_list.clone()
+                })
+            },
+            _ => None
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum DefObjectType {
     SuperName(SuperName),

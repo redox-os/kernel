@@ -25,7 +25,10 @@ pub enum FieldSelector {
 #[derive(Debug, Clone)]
 pub enum AmlValue {
     Uninitialized,
-    Buffer,
+    Buffer {
+        length: Box<AmlValue>,
+        byte_list: Vec<u8>
+    },
     BufferField {
         source_buf: Box<AmlValue>,
         index: Box<AmlValue>,
