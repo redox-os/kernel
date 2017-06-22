@@ -59,13 +59,11 @@ pub fn parse_aml_table(sdt: &'static Sdt) -> Result<BTreeMap<String, AmlValue>, 
     let mut global_namespace = BTreeMap::new();
     term_list.execute(&mut global_namespace, global_namespace_specifier.clone());
 
-    println!("{:#?}", global_namespace);
-
     Ok(global_namespace)
 }
 
 pub fn is_aml_table(sdt: &'static Sdt) -> bool {
-    if &sdt.signature == b"DSDT" {//|| &sdt.signature == b"SSDT" {
+    if &sdt.signature == b"DSDT" || &sdt.signature == b"SSDT" {
         true
     } else {
         false
