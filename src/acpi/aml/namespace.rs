@@ -20,6 +20,7 @@ pub enum AmlValue {
     Event,
     FieldUnit {
         op_region: String,
+        bank_selector: Option<(String, Box<AmlValue>)>,
         flags: FieldFlags,
         offset: usize,
         length: usize

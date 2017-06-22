@@ -120,6 +120,34 @@ pub struct Method {
 impl AmlExecutable for NamedObj {
     fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
+            NamedObj::DefBankField { ref region_name, ref bank_name, ref bank_value, ref flags, ref field_list } => {
+                let mut offset: usize = 0;
+                let bank_val = if let Some(b) = bank_value.execute(namespace, scope.clone()) {
+                    Box::new(b)
+                } else {
+                    return None;
+                };
+
+                for f in field_list {
+                    match *f {
+                        FieldElement::ReservedField { length } => offset += length,
+                        FieldElement::NamedField { name: ref field_name, length } => {
+                            let local_scope_string = get_namespace_string(scope.clone(),
+                                                                          field_name.clone());
+                            namespace.insert(local_scope_string, AmlValue::FieldUnit {
+                                op_region: region_name.clone(),
+                                bank_selector: Some((bank_name.clone(), bank_val.clone())),
+                                flags: flags.clone(),
+                                offset: offset.clone(),
+                                length: length.clone()
+                            });
+
+                            offset += length;
+                        },
+                        _ => ()
+                    }
+                }
+            },
             NamedObj::DefOpRegion { ref name, ref region, ref offset, ref len } => {
                 let local_scope_string = get_namespace_string(scope.clone(), name.clone());
 
@@ -150,6 +178,7 @@ impl AmlExecutable for NamedObj {
                                                                           field_name.clone());
                             namespace.insert(local_scope_string, AmlValue::FieldUnit {
                                 op_region: name.clone(),
+                                bank_selector: None,
                                 flags: flags.clone(),
                                 offset: offset.clone(),
                                 length: length.clone()
