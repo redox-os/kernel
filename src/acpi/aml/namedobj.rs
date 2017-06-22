@@ -288,6 +288,15 @@ impl AmlExecutable for NamedObj {
                     length: resolved_length
                 });
             },
+            NamedObj::DefDataRegion { ref name, ref signature, ref oem_id, ref oem_table_id } => {
+                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
+
+                namespace.insert(local_scope_string, AmlValue::OperationRegion {
+                    region: RegionSpace::SystemMemory,
+                    offset: Box::new(AmlValue::IntegerConstant(0)),
+                    len: Box::new(AmlValue::IntegerConstant(0))
+                });
+            },
             NamedObj::DefOpRegion { ref name, ref region, ref offset, ref len } => {
                 let local_scope_string = get_namespace_string(scope.clone(), name.clone());
 
