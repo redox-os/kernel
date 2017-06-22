@@ -163,7 +163,7 @@ impl AmlExecutable for NamedObj {
                 namespace.insert(local_scope_string, AmlValue::BufferField {
                     source_buf: resolved_source_buf,
                     index: resolved_index,
-                    length: 1
+                    length: Box::new(AmlValue::IntegerConstant(1))
                 });
             },
             NamedObj::DefCreateByteField { ref name, ref source_buf, ref byte_index } => {
@@ -181,7 +181,7 @@ impl AmlExecutable for NamedObj {
                 namespace.insert(local_scope_string, AmlValue::BufferField {
                     source_buf: resolved_source_buf,
                     index: resolved_index,
-                    length: 8
+                    length: Box::new(AmlValue::IntegerConstant(8))
                 });
             },
             NamedObj::DefCreateWordField { ref name, ref source_buf, ref byte_index } => {
@@ -199,7 +199,7 @@ impl AmlExecutable for NamedObj {
                 namespace.insert(local_scope_string, AmlValue::BufferField {
                     source_buf: resolved_source_buf,
                     index: resolved_index,
-                    length: 16
+                    length: Box::new(AmlValue::IntegerConstant(16))
                 });
             },
             NamedObj::DefCreateDWordField { ref name, ref source_buf, ref byte_index } => {
@@ -217,7 +217,7 @@ impl AmlExecutable for NamedObj {
                 namespace.insert(local_scope_string, AmlValue::BufferField {
                     source_buf: resolved_source_buf,
                     index: resolved_index,
-                    length: 32
+                    length: Box::new(AmlValue::IntegerConstant(32))
                 });
             },
             NamedObj::DefCreateQWordField { ref name, ref source_buf, ref byte_index } => {
@@ -235,7 +235,29 @@ impl AmlExecutable for NamedObj {
                 namespace.insert(local_scope_string, AmlValue::BufferField {
                     source_buf: resolved_source_buf,
                     index: resolved_index,
-                    length: 64
+                    length: Box::new(AmlValue::IntegerConstant(64))
+                });
+            },
+            NamedObj::DefCreateField { ref name, ref source_buf, ref bit_index, ref num_bits } => {
+                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
+                
+                let resolved_source_buf = match source_buf.execute(namespace, scope.clone()) {
+                    Some(r) => Box::new(r),
+                    _ => return None
+                };
+                let resolved_index = match bit_index.execute(namespace, scope.clone()) {
+                    Some(r) => Box::new(r),
+                    _ => return None
+                };
+                let resolved_length = match num_bits.execute(namespace, scope.clone()) {
+                    Some(r) => Box::new(r),
+                    _ => return None
+                };
+
+                namespace.insert(local_scope_string, AmlValue::BufferField {
+                    source_buf: resolved_source_buf,
+                    index: resolved_index,
+                    length: resolved_length
                 });
             },
             NamedObj::DefOpRegion { ref name, ref region, ref offset, ref len } => {
