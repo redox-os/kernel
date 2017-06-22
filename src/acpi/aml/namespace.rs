@@ -16,7 +16,7 @@ pub enum AmlValue {
     BufferField {
         source_buf: Box<AmlValue>,
         index: Box<AmlValue>,
-        length: usize
+        length: Box<AmlValue>
     },
     DDBHandle,
     DebugObject,
