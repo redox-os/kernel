@@ -13,7 +13,11 @@ use super::namestring::SuperName;
 pub enum AmlValue {
     Uninitialized,
     Buffer,
-    BufferField,
+    BufferField {
+        source_buf: Box<AmlValue>,
+        index: Box<AmlValue>,
+        length: usize
+    },
     DDBHandle,
     DebugObject,
     Device(BTreeMap<String, AmlValue>),
