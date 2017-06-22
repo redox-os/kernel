@@ -47,7 +47,7 @@ impl AmlExecutable for DataRefObj {
     fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
         match *self {
             DataRefObj::DataObj(ref cd) => cd.execute(namespace, scope),
-            _ => Some(AmlValue::Integer)
+            _ => Some(AmlValue::Uninitialized)
         }
     }
 }
@@ -57,7 +57,7 @@ impl AmlExecutable for DataObj {
         match *self {
             DataObj::ComputationalData(ref cd) => cd.execute(namespace, scope),
             DataObj::DefPackage(ref pkg) => pkg.execute(namespace, scope),
-            _ => Some(AmlValue::Integer)
+            _ => Some(AmlValue::Uninitialized)
         }
     }
 }
@@ -73,7 +73,7 @@ impl AmlExecutable for ComputationalData {
             ComputationalData::One => Some(AmlValue::IntegerConstant(1)),
             ComputationalData::Ones => Some(AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF)),
             ComputationalData::String(ref s) => Some(AmlValue::String(s.clone())),
-            _ => Some(AmlValue::Integer)
+            _ => Some(AmlValue::Uninitialized)
         }
     }
 }
