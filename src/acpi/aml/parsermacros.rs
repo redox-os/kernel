@@ -1,15 +1,15 @@
 #[macro_export]
 macro_rules! parser_selector {
-    {$data:expr, $func:expr} => {
-        match $func($data) {
+    {$data:expr, $namespace:expr, $scope:expr, $func:expr} => {
+        match $func($data, $namespace, $scope) {
             Ok(res) => return Ok(res),
             Err(AmlInternalError::AmlInvalidOpCode) => (),
             Err(e) => return Err(e)
         }
     };
-    {$data:expr, $func:expr, $($funcs:expr),+} => {
-        parser_selector! {$data, $func};
-        parser_selector! {$data, $($funcs),*};
+    {$data:expr, $namespace:expr, $scope:expr, $func:expr, $($funcs:expr),+} => {
+        parser_selector! {$data, $namespace, $scope, $func};
+        parser_selector! {$data, $namespace, $scope, $($funcs),*};
     };
 }
 
@@ -47,3 +47,14 @@ macro_rules! parser_opcode_extended {
         }
     };
 }
+
+#[macro_export]
+macro_rules! parser_verify_value {
+    ($val:expr) => {
+        match $val.val {
+            Some(s) => s,
+            None => return Err(AmlInternalError::AmlValueError)
+        }
+    };
+}
+

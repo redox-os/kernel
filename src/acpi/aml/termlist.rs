@@ -89,17 +89,20 @@ impl AmlExecutable for TermObj {
     }
 }
 
-pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
-    let mut terms: Vec<TermObj> = vec!();
+pub fn parse_term_list(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        let (res, len) = parse_term_obj(&data[current_offset..])?;
-        terms.push(res);
+        let (res, len) = parse_term_obj(&data[current_offset..], namespace, scope)?;
         current_offset += len;
     }
 
-    Ok(terms)
+    Ok(AmlParseType {
+        val: None,
+        len: data.len()
+    })
 }
 
 pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
@@ -142,13 +145,15 @@ pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize),
     Err(AmlInternalError::AmlDeferredLoad)
 }
 
-fn parse_term_obj(data: &[u8]) -> Result<(TermObj, usize), AmlInternalError> {
+fn parse_term_obj(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
     parser_selector! {
-        data,
-        parser_wrap!(TermObj::NamespaceModifier, parser_wrap!(Box::new, parse_namespace_modifier)),
-        parser_wrap!(TermObj::NamedObj, parser_wrap!(Box::new, parse_named_obj)),
-        parser_wrap!(TermObj::Type1Opcode, parser_wrap!(Box::new, parse_type1_opcode)),
-        parser_wrap!(TermObj::Type2Opcode, parser_wrap!(Box::new, parse_type2_opcode))
+        data, namespace, scope,
+        parse_namespace_modifier,
+        parse_named_obj,
+        parse_type1_opcode,
+        parse_type2_opcode
     };
 
     Err(AmlInternalError::AmlInvalidOpCode)
