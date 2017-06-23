@@ -9,55 +9,11 @@ use super::namestring::{parse_name_string, SuperName};
 use super::termlist::{parse_term_list, TermObj};
 use super::dataobj::{parse_data_ref_obj, DataRefObj};
 
-#[derive(Debug, Clone)]
-pub enum NamespaceModifier {
-    Name {
-        name: String,
-        data_ref_obj: DataRefObj
-    },
-    Scope {
-        name: String,
-        terms: Vec<TermObj>
-    },
-    Alias {
-        source_name: String,
-        alias_name: String
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-impl AmlExecutable for NamespaceModifier {
-    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
-        match *self {
-            NamespaceModifier::Scope { name: ref name, terms: ref terms } => {
-                let local_scope_string = get_namespace_string(scope, name.clone());
-                terms.execute(namespace, local_scope_string);
-            },
-            NamespaceModifier::Name { ref name, ref data_ref_obj } => {
-                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
-                let dro = match data_ref_obj.execute(namespace, scope) {
-                    Some(s) => s,
-                    None => return None
-                };
-
-                namespace.insert(local_scope_string, dro);
-            },
-            NamespaceModifier::Alias { ref source_name, ref alias_name } => {
-                let local_scope_string = get_namespace_string(scope.clone(), source_name.clone());
-                let local_alias_string = get_namespace_string(scope.clone(), alias_name.clone());
-
-                namespace.insert(local_scope_string, AmlValue::ObjectReference(SuperName::NameString(local_alias_string)));
-            },
-            _ => ()
-        }
-
-        None
-    }
-}
-
-pub fn parse_namespace_modifier(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
+pub fn parse_namespace_modifier(data: &[u8],
+                                namespace: &mut BTreeMap<String, AmlValue>,
+                                scope: String) -> ParseResult {
     parser_selector! {
-        data,
+        data, namespace, scope,
         parse_alias_op,
         parse_scope_op,
         parse_name_op
@@ -66,42 +22,57 @@ pub fn parse_namespace_modifier(data: &[u8]) -> Result<(NamespaceModifier, usize
     Err(AmlInternalError::AmlInvalidOpCode)
 }
 
-fn parse_alias_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
+fn parse_alias_op(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
     parser_opcode!(data, 0x06);
 
-    let (source_name, source_name_len) = parse_name_string(&data[1..])?;
-    let (alias_name, alias_name_len) = parse_name_string(&data[1 + source_name_len..])?;
+    let source_name = parse_name_string(&data[1..], namespace, scope)?;
+    let alias_name = parse_name_string(&data[1 + source_name_len..], namespace, scope)?;
+    
+    let local_scope_string = get_namespace_string(scope.clone(), parser_verify_value!(source_name));
+    let local_alias_string = get_namespace_string(scope.clone(), parser_verify_value!(alias_name));
 
-    Ok((NamespaceModifier::Alias {source_name, alias_name}, 1 + source_name_len + alias_name_len))
+    namespace.insert(local_scope_string, AmlValue::ObjectReference(
+        SuperName::NameString(local_alias_string)));
+
+    Ok(AmlParseType {
+        val: None,
+        len: 1 + source_name.len + alias_name.len
+    })
 }
 
-fn parse_name_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
+fn parse_name_op(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
     parser_opcode!(data, 0x08);
+    
+    let name = parse_name_string(&data[1..], namespace, scope)?;
+    let data_ref_obj = parse_data_ref_obj(&data[1 + name_len..], namespace, scope)?;
+    
+    let local_scope_string = get_namespace_string(scope.clone(), parser_verify_value!(name));
 
-    let (name, name_len) = parse_name_string(&data[1..])?;
-    let (data_ref_obj, data_ref_obj_len) = parse_data_ref_obj(&data[1 + name_len..])?;
-
-    Ok((NamespaceModifier::Name {name, data_ref_obj}, 1 + name_len + data_ref_obj_len))
+    namespace.insert(local_scope_string, parser_verify_value!(data_ref_obj));
+    
+    Ok(AmlParseType {
+        val: None,
+        len: 1 + name_len + data_ref_obj_len
+    })
 }
 
-fn parse_scope_op(data: &[u8]) -> Result<(NamespaceModifier, usize), AmlInternalError> {
+fn parse_scope_op(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
     parser_opcode!(data, 0x10);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let (name, name_len) = match parse_name_string(&data[1 + pkg_length_len..]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamespaceModifier::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
-                       1 + pkg_length)),
-        Err(e) => return Err(e)
-    };
-    let terms = match parse_term_list(&data[1 + pkg_length_len + name_len..]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamespaceModifier::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
-                       1 + pkg_length)),
-        Err(e) => return Err(e)
-    };
-
-    Ok((NamespaceModifier::Scope {name, terms}, pkg_length + 1))
+    let name = parse_name_string(&data[1 + pkg_length_len..], namespace, scope)?;
+    
+    let local_scope_string = get_namespace_string(scope, parser_verify_value!(name));
+    parse_term_list(&data[1 + pkg_length_len + name_len..], namespace, local_scope_string)?;
+    
+    Ok(AmlParseType {
+        val: None,
+        len: 1 + pkg_length
+    })
 }

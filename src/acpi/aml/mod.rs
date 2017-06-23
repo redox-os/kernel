@@ -22,20 +22,14 @@ mod namedobj;
 mod dataobj;
 mod type1opcode;
 mod type2opcode;
+mod parser;
 
+use self::parser::{ParseResult, AmlInternalError};
 use self::termlist::{parse_term_list, TermObj};
 pub use self::namespace::{get_namespace_string, AmlValue};
 
-// TODO: This should be able to take parameters, and may also return multiple values
 pub trait AmlExecutable {
     fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue>;
-}
-
-// TODO: make private
-pub enum AmlInternalError {
-    AmlParseError(&'static str),
-    AmlInvalidOpCode,
-    AmlDeferredLoad
 }
 
 pub enum AmlError {
