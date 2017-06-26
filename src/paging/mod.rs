@@ -184,7 +184,7 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
             for page in Page::range_inclusive(start_page, end_page) {
                 let result = mapper.map(page, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
                 // The flush can be ignored as this is not the active table. See later active_table.switch
-                unsafe { result.ignore(); }
+                result.ignore();
             }
         }
     });
@@ -229,7 +229,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
             for page in Page::range_inclusive(start_page, end_page) {
                 let result = mapper.map(page, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
                 // The flush can be ignored as this is not the active table. See later active_table.switch
-                unsafe { result.ignore(); }
+                result.ignore();
             }
         }
 
@@ -241,7 +241,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
                     let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + ::KERNEL_OFFSET));
                     let result = mapper.map_to(page, frame, flags);
                     // The flush can be ignored as this is not the active table. See later active_table.switch
-                    unsafe { result.ignore(); }
+                    result.ignore();
                 }
             }
         };

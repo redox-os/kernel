@@ -1,8 +1,6 @@
 use syscall::io::{Io, Pio};
 use time;
 
-use acpi;
-
 pub fn init() {
     let mut rtc = Rtc::new();
     time::START.lock().0 = rtc.time();
@@ -50,11 +48,11 @@ impl Rtc {
         let mut century;
         let register_b;
 
-        let century_register = if let Some(ref fadt) = acpi::ACPI_TABLE.lock().fadt {
+        /*let century_register = if let Some(ref fadt) = acpi::ACPI_TABLE.lock().fadt {
             Some(fadt.century)
         } else {
             None
-        };
+        };*/
 
         unsafe {
             self.wait();
