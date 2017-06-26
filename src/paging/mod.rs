@@ -78,7 +78,7 @@ unsafe fn init_tcb(cpu_id: usize) -> usize {
 /// Initialize paging
 ///
 /// Returns page table and thread control block offset
-pub unsafe fn init(cpu_id: usize, stack_start: usize, stack_end: usize) -> (ActivePageTable, usize) {
+pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_start: usize, stack_end: usize) -> (ActivePageTable, usize) {
     extern {
         /// The starting byte of the text (code) data segment.
         static mut __text_start: u8;
@@ -118,6 +118,60 @@ pub unsafe fn init(cpu_id: usize, stack_start: usize, stack_end: usize) -> (Acti
     };
 
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+        // Remap stack writable, no execute
+        {
+            let start_frame = Frame::containing_address(PhysicalAddress::new(stack_start - ::KERNEL_OFFSET));
+            let end_frame = Frame::containing_address(PhysicalAddress::new(stack_end - ::KERNEL_OFFSET - 1));
+            for frame in Frame::range_inclusive(start_frame, end_frame) {
+                let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + ::KERNEL_OFFSET));
+                let result = mapper.map_to(page, frame, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
+                // The flush can be ignored as this is not the active table. See later active_table.switch
+                unsafe { result.ignore(); }
+            }
+        }
+
+        // Map all frames in kernel
+        {
+            let start_frame = Frame::containing_address(PhysicalAddress::new(kernel_start));
+            let end_frame = Frame::containing_address(PhysicalAddress::new(kernel_end - 1));
+            for frame in Frame::range_inclusive(start_frame, end_frame) {
+                let phys_addr = frame.start_address().get();
+                let virt_addr = phys_addr + ::KERNEL_OFFSET;
+
+                macro_rules! in_section {
+                    ($n: ident) => (
+                        virt_addr >= & concat_idents!(__, $n, _start) as *const u8 as usize &&
+                        virt_addr < & concat_idents!(__, $n, _end) as *const u8 as usize
+                    );
+                }
+
+                let flags = if in_section!(text) {
+                    // Remap text read-only
+                    PRESENT | GLOBAL
+                } else if in_section!(rodata) {
+                    // Remap rodata read-only, no execute
+                    PRESENT | GLOBAL | NO_EXECUTE
+                } else if in_section!(data) {
+                    // Remap data writable, no execute
+                    PRESENT | GLOBAL | NO_EXECUTE | WRITABLE
+                } else if in_section!(tdata) {
+                    // Remap tdata master read-only, no execute
+                    PRESENT | GLOBAL | NO_EXECUTE
+                } else if in_section!(bss) {
+                    // Remap bss writable, no execute
+                    PRESENT | GLOBAL | NO_EXECUTE | WRITABLE
+                } else {
+                    // Remap anything else read-only, no execute
+                    PRESENT | GLOBAL | NO_EXECUTE
+                };
+
+                let page = Page::containing_address(VirtualAddress::new(virt_addr));
+                let result = mapper.map_to(page, frame, flags);
+                // The flush can be ignored as this is not the active table. See later active_table.switch
+                unsafe { result.ignore(); }
+            }
+        }
+
         // Map tdata and tbss
         {
             let size = & __tbss_end as *const _ as usize - & __tdata_start as *const _ as usize;
@@ -133,37 +187,6 @@ pub unsafe fn init(cpu_id: usize, stack_start: usize, stack_end: usize) -> (Acti
                 result.ignore();
             }
         }
-
-        let mut remap = |start: usize, end: usize, flags: EntryFlags| {
-            if end > start {
-                let start_frame = Frame::containing_address(PhysicalAddress::new(start));
-                let end_frame = Frame::containing_address(PhysicalAddress::new(end - 1));
-                for frame in Frame::range_inclusive(start_frame, end_frame) {
-                    let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + ::KERNEL_OFFSET));
-                    let result = mapper.map_to(page, frame, flags);
-                    // The flush can be ignored as this is not the active table. See later active_table.switch
-                    result.ignore();
-                }
-            }
-        };
-
-        // Remap stack writable, no execute
-        remap(stack_start - ::KERNEL_OFFSET, stack_end - ::KERNEL_OFFSET, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
-
-        // Remap a section with `flags`
-        let mut remap_section = |start: &u8, end: &u8, flags: EntryFlags| {
-            remap(start as *const _ as usize - ::KERNEL_OFFSET, end as *const _ as usize - ::KERNEL_OFFSET, flags);
-        };
-        // Remap text read-only
-        remap_section(& __text_start, & __text_end, PRESENT | GLOBAL);
-        // Remap rodata read-only, no execute
-        remap_section(& __rodata_start, & __rodata_end, PRESENT | GLOBAL | NO_EXECUTE);
-        // Remap data writable, no execute
-        remap_section(& __data_start, & __data_end, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
-        // Remap tdata master writable, no execute
-        remap_section(& __tdata_start, & __tdata_end, PRESENT | GLOBAL | NO_EXECUTE);
-        // Remap bss writable, no execute
-        remap_section(& __bss_start, & __bss_end, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
     });
 
     // This switches the active table, which is setup by the bootloader, to a correct table

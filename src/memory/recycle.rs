@@ -27,7 +27,6 @@ impl<T: FrameAllocator> RecycleAllocator<T> {
         for free in self.free.iter() {
             count += free.1;
         }
-        println!("Free count: {} in {} entries", count, self.free.len());
         count
     }
 
@@ -93,7 +92,7 @@ impl<T: FrameAllocator> FrameAllocator for RecycleAllocator<T> {
         if let Some(i) = small_i {
             let (address, remove) = {
                 let free = &mut self.free[i];
-                free.1 -= 1;
+                free.1 -= count;
                 (free.0 + free.1 * 4096, free.1 == 0)
             };
 

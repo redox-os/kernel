@@ -89,11 +89,11 @@ impl Mapper {
     }
 
     pub fn p4(&self) -> &Table<Level4> {
-        unsafe { self.p4.get() }
+        unsafe { self.p4.as_ref() }
     }
 
     pub fn p4_mut(&mut self) -> &mut Table<Level4> {
-        unsafe { self.p4.get_mut() }
+        unsafe { self.p4.as_mut() }
     }
 
     /// Map a page to a frame
@@ -137,50 +137,60 @@ impl Mapper {
         let frame;
 
         let p4 = self.p4_mut();
-        {
-            let p3 = p4.next_table_mut(page.p4_index()).expect("unmap_inner: p3 not found");
-            {
-                let p2 = p3.next_table_mut(page.p3_index()).expect("unmap_inner: p2 not found");
-                {
-                    let p1 = p2.next_table_mut(page.p2_index()).expect("unmap_inner: p1 not found");
+        if let Some(p3) = p4.next_table_mut(page.p4_index()) {
+            if let Some(p2) = p3.next_table_mut(page.p3_index()) {
+                if let Some(p1) = p2.next_table_mut(page.p2_index()) {
+                    frame = if let Some(frame) = p1[page.p1_index()].pointed_frame() {
+                        frame
+                    } else {
+                        panic!("unmap_inner({:X}): frame not found", page.start_address().get())
+                    };
 
-                    frame = p1[page.p1_index()].pointed_frame().expect("unmap_inner: frame not found");
                     p1[page.p1_index()].set_unused();
 
                     if keep_parents || ! p1.is_unused() {
                         return frame;
                     }
+                } else {
+                    panic!("unmap_inner({:X}): p1 not found", page.start_address().get());
                 }
 
-                {
-                    let p1_frame = p2[page.p2_index()].pointed_frame().expect("unmap_inner: p1 frame not found");
+                if let Some(p1_frame) = p2[page.p2_index()].pointed_frame() {
                     //println!("Free p1 {:?}", p1_frame);
                     p2[page.p2_index()].set_unused();
                     deallocate_frames(p1_frame, 1);
+                } else {
+                    panic!("unmap_inner({:X}): p1_frame not found", page.start_address().get());
                 }
 
                 if keep_parents || ! p2.is_unused() {
                     return frame;
                 }
+            } else {
+                panic!("unmap_inner({:X}): p2 not found", page.start_address().get());
             }
 
-            {
-                let p2_frame = p3[page.p3_index()].pointed_frame().expect("unmap_inner: p2 frame not found");
+            if let Some(p2_frame) = p3[page.p3_index()].pointed_frame() {
                 //println!("Free p2 {:?}", p2_frame);
                 p3[page.p3_index()].set_unused();
                 deallocate_frames(p2_frame, 1);
+            } else {
+                panic!("unmap_inner({:X}): p2_frame not found", page.start_address().get());
             }
 
             if keep_parents || ! p3.is_unused() {
                 return frame;
             }
+        } else {
+            panic!("unmap_inner({:X}): p3 not found", page.start_address().get());
         }
 
-        {
-            let p3_frame = p4[page.p4_index()].pointed_frame().expect("unmap_inner: p3 frame not found");
+        if let Some(p3_frame) = p4[page.p4_index()].pointed_frame() {
             //println!("Free p3 {:?}", p3_frame);
             p4[page.p4_index()].set_unused();
             deallocate_frames(p3_frame, 1);
+        } else {
+            panic!("unmap_inner({:X}): p3_frame not found", page.start_address().get());
         }
 
         frame

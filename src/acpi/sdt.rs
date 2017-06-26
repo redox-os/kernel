@@ -1,4 +1,5 @@
 use core::mem;
+use core::slice;
 
 #[derive(Copy, Clone, Debug)]
 #[repr(packed)]
@@ -29,5 +30,9 @@ impl Sdt {
         } else {
             0
         }
+    }
+
+    pub fn data(&'static self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.data_address() as *const u8, self.data_len()) }
     }
 }

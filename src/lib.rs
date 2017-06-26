@@ -7,6 +7,7 @@
 #![feature(alloc)]
 #![feature(asm)]
 #![feature(collections)]
+#![feature(concat_idents)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
 #![feature(drop_types_in_const)]
