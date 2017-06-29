@@ -75,6 +75,7 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                 SYS_FUTEX => futex(validate_slice_mut(b as *mut i32, 1).map(|uaddr| &mut uaddr[0])?, c, d as i32, e, f as *mut i32),
                 SYS_BRK => brk(b),
                 SYS_GETPID => getpid().map(ContextId::into),
+                SYS_GETPPID => getppid().map(ContextId::into),
                 SYS_CLONE => clone(b, stack).map(ContextId::into),
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
