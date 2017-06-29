@@ -925,6 +925,13 @@ pub fn getpid() -> Result<ContextId> {
     Ok(context.id)
 }
 
+pub fn getppid() -> Result<ContextId> {
+    let contexts = context::contexts();
+    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+    let context = context_lock.read();
+    Ok(context.ppid)
+}
+
 pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     let (ruid, euid) = {
         let contexts = context::contexts();
