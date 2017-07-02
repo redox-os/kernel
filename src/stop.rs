@@ -13,7 +13,7 @@ pub unsafe extern fn kstop() -> ! {
             let mut val = 1 << 13;
             if let Some(ref namespace) = acpi.namespace {
                 if let Some(s) = namespace.get("\\_S5") {
-                    if let Some(p) = s.get_as_package() {
+                    if let Ok(p) = s.get_as_package() {
                         let slp_typa = p[0].get_as_integer().expect("SLP_TYPa is not an integer");
                         let slp_typb = p[1].get_as_integer().expect("SLP_TYPb is not an integer");
 

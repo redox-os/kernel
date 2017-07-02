@@ -6,9 +6,7 @@ use collections::btree_map::BTreeMap;
 use core::str::FromStr;
 
 use super::namedobj::{ RegionSpace, FieldFlags, Method };
-use super::termlist::Object;
-use super::namestring::SuperName;
-use super::type2opcode::Type2OpCode;
+use super::AmlError;
 
 #[derive(Debug, Clone)]
 pub enum FieldSelector {
@@ -24,7 +22,16 @@ pub enum FieldSelector {
 }
 
 #[derive(Debug, Clone)]
+pub enum ObjectReference {
+    ArgObj(u8),
+    LocalObj(u8),
+    NamedObj(String),
+    Object(Box<AmlValue>)
+}
+
+#[derive(Debug, Clone)]
 pub enum AmlValue {
+    None,
     Uninitialized,
     Buffer {
         length: Box<AmlValue>,
@@ -46,11 +53,11 @@ pub enum AmlValue {
         offset: usize,
         length: usize
     },
-    Integer(Type2OpCode),
+    Integer(u64),
     IntegerConstant(u64),
     Method(Method),
     Mutex(u8),
-    ObjectReference(SuperName),
+    ObjectReference(ObjectReference),
     OperationRegion {
         region: RegionSpace,
         offset: Box<AmlValue>,
@@ -73,22 +80,37 @@ pub enum AmlValue {
 }
 
 impl AmlValue {
-    pub fn get_as_package(&self) -> Option<Vec<AmlValue>> {
+    // TODO: These should be able to throw errors rather than returning options
+    pub fn get_as_string(&self) -> Result<String, AmlError> {
         match *self {
-            AmlValue::Package(ref p) => Some(p.clone()),
-            _ => None
+            AmlValue::String(ref s) => Ok(s.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_package(&self) -> Result<Vec<AmlValue>, AmlError> {
+        match *self {
+            AmlValue::Package(ref p) => Ok(p.clone()),
+            _ => Err(AmlError::AmlValueError)
         }
     }
 
-    pub fn get_as_integer(&self) -> Option<u64> {
+    pub fn get_as_integer(&self) -> Result<u64, AmlError> {
         match *self {
-            AmlValue::IntegerConstant(ref i) => Some(i.clone()),
-            _ => None
+            AmlValue::IntegerConstant(ref i) => Ok(i.clone()),
+            _ => Err(AmlError::AmlValueError)
         }
     }
 }
 
-pub fn get_namespace_string(current: String, modifier: String) -> String {
+pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> String {
+    // TODO: Type error if modifier not string
+    let modifier = if let Ok(s) = modifier_v.get_as_string() {
+        s
+    } else {
+        return current;
+    };
+    
     if current.len() == 0 {
         return modifier;
     }

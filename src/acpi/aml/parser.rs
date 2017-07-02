@@ -1,16 +1,10 @@
-use super::AmlValue;
+use super::namespace::AmlValue;
+use super::AmlError;
 
-pub type ParseResult = Result<AmlParseType, AmlInternalError>;
+pub type ParseResult = Result<AmlParseType, AmlError>;
+pub type AmlParseType = AmlParseTypeGeneric<AmlValue>;
 
-pub struct AmlParseType {
-    val: Option<AmlValue>,
-    len: usize
-}
-
-// TODO: make private
-pub enum AmlInternalError {
-    AmlParseError(&'static str),
-    AmlInvalidOpCode,
-    AmlValueError,
-    AmlDeferredLoad
+pub struct AmlParseTypeGeneric<T> {
+    pub val: T,
+    pub len: usize
 }
