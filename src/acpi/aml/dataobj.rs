@@ -2,132 +2,99 @@ use collections::vec::Vec;
 use collections::string::String;
 use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, get_namespace_string};
+use super::AmlError;
+use super::parser::{AmlParseType, ParseResult};
+use super::namespace::{AmlValue, ObjectReference};
 
-use super::type2opcode::{parse_def_buffer, parse_def_package, parse_def_var_package,
-                         DefBuffer, DefPackage, DefVarPackage};
-use super::termlist::{parse_term_arg, TermArg};
-use super::namestring::{parse_super_name, SuperName};
+use super::type2opcode::{parse_def_buffer, parse_def_package, parse_def_var_package};
+use super::termlist::parse_term_arg;
+use super::namestring::parse_super_name;
 
-#[derive(Debug, Clone)]
-pub enum DataObj {
-    ComputationalData(ComputationalData),
-    DefPackage(DefPackage),
-    DefVarPackage(DefVarPackage)
-}
-
-#[derive(Debug, Clone)]
-pub enum DataRefObj {
-    DataObj(DataObj),
-    ObjectReference(TermArg),
-    DDBHandle(SuperName)
-}
-
-#[derive(Debug, Clone)]
-pub struct ArgObj(u8);
-#[derive(Debug, Clone)]
-pub struct LocalObj(u8);
-// Not actually doing anything to contain data, but does give us type guarantees, which is useful
-
-#[derive(Debug, Clone)]
-pub enum ComputationalData {
-    Byte(u8),
-    Word(u16),
-    DWord(u32),
-    QWord(u64),
-    String(String),
-    Zero,
-    One,
-    Ones,
-    DefBuffer(DefBuffer),
-    RevisionOp
-}
-
-impl AmlExecutable for DataRefObj {
-    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
-        match *self {
-            DataRefObj::DataObj(ref cd) => cd.execute(namespace, scope),
-            _ => Some(AmlValue::Uninitialized)
-        }
-    }
-}
-
-impl AmlExecutable for DataObj {
-    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
-        match *self {
-            DataObj::ComputationalData(ref cd) => cd.execute(namespace, scope),
-            DataObj::DefPackage(ref pkg) => pkg.execute(namespace, scope),
-            _ => Some(AmlValue::Uninitialized)
-        }
-    }
-}
-
-impl AmlExecutable for ComputationalData {
-    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
-        match *self {
-            ComputationalData::Byte(b) => Some(AmlValue::IntegerConstant(b as u64)),
-            ComputationalData::Word(w) => Some(AmlValue::IntegerConstant(w as u64)),
-            ComputationalData::DWord(d) => Some(AmlValue::IntegerConstant(d as u64)),
-            ComputationalData::QWord(q) => Some(AmlValue::IntegerConstant(q as u64)),
-            ComputationalData::Zero => Some(AmlValue::IntegerConstant(0)),
-            ComputationalData::One => Some(AmlValue::IntegerConstant(1)),
-            ComputationalData::Ones => Some(AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF)),
-            ComputationalData::String(ref s) => Some(AmlValue::String(s.clone())),
-            _ => Some(AmlValue::Uninitialized)
-        }
-    }
-}
-
-pub fn parse_data_obj(data: &[u8]) -> Result<(DataObj, usize), AmlInternalError> {
+pub fn parse_data_obj(data: &[u8],
+                      namespace: &mut BTreeMap<String, AmlValue>,
+                      scope: String) -> ParseResult {
     parser_selector! {
-        data,
-        parser_wrap!(DataObj::ComputationalData, parse_computational_data),
-        parser_wrap!(DataObj::DefPackage, parse_def_package),
-        parser_wrap!(DataObj::DefVarPackage, parse_def_var_package)
+        data, namespace, scope.clone(),
+        parse_computational_data,
+        parse_def_package,
+        parse_def_var_package
     };
     
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_data_ref_obj(data: &[u8]) -> Result<(DataRefObj, usize), AmlInternalError> {
+pub fn parse_data_ref_obj(data: &[u8],
+                          namespace: &mut BTreeMap<String, AmlValue>,
+                          scope: String) -> ParseResult {
     parser_selector! {
-        data,
-        parser_wrap!(DataRefObj::DataObj, parse_data_obj),
-        parser_wrap!(DataRefObj::ObjectReference, parse_term_arg),
-        parser_wrap!(DataRefObj::DDBHandle, parse_super_name)
+        data, namespace, scope.clone(),
+        parse_data_obj,
+        parse_term_arg
     };
     
-    Err(AmlInternalError::AmlInvalidOpCode)
-}
-
-pub fn parse_arg_obj(data: &[u8]) -> Result<(ArgObj, usize), AmlInternalError> {
-    match data[0] {
-        0x68 ... 0x6E => Ok((ArgObj(data[0] - 0x68), 1 as usize)),
-        _ => Err(AmlInternalError::AmlInvalidOpCode)
+    match parse_super_name(data, namespace, scope.clone()) {
+        Ok(res) => match res.val {
+            AmlValue::String(s) => Ok(AmlParseType {
+                val: AmlValue::ObjectReference(ObjectReference::NamedObj(s)),
+                len: res.len
+            }),
+            _ => Ok(res)
+        },
+        Err(e) => Err(e)
     }
 }
 
-pub fn parse_local_obj(data: &[u8]) -> Result<(LocalObj, usize), AmlInternalError> {
+pub fn parse_arg_obj(data: &[u8],
+                     namespace: &mut BTreeMap<String, AmlValue>,
+                     scope: String) -> ParseResult {
     match data[0] {
-        0x60 ... 0x67 => Ok((LocalObj(data[0] - 0x60), 1 as usize)),
-        _ => Err(AmlInternalError::AmlInvalidOpCode)
+        0x68 ... 0x6E => Ok(AmlParseType {
+            val: AmlValue::ObjectReference(ObjectReference::ArgObj(data[0] - 0x68)),
+            len: 1 as usize
+        }),
+        _ => Err(AmlError::AmlInvalidOpCode)
     }
 }
 
-fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), AmlInternalError> {
+pub fn parse_local_obj(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
     match data[0] {
-        0x0A => Ok((ComputationalData::Byte(data[1]), 2 as usize)),
+        0x68 ... 0x6E => Ok(AmlParseType {
+            val: AmlValue::ObjectReference(ObjectReference::LocalObj(data[0] - 0x60)),
+            len: 1 as usize
+        }),
+        _ => Err(AmlError::AmlInvalidOpCode)
+    }
+}
+
+fn parse_computational_data(data: &[u8],
+                            namespace: &mut BTreeMap<String, AmlValue>,
+                            scope: String) -> ParseResult {
+    match data[0] {
+        0x0A => Ok(AmlParseType {
+            val: AmlValue::Integer(data[1] as u64),
+            len: 2 as usize
+        }),
         0x0B => {
             let res = (data[1] as u16) +
                 ((data[2] as u16) << 8);
-            Ok((ComputationalData::Word(res), 3 as usize))
+
+            Ok(AmlParseType {
+                val: AmlValue::Integer(res as u64),
+                len: 3 as usize
+            })
         },
         0x0C => {
             let res = (data[1] as u32) +
                 ((data[2] as u32) << 8) +
                 ((data[3] as u32) << 16) +
                 ((data[4] as u32) << 24);
-            Ok((ComputationalData::DWord(res), 5 as usize))
+
+            Ok(AmlParseType {
+                val: AmlValue::Integer(res as u64),
+                len: 5 as usize
+            })
         },
         0x0D => {
             let mut cur_ptr: usize = 1;
@@ -139,8 +106,11 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
             }
 
             match String::from_utf8(cur_string) {
-                Ok(s) => Ok((ComputationalData::String(s.clone()), s.clone().len() + 2)),
-                Err(_) => Err(AmlInternalError::AmlParseError("String data - invalid string"))
+                Ok(s) => Ok(AmlParseType {
+                    val: AmlValue::String(s.clone()),
+                    len: s.clone().len() + 2
+                }),
+                Err(_) => Err(AmlError::AmlParseError("String data - invalid string"))
             }
         },
         0x0E => {
@@ -152,19 +122,32 @@ fn parse_computational_data(data: &[u8]) -> Result<(ComputationalData, usize), A
                 ((data[6] as u64) << 40) +
                 ((data[7] as u64) << 48) +
                 ((data[8] as u64) << 56);
-            Ok((ComputationalData::QWord(res), 9 as usize))
+
+            Ok(AmlParseType {
+                val: AmlValue::Integer(res as u64),
+                len: 9 as usize
+            })
         },
-        0x00 => Ok((ComputationalData::Zero, 1 as usize)),
-        0x01 => Ok((ComputationalData::One, 1 as usize)),
+        0x00 => Ok(AmlParseType {
+            val: AmlValue::IntegerConstant(0 as u64),
+            len: 9 as usize
+        }),
+        0x01 => Ok(AmlParseType {
+            val: AmlValue::IntegerConstant(1 as u64),
+            len: 9 as usize
+        }),
         0x5B => if data[1] == 0x30 {
-            Ok((ComputationalData::RevisionOp, 2 as usize))
+            Ok(AmlParseType {
+                val: AmlValue::IntegerConstant(20170630 as u64),
+                len: 2 as usize
+            })
         } else {
-            Err(AmlInternalError::AmlInvalidOpCode)
+            Err(AmlError::AmlInvalidOpCode)
         },
-        0xFF => Ok((ComputationalData::Ones, 1 as usize)),
-        _ => match parse_def_buffer(data) {
-            Ok((res, size)) => Ok((ComputationalData::DefBuffer(res), size)),
-            Err(e) => Err(e)
-        }
+        0xFF => Ok(AmlParseType {
+            val: AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF),
+            len: 9 as usize
+        }),
+        _ => parse_def_buffer(data, namespace, scope.clone())
     }
 }

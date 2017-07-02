@@ -3,236 +3,13 @@ use collections::string::String;
 use collections::vec::Vec;
 use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue};
+use super::AmlError;
+use super::parser::{AmlParseType, ParseResult};
+use super::namespace::{AmlValue, ObjectReference};
 use super::pkglength::parse_pkg_length;
-use super::termlist::{parse_term_arg, parse_method_invocation, TermArg, MethodInvocation};
-use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name,
-                        SuperName, Target};
-use super::dataobj::{parse_data_ref_obj, DataRefObj};
-
-#[derive(Debug, Clone)]
-pub enum Type2OpCode {
-    DefAcquire {
-        object: SuperName,
-        timeout: u16
-    },
-    DefBuffer(DefBuffer),
-    DefPackage(DefPackage),
-    DefVarPackage(DefVarPackage),
-    DefDerefOf(TermArg),
-    DefRefOf(SuperName),
-    DefIncrement(SuperName),
-    DefIndex(DefIndex),
-    DefDecrement(SuperName),
-    DefFindSetLeftBit {
-        operand: TermArg,
-        target: Target
-    },
-    DefFindSetRightBit {
-        operand: TermArg,
-        target: Target
-    },
-    DefFromBCD {
-        operand: TermArg,
-        target: Target
-    },
-    DefDivide {
-        dividend: TermArg,
-        divisor: TermArg,
-        remainder: Target,
-        quotient: Target
-    },
-    DefCondRefOf {
-        operand: SuperName,
-        target: Target
-    },
-    DefCopyObject {
-        source: TermArg,
-        destination: SuperName
-    },
-    DefLAnd {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLEqual {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLGreater {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLLess {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLNot(TermArg),
-    DefLOr {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefSizeOf(SuperName),
-    DefStore {
-        operand: TermArg,
-        target: SuperName
-    },
-    DefSubtract {
-        minuend: TermArg,
-        subtrahend: TermArg,
-        target: Target
-    },
-    DefToBuffer {
-        operand: TermArg,
-        target: Target
-    },
-    DefToHexString {
-        operand: TermArg,
-        target: Target
-    },
-    DefToBCD {
-        operand: TermArg,
-        target: Target
-    },
-    DefToDecimalString {
-        operand: TermArg,
-        target: Target
-    },
-    DefToInteger {
-        operand: TermArg,
-        target: Target
-    },
-    DefToString {
-        operand: TermArg,
-        length: TermArg,
-        target: Target
-    },
-    DefConcat {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefConcatRes {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefShiftLeft {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefShiftRight {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefAdd {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefMultiply {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefMod {
-        dividend: TermArg,
-        divisor: TermArg,
-        target: Target
-    },
-    DefAnd {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefNAnd {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefOr {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefXor {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefNOr {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefNot {
-        operand: TermArg,
-        target: Target
-    },
-    DefLoadTable {
-        signature: TermArg,
-        oem_id: TermArg,
-        oem_table_id: TermArg,
-        root_path: TermArg,
-        parameter_path: TermArg,
-        parameter_data: TermArg
-    },
-    DefMatch {
-        search_pkg: TermArg,
-        first_operation: MatchOpcode,
-        first_operand: TermArg,
-        second_operation: MatchOpcode,
-        second_operand: TermArg,
-        start_index: TermArg
-    },
-    DefMid {
-        source: TermArg,
-        index: TermArg,
-        length: TermArg,
-        target: Target
-    },
-    DefWait {
-        event_object: SuperName,
-        operand: TermArg
-    },
-    DefObjectType(DefObjectType),
-    DefTimer,
-    MethodInvocation(MethodInvocation)
-}
-
-impl AmlExecutable for Type2OpCode {
-    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
-        None
-    }
-}
-
-impl AmlExecutable for DefBuffer {
-    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
-        match *self {
-            DefBuffer::Buffer { ref buffer_size, ref byte_list } => {
-                let length = match buffer_size.execute(namespace, scope.clone()) {
-                    Some(l) => Box::new(l),
-                    _ => return None
-                };
-                
-                Some(AmlValue::Buffer {
-                    length: length,
-                    byte_list: byte_list.clone()
-                })
-            },
-            _ => None
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum DefObjectType {
-    SuperName(SuperName),
-    DefIndex(DefIndex),
-    DefRefOf(SuperName),
-    DefDerefOf(TermArg)
-}
+use super::termlist::{parse_term_arg, parse_method_invocation};
+use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name};
+use super::dataobj::parse_data_ref_obj;
 
 #[derive(Debug, Clone)]
 pub enum MatchOpcode {
@@ -244,84 +21,11 @@ pub enum MatchOpcode {
     MGT
 }
 
-#[derive(Debug, Clone)]
-pub enum Type6OpCode {
-    DefDerefOf(TermArg),
-    DefRefOf(Box<SuperName>),
-    DefIndex(DefIndex),
-    MethodInvocation(MethodInvocation)
-}
-
-#[derive(Debug, Clone)]
-pub struct DefIndex {
-    obj: TermArg,
-    idx: TermArg,
-    target: Box<Target>
-}
-
-#[derive(Debug, Clone)]
-pub enum DefBuffer {
-    Buffer {
-        buffer_size: TermArg,
-        byte_list: Vec<u8>
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-#[derive(Debug, Clone)]
-pub enum DefPackage {
-    Package {
-        num_elements: u8,
-        elements: Vec<PackageElement>
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-#[derive(Debug, Clone)]
-pub enum DefVarPackage {
-    Package {
-        num_elements: TermArg,
-        elements: Vec<PackageElement>
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-#[derive(Debug, Clone)]
-pub enum PackageElement {
-    DataRefObj(DataRefObj),
-    NameString(String)
-}
-
-impl AmlExecutable for DefPackage {
-    fn execute(&self, namespace: &mut BTreeMap<String, AmlValue>, scope: String) -> Option<AmlValue> {
-        match *self {
-            DefPackage::Package { ref num_elements, ref elements } => {
-                let mut values: Vec<AmlValue> = vec!();
-
-                for element in elements {
-                    match *element {
-                        PackageElement::DataRefObj(ref d) => {
-                            let elem = match d.execute(namespace, scope.clone()) {
-                                Some(e) => e,
-                                None => continue
-                            };
-
-                            values.push(elem);
-                        },
-                        _ => return None
-                    }
-                }
-
-                Some(AmlValue::Package(values))
-            },
-            _ => None
-        }
-    }
-}
-
-pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+pub fn parse_type2_opcode(data: &[u8],
+                          namespace: &mut BTreeMap<String, AmlValue>,
+                          scope: String) -> ParseResult {
     parser_selector! {
-        data,
+        data, namespace, scope.clone(),
         parse_def_increment,
         parse_def_acquire,
         parse_def_wait,
@@ -364,589 +68,905 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
         parse_def_nor,
         parse_def_not,
         parse_def_timer,
-        parser_wrap!(Type2OpCode::DefBuffer, parse_def_buffer),
-        parser_wrap!(Type2OpCode::DefPackage, parse_def_package),
-        parser_wrap!(Type2OpCode::DefVarPackage, parse_def_var_package),
-        parser_wrap!(Type2OpCode::DefObjectType, parse_def_object_type),
-        parser_wrap!(Type2OpCode::DefDerefOf, parse_def_deref_of),
-        parser_wrap!(Type2OpCode::DefRefOf, parse_def_ref_of),
-        parser_wrap!(Type2OpCode::DefIndex, parse_def_index),
-        parser_wrap!(Type2OpCode::MethodInvocation, parse_method_invocation)
+        parse_def_buffer,
+        parse_def_package,
+        parse_def_var_package,
+        parse_def_object_type,
+        parse_def_deref_of,
+        parse_def_ref_of,
+        parse_def_index,
+        parse_method_invocation
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlInternalError> {
+pub fn parse_type6_opcode(data: &[u8],
+                          namespace: &mut BTreeMap<String, AmlValue>,
+                          scope: String) -> ParseResult {
     parser_selector! {
-        data,
-        parser_wrap!(Type6OpCode::DefDerefOf, parse_def_deref_of),
-        parser_wrap!(Type6OpCode::DefRefOf, parser_wrap!(Box::new, parse_def_ref_of)),
-        parser_wrap!(Type6OpCode::DefIndex, parse_def_index),
-        parser_wrap!(Type6OpCode::MethodInvocation, parse_method_invocation)
+        data, namespace, scope.clone(),
+        parse_def_deref_of,
+        parse_def_ref_of,
+        parse_def_index,
+        parse_method_invocation
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_def_object_type(data: &[u8]) -> Result<(DefObjectType, usize), AmlInternalError> {
+pub fn parse_def_object_type(data: &[u8],
+                             namespace: &mut BTreeMap<String, AmlValue>,
+                             scope: String) -> ParseResult {
     parser_opcode!(data, 0x8E);
     parser_selector! {
-        data,
-        parser_wrap!(DefObjectType::SuperName, parse_super_name),
-        parser_wrap!(DefObjectType::DefRefOf, parse_def_ref_of),
-        parser_wrap!(DefObjectType::DefDerefOf, parse_def_deref_of),
-        parser_wrap!(DefObjectType::DefIndex, parse_def_index)
+        data, namespace, scope.clone(),
+        parse_super_name,
+        parse_def_ref_of,
+        parse_def_deref_of,
+        parse_def_index
     }
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternalError> {
+pub fn parse_def_package(data: &[u8],
+                         namespace: &mut BTreeMap<String, AmlValue>,
+                         scope: String) -> ParseResult {
+    // TODO: Handle deferred loads in here
+    // TODO: Truncate/extend array if necessary
     parser_opcode!(data, 0x12);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let num_elements = data[1 + pkg_length_len];
-
-    let elements = match parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length]) {
-        Ok(e) => e,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((DefPackage::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length)),
-        Err(e) => return Err(e)
-    };
-
-    Ok((DefPackage::Package {num_elements, elements}, 1 + pkg_length))
+    let elements = parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length],
+                                               namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: elements.val,
+        len: 1 + pkg_length
+    })
 }
 
-pub fn parse_def_var_package(data: &[u8]) -> Result<(DefVarPackage, usize), AmlInternalError> {
+pub fn parse_def_var_package(data: &[u8],
+                             namespace: &mut BTreeMap<String, AmlValue>,
+                             scope: String) -> ParseResult {
+    // TODO: Handle deferred loads in here
+    // TODO: Truncate/extend array if necessary
     parser_opcode!(data, 0x13);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let (num_elements, num_elements_len) = parse_term_arg(&data[1 + pkg_length_len ..])?;
-
-    let elements = match parse_package_elements_list(&data[1 + pkg_length_len + num_elements_len ..
-                                                           1 + pkg_length]) {
-        Ok(e) => e,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((DefVarPackage::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
-                       1 + pkg_length)),
-        Err(e) => return Err(e)
-    };
-
-    Ok((DefVarPackage::Package {num_elements, elements}, 1 + pkg_length))
+    let num_elements = parse_term_arg(&data[1 + pkg_length_len .. 1 + pkg_length], namespace, scope.clone())?;
+    let elements = parse_package_elements_list(&data[1 + pkg_length_len + num_elements.len ..
+                                                     1 + pkg_length], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: elements.val,
+        len: 1 + pkg_length
+    })
 }
 
-fn parse_package_elements_list(data: &[u8]) -> Result<Vec<PackageElement>, AmlInternalError> {
+fn parse_package_elements_list(data: &[u8],
+                               namespace: &mut BTreeMap<String, AmlValue>,
+                               scope: String) -> ParseResult {
     let mut current_offset: usize = 0;
-    let mut elements: Vec<PackageElement> = vec!();
+    let mut elements: Vec<AmlValue> = vec!();
 
     while current_offset < data.len() {
-        match parse_data_ref_obj(&data[current_offset ..]) {
-            Ok((data_ref_obj, data_ref_obj_len)) => {
-                elements.push(PackageElement::DataRefObj(data_ref_obj));
-                current_offset += data_ref_obj_len;
-            },
-            Err(AmlInternalError::AmlInvalidOpCode) =>
-                match parse_name_string(&data[current_offset ..]) {
-                    Ok((name_string, name_string_len)) => {
-                        elements.push(PackageElement::NameString(name_string));
-                        current_offset += name_string_len;
-                    },
-                    Err(e) => return Err(e)
-                },
-            Err(e) => return Err(e)
-        }
+        let dro = if let Ok(e) = parse_data_ref_obj(&data[current_offset..], namespace, scope.clone()) {
+            e
+        } else {
+            parse_name_string(&data[current_offset..], namespace, scope.clone())?
+        };
+
+        elements.push(dro.val);
+        current_offset += dro.len;
     }
 
-    Ok(elements)
+    Ok(AmlParseType {
+        val: AmlValue::Package(elements),
+        len: data.len()
+    })
 }
 
-pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalError> {
+pub fn parse_def_buffer(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
+    // TODO: Perform computation
     parser_opcode!(data, 0x11);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let (buffer_size, buffer_size_len) = match parse_term_arg(&data[1 + pkg_length_len..]) {
-        Ok(s) => s,
-        Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefBuffer::DeferredLoad(
-            data[0 .. 1 + pkg_length].to_vec()
-        ), 1 + pkg_length)),
-        Err(e) => return Err(e),
-    };
-    let byte_list = data[1 + pkg_length_len + buffer_size_len .. 1 + pkg_length].to_vec();
+    let buffer_size = parse_term_arg(&data[1 + pkg_length_len..], namespace, scope.clone())?;
+    let byte_list = data[1 + pkg_length_len + buffer_size.len .. 1 + pkg_length].to_vec();
 
-    Ok((DefBuffer::Buffer {buffer_size, byte_list}, pkg_length + 1))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + pkg_length
+    })
 }
 
-fn parse_def_ref_of(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
+fn parse_def_ref_of(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
+    // TODO: Perform computation
     parser_opcode!(data, 0x71);
-    let (obj_reference, obj_reference_len) = parse_super_name(&data[1..])?;
 
-    Ok((obj_reference, obj_reference_len + 1))
+    let obj = parse_super_name(&data[1..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + obj.len
+    })
 }
 
-fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
+fn parse_def_deref_of(data: &[u8],
+                      namespace: &mut BTreeMap<String, AmlValue>,
+                      scope: String) -> ParseResult {
+    // TODO: Perform computation
     parser_opcode!(data, 0x83);
-    let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
 
-    Ok((obj_reference, obj_reference_len + 1))
+    let obj = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + obj.len
+    })
 }
 
-fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_acquire(data: &[u8],
+                     namespace: &mut BTreeMap<String, AmlValue>,
+                     scope: String) -> ParseResult {
+    // TODO: Store the result
+    // TODO: Perform computation
     parser_opcode_extended!(data, 0x23);
 
-    let (object, object_len) = parse_super_name(&data[2..])?;
-    let timeout = (data[2 + object_len] as u16) +
-        ((data[3 + object_len] as u16) << 8);
-
-    Ok((Type2OpCode::DefAcquire {object, timeout}, object_len + 4))
+    let obj = parse_super_name(&data[1..], namespace, scope.clone())?;
+    let timeout = (data[2 + obj.len] as u16) + ((data[3 + obj.len] as u16) << 8);
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 4 + obj.len
+    })
 }
 
-fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_increment(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
+    // TODO: Store the result
+    // TODO: Perform computation
     parser_opcode!(data, 0x75);
 
-    let (obj, obj_len) = parse_super_name(&data[1..])?;
-    Ok((Type2OpCode::DefIncrement(obj), obj_len + 1))
+    let obj = parse_super_name(&data[1..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + obj.len
+    })
 }
 
-fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
+fn parse_def_index(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
+    // TODO: Perform computation
     parser_opcode!(data, 0x88);
 
-    let (obj, obj_len) = parse_term_arg(&data[1..])?;
-    let (idx, idx_len) = parse_term_arg(&data[1 + obj_len..])?;
-    let (target, target_len) = parse_target(&data[1 + obj_len + idx_len..])?;
-
-    Ok((DefIndex {obj, idx, target: Box::new(target)}, 1 + obj_len + idx_len + target_len))
+    let obj = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let idx = parse_term_arg(&data[1 + obj.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + obj.len + idx.len..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + obj.len + idx.len + target.len
+    })
 }
 
-fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_land(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
     parser_opcode!(data, 0x90);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefLAnd {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? > 0 && rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lequal(data: &[u8],
+                    namespace: &mut BTreeMap<String, AmlValue>,
+                    scope: String) -> ParseResult {
     parser_opcode!(data, 0x93);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefLEqual {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? == rhs.val.get_as_integer()? { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lgreater(data: &[u8],
+                      namespace: &mut BTreeMap<String, AmlValue>,
+                      scope: String) -> ParseResult {
     parser_opcode!(data, 0x94);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefLGreater {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? > rhs.val.get_as_integer()? { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lless(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lless(data: &[u8],
+                   namespace: &mut BTreeMap<String, AmlValue>,
+                   scope: String) -> ParseResult {
     parser_opcode!(data, 0x95);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefLLess {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? < rhs.val.get_as_integer()? { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lnot(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lnot(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
     parser_opcode!(data, 0x92);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-
-    Ok((Type2OpCode::DefLNot(operand), 1 + operand_len))
+    let operand = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let result = if operand.val.get_as_integer()? == 0 { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + operand.len
+    })
 }
 
-fn parse_def_lor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lor(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
     parser_opcode!(data, 0x91);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefLOr {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? > 0 || rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_to_hex_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_hex_string(data: &[u8],
+                           namespace: &mut BTreeMap<String, AmlValue>,
+                           scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x98);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefToHexString {operand, target}, 1 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_buffer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_buffer(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x96);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefToBuffer {operand, target}, 1 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_bcd(data: &[u8],
+                    namespace: &mut BTreeMap<String, AmlValue>,
+                    scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode_extended!(data, 0x29);
 
-    let (operand, operand_len) = parse_term_arg(&data[2..])?;
-    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefToBCD {operand, target}, 2 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_decimal_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_decimal_string(data: &[u8],
+                               namespace: &mut BTreeMap<String, AmlValue>,
+                               scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x97);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefToDecimalString {operand, target}, 1 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_integer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_integer(data: &[u8],
+                        namespace: &mut BTreeMap<String, AmlValue>,
+                        scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x99);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefToInteger {operand, target}, 1 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_string(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x9C);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (length, length_len) = parse_term_arg(&data[1 + operand_len..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len + length_len..])?;
+    let operand = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let length = parse_term_arg(&data[1 + operand.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + operand.len + length.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefToString {operand, length, target}, 1 + operand_len + length_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + length.len + target.len
+    })
 }
 
-fn parse_def_subtract(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_subtract(data: &[u8],
+                      namespace: &mut BTreeMap<String, AmlValue>,
+                      scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x74);
 
-    let (minuend, minuend_len) = parse_term_arg(&data[1..])?;
-    let (subtrahend, subtrahend_len) = parse_term_arg(&data[1 + minuend_len..])?;
-    let (target, target_len) = parse_target(&data[1 + minuend_len + subtrahend_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefSubtract {minuend, subtrahend, target}, 1 + minuend_len + subtrahend_len + target_len))
+    let result = lhs.val.get_as_integer()? - rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_size_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_size_of(data: &[u8],
+                     namespace: &mut BTreeMap<String, AmlValue>,
+                     scope: String) -> ParseResult {
+    // TODO: Perform the computation
     parser_opcode!(data, 0x87);
 
-    let (name, name_len) = parse_super_name(&data[1..])?;
-    Ok((Type2OpCode::DefSizeOf(name), name_len + 1))
+    let name = parse_super_name(&data[1..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + name.len
+    })
 }
 
-fn parse_def_store(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_store(data: &[u8],
+                   namespace: &mut BTreeMap<String, AmlValue>,
+                   scope: String) -> ParseResult {
+    // TODO: Perform the store
     parser_opcode!(data, 0x70);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_super_name(&data[1 + operand_len..])?;
-
-    Ok((Type2OpCode::DefStore {operand, target}, operand_len + target_len + 1))
+    let operand = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let target = parse_super_name(&data[1 + operand.len..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_or(data: &[u8],
+                namespace: &mut BTreeMap<String, AmlValue>,
+                scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7D);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
-
-    Ok((Type2OpCode::DefOr {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    
+    let result = lhs.val.get_as_integer()? | rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_shift_left(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_shift_left(data: &[u8],
+                        namespace: &mut BTreeMap<String, AmlValue>,
+                        scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x79);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
-
-    Ok((Type2OpCode::DefShiftLeft {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    
+    let result = lhs.val.get_as_integer()? >> rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_shift_right(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_shift_right(data: &[u8],
+                         namespace: &mut BTreeMap<String, AmlValue>,
+                         scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7A);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
-
-    Ok((Type2OpCode::DefShiftRight {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    
+    let result = lhs.val.get_as_integer()? << rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_add(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x72);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
-
-    Ok((Type2OpCode::DefAdd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    
+    let result = lhs.val.get_as_integer()? + rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_and(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7B);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
-
-    Ok((Type2OpCode::DefAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    
+    let result = lhs.val.get_as_integer()? & rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_xor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_xor(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7F);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
-
-    Ok((Type2OpCode::DefXor {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    
+    let result = lhs.val.get_as_integer()? ^ rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_concat_res(data: &[u8],
+                        namespace: &mut BTreeMap<String, AmlValue>,
+                        scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x84);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
-
-    Ok((Type2OpCode::DefConcatRes {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_wait(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_wait(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
+    // TODO: Compute the result
     parser_opcode_extended!(data, 0x25);
 
-    let (event_object, event_object_len) = parse_super_name(&data[2..])?;
-    let (operand, operand_len) = parse_term_arg(&data[2 + event_object_len..])?;
+    let event_object = parse_super_name(&data[2..], namespace, scope.clone())?;
+    let operand = parse_term_arg(&data[2 + event_object.len..], namespace, scope.clone())?;
 
-
-    Ok((Type2OpCode::DefWait {event_object, operand}, 2 + event_object_len + operand_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 2 + event_object.len + operand.len
+    })
 }
 
-fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_cond_ref_of(data: &[u8],
+                         namespace: &mut BTreeMap<String, AmlValue>,
+                         scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result
     parser_opcode_extended!(data, 0x12);
 
-    let (operand, operand_len) = parse_super_name(&data[2..])?;
-    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
+    let operand = parse_super_name(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefCondRefOf {operand, target}, 2 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 2 + operand.len + target.len
+    })
 }
 
-fn parse_def_copy_object(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_copy_object(data: &[u8],
+                         namespace: &mut BTreeMap<String, AmlValue>,
+                         scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result
     parser_opcode!(data, 0x9D);
 
-    let (source, source_len) = parse_term_arg(&data[1..])?;
-    let (destination, destination_len) = parse_simple_name(&data[1 + source_len..])?;
+    let source = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let destination = parse_simple_name(&data[1 + source.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefCopyObject {source, destination}, 1 + source_len + destination_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + source.len + destination.len
+    })
 }
 
-fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_concat(data: &[u8],
+                    namespace: &mut BTreeMap<String, AmlValue>,
+                    scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result
     parser_opcode!(data, 0x73);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefConcat {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_decrement(data: &[u8],
+                       namespace: &mut BTreeMap<String, AmlValue>,
+                       scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result
     parser_opcode!(data, 0x76);
 
-    let (target, target_len) = parse_super_name(&data[1..])?;
+    let target = parse_super_name(&data[1..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefDecrement(target), 1 + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + target.len
+    })
 }
 
-fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_divide(data: &[u8],
+                    namespace: &mut BTreeMap<String, AmlValue>,
+                    scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x78);
 
-    let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
-    let (divisor, divisor_len) = parse_term_arg(&data[1 + dividend_len..])?;
-    let (remainder, remainder_len) = parse_target(&data[1 + dividend_len + divisor_len..])?;
-    let (quotient, quotient_len) = parse_target(&data[1 + dividend_len + divisor_len + remainder_len..])?;
-
-    Ok((Type2OpCode::DefDivide {dividend, divisor, remainder, quotient},
-        1 + dividend_len + divisor_len + remainder_len + quotient_len))
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target_remainder = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
+    let target_quotient = parse_target(&data[1 + lhs.len + rhs.len + target_remainder.len..], namespace, scope.clone())?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + lhs.len + rhs.len + target_remainder.len + target_quotient.len
+    })
 }
 
-fn parse_def_find_set_left_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_find_set_left_bit(data: &[u8],
+                               namespace: &mut BTreeMap<String, AmlValue>,
+                               scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x81);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefFindSetLeftBit {operand, target}, 1 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_find_set_right_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x82 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_find_set_right_bit(data: &[u8],
+                                namespace: &mut BTreeMap<String, AmlValue>,
+                                scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
+    parser_opcode!(data, 0x82);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefFindSetRightBit {operand, target}, 1 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_load_table(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x1F {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_load_table(data: &[u8],
+                        namespace: &mut BTreeMap<String, AmlValue>,
+                        scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
+    // TODO: Clean up
+    parser_opcode_extended!(data, 0x1F);
 
-    let (signature, signature_len) = parse_term_arg(&data[2..])?;
-    let (oem_id, oem_id_len) = parse_term_arg(&data[2 + signature_len..])?;
-    let (oem_table_id, oem_table_id_len) = parse_term_arg(&data[2 + signature_len + oem_id_len..])?;
-    let (root_path, root_path_len) =
-        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len..])?;
-    let (parameter_path, parameter_path_len) =
-        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len + root_path_len..])?;
-    let (parameter_data, parameter_data_len) =
-        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
-                             parameter_path_len..])?;
+    let signature = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let oem_id = parse_term_arg(&data[2 + signature.len..], namespace, scope.clone())?;
+    let oem_table_id = parse_term_arg(&data[2 + signature.len + oem_id.len..], namespace, scope.clone())?;
+    let root_path = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len..], namespace, scope.clone())?;
+    let parameter_path = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len..], namespace, scope.clone())?;
+    let parameter_data = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefLoadTable {signature, oem_id, oem_table_id, root_path,
-                                   parameter_path, parameter_data},
-        2 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
-        parameter_path_len + parameter_data_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len + parameter_data.len
+    })
 }
 
-fn parse_def_match(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x89 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
-
-    let (search_pkg, search_pkg_len) = parse_term_arg(&data[1..])?;
-    let first_operation = match data[1 + search_pkg_len] {
+fn parse_def_match(data: &[u8],
+                   namespace: &mut BTreeMap<String, AmlValue>,
+                   scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
+    // TODO: Clean up match blocks
+    parser_opcode!(data, 0x28);
+    
+    let search_pkg = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    
+    let first_operation = match data[1 + search_pkg.len] {
         0 => MatchOpcode::MTR,
         1 => MatchOpcode::MEQ,
         2 => MatchOpcode::MLE,
         3 => MatchOpcode::MLT,
         4 => MatchOpcode::MGE,
         5 => MatchOpcode::MGT,
-        _ => return Err(AmlInternalError::AmlParseError("DefMatch - Invalid Opcode"))
+        _ => return Err(AmlError::AmlParseError("DefMatch - Invalid Opcode"))
     };
-    let (first_operand, first_operand_len) = parse_term_arg(&data[2 + search_pkg_len..])?;
+    let first_operand = parse_term_arg(&data[2 + search_pkg.len..], namespace, scope.clone())?;
 
-    let second_operation = match data[2 + search_pkg_len + first_operand_len] {
+    let second_operation = match data[2 + search_pkg.len + first_operand.len] {
         0 => MatchOpcode::MTR,
         1 => MatchOpcode::MEQ,
         2 => MatchOpcode::MLE,
         3 => MatchOpcode::MLT,
         4 => MatchOpcode::MGE,
         5 => MatchOpcode::MGT,
-        _ => return Err(AmlInternalError::AmlParseError("DefMatch - Invalid Opcode"))
+        _ => return Err(AmlError::AmlParseError("DefMatch - Invalid Opcode"))
     };
-    let (second_operand, second_operand_len) =
-        parse_term_arg(&data[3 + search_pkg_len + first_operand_len..])?;
+    let second_operand = parse_term_arg(&data[3 + search_pkg.len + first_operand.len..], namespace, scope.clone())?;
+    
+    let start_index = parse_term_arg(&data[3 + search_pkg.len + first_operand.len + second_operand.len..], namespace, scope.clone())?;
 
-    let (start_index, start_index_len) =
-        parse_term_arg(&data[3 + search_pkg_len + first_operand_len + second_operand_len..])?;
-
-    Ok((Type2OpCode::DefMatch {search_pkg, first_operation, first_operand,
-                               second_operation, second_operand, start_index},
-        3 + search_pkg_len + first_operand_len + second_operand_len + start_index_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+    })
 }
 
-fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x28 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_from_bcd(data: &[u8],
+                      namespace: &mut BTreeMap<String, AmlValue>,
+                      scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
+    // TODO: Clean up match block
+    parser_opcode_extended!(data, 0x28);
 
-    let (operand, operand_len) = parse_term_arg(&data[2..])?;
-    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], namespace, scope.clone())?;
+    let target = parse_target(&data[2 + operand.len..], namespace, scope.clone())?;
+    
+    let result = match target.val.get_as_integer() {
+        Ok(i) => {
+            let mut i = i;
+            let mut ires = 0;
 
-    Ok((Type2OpCode::DefFromBCD {operand, target}, 2 + operand_len + target_len))
+            while i != 0 {
+                if i & 0x0F > 10 {
+                    return Err(AmlError::AmlValueError);
+                }
+
+                ires *= 10;
+                ires += i & 0x0F;
+                i >>= 4;
+            }
+
+            ires
+        },
+        Err(e) => return Err(e)
+    };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 2 + operand.len + target.len
+    })
 }
 
-fn parse_def_mid(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x9E {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_mid(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
+    // TODO: Compute the result
+    // TODO: Store the result, if appropriate
+    parser_opcode!(data, 0x9E);
 
-    let (source, source_len) = parse_term_arg(&data[1..])?;
-    let (index, index_len) = parse_term_arg(&data[1 + source_len..])?;
-    let (length, length_len) = parse_term_arg(&data[1 + source_len + index_len..])?;
-    let (target, target_len) = parse_target(&data[1 + source_len + index_len + length_len..])?;
+    let source = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let index = parse_term_arg(&data[1 + source.len..], namespace, scope.clone())?;
+    let length = parse_term_arg(&data[1 + source.len + index.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + source.len + index.len + length.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefMid {source, index, length, target},
-        1 + source_len + index_len + length_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::Uninitialized,
+        len: 1 + source.len + index.len + length.len + target.len
+    })
 }
 
-fn parse_def_mod(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x85 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_mod(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
+    // TODO: Fatal exception on rhs == 0
+    parser_opcode!(data, 0x85);
 
-    let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
-    let (divisor, divisor_len) = parse_term_arg(&data[1 + dividend_len..])?;
-    let (target, target_len) = parse_target(&data[1 + dividend_len + divisor_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefMod {dividend, divisor, target}, 1 + dividend_len + divisor_len + target_len))
+    let result = lhs.val.get_as_integer()? % rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_multiply(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x77 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_multiply(data: &[u8],
+                      namespace: &mut BTreeMap<String, AmlValue>,
+                      scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
+    // TODO: Handle overflow
+    parser_opcode!(data, 0x77);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefMultiply {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let result = lhs.val.get_as_integer()? * rhs.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_nand(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7C {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_nand(data: &[u8],
+                  namespace: &mut BTreeMap<String, AmlValue>,
+                  scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
+    parser_opcode!(data, 0x7C);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefNAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let result = !(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?);
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_nor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7E {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_nor(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
+    parser_opcode!(data, 0x7E);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefNOr {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let result = !(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?);
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_not(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x80 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
-    }
+fn parse_def_not(data: &[u8],
+                 namespace: &mut BTreeMap<String, AmlValue>,
+                 scope: String) -> ParseResult {
+    // TODO: Store the result, if appropriate
+    parser_opcode!(data, 0x80);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[1..], namespace, scope.clone())?;
+    let target = parse_target(&data[1 + operand.len..], namespace, scope.clone())?;
 
-    Ok((Type2OpCode::DefNot {operand, target}, 1 + operand_len + target_len))
+    let result = !operand.val.get_as_integer()?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_timer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x33 {
-        return Err(AmlInternalError::AmlInvalidOpCode)
-    }
-
-    Ok((Type2OpCode::DefTimer, 2 as usize))
+fn parse_def_timer(data: &[u8],
+                   namespace: &mut BTreeMap<String, AmlValue>,
+                   scope: String) -> ParseResult {
+    // TODO: Read from the hardware timer, and split into 100ns intervals
+    parser_opcode_extended!(data, 0x33);
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(0),
+        len: 2 as usize
+    })
 }
