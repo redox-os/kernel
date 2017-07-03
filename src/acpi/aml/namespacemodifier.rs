@@ -4,7 +4,7 @@ use collections::vec::Vec;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric};
+use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext};
 use super::namespace::{AmlValue, ObjectReference, FieldSelector, get_namespace_string};
 use super::pkglength::parse_pkg_length;
 use super::namestring::parse_name_string;
@@ -12,10 +12,9 @@ use super::termlist::parse_term_list;
 use super::dataobj::parse_data_ref_obj;
 
 pub fn parse_namespace_modifier(data: &[u8],
-                                namespace: &mut BTreeMap<String, AmlValue>,
-                                scope: String) -> ParseResult {
+                                ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_selector! {
-        data, namespace, scope.clone(),
+        data, ctx,
         parse_alias_op,
         parse_scope_op,
         parse_name_op
@@ -25,17 +24,16 @@ pub fn parse_namespace_modifier(data: &[u8],
 }
 
 fn parse_alias_op(data: &[u8],
-                  namespace: &mut BTreeMap<String, AmlValue>,
-                  scope: String) -> ParseResult {
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_opcode!(data, 0x06);
 
-    let source_name = parse_name_string(&data[1..], namespace, scope.clone())?;
-    let alias_name = parse_name_string(&data[1 + source_name.len..], namespace, scope.clone())?;
+    let source_name = parse_name_string(&data[1..], ctx)?;
+    let alias_name = parse_name_string(&data[1 + source_name.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(scope.clone(), source_name.val);
-    let local_alias_string = get_namespace_string(scope.clone(), alias_name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), source_name.val);
+    let local_alias_string = get_namespace_string(ctx.scope.clone(), alias_name.val);
 
-    namespace.insert(local_scope_string, AmlValue::ObjectReference(
+    ctx.namespace.insert(local_scope_string, AmlValue::ObjectReference(
         ObjectReference::NamedObj(local_alias_string)));
 
     Ok(AmlParseType {
@@ -45,16 +43,15 @@ fn parse_alias_op(data: &[u8],
 }
 
 fn parse_name_op(data: &[u8],
-                 namespace: &mut BTreeMap<String, AmlValue>,
-                 scope: String) -> ParseResult {
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_opcode!(data, 0x08);
     
-    let name = parse_name_string(&data[1..], namespace, scope.clone())?;
-    let data_ref_obj = parse_data_ref_obj(&data[1 + name.len..], namespace, scope.clone())?;
+    let name = parse_name_string(&data[1..], ctx)?;
+    let data_ref_obj = parse_data_ref_obj(&data[1 + name.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
 
-    namespace.insert(local_scope_string, data_ref_obj.val);
+    ctx.namespace.insert(local_scope_string, data_ref_obj.val);
     
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -63,15 +60,18 @@ fn parse_name_op(data: &[u8],
 }
 
 fn parse_scope_op(data: &[u8],
-                  namespace: &mut BTreeMap<String, AmlValue>,
-                  scope: String) -> ParseResult {
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_opcode!(data, 0x10);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let name = parse_name_string(&data[1 + pkg_length_len..], namespace, scope.clone())?;
+    let name = parse_name_string(&data[1 + pkg_length_len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(scope, name.val);
-    parse_term_list(&data[1 + pkg_length_len + name.len..], namespace, local_scope_string)?;
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let containing_scope_string = ctx.scope.clone();
+    
+    ctx.scope = local_scope_string;
+    parse_term_list(&data[1 + pkg_length_len + name.len..], ctx)?;
+    ctx.scope = containing_scope_string;
     
     Ok(AmlParseType {
         val: AmlValue::None,

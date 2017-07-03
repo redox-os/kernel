@@ -4,7 +4,7 @@ use collections::vec::Vec;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric};
+use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext };
 use super::namespace::{AmlValue, ObjectReference, FieldSelector, get_namespace_string};
 use super::namespacemodifier::parse_namespace_modifier;
 use super::namedobj::parse_named_obj;
@@ -14,12 +14,11 @@ use super::type2opcode::parse_type2_opcode;
 use super::namestring::parse_name_string;
 
 pub fn parse_term_list(data: &[u8],
-                       namespace: &mut BTreeMap<String, AmlValue>,
-                       scope: String) -> ParseResult {
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        let res = parse_term_obj(&data[current_offset..], namespace, scope.clone())?;
+        let res = parse_term_obj(&data[current_offset..], ctx)?;
         current_offset += res.len;
     }
 
@@ -30,10 +29,9 @@ pub fn parse_term_list(data: &[u8],
 }
 
 pub fn parse_term_arg(data: &[u8],
-                      namespace: &mut BTreeMap<String, AmlValue>,
-                      scope: String) -> ParseResult {
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_selector! {
-        data, namespace, scope.clone(),
+        data, ctx,
         parse_local_obj,
         parse_data_obj,
         parse_arg_obj,
@@ -44,12 +42,11 @@ pub fn parse_term_arg(data: &[u8],
 }
 
 pub fn parse_object_list(data: &[u8],
-                         namespace: &mut BTreeMap<String, AmlValue>,
-                         scope: String) -> ParseResult {
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        let res = parse_object(&data[current_offset..], namespace, scope.clone())?;
+        let res = parse_object(&data[current_offset..], ctx)?;
         current_offset += res.len;
     }
 
@@ -60,10 +57,9 @@ pub fn parse_object_list(data: &[u8],
 }
 
 fn parse_object(data: &[u8],
-                namespace: &mut BTreeMap<String, AmlValue>,
-                scope: String) -> ParseResult {
+                ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_selector! {
-        data, namespace, scope.clone(),
+        data, ctx,
         parse_namespace_modifier,
         parse_named_obj
     };
@@ -72,17 +68,18 @@ fn parse_object(data: &[u8],
 }
 
 pub fn parse_method_invocation(data: &[u8],
-                               namespace: &mut BTreeMap<String, AmlValue>,
-                               scope: String) -> ParseResult {
-    let name = parse_name_string(data, namespace, scope)?;
+                               ctx: &mut AmlExecutionContext) -> ParseResult {
+    // TODO: Check if method exists in namespace
+    // TODO: If so, parse appropriate number of parameters
+    // TODO: If not, add deferred load to ctx
+    let name = parse_name_string(data, ctx)?;
     Err(AmlError::AmlDeferredLoad)
 }
 
 fn parse_term_obj(data: &[u8],
-                  namespace: &mut BTreeMap<String, AmlValue>,
-                  scope: String) -> ParseResult {
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_selector! {
-        data, namespace, scope.clone(),
+        data, ctx,
         parse_namespace_modifier,
         parse_named_obj,
         parse_type1_opcode,

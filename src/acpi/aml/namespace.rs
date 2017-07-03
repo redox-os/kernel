@@ -6,6 +6,7 @@ use collections::btree_map::BTreeMap;
 use core::str::FromStr;
 
 use super::namedobj::{ RegionSpace, FieldFlags, Method };
+use super::parser::AmlExecutionContext;
 use super::AmlError;
 
 #[derive(Debug, Clone)]

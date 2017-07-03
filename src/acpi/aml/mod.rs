@@ -24,7 +24,7 @@ mod type1opcode;
 mod type2opcode;
 mod parser;
 
-use self::parser::ParseResult;
+use self::parser::{ ParseResult, AmlExecutionContext };
 use self::termlist::parse_term_list;
 pub use self::namespace::AmlValue;
 
@@ -39,13 +39,14 @@ pub enum AmlError {
 
 pub fn parse_aml_table(sdt: &'static Sdt) -> Result<BTreeMap<String, AmlValue>, AmlError> {
     let data = sdt.data();
+    let mut ctx = AmlExecutionContext {
+        namespace: &mut BTreeMap::new(),
+        scope: String::from_str("\\").unwrap()
+    };
+    
+    let term_list = parse_term_list(data, &mut ctx)?;
 
-    let global_namespace_specifier = String::from_str("\\").unwrap();
-    let mut global_namespace = BTreeMap::new();
-
-    let term_list = parse_term_list(data, &mut global_namespace, global_namespace_specifier.clone())?;
-
-    Ok(global_namespace)
+    Ok(ctx.namespace.clone())
 }
 
 pub fn is_aml_table(sdt: &'static Sdt) -> bool {
