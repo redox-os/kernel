@@ -39,10 +39,7 @@ pub enum AmlError {
 
 pub fn parse_aml_table(sdt: &'static Sdt) -> Result<BTreeMap<String, AmlValue>, AmlError> {
     let data = sdt.data();
-    let mut ctx = AmlExecutionContext {
-        namespace: &mut BTreeMap::new(),
-        scope: String::from_str("\\").unwrap()
-    };
+    let mut ctx = AmlExecutionContext::new(String::from_str("\\").unwrap());
     
     let term_list = parse_term_list(data, &mut ctx)?;
 

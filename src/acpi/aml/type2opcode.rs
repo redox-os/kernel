@@ -429,17 +429,18 @@ fn parse_def_to_string(data: &[u8],
 
 fn parse_def_subtract(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x74);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = lhs.val.get_as_integer()? - rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? - rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
@@ -459,11 +460,13 @@ fn parse_def_size_of(data: &[u8],
 
 fn parse_def_store(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Perform the store
+    // TODO: Return the DRO
     parser_opcode!(data, 0x70);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
     let target = parse_super_name(&data[1 + operand.len..], ctx)?;
+
+    ctx.modify(target.val, operand.val);
     
     Ok(AmlParseType {
         val: AmlValue::Uninitialized,
@@ -473,102 +476,108 @@ fn parse_def_store(data: &[u8],
 
 fn parse_def_or(data: &[u8],
                 ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7D);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
     
-    let result = lhs.val.get_as_integer()? | rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_shift_left(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x79);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
     
-    let result = lhs.val.get_as_integer()? >> rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? >> rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_shift_right(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7A);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
-    
-    let result = lhs.val.get_as_integer()? << rhs.val.get_as_integer()?;
-    
+
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? << rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
+                                                              
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_add(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x72);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
     
-    let result = lhs.val.get_as_integer()? + rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? + rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_and(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7B);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
     
-    let result = lhs.val.get_as_integer()? & rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_xor(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7F);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
     
-    let result = lhs.val.get_as_integer()? ^ rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? ^ rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
@@ -771,14 +780,13 @@ fn parse_def_match(data: &[u8],
 
 fn parse_def_from_bcd(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     // TODO: Clean up match block
     parser_opcode_extended!(data, 0x28);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
     
-    let result = match target.val.get_as_integer() {
+    let result = AmlValue::Integer(match target.val.get_as_integer() {
         Ok(i) => {
             let mut i = i;
             let mut ires = 0;
@@ -796,10 +804,12 @@ fn parse_def_from_bcd(data: &[u8],
             ires
         },
         Err(e) => return Err(e)
-    };
+    });
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 2 + operand.len + target.len
     })
 }
@@ -823,7 +833,6 @@ fn parse_def_mid(data: &[u8],
 
 fn parse_def_mod(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     // TODO: Fatal exception on rhs == 0
     parser_opcode!(data, 0x85);
 
@@ -831,17 +840,18 @@ fn parse_def_mod(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = lhs.val.get_as_integer()? % rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? % rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_multiply(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     // TODO: Handle overflow
     parser_opcode!(data, 0x77);
 
@@ -849,60 +859,65 @@ fn parse_def_multiply(data: &[u8],
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = lhs.val.get_as_integer()? * rhs.val.get_as_integer()?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? * rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_nand(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7C);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = !(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(!(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?));
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_nor(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x7E);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    let result = !(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?);
+    let result = AmlValue::Integer(!(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?));
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }
 
 fn parse_def_not(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x80);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
     let target = parse_target(&data[1 + operand.len..], ctx)?;
 
-    let result = !operand.val.get_as_integer()?;
+    let result = AmlValue::Integer(!operand.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(result),
+        val: result,
         len: 1 + operand.len + target.len
     })
 }
