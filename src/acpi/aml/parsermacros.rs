@@ -1,15 +1,15 @@
 #[macro_export]
 macro_rules! parser_selector {
-    {$data:expr, $namespace:expr, $scope:expr, $func:expr} => {
-        match $func($data, $namespace, $scope) {
+    {$data:expr, $ctx:expr, $func:expr} => {
+        match $func($data, $ctx) {
             Ok(res) => return Ok(res),
             Err(AmlError::AmlInvalidOpCode) => (),
             Err(e) => return Err(e)
         }
     };
-    {$data:expr, $namespace:expr, $scope:expr, $func:expr, $($funcs:expr),+} => {
-        parser_selector! {$data, $namespace, $scope, $func};
-        parser_selector! {$data, $namespace, $scope, $($funcs),*};
+    {$data:expr, $ctx:expr, $func:expr, $($funcs:expr),+} => {
+        parser_selector! {$data, $ctx, $func};
+        parser_selector! {$data, $ctx, $($funcs),*};
     };
 }
 

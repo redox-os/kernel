@@ -3,18 +3,17 @@ use collections::string::String;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult};
-use super::namespace::{AmlValue, ObjectReference};
+use super::parser::{ AmlParseType, ParseResult, AmlExecutionContext };
+use super::namespace::{ AmlValue, ObjectReference };
 
 use super::type2opcode::{parse_def_buffer, parse_def_package, parse_def_var_package};
 use super::termlist::parse_term_arg;
 use super::namestring::parse_super_name;
 
 pub fn parse_data_obj(data: &[u8],
-                      namespace: &mut BTreeMap<String, AmlValue>,
-                      scope: String) -> ParseResult {
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_selector! {
-        data, namespace, scope.clone(),
+        data, ctx,
         parse_computational_data,
         parse_def_package,
         parse_def_var_package
@@ -24,15 +23,14 @@ pub fn parse_data_obj(data: &[u8],
 }
 
 pub fn parse_data_ref_obj(data: &[u8],
-                          namespace: &mut BTreeMap<String, AmlValue>,
-                          scope: String) -> ParseResult {
+                          ctx: &mut AmlExecutionContext) -> ParseResult {
     parser_selector! {
-        data, namespace, scope.clone(),
+        data, ctx,
         parse_data_obj,
         parse_term_arg
     };
     
-    match parse_super_name(data, namespace, scope.clone()) {
+    match parse_super_name(data, ctx) {
         Ok(res) => match res.val {
             AmlValue::String(s) => Ok(AmlParseType {
                 val: AmlValue::ObjectReference(ObjectReference::NamedObj(s)),
@@ -45,8 +43,7 @@ pub fn parse_data_ref_obj(data: &[u8],
 }
 
 pub fn parse_arg_obj(data: &[u8],
-                     namespace: &mut BTreeMap<String, AmlValue>,
-                     scope: String) -> ParseResult {
+                     ctx: &mut AmlExecutionContext) -> ParseResult {
     match data[0] {
         0x68 ... 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::ArgObj(data[0] - 0x68)),
@@ -57,8 +54,7 @@ pub fn parse_arg_obj(data: &[u8],
 }
 
 pub fn parse_local_obj(data: &[u8],
-                       namespace: &mut BTreeMap<String, AmlValue>,
-                       scope: String) -> ParseResult {
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
     match data[0] {
         0x68 ... 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::LocalObj(data[0] - 0x60)),
@@ -69,8 +65,7 @@ pub fn parse_local_obj(data: &[u8],
 }
 
 fn parse_computational_data(data: &[u8],
-                            namespace: &mut BTreeMap<String, AmlValue>,
-                            scope: String) -> ParseResult {
+                            ctx: &mut AmlExecutionContext) -> ParseResult {
     match data[0] {
         0x0A => Ok(AmlParseType {
             val: AmlValue::Integer(data[1] as u64),
@@ -148,6 +143,6 @@ fn parse_computational_data(data: &[u8],
             val: AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF),
             len: 9 as usize
         }),
-        _ => parse_def_buffer(data, namespace, scope.clone())
+        _ => parse_def_buffer(data, ctx)
     }
 }
