@@ -41,7 +41,7 @@ pub fn parse_aml_table(sdt: &'static Sdt) -> Result<BTreeMap<String, AmlValue>, 
     let data = sdt.data();
     let mut ctx = AmlExecutionContext::new(String::from_str("\\").unwrap());
     
-    let term_list = parse_term_list(data, &mut ctx)?;
+    parse_term_list(data, &mut ctx)?;
 
     Ok(ctx.namespace.clone())
 }

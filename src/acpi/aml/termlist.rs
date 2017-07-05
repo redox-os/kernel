@@ -73,6 +73,7 @@ pub fn parse_method_invocation(data: &[u8],
     // TODO: If so, parse appropriate number of parameters
     // TODO: If not, add deferred load to ctx
     let name = parse_name_string(data, ctx)?;
+    
     Err(AmlError::AmlDeferredLoad)
 }
 

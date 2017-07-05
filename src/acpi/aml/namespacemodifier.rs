@@ -66,13 +66,13 @@ fn parse_scope_op(data: &[u8],
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let name = parse_name_string(&data[1 + pkg_length_len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val.clone());
     let containing_scope_string = ctx.scope.clone();
     
     ctx.scope = local_scope_string;
-    parse_term_list(&data[1 + pkg_length_len + name.len..], ctx)?;
+    parse_term_list(&data[1 + pkg_length_len + name.len .. 1 + pkg_length], ctx)?;
     ctx.scope = containing_scope_string;
-    
+
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 1 + pkg_length

@@ -149,7 +149,11 @@ fn parse_package_elements_list(data: &[u8],
         let dro = if let Ok(e) = parse_data_ref_obj(&data[current_offset..], ctx) {
             e
         } else {
-            parse_name_string(&data[current_offset..], ctx)?
+            let d = parse_name_string(&data[current_offset..], ctx)?;
+            AmlParseType {
+                val: AmlValue::ObjectReference(ObjectReference::NamedObj(d.val.get_as_string()?)),
+                len: d.len
+            }
         };
 
         elements.push(dro.val);

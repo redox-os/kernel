@@ -4,7 +4,10 @@ macro_rules! parser_selector {
         match $func($data, $ctx) {
             Ok(res) => return Ok(res),
             Err(AmlError::AmlInvalidOpCode) => (),
-            Err(e) => return Err(e)
+            Err(e) => {
+//                println!("This doesn't work for some reason");
+                return Err(e);
+            }
         }
     };
     {$data:expr, $ctx:expr, $func:expr, $($funcs:expr),+} => {
@@ -13,6 +16,7 @@ macro_rules! parser_selector {
     };
 }
 
+#[macro_export]
 macro_rules! parser_selector_simple {
     {$data:expr, $func:expr} => {
         match $func($data) {
@@ -24,21 +28,6 @@ macro_rules! parser_selector_simple {
     {$data:expr, $func:expr, $($funcs:expr),+} => {
         parser_selector_simple! {$data, $func};
         parser_selector_simple! {$data, $($funcs),*};
-    };
-}
-
-#[macro_export]
-macro_rules! parser_wrap {
-    ($wrap:expr, $func:expr) => {
-        |data, namespace, scope| { 
-            match $func(data) {
-                Ok(res) => Ok(AmlParseTypeGeneric {
-                    val: $wrap(res.val),
-                    len: res.len
-                }),
-                Err(e) => Err(e)
-            }
-        }
     };
 }
 
@@ -64,14 +53,3 @@ macro_rules! parser_opcode_extended {
         }
     };
 }
-
-#[macro_export]
-macro_rules! parser_verify_value {
-    ($val:expr) => {
-        match $val.val {
-            Some(s) => s,
-            None => return Err(AmlError::AmlValueError)
-        }
-    };
-}
-

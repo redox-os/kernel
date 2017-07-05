@@ -14,6 +14,7 @@ pub unsafe extern fn kstop() -> ! {
             if let Some(ref namespace) = acpi.namespace {
                 if let Some(s) = namespace.get("\\_S5") {
                     if let Ok(p) = s.get_as_package() {
+                        println!("{:?}", p);
                         let slp_typa = p[0].get_as_integer().expect("SLP_TYPa is not an integer");
                         let slp_typb = p[1].get_as_integer().expect("SLP_TYPb is not an integer");
 
