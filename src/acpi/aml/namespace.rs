@@ -129,6 +129,10 @@ pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> String {
     }
 
     let mut namespace = current.clone();
-    namespace.push('.');
+
+    if !namespace.ends_with("\\") {
+        namespace.push('.');
+    }
+    
     namespace + &modifier
 }

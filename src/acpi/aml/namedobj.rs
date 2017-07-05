@@ -474,10 +474,13 @@ fn parse_field_list(data: &[u8],
                     selector: FieldSelector,
                     flags: &mut FieldFlags) -> ParseResult {
     let mut current_offset: usize = 0;
+    let mut field_offset: usize = 0;
     let mut connection = AmlValue::Uninitialized;
 
     while current_offset < data.len() {
-        parse_field_element(&data[current_offset..], ctx, selector.clone(), &mut connection, flags, &mut current_offset)?;
+        let res = parse_field_element(&data[current_offset..], ctx, selector.clone(), &mut connection, flags, &mut field_offset)?;
+
+        current_offset += res.len;
     }
 
     Ok(AmlParseType {
@@ -503,6 +506,7 @@ fn parse_field_element(data: &[u8],
             length: field.val.length
         });
 
+        *offset += field.val.length;
         field.len
     } else if let Ok(field) = parse_reserved_field(data, ctx) {
         *offset += field.val;

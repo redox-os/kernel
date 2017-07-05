@@ -125,11 +125,11 @@ fn parse_computational_data(data: &[u8],
         },
         0x00 => Ok(AmlParseType {
             val: AmlValue::IntegerConstant(0 as u64),
-            len: 9 as usize
+            len: 1 as usize
         }),
         0x01 => Ok(AmlParseType {
             val: AmlValue::IntegerConstant(1 as u64),
-            len: 9 as usize
+            len: 1 as usize
         }),
         0x5B => if data[1] == 0x30 {
             Ok(AmlParseType {
@@ -141,7 +141,7 @@ fn parse_computational_data(data: &[u8],
         },
         0xFF => Ok(AmlParseType {
             val: AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF),
-            len: 9 as usize
+            len: 1 as usize
         }),
         _ => parse_def_buffer(data, ctx)
     }
