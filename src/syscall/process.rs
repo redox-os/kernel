@@ -742,7 +742,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     (vfork, context.ppid, files)
                 };
 
-                // Duplicate current files using b"exec", close previous
+                // Duplicate current files, close previous
                 for (fd, mut file_option) in files.lock().iter_mut().enumerate() {
                     let new_file_option = if let Some(ref file) = *file_option {
                         // Duplicate
@@ -755,7 +755,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                                     schemes.get(file.scheme).map(|scheme| scheme.clone())
                                 };
                                 if let Some(scheme) = scheme_option {
-                                    scheme.dup(file.number, b"exec")
+                                    scheme.dup(file.number, b"")
                                 } else {
                                     Err(Error::new(EBADF))
                                 }
