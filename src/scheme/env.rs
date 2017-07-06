@@ -214,7 +214,7 @@ impl Scheme for EnvScheme {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 
-    fn unlink(&self, path: &[u8], uid: u32, _gid: u32) -> Result<usize> {
+    fn unlink(&self, path: &[u8], _uid: u32, _gid: u32) -> Result<usize> {
         let env_lock = {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;

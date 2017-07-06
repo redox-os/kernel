@@ -109,7 +109,6 @@ pub unsafe fn switch() -> bool {
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
     if let Some(sig) = to_sig {
-        println!("Handle {}", sig);
         (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
     }
 
@@ -118,7 +117,20 @@ pub unsafe fn switch() -> bool {
     true
 }
 
-extern "C" fn signal_handler(signal: usize) {
-    println!("Signal handler: {}", signal);
-    syscall::exit(signal);
+extern "C" fn signal_handler(sig: usize) {
+    let handler = {
+        let contexts = contexts();
+        let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+        let context = context_lock.read();
+        let handlers = context.handlers.lock();
+        handlers.get(&(sig as u8)).map_or(0, |sig| *sig)
+    };
+
+    println!("Signal handler: {}, {:X}", sig, handler);
+
+    if handler == 0 {
+        syscall::exit(sig);
+    } else {
+        // TODO: Call handler
+    }
 }

@@ -82,7 +82,9 @@ pub struct Context {
     /// The process environment
     pub env: Arc<Mutex<BTreeMap<Box<[u8]>, Arc<Mutex<Vec<u8>>>>>>,
     /// The open files in the scheme
-    pub files: Arc<Mutex<Vec<Option<File>>>>
+    pub files: Arc<Mutex<Vec<Option<File>>>>,
+    /// Singal handlers
+    pub handlers: Arc<Mutex<BTreeMap<u8, usize>>>,
 }
 
 impl Context {
@@ -115,7 +117,8 @@ impl Context {
             cwd: Arc::new(Mutex::new(Vec::new())),
             events: Arc::new(WaitQueue::new()),
             env: Arc::new(Mutex::new(BTreeMap::new())),
-            files: Arc::new(Mutex::new(Vec::new()))
+            files: Arc::new(Mutex::new(Vec::new())),
+            handlers: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 

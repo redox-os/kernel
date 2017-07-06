@@ -18,7 +18,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::Stat;
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, O_CLOEXEC, WNOHANG};
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, O_CLOEXEC, SIG_DFL, WNOHANG};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
@@ -83,6 +83,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         let cwd;
         let env;
         let files;
+        let handlers;
 
         // Copy from old process
         {
@@ -246,6 +247,12 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 files = context.files.clone();
             } else {
                 files = Arc::new(Mutex::new(context.files.lock().clone()));
+            }
+
+            if flags & CLONE_SIGHAND == CLONE_SIGHAND {
+                handlers = context.handlers.clone();
+            } else {
+                handlers = Arc::new(Mutex::new(context.handlers.lock().clone()));
             }
         }
 
@@ -445,6 +452,8 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             context.env = env;
 
             context.files = files;
+
+            context.handlers = handlers;
         }
     }
 
@@ -726,6 +735,8 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     let files = Arc::new(Mutex::new(context.files.lock().clone()));
                     context.files = files.clone();
 
+                    context.handlers = Arc::new(Mutex::new(BTreeMap::new()));
+
                     let vfork = context.vfork;
                     context.vfork = false;
                     (vfork, context.ppid, files)
@@ -953,6 +964,23 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         } else {
             Err(Error::new(EPERM))
         }
+    } else {
+        Err(Error::new(EINVAL))
+    }
+}
+
+pub fn signal(sig: usize, handler: usize) -> Result<usize> {
+    if sig > 0 && sig <= 0x7F {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        let mut handlers = context.handlers.lock();
+        let previous = if handler == SIG_DFL {
+            handlers.remove(&(sig as u8))
+        } else {
+            handlers.insert(sig as u8, handler)
+        };
+        Ok(previous.unwrap_or(0))
     } else {
         Err(Error::new(EINVAL))
     }

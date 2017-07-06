@@ -80,6 +80,7 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
                 SYS_WAITPID => waitpid(ContextId::from(b), c, d).map(ContextId::into),
+                SYS_SIGNAL => signal(b, c),
                 SYS_CHDIR => chdir(validate_slice(b as *const u8, c)?),
                 SYS_EXECVE => exec(validate_slice(b as *const u8, c)?, validate_slice(d as *const [usize; 2], e)?),
                 SYS_IOPL => iopl(b, stack),
