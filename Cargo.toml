@@ -13,7 +13,7 @@ alloc_kernel = { path = "alloc_kernel" }
 bitflags = "0.7"
 spin = "0.4"
 raw-cpuid = { git = "https://github.com/gz/rust-cpuid", branch = "master" }
-redox_syscall = { version = "0.1", path = "../syscall" }
+redox_syscall = "0.1"
 
 [dependencies.goblin]
 version = "0.0.10"
