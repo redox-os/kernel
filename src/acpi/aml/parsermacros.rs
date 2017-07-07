@@ -4,10 +4,7 @@ macro_rules! parser_selector {
         match $func($data, $ctx) {
             Ok(res) => return Ok(res),
             Err(AmlError::AmlInvalidOpCode) => (),
-            Err(e) => {
-//                println!("This doesn't work for some reason");
-                return Err(e);
-            }
+            Err(e) => return Err(e)
         }
     };
     {$data:expr, $ctx:expr, $func:expr, $($funcs:expr),+} => {
