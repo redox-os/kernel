@@ -34,10 +34,7 @@ pub enum ObjectReference {
 pub enum AmlValue {
     None,
     Uninitialized,
-    Buffer {
-        length: Box<AmlValue>,
-        byte_list: Vec<u8>
-    },
+    Buffer(Vec<u8>),
     BufferField {
         source_buf: Box<AmlValue>,
         index: Box<AmlValue>,
@@ -81,10 +78,16 @@ pub enum AmlValue {
 }
 
 impl AmlValue {
-    // TODO: These should be able to throw errors rather than returning options
     pub fn get_as_string(&self) -> Result<String, AmlError> {
         match *self {
             AmlValue::String(ref s) => Ok(s.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
+    pub fn get_as_buffer(&self) -> Result<Vec<u8>, AmlError> {
+        match *self {
+            AmlValue::Buffer(ref b) => Ok(b.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }

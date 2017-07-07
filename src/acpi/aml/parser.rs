@@ -56,4 +56,16 @@ impl AmlExecutionContext {
             _ => ()
         }
     }
+
+    pub fn get(&self, name: AmlValue) -> AmlValue {
+        match name {
+            AmlValue::None => AmlValue::None,
+            AmlValue::ObjectReference(r) => match r {
+                ObjectReference::ArgObj(i) => self.arg_vars[i as usize].clone(),
+                ObjectReference::LocalObj(i) => self.local_vars[i as usize].clone(),
+                _ => AmlValue::None
+            },
+            _ => AmlValue::None
+        }
+    }
 }

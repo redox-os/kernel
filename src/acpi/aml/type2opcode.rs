@@ -110,15 +110,22 @@ pub fn parse_def_object_type(data: &[u8],
 pub fn parse_def_package(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
     // TODO: Handle deferred loads in here
-    // TODO: Truncate/extend array if necessary
     parser_opcode!(data, 0x12);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let num_elements = data[1 + pkg_length_len];
-    let elements = parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length], ctx)?;
+    let numelements = data[1 + pkg_length_len] as usize;
+    let mut elements = parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length], ctx)?.val.get_as_package()?;
+
+    if elements.len() > numelements {
+        elements = elements[0 .. numelements].to_vec();
+    } else if numelements > elements.len() {
+        for i in 0..numelements - elements.len() {
+            elements.push(AmlValue::Uninitialized);
+        }
+    }
     
     Ok(AmlParseType {
-        val: elements.val,
+        val: AmlValue::Package(elements),
         len: 1 + pkg_length
     })
 }
@@ -126,16 +133,25 @@ pub fn parse_def_package(data: &[u8],
 pub fn parse_def_var_package(data: &[u8],
                              ctx: &mut AmlExecutionContext) -> ParseResult {
     // TODO: Handle deferred loads in here
-    // TODO: Truncate/extend array if necessary
     parser_opcode!(data, 0x13);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let num_elements = parse_term_arg(&data[1 + pkg_length_len .. 1 + pkg_length], ctx)?;
-    let elements = parse_package_elements_list(&data[1 + pkg_length_len + num_elements.len ..
-                                                     1 + pkg_length], ctx)?;
+    let mut elements = parse_package_elements_list(&data[1 + pkg_length_len + num_elements.len ..
+                                                         1 + pkg_length], ctx)?.val.get_as_package()?;
+
+    let numelements = num_elements.val.get_as_integer()? as usize;
+
+    if elements.len() > numelements {
+        elements = elements[0 .. numelements].to_vec();
+    } else if numelements > elements.len() {
+        for i in 0..numelements - elements.len() {
+            elements.push(AmlValue::Uninitialized);
+        }
+    }
     
     Ok(AmlParseType {
-        val: elements.val,
+        val: AmlValue::Package(elements),
         len: 1 + pkg_length
     })
 }
@@ -224,14 +240,15 @@ fn parse_def_acquire(data: &[u8],
 
 fn parse_def_increment(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Store the result
-    // TODO: Perform computation
     parser_opcode!(data, 0x75);
 
     let obj = parse_super_name(&data[1..], ctx)?;
+    let value = AmlValue::Integer(ctx.get(obj.val.clone()).get_as_integer()? + 1);
+
+    ctx.modify(obj.val, value.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: value,
         len: 1 + obj.len
     })
 }
@@ -464,16 +481,15 @@ fn parse_def_size_of(data: &[u8],
 
 fn parse_def_store(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Return the DRO
     parser_opcode!(data, 0x70);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
     let target = parse_super_name(&data[1 + operand.len..], ctx)?;
 
-    ctx.modify(target.val, operand.val);
+    ctx.modify(target.val.clone(), operand.val);
     
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: target.val,
         len: 1 + operand.len + target.len
     })
 }
@@ -664,61 +680,99 @@ fn parse_def_concat(data: &[u8],
 
 fn parse_def_decrement(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Compute the result
-    // TODO: Store the result
     parser_opcode!(data, 0x76);
 
-    let target = parse_super_name(&data[1..], ctx)?;
+    let obj = parse_super_name(&data[1..], ctx)?;
+    let value = AmlValue::Integer(ctx.get(obj.val.clone()).get_as_integer()? - 1);
 
+    ctx.modify(obj.val, value.clone());
+    
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
-        len: 1 + target.len
+        val: value,
+        len: 1 + obj.len
     })
 }
 
 fn parse_def_divide(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x78);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target_remainder = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
     let target_quotient = parse_target(&data[1 + lhs.len + rhs.len + target_remainder.len..], ctx)?;
+
+    let numerator = lhs.val.get_as_integer()?;
+    let denominator = rhs.val.get_as_integer()?;
+
+    let remainder = numerator % denominator;
+    let quotient = (numerator - remainder) / denominator;
+
+    ctx.modify(target_remainder.val, AmlValue::Integer(remainder));
+    ctx.modify(target_quotient.val, AmlValue::Integer(quotient));
     
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: AmlValue::Integer(quotient),
         len: 1 + lhs.len + rhs.len + target_remainder.len + target_quotient.len
     })
 }
 
 fn parse_def_find_set_left_bit(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x81);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
+    let mut first_bit = 32;
+    let mut test = operand.val.get_as_integer()?;
+    
+    while first_bit > 0{
+        if test & 0x8000000000000000 > 0 {
+            break;
+        }
+
+        test <<= 1;
+        first_bit -= 1;
+    }
+
+    let result = AmlValue::Integer(first_bit);
+    ctx.modify(target.val, result.clone());
+    
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: result,
         len: 1 + operand.len + target.len
     })
 }
 
 fn parse_def_find_set_right_bit(data: &[u8],
                                 ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x82);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
+    let mut first_bit = 1;
+    let mut test = operand.val.get_as_integer()?;
+    
+    while first_bit <= 32 {
+        if test & 1 > 0 {
+            break;
+        }
+
+        test >>= 1;
+        first_bit += 1;
+    }
+
+    if first_bit == 33 {
+        first_bit = 0;
+    }
+
+    let result = AmlValue::Integer(first_bit);
+    ctx.modify(target.val, result.clone());
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: result,
         len: 1 + operand.len + target.len
     })
 }
@@ -784,31 +838,25 @@ fn parse_def_match(data: &[u8],
 
 fn parse_def_from_bcd(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Clean up match block
     parser_opcode_extended!(data, 0x28);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
-    
-    let result = AmlValue::Integer(match target.val.get_as_integer() {
-        Ok(i) => {
-            let mut i = i;
-            let mut ires = 0;
 
-            while i != 0 {
-                if i & 0x0F > 10 {
-                    return Err(AmlError::AmlValueError);
-                }
+    let mut i = operand.val.get_as_integer()?;
+    let mut result = 0;
 
-                ires *= 10;
-                ires += i & 0x0F;
-                i >>= 4;
-            }
+    while i != 0 {
+        if i & 0x0F > 10 {
+            return Err(AmlError::AmlValueError);
+        }
+        
+        result *= 10;
+        result += i & 0x0F;
+        i >>= 4;
+    }
 
-            ires
-        },
-        Err(e) => return Err(e)
-    });
+    let result = AmlValue::Integer(result);
 
     ctx.modify(target.val, result.clone());
     
@@ -820,8 +868,6 @@ fn parse_def_from_bcd(data: &[u8],
 
 fn parse_def_mid(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x9E);
 
     let source = parse_term_arg(&data[1..], ctx)?;
@@ -829,20 +875,62 @@ fn parse_def_mid(data: &[u8],
     let length = parse_term_arg(&data[1 + source.len + index.len..], ctx)?;
     let target = parse_target(&data[1 + source.len + index.len + length.len..], ctx)?;
 
+    let idx = index.val.get_as_integer()? as usize;
+    let mut len = length.val.get_as_integer()? as usize;
+    
+    let result = match source.val {
+        AmlValue::String(s) => {
+            if idx > s.len() {
+                AmlValue::String(String::new())
+            } else {
+                let mut res = s.clone().split_off(idx);
+
+                if len < res.len() {
+                    res.split_off(len);
+                }
+
+                AmlValue::String(res)
+            }
+        },
+        _ => {
+            // If it isn't a string already, treat it as a buffer. Must perform that check first,
+            // as Mid can operate on both strings and buffers, but a string can be cast as a buffer
+            // implicitly.
+            // Additionally, any type that can be converted to a buffer can also be converted to a
+            // string, so no information is lost
+            let b = source.val.get_as_buffer()?;
+            
+            if idx > b.len() {
+                AmlValue::Buffer(vec!())
+            } else {
+                if idx + len > b.len() {
+                    len = b.len() - idx;
+                }
+
+                AmlValue::Buffer(b[idx .. idx + len].to_vec())
+            }
+        }
+    };
+    
+    ctx.modify(target.val, result.clone());
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: result,
         len: 1 + source.len + index.len + length.len + target.len
     })
 }
 
 fn parse_def_mod(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Fatal exception on rhs == 0
     parser_opcode!(data, 0x85);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+
+    if rhs.val.get_as_integer()? == 0 {
+        return Err(AmlError::AmlValueError);
+    }
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? % rhs.val.get_as_integer()?);
 
