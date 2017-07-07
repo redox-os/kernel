@@ -799,9 +799,7 @@ fn parse_def_load_table(data: &[u8],
 
 fn parse_def_match(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
-    // TODO: Clean up match blocks
+    // TODO: Clean up
     parser_opcode!(data, 0x28);
     
     let search_pkg = parse_term_arg(&data[1..], ctx)?;
@@ -830,8 +828,108 @@ fn parse_def_match(data: &[u8],
     
     let start_index = parse_term_arg(&data[3 + search_pkg.len + first_operand.len + second_operand.len..], ctx)?;
 
+    let pkg = search_pkg.val.get_as_package()?;
+    let mut idx = start_index.val.get_as_integer()? as usize;
+
+    match first_operand.val {
+        AmlValue::Integer(i) => {
+            let j = second_operand.val.get_as_integer()?;
+
+            while idx < pkg.len() {
+                let val = if let Ok(v) = pkg[idx].get_as_integer() { v } else { idx += 1; continue; };
+                idx += 1;
+
+                match first_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                match second_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(idx as u64),
+                    len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+                });
+            }
+        },
+        AmlValue::String(i) => {
+            let j = second_operand.val.get_as_string()?;
+
+            while idx < pkg.len() {
+                let val = if let Ok(v) = pkg[idx].get_as_string() { v } else { idx += 1; continue; };
+                idx += 1;
+
+                match first_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                match second_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(idx as u64),
+                    len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+                });
+            }
+        },
+        _ => {
+            let i = first_operand.val.get_as_buffer()?;
+            let j = second_operand.val.get_as_buffer()?;
+
+            while idx < pkg.len() {
+                let val = if let Ok(v) = pkg[idx].get_as_buffer() { v } else { idx += 1; continue; };
+                idx += 1;
+
+                match first_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                match second_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(idx as u64),
+                    len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+                });
+            }
+        }
+    }
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF),
         len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
     })
 }
