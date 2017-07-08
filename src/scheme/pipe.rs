@@ -172,6 +172,8 @@ impl PipeRead {
     }
 
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
+        let mut resumed = false;
+
         loop {
             {
                 let mut vec = self.vec.lock();
@@ -186,7 +188,7 @@ impl PipeRead {
                     }
                 }
 
-                if i > 0 {
+                if i > 0 || resumed {
                     return Ok(i);
                 }
             }
@@ -197,6 +199,7 @@ impl PipeRead {
                 return Err(Error::new(EAGAIN));
             } else {
                 self.condition.wait();
+                resumed = true;
             }
         }
     }
@@ -246,7 +249,9 @@ impl PipeWrite {
                     vec.push_back(b);
                 }
 
-                self.condition.notify();
+                if buf.len() > 0 {
+                    self.condition.notify();
+                }
 
                 Ok(buf.len())
             } else {
