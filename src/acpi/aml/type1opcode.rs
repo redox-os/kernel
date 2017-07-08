@@ -48,7 +48,6 @@ fn parse_def_break(data: &[u8],
 
 fn parse_def_breakpoint(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Implement
     parser_opcode!(data, 0xCC);
 
     Ok(AmlParseType {
