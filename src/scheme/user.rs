@@ -11,7 +11,7 @@ use context::{self, Context};
 use context::memory::Grant;
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use sync::{WaitQueue, WaitMap};
-use syscall::data::{Packet, Stat, StatVfs};
+use syscall::data::{Packet, Stat, StatVfs, TimeSpec};
 use syscall::error::*;
 use syscall::flag::{EVENT_READ, O_NONBLOCK};
 use syscall::number::*;
@@ -347,6 +347,15 @@ impl Scheme for UserScheme {
     fn ftruncate(&self, file: usize, len: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner.call(SYS_FTRUNCATE, file, len, 0)
+    }
+
+    fn futimens(&self, file: usize, times: &[TimeSpec]) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let buf = unsafe { slice::from_raw_parts(times.as_ptr() as *const u8, mem::size_of::<TimeSpec>() * times.len()) };
+        let address = inner.capture(buf)?;
+        let result = inner.call(SYS_FUTIMENS, file, address, buf.len());
+        let _ = inner.release(address);
+        result
     }
 
     fn close(&self, file: usize) -> Result<usize> {
