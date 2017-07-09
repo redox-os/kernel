@@ -1,6 +1,8 @@
 ///! Process syscalls
+use alloc::allocator::{Alloc, Layout};
 use alloc::arc::Arc;
 use alloc::boxed::Box;
+use alloc::heap::Heap;
 use collections::{BTreeMap, Vec};
 use core::{intrinsics, mem, str};
 use core::ops::DerefMut;
@@ -106,7 +108,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             arch = context.arch.clone();
 
             if let Some(ref fx) = context.kfx {
-                let mut new_fx = unsafe { Box::from_raw(::alloc::heap::allocate(512, 16) as *mut [u8; 512]) };
+                let mut new_fx = unsafe { Box::from_raw(Heap.alloc(Layout::from_size_align_unchecked(512, 16)).unwrap() as *mut [u8; 512]) };
                 for (new_b, b) in new_fx.iter_mut().zip(fx.iter()) {
                     *new_b = *b;
                 }

@@ -5,13 +5,14 @@
 
 //#![deny(warnings)]
 #![feature(alloc)]
+#![feature(allocator_api)]
 #![feature(asm)]
 #![feature(collections)]
 #![feature(concat_idents)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
 #![feature(drop_types_in_const)]
-#![feature(heap_api)]
+#![feature(global_allocator)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
 #![feature(naked_functions)]
@@ -103,6 +104,9 @@ pub mod time;
 #[cfg(test)]
 pub mod tests;
 
+#[global_allocator]
+static ALLOCATOR: allocator::Allocator = allocator::Allocator;
+
 #[cfg(feature = "multi_core")]
 static MULTI_CORE_IS_NOT_SUPPORTED_AT_THE_MOMENT: u8 = ();
 
@@ -183,7 +187,7 @@ pub extern fn kmain_ap(id: usize) {
             interrupt::halt();
         }
     }
-    
+
     if cfg!(feature = "multi_core"){
         CPU_ID.store(id, Ordering::SeqCst);
 
