@@ -12,7 +12,7 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::validate::*;
 
-use self::data::TimeSpec;
+use self::data::{SigAction, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
 use self::number::*;
 
@@ -70,7 +70,14 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
             },
             _ => match a {
                 SYS_YIELD => sched_yield(),
-                SYS_NANOSLEEP => nanosleep(validate_slice(b as *const TimeSpec, 1).map(|req| &req[0])?, validate_slice_mut(c as *mut TimeSpec, 1).ok().map(|rem| &mut rem[0])),
+                SYS_NANOSLEEP => nanosleep(
+                    validate_slice(b as *const TimeSpec, 1).map(|req| &req[0])?,
+                    if c == 0 {
+                        None
+                    } else {
+                        Some(validate_slice_mut(c as *mut TimeSpec, 1).map(|rem| &mut rem[0])?)
+                    }
+                ),
                 SYS_CLOCK_GETTIME => clock_gettime(b, validate_slice_mut(c as *mut TimeSpec, 1).map(|time| &mut time[0])?),
                 SYS_FUTEX => futex(validate_slice_mut(b as *mut i32, 1).map(|uaddr| &mut uaddr[0])?, c, d as i32, e, f as *mut i32),
                 SYS_BRK => brk(b),
@@ -80,7 +87,6 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
                 SYS_WAITPID => waitpid(ContextId::from(b), c, d).map(ContextId::into),
-                SYS_SIGNAL => signal(b, c),
                 SYS_CHDIR => chdir(validate_slice(b as *const u8, c)?),
                 SYS_EXECVE => exec(validate_slice(b as *const u8, c)?, validate_slice(d as *const [usize; 2], e)?),
                 SYS_IOPL => iopl(b, stack),
@@ -95,6 +101,19 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                 SYS_SETREUID => setreuid(b as u32, c as u32),
                 SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)),
                 SYS_SETREGID => setregid(b as u32, c as u32),
+                SYS_SIGACTION => sigaction(
+                    b,
+                    if c == 0 {
+                        None
+                    } else {
+                        Some(validate_slice(c as *const SigAction, 1).map(|act| &act[0])?)
+                    },
+                    if d == 0 {
+                        None
+                    } else {
+                        Some(validate_slice_mut(d as *mut SigAction, 1).map(|oldact| &mut oldact[0])?)
+                    }
+                ),
                 SYS_PIPE2 => pipe2(validate_slice_mut(b as *mut usize, 2)?, c),
                 SYS_PHYSALLOC => physalloc(b),
                 SYS_PHYSFREE => physfree(b, c),

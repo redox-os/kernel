@@ -46,8 +46,13 @@
     /// Size of user stack
     pub const USER_STACK_SIZE: usize = 1024 * 1024; // 1 MB
 
+    /// Offset to user sigstack
+    pub const USER_SIGSTACK_OFFSET: usize = USER_STACK_OFFSET + PML4_SIZE;
+    /// Size of user sigstack
+    pub const USER_SIGSTACK_SIZE: usize = 256 * 1024; // 256 KB
+
     /// Offset to user TLS
-    pub const USER_TLS_OFFSET: usize = USER_STACK_OFFSET + PML4_SIZE;
+    pub const USER_TLS_OFFSET: usize = USER_SIGSTACK_OFFSET + PML4_SIZE;
 
     /// Offset to user temporary image (used when cloning)
     pub const USER_TMP_OFFSET: usize = USER_TLS_OFFSET + PML4_SIZE;
@@ -61,8 +66,11 @@
     /// Offset to user temporary stack (used when cloning)
     pub const USER_TMP_STACK_OFFSET: usize = USER_TMP_GRANT_OFFSET + PML4_SIZE;
 
+    /// Offset to user temporary sigstack (used when cloning)
+    pub const USER_TMP_SIGSTACK_OFFSET: usize = USER_TMP_STACK_OFFSET + PML4_SIZE;
+
     /// Offset to user temporary tls (used when cloning)
-    pub const USER_TMP_TLS_OFFSET: usize = USER_TMP_STACK_OFFSET + PML4_SIZE;
+    pub const USER_TMP_TLS_OFFSET: usize = USER_TMP_SIGSTACK_OFFSET + PML4_SIZE;
 
     /// Offset for usage in other temporary pages
     pub const USER_TMP_MISC_OFFSET: usize = USER_TMP_TLS_OFFSET + PML4_SIZE;

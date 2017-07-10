@@ -18,7 +18,7 @@ use context::ContextId;
 use elf::{self, program_header};
 use scheme::{self, FileHandle};
 use syscall;
-use syscall::data::Stat;
+use syscall::data::{SigAction, Stat};
 use syscall::error::*;
 use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, O_CLOEXEC, SIG_DFL, WNOHANG};
 use syscall::validate::{validate_slice, validate_slice_mut};
@@ -79,13 +79,14 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         let mut image = vec![];
         let mut heap_option = None;
         let mut stack_option = None;
+        let mut sigstack_option = None;
         let mut tls_option = None;
         let grants;
         let name;
         let cwd;
         let env;
         let files;
-        let handlers;
+        let actions;
 
         // Copy from old process
         {
@@ -195,6 +196,24 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 stack_option = Some(new_stack);
             }
 
+            if let Some(ref sigstack) = context.sigstack {
+                let mut new_sigstack = context::memory::Memory::new(
+                    VirtualAddress::new(::USER_TMP_SIGSTACK_OFFSET),
+                    sigstack.size(),
+                    entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
+                    false
+                );
+
+                unsafe {
+                    intrinsics::copy(sigstack.start_address().get() as *const u8,
+                                    new_sigstack.start_address().get() as *mut u8,
+                                    sigstack.size());
+                }
+
+                new_sigstack.remap(sigstack.flags());
+                sigstack_option = Some(new_sigstack);
+            }
+
             if let Some(ref tls) = context.tls {
                 let mut new_tls = context::memory::Tls {
                     master: tls.master,
@@ -252,9 +271,9 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             }
 
             if flags & CLONE_SIGHAND == CLONE_SIGHAND {
-                handlers = context.handlers.clone();
+                actions = context.actions.clone();
             } else {
-                handlers = Arc::new(Mutex::new(context.handlers.lock().clone()));
+                actions = Arc::new(Mutex::new(context.actions.lock().clone()));
             }
         }
 
@@ -441,6 +460,12 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 context.stack = Some(stack);
             }
 
+            // Setup user sigstack
+            if let Some(mut sigstack) = sigstack_option {
+                sigstack.move_to(VirtualAddress::new(::USER_SIGSTACK_OFFSET), &mut new_table, &mut temporary_page);
+                context.sigstack = Some(sigstack);
+            }
+
             // Setup user TLS
             if let Some(mut tls) = tls_option {
                 tls.mem.move_to(VirtualAddress::new(::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
@@ -455,7 +480,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             context.files = files;
 
-            context.handlers = handlers;
+            context.actions = actions;
         }
     }
 
@@ -470,12 +495,14 @@ fn empty(context: &mut context::Context, reaping: bool) {
         assert!(context.image.is_empty());
         assert!(context.heap.is_none());
         assert!(context.stack.is_none());
+        assert!(context.sigstack.is_none());
         assert!(context.tls.is_none());
     } else {
         // Unmap previous image, heap, grants, stack, and tls
         context.image.clear();
         drop(context.heap.take());
         drop(context.stack.take());
+        drop(context.sigstack.take());
         drop(context.tls.take());
     }
 
@@ -673,6 +700,14 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                         true
                     ));
 
+                    // Map stack
+                    context.sigstack = Some(context::memory::Memory::new(
+                        VirtualAddress::new(::USER_SIGSTACK_OFFSET),
+                        ::USER_SIGSTACK_SIZE,
+                        entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
+                        true
+                    ));
+
                     // Map TLS
                     if let Some((master, file_size, size)) = tls_option {
                         let tls = context::memory::Tls {
@@ -737,7 +772,12 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     let files = Arc::new(Mutex::new(context.files.lock().clone()));
                     context.files = files.clone();
 
-                    context.handlers = Arc::new(Mutex::new(BTreeMap::new()));
+                    context.actions = Arc::new(Mutex::new(vec![SigAction {
+                        sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                        sa_mask: [0; 2],
+                        sa_flags: 0,
+                        sa_restorer: unsafe { mem::transmute(0usize) },
+                    }; 128]));
 
                     let vfork = context.vfork;
                     context.vfork = false;
@@ -819,7 +859,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
     }
 
     // Go to usermode
-    unsafe { usermode(entry, sp); }
+    unsafe { usermode(entry, sp, 0); }
 }
 
 pub fn exit(status: usize) -> ! {
@@ -971,18 +1011,22 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     }
 }
 
-pub fn signal(sig: usize, handler: usize) -> Result<usize> {
+pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mut SigAction>) -> Result<usize> {
     if sig > 0 && sig <= 0x7F {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        let mut handlers = context.handlers.lock();
-        let previous = if handler == SIG_DFL {
-            handlers.remove(&(sig as u8))
-        } else {
-            handlers.insert(sig as u8, handler)
-        };
-        Ok(previous.unwrap_or(0))
+        let mut actions = context.actions.lock();
+
+        if let Some(oldact) = oldact_opt {
+            *oldact = actions[sig];
+        }
+
+        if let Some(act) = act_opt {
+            actions[sig] = *act;
+        }
+
+        Ok(0)
     } else {
         Err(Error::new(EINVAL))
     }

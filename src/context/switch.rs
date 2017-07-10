@@ -1,9 +1,12 @@
+use core::mem;
 use core::sync::atomic::Ordering;
 use context::{arch, contexts, Context, Status, CONTEXT_ID};
-use interrupt::irq::PIT_TICKS;
+use start::usermode;
+use syscall::flag::{SIG_DFL, SIG_IGN};
 
 use gdt;
 use interrupt;
+use interrupt::irq::PIT_TICKS;
 use syscall;
 use time;
 
@@ -118,19 +121,35 @@ pub unsafe fn switch() -> bool {
 }
 
 extern "C" fn signal_handler(sig: usize) {
-    let handler = {
+    let action = {
         let contexts = contexts();
         let context_lock = contexts.current().expect("context::signal_handler not inside of context");
         let context = context_lock.read();
-        let handlers = context.handlers.lock();
-        handlers.get(&(sig as u8)).map_or(0, |sig| *sig)
+        let actions = context.actions.lock();
+        actions[sig]
     };
 
-    println!("Signal handler: {}, {:X}", sig, handler);
+    println!("Signal handler: {:X}, {:?}", sig, action);
 
-    if handler == 0 {
+    let handler = action.sa_handler as usize;
+    let restorer = action.sa_restorer as usize;
+    if handler == SIG_DFL {
+        println!("Exit {:X}", sig);
         syscall::exit(sig);
+    } else if handler == SIG_IGN {
+        println!("Ignore");
     } else {
-        // TODO: Call handler
+        println!("Call {:X}", handler);
+
+        unsafe {
+            let mut sp = ::USER_SIGSTACK_OFFSET + ::USER_SIGSTACK_SIZE - 256;
+
+            sp = (sp / 16) * 16;
+
+            sp -= mem::size_of::<usize>();
+            *(sp as *mut usize) = restorer;
+
+            usermode(handler, sp, sig);
+        }
     }
 }

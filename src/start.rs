@@ -156,25 +156,26 @@ pub unsafe extern fn kstart_ap(cpu_id: usize, bsp_table: usize, stack_start: usi
     kmain_ap(cpu_id);
 }
 
-pub unsafe fn usermode(ip: usize, sp: usize) -> ! {
+pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
     // Go to usermode
-    asm!("mov ds, ax
-        mov es, ax
-        mov fs, bx
-        mov gs, ax
-        push rax
-        push rcx
-        push rdx
-        push rsi
-        push rdi
+    asm!("mov ds, r10d
+        mov es, r10d
+        mov fs, r11d
+        mov gs, r10d
+        push r10
+        push r12
+        push r13
+        push r14
+        push r15
         iretq"
         : // No output because it never returns
-        :   "{rax}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
-            "{rbx}"(gdt::GDT_USER_TLS << 3 | 3), // TLS segment
-            "{rcx}"(sp), // Stack pointer
-            "{rdx}"(3 << 12 | 1 << 9), // Flags - Set IOPL and interrupt enable flag
-            "{rsi}"(gdt::GDT_USER_CODE << 3 | 3), // Code segment
-            "{rdi}"(ip) // IP
+        :   "{r10}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
+            "{r11}"(gdt::GDT_USER_TLS << 3 | 3), // TLS segment
+            "{r12}"(sp), // Stack pointer
+            "{r13}"(3 << 12 | 1 << 9), // Flags - Set IOPL and interrupt enable flag
+            "{r14}"(gdt::GDT_USER_CODE << 3 | 3), // Code segment
+            "{r15}"(ip) // IP
+            "{rdi}"(arg) // Argument
         : // No clobers because it never returns
         : "intel", "volatile");
     unreachable!();

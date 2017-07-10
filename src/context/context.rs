@@ -1,6 +1,7 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
 use collections::{BTreeMap, Vec, VecDeque};
+use core::mem;
 use spin::Mutex;
 
 use context::arch;
@@ -8,7 +9,8 @@ use context::file::File;
 use context::memory::{Grant, Memory, SharedMemory, Tls};
 use device;
 use scheme::{SchemeNamespace, FileHandle};
-use syscall::data::Event;
+use syscall::data::{Event, SigAction};
+use syscall::flag::SIG_DFL;
 use sync::{WaitMap, WaitQueue};
 
 /// Unique identifier for a context (i.e. `pid`).
@@ -69,6 +71,8 @@ pub struct Context {
     pub heap: Option<SharedMemory>,
     /// User stack
     pub stack: Option<Memory>,
+    /// User signal stack
+    pub sigstack: Option<Memory>,
     /// User Thread local storage
     pub tls: Option<Tls>,
     /// User grants
@@ -83,8 +87,8 @@ pub struct Context {
     pub env: Arc<Mutex<BTreeMap<Box<[u8]>, Arc<Mutex<Vec<u8>>>>>>,
     /// The open files in the scheme
     pub files: Arc<Mutex<Vec<Option<File>>>>,
-    /// Singal handlers
-    pub handlers: Arc<Mutex<BTreeMap<u8, usize>>>,
+    /// Singal actions
+    pub actions: Arc<Mutex<Vec<SigAction>>>,
 }
 
 impl Context {
@@ -111,6 +115,7 @@ impl Context {
             image: Vec::new(),
             heap: None,
             stack: None,
+            sigstack: None,
             tls: None,
             grants: Arc::new(Mutex::new(Vec::new())),
             name: Arc::new(Mutex::new(Vec::new())),
@@ -118,7 +123,12 @@ impl Context {
             events: Arc::new(WaitQueue::new()),
             env: Arc::new(Mutex::new(BTreeMap::new())),
             files: Arc::new(Mutex::new(Vec::new())),
-            handlers: Arc::new(Mutex::new(BTreeMap::new())),
+            actions: Arc::new(Mutex::new(vec![SigAction {
+                sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                sa_mask: [0; 2],
+                sa_flags: 0,
+                sa_restorer: unsafe { mem::transmute(0usize) },
+            }; 128])),
         }
     }
 
