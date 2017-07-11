@@ -159,9 +159,8 @@ extern "C" fn signal_handler(sig: usize) {
         actions[sig]
     };
 
-    println!("Signal handler: {:X}, {:?}", sig, action);
-
     let handler = action.sa_handler as usize;
+    println!("Handler {:X}: {:X}", sig, handler);
     if handler == SIG_DFL {
         println!("Exit {:X}", sig);
         syscall::exit(sig);
