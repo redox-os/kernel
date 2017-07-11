@@ -66,7 +66,7 @@ pub struct Context {
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
     /// Kernel signal backup
-    pub ksig: Option<(arch::Context, Box<[u8]>, Box<[u8]>)>,
+    pub ksig: Option<(arch::Context, Option<Box<[u8]>>, Option<Box<[u8]>>)>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
     /// Executable image

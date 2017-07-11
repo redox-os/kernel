@@ -53,12 +53,12 @@ pub unsafe fn switch() -> bool {
                 let ksig = context.ksig.take().expect("context::switch: ksig not set with ksig_restore");
                 context.arch = ksig.0;
                 if let Some(ref mut kfx) = context.kfx {
-                    kfx.clone_from_slice(&ksig.1);
+                    kfx.clone_from_slice(&ksig.1.expect("context::switch: ksig kfx not set with ksig_restore"));
                 } else {
                     panic!("context::switch: kfx not set with ksig_restore");
                 }
                 if let Some(ref mut kstack) = context.kstack {
-                    kstack.clone_from_slice(&ksig.2);
+                    kstack.clone_from_slice(&ksig.2.expect("context::switch: ksig kstack not set with ksig_restore"));
                 } else {
                     panic!("context::switch: kstack not set with ksig_restore");
                 }
@@ -139,15 +139,8 @@ pub unsafe fn switch() -> bool {
         assert!((&mut *to_ptr).ksig.is_none());
 
         let arch = (&mut *to_ptr).arch.clone();
-        let kfx = match (&mut *to_ptr).kfx {
-            Some(ref kfx) => kfx.clone(),
-            None => panic!("context::switch: no kfx during signal")
-        };
-        let kstack = match (&mut *to_ptr).kstack {
-            Some(ref kstack) => kstack.clone(),
-            None => panic!("context::switch: no kstack during signal")
-        };
-
+        let kfx = (&mut *to_ptr).kfx.clone();
+        let kstack = (&mut *to_ptr).kstack.clone();
         (&mut *to_ptr).ksig = Some((arch, kfx, kstack));
         (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
     }
