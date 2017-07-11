@@ -112,8 +112,10 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                         None
                     } else {
                         Some(validate_slice_mut(d as *mut SigAction, 1).map(|oldact| &mut oldact[0])?)
-                    }
+                    },
+                    e
                 ),
+                SYS_SIGRETURN => sigreturn(),
                 SYS_PIPE2 => pipe2(validate_slice_mut(b as *mut usize, 2)?, c),
                 SYS_PHYSALLOC => physalloc(b),
                 SYS_PHYSFREE => physfree(b, c),

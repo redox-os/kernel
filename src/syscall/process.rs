@@ -378,6 +378,8 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 context.kstack = Some(stack);
             }
 
+            // TODO: Clone ksig?
+
             // Setup heap
             if flags & CLONE_VM == CLONE_VM {
                 // Copy user image mapping, if found
@@ -772,12 +774,14 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     let files = Arc::new(Mutex::new(context.files.lock().clone()));
                     context.files = files.clone();
 
-                    context.actions = Arc::new(Mutex::new(vec![SigAction {
-                        sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                        sa_mask: [0; 2],
-                        sa_flags: 0,
-                        sa_restorer: unsafe { mem::transmute(0usize) },
-                    }; 128]));
+                    context.actions = Arc::new(Mutex::new(vec![(
+                        SigAction {
+                            sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                            sa_mask: [0; 2],
+                            sa_flags: 0,
+                        },
+                        0
+                    ); 128]));
 
                     let vfork = context.vfork;
                     context.vfork = false;
@@ -1011,7 +1015,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     }
 }
 
-pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mut SigAction>) -> Result<usize> {
+pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mut SigAction>, restorer: usize) -> Result<usize> {
     if sig > 0 && sig <= 0x7F {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -1019,17 +1023,33 @@ pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mu
         let mut actions = context.actions.lock();
 
         if let Some(oldact) = oldact_opt {
-            *oldact = actions[sig];
+            *oldact = actions[sig].0;
         }
 
         if let Some(act) = act_opt {
-            actions[sig] = *act;
+            actions[sig] = (*act, restorer);
         }
 
         Ok(0)
     } else {
         Err(Error::new(EINVAL))
     }
+}
+
+pub fn sigreturn() -> Result<usize> {
+    println!("Sigreturn");
+
+    {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let mut context = context_lock.write();
+        context.ksig_restore = true;
+        context.block();
+    }
+
+    unsafe { context::switch(); }
+
+    unreachable!();
 }
 
 fn reap(pid: ContextId) -> Result<ContextId> {

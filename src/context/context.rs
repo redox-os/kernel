@@ -65,6 +65,10 @@ pub struct Context {
     pub kfx: Option<Box<[u8]>>,
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
+    /// Kernel signal backup
+    pub ksig: Option<(arch::Context, Box<[u8]>, Box<[u8]>)>,
+    /// Restore ksig context on next switch
+    pub ksig_restore: bool,
     /// Executable image
     pub image: Vec<SharedMemory>,
     /// User heap
@@ -88,7 +92,7 @@ pub struct Context {
     /// The open files in the scheme
     pub files: Arc<Mutex<Vec<Option<File>>>>,
     /// Singal actions
-    pub actions: Arc<Mutex<Vec<SigAction>>>,
+    pub actions: Arc<Mutex<Vec<(SigAction, usize)>>>,
 }
 
 impl Context {
@@ -112,6 +116,8 @@ impl Context {
             arch: arch::Context::new(),
             kfx: None,
             kstack: None,
+            ksig: None,
+            ksig_restore: false,
             image: Vec::new(),
             heap: None,
             stack: None,
@@ -123,12 +129,14 @@ impl Context {
             events: Arc::new(WaitQueue::new()),
             env: Arc::new(Mutex::new(BTreeMap::new())),
             files: Arc::new(Mutex::new(Vec::new())),
-            actions: Arc::new(Mutex::new(vec![SigAction {
-                sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                sa_mask: [0; 2],
-                sa_flags: 0,
-                sa_restorer: unsafe { mem::transmute(0usize) },
-            }; 128])),
+            actions: Arc::new(Mutex::new(vec![(
+                SigAction {
+                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                    sa_mask: [0; 2],
+                    sa_flags: 0,
+                },
+                0
+            ); 128])),
         }
     }
 

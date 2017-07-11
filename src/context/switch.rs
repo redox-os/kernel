@@ -47,6 +47,29 @@ pub unsafe fn switch() -> bool {
                 // println!("{}: take {} {}", cpu_id, context.id, ::core::str::from_utf8_unchecked(&context.name.lock()));
             }
 
+            if context.ksig_restore {
+                println!("Restore from ksig");
+
+                let ksig = context.ksig.take().expect("context::switch: ksig not set with ksig_restore");
+                context.arch = ksig.0;
+                if let Some(ref mut kfx) = context.kfx {
+                    kfx.clone_from_slice(&ksig.1);
+                } else {
+                    panic!("context::switch: kfx not set with ksig_restore");
+                }
+                if let Some(ref mut kstack) = context.kstack {
+                    kstack.clone_from_slice(&ksig.2);
+                } else {
+                    panic!("context::switch: kstack not set with ksig_restore");
+                }
+                context.ksig_restore = false;
+
+                //TODO: Interrupt
+                if context.status == Status::Blocked {
+                    context.unblock();
+                }
+            }
+
             if context.status == Status::Blocked && !context.pending.is_empty() {
                 context.unblock();
             }
@@ -112,6 +135,20 @@ pub unsafe fn switch() -> bool {
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
     if let Some(sig) = to_sig {
+        //TODO: Allow nested signals
+        assert!((&mut *to_ptr).ksig.is_none());
+
+        let arch = (&mut *to_ptr).arch.clone();
+        let kfx = match (&mut *to_ptr).kfx {
+            Some(ref kfx) => kfx.clone(),
+            None => panic!("context::switch: no kfx during signal")
+        };
+        let kstack = match (&mut *to_ptr).kstack {
+            Some(ref kstack) => kstack.clone(),
+            None => panic!("context::switch: no kstack during signal")
+        };
+
+        (&mut *to_ptr).ksig = Some((arch, kfx, kstack));
         (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
     }
 
@@ -121,7 +158,7 @@ pub unsafe fn switch() -> bool {
 }
 
 extern "C" fn signal_handler(sig: usize) {
-    let action = {
+    let (action, restorer) = {
         let contexts = contexts();
         let context_lock = contexts.current().expect("context::signal_handler not inside of context");
         let context = context_lock.read();
@@ -132,7 +169,6 @@ extern "C" fn signal_handler(sig: usize) {
     println!("Signal handler: {:X}, {:?}", sig, action);
 
     let handler = action.sa_handler as usize;
-    let restorer = action.sa_restorer as usize;
     if handler == SIG_DFL {
         println!("Exit {:X}", sig);
         syscall::exit(sig);
