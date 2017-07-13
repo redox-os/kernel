@@ -584,6 +584,9 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
 
             if data.starts_with(b"#!") {
                 if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
+                    // Strip whitespace
+                    let line = &line[line.iter().position(|&b| b != b' ')
+                                         .unwrap_or(0)..];
                     if ! args.is_empty() {
                         args.remove(0);
                     }
