@@ -590,7 +590,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     if ! args.is_empty() {
                         args.remove(0);
                     }
-                    args.insert(0, canonical);
+                    args.insert(0, path.to_vec());
                     args.insert(0, line.to_vec());
                     canonical = {
                         let contexts = context::contexts();
