@@ -272,7 +272,7 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
     if fd == new_fd {
         Ok(new_fd)
     } else {
-        let _ = close(new_fd)?;
+        let _ = close(new_fd);
 
         let file = {
             let contexts = context::contexts();
