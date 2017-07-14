@@ -198,7 +198,8 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
             }
         }
     } else if let Some(hpet) = Hpet::new(sdt) {
-        println!(": {:#?}", hpet);
+        println!(": {}", hpet.hpet_number);
+        ACPI_TABLE.lock().hpet = Some(hpet);
     } else if is_aml_table(sdt) {
         ACPI_TABLE.lock().namespace = match parse_aml_table(sdt) {
             Ok(res) => {
@@ -273,9 +274,10 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
 pub struct Acpi {
     pub fadt: Option<Fadt>,
     pub namespace: Option<AmlNamespace>,
+    pub hpet: Option<Hpet>
 }
 
-pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, namespace: None });
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, namespace: None, hpet: None });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
