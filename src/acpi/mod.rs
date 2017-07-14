@@ -22,7 +22,7 @@ use self::hpet::Hpet;
 
 use self::aml::{is_aml_table, parse_aml_table, AmlNamespace, AmlError};
 
-mod hpet;
+pub mod hpet;
 mod dmar;
 mod fadt;
 mod madt;

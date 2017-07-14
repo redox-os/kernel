@@ -9,7 +9,7 @@ pub struct GenericAddressStructure {
     bit_width: u8,
     bit_offset: u8,
     access_size: u8,
-    address: u64,
+    pub address: u64,
 }
 
 #[repr(packed)]
