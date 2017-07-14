@@ -18,9 +18,11 @@ use self::madt::{Madt, MadtEntry};
 use self::rsdt::Rsdt;
 use self::sdt::Sdt;
 use self::xsdt::Xsdt;
+use self::hpet::Hpet;
 
 use self::aml::{is_aml_table, parse_aml_table, AmlNamespace, AmlError};
 
+pub mod hpet;
 mod dmar;
 mod fadt;
 mod madt;
@@ -195,6 +197,9 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
                 _ => ()
             }
         }
+    } else if let Some(hpet) = Hpet::new(sdt) {
+        println!(": {}", hpet.hpet_number);
+        ACPI_TABLE.lock().hpet = Some(hpet);
     } else if is_aml_table(sdt) {
         ACPI_TABLE.lock().namespace = match parse_aml_table(sdt) {
             Ok(res) => {
@@ -269,9 +274,10 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
 pub struct Acpi {
     pub fadt: Option<Fadt>,
     pub namespace: Option<AmlNamespace>,
+    pub hpet: Option<Hpet>
 }
 
-pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, namespace: None });
+pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, namespace: None, hpet: None });
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]

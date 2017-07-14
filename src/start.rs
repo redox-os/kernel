@@ -107,7 +107,7 @@ pub unsafe extern fn kstart(kernel_base: usize, kernel_size: usize, stack_base: 
         acpi::init(&mut active_table);
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
-        device::init_noncore();
+        device::init_noncore(&mut active_table);
 
         // Initialize memory functions after core has loaded
         memory::init_noncore();
