@@ -5,7 +5,7 @@ use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 
 use sync::WaitCondition;
-use syscall::error::{Error, Result, EAGAIN, EBADF, EINVAL, EPIPE};
+use syscall::error::{Error, Result, EAGAIN, EBADF, EINVAL, EPIPE, ESPIPE};
 use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_CHR};
 use syscall::scheme::Scheme;
 use syscall::data::Stat;
@@ -143,6 +143,10 @@ impl Scheme for PipeScheme {
         drop(pipes.1.remove(&id));
 
         Ok(0)
+    }
+
+    fn seek(&self, _id: usize, _pos: usize, _whence: usize) -> Result<usize> {
+        Err(Error::new(ESPIPE))
     }
 }
 
