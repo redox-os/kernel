@@ -6,7 +6,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{Packet, Stat};
 use syscall::error::*;
-use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE};
+use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let (file, pid, uid, gid) = {
@@ -262,7 +262,7 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
     context.add_file(::context::file::File {
         scheme: file.scheme,
         number: new_id,
-        flags: file.flags,
+        flags: file.flags & !O_CLOEXEC,
         event: None,
     }).ok_or(Error::new(EMFILE))
 }
@@ -297,7 +297,7 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
         context.insert_file(new_fd, ::context::file::File {
             scheme: file.scheme,
             number: new_id,
-            flags: file.flags,
+            flags: file.flags & !O_CLOEXEC,
             event: None,
         }).ok_or(Error::new(EBADF))
     }
