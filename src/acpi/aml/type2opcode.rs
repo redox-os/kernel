@@ -11,6 +11,8 @@ use super::termlist::{parse_term_arg, parse_method_invocation};
 use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name};
 use super::dataobj::parse_data_ref_obj;
 
+use time::monotonic;
+
 #[derive(Debug, Clone)]
 pub enum MatchOpcode {
     MTR,
@@ -1114,11 +1116,13 @@ fn parse_def_not(data: &[u8],
 
 fn parse_def_timer(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    // TODO: Read from the hardware timer, and split into 100ns intervals
     parser_opcode_extended!(data, 0x33);
+
+    let (seconds, nanoseconds) = monotonic();
+    let monotonic_ns = nanoseconds + (seconds * 1000000000);
     
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(0),
+        val: AmlValue::Integer(monotonic_ns),
         len: 2 as usize
     })
 }
