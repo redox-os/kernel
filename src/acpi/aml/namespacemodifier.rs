@@ -4,7 +4,7 @@ use collections::vec::Vec;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext};
+use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState};
 use super::namespace::{AmlValue, ObjectReference, FieldSelector, get_namespace_string};
 use super::pkglength::parse_pkg_length;
 use super::namestring::parse_name_string;
@@ -13,6 +13,13 @@ use super::dataobj::parse_data_ref_obj;
 
 pub fn parse_namespace_modifier(data: &[u8],
                                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_alias_op,
@@ -25,6 +32,13 @@ pub fn parse_namespace_modifier(data: &[u8],
 
 fn parse_alias_op(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x06);
 
     let source_name = parse_name_string(&data[1..], ctx)?;
@@ -44,6 +58,13 @@ fn parse_alias_op(data: &[u8],
 
 fn parse_name_op(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x08);
     
     let name = parse_name_string(&data[1..], ctx)?;
@@ -61,6 +82,13 @@ fn parse_name_op(data: &[u8],
 
 fn parse_scope_op(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x10);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;

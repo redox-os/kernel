@@ -3,7 +3,7 @@ use collections::string::String;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{ AmlParseType, ParseResult, AmlExecutionContext };
+use super::parser::{ AmlParseType, ParseResult, AmlExecutionContext, ExecutionState };
 use super::namespace::{ AmlValue, ObjectReference };
 
 use super::type2opcode::{parse_def_buffer, parse_def_package, parse_def_var_package};
@@ -12,6 +12,13 @@ use super::namestring::parse_super_name;
 
 pub fn parse_data_obj(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_computational_data,
@@ -24,6 +31,13 @@ pub fn parse_data_obj(data: &[u8],
 
 pub fn parse_data_ref_obj(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_data_obj,
@@ -44,6 +58,13 @@ pub fn parse_data_ref_obj(data: &[u8],
 
 pub fn parse_arg_obj(data: &[u8],
                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     match data[0] {
         0x68 ... 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::ArgObj(data[0] - 0x68)),
@@ -55,6 +76,13 @@ pub fn parse_arg_obj(data: &[u8],
 
 pub fn parse_local_obj(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     match data[0] {
         0x68 ... 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::LocalObj(data[0] - 0x60)),
@@ -66,6 +94,13 @@ pub fn parse_local_obj(data: &[u8],
 
 fn parse_computational_data(data: &[u8],
                             ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     match data[0] {
         0x0A => Ok(AmlParseType {
             val: AmlValue::Integer(data[1] as u64),

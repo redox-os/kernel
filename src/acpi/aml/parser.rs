@@ -12,11 +12,20 @@ pub struct AmlParseTypeGeneric<T> {
     pub len: usize
 }
 
+#[derive(PartialEq)]
+pub enum ExecutionState {
+    EXECUTING,
+    CONTINUE,
+    BREAK,
+    RETURN
+}
+
 pub struct AmlExecutionContext {
     pub namespace: BTreeMap<String, AmlValue>,
     pub scope: String,
     pub local_vars: [AmlValue; 8],
-    pub arg_vars: [AmlValue; 8]
+    pub arg_vars: [AmlValue; 8],
+    pub state: ExecutionState
 }
 
 impl AmlExecutionContext {
@@ -39,7 +48,8 @@ impl AmlExecutionContext {
                        AmlValue::Uninitialized,
                        AmlValue::Uninitialized,
                        AmlValue::Uninitialized,
-                       AmlValue::Uninitialized]
+                       AmlValue::Uninitialized],
+            state: ExecutionState::EXECUTING
         }
     }
 

@@ -4,7 +4,7 @@ use collections::vec::Vec;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult, AmlExecutionContext};
+use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
 use super::namespace::{AmlValue, ObjectReference};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_method_invocation};
@@ -25,6 +25,13 @@ pub enum MatchOpcode {
 
 pub fn parse_type2_opcode(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_def_increment,
@@ -84,6 +91,13 @@ pub fn parse_type2_opcode(data: &[u8],
 
 pub fn parse_type6_opcode(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_def_deref_of,
@@ -97,6 +111,13 @@ pub fn parse_type6_opcode(data: &[u8],
 
 pub fn parse_def_object_type(data: &[u8],
                              ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x8E);
     parser_selector! {
         data, ctx,
@@ -111,6 +132,13 @@ pub fn parse_def_object_type(data: &[u8],
 
 pub fn parse_def_package(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Handle deferred loads in here
     parser_opcode!(data, 0x12);
 
@@ -134,6 +162,13 @@ pub fn parse_def_package(data: &[u8],
 
 pub fn parse_def_var_package(data: &[u8],
                              ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Handle deferred loads in here
     parser_opcode!(data, 0x13);
 
@@ -160,6 +195,13 @@ pub fn parse_def_var_package(data: &[u8],
 
 fn parse_package_elements_list(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     let mut current_offset: usize = 0;
     let mut elements: Vec<AmlValue> = vec!();
 
@@ -186,6 +228,13 @@ fn parse_package_elements_list(data: &[u8],
 
 pub fn parse_def_buffer(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Perform computation
     parser_opcode!(data, 0x11);
 
@@ -201,6 +250,13 @@ pub fn parse_def_buffer(data: &[u8],
 
 fn parse_def_ref_of(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Perform computation
     parser_opcode!(data, 0x71);
 
@@ -214,6 +270,13 @@ fn parse_def_ref_of(data: &[u8],
 
 fn parse_def_deref_of(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Perform computation
     parser_opcode!(data, 0x83);
 
@@ -227,6 +290,13 @@ fn parse_def_deref_of(data: &[u8],
 
 fn parse_def_acquire(data: &[u8],
                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Store the result
     // TODO: Perform computation
     parser_opcode_extended!(data, 0x23);
@@ -242,6 +312,13 @@ fn parse_def_acquire(data: &[u8],
 
 fn parse_def_increment(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x75);
 
     let obj = parse_super_name(&data[1..], ctx)?;
@@ -257,6 +334,13 @@ fn parse_def_increment(data: &[u8],
 
 fn parse_def_index(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Store the result, if appropriate
     // TODO: Perform computation
     parser_opcode!(data, 0x88);
@@ -273,6 +357,13 @@ fn parse_def_index(data: &[u8],
 
 fn parse_def_land(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x90);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -288,6 +379,13 @@ fn parse_def_land(data: &[u8],
 
 fn parse_def_lequal(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x93);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -303,6 +401,13 @@ fn parse_def_lequal(data: &[u8],
 
 fn parse_def_lgreater(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x94);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -318,6 +423,13 @@ fn parse_def_lgreater(data: &[u8],
 
 fn parse_def_lless(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x95);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -333,6 +445,13 @@ fn parse_def_lless(data: &[u8],
 
 fn parse_def_lnot(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x92);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
@@ -346,6 +465,13 @@ fn parse_def_lnot(data: &[u8],
 
 fn parse_def_lor(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x91);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -361,6 +487,13 @@ fn parse_def_lor(data: &[u8],
 
 fn parse_def_to_hex_string(data: &[u8],
                            ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x98);
@@ -376,6 +509,13 @@ fn parse_def_to_hex_string(data: &[u8],
 
 fn parse_def_to_buffer(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x96);
@@ -391,6 +531,13 @@ fn parse_def_to_buffer(data: &[u8],
 
 fn parse_def_to_bcd(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     parser_opcode_extended!(data, 0x29);
@@ -406,6 +553,13 @@ fn parse_def_to_bcd(data: &[u8],
 
 fn parse_def_to_decimal_string(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x97);
@@ -421,6 +575,13 @@ fn parse_def_to_decimal_string(data: &[u8],
 
 fn parse_def_to_integer(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x99);
@@ -436,6 +597,13 @@ fn parse_def_to_integer(data: &[u8],
 
 fn parse_def_to_string(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x9C);
@@ -452,6 +620,13 @@ fn parse_def_to_string(data: &[u8],
 
 fn parse_def_subtract(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x74);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -470,6 +645,13 @@ fn parse_def_subtract(data: &[u8],
 
 fn parse_def_size_of(data: &[u8],
                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Perform the computation
     parser_opcode!(data, 0x87);
 
@@ -483,6 +665,13 @@ fn parse_def_size_of(data: &[u8],
 
 fn parse_def_store(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x70);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
@@ -498,6 +687,13 @@ fn parse_def_store(data: &[u8],
 
 fn parse_def_or(data: &[u8],
                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x7D);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -516,6 +712,13 @@ fn parse_def_or(data: &[u8],
 
 fn parse_def_shift_left(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x79);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -534,6 +737,13 @@ fn parse_def_shift_left(data: &[u8],
 
 fn parse_def_shift_right(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x7A);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -552,6 +762,13 @@ fn parse_def_shift_right(data: &[u8],
 
 fn parse_def_add(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x72);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -570,6 +787,13 @@ fn parse_def_add(data: &[u8],
 
 fn parse_def_and(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x7B);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -588,6 +812,13 @@ fn parse_def_and(data: &[u8],
 
 fn parse_def_xor(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x7F);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -606,6 +837,13 @@ fn parse_def_xor(data: &[u8],
 
 fn parse_def_concat_res(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x84);
@@ -622,6 +860,13 @@ fn parse_def_concat_res(data: &[u8],
 
 fn parse_def_wait(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     parser_opcode_extended!(data, 0x25);
 
@@ -636,6 +881,13 @@ fn parse_def_wait(data: &[u8],
 
 fn parse_def_cond_ref_of(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result
     parser_opcode_extended!(data, 0x12);
@@ -651,6 +903,13 @@ fn parse_def_cond_ref_of(data: &[u8],
 
 fn parse_def_copy_object(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result
     parser_opcode!(data, 0x9D);
@@ -666,6 +925,13 @@ fn parse_def_copy_object(data: &[u8],
 
 fn parse_def_concat(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result
     parser_opcode!(data, 0x73);
@@ -682,6 +948,13 @@ fn parse_def_concat(data: &[u8],
 
 fn parse_def_decrement(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x76);
 
     let obj = parse_super_name(&data[1..], ctx)?;
@@ -697,6 +970,13 @@ fn parse_def_decrement(data: &[u8],
 
 fn parse_def_divide(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x78);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -721,6 +1001,13 @@ fn parse_def_divide(data: &[u8],
 
 fn parse_def_find_set_left_bit(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x81);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -749,6 +1036,13 @@ fn parse_def_find_set_left_bit(data: &[u8],
 
 fn parse_def_find_set_right_bit(data: &[u8],
                                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x82);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -781,6 +1075,13 @@ fn parse_def_find_set_right_bit(data: &[u8],
 
 fn parse_def_load_table(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Compute the result
     // TODO: Store the result, if appropriate
     // TODO: Clean up
@@ -938,6 +1239,13 @@ fn parse_def_match(data: &[u8],
 
 fn parse_def_from_bcd(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode_extended!(data, 0x28);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -968,6 +1276,13 @@ fn parse_def_from_bcd(data: &[u8],
 
 fn parse_def_mid(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x9E);
 
     let source = parse_term_arg(&data[1..], ctx)?;
@@ -1022,6 +1337,13 @@ fn parse_def_mid(data: &[u8],
 
 fn parse_def_mod(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x85);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1044,6 +1366,13 @@ fn parse_def_mod(data: &[u8],
 
 fn parse_def_multiply(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Handle overflow
     parser_opcode!(data, 0x77);
 
@@ -1063,6 +1392,13 @@ fn parse_def_multiply(data: &[u8],
 
 fn parse_def_nand(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x7C);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1081,6 +1417,13 @@ fn parse_def_nand(data: &[u8],
 
 fn parse_def_nor(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x7E);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1099,6 +1442,13 @@ fn parse_def_nor(data: &[u8],
 
 fn parse_def_not(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode!(data, 0x80);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
@@ -1116,6 +1466,13 @@ fn parse_def_not(data: &[u8],
 
 fn parse_def_timer(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode_extended!(data, 0x33);
 
     let (seconds, nanoseconds) = monotonic();

@@ -3,13 +3,20 @@ use collections::string::String;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext};
+use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState};
 use super::namespace::{AmlValue, ObjectReference, FieldSelector, get_namespace_string};
 use super::dataobj::{parse_arg_obj, parse_local_obj};
 use super::type2opcode::parse_type6_opcode;
 
 pub fn parse_name_string(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     let mut characters: Vec<u8> = vec!();
     let mut starting_index: usize = 0;
 
@@ -142,6 +149,13 @@ fn parse_multi_name_path(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
 
 pub fn parse_super_name(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_simple_name,
@@ -154,6 +168,13 @@ pub fn parse_super_name(data: &[u8],
 
 fn parse_debug_obj(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_opcode_extended!(data, 0x31);
 
     Ok(AmlParseType {
@@ -164,6 +185,13 @@ fn parse_debug_obj(data: &[u8],
 
 pub fn parse_simple_name(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_name_string,
@@ -176,6 +204,13 @@ pub fn parse_simple_name(data: &[u8],
 
 pub fn parse_target(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     if data[0] == 0x00 {
         Ok(AmlParseType {
             val: AmlValue::None,

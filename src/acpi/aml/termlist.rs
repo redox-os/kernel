@@ -4,7 +4,7 @@ use collections::vec::Vec;
 use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext };
+use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
 use super::namespace::{AmlValue, ObjectReference, FieldSelector, get_namespace_string};
 use super::namespacemodifier::parse_namespace_modifier;
 use super::namedobj::parse_named_obj;
@@ -15,10 +15,25 @@ use super::namestring::parse_name_string;
 
 pub fn parse_term_list(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: data.len()
+        });
+    }
+    
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
         let res = parse_term_obj(&data[current_offset..], ctx)?;
+        
+        if ctx.state != ExecutionState::EXECUTING {
+            return Ok(AmlParseType {
+                val: AmlValue::None,
+                len: data.len()
+            });
+        }
+    
         current_offset += res.len;
     }
 
@@ -30,6 +45,13 @@ pub fn parse_term_list(data: &[u8],
 
 pub fn parse_term_arg(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_local_obj,
@@ -43,10 +65,25 @@ pub fn parse_term_arg(data: &[u8],
 
 pub fn parse_object_list(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: data.len()
+        });
+    }
+    
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
         let res = parse_object(&data[current_offset..], ctx)?;
+        
+        if ctx.state != ExecutionState::EXECUTING {
+            return Ok(AmlParseType {
+                val: AmlValue::None,
+                len: data.len()
+            });
+        }
+    
         current_offset += res.len;
     }
 
@@ -58,6 +95,13 @@ pub fn parse_object_list(data: &[u8],
 
 fn parse_object(data: &[u8],
                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_namespace_modifier,
@@ -69,6 +113,13 @@ fn parse_object(data: &[u8],
 
 pub fn parse_method_invocation(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     // TODO: Check if method exists in namespace
     // TODO: If so, parse appropriate number of parameters
     // TODO: If not, add deferred load to ctx
@@ -79,6 +130,13 @@ pub fn parse_method_invocation(data: &[u8],
 
 fn parse_term_obj(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    if ctx.state != ExecutionState::EXECUTING {
+        return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        });
+    }
+    
     parser_selector! {
         data, ctx,
         parse_namespace_modifier,
