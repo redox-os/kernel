@@ -1,5 +1,6 @@
 use collections::string::String;
 use collections::btree_map::BTreeMap;
+use collections::vec::Vec;
 
 use super::namespace::{ AmlValue, ObjectReference };
 use super::AmlError;
@@ -50,6 +51,18 @@ impl AmlExecutionContext {
                        AmlValue::Uninitialized,
                        AmlValue::Uninitialized],
             state: ExecutionState::EXECUTING
+        }
+    }
+
+    pub fn init_arg_vars(&mut self, parameters: Vec<AmlValue>) {
+        if parameters.len() > 8 {
+            return;
+        }
+
+        let mut cur = 0;
+        while cur < parameters.len() {
+            self.arg_vars[cur] = parameters[cur].clone();
+            cur += 1;
         }
     }
 

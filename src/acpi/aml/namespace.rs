@@ -5,7 +5,8 @@ use collections::btree_map::BTreeMap;
 
 use core::str::FromStr;
 
-use super::namedobj::{ RegionSpace, FieldFlags, Method };
+use super::termlist::parse_term_list;
+use super::namedobj::{ RegionSpace, FieldFlags };
 use super::parser::AmlExecutionContext;
 use super::AmlError;
 
@@ -28,6 +29,14 @@ pub enum ObjectReference {
     LocalObj(u8),
     NamedObj(String),
     Object(Box<AmlValue>)
+}
+
+#[derive(Debug, Clone)]
+pub struct Method {
+    pub arg_count: u8,
+    pub serialized: bool,
+    pub sync_level: u8,
+    pub term_list: Vec<u8>
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +113,24 @@ impl AmlValue {
             AmlValue::IntegerConstant(ref i) => Ok(i.clone()),
             _ => Err(AmlError::AmlValueError)
         }
+    }
+
+    pub fn get_as_method(&self) -> Result<Method, AmlError> {
+        match *self {
+            AmlValue::Method(ref m) => Ok(m.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+}
+
+impl Method {
+    pub fn execute(&self, scope: String, parameters: Vec<AmlValue>) -> AmlValue {
+        let mut ctx = AmlExecutionContext::new(scope);
+        ctx.init_arg_vars(parameters);
+
+        parse_term_list(&self.term_list[..], &mut ctx);
+
+        AmlValue::None
     }
 }
 

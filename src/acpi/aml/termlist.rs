@@ -120,12 +120,32 @@ pub fn parse_method_invocation(data: &[u8],
         });
     }
     
-    // TODO: Check if method exists in namespace
-    // TODO: If so, parse appropriate number of parameters
-    // TODO: If not, add deferred load to ctx
     let name = parse_name_string(data, ctx)?;
+    let method = ctx.get(name.val.clone());
+
+    let method = match method {
+        AmlValue::None => return Err(AmlError::AmlDeferredLoad),
+        _ => method.get_as_method()?
+    };
     
-    Err(AmlError::AmlDeferredLoad)
+    let mut cur = 0;
+    let mut params: Vec<AmlValue> = vec!();
+
+    let mut current_offset = name.len;
+    
+    while cur < method.arg_count {
+        let res = parse_term_arg(&data[current_offset..], ctx)?;
+        
+        current_offset += res.len;
+        cur += 1;
+
+        params.push(res.val);
+    }
+
+    Ok(AmlParseType {
+        val: method.execute(get_namespace_string(ctx.scope.clone(), name.val), params),
+        len: current_offset
+    })
 }
 
 fn parse_term_obj(data: &[u8],

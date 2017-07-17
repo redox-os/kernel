@@ -7,19 +7,11 @@ use collections::btree_map::BTreeMap;
 
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
-use super::namespace::{ AmlValue, ObjectReference, FieldSelector, get_namespace_string };
+use super::namespace::{ AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string };
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list};
 use super::pkglength::parse_pkg_length;
 use super::type2opcode::parse_def_buffer;
-
-#[derive(Debug, Clone)]
-pub struct Method {
-    arg_count: u8,
-    serialized: bool,
-    sync_level: u8,
-    term_list: Vec<u8>
-}
 
 #[derive(Debug, Copy, Clone)]
 pub enum RegionSpace {
