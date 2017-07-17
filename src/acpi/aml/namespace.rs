@@ -7,7 +7,7 @@ use core::str::FromStr;
 
 use super::termlist::parse_term_list;
 use super::namedobj::{ RegionSpace, FieldFlags };
-use super::parser::AmlExecutionContext;
+use super::parser::{AmlExecutionContext, ExecutionState};
 use super::AmlError;
 
 #[derive(Debug, Clone)]
@@ -130,7 +130,10 @@ impl Method {
 
         parse_term_list(&self.term_list[..], &mut ctx);
 
-        AmlValue::None
+        match ctx.state {
+            ExecutionState::RETURN(v) => v,
+            _ => AmlValue::IntegerConstant(0)
+        }
     }
 }
 

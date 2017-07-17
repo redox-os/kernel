@@ -80,11 +80,12 @@ pub enum AccessAttrib {
 
 pub fn parse_named_obj(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {
@@ -114,11 +115,12 @@ pub fn parse_named_obj(data: &[u8],
 
 fn parse_def_bank_field(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: Why isn't bank name used?
@@ -169,11 +171,12 @@ fn parse_def_bank_field(data: &[u8],
 
 fn parse_def_create_bit_field(data: &[u8],
                               ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x8D);
@@ -198,11 +201,12 @@ fn parse_def_create_bit_field(data: &[u8],
 
 fn parse_def_create_byte_field(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x8C);
@@ -227,11 +231,12 @@ fn parse_def_create_byte_field(data: &[u8],
 
 fn parse_def_create_word_field(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x8B);
@@ -256,11 +261,12 @@ fn parse_def_create_word_field(data: &[u8],
 
 fn parse_def_create_dword_field(data: &[u8],
                                 ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x8A);
@@ -285,11 +291,12 @@ fn parse_def_create_dword_field(data: &[u8],
 
 fn parse_def_create_qword_field(data: &[u8],
                                 ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x8F);
@@ -314,11 +321,12 @@ fn parse_def_create_qword_field(data: &[u8],
 
 fn parse_def_create_field(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x13);
@@ -344,11 +352,12 @@ fn parse_def_create_field(data: &[u8],
 
 fn parse_def_data_region(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: Find the actual offset and length, once table mapping is implemented
@@ -375,11 +384,12 @@ fn parse_def_data_region(data: &[u8],
 
 fn parse_def_event(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x02);
@@ -397,11 +407,12 @@ fn parse_def_event(data: &[u8],
 
 fn parse_def_device(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: How to handle local context deferreds
@@ -425,11 +436,12 @@ fn parse_def_device(data: &[u8],
 
 fn parse_def_op_region(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x80);
@@ -468,11 +480,12 @@ fn parse_def_op_region(data: &[u8],
 
 fn parse_def_field(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x81);
@@ -512,11 +525,12 @@ fn parse_def_field(data: &[u8],
 
 fn parse_def_index_field(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x86);
@@ -563,11 +577,12 @@ fn parse_field_list(data: &[u8],
                     ctx: &mut AmlExecutionContext,
                     selector: FieldSelector,
                     flags: &mut FieldFlags) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     let mut current_offset: usize = 0;
@@ -577,11 +592,12 @@ fn parse_field_list(data: &[u8],
     while current_offset < data.len() {
         let res = parse_field_element(&data[current_offset..], ctx, selector.clone(), &mut connection, flags, &mut field_offset)?;
         
-        if ctx.state != ExecutionState::EXECUTING {
-            return Ok(AmlParseType {
+        match ctx.state {
+            ExecutionState::EXECUTING => (),
+            _ => return Ok(AmlParseType {
                 val: AmlValue::None,
                 len: 0 as usize
-            });
+            })
         }
     
         current_offset += res.len;
@@ -599,11 +615,12 @@ fn parse_field_element(data: &[u8],
                        connection: &mut AmlValue,
                        flags: &mut FieldFlags,
                        offset: &mut usize) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     let length = if let Ok(field) = parse_named_field(data, ctx) {
@@ -717,11 +734,12 @@ fn parse_access_field(data: &[u8],
 
 fn parse_connect_field(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x02);
@@ -742,11 +760,12 @@ fn parse_connect_field(data: &[u8],
 
 fn parse_def_method(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x14);
@@ -777,11 +796,12 @@ fn parse_def_method(data: &[u8],
 
 fn parse_def_mutex(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x01);
@@ -801,11 +821,12 @@ fn parse_def_mutex(data: &[u8],
 
 fn parse_def_power_res(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: How to handle local context deferreds
@@ -838,11 +859,12 @@ fn parse_def_power_res(data: &[u8],
 
 fn parse_def_processor(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x83);
@@ -876,11 +898,12 @@ fn parse_def_processor(data: &[u8],
 
 fn parse_def_thermal_zone(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x85);    

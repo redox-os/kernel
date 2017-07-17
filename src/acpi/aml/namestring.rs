@@ -10,11 +10,12 @@ use super::type2opcode::parse_type6_opcode;
 
 pub fn parse_name_string(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     let mut characters: Vec<u8> = vec!();
@@ -149,11 +150,12 @@ fn parse_multi_name_path(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
 
 pub fn parse_super_name(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {
@@ -168,11 +170,12 @@ pub fn parse_super_name(data: &[u8],
 
 fn parse_debug_obj(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x31);
@@ -185,11 +188,12 @@ fn parse_debug_obj(data: &[u8],
 
 pub fn parse_simple_name(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {
@@ -204,11 +208,12 @@ pub fn parse_simple_name(data: &[u8],
 
 pub fn parse_target(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     if data[0] == 0x00 {

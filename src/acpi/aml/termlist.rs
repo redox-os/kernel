@@ -15,11 +15,12 @@ use super::namestring::parse_name_string;
 
 pub fn parse_term_list(data: &[u8],
                        ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: data.len()
-        });
+            len: 0 as usize
+        })
     }
     
     let mut current_offset: usize = 0;
@@ -27,11 +28,12 @@ pub fn parse_term_list(data: &[u8],
     while current_offset < data.len() {
         let res = parse_term_obj(&data[current_offset..], ctx)?;
         
-        if ctx.state != ExecutionState::EXECUTING {
-            return Ok(AmlParseType {
+        match ctx.state {
+            ExecutionState::EXECUTING => (),
+            _ => return Ok(AmlParseType {
                 val: AmlValue::None,
                 len: data.len()
-            });
+            })
         }
     
         current_offset += res.len;
@@ -45,11 +47,12 @@ pub fn parse_term_list(data: &[u8],
 
 pub fn parse_term_arg(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {
@@ -65,11 +68,12 @@ pub fn parse_term_arg(data: &[u8],
 
 pub fn parse_object_list(data: &[u8],
                          ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: data.len()
-        });
+            len: 0 as usize
+        })
     }
     
     let mut current_offset: usize = 0;
@@ -77,11 +81,12 @@ pub fn parse_object_list(data: &[u8],
     while current_offset < data.len() {
         let res = parse_object(&data[current_offset..], ctx)?;
         
-        if ctx.state != ExecutionState::EXECUTING {
-            return Ok(AmlParseType {
+        match ctx.state {
+            ExecutionState::EXECUTING => (),
+            _ => return Ok(AmlParseType {
                 val: AmlValue::None,
                 len: data.len()
-            });
+            })
         }
     
         current_offset += res.len;
@@ -95,11 +100,12 @@ pub fn parse_object_list(data: &[u8],
 
 fn parse_object(data: &[u8],
                 ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {
@@ -113,11 +119,12 @@ fn parse_object(data: &[u8],
 
 pub fn parse_method_invocation(data: &[u8],
                                ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     let name = parse_name_string(data, ctx)?;
@@ -150,11 +157,12 @@ pub fn parse_method_invocation(data: &[u8],
 
 fn parse_term_obj(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {

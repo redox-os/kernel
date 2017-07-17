@@ -13,12 +13,11 @@ pub struct AmlParseTypeGeneric<T> {
     pub len: usize
 }
 
-#[derive(PartialEq)]
 pub enum ExecutionState {
     EXECUTING,
     CONTINUE,
     BREAK,
-    RETURN
+    RETURN(AmlValue)
 }
 
 pub struct AmlExecutionContext {

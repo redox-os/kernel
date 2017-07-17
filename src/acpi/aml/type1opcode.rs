@@ -12,11 +12,12 @@ use super::namestring::{parse_name_string, parse_super_name};
 
 pub fn parse_type1_opcode(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {
@@ -44,11 +45,12 @@ pub fn parse_type1_opcode(data: &[u8],
 
 fn parse_def_break(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0xA5);
@@ -62,11 +64,12 @@ fn parse_def_break(data: &[u8],
 
 fn parse_def_breakpoint(data: &[u8],
                         ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0xCC);
@@ -79,11 +82,12 @@ fn parse_def_breakpoint(data: &[u8],
 
 fn parse_def_continue(data: &[u8],
                       ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x9F);
@@ -97,11 +101,12 @@ fn parse_def_continue(data: &[u8],
 
 fn parse_def_noop(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0xA3);
@@ -114,11 +119,12 @@ fn parse_def_noop(data: &[u8],
 
 fn parse_def_fatal(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode_extended!(data, 0x32);
@@ -132,11 +138,12 @@ fn parse_def_fatal(data: &[u8],
 
 fn parse_def_load(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: Load in the table pointed to by `name`
@@ -155,11 +162,12 @@ fn parse_def_load(data: &[u8],
 
 fn parse_def_notify(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: This requires significantly more infrastructure from the OS itself, see 5.6.6
@@ -176,11 +184,12 @@ fn parse_def_notify(data: &[u8],
 
 fn parse_def_release(data: &[u8],
                      ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: Check ownership of the mutex pointed to
@@ -198,11 +207,12 @@ fn parse_def_release(data: &[u8],
 
 fn parse_def_reset(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: object (of type Event) is a semaphore. Reset the resource count to 0
@@ -218,11 +228,12 @@ fn parse_def_reset(data: &[u8],
 
 fn parse_def_signal(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: Increment the resource count of the semaphore
@@ -238,11 +249,12 @@ fn parse_def_signal(data: &[u8],
 
 fn parse_def_sleep(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: Sleep the processor for the specified number of milliseconds (minimum)
@@ -258,11 +270,12 @@ fn parse_def_sleep(data: &[u8],
 
 fn parse_def_stall(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: Sleep the processor for the specified number of microseconds (minimum)
@@ -278,11 +291,12 @@ fn parse_def_stall(data: &[u8],
 
 fn parse_def_unload(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     // TODO: remove from namespace all values added when `object` was loaded
@@ -299,11 +313,12 @@ fn parse_def_unload(data: &[u8],
 
 fn parse_def_if_else(data: &[u8],
                      ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0xA0);
@@ -331,11 +346,12 @@ fn parse_def_if_else(data: &[u8],
 
 fn parse_def_while(data: &[u8],
                    ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0xA2);
@@ -343,13 +359,6 @@ fn parse_def_while(data: &[u8],
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
 
     loop {
-        if ctx.state != ExecutionState::EXECUTING {
-            return Ok(AmlParseType {
-                val: AmlValue::None,
-                len: 0 as usize
-            });
-        }
-        
         let predicate = parse_term_arg(&data[1 + pkg_length_len..], ctx)?;
         if predicate.val.get_as_integer()? == 0 {
             break;
@@ -357,11 +366,17 @@ fn parse_def_while(data: &[u8],
         
         parse_term_list(&data[1 + pkg_length_len + predicate.len .. 1 + pkg_length], ctx)?;
 
-        if ctx.state == ExecutionState::BREAK {
-            ctx.state = ExecutionState::EXECUTING;
-            break;
-        } else if ctx.state == ExecutionState::CONTINUE {
-            ctx.state = ExecutionState::EXECUTING;
+        match ctx.state {
+            ExecutionState::EXECUTING => (),
+            ExecutionState::BREAK => {
+                ctx.state = ExecutionState::EXECUTING;
+                break;
+            },
+            ExecutionState::CONTINUE => ctx.state = ExecutionState::EXECUTING,
+            _ => return Ok(AmlParseType {
+                val: AmlValue::None,
+                len: 0 as usize
+            })
         }
     }
     
@@ -373,18 +388,18 @@ fn parse_def_while(data: &[u8],
 
 fn parse_def_return(data: &[u8],
                     ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
-    // TODO: Return to the calling context
-    // TODO: We need contexts for that
     parser_opcode!(data, 0xA4);
 
     let arg_object = parse_term_arg(&data[1..], ctx)?;
+    ctx.state = ExecutionState::RETURN(arg_object.val);
 
     Ok(AmlParseType {
         val: AmlValue::None,

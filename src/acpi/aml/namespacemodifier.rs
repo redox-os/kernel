@@ -13,11 +13,12 @@ use super::dataobj::parse_data_ref_obj;
 
 pub fn parse_namespace_modifier(data: &[u8],
                                 ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_selector! {
@@ -32,11 +33,12 @@ pub fn parse_namespace_modifier(data: &[u8],
 
 fn parse_alias_op(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x06);
@@ -58,11 +60,12 @@ fn parse_alias_op(data: &[u8],
 
 fn parse_name_op(data: &[u8],
                  ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x08);
@@ -82,11 +85,12 @@ fn parse_name_op(data: &[u8],
 
 fn parse_scope_op(data: &[u8],
                   ctx: &mut AmlExecutionContext) -> ParseResult {
-    if ctx.state != ExecutionState::EXECUTING {
-        return Ok(AmlParseType {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
             val: AmlValue::None,
             len: 0 as usize
-        });
+        })
     }
     
     parser_opcode!(data, 0x10);
