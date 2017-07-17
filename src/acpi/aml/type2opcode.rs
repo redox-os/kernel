@@ -353,16 +353,17 @@ fn parse_def_index(data: &[u8],
         })
     }
     
-    // TODO: Store the result, if appropriate
-    // TODO: Perform computation
     parser_opcode!(data, 0x88);
 
     let obj = parse_term_arg(&data[1..], ctx)?;
     let idx = parse_term_arg(&data[1 + obj.len..], ctx)?;
     let target = parse_target(&data[1 + obj.len + idx.len..], ctx)?;
+
+    let reference = AmlValue::ObjectReference(ObjectReference::Index(Box::new(obj.val), Box::new(idx.val)));
+    ctx.modify(target.val, reference.clone());
     
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: reference,
         len: 1 + obj.len + idx.len + target.len
     })
 }

@@ -28,7 +28,8 @@ pub enum ObjectReference {
     ArgObj(u8),
     LocalObj(u8),
     NamedObj(String),
-    Object(Box<AmlValue>)
+    Object(Box<AmlValue>),
+    Index(Box<AmlValue>, Box<AmlValue>)
 }
 
 #[derive(Debug, Clone)]
