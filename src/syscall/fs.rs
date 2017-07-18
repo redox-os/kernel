@@ -314,7 +314,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     };
 
     // Communicate fcntl with scheme
-    let res = {
+    let _res = {
         let scheme = {
             let schemes = scheme::schemes();
             let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
