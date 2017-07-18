@@ -25,7 +25,8 @@ pub struct AmlExecutionContext {
     pub scope: String,
     pub local_vars: [AmlValue; 8],
     pub arg_vars: [AmlValue; 8],
-    pub state: ExecutionState
+    pub state: ExecutionState,
+    pub namespace_delta: Vec<String>
 }
 
 impl AmlExecutionContext {
@@ -49,7 +50,25 @@ impl AmlExecutionContext {
                        AmlValue::Uninitialized,
                        AmlValue::Uninitialized,
                        AmlValue::Uninitialized],
-            state: ExecutionState::EXECUTING
+            state: ExecutionState::EXECUTING,
+            namespace_delta: vec!()
+        }
+    }
+
+    pub fn add_to_namespace(&mut self, name: String, value: AmlValue) -> Result<(), AmlError> {
+        if self.namespace.contains_key(&name) {
+            return Err(AmlError::AmlValueError);
+        }
+            
+        self.namespace_delta.push(name.clone());
+        self.namespace.insert(name, value);
+
+        Ok(())
+    }
+
+    pub fn clean_namespace(&mut self) {
+        for k in &self.namespace_delta {
+            self.namespace.remove(k);
         }
     }
 

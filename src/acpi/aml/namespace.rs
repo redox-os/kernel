@@ -130,6 +130,7 @@ impl Method {
         ctx.init_arg_vars(parameters);
 
         parse_term_list(&self.term_list[..], &mut ctx);
+        ctx.clean_namespace();
 
         match ctx.state {
             ExecutionState::RETURN(v) => v,
