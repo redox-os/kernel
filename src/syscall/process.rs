@@ -20,7 +20,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{SigAction, Stat};
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, O_CLOEXEC, SIG_DFL, WNOHANG};
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, O_CLOEXEC, SIG_DFL, SIGTERM, WNOHANG};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
@@ -963,13 +963,18 @@ pub fn exit(status: usize) -> ! {
         }
 
         if pid == ContextId::from(1) {
-            println!("Main kernel thread exited with status {:X}, calling kstop", status);
+            println!("Main kernel thread exited with status {:X}", status);
 
             extern {
+                fn kreset() -> !;
                 fn kstop() -> !;
             }
 
-            unsafe { kstop(); }
+            if status == SIGTERM {
+                unsafe { kreset(); }
+            } else {
+                unsafe { kstop(); }
+            }
         }
     }
 
