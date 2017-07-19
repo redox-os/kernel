@@ -114,4 +114,8 @@ b"        files.clear();" // Silence mutability warning
     }
 }
     ").unwrap();
+
+    fn main() {
+        println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
+    }
 }
