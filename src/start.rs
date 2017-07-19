@@ -172,7 +172,7 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
         :   "{r10}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
             "{r11}"(gdt::GDT_USER_TLS << 3 | 3), // TLS segment
             "{r12}"(sp), // Stack pointer
-            "{r13}"(3 << 12 | 1 << 9), // Flags - Set IOPL and interrupt enable flag
+            "{r13}"(0 << 12 | 1 << 9), // Flags - Set IOPL and interrupt enable flag
             "{r14}"(gdt::GDT_USER_CODE << 3 | 3), // Code segment
             "{r15}"(ip) // IP
             "{rdi}"(arg) // Argument

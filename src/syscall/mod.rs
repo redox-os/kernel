@@ -17,6 +17,7 @@ use self::error::{Error, Result, ENOSYS};
 use self::number::*;
 
 use context::ContextId;
+use interrupt::syscall::SyscallStack;
 use scheme::{FileHandle, SchemeNamespace};
 
 /// Driver syscalls
@@ -41,9 +42,9 @@ pub mod time;
 pub mod validate;
 
 #[no_mangle]
-pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack: usize) -> usize {
+pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> usize {
     #[inline(always)]
-    fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack: usize) -> Result<usize> {
+    fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> Result<usize> {
         match a & SYS_CLASS {
             SYS_CLASS_FILE => {
                 let fd = FileHandle::from(b);
@@ -83,7 +84,7 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                 SYS_BRK => brk(b),
                 SYS_GETPID => getpid().map(ContextId::into),
                 SYS_GETPPID => getppid().map(ContextId::into),
-                SYS_CLONE => clone(b, stack).map(ContextId::into),
+                SYS_CLONE => clone(b, bp).map(ContextId::into),
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
                 SYS_WAITPID => waitpid(ContextId::from(b), c, d).map(ContextId::into),
@@ -127,7 +128,7 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
         }
     }
 
-    let result = inner(a, b, c, d, e, f, stack);
+    let result = inner(a, b, c, d, e, f, bp, stack);
 
     /*
     if let Err(ref err) = result {

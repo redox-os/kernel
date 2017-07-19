@@ -85,7 +85,7 @@ macro_rules! interrupt_stack {
         #[naked]
         pub unsafe extern fn $name () {
             #[inline(never)]
-            unsafe fn inner($stack: &$crate::macros::InterruptStack) {
+            unsafe fn inner($stack: &mut $crate::macros::InterruptStack) {
                 $func
             }
 
@@ -109,7 +109,7 @@ macro_rules! interrupt_stack {
             asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
 
             // Call inner rust function
-            inner(&*(rsp as *const $crate::macros::InterruptStack));
+            inner(&mut *(rsp as *mut $crate::macros::InterruptStack));
 
             // Pop scratch registers and return
             asm!("pop fs
