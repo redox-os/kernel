@@ -614,8 +614,8 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                 drop(path); // Drop so that usage is not allowed after unmapping context
                 drop(arg_ptrs); // Drop so that usage is not allowed after unmapping context
 
-                let contexts = context::contexts();
                 let (vfork, ppid, files) = {
+                    let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
                     let mut context = context_lock.write();
 
@@ -848,6 +848,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                 }
 
                 if vfork {
+                    let contexts = context::contexts();
                     if let Some(context_lock) = contexts.get(ppid) {
                         let mut context = context_lock.write();
                         if ! context.unblock() {
