@@ -203,7 +203,7 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
                 _ => ()
             }
         }
-    } else if let Some(hpet) = Hpet::new(sdt) {
+    } else if let Some(hpet) = Hpet::new(sdt, active_table) {
         println!(": {}", hpet.hpet_number);
         
         let mut hpet_t = ACPI_TABLE.hpet.write();
