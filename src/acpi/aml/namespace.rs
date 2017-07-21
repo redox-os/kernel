@@ -52,7 +52,7 @@ pub enum AmlValue {
     },
     DDBHandle(u32), // Index into the XSDT
     DebugObject,
-    Device(BTreeMap<String, AmlValue>),
+    Device(Vec<String>),
     Event,
     FieldUnit {
         selector: FieldSelector,
@@ -76,15 +76,15 @@ pub enum AmlValue {
     PowerResource {
         system_level: u8,
         resource_order: u16,
-        obj_list: BTreeMap<String, AmlValue>
+        obj_list: Vec<String>
     },
     Processor {
         proc_id: u8,
         p_blk: Option<u32>,
-        obj_list: BTreeMap<String, AmlValue>
+        obj_list: Vec<String>
     },
     RawDataBuffer(Vec<u8>),
-    ThermalZone(BTreeMap<String, AmlValue>)
+    ThermalZone(Vec<String>)
 }
 
 impl AmlValue {

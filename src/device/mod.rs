@@ -17,7 +17,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable){
 
 pub unsafe fn init_noncore(active_table: &mut ActivePageTable) {
     {
-        if let Some(ref hpet) = ACPI_TABLE.lock().hpet {
+        if let Some(ref hpet) = *ACPI_TABLE.hpet.read() {
             hpet::init(hpet, active_table);
         } else {
             pit::init();

@@ -416,17 +416,17 @@ fn parse_def_device(data: &[u8],
     }
     
     // TODO: How to handle local context deferreds
-    // TODO: How to also handle local context reference to calling context
     parser_opcode_extended!(data, 0x82);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length], ctx)?;
-
-    let mut local_ctx = AmlExecutionContext::new(String::new());    
-    let obj_list = parse_object_list(&data[2 + pkg_length_len + name.len .. 2 + pkg_length], &mut local_ctx)?;
-
+    
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
-    ctx.add_to_namespace(local_scope_string, AmlValue::Device(local_ctx.namespace.clone()));
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
+    
+    parse_object_list(&data[2 + pkg_length_len + name.len .. 2 + pkg_length], &mut local_ctx)?;
+
+    ctx.add_to_namespace(local_scope_string, AmlValue::Device(local_ctx.namespace_delta.clone()));
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -830,7 +830,6 @@ fn parse_def_power_res(data: &[u8],
     }
     
     // TODO: How to handle local context deferreds
-    // TODO: How to also handle local context reference to calling context
     parser_opcode_extended!(data, 0x84);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
@@ -842,13 +841,13 @@ fn parse_def_power_res(data: &[u8],
     let resource_order: u16 = (data[3 + pkg_len_len + name.len] as u16) +
         ((data[4 + pkg_len_len + name.len] as u16) << 8);
 
-    let mut local_ctx = AmlExecutionContext::new(String::new());
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
     parse_object_list(&data[5 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
     
     ctx.add_to_namespace(local_scope_string, AmlValue::PowerResource {
         system_level,
         resource_order,
-        obj_list: local_ctx.namespace.clone()
+        obj_list: local_ctx.namespace_delta.clone()
     });
 
     Ok(AmlParseType {
@@ -881,13 +880,13 @@ fn parse_def_processor(data: &[u8],
         ((data[6 + pkg_len_len + name.len] as u32) << 24);
     let p_blk_len = data[7 + pkg_len_len + name.len];
 
-    let mut local_ctx = AmlExecutionContext::new(String::new());
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
     parse_object_list(&data[8 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
 
     ctx.add_to_namespace(local_scope_string, AmlValue::Processor {
         proc_id: proc_id,
         p_blk: if p_blk_len > 0 { Some(p_blk_addr) } else { None },
-        obj_list: local_ctx.namespace.clone()
+        obj_list: local_ctx.namespace_delta.clone()
     });
 
     Ok(AmlParseType {
@@ -913,10 +912,10 @@ fn parse_def_thermal_zone(data: &[u8],
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
 
-    let mut local_ctx = AmlExecutionContext::new(String::new());    
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());    
     parse_object_list(&data[2 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::ThermalZone(local_ctx.namespace.clone()));
+    ctx.add_to_namespace(local_scope_string, AmlValue::ThermalZone(local_ctx.namespace_delta.clone()));
 
     Ok(AmlParseType {
         val: AmlValue::None,

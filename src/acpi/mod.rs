@@ -7,7 +7,7 @@ use collections::btree_map::BTreeMap;
 use collections::string::String;
 use alloc::boxed::Box;
 
-use spin::Mutex;
+use spin::{Mutex, RwLock};
 
 use device::local_apic::LOCAL_APIC;
 use interrupt;
@@ -73,9 +73,12 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
 
     if let Some(fadt) = Fadt::new(sdt) {
         println!(": {:X}", fadt.dsdt);
+        
         let dsdt = get_sdt(fadt.dsdt as usize, active_table);
         parse_sdt(dsdt, active_table);
-        ACPI_TABLE.lock().fadt = Some(fadt);
+        
+        let mut fadt_t = ACPI_TABLE.fadt.write();
+        *fadt_t = Some(fadt);
     } else if let Some(madt) = Madt::new(sdt) {
         println!(": {:>08X}: {}", madt.local_address, madt.flags);
 
@@ -202,20 +205,12 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         }
     } else if let Some(hpet) = Hpet::new(sdt) {
         println!(": {}", hpet.hpet_number);
-        ACPI_TABLE.lock().hpet = Some(hpet);
+        
+        let mut hpet_t = ACPI_TABLE.hpet.write();
+        *hpet_t = Some(hpet);
     } else if is_aml_table(sdt) {
         match parse_aml_table(sdt) {
-            Ok(res) => {
-                println!(": Parsed");
-                let ref mut namespace = ACPI_TABLE.lock().namespace;
-
-                if let Some(ref mut ns) = *namespace {
-                    let mut res = res.clone();
-                    ns.append(&mut res);
-                } else {
-                    *namespace = Some(res);
-                }
-            },
+            Ok(()) => println!(": Parsed"),
             Err(AmlError::AmlParseError(e)) => println!(": {}", e),
             Err(AmlError::AmlInvalidOpCode) => println!(": Invalid opcode"),
             Err(AmlError::AmlValueError) => println!(": Type constraints or value bounds not met"),
@@ -229,6 +224,11 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
 pub unsafe fn init(active_table: &mut ActivePageTable) {
+    {
+        let mut namespace = ACPI_TABLE.namespace.write();
+        *namespace = Some(BTreeMap::new());
+    }
+    
     let start_addr = 0xE0000;
     let end_addr = 0xFFFFF;
 
@@ -283,12 +283,16 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
 }
 
 pub struct Acpi {
-    pub fadt: Option<Fadt>,
-    pub namespace: Option<BTreeMap<String, AmlValue>>,
-    pub hpet: Option<Hpet>
+    pub fadt: RwLock<Option<Fadt>>,
+    pub namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
+    pub hpet: RwLock<Option<Hpet>>
 }
 
-pub static ACPI_TABLE: Mutex<Acpi> = Mutex::new(Acpi { fadt: None, namespace: None, hpet: None });
+pub static ACPI_TABLE: Acpi = Acpi {
+    fadt: RwLock::new(None),
+    namespace: RwLock::new(None),
+    hpet: RwLock::new(None)
+};
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]

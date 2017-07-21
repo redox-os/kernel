@@ -5,6 +5,8 @@ use collections::vec::Vec;
 use super::namespace::{ AmlValue, ObjectReference };
 use super::AmlError;
 
+use acpi::ACPI_TABLE;
+
 pub type ParseResult = Result<AmlParseType, AmlError>;
 pub type AmlParseType = AmlParseTypeGeneric<AmlValue>;
 
@@ -21,7 +23,6 @@ pub enum ExecutionState {
 }
 
 pub struct AmlExecutionContext {
-    pub namespace: BTreeMap<String, AmlValue>,
     pub scope: String,
     pub local_vars: [AmlValue; 8],
     pub arg_vars: [AmlValue; 8],
@@ -32,7 +33,6 @@ pub struct AmlExecutionContext {
 impl AmlExecutionContext {
     pub fn new(scope: String) -> AmlExecutionContext {
         AmlExecutionContext {
-            namespace: BTreeMap::new(),
             scope: scope,
             local_vars: [AmlValue::Uninitialized,
                          AmlValue::Uninitialized,
@@ -56,19 +56,29 @@ impl AmlExecutionContext {
     }
 
     pub fn add_to_namespace(&mut self, name: String, value: AmlValue) -> Result<(), AmlError> {
-        if self.namespace.contains_key(&name) {
-            return Err(AmlError::AmlValueError);
-        }
+        let mut namespace = ACPI_TABLE.namespace.write();
+        
+        if let Some(ref mut namespace) = *namespace {
+            if namespace.contains_key(&name) {
+                return Err(AmlError::AmlValueError);
+            }
             
-        self.namespace_delta.push(name.clone());
-        self.namespace.insert(name, value);
+            self.namespace_delta.push(name.clone());
+            namespace.insert(name, value);
 
-        Ok(())
+            Ok(())
+        } else {
+            Err(AmlError::AmlValueError)
+        }
     }
 
     pub fn clean_namespace(&mut self) {
-        for k in &self.namespace_delta {
-            self.namespace.remove(k);
+        let mut namespace = ACPI_TABLE.namespace.write();
+
+        if let Some(ref mut namespace) = *namespace {
+            for k in &self.namespace_delta {
+                namespace.remove(k);
+            }
         }
     }
 

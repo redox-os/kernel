@@ -37,13 +37,13 @@ pub enum AmlError {
     AmlFatalError(u8, u16, AmlValue)
 }
 
-pub fn parse_aml_table(sdt: &'static Sdt) -> Result<BTreeMap<String, AmlValue>, AmlError> {
+pub fn parse_aml_table(sdt: &'static Sdt) -> Result<(), AmlError> {
     let data = sdt.data();
     let mut ctx = AmlExecutionContext::new(String::from_str("\\").unwrap());
     
     parse_term_list(data, &mut ctx)?;
 
-    Ok(ctx.namespace.clone())
+    Ok(())
 }
 
 pub fn is_aml_table(sdt: &'static Sdt) -> bool {

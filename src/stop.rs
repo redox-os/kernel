@@ -7,25 +7,29 @@ pub unsafe extern fn kstop() -> ! {
 
     // ACPI shutdown
     {
-        let acpi = acpi::ACPI_TABLE.lock();
-        if let Some(ref fadt) = acpi.fadt {
+        let fadt = acpi::ACPI_TABLE.fadt.read();
+        
+        if let Some(ref fadt) = *fadt {
             let port = fadt.pm1a_control_block as u16;
             let mut val = 1 << 13;
-            if let Some(ref namespace) = acpi.namespace {
+
+            let namespace = acpi::ACPI_TABLE.namespace.read();
+
+            if let Some(ref namespace) = *namespace {
                 if let Some(s) = namespace.get("\\_S5") {
                     if let Ok(p) = s.get_as_package() {
                         println!("{:?}", p);
                         let slp_typa = p[0].get_as_integer().expect("SLP_TYPa is not an integer");
                         let slp_typb = p[1].get_as_integer().expect("SLP_TYPb is not an integer");
-
+                        
                         println!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
                         val |= slp_typa as u16;
+                        
+                        println!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
+                        Pio::<u16>::new(port).write(val);
                     }
                 }
             }
-            
-            println!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
-            Pio::<u16>::new(port).write(val);
         }
     }
 
