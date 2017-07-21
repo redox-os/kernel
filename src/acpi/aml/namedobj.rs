@@ -7,7 +7,7 @@ use collections::btree_map::BTreeMap;
 
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
-use super::namespace::{ AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string };
+use super::namespace::{ AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string, Accessor };
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_term_list, parse_object_list};
 use super::pkglength::parse_pkg_length;
@@ -373,7 +373,11 @@ fn parse_def_data_region(data: &[u8],
     ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion {
         region: RegionSpace::SystemMemory,
         offset: Box::new(AmlValue::IntegerConstant(0)),
-        len: Box::new(AmlValue::IntegerConstant(0))
+        len: Box::new(AmlValue::IntegerConstant(0)),
+        accessor: Accessor {
+            read: |x| 0 as u64,
+            write: |x, y| ()
+        }
     });
 
     Ok(AmlParseType {
@@ -469,7 +473,11 @@ fn parse_def_op_region(data: &[u8],
     ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion {
         region: region,
         offset: Box::new(offset.val),
-        len: Box::new(len.val)
+        len: Box::new(len.val),
+        accessor: Accessor {
+            read: |x| 0 as u64,
+            write: |x, y| ()
+        }
     });
 
     Ok(AmlParseType {

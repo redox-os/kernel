@@ -4,13 +4,14 @@ use collections::vec::Vec;
 use collections::btree_map::BTreeMap;
 
 use core::str::FromStr;
+use core::fmt::{Debug, Formatter, Error};
 
 use super::termlist::parse_term_list;
 use super::namedobj::{ RegionSpace, FieldFlags };
 use super::parser::{AmlExecutionContext, ExecutionState};
 use super::AmlError;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum FieldSelector {
     Region(String),
     Bank {
@@ -23,7 +24,7 @@ pub enum FieldSelector {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ObjectReference {
     ArgObj(u8),
     LocalObj(u8),
@@ -32,7 +33,7 @@ pub enum ObjectReference {
     Index(Box<AmlValue>, Box<AmlValue>)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Method {
     pub arg_count: u8,
     pub serialized: bool,
@@ -40,7 +41,21 @@ pub struct Method {
     pub term_list: Vec<u8>
 }
 
-#[derive(Debug, Clone)]
+pub struct Accessor {
+    pub read: fn(usize) -> u64,
+    pub write: fn(usize, u64)
+}
+
+impl Clone for Accessor {
+    fn clone(&self) -> Accessor {
+        Accessor {
+            read: (*self).read,
+            write: (*self).write
+        }
+    }
+}
+
+#[derive(Clone)]
 pub enum AmlValue {
     None,
     Uninitialized,
@@ -69,7 +84,8 @@ pub enum AmlValue {
     OperationRegion {
         region: RegionSpace,
         offset: Box<AmlValue>,
-        len: Box<AmlValue>
+        len: Box<AmlValue>,
+        accessor: Accessor
     },
     Package(Vec<AmlValue>),
     String(String),
@@ -85,6 +101,10 @@ pub enum AmlValue {
     },
     RawDataBuffer(Vec<u8>),
     ThermalZone(Vec<String>)
+}
+
+impl Debug for AmlValue {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { Ok(()) }
 }
 
 impl AmlValue {
