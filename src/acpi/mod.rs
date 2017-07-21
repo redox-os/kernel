@@ -7,6 +7,8 @@ use collections::btree_map::BTreeMap;
 use collections::string::String;
 use alloc::boxed::Box;
 
+use syscall::io::{Io, Pio};
+
 use spin::{Mutex, RwLock};
 
 use device::local_apic::LOCAL_APIC;
@@ -280,6 +282,34 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         }
     }
     */
+}
+
+pub fn set_global_s_state(state: u8) {
+    if state == 5 {
+        let fadt = ACPI_TABLE.fadt.read();
+        
+        if let Some(ref fadt) = *fadt {
+            let port = fadt.pm1a_control_block as u16;
+            let mut val = 1 << 13;
+
+            let namespace = ACPI_TABLE.namespace.read();
+
+            if let Some(ref namespace) = *namespace {
+                if let Some(s) = namespace.get("\\_S5") {
+                    if let Ok(p) = s.get_as_package() {
+                        let slp_typa = p[0].get_as_integer().expect("SLP_TYPa is not an integer");
+                        let slp_typb = p[1].get_as_integer().expect("SLP_TYPb is not an integer");
+                        
+                        println!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
+                        val |= slp_typa as u16;
+                        
+                        println!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
+                        Pio::<u16>::new(port).write(val);
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub struct Acpi {
