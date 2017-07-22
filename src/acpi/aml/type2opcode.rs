@@ -614,15 +614,25 @@ fn parse_def_to_bcd(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode_extended!(data, 0x29);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
+    
+    let mut i = operand.val.get_as_integer()?;
+    let mut result = 0;
+
+    while i != 0 {
+        result <<= 4;
+        result += i % 10;
+        i /= 10;
+    }
+    
+    let result = AmlValue::Integer(result);
+    ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: result,
         len: 1 + operand.len + target.len
     })
 }
@@ -685,16 +695,25 @@ fn parse_def_to_string(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x9C);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
     let length = parse_term_arg(&data[1 + operand.len..], ctx)?;
     let target = parse_target(&data[1 + operand.len + length.len..], ctx)?;
 
+    let buf = operand.val.get_as_buffer()?;
+    let mut string = match String::from_utf8(buf) {
+        Ok(s) => s,
+        Err(_) => return Err(AmlError::AmlValueError)
+    };
+
+    string.truncate(length.val.get_as_integer()? as usize);
+    let res = AmlValue::String(string);
+
+    ctx.modify(target.val, res.clone());
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: res,
         len: 1 + operand.len + length.len + target.len
     })
 }
