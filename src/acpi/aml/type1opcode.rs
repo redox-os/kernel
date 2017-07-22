@@ -292,10 +292,22 @@ fn parse_def_sleep(data: &[u8],
         })
     }
     
-    // TODO: Sleep the processor for the specified number of milliseconds (minimum)
     parser_opcode_extended!(data, 0x22);
 
     let time = parse_term_arg(&data[2..], ctx)?;
+    let timeout = time.val.get_as_integer()?;
+    
+    let (seconds, nanoseconds) = monotonic();
+    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+    
+    loop {
+        let (seconds, nanoseconds) = monotonic();
+        let current_time_ns = nanoseconds + (seconds * 1000000000);
+        
+        if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+            break;
+        }
+    }
 
     Ok(AmlParseType {
         val: AmlValue::None,
