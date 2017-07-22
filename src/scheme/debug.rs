@@ -49,7 +49,7 @@ impl Scheme for DebugScheme {
 
     fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
         if ! buf.is_empty() {
-            return Err(Error::new(ENOENT));
+            return Err(Error::new(EINVAL));
         }
 
         let flags = {

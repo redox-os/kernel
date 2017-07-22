@@ -51,7 +51,7 @@ impl Scheme for DiskScheme {
 
     fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
         if ! buf.is_empty() {
-            return Err(Error::new(ENOENT));
+            return Err(Error::new(EINVAL));
         }
 
         let (path, data, mode, seek) = {

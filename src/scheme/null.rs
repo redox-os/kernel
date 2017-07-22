@@ -10,7 +10,7 @@ impl Scheme for NullScheme {
 
     fn dup(&self, _file: usize, buf: &[u8]) -> Result<usize> {
         if ! buf.is_empty() {
-            return Err(Error::new(ENOENT));
+            return Err(Error::new(EINVAL));
         }
 
         Ok(0)
