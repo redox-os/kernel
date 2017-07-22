@@ -568,15 +568,33 @@ fn parse_def_to_hex_string(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x98);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
+    let res = match operand.val {
+        AmlValue::Integer(_) => {
+            let result: String = format!("{:X}", operand.val.get_as_integer()?);
+            AmlValue::String(result)
+        },
+        AmlValue::String(s) => AmlValue::String(s),
+        AmlValue::Buffer(_) => {
+            let mut string: String = String::new();
+
+            for b in operand.val.get_as_buffer()? {
+                string.push_str(&format!("{:X}", b));
+            }
+
+            AmlValue::String(string)
+        },
+        _ => return Err(AmlError::AmlValueError)
+    };
+
+    ctx.modify(target.val, res.clone());
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: res,
         len: 1 + operand.len + target.len
     })
 }
@@ -651,9 +669,23 @@ fn parse_def_to_decimal_string(data: &[u8],
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
+    let res = match operand.val {
+        AmlValue::Integer(_) => {
+            let result: String = format!("{}", operand.val.get_as_integer()?);
+            AmlValue::String(result)
+        },
+        AmlValue::String(s) => AmlValue::String(s),
+        AmlValue::Buffer(_) => {
+            let mut string: String = String::new();
 
-    let result: String = format!("{}", operand.val.get_as_integer()?);
-    let res = AmlValue::String(result);
+            for b in operand.val.get_as_buffer()? {
+                string.push_str(&format!("{}", b));
+            }
+
+            AmlValue::String(string)
+        },
+        _ => return Err(AmlError::AmlValueError)
+    };
 
     ctx.modify(target.val, res.clone());
 
