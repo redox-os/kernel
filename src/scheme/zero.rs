@@ -8,7 +8,11 @@ impl Scheme for ZeroScheme {
         Ok(0)
     }
 
-    fn dup(&self, _file: usize, _buf: &[u8]) -> Result<usize> {
+    fn dup(&self, _file: usize, buf: &[u8]) -> Result<usize> {
+        if ! buf.is_empty() {
+            return Err(Error::new(ENOENT));
+        }
+
         Ok(0)
     }
 
