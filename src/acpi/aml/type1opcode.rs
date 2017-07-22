@@ -197,11 +197,42 @@ fn parse_def_release(data: &[u8],
     // TODO: Release if it is
     parser_opcode_extended!(data, 0x27);
 
-    let object = parse_super_name(&data[2..], ctx)?;
+    let obj = parse_super_name(&data[2..], ctx)?;
+
+    let mut namespace = ctx.prelock();
+    let mutex = ctx.get(obj.val.clone());
+
+    match mutex {
+        AmlValue::Mutex((sync_level, owner)) => {
+            if let Some(o) = owner {
+                if o == ctx.ctx_id {
+                    ctx.modify(obj.val.clone(), AmlValue::Mutex((sync_level, None)));
+                } else {
+                    return Err(AmlError::AmlHardFatal);
+                }
+            }
+        },
+        AmlValue::OperationRegion { region, offset, len, accessor, accessed_by } => {
+            if let Some(o) = accessed_by {
+                if o == ctx.ctx_id {
+                    ctx.modify(obj.val.clone(), AmlValue::OperationRegion {
+                        region,
+                        offset,
+                        len,
+                        accessor,
+                        accessed_by: None
+                    });
+                } else {
+                    return Err(AmlError::AmlHardFatal);
+                }
+            }
+        },
+        _ => return Err(AmlError::AmlValueError)
+    }
 
     Ok(AmlParseType {
         val: AmlValue::None,
-        len: 2 + object.len
+        len: 2 + obj.len
     })
 }
 

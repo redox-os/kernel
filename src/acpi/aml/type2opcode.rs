@@ -1052,8 +1052,9 @@ fn parse_def_decrement(data: &[u8],
     parser_opcode!(data, 0x76);
 
     let obj = parse_super_name(&data[1..], ctx)?;
+    
+    let mut namespace = ctx.prelock();
     let value = AmlValue::Integer(ctx.get(obj.val.clone()).get_as_integer()? - 1);
-
     ctx.modify(obj.val, value.clone());
     
     Ok(AmlParseType {

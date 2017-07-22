@@ -217,7 +217,8 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
             Err(AmlError::AmlInvalidOpCode) => println!(": Invalid opcode"),
             Err(AmlError::AmlValueError) => println!(": Type constraints or value bounds not met"),
             Err(AmlError::AmlDeferredLoad) => println!(": Deferred load reached top level"),
-            Err(AmlError::AmlFatalError(_, _, _)) => println!(": Fatal error occurred")
+            Err(AmlError::AmlFatalError(_, _, _)) => println!(": Fatal error occurred"),
+            Err(AmlError::AmlHardFatal) => println!(": Fatal error occurred")
         };
     } else {
         println!(": Unknown");

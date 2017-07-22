@@ -34,7 +34,8 @@ pub enum AmlError {
     AmlInvalidOpCode,
     AmlValueError,
     AmlDeferredLoad,
-    AmlFatalError(u8, u16, AmlValue)
+    AmlFatalError(u8, u16, AmlValue),
+    AmlHardFatal
 }
 
 pub fn parse_aml_table(sdt: &'static Sdt) -> Result<(), AmlError> {
