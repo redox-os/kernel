@@ -646,16 +646,19 @@ fn parse_def_to_decimal_string(data: &[u8],
             len: 0 as usize
         })
     }
-    
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
+
     parser_opcode!(data, 0x97);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
+    let result: String = format!("{}", operand.val.get_as_integer()?);
+    let res = AmlValue::String(result);
+
+    ctx.modify(target.val, res.clone());
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: res,
         len: 1 + operand.len + target.len
     })
 }
