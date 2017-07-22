@@ -660,15 +660,17 @@ fn parse_def_to_integer(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x99);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
+    let res = AmlValue::Integer(operand.val.get_as_integer()?);
+
+    ctx.modify(target.val, res.clone());
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: res,
         len: 1 + operand.len + target.len
     })
 }
@@ -1247,7 +1249,6 @@ fn parse_def_match(data: &[u8],
         })
     }
     
-    // TODO: Clean up
     parser_opcode!(data, 0x28);
     
     let search_pkg = parse_term_arg(&data[1..], ctx)?;
