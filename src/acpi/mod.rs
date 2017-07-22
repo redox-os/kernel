@@ -315,13 +315,15 @@ pub fn set_global_s_state(state: u8) {
 pub struct Acpi {
     pub fadt: RwLock<Option<Fadt>>,
     pub namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
-    pub hpet: RwLock<Option<Hpet>>
+    pub hpet: RwLock<Option<Hpet>>,
+    pub next_ctx: RwLock<u64>,
 }
 
 pub static ACPI_TABLE: Acpi = Acpi {
     fadt: RwLock::new(None),
     namespace: RwLock::new(None),
-    hpet: RwLock::new(None)
+    hpet: RwLock::new(None),
+    next_ctx: RwLock::new(0),
 };
 
 /// RSDP

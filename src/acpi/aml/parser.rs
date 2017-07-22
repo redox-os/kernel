@@ -27,11 +27,17 @@ pub struct AmlExecutionContext {
     pub local_vars: [AmlValue; 8],
     pub arg_vars: [AmlValue; 8],
     pub state: ExecutionState,
-    pub namespace_delta: Vec<String>
+    pub namespace_delta: Vec<String>,
+    pub ctx_id: u64
 }
 
 impl AmlExecutionContext {
     pub fn new(scope: String) -> AmlExecutionContext {
+        let mut idptr = ACPI_TABLE.next_ctx.write();
+        let id: u64 = *idptr;
+
+        *idptr += 1;
+        
         AmlExecutionContext {
             scope: scope,
             local_vars: [AmlValue::Uninitialized,
@@ -51,7 +57,8 @@ impl AmlExecutionContext {
                        AmlValue::Uninitialized,
                        AmlValue::Uninitialized],
             state: ExecutionState::EXECUTING,
-            namespace_delta: vec!()
+            namespace_delta: vec!(),
+            ctx_id: id
         }
     }
 
