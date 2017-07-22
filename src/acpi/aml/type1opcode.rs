@@ -1,11 +1,6 @@
-use alloc::boxed::Box;
-use collections::string::String;
-use collections::vec::Vec;
-use collections::btree_map::BTreeMap;
-
 use super::AmlError;
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
-use super::namespace::{AmlValue, ObjectReference};
+use super::namespace::AmlValue;
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list};
 use super::namestring::{parse_name_string, parse_super_name};
@@ -248,7 +243,7 @@ fn parse_def_reset(data: &[u8],
     parser_opcode_extended!(data, 0x26);
 
     let object = parse_super_name(&data[2..], ctx)?;
-    let event = ctx.get(object.val.clone()).get_as_event()?;
+    ctx.get(object.val.clone()).get_as_event()?;
 
     ctx.modify(object.val.clone(), AmlValue::Event(0));
 

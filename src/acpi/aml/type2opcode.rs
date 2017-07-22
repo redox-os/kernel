@@ -1,7 +1,6 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
-use collections::btree_map::BTreeMap;
 
 use super::AmlError;
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
@@ -153,7 +152,7 @@ pub fn parse_def_package(data: &[u8],
     if elements.len() > numelements {
         elements = elements[0 .. numelements].to_vec();
     } else if numelements > elements.len() {
-        for i in 0..numelements - elements.len() {
+        for _ in 0..numelements - elements.len() {
             elements.push(AmlValue::Uninitialized);
         }
     }
@@ -187,7 +186,7 @@ pub fn parse_def_var_package(data: &[u8],
     if elements.len() > numelements {
         elements = elements[0 .. numelements].to_vec();
     } else if numelements > elements.len() {
-        for i in 0..numelements - elements.len() {
+        for _ in 0..numelements - elements.len() {
             elements.push(AmlValue::Uninitialized);
         }
     }
@@ -365,12 +364,6 @@ fn parse_def_acquire(data: &[u8],
             }
         }
     }
-    
-    Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
-        len: 4 + obj.len
-    })
-        // This should never run
 }
 
 fn parse_def_increment(data: &[u8],
@@ -1056,11 +1049,6 @@ fn parse_def_wait(data: &[u8],
             }
         }
     }
-    
-    Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
-        len: 2 + obj.len + timeout_obj.len
-    })
 }
 
 fn parse_def_cond_ref_of(data: &[u8],
@@ -1353,11 +1341,11 @@ fn parse_def_match(data: &[u8],
 
                 match second_operation {
                     MatchOpcode::MTR => (),
-                    MatchOpcode::MEQ => if val != i { continue },
-                    MatchOpcode::MLE => if val > i { continue },
-                    MatchOpcode::MLT => if val >= i { continue },
-                    MatchOpcode::MGE => if val < i { continue },
-                    MatchOpcode::MGT => if val <= i { continue }
+                    MatchOpcode::MEQ => if val != j { continue },
+                    MatchOpcode::MLE => if val > j { continue },
+                    MatchOpcode::MLT => if val >= j { continue },
+                    MatchOpcode::MGE => if val < j { continue },
+                    MatchOpcode::MGT => if val <= j { continue }
                 }
 
                 return Ok(AmlParseType {
@@ -1384,11 +1372,11 @@ fn parse_def_match(data: &[u8],
 
                 match second_operation {
                     MatchOpcode::MTR => (),
-                    MatchOpcode::MEQ => if val != i { continue },
-                    MatchOpcode::MLE => if val > i { continue },
-                    MatchOpcode::MLT => if val >= i { continue },
-                    MatchOpcode::MGE => if val < i { continue },
-                    MatchOpcode::MGT => if val <= i { continue }
+                    MatchOpcode::MEQ => if val != j { continue },
+                    MatchOpcode::MLE => if val > j { continue },
+                    MatchOpcode::MLT => if val >= j { continue },
+                    MatchOpcode::MGE => if val < j { continue },
+                    MatchOpcode::MGT => if val <= j { continue }
                 }
 
                 return Ok(AmlParseType {
@@ -1416,11 +1404,11 @@ fn parse_def_match(data: &[u8],
 
                 match second_operation {
                     MatchOpcode::MTR => (),
-                    MatchOpcode::MEQ => if val != i { continue },
-                    MatchOpcode::MLE => if val > i { continue },
-                    MatchOpcode::MLT => if val >= i { continue },
-                    MatchOpcode::MGE => if val < i { continue },
-                    MatchOpcode::MGT => if val <= i { continue }
+                    MatchOpcode::MEQ => if val != j { continue },
+                    MatchOpcode::MLE => if val > j { continue },
+                    MatchOpcode::MLT => if val >= j { continue },
+                    MatchOpcode::MGE => if val < j { continue },
+                    MatchOpcode::MGT => if val <= j { continue }
                 }
 
                 return Ok(AmlParseType {

@@ -1,10 +1,9 @@
 use collections::vec::Vec;
 use collections::string::String;
-use collections::btree_map::BTreeMap;
 
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState};
-use super::namespace::{AmlValue, ObjectReference, FieldSelector, get_namespace_string};
+use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
+use super::namespace::AmlValue;
 use super::dataobj::{parse_arg_obj, parse_local_obj};
 use super::type2opcode::parse_type6_opcode;
 

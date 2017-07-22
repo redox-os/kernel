@@ -1,11 +1,6 @@
-use alloc::boxed::Box;
-use collections::string::String;
-use collections::vec::Vec;
-use collections::btree_map::BTreeMap;
-
 use super::AmlError;
-use super::parser::{AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState};
-use super::namespace::{AmlValue, ObjectReference, FieldSelector, get_namespace_string};
+use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
+use super::namespace::{AmlValue, ObjectReference, get_namespace_string};
 use super::pkglength::parse_pkg_length;
 use super::namestring::parse_name_string;
 use super::termlist::parse_term_list;

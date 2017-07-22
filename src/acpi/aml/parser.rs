@@ -113,7 +113,7 @@ impl AmlExecutionContext {
         match name {
             AmlValue::None => (),
             AmlValue::ObjectReference(r) => match r {
-                ObjectReference::ArgObj(i) => (),
+                ObjectReference::ArgObj(_) => (),
                 ObjectReference::LocalObj(i) => self.local_vars[i as usize] = value,
                 _ => ()
             },

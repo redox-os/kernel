@@ -1,8 +1,3 @@
-use core::intrinsics::{volatile_load, volatile_store};
-
-use memory::Frame;
-use paging::{entry, ActivePageTable, PhysicalAddress, Page, VirtualAddress};
-
 use acpi::hpet::Hpet;
 
 static LEG_RT_CNF: u64 = 2;
@@ -14,8 +9,8 @@ static TN_INT_ENB_CNF: u64 = 0x04;
 
 static CAPABILITY_OFFSET: usize = 0x00;
 static GENERAL_CONFIG_OFFSET: usize = 0x10;
-static GENERAL_INTERRUPT_OFFSET: usize = 0x20;
-static MAIN_COUNTER_OFFSET: usize = 0xF0;
+// static GENERAL_INTERRUPT_OFFSET: usize = 0x20;
+// static MAIN_COUNTER_OFFSET: usize = 0xF0;
 static T0_CONFIG_CAPABILITY_OFFSET: usize = 0x100;
 static T0_COMPARATOR_OFFSET: usize = 0x108;
 

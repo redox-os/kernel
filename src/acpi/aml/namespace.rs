@@ -1,9 +1,7 @@
 use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
-use collections::btree_map::BTreeMap;
 
-use core::str::FromStr;
 use core::fmt::{Debug, Formatter, Error};
 
 use super::termlist::parse_term_list;

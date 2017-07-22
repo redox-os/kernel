@@ -1,15 +1,11 @@
 use alloc::boxed::Box;
 use collections::string::String;
-use collections::vec::Vec;
-use core::str::FromStr;
-
-use collections::btree_map::BTreeMap;
 
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
 use super::namespace::{ AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string, Accessor };
 use super::namestring::{parse_name_string, parse_name_seg};
-use super::termlist::{parse_term_arg, parse_term_list, parse_object_list};
+use super::termlist::{parse_term_arg, parse_object_list};
 use super::pkglength::parse_pkg_length;
 use super::type2opcode::parse_def_buffer;
 
@@ -159,9 +155,8 @@ fn parse_def_bank_field(data: &[u8],
         bank_selector: Box::new(bank_value.val)
     };
 
-    let field_list = parse_field_list(
-        &data[3 + pkg_length_len + region_name.len + bank_name.len + bank_value.len ..
-              2 + pkg_length], ctx, selector, &mut flags)?;
+    parse_field_list(&data[3 + pkg_length_len + region_name.len + bank_name.len + bank_value.len ..
+                           2 + pkg_length], ctx, selector, &mut flags)?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -191,7 +186,7 @@ fn parse_def_create_bit_field(data: &[u8],
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(1))
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -221,7 +216,7 @@ fn parse_def_create_byte_field(data: &[u8],
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(8))
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -251,7 +246,7 @@ fn parse_def_create_word_field(data: &[u8],
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(16))
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -311,7 +306,7 @@ fn parse_def_create_qword_field(data: &[u8],
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(64))
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -342,7 +337,7 @@ fn parse_def_create_field(data: &[u8],
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(num_bits.val)
-    });
+    })?;
     
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -379,7 +374,7 @@ fn parse_def_data_region(data: &[u8],
             write: |x, y| ()
         },
         accessed_by: None
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -402,7 +397,7 @@ fn parse_def_event(data: &[u8],
     let name = parse_name_string(&data[2..], ctx)?;
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
-    ctx.add_to_namespace(local_scope_string, AmlValue::Event(0));
+    ctx.add_to_namespace(local_scope_string, AmlValue::Event(0))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -431,7 +426,7 @@ fn parse_def_device(data: &[u8],
     
     parse_object_list(&data[2 + pkg_length_len + name.len .. 2 + pkg_length], &mut local_ctx)?;
 
-    ctx.add_to_namespace(local_scope_string, AmlValue::Device(local_ctx.namespace_delta.clone()));
+    ctx.add_to_namespace(local_scope_string, AmlValue::Device(local_ctx.namespace_delta.clone()))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -480,7 +475,7 @@ fn parse_def_op_region(data: &[u8],
             write: |x, y| ()
         },
         accessed_by: None
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -525,7 +520,7 @@ fn parse_def_field(data: &[u8],
 
     let selector = FieldSelector::Region(name.val.get_as_string()?);
 
-    let field_list = parse_field_list(&data[3 + pkg_length_len + name.len .. 2 + pkg_length], ctx, selector, &mut flags)?;
+    parse_field_list(&data[3 + pkg_length_len + name.len .. 2 + pkg_length], ctx, selector, &mut flags)?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -574,8 +569,8 @@ fn parse_def_index_field(data: &[u8],
         data_selector: data_name.val.get_as_string()?
     };
 
-    let field_list = parse_field_list(
-        &data[3 + pkg_length_len + idx_name.len + data_name.len .. 2 + pkg_length], ctx, selector, &mut flags)?;
+    parse_field_list(&data[3 + pkg_length_len + idx_name.len + data_name.len .. 2 + pkg_length],
+                     ctx, selector, &mut flags)?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -642,7 +637,7 @@ fn parse_field_element(data: &[u8],
             flags: flags.clone(),
             offset: offset.clone(),
             length: field.val.length
-        });
+        })?;
 
         *offset += field.val.length;
         field.len
@@ -681,7 +676,7 @@ fn parse_named_field(data: &[u8],
 
     Ok(AmlParseTypeGeneric {
         val: NamedField { name, length },
-        len: 4 + length_len
+        len: name_seg_len + length_len
     })
 }
 
@@ -796,7 +791,7 @@ fn parse_def_method(data: &[u8],
         serialized,
         sync_level,
         term_list: term_list.to_vec()
-    }));
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -821,7 +816,7 @@ fn parse_def_mutex(data: &[u8],
     let sync_level = flags & 0x0F;
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
-    ctx.add_to_namespace(local_scope_string, AmlValue::Mutex((sync_level, None)));
+    ctx.add_to_namespace(local_scope_string, AmlValue::Mutex((sync_level, None)))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -858,7 +853,7 @@ fn parse_def_power_res(data: &[u8],
         system_level,
         resource_order,
         obj_list: local_ctx.namespace_delta.clone()
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -897,7 +892,7 @@ fn parse_def_processor(data: &[u8],
         proc_id: proc_id,
         p_blk: if p_blk_len > 0 { Some(p_blk_addr) } else { None },
         obj_list: local_ctx.namespace_delta.clone()
-    });
+    })?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -925,7 +920,7 @@ fn parse_def_thermal_zone(data: &[u8],
     let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());    
     parse_object_list(&data[2 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::ThermalZone(local_ctx.namespace_delta.clone()));
+    ctx.add_to_namespace(local_scope_string, AmlValue::ThermalZone(local_ctx.namespace_delta.clone()))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,

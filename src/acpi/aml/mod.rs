@@ -1,11 +1,7 @@
 //! # AML
 //! Code to parse and execute AML tables
 
-use alloc::boxed::Box;
 use collections::string::String;
-use collections::vec::Vec;
-use collections::btree_map::BTreeMap;
-use core::fmt::Debug;
 use core::str::FromStr;
 
 use super::sdt::Sdt;
@@ -24,7 +20,7 @@ mod type1opcode;
 mod type2opcode;
 mod parser;
 
-use self::parser::{ ParseResult, AmlExecutionContext };
+use self::parser::AmlExecutionContext;
 use self::termlist::parse_term_list;
 pub use self::namespace::AmlValue;
 

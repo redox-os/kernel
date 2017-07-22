@@ -1,6 +1,5 @@
 use paging::ActivePageTable;
 use acpi::ACPI_TABLE;
-use syscall::io::{Pio, Io};
 
 pub mod cpu;
 pub mod local_apic;

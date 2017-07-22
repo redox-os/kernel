@@ -5,11 +5,10 @@ use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
 use collections::btree_map::BTreeMap;
 use collections::string::String;
-use alloc::boxed::Box;
 
 use syscall::io::{Io, Pio};
 
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 
 use device::local_apic::LOCAL_APIC;
 use interrupt;
