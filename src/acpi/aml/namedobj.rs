@@ -402,7 +402,7 @@ fn parse_def_event(data: &[u8],
     let name = parse_name_string(&data[2..], ctx)?;
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
-    ctx.add_to_namespace(local_scope_string, AmlValue::Event);
+    ctx.add_to_namespace(local_scope_string, AmlValue::Event(0));
 
     Ok(AmlParseType {
         val: AmlValue::None,

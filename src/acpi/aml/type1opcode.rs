@@ -192,9 +192,6 @@ fn parse_def_release(data: &[u8],
         })
     }
     
-    // TODO: Check ownership of the mutex pointed to
-    // TODO: FATAL if not owned
-    // TODO: Release if it is
     parser_opcode_extended!(data, 0x27);
 
     let obj = parse_super_name(&data[2..], ctx)?;
@@ -246,10 +243,12 @@ fn parse_def_reset(data: &[u8],
         })
     }
     
-    // TODO: object (of type Event) is a semaphore. Reset the resource count to 0
     parser_opcode_extended!(data, 0x26);
 
     let object = parse_super_name(&data[2..], ctx)?;
+    let event = ctx.get(object.val.clone()).get_as_event()?;
+
+    ctx.modify(object.val.clone(), AmlValue::Event(0));
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -267,10 +266,13 @@ fn parse_def_signal(data: &[u8],
         })
     }
     
-    // TODO: Increment the resource count of the semaphore
     parser_opcode_extended!(data, 0x24);
-
     let object = parse_super_name(&data[2..], ctx)?;
+
+    let namespace = ctx.prelock();
+    let event = ctx.get(object.val.clone()).get_as_event()?;
+
+    ctx.modify(object.val.clone(), AmlValue::Event(event + 1));
 
     Ok(AmlParseType {
         val: AmlValue::None,

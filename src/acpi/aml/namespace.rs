@@ -68,7 +68,7 @@ pub enum AmlValue {
     DDBHandle(u32), // Index into the XSDT
     DebugObject,
     Device(Vec<String>),
-    Event,
+    Event(u64),
     FieldUnit {
         selector: FieldSelector,
         connection: Box<AmlValue>,
@@ -109,6 +109,13 @@ impl Debug for AmlValue {
 }
 
 impl AmlValue {
+    pub fn get_as_event(&self) -> Result<u64, AmlError> {
+        match *self {
+            AmlValue::Event(ref e) => Ok(e.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
     pub fn get_as_string(&self) -> Result<String, AmlError> {
         match *self {
             AmlValue::String(ref s) => Ok(s.clone()),

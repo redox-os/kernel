@@ -957,15 +957,53 @@ fn parse_def_wait(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
     parser_opcode_extended!(data, 0x25);
 
-    let event_object = parse_super_name(&data[2..], ctx)?;
-    let operand = parse_term_arg(&data[2 + event_object.len..], ctx)?;
+    let obj = parse_super_name(&data[2..], ctx)?;
+    let timeout_obj = parse_term_arg(&data[2 + obj.len..], ctx)?;
 
+    let timeout = timeout_obj.val.get_as_integer()?;
+
+    let (seconds, nanoseconds) = monotonic();
+    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+
+    loop {
+        {
+            let mut namespace = ctx.prelock();
+            let mutex = ctx.get(obj.val.clone());
+
+            match mutex {
+                AmlValue::Event(count) => {
+                    if count > 0 {
+                        ctx.modify(obj.val.clone(), AmlValue::Event(count - 1));
+                        return Ok(AmlParseType {
+                            val: AmlValue::Integer(0),
+                            len: 2 + obj.len + timeout_obj.len
+                        });
+                    }
+                },
+                _ => return Err(AmlError::AmlValueError)
+            }
+        }
+
+        if timeout >= 0xFFFF {
+            // TODO: Brief sleep here
+        } else {
+            let (seconds, nanoseconds) = monotonic();
+            let current_time_ns = nanoseconds + (seconds * 1000000000);
+            
+            if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(1),
+                    len: 2 + obj.len + timeout_obj.len
+                });
+            }
+        }
+    }
+    
     Ok(AmlParseType {
         val: AmlValue::Uninitialized,
-        len: 2 + event_object.len + operand.len
+        len: 2 + obj.len + timeout_obj.len
     })
 }
 
