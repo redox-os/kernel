@@ -10,6 +10,8 @@ use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list};
 use super::namestring::{parse_name_string, parse_super_name};
 
+use time::monotonic;
+
 pub fn parse_type1_opcode(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
     match ctx.state {
@@ -311,10 +313,22 @@ fn parse_def_stall(data: &[u8],
         })
     }
     
-    // TODO: Sleep the processor for the specified number of microseconds (minimum)
     parser_opcode_extended!(data, 0x21);
 
     let time = parse_term_arg(&data[2..], ctx)?;
+    let timeout = time.val.get_as_integer()?;
+    
+    let (seconds, nanoseconds) = monotonic();
+    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+    
+    loop {
+        let (seconds, nanoseconds) = monotonic();
+        let current_time_ns = nanoseconds + (seconds * 1000000000);
+        
+        if current_time_ns - starting_time_ns > timeout as u64 * 1000 {
+            break;
+        }
+    }
 
     Ok(AmlParseType {
         val: AmlValue::None,
