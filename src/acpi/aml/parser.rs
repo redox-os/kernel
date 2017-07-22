@@ -2,6 +2,8 @@ use collections::string::String;
 use collections::btree_map::BTreeMap;
 use collections::vec::Vec;
 
+use spin::RwLockWriteGuard;
+
 use super::namespace::{ AmlValue, ObjectReference };
 use super::AmlError;
 
@@ -99,6 +101,10 @@ impl AmlExecutionContext {
             self.arg_vars[cur] = parameters[cur].clone();
             cur += 1;
         }
+    }
+
+    pub fn prelock(&mut self) -> RwLockWriteGuard<'static, Option<BTreeMap<String, AmlValue>>> {
+        ACPI_TABLE.namespace.write()
     }
 
     pub fn modify(&mut self, name: AmlValue, value: AmlValue) {

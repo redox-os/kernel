@@ -307,17 +307,70 @@ fn parse_def_acquire(data: &[u8],
         })
     }
     
-    // TODO: Store the result
-    // TODO: Perform computation
     parser_opcode_extended!(data, 0x23);
 
     let obj = parse_super_name(&data[1..], ctx)?;
     let timeout = (data[2 + obj.len] as u16) + ((data[3 + obj.len] as u16) << 8);
+
+    let (seconds, nanoseconds) = monotonic();
+    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+
+    let id = ctx.ctx_id;
+
+    loop {
+        {
+            let mut namespace = ctx.prelock();
+            let mutex = ctx.get(obj.val.clone());
+
+            match mutex {
+                AmlValue::Mutex((sync_level, owner)) => {
+                    if owner == None {
+                        ctx.modify(obj.val.clone(), AmlValue::Mutex((sync_level, Some(id))));
+                        return Ok(AmlParseType {
+                            val: AmlValue::Integer(0),
+                            len: 4 + obj.len
+                        });
+                    }
+                },
+                AmlValue::OperationRegion { region, offset, len, accessor, accessed_by } => {
+                    if accessed_by == None {
+                        ctx.modify(obj.val.clone(), AmlValue::OperationRegion {
+                            region,
+                            offset,
+                            len,
+                            accessor,
+                            accessed_by: Some(id)
+                        });
+                        return Ok(AmlParseType {
+                            val: AmlValue::Integer(0),
+                            len: 4 + obj.len
+                        });
+                    }
+                },
+                _ => return Err(AmlError::AmlValueError)
+            }
+        }
+
+        if timeout == 0xFFFF {
+            // TODO: Brief sleep here
+        } else {
+            let (seconds, nanoseconds) = monotonic();
+            let current_time_ns = nanoseconds + (seconds * 1000000000);
+            
+            if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(1),
+                    len: 4 + obj.len
+                });
+            }
+        }
+    }
     
     Ok(AmlParseType {
         val: AmlValue::Uninitialized,
         len: 4 + obj.len
     })
+        // This should never run
 }
 
 fn parse_def_increment(data: &[u8],
@@ -333,8 +386,9 @@ fn parse_def_increment(data: &[u8],
     parser_opcode!(data, 0x75);
 
     let obj = parse_super_name(&data[1..], ctx)?;
+    
+    let mut namespace = ctx.prelock();
     let value = AmlValue::Integer(ctx.get(obj.val.clone()).get_as_integer()? + 1);
-
     ctx.modify(obj.val, value.clone());
     
     Ok(AmlParseType {

@@ -377,7 +377,8 @@ fn parse_def_data_region(data: &[u8],
         accessor: Accessor {
             read: |x| 0 as u64,
             write: |x, y| ()
-        }
+        },
+        accessed_by: None
     });
 
     Ok(AmlParseType {
@@ -477,7 +478,8 @@ fn parse_def_op_region(data: &[u8],
         accessor: Accessor {
             read: |x| 0 as u64,
             write: |x, y| ()
-        }
+        },
+        accessed_by: None
     });
 
     Ok(AmlParseType {
@@ -819,7 +821,7 @@ fn parse_def_mutex(data: &[u8],
     let sync_level = flags & 0x0F;
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
-    ctx.add_to_namespace(local_scope_string, AmlValue::Mutex(sync_level));
+    ctx.add_to_namespace(local_scope_string, AmlValue::Mutex((sync_level, None)));
 
     Ok(AmlParseType {
         val: AmlValue::None,

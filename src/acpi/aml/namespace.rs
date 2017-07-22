@@ -79,13 +79,14 @@ pub enum AmlValue {
     Integer(u64),
     IntegerConstant(u64),
     Method(Method),
-    Mutex(u8),
+    Mutex((u8, Option<u64>)),
     ObjectReference(ObjectReference),
     OperationRegion {
         region: RegionSpace,
         offset: Box<AmlValue>,
         len: Box<AmlValue>,
-        accessor: Accessor
+        accessor: Accessor,
+        accessed_by: Option<u64>
     },
     Package(Vec<AmlValue>),
     String(String),
