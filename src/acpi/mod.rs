@@ -10,6 +10,8 @@ use syscall::io::{Io, Pio};
 
 use spin::RwLock;
 
+use stop::kstop;
+
 use device::local_apic::LOCAL_APIC;
 use interrupt;
 use memory::{allocate_frames, Frame};
@@ -216,8 +218,14 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
             Err(AmlError::AmlInvalidOpCode) => println!(": Invalid opcode"),
             Err(AmlError::AmlValueError) => println!(": Type constraints or value bounds not met"),
             Err(AmlError::AmlDeferredLoad) => println!(": Deferred load reached top level"),
-            Err(AmlError::AmlFatalError(_, _, _)) => println!(": Fatal error occurred"),
-            Err(AmlError::AmlHardFatal) => println!(": Fatal error occurred")
+            Err(AmlError::AmlFatalError(_, _, _)) => {
+                println!(": Fatal error occurred");
+                unsafe { kstop(); }
+            },
+            Err(AmlError::AmlHardFatal) => {
+                println!(": Fatal error occurred");
+                unsafe { kstop(); }
+            }
         };
     } else {
         println!(": Unknown");
