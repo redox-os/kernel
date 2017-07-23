@@ -31,6 +31,8 @@ pub enum Status {
 pub struct Context {
     /// The ID of this context
     pub id: ContextId,
+    /// The group ID of this context
+    pub pgid: ContextId,
     /// The ID of the parent context
     pub ppid: ContextId,
     /// The real user id
@@ -99,6 +101,7 @@ impl Context {
     pub fn new(id: ContextId) -> Context {
         Context {
             id: id,
+            pgid: id,
             ppid: ContextId::from(0),
             ruid: 0,
             rgid: 0,

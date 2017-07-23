@@ -64,6 +64,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
     let ppid;
     let pid;
     {
+        let pgid;
         let ruid;
         let rgid;
         let rns;
@@ -95,6 +96,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             let context = context_lock.read();
 
             ppid = context.id;
+            pgid = context.pgid;
             ruid = context.ruid;
             rgid = context.rgid;
             rns = context.rns;
@@ -331,6 +333,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             pid = context.id;
 
+            context.pgid = pgid;
             context.ppid = ppid;
             context.ruid = ruid;
             context.rgid = rgid;
@@ -991,6 +994,17 @@ pub fn getpid() -> Result<ContextId> {
     Ok(context.id)
 }
 
+pub fn getpgid(pid: ContextId) -> Result<ContextId> {
+    let contexts = context::contexts();
+    let context_lock = if pid.into() == 0 {
+        contexts.current().ok_or(Error::new(ESRCH))?
+    } else {
+        contexts.get(pid).ok_or(Error::new(ESRCH))?
+    };
+    let context = context_lock.read();
+    Ok(context.pgid)
+}
+
 pub fn getppid() -> Result<ContextId> {
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -1021,6 +1035,34 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         }
     } else {
         Err(Error::new(EINVAL))
+    }
+}
+
+pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
+    let contexts = context::contexts();
+
+    let current_pid = {
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        context.id
+    };
+
+    let context_lock = if pid.into() == 0 {
+        contexts.current().ok_or(Error::new(ESRCH))?
+    } else {
+        contexts.get(pid).ok_or(Error::new(ESRCH))?
+    };
+
+    let mut context = context_lock.write();
+    if context.id == current_pid || context.ppid == current_pid {
+        if pgid.into() == 0 {
+            context.pgid = context.id;
+        } else {
+            context.pgid = pgid;
+        }
+        Ok(0)
+    } else {
+        Err(Error::new(ESRCH))
     }
 }
 
