@@ -34,7 +34,7 @@ pub mod memory;
 pub mod timeout;
 
 /// Limit on number of contexts
-pub const CONTEXT_MAX_CONTEXTS: usize = usize::max_value() - 1;
+pub const CONTEXT_MAX_CONTEXTS: usize = (isize::max_value() as usize) - 1;
 
 /// Maximum context files
 pub const CONTEXT_MAX_FILES: usize = 65536;

@@ -1013,25 +1013,88 @@ pub fn getppid() -> Result<ContextId> {
 }
 
 pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
-    let (ruid, euid) = {
+    println!("Kill {} {:X}", pid.into() as isize, sig);
+
+    let (ruid, euid, current_pgid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.ruid, context.euid)
+        (context.ruid, context.euid, context.pgid)
     };
 
     if sig > 0 && sig <= 0x7F {
         let contexts = context::contexts();
-        let context_lock = contexts.get(pid).ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
-        if euid == 0
-        || euid == context.ruid
-        || ruid == context.ruid
-        {
-            context.pending.push_back(sig as u8);
-            Ok(0)
+
+        let mut found = 0;
+        let mut sent = 0;
+
+        let send = |context: &mut context::Context| -> bool {
+            if euid == 0
+            || euid == context.ruid
+            || ruid == context.ruid
+            {
+                println!("Send {:X} to {}", sig, context.id.into());
+                context.pending.push_back(sig as u8);
+                true
+            } else {
+                false
+            }
+        };
+
+        if pid.into() > 0 {
+            // Send to a single process
+            if let Some(context_lock) = contexts.get(pid) {
+                let mut context = context_lock.write();
+
+                found += 1;
+                if send(&mut context) {
+                    sent += 1;
+                }
+            }
+        } else if pid.into() as isize == -1 {
+            // Send to every process with permission, except for init
+            for (_id, context_lock) in contexts.iter() {
+                let mut context = context_lock.write();
+
+                if context.id.into() > 2 {
+                    found += 1;
+
+                    if send(&mut context) {
+                        sent += 1;
+                    }
+                }
+            }
         } else {
+            let pgid = if pid.into() == 0 {
+                current_pgid
+            } else {
+                ContextId::from(-(pid.into() as isize) as usize)
+            };
+
+            println!("pgid {}", pgid.into());
+
+            // Send to every process in the process group whose ID
+            for (_id, context_lock) in contexts.iter() {
+                let mut context = context_lock.write();
+
+                if context.pgid == pgid {
+                    found += 1;
+
+                    if send(&mut context) {
+                        sent += 1;
+                    }
+                }
+            }
+        }
+
+        println!("Found {}, sent to {}", found, sent);
+
+        if found == 0 {
+            Err(Error::new(ESRCH))
+        } else if sent == 0 {
             Err(Error::new(EPERM))
+        } else {
+            Ok(0)
         }
     } else {
         Err(Error::new(EINVAL))
