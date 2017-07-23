@@ -1041,7 +1041,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             }
         };
 
-        if pid.into() > 0 {
+        if pid.into() as isize > 0 {
             // Send to a single process
             if let Some(context_lock) = contexts.get(pid) {
                 let mut context = context_lock.write();

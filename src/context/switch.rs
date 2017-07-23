@@ -98,7 +98,9 @@ pub unsafe fn switch() -> bool {
                 let mut context = context_lock.write();
                 if check_context(&mut context) {
                     to_ptr = context.deref_mut() as *mut Context;
-                    to_sig = context.pending.pop_front();
+                    if (&mut *to_ptr).ksig.is_none() {
+                        to_sig = context.pending.pop_front();
+                    }
                     break;
                 }
             }
@@ -110,7 +112,9 @@ pub unsafe fn switch() -> bool {
                     let mut context = context_lock.write();
                     if check_context(&mut context) {
                         to_ptr = context.deref_mut() as *mut Context;
-                        to_sig = context.pending.pop_front();
+                        if (&mut *to_ptr).ksig.is_none() {
+                            to_sig = context.pending.pop_front();
+                        }
                         break;
                     }
                 }
