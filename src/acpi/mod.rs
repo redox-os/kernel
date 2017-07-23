@@ -5,6 +5,7 @@ use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
 use collections::btree_map::BTreeMap;
 use collections::string::String;
+use alloc::boxed::Box;
 
 use syscall::io::{Io, Pio};
 
@@ -25,6 +26,7 @@ use self::rsdt::Rsdt;
 use self::sdt::Sdt;
 use self::xsdt::Xsdt;
 use self::hpet::Hpet;
+use self::rxsdt::Rxsdt;
 
 use self::aml::{is_aml_table, parse_aml_table, AmlError, AmlValue};
 
@@ -36,6 +38,7 @@ mod rsdt;
 mod sdt;
 mod xsdt;
 mod aml;
+mod rxsdt;
 
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
@@ -261,18 +264,32 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
             print!("{}", c as char);
         }
         println!(":");
-        if let Some(rsdt) = Rsdt::new(rxsdt) {
-            for sdt_address in rsdt.iter() {
-                let sdt = get_sdt(sdt_address, active_table);
-                parse_sdt(sdt, active_table);
-            }
+
+        let rxsdt: Box<Rxsdt + Send + Sync> = if let Some(rsdt) = Rsdt::new(rxsdt) {
+            Box::new(rsdt)
         } else if let Some(xsdt) = Xsdt::new(rxsdt) {
-            for sdt_address in xsdt.iter() {
-                let sdt = get_sdt(sdt_address, active_table);
-                parse_sdt(sdt, active_table);
-            }
+            Box::new(xsdt)
         } else {
             println!("UNKNOWN RSDT OR XSDT SIGNATURE");
+            return;
+        };
+
+        {
+            let mut rxsdt_ptr = ACPI_TABLE.rxsdt.write();
+            *rxsdt_ptr = Some(rxsdt);
+        }
+
+        {
+            let rxsdt_ptr = ACPI_TABLE.rxsdt.read();
+
+            if let Some(ref rxsdt) = *rxsdt_ptr {
+                rxsdt.map_all(active_table);
+                
+                for sdt_address in rxsdt.iter() {
+                    let sdt = unsafe { &*(sdt_address as *const Sdt) };
+                    parse_sdt(sdt, active_table);
+                }
+            }
         }
     } else {
         println!("NO RSDP FOUND");
@@ -321,6 +338,7 @@ pub fn set_global_s_state(state: u8) {
 }
 
 pub struct Acpi {
+    pub rxsdt: RwLock<Option<Box<Rxsdt + Send + Sync>>>,
     pub fadt: RwLock<Option<Fadt>>,
     pub namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
     pub hpet: RwLock<Option<Hpet>>,
@@ -328,6 +346,7 @@ pub struct Acpi {
 }
 
 pub static ACPI_TABLE: Acpi = Acpi {
+    rxsdt: RwLock::new(None),
     fadt: RwLock::new(None),
     namespace: RwLock::new(None),
     hpet: RwLock::new(None),

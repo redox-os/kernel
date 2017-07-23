@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
 
-use super::AmlError;
+use super::{AmlError, parse_aml_with_scope};
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
 use super::namespace::{AmlValue, ObjectReference};
 use super::pkglength::parse_pkg_length;
@@ -11,6 +11,7 @@ use super::namestring::{parse_super_name, parse_target, parse_name_string, parse
 use super::dataobj::parse_data_ref_obj;
 
 use time::monotonic;
+use acpi::ACPI_TABLE;
 
 #[derive(Debug, Clone)]
 pub enum MatchOpcode {
@@ -1263,8 +1264,6 @@ fn parse_def_load_table(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     // TODO: Clean up
     parser_opcode_extended!(data, 0x1F);
 
@@ -1275,8 +1274,34 @@ fn parse_def_load_table(data: &[u8],
     let parameter_path = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len..], ctx)?;
     let parameter_data = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len..], ctx)?;
 
+    let rxsdt_ptr = ACPI_TABLE.rxsdt.read();
+    
+    if let Some(ref rxsdt) = *rxsdt_ptr {
+        let sig_str = unsafe {
+            *(signature.val.get_as_string()?.as_bytes().as_ptr() as *const [u8; 4])
+        };
+        let oem_str = unsafe {
+            *(oem_id.val.get_as_string()?.as_bytes().as_ptr() as *const [u8; 6])
+        };
+        let oem_table_str = unsafe {
+            *(oem_table_id.val.get_as_string()?.as_bytes().as_ptr() as *const [u8; 8])
+        };
+        
+        let sdt = rxsdt.find(sig_str, oem_str, oem_table_str);
+        
+        if let Some(sdt) = sdt {
+            let hdl = parse_aml_with_scope(sdt, root_path.val.get_as_string()?)?;
+            ctx.modify(parameter_path.val, parameter_data.val);
+            
+            return Ok(AmlParseType {
+                val: AmlValue::DDBHandle(hdl),
+                len: 2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len + parameter_data.len
+            });
+        }
+    }
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: AmlValue::IntegerConstant(0),
         len: 2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len + parameter_data.len
     })
 }

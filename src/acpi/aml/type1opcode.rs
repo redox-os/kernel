@@ -363,11 +363,18 @@ fn parse_def_unload(data: &[u8],
         })
     }
     
-    // TODO: remove from namespace all values added when `object` was loaded
-    // TODO: globally synchronous (how?)
     parser_opcode_extended!(data, 0x2A);
 
     let object = parse_super_name(&data[2..], ctx)?;
+
+    let delta = ctx.get(object.val).get_as_ddb_handle()?;
+    let mut namespace = ctx.prelock();
+
+    if let Some(ref mut ns) = *namespace {
+        for o in delta {
+            ns.remove(&o);
+        }
+    }
 
     Ok(AmlParseType {
         val: AmlValue::None,

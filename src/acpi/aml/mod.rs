@@ -36,8 +36,12 @@ pub enum AmlError {
 }
 
 pub fn parse_aml_table(sdt: &Sdt) -> Result<Vec<String>, AmlError> {
+    parse_aml_with_scope(sdt, String::from_str("\\").unwrap())
+}
+
+pub fn parse_aml_with_scope(sdt: &Sdt, scope: String) -> Result<Vec<String>, AmlError> {
     let data = sdt.data();
-    let mut ctx = AmlExecutionContext::new(String::from_str("\\").unwrap());
+    let mut ctx = AmlExecutionContext::new(scope);
     
     parse_term_list(data, &mut ctx)?;
 

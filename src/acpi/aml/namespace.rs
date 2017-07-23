@@ -113,6 +113,13 @@ impl AmlValue {
             _ => Err(AmlError::AmlValueError)
         }
     }
+
+    pub fn get_as_ddb_handle(&self) -> Result<Vec<String>, AmlError> {
+        match *self {
+            AmlValue::DDBHandle(ref v) => Ok(v.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
     
     pub fn get_as_string(&self) -> Result<String, AmlError> {
         match *self {
