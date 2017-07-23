@@ -17,12 +17,12 @@ pub struct Sdt {
 
 impl Sdt {
     /// Get the address of this tables data
-    pub fn data_address(&'static self) -> usize {
+    pub fn data_address(&self) -> usize {
         self as *const _ as usize + mem::size_of::<Sdt>()
     }
 
     /// Get the length of this tables data
-    pub fn data_len(&'static self) -> usize {
+    pub fn data_len(&self) -> usize {
         let total_size = self.length as usize;
         let header_size = mem::size_of::<Sdt>();
         if total_size >= header_size {
@@ -32,7 +32,7 @@ impl Sdt {
         }
     }
 
-    pub fn data(&'static self) -> &[u8] {
+    pub fn data(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.data_address() as *const u8, self.data_len()) }
     }
 }

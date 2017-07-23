@@ -1,11 +1,14 @@
 use super::AmlError;
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
-use super::namespace::AmlValue;
+use super::namespace::{AmlValue, ObjectReference};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list};
 use super::namestring::{parse_name_string, parse_super_name};
 
 use time::monotonic;
+
+use acpi::Sdt;
+use super::{parse_aml_table, is_aml_table};
 
 pub fn parse_type1_opcode(data: &[u8],
                           ctx: &mut AmlExecutionContext) -> ParseResult {
@@ -143,18 +146,25 @@ fn parse_def_load(data: &[u8],
         })
     }
     
-    // TODO: Load in the table pointed to by `name`
-    // TODO: Set DDB_Handle to the handle returned by loading in the table
-    // TODO: Run the AML parser on the table, in a secondary namespace
     parser_opcode_extended!(data, 0x20);
 
     let name = parse_name_string(&data[2..], ctx)?;
     let ddb_handle_object = parse_super_name(&data[2 + name.len..], ctx)?;
-    
-    Ok(AmlParseType {
-        val: AmlValue::None,
-        len: 2 + name.len + ddb_handle_object.len
-    })
+
+    let tbl = ctx.get(AmlValue::ObjectReference(ObjectReference::NamedObj(name.val.get_as_string()?))).get_as_buffer()?;
+    let sdt = unsafe { &*(tbl.as_ptr() as *const Sdt) };
+
+    if is_aml_table(sdt) {
+        let delta = parse_aml_table(sdt)?;
+        ctx.modify(ddb_handle_object.val, AmlValue::DDBHandle(delta));
+        
+        Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 2 + name.len + ddb_handle_object.len
+        })
+    } else {
+        Err(AmlError::AmlValueError)
+    }
 }
 
 fn parse_def_notify(data: &[u8],

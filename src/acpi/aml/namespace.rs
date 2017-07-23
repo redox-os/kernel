@@ -63,7 +63,7 @@ pub enum AmlValue {
         index: Box<AmlValue>,
         length: Box<AmlValue>
     },
-    DDBHandle(u32), // Index into the XSDT
+    DDBHandle(Vec<String>),
     DebugObject,
     Device(Vec<String>),
     Event(u64),

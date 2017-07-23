@@ -2,6 +2,7 @@
 //! Code to parse and execute AML tables
 
 use collections::string::String;
+use collections::vec::Vec;
 use core::str::FromStr;
 
 use super::sdt::Sdt;
@@ -34,16 +35,16 @@ pub enum AmlError {
     AmlHardFatal
 }
 
-pub fn parse_aml_table(sdt: &'static Sdt) -> Result<(), AmlError> {
+pub fn parse_aml_table(sdt: &Sdt) -> Result<Vec<String>, AmlError> {
     let data = sdt.data();
     let mut ctx = AmlExecutionContext::new(String::from_str("\\").unwrap());
     
     parse_term_list(data, &mut ctx)?;
 
-    Ok(())
+    Ok(ctx.namespace_delta)
 }
 
-pub fn is_aml_table(sdt: &'static Sdt) -> bool {
+pub fn is_aml_table(sdt: &Sdt) -> bool {
     if &sdt.signature == b"DSDT" || &sdt.signature == b"SSDT" {
         true
     } else {

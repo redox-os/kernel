@@ -213,7 +213,7 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
         *hpet_t = Some(hpet);
     } else if is_aml_table(sdt) {
         match parse_aml_table(sdt) {
-            Ok(()) => println!(": Parsed"),
+            Ok(_) => println!(": Parsed"),
             Err(AmlError::AmlParseError(e)) => println!(": {}", e),
             Err(AmlError::AmlInvalidOpCode) => println!(": Invalid opcode"),
             Err(AmlError::AmlValueError) => println!(": Type constraints or value bounds not met"),
