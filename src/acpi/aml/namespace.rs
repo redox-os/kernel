@@ -210,6 +210,51 @@ impl AmlValue {
         match *self {
             AmlValue::IntegerConstant(ref i) => Ok(i.clone()),
             AmlValue::Integer(ref i) => Ok(i.clone()),
+            AmlValue::Buffer(ref b) => {
+                let mut b = b.clone();
+                if b.len() > 8 {
+                    return Err(AmlError::AmlValueError);
+                }
+
+                let mut i: u64 = 0;
+
+                while b.len() > 0 {
+                    i <<= 8;
+                    i += b.pop().expect("Won't happen") as u64;
+                }
+
+                Ok(i)
+            },
+            AmlValue::BufferField(_) => {
+                let mut b = self.get_as_buffer()?;
+                if b.len() > 8 {
+                    return Err(AmlError::AmlValueError);
+                }
+
+                let mut i: u64 = 0;
+
+                while b.len() > 0 {
+                    i <<= 8;
+                    i += b.pop().expect("Won't happen") as u64;
+                }
+
+                Ok(i)
+            },
+            AmlValue::String(ref s) => {
+                let mut s = s.clone()[0..8].to_string().to_uppercase();
+                let mut i: u64 = 0;
+
+                for c in s.chars() {
+                    if !c.is_digit(16) {
+                        break;
+                    }
+                    
+                    i <<= 8;
+                    i += c.to_digit(16).unwrap() as u64;
+                }
+
+                Ok(i)
+            },
             _ => Err(AmlError::AmlValueError)
         }
     }
