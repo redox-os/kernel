@@ -4,7 +4,7 @@ use collections::string::String;
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
 use super::namespace::{AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string,
-                       Accessor, BufferField};
+                       Accessor, BufferField, FieldUnit};
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_object_list};
 use super::pkglength::parse_pkg_length;
@@ -632,13 +632,13 @@ fn parse_field_element(data: &[u8],
     let length = if let Ok(field) = parse_named_field(data, ctx) {
         let local_scope_string = get_namespace_string(ctx.scope.clone(), AmlValue::String(field.val.name.clone()))?;
         
-        ctx.add_to_namespace(local_scope_string, AmlValue::FieldUnit {
+        ctx.add_to_namespace(local_scope_string, AmlValue::FieldUnit(FieldUnit {
             selector: selector.clone(),
             connection: Box::new(connection.clone()),
             flags: flags.clone(),
             offset: offset.clone(),
             length: field.val.length
-        })?;
+        }))?;
 
         *offset += field.val.length;
         field.len

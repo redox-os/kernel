@@ -47,6 +47,15 @@ pub struct BufferField {
     pub length: Box<AmlValue>
 }
 
+#[derive(Clone)]
+pub struct FieldUnit {
+    pub selector: FieldSelector,
+    pub connection: Box<AmlValue>,
+    pub flags: FieldFlags,
+    pub offset: usize,
+    pub length: usize
+}
+
 pub struct Accessor {
     pub read: fn(usize) -> u64,
     pub write: fn(usize, u64)
@@ -71,13 +80,7 @@ pub enum AmlValue {
     DebugObject,
     Device(Vec<String>),
     Event(u64),
-    FieldUnit {
-        selector: FieldSelector,
-        connection: Box<AmlValue>,
-        flags: FieldFlags,
-        offset: usize,
-        length: usize
-    },
+    FieldUnit(FieldUnit),
     Integer(u64),
     IntegerConstant(u64),
     Method(Method),
@@ -110,46 +113,7 @@ impl Debug for AmlValue {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { Ok(()) }
 }
 
-impl AmlValue {
-    pub fn get_as_event(&self) -> Result<u64, AmlError> {
-        match *self {
-            AmlValue::Event(ref e) => Ok(e.clone()),
-            _ => Err(AmlError::AmlValueError)
-        }
-    }
-
-    pub fn get_as_ddb_handle(&self) -> Result<Vec<String>, AmlError> {
-        match *self {
-            AmlValue::DDBHandle(ref v) => Ok(v.clone()),
-            _ => Err(AmlError::AmlValueError)
-        }
-    }
-    
-    pub fn get_as_string(&self) -> Result<String, AmlError> {
-        match *self {
-            AmlValue::String(ref s) => Ok(s.clone()),
-            _ => Err(AmlError::AmlValueError)
-        }
-    }
-
-    pub fn get_as_buffer_field(&self) -> Result<BufferField, AmlError> {
-        match *self {
-            AmlValue::BufferField(ref b) => Ok(b.clone()),
-            _ => {
-                let raw_buf = self.get_as_buffer()?;
-                let buf = Box::new(AmlValue::Buffer(raw_buf.clone()));
-                let idx = Box::new(AmlValue::IntegerConstant(0));
-                let len = Box::new(AmlValue::Integer(raw_buf.len() as u64));
-
-                Ok(BufferField {
-                    source_buf: buf,
-                    index: idx,
-                    length: len
-                })
-            }
-        }
-    }
-    
+impl AmlValue {    
     pub fn get_as_buffer(&self) -> Result<Vec<u8>, AmlError> {
         match *self {
             AmlValue::Buffer(ref b) => Ok(b.clone()),
@@ -185,10 +149,50 @@ impl AmlValue {
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
-    pub fn get_as_package(&self) -> Result<Vec<AmlValue>, AmlError> {
+
+    pub fn get_as_buffer_field(&self) -> Result<BufferField, AmlError> {
         match *self {
-            AmlValue::Package(ref p) => Ok(p.clone()),
+            AmlValue::BufferField(ref b) => Ok(b.clone()),
+            _ => {
+                let raw_buf = self.get_as_buffer()?;
+                let buf = Box::new(AmlValue::Buffer(raw_buf.clone()));
+                let idx = Box::new(AmlValue::IntegerConstant(0));
+                let len = Box::new(AmlValue::Integer(raw_buf.len() as u64));
+
+                Ok(BufferField {
+                    source_buf: buf,
+                    index: idx,
+                    length: len
+                })
+            }
+        }
+    }
+
+    pub fn get_as_ddb_handle(&self) -> Result<Vec<String>, AmlError> {
+        // TODO: Integer conversion
+        match *self {
+            AmlValue::DDBHandle(ref v) => Ok(v.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
+    pub fn get_as_device(&self) -> Result<Vec<String>, AmlError> {
+        match *self {
+            AmlValue::Device(ref s) => Ok(s.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_event(&self) -> Result<u64, AmlError> {
+        match *self {
+            AmlValue::Event(ref e) => Ok(e.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_field_unit(&self) -> Result<FieldUnit, AmlError> {
+        match *self {
+            AmlValue::FieldUnit(ref e) => Ok(e.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
@@ -203,6 +207,20 @@ impl AmlValue {
     pub fn get_as_method(&self) -> Result<Method, AmlError> {
         match *self {
             AmlValue::Method(ref m) => Ok(m.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_package(&self) -> Result<Vec<AmlValue>, AmlError> {
+        match *self {
+            AmlValue::Package(ref p) => Ok(p.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_string(&self) -> Result<String, AmlError> {
+        match *self {
+            AmlValue::String(ref s) => Ok(s.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
