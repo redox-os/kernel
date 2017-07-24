@@ -132,6 +132,21 @@ impl AmlValue {
     pub fn get_as_buffer(&self) -> Result<Vec<u8>, AmlError> {
         match *self {
             AmlValue::Buffer(ref b) => Ok(b.clone()),
+            AmlValue::Integer(ref i) => {
+                let mut v: Vec<u8> = vec!();
+                let mut i = i.clone();
+
+                while i != 0 {
+                    v.push((i & 0xFF) as u8);
+                    i >>= 8;
+                }
+
+                while v.len() < 8 {
+                    v.push(0);
+                }
+
+                Ok(v)
+            },
             _ => Err(AmlError::AmlValueError)
         }
     }
@@ -174,7 +189,6 @@ impl Method {
 }
 
 pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> Result<String, AmlError> {
-    // TODO: Type error if modifier not string
     let mut modifier = modifier_v.get_as_string()?;
     
     if current.len() == 0 {
