@@ -150,6 +150,17 @@ impl AmlValue {
             AmlValue::String(ref s) => {
                 Ok(s.clone().into_bytes())
             },
+            AmlValue::BufferField { ref source_buf, ref index, ref length } => {
+                let buf = source_buf.get_as_buffer()?;
+                let idx = index.get_as_integer()? as usize;
+                let len = length.get_as_integer()? as usize;
+
+                if idx + len > buf.len() {
+                    return Err(AmlError::AmlValueError);
+                }
+                
+                Ok(buf[idx .. idx + len].to_vec())
+            },
             _ => Err(AmlError::AmlValueError)
         }
     }
