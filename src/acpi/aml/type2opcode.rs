@@ -4,7 +4,7 @@ use collections::vec::Vec;
 
 use super::{AmlError, parse_aml_with_scope};
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
-use super::namespace::{AmlValue, ObjectReference};
+use super::namespace::{AmlValue, ObjectReference, OperationRegion};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_method_invocation};
 use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name};
@@ -332,15 +332,12 @@ fn parse_def_acquire(data: &[u8],
                         });
                     }
                 },
-                AmlValue::OperationRegion { region, offset, len, accessor, accessed_by } => {
-                    if accessed_by == None {
-                        ctx.modify(obj.val.clone(), AmlValue::OperationRegion {
-                            region,
-                            offset,
-                            len,
-                            accessor,
-                            accessed_by: Some(id)
-                        });
+                AmlValue::OperationRegion(ref o) => {
+                    if o.accessed_by == None {
+                        let mut new_region = o.clone();
+                        new_region.accessed_by = Some(id);
+                        
+                        ctx.modify(obj.val.clone(), AmlValue::OperationRegion(new_region));
                         return Ok(AmlParseType {
                             val: AmlValue::Integer(0),
                             len: 4 + obj.len

@@ -4,7 +4,7 @@ use collections::string::String;
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
 use super::namespace::{AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string,
-                       Accessor, BufferField, FieldUnit};
+                       Accessor, BufferField, FieldUnit, Processor, PowerResource, OperationRegion};
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_object_list};
 use super::pkglength::parse_pkg_length;
@@ -366,7 +366,7 @@ fn parse_def_data_region(data: &[u8],
 
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
-    ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion {
+    ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion(OperationRegion {
         region: RegionSpace::SystemMemory,
         offset: Box::new(AmlValue::IntegerConstant(0)),
         len: Box::new(AmlValue::IntegerConstant(0)),
@@ -375,7 +375,7 @@ fn parse_def_data_region(data: &[u8],
             write: |x, y| ()
         },
         accessed_by: None
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -467,7 +467,7 @@ fn parse_def_op_region(data: &[u8],
     let len = parse_term_arg(&data[3 + name.len + offset.len..], ctx)?;
 
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion {
+    ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion(OperationRegion {
         region: region,
         offset: Box::new(offset.val),
         len: Box::new(len.val),
@@ -476,7 +476,7 @@ fn parse_def_op_region(data: &[u8],
             write: |x, y| ()
         },
         accessed_by: None
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -850,11 +850,11 @@ fn parse_def_power_res(data: &[u8],
     let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
     parse_object_list(&data[5 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::PowerResource {
+    ctx.add_to_namespace(local_scope_string, AmlValue::PowerResource(PowerResource {
         system_level,
         resource_order,
         obj_list: local_ctx.namespace_delta.clone()
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -889,11 +889,11 @@ fn parse_def_processor(data: &[u8],
     let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
     parse_object_list(&data[8 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
 
-    ctx.add_to_namespace(local_scope_string, AmlValue::Processor {
+    ctx.add_to_namespace(local_scope_string, AmlValue::Processor(Processor {
         proc_id: proc_id,
         p_blk: if p_blk_len > 0 { Some(p_blk_addr) } else { None },
         obj_list: local_ctx.namespace_delta.clone()
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,

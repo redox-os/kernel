@@ -56,6 +56,29 @@ pub struct FieldUnit {
     pub length: usize
 }
 
+#[derive(Clone)]
+pub struct Processor {
+    pub proc_id: u8,
+    pub p_blk: Option<u32>,
+    pub obj_list: Vec<String>
+}
+
+#[derive(Clone)]
+pub struct OperationRegion {
+    pub region: RegionSpace,
+    pub offset: Box<AmlValue>,
+    pub len: Box<AmlValue>,
+    pub accessor: Accessor,
+    pub accessed_by: Option<u64>
+}
+
+#[derive(Clone)]
+pub struct PowerResource {
+    pub system_level: u8,
+    pub resource_order: u16,
+    pub obj_list: Vec<String>
+}
+
 pub struct Accessor {
     pub read: fn(usize) -> u64,
     pub write: fn(usize, u64)
@@ -86,25 +109,11 @@ pub enum AmlValue {
     Method(Method),
     Mutex((u8, Option<u64>)),
     ObjectReference(ObjectReference),
-    OperationRegion {
-        region: RegionSpace,
-        offset: Box<AmlValue>,
-        len: Box<AmlValue>,
-        accessor: Accessor,
-        accessed_by: Option<u64>
-    },
+    OperationRegion(OperationRegion),
     Package(Vec<AmlValue>),
     String(String),
-    PowerResource {
-        system_level: u8,
-        resource_order: u16,
-        obj_list: Vec<String>
-    },
-    Processor {
-        proc_id: u8,
-        p_blk: Option<u32>,
-        obj_list: Vec<String>
-    },
+    PowerResource(PowerResource),
+    Processor(Processor),
     RawDataBuffer(Vec<u8>),
     ThermalZone(Vec<String>)
 }
@@ -200,6 +209,14 @@ impl AmlValue {
     pub fn get_as_integer(&self) -> Result<u64, AmlError> {
         match *self {
             AmlValue::IntegerConstant(ref i) => Ok(i.clone()),
+            AmlValue::Integer(ref i) => Ok(i.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
+    pub fn get_as_integer_constant(&self) -> Result<u64, AmlError> {
+        match *self {
+            AmlValue::IntegerConstant(ref i) => Ok(i.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
@@ -207,6 +224,27 @@ impl AmlValue {
     pub fn get_as_method(&self) -> Result<Method, AmlError> {
         match *self {
             AmlValue::Method(ref m) => Ok(m.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
+    pub fn get_as_mutex(&self) -> Result<(u8, Option<u64>), AmlError> {
+        match *self {
+            AmlValue::Mutex(ref m) => Ok(m.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
+    pub fn get_as_object_reference(&self) -> Result<ObjectReference, AmlError> {
+        match *self {
+            AmlValue::ObjectReference(ref m) => Ok(m.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_operation_region(&self) -> Result<OperationRegion, AmlError> {
+        match *self {
+            AmlValue::OperationRegion(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
@@ -221,6 +259,34 @@ impl AmlValue {
     pub fn get_as_string(&self) -> Result<String, AmlError> {
         match *self {
             AmlValue::String(ref s) => Ok(s.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_power_resource(&self) -> Result<PowerResource, AmlError> {
+        match *self {
+            AmlValue::PowerResource(ref p) => Ok(p.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_processor(&self) -> Result<Processor, AmlError> {
+        match *self {
+            AmlValue::Processor(ref p) => Ok(p.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_raw_data_buffer(&self) -> Result<Vec<u8>, AmlError> {
+        match *self {
+            AmlValue::RawDataBuffer(ref p) => Ok(p.clone()),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+    
+    pub fn get_as_thermal_zone(&self) -> Result<Vec<String>, AmlError> {
+        match *self {
+            AmlValue::ThermalZone(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }

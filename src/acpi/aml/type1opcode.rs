@@ -1,6 +1,6 @@
 use super::AmlError;
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
-use super::namespace::{AmlValue, ObjectReference};
+use super::namespace::{AmlValue, ObjectReference, OperationRegion};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list};
 use super::namestring::{parse_name_string, parse_super_name};
@@ -216,16 +216,13 @@ fn parse_def_release(data: &[u8],
                 }
             }
         },
-        AmlValue::OperationRegion { region, offset, len, accessor, accessed_by } => {
-            if let Some(o) = accessed_by {
+        AmlValue::OperationRegion(ref region) => {
+            if let Some(o) = region.accessed_by {
                 if o == ctx.ctx_id {
-                    ctx.modify(obj.val.clone(), AmlValue::OperationRegion {
-                        region,
-                        offset,
-                        len,
-                        accessor,
-                        accessed_by: None
-                    });
+                    let mut new_region = region.clone();
+                    new_region.accessed_by = None;
+                    
+                    ctx.modify(obj.val.clone(), AmlValue::OperationRegion(new_region));
                 } else {
                     return Err(AmlError::AmlHardFatal);
                 }
