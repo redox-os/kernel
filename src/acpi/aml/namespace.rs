@@ -40,6 +40,13 @@ pub struct Method {
     pub term_list: Vec<u8>
 }
 
+#[derive(Clone)]
+pub struct BufferField {
+    pub source_buf: Box<AmlValue>,
+    pub index: Box<AmlValue>,
+    pub length: Box<AmlValue>
+}
+
 pub struct Accessor {
     pub read: fn(usize) -> u64,
     pub write: fn(usize, u64)
@@ -59,11 +66,7 @@ pub enum AmlValue {
     None,
     Uninitialized,
     Buffer(Vec<u8>),
-    BufferField {
-        source_buf: Box<AmlValue>,
-        index: Box<AmlValue>,
-        length: Box<AmlValue>
-    },
+    BufferField(BufferField),
     DDBHandle(Vec<String>),
     DebugObject,
     Device(Vec<String>),
@@ -129,6 +132,24 @@ impl AmlValue {
         }
     }
 
+    pub fn get_as_buffer_field(&self) -> Result<BufferField, AmlError> {
+        match *self {
+            AmlValue::BufferField(ref b) => Ok(b.clone()),
+            _ => {
+                let raw_buf = self.get_as_buffer()?;
+                let buf = Box::new(AmlValue::Buffer(raw_buf.clone()));
+                let idx = Box::new(AmlValue::IntegerConstant(0));
+                let len = Box::new(AmlValue::Integer(raw_buf.len() as u64));
+
+                Ok(BufferField {
+                    source_buf: buf,
+                    index: idx,
+                    length: len
+                })
+            }
+        }
+    }
+    
     pub fn get_as_buffer(&self) -> Result<Vec<u8>, AmlError> {
         match *self {
             AmlValue::Buffer(ref b) => Ok(b.clone()),
@@ -150,10 +171,10 @@ impl AmlValue {
             AmlValue::String(ref s) => {
                 Ok(s.clone().into_bytes())
             },
-            AmlValue::BufferField { ref source_buf, ref index, ref length } => {
-                let buf = source_buf.get_as_buffer()?;
-                let idx = index.get_as_integer()? as usize;
-                let len = length.get_as_integer()? as usize;
+            AmlValue::BufferField(ref b) => {
+                let buf = b.source_buf.get_as_buffer()?;
+                let idx = b.index.get_as_integer()? as usize;
+                let len = b.length.get_as_integer()? as usize;
 
                 if idx + len > buf.len() {
                     return Err(AmlError::AmlValueError);

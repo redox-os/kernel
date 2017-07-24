@@ -3,7 +3,8 @@ use collections::string::String;
 
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
-use super::namespace::{ AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string, Accessor };
+use super::namespace::{AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string,
+                       Accessor, BufferField};
 use super::namestring::{parse_name_string, parse_name_seg};
 use super::termlist::{parse_term_arg, parse_object_list};
 use super::pkglength::parse_pkg_length;
@@ -182,11 +183,11 @@ fn parse_def_create_bit_field(data: &[u8],
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(1))
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -212,11 +213,11 @@ fn parse_def_create_byte_field(data: &[u8],
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(8))
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -242,11 +243,11 @@ fn parse_def_create_word_field(data: &[u8],
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(16))
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -272,11 +273,11 @@ fn parse_def_create_dword_field(data: &[u8],
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(32))
-    });
+    }));
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -302,11 +303,11 @@ fn parse_def_create_qword_field(data: &[u8],
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(64))
-    })?;
+    }))?;
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -333,11 +334,11 @@ fn parse_def_create_field(data: &[u8],
     
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
-    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(num_bits.val)
-    })?;
+    }))?;
     
     Ok(AmlParseType {
         val: AmlValue::None,
