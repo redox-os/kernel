@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use collections::string::String;
+use collections::string::ToString;
 use collections::vec::Vec;
 
 use core::fmt::{Debug, Formatter, Error};
@@ -174,7 +175,7 @@ impl Method {
 
 pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> String {
     // TODO: Type error if modifier not string
-    let modifier = if let Ok(s) = modifier_v.get_as_string() {
+    let mut modifier = if let Ok(s) = modifier_v.get_as_string() {
         s
     } else {
         return current;
@@ -192,11 +193,14 @@ pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> String {
         return modifier;
     }
 
-    if modifier.starts_with("^") {
-        // TODO
-    }
-
     let mut namespace = current.clone();
+
+    if modifier.starts_with("^") {
+        while modifier.starts_with("^") {
+            modifier = modifier[1..].to_string();
+            while namespace.pop() != Some('.') { }
+        }
+    }
 
     if !namespace.ends_with("\\") {
         namespace.push('.');
