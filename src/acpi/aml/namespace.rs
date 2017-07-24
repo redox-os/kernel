@@ -147,6 +147,9 @@ impl AmlValue {
 
                 Ok(v)
             },
+            AmlValue::String(ref s) => {
+                Ok(s.clone().into_bytes())
+            },
             _ => Err(AmlError::AmlValueError)
         }
     }
