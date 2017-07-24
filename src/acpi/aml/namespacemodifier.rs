@@ -41,8 +41,8 @@ fn parse_alias_op(data: &[u8],
     let source_name = parse_name_string(&data[1..], ctx)?;
     let alias_name = parse_name_string(&data[1 + source_name.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), source_name.val);
-    let local_alias_string = get_namespace_string(ctx.scope.clone(), alias_name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), source_name.val)?;
+    let local_alias_string = get_namespace_string(ctx.scope.clone(), alias_name.val)?;
 
     ctx.add_to_namespace(local_scope_string, AmlValue::ObjectReference(ObjectReference::NamedObj(local_alias_string)))?;
     
@@ -67,7 +67,7 @@ fn parse_name_op(data: &[u8],
     let name = parse_name_string(&data[1..], ctx)?;
     let data_ref_obj = parse_data_ref_obj(&data[1 + name.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
     ctx.add_to_namespace(local_scope_string, data_ref_obj.val)?;
     
@@ -92,7 +92,7 @@ fn parse_scope_op(data: &[u8],
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let name = parse_name_string(&data[1 + pkg_length_len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val.clone());
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val.clone())?;
     let containing_scope_string = ctx.scope.clone();
     
     ctx.scope = local_scope_string;

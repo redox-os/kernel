@@ -173,24 +173,20 @@ impl Method {
     }
 }
 
-pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> String {
+pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> Result<String, AmlError> {
     // TODO: Type error if modifier not string
-    let mut modifier = if let Ok(s) = modifier_v.get_as_string() {
-        s
-    } else {
-        return current;
-    };
+    let mut modifier = modifier_v.get_as_string()?;
     
     if current.len() == 0 {
-        return modifier;
+        return Ok(modifier);
     }
 
     if modifier.len() == 0 {
-        return current;
+        return Ok(current);
     }
     
     if modifier.starts_with("\\") {
-        return modifier;
+        return Ok(modifier);
     }
 
     let mut namespace = current.clone();
@@ -198,7 +194,21 @@ pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> String {
     if modifier.starts_with("^") {
         while modifier.starts_with("^") {
             modifier = modifier[1..].to_string();
-            while namespace.pop() != Some('.') { }
+
+            if namespace.ends_with("\\") {
+                return Err(AmlError::AmlValueError);
+            }
+
+            loop {
+                if namespace.ends_with(".") {
+                    namespace.pop();
+                    break;
+                }
+
+                if namespace.pop() == None {
+                    return Err(AmlError::AmlValueError);
+                }
+            }
         }
     }
 
@@ -206,5 +216,5 @@ pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> String {
         namespace.push('.');
     }
     
-    namespace + &modifier
+    Ok(namespace + &modifier)
 }

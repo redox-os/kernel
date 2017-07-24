@@ -147,7 +147,7 @@ pub fn parse_method_invocation(data: &[u8],
     }
 
     Ok(AmlParseType {
-        val: method.execute(get_namespace_string(ctx.scope.clone(), name.val), params),
+        val: method.execute(get_namespace_string(ctx.scope.clone(), name.val)?, params),
         len: current_offset
     })
 }

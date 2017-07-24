@@ -180,7 +180,7 @@ fn parse_def_create_bit_field(data: &[u8],
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
         source_buf: Box::new(source_buf.val),
@@ -210,7 +210,7 @@ fn parse_def_create_byte_field(data: &[u8],
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
         source_buf: Box::new(source_buf.val),
@@ -240,7 +240,7 @@ fn parse_def_create_word_field(data: &[u8],
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
         source_buf: Box::new(source_buf.val),
@@ -270,7 +270,7 @@ fn parse_def_create_dword_field(data: &[u8],
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
         source_buf: Box::new(source_buf.val),
@@ -300,7 +300,7 @@ fn parse_def_create_qword_field(data: &[u8],
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
         source_buf: Box::new(source_buf.val),
@@ -331,7 +331,7 @@ fn parse_def_create_field(data: &[u8],
     let num_bits = parse_term_arg(&data[2 + source_buf.len + bit_index.len..], ctx)?;
     let name = parse_name_string(&data[2 + source_buf.len + bit_index.len + num_bits.len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField {
         source_buf: Box::new(source_buf.val),
@@ -363,7 +363,7 @@ fn parse_def_data_region(data: &[u8],
     let oem_id = parse_term_arg(&data[2 + name.len + signature.len..], ctx)?;
     let oem_table_id = parse_term_arg(&data[2 + name.len + signature.len + oem_id.len..], ctx)?;
 
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
     ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion {
         region: RegionSpace::SystemMemory,
@@ -396,7 +396,7 @@ fn parse_def_event(data: &[u8],
 
     let name = parse_name_string(&data[2..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     ctx.add_to_namespace(local_scope_string, AmlValue::Event(0))?;
 
     Ok(AmlParseType {
@@ -421,7 +421,7 @@ fn parse_def_device(data: &[u8],
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
     
     parse_object_list(&data[2 + pkg_length_len + name.len .. 2 + pkg_length], &mut local_ctx)?;
@@ -465,7 +465,7 @@ fn parse_def_op_region(data: &[u8],
     let offset = parse_term_arg(&data[3 + name.len..], ctx)?;
     let len = parse_term_arg(&data[3 + name.len + offset.len..], ctx)?;
 
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion {
         region: region,
         offset: Box::new(offset.val),
@@ -629,7 +629,7 @@ fn parse_field_element(data: &[u8],
     }
     
     let length = if let Ok(field) = parse_named_field(data, ctx) {
-        let local_scope_string = get_namespace_string(ctx.scope.clone(), AmlValue::String(field.val.name.clone()));
+        let local_scope_string = get_namespace_string(ctx.scope.clone(), AmlValue::String(field.val.name.clone()))?;
         
         ctx.add_to_namespace(local_scope_string, AmlValue::FieldUnit {
             selector: selector.clone(),
@@ -785,7 +785,7 @@ fn parse_def_method(data: &[u8],
 
     let term_list = &data[2 + pkg_len_len + name.len .. 1 + pkg_len];
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     ctx.add_to_namespace(local_scope_string, AmlValue::Method(Method {
         arg_count,
         serialized,
@@ -815,7 +815,7 @@ fn parse_def_mutex(data: &[u8],
     let flags = data[2 + name.len];
     let sync_level = flags & 0x0F;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     ctx.add_to_namespace(local_scope_string, AmlValue::Mutex((sync_level, None)))?;
 
     Ok(AmlParseType {
@@ -840,7 +840,7 @@ fn parse_def_power_res(data: &[u8],
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_len_len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
     let system_level = data[2 + pkg_len_len + name.len];
     let resource_order: u16 = (data[3 + pkg_len_len + name.len] as u16) +
@@ -876,7 +876,7 @@ fn parse_def_processor(data: &[u8],
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_len_len..], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     
     let proc_id = data[2 + pkg_len_len + name.len];
     let p_blk_addr: u32 = (data[3 + pkg_len_len + name.len] as u32) +
@@ -915,7 +915,7 @@ fn parse_def_thermal_zone(data: &[u8],
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_len_len .. 2 + pkg_len], ctx)?;
     
-    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val);
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
     let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());    
     parse_object_list(&data[2 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
