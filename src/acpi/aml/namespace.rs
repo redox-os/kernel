@@ -304,6 +304,13 @@ impl AmlValue {
     pub fn get_as_string(&self) -> Result<String, AmlError> {
         match *self {
             AmlValue::String(ref s) => Ok(s.clone()),
+            AmlValue::Integer(ref i) => Ok(format!("{:X}", i)),
+            AmlValue::IntegerConstant(ref i) => Ok(format!("{:X}", i)),
+            AmlValue::Buffer(ref b) => Ok(String::from_utf8(b.clone()).expect("Invalid UTF-8")),
+            AmlValue::BufferField(_) => {
+                let b = self.get_as_buffer()?;
+                Ok(String::from_utf8(b).expect("Invalid UTF-8"))
+            },
             _ => Err(AmlError::AmlValueError)
         }
     }
