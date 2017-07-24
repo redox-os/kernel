@@ -189,6 +189,7 @@ impl Context {
                     }
                 })
                 .filter_map(|x| x)
+                .filter(|x| !x.is_empty())
                 .collect::<Vec<_>>();
             parts
                 .iter()
