@@ -296,15 +296,18 @@ fn parse_def_deref_of(data: &[u8],
         })
     }
     
-    // TODO: Perform computation
     parser_opcode!(data, 0x83);
 
     let obj = parse_term_arg(&data[1..], ctx)?;
-    
-    Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
-        len: 1 + obj.len
-    })
+    let res = ctx.get(obj.val);
+
+    match res {
+        AmlValue::None => Err(AmlError::AmlValueError),
+        _ => Ok(AmlParseType {
+            val: res,
+            len: 1 + obj.len
+        })
+    }
 }
 
 fn parse_def_acquire(data: &[u8],
