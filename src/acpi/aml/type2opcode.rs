@@ -782,13 +782,20 @@ fn parse_def_size_of(data: &[u8],
         })
     }
     
-    // TODO: Perform the computation
     parser_opcode!(data, 0x87);
 
     let name = parse_super_name(&data[1..], ctx)?;
+    let obj = ctx.get(name.val);
+
+    let res = match obj {
+        AmlValue::Buffer(ref v) => v.len(),
+        AmlValue::String(ref s) => s.len(),
+        AmlValue::Package(ref p) => p.len(),
+        _ => return Err(AmlError::AmlValueError)
+    };
     
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: AmlValue::Integer(res as u64),
         len: 1 + name.len
     })
 }
