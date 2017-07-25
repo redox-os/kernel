@@ -15,6 +15,7 @@ pub enum FieldSelector {
     Region(String),
     Bank {
         region: String,
+        bank_register: String,
         bank_selector: Box<AmlValue>
     },
     Index {

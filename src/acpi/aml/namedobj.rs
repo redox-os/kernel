@@ -153,6 +153,7 @@ fn parse_def_bank_field(data: &[u8],
 
     let selector = FieldSelector::Bank {
         region: region_name.val.get_as_string()?,
+        bank_register: bank_name.val.get_as_string()?,
         bank_selector: Box::new(bank_value.val)
     };
 
