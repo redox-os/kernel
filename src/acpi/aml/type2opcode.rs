@@ -266,13 +266,22 @@ fn parse_def_ref_of(data: &[u8],
         })
     }
     
-    // TODO: Perform computation
     parser_opcode!(data, 0x71);
 
     let obj = parse_super_name(&data[1..], ctx)?;
+    let res = match obj.val {
+        AmlValue::String(ref s) => {
+            match ctx.get(AmlValue::String(s.clone())) {
+                AmlValue::None => return Err(AmlError::AmlValueError),
+                _ => ObjectReference::Object(s.clone())
+            }
+        },
+        AmlValue::ObjectReference(ref o) => o.clone(),
+        _ => return Err(AmlError::AmlValueError)
+    };
     
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: AmlValue::ObjectReference(res),
         len: 1 + obj.len
     })
 }
