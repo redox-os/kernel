@@ -151,7 +151,7 @@ fn parse_def_load(data: &[u8],
     let name = parse_name_string(&data[2..], ctx)?;
     let ddb_handle_object = parse_super_name(&data[2 + name.len..], ctx)?;
 
-    let tbl = ctx.get(AmlValue::ObjectReference(ObjectReference::NamedObj(name.val.get_as_string()?))).get_as_buffer()?;
+    let tbl = ctx.get(name.val).get_as_buffer()?;
     let sdt = unsafe { &*(tbl.as_ptr() as *const Sdt) };
 
     if is_aml_table(sdt) {

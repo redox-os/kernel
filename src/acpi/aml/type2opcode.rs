@@ -217,7 +217,7 @@ fn parse_package_elements_list(data: &[u8],
         } else {
             let d = parse_name_string(&data[current_offset..], ctx)?;
             AmlParseType {
-                val: AmlValue::ObjectReference(ObjectReference::NamedObj(d.val.get_as_string()?)),
+                val: AmlValue::ObjectReference(ObjectReference::Object(d.val.get_as_string()?)),
                 len: d.len
             }
         };

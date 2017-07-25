@@ -48,7 +48,7 @@ pub fn parse_data_ref_obj(data: &[u8],
     match parse_super_name(data, ctx) {
         Ok(res) => match res.val {
             AmlValue::String(s) => Ok(AmlParseType {
-                val: AmlValue::ObjectReference(ObjectReference::NamedObj(s)),
+                val: AmlValue::ObjectReference(ObjectReference::Object(s)),
                 len: res.len
             }),
             _ => Ok(res)

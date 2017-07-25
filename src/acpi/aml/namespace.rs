@@ -28,8 +28,7 @@ pub enum FieldSelector {
 pub enum ObjectReference {
     ArgObj(u8),
     LocalObj(u8),
-    NamedObj(String),
-    Object(Box<AmlValue>),
+    Object(String),
     Index(Box<AmlValue>, Box<AmlValue>)
 }
 
@@ -98,6 +97,7 @@ impl Clone for Accessor {
 pub enum AmlValue {
     None,
     Uninitialized,
+    Alias(String),
     Buffer(Vec<u8>),
     BufferField(BufferField),
     DDBHandle(Vec<String>),

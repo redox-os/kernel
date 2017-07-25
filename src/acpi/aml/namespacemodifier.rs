@@ -44,7 +44,7 @@ fn parse_alias_op(data: &[u8],
     let local_scope_string = get_namespace_string(ctx.scope.clone(), source_name.val)?;
     let local_alias_string = get_namespace_string(ctx.scope.clone(), alias_name.val)?;
 
-    ctx.add_to_namespace(local_scope_string, AmlValue::ObjectReference(ObjectReference::NamedObj(local_alias_string)))?;
+    ctx.add_to_namespace(local_scope_string, AmlValue::Alias(local_alias_string))?;
     
     Ok(AmlParseType {
         val: AmlValue::None,

@@ -758,7 +758,7 @@ fn parse_connect_field(data: &[u8],
     } else {
         let name = parse_name_string(&data[1..], ctx)?;
         Ok(AmlParseType {
-            val: AmlValue::ObjectReference(ObjectReference::NamedObj(name.val.get_as_string()?)),
+            val: AmlValue::Alias(name.val.get_as_string()?),
             len: name.len + 1
         })
     }
