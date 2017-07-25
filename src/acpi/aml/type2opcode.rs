@@ -242,15 +242,16 @@ pub fn parse_def_buffer(data: &[u8],
         })
     }
     
-    // TODO: Perform computation
     parser_opcode!(data, 0x11);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let buffer_size = parse_term_arg(&data[1 + pkg_length_len..], ctx)?;
-    let byte_list = data[1 + pkg_length_len + buffer_size.len .. 1 + pkg_length].to_vec();
+    let mut byte_list = data[1 + pkg_length_len + buffer_size.len .. 1 + pkg_length].to_vec().clone();
+
+    byte_list.truncate(buffer_size.val.get_as_integer()? as usize);        
 
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: AmlValue::Buffer(byte_list),
         len: 1 + pkg_length
     })
 }

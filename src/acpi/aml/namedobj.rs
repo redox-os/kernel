@@ -120,7 +120,6 @@ fn parse_def_bank_field(data: &[u8],
         })
     }
     
-    // TODO: Why isn't bank name used?
     parser_opcode_extended!(data, 0x87);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
