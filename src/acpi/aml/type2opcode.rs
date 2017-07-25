@@ -1077,16 +1077,30 @@ fn parse_def_cond_ref_of(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result
     parser_opcode_extended!(data, 0x12);
 
-    let operand = parse_super_name(&data[2..], ctx)?;
-    let target = parse_target(&data[2 + operand.len..], ctx)?;
+    let obj = parse_super_name(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + obj.len..], ctx)?;
 
+    let res = match obj.val {
+        AmlValue::String(ref s) => {
+            match ctx.get(AmlValue::String(s.clone())) {
+                AmlValue::None => return Ok(AmlParseType {
+                    val: AmlValue::Integer(0),
+                    len: 1 + obj.len + target.len
+                }),
+                _ => ObjectReference::Object(s.clone())
+            }
+        },
+        AmlValue::ObjectReference(ref o) => o.clone(),
+        _ => return Err(AmlError::AmlValueError)
+    };
+
+    ctx.modify(target.val, AmlValue::ObjectReference(res));
+    
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
-        len: 2 + operand.len + target.len
+        val: AmlValue::Integer(1),
+        len: 1 + obj.len + target.len
     })
 }
 
