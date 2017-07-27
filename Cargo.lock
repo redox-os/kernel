@@ -15,7 +15,7 @@ dependencies = [
 name = "alloc_kernel"
 version = "0.1.0"
 dependencies = [
- "linked_list_allocator 0.4.1 (git+https://github.com/phil-opp/linked-list-allocator.git)",
+ "linked_list_allocator 0.4.1 (git+https://github.com/redox-os/linked-list-allocator.git)",
  "spin 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "linked_list_allocator"
 version = "0.4.1"
-source = "git+https://github.com/phil-opp/linked-list-allocator.git#f742a71067f598aa1634fd097a54057e7576ecb3"
+source = "git+https://github.com/redox-os/linked-list-allocator.git#465d15c4fa7e9a99bef6fc66971861cb65e040fb"
 dependencies = [
  "spin 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -95,7 +95,7 @@ dependencies = [
 "checksum bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "aad18937a628ec6abcd26d1489012cc0e18c21798210f491af69ded9b881106d"
 "checksum gcc 0.3.51 (registry+https://github.com/rust-lang/crates.io-index)" = "120d07f202dcc3f72859422563522b66fe6463a4c513df062874daad05f85f0a"
 "checksum goblin 0.0.10 (registry+https://github.com/rust-lang/crates.io-index)" = "81af14056c25d33759862c5ae2035452acb1255bfb1b16db57819f183921e259"
-"checksum linked_list_allocator 0.4.1 (git+https://github.com/phil-opp/linked-list-allocator.git)" = "<none>"
+"checksum linked_list_allocator 0.4.1 (git+https://github.com/redox-os/linked-list-allocator.git)" = "<none>"
 "checksum plain 0.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "595830506990cbd6a1a08ed73bd9b40beb4692f38334885bf25a5daa654c6fae"
 "checksum raw-cpuid 2.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "13b844e4049605ff38fed943f5c7b2c691fad68d9d5bf074d2720554c4e48246"
 "checksum raw-cpuid 3.0.0 (git+https://github.com/gz/rust-cpuid)" = "<none>"

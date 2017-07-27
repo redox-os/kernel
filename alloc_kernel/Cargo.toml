@@ -4,5 +4,5 @@ name = "alloc_kernel"
 version = "0.1.0"
 
 [dependencies]
-linked_list_allocator = { git = "https://github.com/phil-opp/linked-list-allocator.git" }
+linked_list_allocator = { git = "https://github.com/redox-os/linked-list-allocator.git" }
 spin = "*"

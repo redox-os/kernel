@@ -84,7 +84,7 @@ impl Mapper {
     /// Create a new page table
     pub unsafe fn new() -> Mapper {
         Mapper {
-            p4: Unique::new(table::P4),
+            p4: Unique::new_unchecked(table::P4),
         }
     }
 
