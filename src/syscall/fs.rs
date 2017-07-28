@@ -8,7 +8,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{Packet, Stat};
 use syscall::error::*;
-use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
 use context::file::{FileDescriptor, FileDescription};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
@@ -356,13 +356,13 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     let description = file.description.read();
 
     // Communicate fcntl with scheme
-    let _res = {
+    if cmd != F_GETFD && cmd != F_SETFD {
         let scheme = {
             let schemes = scheme::schemes();
             let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
             scheme.clone()
         };
-        scheme.fcntl(description.number, cmd, arg)?
+        scheme.fcntl(description.number, cmd, arg)?;
     };
 
     // Perform kernel operation if scheme agrees
@@ -373,6 +373,17 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let mut files = context.files.lock();
         match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
+                F_GETFD => {
+                    if file.cloexec {
+                        Ok(O_CLOEXEC)
+                    } else {
+                        Ok(0)
+                    }
+                },
+                F_SETFD => {
+                    file.cloexec = arg & O_CLOEXEC == O_CLOEXEC;
+                    Ok(0)
+                },
                 F_GETFL => {
                     Ok(description.flags)
                 },
