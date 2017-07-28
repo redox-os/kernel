@@ -16,11 +16,11 @@ use context;
 use context::ContextId;
 use context::file::FileDescriptor;
 use elf::{self, program_header};
-use scheme::{self, FileHandle};
+use scheme::FileHandle;
 use syscall;
 use syscall::data::{SigAction, Stat};
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, O_CLOEXEC, SIG_DFL, SIGTERM, WNOHANG};
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, SIG_DFL, SIGTERM, WNOHANG};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
