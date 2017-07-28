@@ -31,25 +31,27 @@ pub fn resource() -> Result<Vec<u8>> {
                     Some(ref file) => file.clone()
                 };
 
+                let description = file.description.read();
+
                 let scheme = {
                     let schemes = scheme::schemes();
-                    match schemes.get(file.scheme) {
+                    match schemes.get(description.scheme) {
                         Some(scheme) => scheme.clone(),
                         None => {
-                            let _ = writeln!(string, "  {:>4}: {:>8} {:>8} {:>08X}: no scheme", fd, file.scheme.into(), file.number, file.flags);
+                            let _ = writeln!(string, "  {:>4}: {:>8} {:>8} {:>08X}: no scheme", fd, description.scheme.into(), description.number, description.flags);
                             continue;
                         }
                     }
                 };
 
                 let mut fpath = [0; 4096];
-                match scheme.fpath(file.number, &mut fpath) {
+                match scheme.fpath(description.number, &mut fpath) {
                     Ok(path_len) => {
                         let fname = str::from_utf8(&fpath[..path_len]).unwrap_or("?");
-                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, file.scheme.into(), file.number, file.flags, fname);
+                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, description.scheme.into(), description.number, description.flags, fname);
                     },
                     Err(err) => {
-                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, file.scheme.into(), file.number, file.flags, err);
+                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, description.scheme.into(), description.number, description.flags, err);
                     }
                 }
             }
