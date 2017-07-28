@@ -1,4 +1,3 @@
-///! Process syscalls
 use alloc::allocator::{Alloc, Layout};
 use alloc::arc::Arc;
 use alloc::boxed::Box;
@@ -15,12 +14,13 @@ use start::usermode;
 use interrupt;
 use context;
 use context::ContextId;
+use context::file::FileDescriptor;
 use elf::{self, program_header};
-use scheme::{self, FileHandle};
+use scheme::FileHandle;
 use syscall;
 use syscall::data::{SigAction, Stat};
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, O_CLOEXEC, SIG_DFL, SIGTERM, WNOHANG};
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, SIG_DFL, SIGTERM, WNOHANG};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
@@ -284,27 +284,11 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         if flags & CLONE_FILES == 0 {
             for (_fd, mut file_option) in files.lock().iter_mut().enumerate() {
                 let new_file_option = if let Some(ref file) = *file_option {
-                    let result = {
-                        let scheme = {
-                            let schemes = scheme::schemes();
-                            let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
-                            scheme.clone()
-                        };
-                        scheme.dup(file.number, b"")
-                    };
-                    match result {
-                        Ok(new_number) => {
-                            Some(context::file::File {
-                                scheme: file.scheme,
-                                number: new_number,
-                                flags: file.flags,
-                                event: None,
-                            })
-                        },
-                        Err(_err) => {
-                            None
-                        }
-                    }
+                    Some(FileDescriptor {
+                        description: Arc::clone(&file.description),
+                        event: None,
+                        cloexec: file.cloexec,
+                    })
                 } else {
                     None
                 };
@@ -617,7 +601,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                 drop(path); // Drop so that usage is not allowed after unmapping context
                 drop(arg_ptrs); // Drop so that usage is not allowed after unmapping context
 
-                let (vfork, ppid, files) = {
+                let (vfork, ppid) = {
                     let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
                     let mut context = context_lock.write();
@@ -777,9 +761,6 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                         context.image.push(memory.to_shared());
                     }
 
-                    let files = Arc::new(Mutex::new(context.files.lock().clone()));
-                    context.files = files.clone();
-
                     context.actions = Arc::new(Mutex::new(vec![(
                         SigAction {
                             sa_handler: unsafe { mem::transmute(SIG_DFL) },
@@ -791,64 +772,22 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
 
                     let vfork = context.vfork;
                     context.vfork = false;
-                    (vfork, context.ppid, files)
+
+                    for (fd, file_option) in context.files.lock().iter_mut().enumerate() {
+                        let mut cloexec = false;
+                        if let Some(ref file) = *file_option {
+                            if file.cloexec {
+                                cloexec = true;
+                            }
+                        }
+
+                        if cloexec {
+                            let _ = file_option.take().unwrap().close(FileHandle::from(fd));
+                        }
+                    }
+
+                    (vfork, context.ppid)
                 };
-
-                // Duplicate current files, close previous
-                for (fd, mut file_option) in files.lock().iter_mut().enumerate() {
-                    let new_file_option = if let Some(ref file) = *file_option {
-                        // Duplicate
-                        let result = {
-                            if file.flags & O_CLOEXEC == O_CLOEXEC {
-                                Err(Error::new(EBADF))
-                            } else {
-                                let scheme_option = {
-                                    let schemes = scheme::schemes();
-                                    schemes.get(file.scheme).map(|scheme| scheme.clone())
-                                };
-                                if let Some(scheme) = scheme_option {
-                                    scheme.dup(file.number, b"")
-                                } else {
-                                    Err(Error::new(EBADF))
-                                }
-                            }
-                        };
-
-                        // Close
-                        {
-                            if let Some(event_id) = file.event {
-                                context::event::unregister(FileHandle::from(fd), file.scheme, event_id);
-                            }
-
-                            let scheme_option = {
-                                let schemes = scheme::schemes();
-                                schemes.get(file.scheme).map(|scheme| scheme.clone())
-                            };
-                            if let Some(scheme) = scheme_option {
-                                let _ = scheme.close(file.number);
-                            }
-                        }
-
-                        // Return new descriptor
-                        match result {
-                            Ok(new_number) => {
-                                Some(context::file::File {
-                                    scheme: file.scheme,
-                                    number: new_number,
-                                    flags: file.flags,
-                                    event: None,
-                                })
-                            },
-                            Err(_err) => {
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    };
-
-                    *file_option = new_file_option;
-                }
 
                 if vfork {
                     let contexts = context::contexts();
@@ -897,17 +836,7 @@ pub fn exit(status: usize) -> ! {
         /// Files must be closed while context is valid so that messages can be passed
         for (fd, file_option) in close_files.drain(..).enumerate() {
             if let Some(file) = file_option {
-                if let Some(event_id) = file.event {
-                    context::event::unregister(FileHandle::from(fd), file.scheme, event_id);
-                }
-
-                let scheme_option = {
-                    let schemes = scheme::schemes();
-                    schemes.get(file.scheme).map(|scheme| scheme.clone())
-                };
-                if let Some(scheme) = scheme_option {
-                    let _ = scheme.close(file.number);
-                }
+                let _ = file.close(FileHandle::from(fd));
             }
         }
 

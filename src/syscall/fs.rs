@@ -1,12 +1,15 @@
 //! Filesystem syscalls
 use core::sync::atomic::Ordering;
+use alloc::arc::Arc;
+use spin::RwLock;
 
 use context;
 use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{Packet, Stat};
 use syscall::error::*;
-use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use context::file::{FileDescriptor, FileDescription};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let (file, pid, uid, gid) = {
@@ -19,7 +22,7 @@ pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
 
     let scheme = {
         let schemes = scheme::schemes();
-        let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
+        let scheme = schemes.get(file.description.read().scheme).ok_or(Error::new(EBADF))?;
         scheme.clone()
     };
 
@@ -29,7 +32,7 @@ pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
         uid: uid,
         gid: gid,
         a: a,
-        b: file.number,
+        b: file.description.read().number,
         c: c,
         d: d
     };
@@ -109,11 +112,14 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let context = context_lock.read();
-    context.add_file(::context::file::File {
-        scheme: scheme_id,
-        number: file_id,
-        flags: flags,
+    context.add_file(FileDescriptor {
+        description: Arc::new(RwLock::new(FileDescription {
+            scheme: scheme_id,
+            number: file_id,
+            flags: flags & !O_CLOEXEC,
+        })),
         event: None,
+        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
     }).ok_or(Error::new(EMFILE))
 }
 
@@ -126,18 +132,24 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let read_fd = context.add_file(::context::file::File {
-            scheme: scheme_id,
-            number: read_id,
-            flags: O_RDONLY | flags & !O_ACCMODE,
+        let read_fd = context.add_file(FileDescriptor {
+            description: Arc::new(RwLock::new(FileDescription {
+                scheme: scheme_id,
+                number: read_id,
+                flags: O_RDONLY | flags & !O_ACCMODE & !O_CLOEXEC,
+            })),
             event: None,
+            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         }).ok_or(Error::new(EMFILE))?;
 
-        let write_fd = context.add_file(::context::file::File {
-            scheme: scheme_id,
-            number: write_id,
-            flags: O_WRONLY | flags & !O_ACCMODE,
+        let write_fd = context.add_file(FileDescriptor {
+            description: Arc::new(RwLock::new(FileDescription {
+                scheme: scheme_id,
+                number: write_id,
+                flags: O_WRONLY | flags & !O_ACCMODE & !O_CLOEXEC,
+            })),
             event: None,
+            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         }).ok_or(Error::new(EMFILE))?;
 
         fds[0] = read_fd.into();
@@ -225,16 +237,7 @@ pub fn close(fd: FileHandle) -> Result<usize> {
         file
     };
 
-    if let Some(event_id) = file.event {
-        context::event::unregister(fd, file.scheme, event_id);
-    }
-
-    let scheme = {
-        let schemes = scheme::schemes();
-        let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
-        scheme.clone()
-    };
-    scheme.close(file.number)
+    file.close(fd)
 }
 
 /// Duplicate file descriptor
@@ -247,24 +250,43 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
         file
     };
 
-    let new_id = {
-        let scheme = {
-            let schemes = scheme::schemes();
-            let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
-            scheme.clone()
-        };
-        scheme.dup(file.number, buf)?
-    };
+    if buf.is_empty() {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
 
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    context.add_file(::context::file::File {
-        scheme: file.scheme,
-        number: new_id,
-        flags: file.flags & !O_CLOEXEC,
-        event: None,
-    }).ok_or(Error::new(EMFILE))
+        context.add_file(FileDescriptor {
+            description: Arc::clone(&file.description),
+            event: None,
+            cloexec: false,
+        }).ok_or(Error::new(EMFILE))
+    } else {
+        let description = file.description.read();
+
+        let new_id = {
+            let scheme = {
+                let schemes = scheme::schemes();
+                let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
+
+                scheme.clone()
+            };
+            scheme.dup(description.number, buf)?
+        };
+
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+
+        context.add_file(FileDescriptor {
+            description: Arc::new(RwLock::new(FileDescription {
+                scheme: description.scheme,
+                number: new_id,
+                flags: description.flags,
+            })),
+            event: None,
+            cloexec: false,
+        }).ok_or(Error::new(EMFILE))
+    }
 }
 
 /// Duplicate file descriptor, replacing another
@@ -278,28 +300,46 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
-            let file = context.get_file(fd).ok_or(Error::new(EBADF))?;
-            file
+            context.get_file(fd).ok_or(Error::new(EBADF))?
         };
 
-        let new_id = {
-            let scheme = {
-                let schemes = scheme::schemes();
-                let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
-                scheme.clone()
+        if buf.is_empty() {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+
+            context.insert_file(new_fd, FileDescriptor {
+                description: Arc::clone(&file.description),
+                event: None,
+                cloexec: false,
+            }).ok_or(Error::new(EBADF))
+        } else {
+            let description = file.description.read();
+
+            let new_id = {
+                let scheme = {
+                    let schemes = scheme::schemes();
+                    let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
+
+                    scheme.clone()
+                };
+                scheme.dup(description.number, buf)?
             };
-            scheme.dup(file.number, buf)?
-        };
 
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        context.insert_file(new_fd, ::context::file::File {
-            scheme: file.scheme,
-            number: new_id,
-            flags: file.flags & !O_CLOEXEC,
-            event: None,
-        }).ok_or(Error::new(EBADF))
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+
+            context.insert_file(new_fd, FileDescriptor {
+                description: Arc::new(RwLock::new(FileDescription {
+                    scheme: description.scheme,
+                    number: new_id,
+                    flags: description.flags,
+                })),
+                event: None,
+                cloexec: false,
+            }).ok_or(Error::new(EMFILE))
+        }
     }
 }
 
@@ -313,14 +353,16 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         file
     };
 
+    let description = file.description.read();
+
     // Communicate fcntl with scheme
-    let _res = {
+    if cmd != F_GETFD && cmd != F_SETFD {
         let scheme = {
             let schemes = scheme::schemes();
-            let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
+            let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
             scheme.clone()
         };
-        scheme.fcntl(file.number, cmd, arg)?
+        scheme.fcntl(description.number, cmd, arg)?;
     };
 
     // Perform kernel operation if scheme agrees
@@ -331,12 +373,24 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let mut files = context.files.lock();
         match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
+                F_GETFD => {
+                    if file.cloexec {
+                        Ok(O_CLOEXEC)
+                    } else {
+                        Ok(0)
+                    }
+                },
+                F_SETFD => {
+                    file.cloexec = arg & O_CLOEXEC == O_CLOEXEC;
+                    Ok(0)
+                },
                 F_GETFL => {
-                    Ok(file.flags)
+                    Ok(description.flags)
                 },
                 F_SETFL => {
-                    let new_flags = (file.flags & O_ACCMODE) | (arg & ! O_ACCMODE);
-                    file.flags = new_flags;
+                    let new_flags = (description.flags & O_ACCMODE) | (arg & ! O_ACCMODE);
+                    drop(description);
+                    file.description.write().flags = new_flags;
                     Ok(0)
                 },
                 _ => {
@@ -357,9 +411,10 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
         let mut files = context.files.lock();
         match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => {
+                let description = file.description.read();
                 if let Some(event_id) = file.event.take() {
-                    println!("{:?}: {:?}:{}: events already registered: {}", fd, file.scheme, file.number, event_id);
-                    context::event::unregister(fd, file.scheme, event_id);
+                    println!("{:?}: {:?}:{}: events already registered: {}", fd, description.scheme, description.number, event_id);
+                    context::event::unregister(fd, description.scheme, event_id);
                 }
                 file.clone()
             },
@@ -367,12 +422,14 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
         }
     };
 
+    let description = file.description.read();
+
     let scheme = {
         let schemes = scheme::schemes();
-        let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
+        let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
         scheme.clone()
     };
-    let event_id = scheme.fevent(file.number, flags)?;
+    let event_id = scheme.fevent(description.number, flags)?;
     {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -383,7 +440,7 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
             None => return Err(Error::new(EBADF)),
         }
     }
-    context::event::register(fd, file.scheme, event_id);
+    context::event::register(fd, description.scheme, event_id);
     Ok(0)
 }
 
