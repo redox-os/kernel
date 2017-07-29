@@ -65,6 +65,73 @@ impl AmlExecutionContext {
             sync_level: 0
         }
     }
+
+    pub fn wait_for_event(&mut self, event_ptr: AmlValue) -> Result<bool, AmlError> {
+        let mut namespace_ptr = self.prelock();
+        let mut namespace = match *namespace_ptr {
+            Some(ref mut n) => n,
+            None => return Err(AmlError::AmlHardFatal)
+        };
+        
+        let mutex_idx = match event_ptr {
+            AmlValue::String(ref s) => s.clone(),
+            AmlValue::ObjectReference(ref o) => match *o {
+                ObjectReference::Object(ref s) => s.clone(),
+                _ => return Err(AmlError::AmlValueError)
+            },
+            _ => return Err(AmlError::AmlValueError)
+        };
+
+        let mutex = match namespace.get(&mutex_idx) {
+            Some(s) => s.clone(),
+            None => return Err(AmlError::AmlValueError)
+        };
+
+        match mutex {
+            AmlValue::Event(count) => {
+                if count > 0 {
+                    namespace.insert(mutex_idx, AmlValue::Event(count - 1));
+                    return Ok(true);
+                }
+            },
+            _ => return Err(AmlError::AmlValueError)
+        }
+
+        Ok(false)
+    }
+
+    pub fn signal_event(&mut self, event_ptr: AmlValue) -> Result<(), AmlError> {
+        let mut namespace_ptr = self.prelock();
+        let mut namespace = match *namespace_ptr {
+            Some(ref mut n) => n,
+            None => return Err(AmlError::AmlHardFatal)
+        };
+
+        
+        let mutex_idx = match event_ptr {
+            AmlValue::String(ref s) => s.clone(),
+            AmlValue::ObjectReference(ref o) => match *o {
+                ObjectReference::Object(ref s) => s.clone(),
+                _ => return Err(AmlError::AmlValueError)
+            },
+            _ => return Err(AmlError::AmlValueError)
+        };
+
+        let mutex = match namespace.get(&mutex_idx) {
+            Some(s) => s.clone(),
+            None => return Err(AmlError::AmlValueError)
+        };
+
+        match mutex {
+            AmlValue::Event(count) => {
+                namespace.insert(mutex_idx, AmlValue::Event(count + 1));
+                return Ok(());
+            },
+            _ => return Err(AmlError::AmlValueError)
+        }
+
+        Ok(())
+    }
     
     pub fn release_mutex(&mut self, mutex_ptr: AmlValue) -> Result<(), AmlError> {
         let id = self.ctx_id;
@@ -123,9 +190,8 @@ impl AmlExecutionContext {
         Ok(())
     }
 
-    pub fn acquire_mutex(&mut self, mutex_ptr: AmlValue, timeout: u16) -> Result<bool, AmlError> {
-        let id = self.ctx_id;
-        
+    pub fn acquire_mutex(&mut self, mutex_ptr: AmlValue) -> Result<bool, AmlError> {
+        let id = self.ctx_id;        
         
         let mut namespace_ptr = self.prelock();
         let mut namespace = match *namespace_ptr {

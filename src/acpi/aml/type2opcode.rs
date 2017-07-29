@@ -329,7 +329,7 @@ fn parse_def_acquire(data: &[u8],
     let starting_time_ns = nanoseconds + (seconds * 1000000000);
 
     loop {
-        match ctx.acquire_mutex(obj.val.clone(), timeout) {
+        match ctx.acquire_mutex(obj.val.clone()) {
             Err(e) => return Err(e),
             Ok(b) => if b {
                 return Ok(AmlParseType {
@@ -1012,35 +1012,25 @@ fn parse_def_wait(data: &[u8],
     let starting_time_ns = nanoseconds + (seconds * 1000000000);
 
     loop {
-        {
-            let mut namespace = ctx.prelock();
-            let mutex = ctx.get(obj.val.clone());
-
-            match mutex {
-                AmlValue::Event(count) => {
-                    if count > 0 {
-                        ctx.modify(obj.val.clone(), AmlValue::Event(count - 1));
-                        return Ok(AmlParseType {
-                            val: AmlValue::Integer(0),
-                            len: 2 + obj.len + timeout_obj.len
-                        });
-                    }
-                },
-                _ => return Err(AmlError::AmlValueError)
-            }
-        }
-
-        if timeout >= 0xFFFF {
-            // TODO: Brief sleep here
-        } else {
-            let (seconds, nanoseconds) = monotonic();
-            let current_time_ns = nanoseconds + (seconds * 1000000000);
-            
-            if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+        match ctx.wait_for_event(obj.val.clone()) {
+            Err(e) => return Err(e),
+            Ok(b) => if b {
                 return Ok(AmlParseType {
-                    val: AmlValue::Integer(1),
+                    val: AmlValue::Integer(0),
                     len: 2 + obj.len + timeout_obj.len
-                });
+                })
+            } else if timeout >= 0xFFFF {
+                // TODO: Brief sleep here
+            } else {
+                let (seconds, nanoseconds) = monotonic();
+                let current_time_ns = nanoseconds + (seconds * 1000000000);
+                
+                if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                    return Ok(AmlParseType {
+                        val: AmlValue::Integer(1),
+                        len: 2 + obj.len + timeout_obj.len
+                    });
+                }
             }
         }
     }

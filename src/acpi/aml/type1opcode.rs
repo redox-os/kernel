@@ -246,11 +246,7 @@ fn parse_def_signal(data: &[u8],
     parser_opcode_extended!(data, 0x24);
     let object = parse_super_name(&data[2..], ctx)?;
 
-    let namespace = ctx.prelock();
-    let event = ctx.get(object.val.clone()).get_as_event()?;
-
-    ctx.modify(object.val.clone(), AmlValue::Event(event + 1));
-
+    ctx.signal_event(object.val)?;
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 2 + object.len
