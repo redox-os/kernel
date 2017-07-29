@@ -202,35 +202,8 @@ fn parse_def_release(data: &[u8],
     parser_opcode_extended!(data, 0x27);
 
     let obj = parse_super_name(&data[2..], ctx)?;
-
-    let mut namespace = ctx.prelock();
-    let mutex = ctx.get(obj.val.clone());
-
-    match mutex {
-        AmlValue::Mutex((sync_level, owner)) => {
-            if let Some(o) = owner {
-                if o == ctx.ctx_id {
-                    ctx.modify(obj.val.clone(), AmlValue::Mutex((sync_level, None)));
-                } else {
-                    return Err(AmlError::AmlHardFatal);
-                }
-            }
-        },
-        AmlValue::OperationRegion(ref region) => {
-            if let Some(o) = region.accessed_by {
-                if o == ctx.ctx_id {
-                    let mut new_region = region.clone();
-                    new_region.accessed_by = None;
-                    
-                    ctx.modify(obj.val.clone(), AmlValue::OperationRegion(new_region));
-                } else {
-                    return Err(AmlError::AmlHardFatal);
-                }
-            }
-        },
-        _ => return Err(AmlError::AmlValueError)
-    }
-
+    ctx.release_mutex(obj.val);
+    
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 2 + obj.len

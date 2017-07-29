@@ -328,50 +328,26 @@ fn parse_def_acquire(data: &[u8],
     let (seconds, nanoseconds) = monotonic();
     let starting_time_ns = nanoseconds + (seconds * 1000000000);
 
-    let id = ctx.ctx_id;
-
     loop {
-        {
-            let mut namespace = ctx.prelock();
-            let mutex = ctx.get(obj.val.clone());
-
-            match mutex {
-                AmlValue::Mutex((sync_level, owner)) => {
-                    if owner == None {
-                        ctx.modify(obj.val.clone(), AmlValue::Mutex((sync_level, Some(id))));
-                        return Ok(AmlParseType {
-                            val: AmlValue::Integer(0),
-                            len: 4 + obj.len
-                        });
-                    }
-                },
-                AmlValue::OperationRegion(ref o) => {
-                    if o.accessed_by == None {
-                        let mut new_region = o.clone();
-                        new_region.accessed_by = Some(id);
-                        
-                        ctx.modify(obj.val.clone(), AmlValue::OperationRegion(new_region));
-                        return Ok(AmlParseType {
-                            val: AmlValue::Integer(0),
-                            len: 4 + obj.len
-                        });
-                    }
-                },
-                _ => return Err(AmlError::AmlValueError)
-            }
-        }
-
-        if timeout == 0xFFFF {
-            // TODO: Brief sleep here
-        } else {
-            let (seconds, nanoseconds) = monotonic();
-            let current_time_ns = nanoseconds + (seconds * 1000000000);
-            
-            if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+        match ctx.acquire_mutex(obj.val.clone(), timeout) {
+            Err(e) => return Err(e),
+            Ok(b) => if b {
                 return Ok(AmlParseType {
-                    val: AmlValue::Integer(1),
+                    val: AmlValue::Integer(0),
                     len: 4 + obj.len
                 });
+            } else if timeout == 0xFFFF {
+                // TODO: Brief sleep here
+            } else {
+                let (seconds, nanoseconds) = monotonic();
+                let current_time_ns = nanoseconds + (seconds * 1000000000);
+                
+                if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                    return Ok(AmlParseType {
+                        val: AmlValue::Integer(1),
+                        len: 4 + obj.len
+                    });
+                }
             }
         }
     }

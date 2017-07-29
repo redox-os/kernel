@@ -30,7 +30,8 @@ pub struct AmlExecutionContext {
     pub arg_vars: [AmlValue; 8],
     pub state: ExecutionState,
     pub namespace_delta: Vec<String>,
-    pub ctx_id: u64
+    pub ctx_id: u64,
+    pub sync_level: u8
 }
 
 impl AmlExecutionContext {
@@ -60,8 +61,117 @@ impl AmlExecutionContext {
                        AmlValue::Uninitialized],
             state: ExecutionState::EXECUTING,
             namespace_delta: vec!(),
-            ctx_id: id
+            ctx_id: id,
+            sync_level: 0
         }
+    }
+    
+    pub fn release_mutex(&mut self, mutex_ptr: AmlValue) -> Result<(), AmlError> {
+        let id = self.ctx_id;
+        
+        let mut namespace_ptr = self.prelock();
+        let mut namespace = match *namespace_ptr {
+            Some(ref mut n) => n,
+            None => return Err(AmlError::AmlHardFatal)
+        };
+        
+        let mutex_idx = match mutex_ptr {
+            AmlValue::String(ref s) => s.clone(),
+            AmlValue::ObjectReference(ref o) => match *o {
+                ObjectReference::Object(ref s) => s.clone(),
+                _ => return Err(AmlError::AmlValueError)
+            },
+            _ => return Err(AmlError::AmlValueError)
+        };
+
+        let mutex = match namespace.get(&mutex_idx) {
+            Some(s) => s.clone(),
+            None => return Err(AmlError::AmlValueError)
+        };
+        
+        match mutex {
+            AmlValue::Mutex((sync_level, owner)) => {
+                if let Some(o) = owner {
+                    if o == id {
+                        if sync_level == self.sync_level {
+                            namespace.insert(mutex_idx, AmlValue::Mutex((sync_level, None)));
+                            return Ok(());
+                        } else {
+                            return Err(AmlError::AmlValueError);
+                        }
+                    } else {
+                        return Err(AmlError::AmlHardFatal);
+                    }
+                }
+            },
+            AmlValue::OperationRegion(ref region) => {
+                if let Some(o) = region.accessed_by {
+                    if o == id {
+                        let mut new_region = region.clone();
+                        new_region.accessed_by = None;
+                        
+                        namespace.insert(mutex_idx, AmlValue::OperationRegion(new_region));
+                        return Ok(());
+                    } else {
+                        return Err(AmlError::AmlHardFatal);
+                    }
+                }
+            },
+            _ => return Err(AmlError::AmlValueError)
+        }
+
+        Ok(())
+    }
+
+    pub fn acquire_mutex(&mut self, mutex_ptr: AmlValue, timeout: u16) -> Result<bool, AmlError> {
+        let id = self.ctx_id;
+        
+        
+        let mut namespace_ptr = self.prelock();
+        let mut namespace = match *namespace_ptr {
+            Some(ref mut n) => n,
+            None => return Err(AmlError::AmlHardFatal)
+        };
+        let mutex_idx = match mutex_ptr {
+            AmlValue::String(ref s) => s.clone(),
+            AmlValue::ObjectReference(ref o) => match *o {
+                ObjectReference::Object(ref s) => s.clone(),
+                _ => return Err(AmlError::AmlValueError)
+            },
+            _ => return Err(AmlError::AmlValueError)
+        };
+
+        let mutex = match namespace.get(&mutex_idx) {
+            Some(s) => s.clone(),
+            None => return Err(AmlError::AmlValueError)
+        };
+        
+        match mutex {
+            AmlValue::Mutex((sync_level, owner)) => {
+                if owner == None {
+                    if sync_level < self.sync_level {
+                        return Err(AmlError::AmlValueError);
+                    }
+                    
+                    namespace.insert(mutex_idx, AmlValue::Mutex((sync_level, Some(id))));
+                    self.sync_level = sync_level;
+                    
+                    return Ok(true);
+                }
+            },
+            AmlValue::OperationRegion(ref o) => {
+                if o.accessed_by == None {
+                    let mut new_region = o.clone();
+                    new_region.accessed_by = Some(id);
+
+                    namespace.insert(mutex_idx, AmlValue::OperationRegion(new_region));
+                    return Ok(true);
+                }
+            },
+            _ => return Err(AmlError::AmlValueError)
+        }
+
+        Ok(false)
     }
 
     pub fn add_to_namespace(&mut self, name: String, value: AmlValue) -> Result<(), AmlError> {
