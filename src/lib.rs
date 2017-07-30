@@ -42,9 +42,10 @@ pub use consts::*;
 /// Shared data structures
 pub mod common;
 
-/// Macros like print, println, and interrupt
+/// Architecture-dependent stuff
 #[macro_use]
-pub mod macros;
+pub mod arch;
+pub use arch::*;
 
 /// Constants like memory locations
 pub mod consts;
@@ -52,13 +53,11 @@ pub mod consts;
 /// ACPI table parsing
 mod acpi;
 
-/// Architecture-dependent stuff
-mod arch;
-#[cfg(target_arch = "x86_64")]
-pub use arch::x86_64::*;
-
 /// Context management
 pub mod context;
+
+/// Architecture-independent devices
+pub mod devices;
 
 /// ELF file parsing
 pub mod elf;
