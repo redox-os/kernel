@@ -151,7 +151,7 @@ fn parse_def_load(data: &[u8],
     let name = parse_name_string(&data[2..], ctx)?;
     let ddb_handle_object = parse_super_name(&data[2 + name.len..], ctx)?;
 
-    let tbl = ctx.get(name.val).get_as_buffer()?;
+    let tbl = ctx.get(name.val)?.get_as_buffer()?;
     let sdt = unsafe { &*(tbl.as_ptr() as *const Sdt) };
 
     if is_aml_table(sdt) {
@@ -223,7 +223,7 @@ fn parse_def_reset(data: &[u8],
     parser_opcode_extended!(data, 0x26);
 
     let object = parse_super_name(&data[2..], ctx)?;
-    ctx.get(object.val.clone()).get_as_event()?;
+    ctx.get(object.val.clone())?.get_as_event()?;
 
     ctx.modify(object.val.clone(), AmlValue::Event(0));
 
@@ -333,7 +333,7 @@ fn parse_def_unload(data: &[u8],
 
     let object = parse_super_name(&data[2..], ctx)?;
 
-    let delta = ctx.get(object.val).get_as_ddb_handle()?;
+    let delta = ctx.get(object.val)?.get_as_ddb_handle()?;
     let mut namespace = ctx.prelock();
 
     if let Some(ref mut ns) = *namespace {

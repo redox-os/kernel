@@ -271,7 +271,7 @@ fn parse_def_ref_of(data: &[u8],
     let obj = parse_super_name(&data[1..], ctx)?;
     let res = match obj.val {
         AmlValue::String(ref s) => {
-            match ctx.get(AmlValue::String(s.clone())) {
+            match ctx.get(AmlValue::String(s.clone()))? {
                 AmlValue::None => return Err(AmlError::AmlValueError),
                 _ => ObjectReference::Object(s.clone())
             }
@@ -299,7 +299,7 @@ fn parse_def_deref_of(data: &[u8],
     parser_opcode!(data, 0x83);
 
     let obj = parse_term_arg(&data[1..], ctx)?;
-    let res = ctx.get(obj.val);
+    let res = ctx.get(obj.val)?;
 
     match res {
         AmlValue::None => Err(AmlError::AmlValueError),
@@ -368,7 +368,7 @@ fn parse_def_increment(data: &[u8],
     let obj = parse_super_name(&data[1..], ctx)?;
     
     let mut namespace = ctx.prelock();
-    let value = AmlValue::Integer(ctx.get(obj.val.clone()).get_as_integer()? + 1);
+    let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? + 1);
     ctx.modify(obj.val, value.clone());
     
     Ok(AmlParseType {
@@ -773,7 +773,7 @@ fn parse_def_size_of(data: &[u8],
     parser_opcode!(data, 0x87);
 
     let name = parse_super_name(&data[1..], ctx)?;
-    let obj = ctx.get(name.val);
+    let obj = ctx.get(name.val)?;
 
     let res = match obj {
         AmlValue::Buffer(ref v) => v.len(),
@@ -1053,7 +1053,7 @@ fn parse_def_cond_ref_of(data: &[u8],
 
     let res = match obj.val {
         AmlValue::String(ref s) => {
-            match ctx.get(AmlValue::String(s.clone())) {
+            match ctx.get(AmlValue::String(s.clone()))? {
                 AmlValue::None => return Ok(AmlParseType {
                     val: AmlValue::Integer(0),
                     len: 1 + obj.len + target.len
@@ -1135,7 +1135,7 @@ fn parse_def_decrement(data: &[u8],
     let obj = parse_super_name(&data[1..], ctx)?;
     
     let mut namespace = ctx.prelock();
-    let value = AmlValue::Integer(ctx.get(obj.val.clone()).get_as_integer()? - 1);
+    let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? - 1);
     ctx.modify(obj.val, value.clone());
     
     Ok(AmlParseType {

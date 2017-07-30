@@ -125,7 +125,7 @@ pub fn parse_method_invocation(data: &[u8],
     }
     
     let name = parse_name_string(data, ctx)?;
-    let method = ctx.get(name.val.clone());
+    let method = ctx.get(name.val.clone())?;
 
     let method = match method {
         AmlValue::None => return Err(AmlError::AmlDeferredLoad),

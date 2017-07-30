@@ -283,29 +283,95 @@ impl AmlExecutionContext {
         ACPI_TABLE.namespace.write()
     }
 
-    pub fn modify(&mut self, name: AmlValue, value: AmlValue) {
-        // TODO: throw errors
-        // TODO: return DRO
+    pub fn modify(&mut self, name: AmlValue, value: AmlValue) -> Result<(), AmlError> {
         match name {
-            AmlValue::None => (),
             AmlValue::ObjectReference(r) => match r {
-                ObjectReference::ArgObj(_) => (),
+                ObjectReference::ArgObj(_) => return Err(AmlError::AmlValueError),
                 ObjectReference::LocalObj(i) => self.local_vars[i as usize] = value,
-                _ => ()
+                ObjectReference::Object(s) => if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
+                    namespace.insert(s, value);
+                },
+                ObjectReference::Index(c, v) => {
+                    let idx = v.get_as_integer()? as usize;
+                    match *c {
+                        AmlValue::ObjectReference(r) => match r {
+                            ObjectReference::Object(s) => {
+                                if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
+                                    let obj = if let Some(s) = namespace.get(&s) {
+                                        s.clone()
+                                    } else {
+                                        return Err(AmlError::AmlValueError);
+                                    };
+                                    
+                                    match obj {
+                                        AmlValue::String(ref string) => {
+                                            let mut bytes = string.clone().into_bytes();
+                                            bytes[idx] = value.get_as_integer()? as u8;
+                                            
+                                            let string = String::from_utf8(bytes).unwrap();
+                                            namespace.insert(s, AmlValue::String(string));
+                                        },
+                                        AmlValue::Buffer(ref b) => {
+                                            let mut b = b.clone();
+                                            b[idx] = value.get_as_integer()? as u8;
+
+                                            namespace.insert(s, AmlValue::Buffer(b));
+                                        },
+                                        AmlValue::Package(ref p) => {
+                                            let mut p = p.clone();
+                                            p[idx] = value;
+
+                                            namespace.insert(s, AmlValue::Package(p));
+                                        },
+                                        _ => return Err(AmlError::AmlValueError)
+                                    }
+                                }
+                            },
+                            _ => return Err(AmlError::AmlValueError)
+                        },
+                        _ => return Err(AmlError::AmlValueError)
+                    }
+                }
             },
-            _ => ()
+            AmlValue::String(s) => if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
+                namespace.insert(s, value);
+            },
+            _ => return Err(AmlError::AmlValueError)
         }
+
+        Ok(())
     }
 
-    pub fn get(&self, name: AmlValue) -> AmlValue {
-        match name {
-            AmlValue::None => AmlValue::None,
+    pub fn get(&self, name: AmlValue) -> Result<AmlValue, AmlError> {
+        Ok(match name {
             AmlValue::ObjectReference(r) => match r {
                 ObjectReference::ArgObj(i) => self.arg_vars[i as usize].clone(),
                 ObjectReference::LocalObj(i) => self.local_vars[i as usize].clone(),
-                _ => AmlValue::None
+                ObjectReference::Object(ref s) => if let Some(ref namespace) = *ACPI_TABLE.namespace.read() {
+                    if let Some(o) = namespace.get(s) {
+                        o.clone()
+                    } else {
+                        AmlValue::None
+                    }
+                } else { AmlValue::None },
+                ObjectReference::Index(c, v) => if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
+                    let idx = v.get_as_integer()? as usize;
+                    match *c {
+                        AmlValue::Package(p) => p[idx].clone(),
+                        _ => AmlValue::None
+                    }
+                } else {
+                    AmlValue::None
+                }
             },
+            AmlValue::String(ref s) => if let Some(ref namespace) = *ACPI_TABLE.namespace.read() {
+                if let Some(o) = namespace.get(s) {
+                    o.clone()
+                } else {
+                    AmlValue::None
+                }
+            } else { AmlValue::None },
             _ => AmlValue::None
-        }
+        })
     }
 }
