@@ -5,7 +5,7 @@ use syscall::io::{Io, Pio};
 pub unsafe extern fn kstop() -> ! {
     println!("kstop");
     acpi::set_global_s_state(5);
-    
+
     // Magic shutdown code for bochs and qemu (older versions).
     for c in "Shutdown".bytes() {
         let port = 0x8900;
