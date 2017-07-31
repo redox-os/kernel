@@ -1,16 +1,7 @@
 use core::fmt::{self, Write};
-use spin::Mutex;
 
 use scheme::debug::debug_input;
-use syscall::io::{Io, Pio, ReadOnly};
-
-pub static COM1: Mutex<SerialPort> = Mutex::new(SerialPort::new(0x3F8));
-pub static COM2: Mutex<SerialPort> = Mutex::new(SerialPort::new(0x2F8));
-
-pub unsafe fn init() {
-    COM1.lock().init();
-    COM2.lock().init();
-}
+use syscall::io::{Io, Pio, Mmio, ReadOnly};
 
 bitflags! {
     /// Interrupt enable flags
@@ -34,25 +25,25 @@ bitflags! {
 }
 
 #[allow(dead_code)]
-pub struct SerialPort {
+pub struct SerialPort<T: Io<Value = u8>> {
     /// Data register, read to receive, write to send
-    data: Pio<u8>,
+    data: T,
     /// Interrupt enable
-    int_en: Pio<u8>,
+    int_en: T,
     /// FIFO control
-    fifo_ctrl: Pio<u8>,
+    fifo_ctrl: T,
     /// Line control
-    line_ctrl: Pio<u8>,
+    line_ctrl: T,
     /// Modem control
-    modem_ctrl: Pio<u8>,
+    modem_ctrl: T,
     /// Line status
-    line_sts: ReadOnly<Pio<u8>>,
+    line_sts: ReadOnly<T>,
     /// Modem status
-    modem_sts: ReadOnly<Pio<u8>>,
+    modem_sts: ReadOnly<T>,
 }
 
-impl SerialPort {
-    const fn new(base: u16) -> SerialPort {
+impl SerialPort<Pio<u8>> {
+    pub const fn new(base: u16) -> SerialPort<Pio<u8>> {
         SerialPort {
             data: Pio::new(base),
             int_en: Pio::new(base + 1),
@@ -63,8 +54,24 @@ impl SerialPort {
             modem_sts: ReadOnly::new(Pio::new(base + 6))
         }
     }
+}
 
-    fn init(&mut self) {
+impl SerialPort<Mmio<u8>> {
+    pub fn new(base: usize) -> SerialPort<Mmio<u8>> {
+        SerialPort {
+            data: Mmio::new(),
+            int_en: Mmio::new(),
+            fifo_ctrl: Mmio::new(),
+            line_ctrl: Mmio::new(),
+            modem_ctrl: Mmio::new(),
+            line_sts: ReadOnly::new(Mmio::new()),
+            modem_sts: ReadOnly::new(Mmio::new())
+        }
+    }
+}
+
+impl<T: Io<Value = u8>> SerialPort<T> {
+    pub fn init(&mut self) {
         //TODO: Cleanup
         self.int_en.write(0x00);
         self.line_ctrl.write(0x80);
@@ -104,7 +111,7 @@ impl SerialPort {
     }
 }
 
-impl Write for SerialPort {
+impl<T: Io<Value = u8>> Write for SerialPort<T> {
     fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
         for byte in s.bytes() {
             self.send(byte);

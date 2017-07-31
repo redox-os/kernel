@@ -3,7 +3,7 @@
 macro_rules! print {
     ($($arg:tt)*) => ({
         use core::fmt::Write;
-        let _ = write!($crate::device::serial::COM1.lock(), $($arg)*);
+        let _ = write!($crate::arch::device::serial::COM1.lock(), $($arg)*);
     });
 }
 
@@ -85,7 +85,7 @@ macro_rules! interrupt_stack {
         #[naked]
         pub unsafe extern fn $name () {
             #[inline(never)]
-            unsafe fn inner($stack: &mut $crate::macros::InterruptStack) {
+            unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStack) {
                 $func
             }
 
@@ -109,7 +109,7 @@ macro_rules! interrupt_stack {
             asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
 
             // Call inner rust function
-            inner(&mut *(rsp as *mut $crate::macros::InterruptStack));
+            inner(&mut *(rsp as *mut $crate::arch::x86_64::macros::InterruptStack));
 
             // Pop scratch registers and return
             asm!("pop fs
@@ -153,7 +153,7 @@ macro_rules! interrupt_error {
         #[naked]
         pub unsafe extern fn $name () {
             #[inline(never)]
-            unsafe fn inner($stack: &$crate::macros::InterruptErrorStack) {
+            unsafe fn inner($stack: &$crate::arch::x86_64::macros::InterruptErrorStack) {
                 $func
             }
 
@@ -177,7 +177,7 @@ macro_rules! interrupt_error {
             asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
 
             // Call inner rust function
-            inner(&*(rsp as *const $crate::macros::InterruptErrorStack));
+            inner(&*(rsp as *const $crate::arch::x86_64::macros::InterruptErrorStack));
 
             // Pop scratch registers, error code, and return
             asm!("pop fs
