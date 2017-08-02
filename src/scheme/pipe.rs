@@ -6,7 +6,7 @@ use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 
 use sync::WaitCondition;
 use syscall::error::{Error, Result, EAGAIN, EBADF, EINVAL, EPIPE, ESPIPE};
-use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_CHR};
+use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
 use syscall::scheme::Scheme;
 use syscall::data::Stat;
 
@@ -129,7 +129,7 @@ impl Scheme for PipeScheme {
 
     fn fstat(&self, _id: usize, stat: &mut Stat) -> Result<usize> {
         *stat = Stat {
-            st_mode: MODE_CHR | 0o666,
+            st_mode: MODE_FIFO | 0o666,
             ..Default::default()
         };
 
