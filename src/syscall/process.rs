@@ -601,7 +601,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                 drop(path); // Drop so that usage is not allowed after unmapping context
                 drop(arg_ptrs); // Drop so that usage is not allowed after unmapping context
 
-                let (vfork, ppid) = {
+                let (vfork, ppid, files) = {
                     let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
                     let mut context = context_lock.write();
@@ -773,21 +773,23 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     let vfork = context.vfork;
                     context.vfork = false;
 
-                    for (fd, file_option) in context.files.lock().iter_mut().enumerate() {
-                        let mut cloexec = false;
-                        if let Some(ref file) = *file_option {
-                            if file.cloexec {
-                                cloexec = true;
-                            }
-                        }
+                    let files = Arc::clone(&context.files);
 
-                        if cloexec {
-                            let _ = file_option.take().unwrap().close(FileHandle::from(fd));
+                    (vfork, context.ppid, files)
+                };
+
+                for (fd, file_option) in files.lock().iter_mut().enumerate() {
+                    let mut cloexec = false;
+                    if let Some(ref file) = *file_option {
+                        if file.cloexec {
+                            cloexec = true;
                         }
                     }
 
-                    (vfork, context.ppid)
-                };
+                    if cloexec {
+                        let _ = file_option.take().unwrap().close(FileHandle::from(fd));
+                    }
+                }
 
                 if vfork {
                     let contexts = context::contexts();
