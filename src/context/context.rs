@@ -244,17 +244,28 @@ impl Context {
     /// Add a file to the lowest available slot.
     /// Return the file descriptor number or None if no slot was found
     pub fn add_file(&self, file: FileDescriptor) -> Option<FileHandle> {
+        self.add_file_min(file, 0)
+    }
+
+    /// Add a file to the lowest available slot greater than or equal to min.
+    /// Return the file descriptor number or None if no slot was found
+    pub fn add_file_min(&self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
         let mut files = self.files.lock();
         for (i, mut file_option) in files.iter_mut().enumerate() {
-            if file_option.is_none() {
+            if file_option.is_none() && i >= min {
                 *file_option = Some(file);
                 return Some(FileHandle::from(i));
             }
         }
         let len = files.len();
         if len < super::CONTEXT_MAX_FILES {
-            files.push(Some(file));
-            Some(FileHandle::from(len))
+            if len >= min {
+                files.push(Some(file));
+                Some(FileHandle::from(len))
+            } else {
+                drop(files);
+                self.insert_file(FileHandle::from(min), file)
+            }
         } else {
             None
         }

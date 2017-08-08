@@ -8,7 +8,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{Packet, Stat};
 use syscall::error::*;
-use syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
 use context::file::{FileDescriptor, FileDescription};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
@@ -240,8 +240,7 @@ pub fn close(fd: FileHandle) -> Result<usize> {
     file.close(fd)
 }
 
-/// Duplicate file descriptor
-pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
+fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
     let file = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -251,15 +250,11 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
     };
 
     if buf.is_empty() {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        context.add_file(FileDescriptor {
+        Ok(FileDescriptor {
             description: Arc::clone(&file.description),
             event: None,
             cloexec: false,
-        }).ok_or(Error::new(EMFILE))
+        })
     } else {
         let description = file.description.read();
 
@@ -273,11 +268,7 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
             scheme.dup(description.number, buf)?
         };
 
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        context.add_file(FileDescriptor {
+        Ok(FileDescriptor {
             description: Arc::new(RwLock::new(FileDescription {
                 scheme: description.scheme,
                 number: new_id,
@@ -285,8 +276,19 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
             })),
             event: None,
             cloexec: false,
-        }).ok_or(Error::new(EMFILE))
+        })
     }
+}
+
+/// Duplicate file descriptor
+pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
+    let new_file = duplicate_file(fd, buf)?;
+
+    let contexts = context::contexts();
+    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+    let context = context_lock.read();
+
+    context.add_file(new_file).ok_or(Error::new(EMFILE))
 }
 
 /// Duplicate file descriptor, replacing another
@@ -295,51 +297,13 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
         Ok(new_fd)
     } else {
         let _ = close(new_fd);
+        let new_file = duplicate_file(fd, buf)?;
 
-        let file = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            context.get_file(fd).ok_or(Error::new(EBADF))?
-        };
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
 
-        if buf.is_empty() {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            context.insert_file(new_fd, FileDescriptor {
-                description: Arc::clone(&file.description),
-                event: None,
-                cloexec: false,
-            }).ok_or(Error::new(EBADF))
-        } else {
-            let description = file.description.read();
-
-            let new_id = {
-                let scheme = {
-                    let schemes = scheme::schemes();
-                    let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-
-                    scheme.clone()
-                };
-                scheme.dup(description.number, buf)?
-            };
-
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            context.insert_file(new_fd, FileDescriptor {
-                description: Arc::new(RwLock::new(FileDescription {
-                    scheme: description.scheme,
-                    number: new_id,
-                    flags: description.flags,
-                })),
-                event: None,
-                cloexec: false,
-            }).ok_or(Error::new(EMFILE))
-        }
+        context.insert_file(new_fd, new_file).ok_or(Error::new(EMFILE))
     }
 }
 
@@ -356,7 +320,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     let description = file.description.read();
 
     // Communicate fcntl with scheme
-    if cmd != F_GETFD && cmd != F_SETFD {
+    if cmd != F_DUPFD && cmd != F_GETFD && cmd != F_SETFD {
         let scheme = {
             let schemes = scheme::schemes();
             let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
@@ -367,9 +331,23 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 
     // Perform kernel operation if scheme agrees
     {
+        if cmd == F_DUPFD {
+            // Not in match because 'files' cannot be locked
+            let new_file = duplicate_file(fd, &[])?;
+
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+
+            return context.add_file_min(new_file, arg)
+                .ok_or(Error::new(EMFILE))
+                .map(FileHandle::into);
+        }
+
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
+
         let mut files = context.files.lock();
         match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
