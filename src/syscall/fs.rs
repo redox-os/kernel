@@ -240,8 +240,7 @@ pub fn close(fd: FileHandle) -> Result<usize> {
     file.close(fd)
 }
 
-/// Duplicate file descriptor
-pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
+fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
     let file = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -251,15 +250,11 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
     };
 
     if buf.is_empty() {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        context.add_file(FileDescriptor {
+        Ok(FileDescriptor {
             description: Arc::clone(&file.description),
             event: None,
             cloexec: false,
-        }).ok_or(Error::new(EMFILE))
+        })
     } else {
         let description = file.description.read();
 
@@ -273,11 +268,7 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
             scheme.dup(description.number, buf)?
         };
 
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        context.add_file(FileDescriptor {
+        Ok(FileDescriptor {
             description: Arc::new(RwLock::new(FileDescription {
                 scheme: description.scheme,
                 number: new_id,
@@ -285,8 +276,19 @@ pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
             })),
             event: None,
             cloexec: false,
-        }).ok_or(Error::new(EMFILE))
+        })
     }
+}
+
+/// Duplicate file descriptor
+pub fn dup(fd: FileHandle, buf: &[u8]) -> Result<FileHandle> {
+    let new_file = duplicate_file(fd, buf)?;
+
+    let contexts = context::contexts();
+    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+    let context = context_lock.read();
+    
+    context.add_file(new_file).ok_or(Error::new(EMFILE))
 }
 
 /// Duplicate file descriptor, replacing another
@@ -295,51 +297,13 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: &[u8]) -> Result<FileHandle
         Ok(new_fd)
     } else {
         let _ = close(new_fd);
+        let new_file = duplicate_file(fd, buf)?;
 
-        let file = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            context.get_file(fd).ok_or(Error::new(EBADF))?
-        };
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
 
-        if buf.is_empty() {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            context.insert_file(new_fd, FileDescriptor {
-                description: Arc::clone(&file.description),
-                event: None,
-                cloexec: false,
-            }).ok_or(Error::new(EBADF))
-        } else {
-            let description = file.description.read();
-
-            let new_id = {
-                let scheme = {
-                    let schemes = scheme::schemes();
-                    let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-
-                    scheme.clone()
-                };
-                scheme.dup(description.number, buf)?
-            };
-
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            context.insert_file(new_fd, FileDescriptor {
-                description: Arc::new(RwLock::new(FileDescription {
-                    scheme: description.scheme,
-                    number: new_id,
-                    flags: description.flags,
-                })),
-                event: None,
-                cloexec: false,
-            }).ok_or(Error::new(EMFILE))
-        }
+        context.insert_file(new_fd, new_file).ok_or(Error::new(EMFILE))
     }
 }
 
