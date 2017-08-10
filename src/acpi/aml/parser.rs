@@ -283,63 +283,90 @@ impl AmlExecutionContext {
         ACPI_TABLE.namespace.write()
     }
 
-    pub fn modify(&mut self, name: AmlValue, value: AmlValue) -> Result<(), AmlError> {
-        match name {
-            AmlValue::ObjectReference(r) => match r {
-                ObjectReference::ArgObj(_) => return Err(AmlError::AmlValueError),
-                ObjectReference::LocalObj(i) => self.local_vars[i as usize] = value,
-                ObjectReference::Object(s) => if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
-                    namespace.insert(s, value);
-                },
-                ObjectReference::Index(c, v) => {
-                    let idx = v.get_as_integer()? as usize;
-                    match *c {
-                        AmlValue::ObjectReference(r) => match r {
-                            ObjectReference::Object(s) => {
-                                if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
-                                    let obj = if let Some(s) = namespace.get(&s) {
-                                        s.clone()
-                                    } else {
-                                        return Err(AmlError::AmlValueError);
-                                    };
-                                    
-                                    match obj {
-                                        AmlValue::String(ref string) => {
-                                            let mut bytes = string.clone().into_bytes();
-                                            bytes[idx] = value.get_as_integer()? as u8;
-                                            
-                                            let string = String::from_utf8(bytes).unwrap();
-                                            namespace.insert(s, AmlValue::String(string));
-                                        },
-                                        AmlValue::Buffer(ref b) => {
-                                            let mut b = b.clone();
-                                            b[idx] = value.get_as_integer()? as u8;
+    fn modify_local_obj(&mut self, local: usize, value: AmlValue) -> Result<(), AmlError> {
+        self.local_vars[local] = value;
+        Ok(())
+    }
 
-                                            namespace.insert(s, AmlValue::Buffer(b));
-                                        },
-                                        AmlValue::Package(ref p) => {
-                                            let mut p = p.clone();
-                                            p[idx] = value;
+    fn modify_object(&mut self, name: String, value: AmlValue) -> Result<(), AmlError> {
+        if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
+            namespace.insert(name, value);
+            Ok(())
+        } else {
+            Err(AmlError::AmlHardFatal)
+        }
+    }
 
-                                            namespace.insert(s, AmlValue::Package(p));
-                                        },
-                                        _ => return Err(AmlError::AmlValueError)
-                                    }
-                                }
-                            },
-                            _ => return Err(AmlError::AmlValueError)
-                        },
-                        _ => return Err(AmlError::AmlValueError)
+    fn modify_index_final(&mut self, name: String, value: AmlValue, indices: Vec<u64>) -> Result<(), AmlError> {
+        if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
+            let obj = if let Some(s) = namespace.get(&name) {
+                s.clone()
+            } else {
+                return Err(AmlError::AmlValueError);
+            };
+            
+            match obj {
+                AmlValue::String(ref string) => {
+                    if indices.len() != 1 {
+                        return Err(AmlError::AmlValueError);
                     }
-                }
-            },
-            AmlValue::String(s) => if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
-                namespace.insert(s, value);
-            },
-            _ => return Err(AmlError::AmlValueError)
+                    
+                    let mut bytes = string.clone().into_bytes();
+                    bytes[indices[0] as usize] = value.get_as_integer()? as u8;
+                    
+                    let string = String::from_utf8(bytes).unwrap();
+                    namespace.insert(name, AmlValue::String(string));
+                },
+                AmlValue::Buffer(ref b) => {
+                    if indices.len() != 1 {
+                        return Err(AmlError::AmlValueError);
+                    }
+                    
+                    let mut b = b.clone();
+                    b[indices[0] as usize] = value.get_as_integer()? as u8;
+                    
+                    namespace.insert(name, AmlValue::Buffer(b));
+                },
+                AmlValue::Package(ref p) => {
+                    // TODO: Nested references need to be handled here
+                    if indices.len() < 0 {
+                        return Err(AmlError::AmlValueError);
+                    }
+                    
+                    let mut p = p.clone();
+//                    let ref mut current = p;
+                    
+                    p[indices[0] as usize] = value;
+                    
+                    namespace.insert(name, AmlValue::Package(p));
+                },
+                _ => return Err(AmlError::AmlValueError)
+            }
         }
 
         Ok(())
+    }
+
+    pub fn modify(&mut self, name: AmlValue, value: AmlValue) -> Result<(), AmlError> {
+        match name {
+            AmlValue::ObjectReference(r) => match r {
+                ObjectReference::ArgObj(_) => Err(AmlError::AmlValueError),
+                ObjectReference::LocalObj(i) => self.modify_local_obj(i as usize, value),
+                ObjectReference::Object(s) => self.modify_object(s, value),
+                ObjectReference::Index(c, v) => {
+                    let idx = v.get_as_integer()?;
+                    match *c {
+                        AmlValue::ObjectReference(r) => match r {
+                            ObjectReference::Object(s) => self.modify_index_final(s, value, vec!(idx)),
+                            _ => Err(AmlError::AmlValueError)
+                        },
+                        _ => Err(AmlError::AmlValueError)
+                    }
+                }
+            },
+            AmlValue::String(s) => self.modify_object(s, value),
+            _ => Err(AmlError::AmlValueError)
+        }
     }
 
     pub fn get(&self, name: AmlValue) -> Result<AmlValue, AmlError> {
