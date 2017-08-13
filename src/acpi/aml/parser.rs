@@ -299,52 +299,62 @@ impl AmlExecutionContext {
 
     fn modify_index_final(&mut self, name: String, value: AmlValue, indices: Vec<u64>) -> Result<(), AmlError> {
         if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
-            let obj = if let Some(s) = namespace.get(&name) {
+            let mut obj = if let Some(s) = namespace.get(&name) {
                 s.clone()
             } else {
                 return Err(AmlError::AmlValueError);
             };
-            
-            match obj {
-                AmlValue::String(ref string) => {
-                    if indices.len() != 1 {
-                        return Err(AmlError::AmlValueError);
-                    }
-                    
-                    let mut bytes = string.clone().into_bytes();
-                    bytes[indices[0] as usize] = value.get_as_integer()? as u8;
-                    
-                    let string = String::from_utf8(bytes).unwrap();
-                    namespace.insert(name, AmlValue::String(string));
-                },
-                AmlValue::Buffer(ref b) => {
-                    if indices.len() != 1 {
-                        return Err(AmlError::AmlValueError);
-                    }
-                    
-                    let mut b = b.clone();
-                    b[indices[0] as usize] = value.get_as_integer()? as u8;
-                    
-                    namespace.insert(name, AmlValue::Buffer(b));
-                },
-                AmlValue::Package(ref p) => {
-                    // TODO: Nested references need to be handled here
-                    if indices.len() < 0 {
-                        return Err(AmlError::AmlValueError);
-                    }
-                    
-                    let mut p = p.clone();
-//                    let ref mut current = p;
-                    
-                    p[indices[0] as usize] = value;
-                    
-                    namespace.insert(name, AmlValue::Package(p));
-                },
-                _ => return Err(AmlError::AmlValueError)
-            }
-        }
 
-        Ok(())
+            obj = self.modify_index_core(obj, value, indices)?;
+
+            namespace.insert(name, obj);
+            Ok(())
+        } else {
+            Err(AmlError::AmlValueError)
+        }
+    }
+
+    fn modify_index_core(&self, obj: AmlValue, value: AmlValue, indices: Vec<u64>) -> Result<AmlValue, AmlError> {
+        match obj {
+            AmlValue::String(ref string) => {
+                if indices.len() != 1 {
+                    return Err(AmlError::AmlValueError);
+                }
+                
+                let mut bytes = string.clone().into_bytes();
+                bytes[indices[0] as usize] = value.get_as_integer()? as u8;
+                
+                let string = String::from_utf8(bytes).unwrap();
+
+                Ok(AmlValue::String(string))
+            },
+            AmlValue::Buffer(ref b) => {
+                if indices.len() != 1 {
+                    return Err(AmlError::AmlValueError);
+                }
+                
+                let mut b = b.clone();
+                b[indices[0] as usize] = value.get_as_integer()? as u8;
+
+                Ok(AmlValue::Buffer(b))
+            },
+            AmlValue::Package(ref p) => {
+                if indices.len() < 0 {
+                    return Err(AmlError::AmlValueError);
+                }
+                
+                let mut p = p.clone();
+
+                if indices.len() == 1 {
+                    p[indices[0] as usize] = value;
+                } else {
+                    p[indices[0] as usize] = self.modify_index_core(p[indices[0] as usize].clone(), value, indices[1..].to_vec())?;
+                }
+                
+                Ok(AmlValue::Package(p))
+            },
+            _ => return Err(AmlError::AmlValueError)
+        }
     }
 
     pub fn modify(&mut self, name: AmlValue, value: AmlValue) -> Result<(), AmlError> {
