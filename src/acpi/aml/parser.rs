@@ -357,22 +357,29 @@ impl AmlExecutionContext {
         }
     }
 
+    pub fn modify_index(&mut self, name: AmlValue, value: AmlValue, indices: Vec<u64>) -> Result<(), AmlError>{
+        match name {
+            AmlValue::ObjectReference(r) => match r {
+                ObjectReference::Object(s) => self.modify_index_final(s, value, indices),
+                ObjectReference::Index(c, v) => {
+                    let mut indices = indices.clone();
+                    indices.push(v.get_as_integer()?);
+
+                    self.modify_index(*c, value, indices)
+                },
+                _ => Err(AmlError::AmlValueError)
+            },
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
     pub fn modify(&mut self, name: AmlValue, value: AmlValue) -> Result<(), AmlError> {
         match name {
             AmlValue::ObjectReference(r) => match r {
                 ObjectReference::ArgObj(_) => Err(AmlError::AmlValueError),
                 ObjectReference::LocalObj(i) => self.modify_local_obj(i as usize, value),
                 ObjectReference::Object(s) => self.modify_object(s, value),
-                ObjectReference::Index(c, v) => {
-                    let idx = v.get_as_integer()?;
-                    match *c {
-                        AmlValue::ObjectReference(r) => match r {
-                            ObjectReference::Object(s) => self.modify_index_final(s, value, vec!(idx)),
-                            _ => Err(AmlError::AmlValueError)
-                        },
-                        _ => Err(AmlError::AmlValueError)
-                    }
-                }
+                ObjectReference::Index(c, v) => self.modify_index(*c, value, vec!(v.get_as_integer()?))
             },
             AmlValue::String(s) => self.modify_object(s, value),
             _ => Err(AmlError::AmlValueError)
