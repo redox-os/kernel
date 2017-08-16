@@ -574,16 +574,21 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     // Strip whitespace
                     let line = &line[line.iter().position(|&b| b != b' ')
                                          .unwrap_or(0)..];
+                    let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
+                    let mut parts = line.split(|x| *x == b' ')
+                        .map(|x| x.iter().cloned().collect::<Vec<_>>())
+                        .collect::<Vec<_>>();
                     if ! args.is_empty() {
                         args.remove(0);
                     }
-                    args.insert(0, path.to_vec());
-                    args.insert(0, line.to_vec());
+                    parts.push(path.to_vec());
+                    parts.extend(args.iter().cloned());
+                    args = parts;
                     canonical = {
                         let contexts = context::contexts();
                         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
                         let context = context_lock.read();
-                        context.canonicalize(line)
+                        context.canonicalize(executable)
                     };
                 } else {
                     println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
