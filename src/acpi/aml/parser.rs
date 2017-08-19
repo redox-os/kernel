@@ -1,6 +1,7 @@
 use collections::string::String;
 use collections::btree_map::BTreeMap;
 use collections::vec::Vec;
+use alloc::boxed::Box;
 
 use spin::RwLockWriteGuard;
 
@@ -314,7 +315,7 @@ impl AmlExecutionContext {
         }
     }
 
-    fn modify_index_core(&self, obj: AmlValue, value: AmlValue, indices: Vec<u64>) -> Result<AmlValue, AmlError> {
+    fn modify_index_core(&mut self, obj: AmlValue, value: AmlValue, indices: Vec<u64>) -> Result<AmlValue, AmlError> {
         match obj {
             AmlValue::String(ref string) => {
                 if indices.len() != 1 {
@@ -337,6 +338,18 @@ impl AmlExecutionContext {
                 b[indices[0] as usize] = value.get_as_integer()? as u8;
 
                 Ok(AmlValue::Buffer(b))
+            },
+            AmlValue::BufferField(ref b) => {
+                if indices.len() != 1 {
+                    return Err(AmlError::AmlValueError);
+                }
+
+                let mut idx = indices[0];
+                idx += b.index.get_as_integer()?;
+
+                self.modify(AmlValue::ObjectReference(ObjectReference::Index(b.source_buf.clone(), Box::new(AmlValue::Integer(idx.clone())))), value);
+
+                Ok(AmlValue::BufferField(b.clone()))
             },
             AmlValue::Package(ref p) => {
                 if indices.len() < 0 {
@@ -367,7 +380,13 @@ impl AmlExecutionContext {
 
                     self.modify_index(*c, value, indices)
                 },
-                _ => Err(AmlError::AmlValueError)
+                ObjectReference::ArgObj(_) => Err(AmlError::AmlValueError),
+                ObjectReference::LocalObj(i) => {
+                    let v = self.local_vars[i as usize].clone();
+                    self.local_vars[i as usize] = self.modify_index_core(v, value, indices)?;
+
+                    Ok(())
+                }
             },
             _ => Err(AmlError::AmlValueError)
         }
