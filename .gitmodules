@@ -1,0 +1,3 @@
+[submodule "syscall"]
+	path = syscall
+	url = https://github.com/redox-os/syscall.git
