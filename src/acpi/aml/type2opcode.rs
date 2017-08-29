@@ -1118,8 +1118,10 @@ fn parse_def_copy_object(data: &[u8],
     let source = parse_term_arg(&data[1..], ctx)?;
     let destination = parse_simple_name(&data[1 + source.len..], ctx)?;
 
+    ctx.copy(destination.val, source.val.clone())?;
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: source.val,
         len: 1 + source.len + destination.len
     })
 }

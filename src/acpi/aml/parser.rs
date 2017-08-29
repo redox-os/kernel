@@ -423,6 +423,33 @@ impl AmlExecutionContext {
         }
     }
 
+    fn copy_local_obj(&mut self, local: usize, value: AmlValue) -> Result<(), AmlError> {
+        self.local_vars[local] = value;
+        Ok(())
+    }
+
+    fn copy_object(&mut self, name: String, value: AmlValue) -> Result<(), AmlError> {
+        if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
+            namespace.insert(name, value);
+            Ok(())
+        } else {
+            Err(AmlError::AmlHardFatal)
+        }
+    }
+
+    pub fn copy(&mut self, name: AmlValue, value: AmlValue) -> Result<(), AmlError> {
+        match name {
+            AmlValue::ObjectReference(r) => match r {
+                ObjectReference::ArgObj(_) => Err(AmlError::AmlValueError),
+                ObjectReference::LocalObj(i) => self.copy_local_obj(i as usize, value),
+                ObjectReference::Object(s) => self.copy_object(s, value),
+                ObjectReference::Index(c, v) => self.modify_index(*c, value, vec!(v.get_as_integer()?))
+            },
+            AmlValue::String(s) => self.copy_object(s, value),
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
     fn get_index_final(&self, name: String, indices: Vec<u64>) -> Result<AmlValue, AmlError> {
         if let Some(ref namespace) = *ACPI_TABLE.namespace.read() {
             let obj = if let Some(s) = namespace.get(&name) {
