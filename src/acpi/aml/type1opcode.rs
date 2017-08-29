@@ -177,11 +177,37 @@ fn parse_def_notify(data: &[u8],
         })
     }
     
-    // TODO: This requires significantly more infrastructure from the OS itself, see 5.6.6
     parser_opcode!(data, 0x86);
 
     let object = parse_super_name(&data[1..], ctx)?;
     let value = parse_term_arg(&data[1 + object.len..], ctx)?;
+
+    let number = value.val.get_as_integer()? as u8;
+
+    match ctx.get(object.val)? {
+        AmlValue::Device(d) => {
+            if let Some(methods) = d.notify_methods.get(&number) {
+                for method in methods {
+                    method();
+                }
+            }
+        },
+        AmlValue::Processor(d) => {
+            if let Some(methods) = d.notify_methods.get(&number) {
+                for method in methods {
+                    method();
+                }
+            }
+        },
+        AmlValue::ThermalZone(d) => {
+            if let Some(methods) = d.notify_methods.get(&number) {
+                for method in methods {
+                    method();
+                }
+            }
+        },
+        _ => return Err(AmlError::AmlValueError)
+    }
 
     Ok(AmlParseType {
         val: AmlValue::None,

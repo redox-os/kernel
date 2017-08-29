@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use collections::string::String;
 use collections::string::ToString;
 use collections::vec::Vec;
+use collections::btree_map::BTreeMap;
 
 use core::fmt::{Debug, Formatter, Error};
 use core::str::FromStr;
@@ -58,10 +59,23 @@ pub struct FieldUnit {
 }
 
 #[derive(Clone)]
+pub struct Device {
+    pub obj_list: Vec<String>,
+    pub notify_methods: BTreeMap<u8, Vec<fn()>>
+}
+
+#[derive(Clone)]
+pub struct ThermalZone {
+    pub obj_list: Vec<String>,
+    pub notify_methods: BTreeMap<u8, Vec<fn()>>
+}
+
+#[derive(Clone)]
 pub struct Processor {
     pub proc_id: u8,
     pub p_blk: Option<u32>,
-    pub obj_list: Vec<String>
+    pub obj_list: Vec<String>,
+    pub notify_methods: BTreeMap<u8, Vec<fn()>>
 }
 
 #[derive(Clone)]
@@ -103,7 +117,7 @@ pub enum AmlValue {
     BufferField(BufferField),
     DDBHandle(Vec<String>),
     DebugObject,
-    Device(Vec<String>),
+    Device(Device),
     Event(u64),
     FieldUnit(FieldUnit),
     Integer(u64),
@@ -117,7 +131,7 @@ pub enum AmlValue {
     PowerResource(PowerResource),
     Processor(Processor),
     RawDataBuffer(Vec<u8>),
-    ThermalZone(Vec<String>)
+    ThermalZone(ThermalZone)
 }
 
 impl Debug for AmlValue {
@@ -246,7 +260,7 @@ impl AmlValue {
         }
     }
 
-    pub fn get_as_device(&self) -> Result<Vec<String>, AmlError> {
+    pub fn get_as_device(&self) -> Result<Device, AmlError> {
         match *self {
             AmlValue::Device(ref s) => Ok(s.clone()),
             _ => Err(AmlError::AmlValueError)
@@ -397,7 +411,7 @@ impl AmlValue {
         }
     }
     
-    pub fn get_as_thermal_zone(&self) -> Result<Vec<String>, AmlError> {
+    pub fn get_as_thermal_zone(&self) -> Result<ThermalZone, AmlError> {
         match *self {
             AmlValue::ThermalZone(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
