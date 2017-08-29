@@ -405,6 +405,82 @@ impl AmlExecutionContext {
         }
     }
 
+    fn get_index_final(&self, name: String, indices: Vec<u64>) -> Result<AmlValue, AmlError> {
+        if let Some(ref namespace) = *ACPI_TABLE.namespace.read() {
+            let obj = if let Some(s) = namespace.get(&name) {
+                s.clone()
+            } else {
+                return Err(AmlError::AmlValueError);
+            };
+
+            self.get_index_core(obj, indices)
+        } else {
+            Err(AmlError::AmlValueError)
+        }
+    }
+
+    fn get_index_core(&self, obj: AmlValue, indices: Vec<u64>) -> Result<AmlValue, AmlError> {
+        match obj {
+            AmlValue::String(ref string) => {
+                if indices.len() != 1 {
+                    return Err(AmlError::AmlValueError);
+                }
+                
+                let mut bytes = string.clone().into_bytes();
+                Ok(AmlValue::Integer(bytes[indices[0] as usize] as u64))
+            },
+            AmlValue::Buffer(ref b) => {
+                if indices.len() != 1 {
+                    return Err(AmlError::AmlValueError);
+                }
+
+                Ok(AmlValue::Integer(b[indices[0] as usize] as u64))
+            },
+            AmlValue::BufferField(ref b) => {
+                if indices.len() != 1 {
+                    return Err(AmlError::AmlValueError);
+                }
+
+                let mut idx = indices[0];
+                idx += b.index.get_as_integer()?;
+
+                Ok(AmlValue::Integer(b.source_buf.get_as_buffer()?[idx as usize] as u64))
+            },
+            AmlValue::Package(ref p) => {
+                if indices.len() < 0 {
+                    return Err(AmlError::AmlValueError);
+                }
+
+                if indices.len() == 1 {
+                    Ok(p[indices[0] as usize].clone())
+                } else {
+                    self.get_index_core(p[indices[0] as usize].clone(), indices[1..].to_vec())
+                }
+            },
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
+    pub fn get_index(&self, name: AmlValue, indices: Vec<u64>) -> Result<AmlValue, AmlError>{
+        match name {
+            AmlValue::ObjectReference(r) => match r {
+                ObjectReference::Object(s) => self.get_index_final(s, indices),
+                ObjectReference::Index(c, v) => {
+                    let mut indices = indices.clone();
+                    indices.push(v.get_as_integer()?);
+
+                    self.get_index(*c, indices)
+                },
+                ObjectReference::ArgObj(_) => Err(AmlError::AmlValueError),
+                ObjectReference::LocalObj(i) => {
+                    let v = self.local_vars[i as usize].clone();
+                    self.get_index_core(v, indices)
+                }
+            },
+            _ => Err(AmlError::AmlValueError)
+        }
+    }
+
     pub fn get(&self, name: AmlValue) -> Result<AmlValue, AmlError> {
         Ok(match name {
             AmlValue::ObjectReference(r) => match r {
@@ -417,15 +493,7 @@ impl AmlExecutionContext {
                         AmlValue::None
                     }
                 } else { AmlValue::None },
-                ObjectReference::Index(c, v) => if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
-                    let idx = v.get_as_integer()? as usize;
-                    match *c {
-                        AmlValue::Package(p) => p[idx].clone(),
-                        _ => AmlValue::None
-                    }
-                } else {
-                    AmlValue::None
-                }
+                ObjectReference::Index(c, v) => self.get_index(*c, vec!(v.get_as_integer()?))?,
             },
             AmlValue::String(ref s) => if let Some(ref namespace) = *ACPI_TABLE.namespace.read() {
                 if let Some(o) = namespace.get(s) {
