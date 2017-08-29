@@ -1106,16 +1106,60 @@ fn parse_def_concat(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result
     parser_opcode!(data, 0x73);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
+    let result = match lhs.val {
+        AmlValue::Integer(i) => {
+            let j = AmlValue::Integer(rhs.val.get_as_integer()?);
+
+            let mut first = lhs.val.get_as_buffer()?.clone();
+            let mut second = j.get_as_buffer()?.clone();
+
+            first.append(&mut second);
+
+            AmlValue::Buffer(first)
+        },
+        AmlValue::String(s) => {
+            let t = if let Ok(t) = rhs.val.get_as_string() {
+                t
+            } else {
+                rhs.val.get_type_string()
+            };
+
+            AmlValue::String(format!("{}{}", s, t))
+        },
+        AmlValue::Buffer(b) => {
+            let mut b = b.clone();
+            let mut c = if let Ok(c) = rhs.val.get_as_buffer() {
+                c.clone()
+            } else {
+                AmlValue::String(rhs.val.get_type_string()).get_as_buffer()?.clone()
+            };
+
+            b.append(&mut c);
+
+            AmlValue::Buffer(b)
+        },
+        _ => {
+            let first = lhs.val.get_type_string();
+            let second = if let Ok(second) = rhs.val.get_as_string() {
+                second
+            } else {
+                rhs.val.get_type_string()
+            };
+
+            AmlValue::String(format!("{}{}", first, second))
+        }
+    };
+
+    ctx.modify(target.val, result.clone())?;
+
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: result,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }

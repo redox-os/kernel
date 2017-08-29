@@ -4,6 +4,7 @@ use collections::string::ToString;
 use collections::vec::Vec;
 
 use core::fmt::{Debug, Formatter, Error};
+use core::str::FromStr;
 
 use super::termlist::parse_term_list;
 use super::namedobj::{ RegionSpace, FieldFlags };
@@ -124,6 +125,29 @@ impl Debug for AmlValue {
 }
 
 impl AmlValue {
+    pub fn get_type_string(&self) -> String {
+        match *self {
+            AmlValue::Uninitialized => String::from_str("[Uninitialized Object]").unwrap(),
+            AmlValue::Integer(_) => String::from_str("[Integer]").unwrap(),
+            AmlValue::String(_) => String::from_str("[String]").unwrap(),
+            AmlValue::Buffer(_) => String::from_str("[Buffer]").unwrap(),
+            AmlValue::Package(_) => String::from_str("[Package]").unwrap(),
+            AmlValue::FieldUnit(_) => String::from_str("[Field]").unwrap(),
+            AmlValue::Device(_) => String::from_str("[Device]").unwrap(),
+            AmlValue::Event(_) => String::from_str("[Event]").unwrap(),
+            AmlValue::Method(_) => String::from_str("[Control Method]").unwrap(),
+            AmlValue::Mutex(_) => String::from_str("[Mutex]").unwrap(),
+            AmlValue::OperationRegion(_) => String::from_str("[Operation Region]").unwrap(),
+            AmlValue::PowerResource(_) => String::from_str("[Power Resource]").unwrap(),
+            AmlValue::Processor(_) => String::from_str("[Processor]").unwrap(),
+            AmlValue::ThermalZone(_) => String::from_str("[Thermal Zone]").unwrap(),
+            AmlValue::BufferField(_) => String::from_str("[Buffer Field]").unwrap(),
+            AmlValue::DDBHandle(_) => String::from_str("[DDB Handle]").unwrap(),
+            AmlValue::DebugObject => String::from_str("[Debug Object]").unwrap(),
+            _ => String::new()
+        }
+    }
+    
     pub fn get_as_type(&self, t: AmlValue) -> Result<AmlValue, AmlError> {
         match t {
             AmlValue::None => Ok(AmlValue::None),
