@@ -285,13 +285,23 @@ impl AmlExecutionContext {
     }
 
     fn modify_local_obj(&mut self, local: usize, value: AmlValue) -> Result<(), AmlError> {
-        self.local_vars[local] = value;
+        self.local_vars[local] = value.get_as_type(self.local_vars[local].clone())?;
         Ok(())
     }
 
     fn modify_object(&mut self, name: String, value: AmlValue) -> Result<(), AmlError> {
         if let Some(ref mut namespace) = *ACPI_TABLE.namespace.write() {
-            namespace.insert(name, value);
+            let coercion_obj = {
+                let obj = namespace.get(&name);
+
+                if let Some(o) = obj {
+                    o.clone()
+                } else {
+                    AmlValue::Uninitialized
+                }
+            };
+
+            namespace.insert(name, value.get_as_type(coercion_obj)?);
             Ok(())
         } else {
             Err(AmlError::AmlHardFatal)

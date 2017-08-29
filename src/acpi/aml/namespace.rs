@@ -123,7 +123,43 @@ impl Debug for AmlValue {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { Ok(()) }
 }
 
-impl AmlValue {    
+impl AmlValue {
+    pub fn get_as_type(&self, t: AmlValue) -> Result<AmlValue, AmlError> {
+        match t {
+            AmlValue::None => Ok(AmlValue::None),
+            AmlValue::Uninitialized => Ok(self.clone()),
+            AmlValue::Alias(_) => match *self {
+                AmlValue::Alias(_) => Ok(self.clone()),
+                _ => Err(AmlError::AmlValueError)
+            },
+            AmlValue::Buffer(_) => Ok(AmlValue::Buffer(self.get_as_buffer()?)),
+            AmlValue::BufferField(_) => Ok(AmlValue::BufferField(self.get_as_buffer_field()?)),
+            AmlValue::DDBHandle(_) => Ok(AmlValue::DDBHandle(self.get_as_ddb_handle()?)),
+            AmlValue::DebugObject => match *self {
+                AmlValue::DebugObject => Ok(self.clone()),
+                _ => Err(AmlError::AmlValueError)
+            },
+            AmlValue::Device(_) => Ok(AmlValue::Device(self.get_as_device()?)),
+            AmlValue::Event(_) => Ok(AmlValue::Event(self.get_as_event()?)),
+            AmlValue::FieldUnit(_) => Ok(AmlValue::FieldUnit(self.get_as_field_unit()?)),
+            AmlValue::Integer(_) => Ok(AmlValue::Integer(self.get_as_integer()?)),
+            AmlValue::IntegerConstant(_) => Ok(AmlValue::IntegerConstant(self.get_as_integer_constant()?)),
+            AmlValue::Method(_) => Ok(AmlValue::Method(self.get_as_method()?)),
+            AmlValue::Mutex(_) => Ok(AmlValue::Mutex(self.get_as_mutex()?)),
+            AmlValue::ObjectReference(_) => Ok(AmlValue::ObjectReference(self.get_as_object_reference()?)),
+            AmlValue::OperationRegion(_) => match *self {
+                AmlValue::OperationRegion(_) => Ok(self.clone()),
+                _ => Err(AmlError::AmlValueError)
+            },
+            AmlValue::Package(_) => Ok(AmlValue::Package(self.get_as_package()?)),
+            AmlValue::String(_) => Ok(AmlValue::String(self.get_as_string()?)),
+            AmlValue::PowerResource(_) => Ok(AmlValue::PowerResource(self.get_as_power_resource()?)),
+            AmlValue::Processor(_) => Ok(AmlValue::Processor(self.get_as_processor()?)),
+            AmlValue::RawDataBuffer(_) => Ok(AmlValue::RawDataBuffer(self.get_as_raw_data_buffer()?)),
+            AmlValue::ThermalZone(_) => Ok(AmlValue::ThermalZone(self.get_as_thermal_zone()?))
+        }
+    }
+
     pub fn get_as_buffer(&self) -> Result<Vec<u8>, AmlError> {
         match *self {
             AmlValue::Buffer(ref b) => Ok(b.clone()),
