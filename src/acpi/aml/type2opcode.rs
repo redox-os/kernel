@@ -977,16 +977,44 @@ fn parse_def_concat_res(data: &[u8],
         })
     }
     
-    // TODO: Compute the result
-    // TODO: Store the result, if appropriate
     parser_opcode!(data, 0x84);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+
+    let mut buf1 = lhs.val.get_as_buffer()?.clone();
+    let mut buf2 = rhs.val.get_as_buffer()?.clone();
+
+    if buf1.len() == 1 || buf2.len() == 1 {
+        return Err(AmlError::AmlValueError);
+    }
+
+    if buf1.len() >= 2 && buf1[buf1.len() - 2] == 0x79 {
+        buf1 = buf1[0..buf1.len() - 2].to_vec();
+    }
+    
+    if buf2.len() >= 2 && buf2[buf2.len() - 2] == 0x79 {
+        buf2 = buf2[0..buf2.len() - 2].to_vec();
+    }
+
+    buf1.append(&mut buf2);
+    buf1.push(0x79);
+
+    let mut checksum: u8 = 0;
+    let loopbuf = buf1.clone();
+    for b in loopbuf {
+        checksum += b;
+    }
+
+    checksum = (!checksum) + 1;
+    buf1.push(checksum);
+    
+    let res = AmlValue::Buffer(buf1);
+    ctx.modify(target.val, res.clone())?;
     
     Ok(AmlParseType {
-        val: AmlValue::Uninitialized,
+        val: res,
         len: 1 + lhs.len + rhs.len + target.len
     })
 }

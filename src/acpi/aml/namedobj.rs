@@ -96,6 +96,7 @@ pub fn parse_named_obj(data: &[u8],
         parse_def_create_field,
         parse_def_data_region,
         parse_def_event,
+        parse_def_external,
         parse_def_device,
         parse_def_op_region,
         parse_def_field,
@@ -926,5 +927,41 @@ fn parse_def_thermal_zone(data: &[u8],
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 2 + pkg_len
+    })
+}
+
+fn parse_def_external(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode_extended!(data, 0x15);
+
+    let object_name = parse_name_string(&data[1..], ctx)?;
+    let object_type = data[1 + object_name.len];
+    let argument_count = data[2 + object_name.len];
+
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), object_name.val)?;
+
+    let obj = match object_type {
+        8 => AmlValue::Method(Method {
+            arg_count: argument_count,
+            serialized: false,
+            sync_level: 0,
+            term_list: vec!()
+        }),
+        _ => AmlValue::Uninitialized
+    };
+
+    ctx.add_to_namespace(local_scope_string, obj)?;
+
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 3 + object_name.len
     })
 }

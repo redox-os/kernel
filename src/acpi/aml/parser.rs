@@ -245,8 +245,16 @@ impl AmlExecutionContext {
         let mut namespace = ACPI_TABLE.namespace.write();
         
         if let Some(ref mut namespace) = *namespace {
-            if namespace.contains_key(&name) {
-                return Err(AmlError::AmlValueError);
+            if let Some(obj) = namespace.get(&name) {
+                match *obj {
+                    AmlValue::Uninitialized => (),
+                    AmlValue::Method(ref m) => {
+                        if m.term_list.len() != 0 {
+                            return Err(AmlError::AmlValueError);
+                        }
+                    },
+                    _ => return Err(AmlError::AmlValueError)
+                }
             }
             
             self.namespace_delta.push(name.clone());
