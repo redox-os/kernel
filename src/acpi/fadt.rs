@@ -1,6 +1,10 @@
 use core::{mem, ptr};
+use collections::string::String;
 
 use super::sdt::Sdt;
+use super::{ACPI_TABLE, SDT_POINTERS, get_sdt};
+
+use paging::ActivePageTable;
 
 #[repr(packed)]
 #[derive(Debug)]
@@ -91,6 +95,28 @@ impl Fadt {
             Some(unsafe { ptr::read((sdt as *const Sdt) as *const Fadt) })
         } else {
             None
+        }
+    }
+    
+    pub fn init(active_table: &mut ActivePageTable) {
+        if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
+            let fadt = if let Some(fadt_sdt) = ptrs.get("FACP") {
+                Fadt::new(fadt_sdt)
+            } else {
+                println!("Unable to find FADT");
+                return;
+            };
+            
+            if let Some(fadt) = fadt {
+                println!("  FACP: {:X}", fadt.dsdt);
+                    
+                let dsdt_sdt = get_sdt(fadt.dsdt as usize, active_table);
+                let signature = String::from_utf8(dsdt_sdt.signature.to_vec()).expect("Error converting signature to string");
+                ptrs.insert(signature, dsdt_sdt);
+
+                let mut fadt_t = ACPI_TABLE.fadt.write();
+                *fadt_t = Some(fadt);
+            }
         }
     }
 }

@@ -5,6 +5,8 @@ use self::drhd::Drhd;
 use memory::Frame;
 use paging::{entry, ActivePageTable, PhysicalAddress};
 
+use super::{ACPI_TABLE, SDT_POINTERS, get_sdt};
+
 pub mod drhd;
 
 /// The DMA Remapping Table
@@ -17,6 +19,38 @@ pub struct Dmar {
 }
 
 impl Dmar {
+    pub fn init(active_table: &mut ActivePageTable) {
+        if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
+            let dmar = if let Some(dmar_sdt) = ptrs.get("DMAR") {
+                Dmar::new(dmar_sdt)
+            } else {
+                println!("Unable to find DMAR");
+                return;
+            };
+            
+            if let Some(dmar) = dmar {
+                println!("  DMAR: {}: {}", dmar.addr_width, dmar.flags);
+
+                for dmar_entry in dmar.iter() {
+                    println!("      {:?}", dmar_entry);
+                    match dmar_entry {
+                        DmarEntry::Drhd(dmar_drhd) => {
+                            let drhd = dmar_drhd.get(active_table);
+
+                            println!("VER: {:X}", drhd.version);
+                            println!("CAP: {:X}", drhd.cap);
+                            println!("EXT_CAP: {:X}", drhd.ext_cap);
+                            println!("GCMD: {:X}", drhd.gl_cmd);
+                            println!("GSTS: {:X}", drhd.gl_sts);
+                            println!("RT: {:X}", drhd.root_table);
+                        },
+                        _ => ()
+                    }
+                }
+            }
+        }
+    }
+        
     pub fn new(sdt: &'static Sdt) -> Option<Dmar> {
         if &sdt.signature == b"DMAR" && sdt.data_len() >= 12 { //Not valid if no local address and flags
             let addr_width = unsafe { *(sdt.data_address() as *const u8) };

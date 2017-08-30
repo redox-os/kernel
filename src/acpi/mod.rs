@@ -5,6 +5,7 @@ use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
 use collections::btree_map::BTreeMap;
 use collections::string::String;
+use collections::vec::Vec;
 use alloc::boxed::Box;
 
 use syscall::io::{Io, Pio};
@@ -27,6 +28,7 @@ use self::sdt::Sdt;
 use self::xsdt::Xsdt;
 use self::hpet::Hpet;
 use self::rxsdt::Rxsdt;
+use self::rsdp::RSDP;
 
 use self::aml::{is_aml_table, parse_aml_table, AmlError, AmlValue};
 
@@ -39,6 +41,7 @@ mod sdt;
 mod xsdt;
 mod aml;
 mod rxsdt;
+mod rsdp;
 
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
@@ -235,29 +238,68 @@ fn parse_sdt(sdt: &'static Sdt, active_table: &mut ActivePageTable) {
     }
 }
 
-/// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(active_table: &mut ActivePageTable) {
+fn init_aml_table(sdt: &'static Sdt) {
+    match parse_aml_table(sdt) {
+        Ok(_) => println!(": Parsed"),
+        Err(AmlError::AmlParseError(e)) => println!(": {}", e),
+        Err(AmlError::AmlInvalidOpCode) => println!(": Invalid opcode"),
+        Err(AmlError::AmlValueError) => println!(": Type constraints or value bounds not met"),
+        Err(AmlError::AmlDeferredLoad) => println!(": Deferred load reached top level"),
+        Err(AmlError::AmlFatalError(_, _, _)) => {
+            println!(": Fatal error occurred");
+            unsafe { kstop(); }
+        },
+        Err(AmlError::AmlHardFatal) => {
+            println!(": Fatal error occurred");
+            unsafe { kstop(); }
+        }
+    }
+}
+
+fn init_namespace() {
     {
         let mut namespace = ACPI_TABLE.namespace.write();
         *namespace = Some(BTreeMap::new());
     }
-    
-    let start_addr = 0xE0000;
-    let end_addr = 0xFFFFF;
 
-    // Map all of the ACPI RSDP space
-    {
-        let start_frame = Frame::containing_address(PhysicalAddress::new(start_addr));
-        let end_frame = Frame::containing_address(PhysicalAddress::new(end_addr));
-        for frame in Frame::range_inclusive(start_frame, end_frame) {
-            let page = Page::containing_address(VirtualAddress::new(frame.start_address().get()));
-            let result = active_table.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE);
-            result.flush(active_table);
+    let dsdt: &'static Sdt = if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
+        if let Some(dsdt_sdt) = ptrs.get("DSDT") {
+            print!("  DSDT");
+            dsdt_sdt
+        } else {
+            println!("No DSDT found");
+            return;
         }
-    }
+    } else {
+        return;
+    };
 
+    init_aml_table(dsdt);
+    
+    let ssdt: &'static Sdt = if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
+        if let Some(ssdt_sdt) = ptrs.get("SSDT") {
+            print!("  SSDT");
+            ssdt_sdt
+        } else {
+            println!("No SSDT found");
+            return;
+        }
+    } else {
+        return;
+    };
+
+    init_aml_table(ssdt);
+}
+
+/// Parse the ACPI tables to gather CPU, interrupt, and timer information
+pub unsafe fn init(active_table: &mut ActivePageTable) {
+    {
+        let mut sdt_ptrs = SDT_POINTERS.write();
+        *sdt_ptrs = Some(BTreeMap::new());
+    }
+    
     // Search for RSDP
-    if let Some(rsdp) = RSDP::search(start_addr, end_addr) {
+    if let Some(rsdp) = RSDP::get_rsdp(active_table) {
         let rxsdt = get_sdt(rsdp.sdt_address(), active_table);
 
         for &c in rxsdt.signature.iter() {
@@ -273,40 +315,28 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
             println!("UNKNOWN RSDT OR XSDT SIGNATURE");
             return;
         };
-
-        {
-            let mut rxsdt_ptr = ACPI_TABLE.rxsdt.write();
-            *rxsdt_ptr = Some(rxsdt);
-        }
-
-        {
-            let rxsdt_ptr = ACPI_TABLE.rxsdt.read();
-
-            if let Some(ref rxsdt) = *rxsdt_ptr {
-                rxsdt.map_all(active_table);
-                
-                for sdt_address in rxsdt.iter() {
-                    let sdt = unsafe { &*(sdt_address as *const Sdt) };
-                    parse_sdt(sdt, active_table);
+        
+        rxsdt.map_all(active_table);
+        
+        for sdt_address in rxsdt.iter() {
+            let sdt = unsafe { &*(sdt_address as *const Sdt) };
+            
+            let signature = String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");
+            {
+                if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
+                    ptrs.insert(signature, sdt);
                 }
             }
         }
+
+        Fadt::init(active_table);
+        Madt::init(active_table);
+        Dmar::init(active_table);
+        Hpet::init(active_table);
+        init_namespace();
     } else {
         println!("NO RSDP FOUND");
     }
-
-    /* TODO: Cleanup mapping when looking for RSDP
-    // Unmap all of the ACPI RSDP space
-    {
-        let start_frame = Frame::containing_address(PhysicalAddress::new(start_addr));
-        let end_frame = Frame::containing_address(PhysicalAddress::new(end_addr));
-        for frame in Frame::range_inclusive(start_frame, end_frame) {
-            let page = Page::containing_address(VirtualAddress::new(frame.start_address().get()));
-            let result = active_table.unmap(page);
-            result.flush(active_table);
-        }
-    }
-    */
 }
 
 pub fn set_global_s_state(state: u8) {
@@ -337,6 +367,8 @@ pub fn set_global_s_state(state: u8) {
     }
 }
 
+pub static SDT_POINTERS: RwLock<Option<BTreeMap<String, &'static Sdt>>> = RwLock::new(None);
+
 pub struct Acpi {
     pub rxsdt: RwLock<Option<Box<Rxsdt + Send + Sync>>>,
     pub fadt: RwLock<Option<Fadt>>,
@@ -352,40 +384,3 @@ pub static ACPI_TABLE: Acpi = Acpi {
     hpet: RwLock::new(None),
     next_ctx: RwLock::new(0),
 };
-
-/// RSDP
-#[derive(Copy, Clone, Debug)]
-#[repr(packed)]
-pub struct RSDP {
-    signature: [u8; 8],
-    checksum: u8,
-    oemid: [u8; 6],
-    revision: u8,
-    rsdt_address: u32,
-    length: u32,
-    xsdt_address: u64,
-    extended_checksum: u8,
-    reserved: [u8; 3]
-}
-
-impl RSDP {
-    /// Search for the RSDP
-    pub fn search(start_addr: usize, end_addr: usize) -> Option<RSDP> {
-        for i in 0 .. (end_addr + 1 - start_addr)/16 {
-            let rsdp = unsafe { &*((start_addr + i * 16) as *const RSDP) };
-            if &rsdp.signature == b"RSD PTR " {
-                return Some(*rsdp);
-            }
-        }
-        None
-    }
-
-    /// Get the RSDT or XSDT address
-    pub fn sdt_address(&self) -> usize {
-        if self.revision >= 2 {
-            self.xsdt_address as usize
-        } else {
-            self.rsdt_address as usize
-        }
-    }
-}

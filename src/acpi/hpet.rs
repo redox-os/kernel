@@ -1,10 +1,12 @@
 use core::{mem, ptr};
 
-use super::sdt::Sdt;
 use core::intrinsics::{volatile_load, volatile_store};
 
 use memory::Frame;
 use paging::{entry, ActivePageTable, PhysicalAddress, Page, VirtualAddress};
+
+use super::sdt::Sdt;
+use super::{ACPI_TABLE, SDT_POINTERS, get_sdt};
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -33,6 +35,24 @@ pub struct Hpet {
 }
 
 impl Hpet {
+    pub fn init(active_table: &mut ActivePageTable) {
+        if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
+            let hpet = if let Some(hpet_sdt) = ptrs.get("HPET") {
+                Hpet::new(hpet_sdt, active_table)
+            } else {
+                println!("Unable to find HPET");
+                return;
+            };
+            
+            if let Some(hpet) = hpet {
+                println!("  HPET: {:X}", hpet.hpet_number);
+                
+                let mut hpet_t = ACPI_TABLE.hpet.write();
+                *hpet_t = Some(hpet);
+            }
+        }
+    }
+    
     pub fn new(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option<Hpet> {
         if &sdt.signature == b"HPET" && sdt.length as usize >= mem::size_of::<Hpet>() {
             let s = unsafe { ptr::read((sdt as *const Sdt) as *const Hpet) };
