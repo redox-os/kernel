@@ -6,7 +6,7 @@ use memory::Frame;
 use paging::{entry, ActivePageTable, PhysicalAddress, Page, VirtualAddress};
 
 use super::sdt::Sdt;
-use super::{ACPI_TABLE, SDT_POINTERS, get_sdt};
+use super::{ACPI_TABLE, SDT_POINTERS, get_sdt, find_sdt, load_table, get_sdt_signature};
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -36,20 +36,20 @@ pub struct Hpet {
 
 impl Hpet {
     pub fn init(active_table: &mut ActivePageTable) {
-        if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
-            let hpet = if let Some(hpet_sdt) = ptrs.get("HPET") {
-                Hpet::new(hpet_sdt, active_table)
-            } else {
-                println!("Unable to find HPET");
-                return;
-            };
+        let hpet_sdt = find_sdt("HPET");
+        let hpet = if hpet_sdt.len() == 1 {
+            load_table(get_sdt_signature(hpet_sdt[0]));
+            Hpet::new(hpet_sdt[0], active_table)
+        } else {
+            println!("Unable to find HPET");
+            return;
+        };
+        
+        if let Some(hpet) = hpet {
+            println!("  HPET: {:X}", hpet.hpet_number);
             
-            if let Some(hpet) = hpet {
-                println!("  HPET: {:X}", hpet.hpet_number);
-                
-                let mut hpet_t = ACPI_TABLE.hpet.write();
-                *hpet_t = Some(hpet);
-            }
+            let mut hpet_t = ACPI_TABLE.hpet.write();
+            *hpet_t = Some(hpet);
         }
     }
     

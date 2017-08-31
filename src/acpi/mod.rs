@@ -97,34 +97,24 @@ fn init_namespace() {
         let mut namespace = ACPI_TABLE.namespace.write();
         *namespace = Some(BTreeMap::new());
     }
-
-    let dsdt: &'static Sdt = if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
-        if let Some(dsdt_sdt) = ptrs.get("DSDT") {
-            print!("  DSDT");
-            dsdt_sdt
-        } else {
-            println!("No DSDT found");
-            return;
-        }
-    } else {
-        return;
-    };
-
-    init_aml_table(dsdt);
     
-    let ssdt: &'static Sdt = if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
-        if let Some(ssdt_sdt) = ptrs.get("SSDT") {
-            print!("  SSDT");
-            ssdt_sdt
-        } else {
-            println!("No SSDT found");
-            return;
-        }
+    let dsdt = find_sdt("DSDT");
+    if dsdt.len() == 1 {
+        print!("  DSDT");
+        load_table(get_sdt_signature(dsdt[0]));
+        init_aml_table(dsdt[0]);
     } else {
+        println!("Unable to find DSDT");
         return;
     };
+    
+    let ssdts = find_sdt("SSDT");
 
-    init_aml_table(ssdt);
+    for ssdt in ssdts {
+        print!("  SSDT");
+        load_table(get_sdt_signature(ssdt));
+        init_aml_table(ssdt);
+    }
 }
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
@@ -132,6 +122,11 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     {
         let mut sdt_ptrs = SDT_POINTERS.write();
         *sdt_ptrs = Some(BTreeMap::new());
+    }
+
+    {
+        let mut order = SDT_ORDER.write();
+        *order = Some(vec!());
     }
     
     // Search for RSDP
@@ -157,11 +152,9 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         for sdt_address in rxsdt.iter() {
             let sdt = unsafe { &*(sdt_address as *const Sdt) };
             
-            let signature = String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");
-            {
-                if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
-                    ptrs.insert(signature, sdt);
-                }
+            let signature = get_sdt_signature(sdt);
+            if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
+                ptrs.insert(signature, sdt);
             }
         }
 
@@ -203,10 +196,38 @@ pub fn set_global_s_state(state: u8) {
     }
 }
 
-pub static SDT_POINTERS: RwLock<Option<BTreeMap<String, &'static Sdt>>> = RwLock::new(None);
+type SdtSignature = (String, [u8; 6], [u8; 8]);
+pub static SDT_POINTERS: RwLock<Option<BTreeMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
+pub static SDT_ORDER: RwLock<Option<Vec<SdtSignature>>> = RwLock::new(None);
+
+pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
+    let mut sdts: Vec<&'static Sdt> = vec!();
+    
+    if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
+        for (signature, sdt) in ptrs {
+            if signature.0 == name {
+                sdts.push(sdt);
+            }
+        }
+    }
+
+    sdts
+}
+
+pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {
+    let signature = String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");
+    (signature, sdt.oem_id, sdt.oem_table_id)
+}
+
+pub fn load_table(signature: SdtSignature) {
+    let mut order = SDT_ORDER.write();
+
+    if let Some(ref mut o) = *order {
+        o.push(signature);
+    }
+}
 
 pub struct Acpi {
-    pub rxsdt: RwLock<Option<Box<Rxsdt + Send + Sync>>>,
     pub fadt: RwLock<Option<Fadt>>,
     pub namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
     pub hpet: RwLock<Option<Hpet>>,
@@ -214,7 +235,6 @@ pub struct Acpi {
 }
 
 pub static ACPI_TABLE: Acpi = Acpi {
-    rxsdt: RwLock::new(None),
     fadt: RwLock::new(None),
     namespace: RwLock::new(None),
     hpet: RwLock::new(None),

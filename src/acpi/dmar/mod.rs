@@ -5,7 +5,7 @@ use self::drhd::Drhd;
 use memory::Frame;
 use paging::{entry, ActivePageTable, PhysicalAddress};
 
-use super::{ACPI_TABLE, SDT_POINTERS, get_sdt};
+use super::{ACPI_TABLE, SDT_POINTERS, get_sdt, find_sdt, load_table, get_sdt_signature};
 
 pub mod drhd;
 
@@ -20,32 +20,32 @@ pub struct Dmar {
 
 impl Dmar {
     pub fn init(active_table: &mut ActivePageTable) {
-        if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
-            let dmar = if let Some(dmar_sdt) = ptrs.get("DMAR") {
-                Dmar::new(dmar_sdt)
-            } else {
-                println!("Unable to find DMAR");
-                return;
-            };
-            
-            if let Some(dmar) = dmar {
-                println!("  DMAR: {}: {}", dmar.addr_width, dmar.flags);
+        let dmar_sdt = find_sdt("DMAR");
+        let dmar = if dmar_sdt.len() == 1 {
+            load_table(get_sdt_signature(dmar_sdt[0]));
+            Dmar::new(dmar_sdt[0])
+        } else {
+            println!("Unable to find DMAR");
+            return;
+        };
+        
+        if let Some(dmar) = dmar {
+            println!("  DMAR: {}: {}", dmar.addr_width, dmar.flags);
 
-                for dmar_entry in dmar.iter() {
-                    println!("      {:?}", dmar_entry);
-                    match dmar_entry {
-                        DmarEntry::Drhd(dmar_drhd) => {
-                            let drhd = dmar_drhd.get(active_table);
+            for dmar_entry in dmar.iter() {
+                println!("      {:?}", dmar_entry);
+                match dmar_entry {
+                    DmarEntry::Drhd(dmar_drhd) => {
+                        let drhd = dmar_drhd.get(active_table);
 
-                            println!("VER: {:X}", drhd.version);
-                            println!("CAP: {:X}", drhd.cap);
-                            println!("EXT_CAP: {:X}", drhd.ext_cap);
-                            println!("GCMD: {:X}", drhd.gl_cmd);
-                            println!("GSTS: {:X}", drhd.gl_sts);
-                            println!("RT: {:X}", drhd.root_table);
-                        },
-                        _ => ()
-                    }
+                        println!("VER: {:X}", drhd.version);
+                        println!("CAP: {:X}", drhd.cap);
+                        println!("EXT_CAP: {:X}", drhd.ext_cap);
+                        println!("GCMD: {:X}", drhd.gl_cmd);
+                        println!("GSTS: {:X}", drhd.gl_sts);
+                        println!("RT: {:X}", drhd.root_table);
+                    },
+                    _ => ()
                 }
             }
         }
