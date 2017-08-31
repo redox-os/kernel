@@ -12,6 +12,8 @@ use super::namedobj::{ RegionSpace, FieldFlags };
 use super::parser::{AmlExecutionContext, ExecutionState};
 use super::AmlError;
 
+use acpi::SdtSignature;
+
 #[derive(Clone)]
 pub enum FieldSelector {
     Region(String),
@@ -115,7 +117,7 @@ pub enum AmlValue {
     Alias(String),
     Buffer(Vec<u8>),
     BufferField(BufferField),
-    DDBHandle(Vec<String>),
+    DDBHandle((Vec<String>, SdtSignature)),
     DebugObject,
     Device(Device),
     Event(u64),
@@ -252,7 +254,7 @@ impl AmlValue {
         }
     }
 
-    pub fn get_as_ddb_handle(&self) -> Result<Vec<String>, AmlError> {
+    pub fn get_as_ddb_handle(&self) -> Result<(Vec<String>, SdtSignature), AmlError> {
         // TODO: Integer conversion
         match *self {
             AmlValue::DDBHandle(ref v) => Ok(v.clone()),

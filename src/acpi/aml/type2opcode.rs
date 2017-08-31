@@ -1367,7 +1367,7 @@ fn parse_def_load_table(data: &[u8],
             ctx.modify(parameter_path.val, parameter_data.val);
             
             return Ok(AmlParseType {
-                val: AmlValue::DDBHandle(hdl),
+                val: AmlValue::DDBHandle((hdl, sdt_signature)),
                 len: 2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len + parameter_data.len
             });
         }

@@ -7,7 +7,7 @@ use super::namestring::{parse_name_string, parse_super_name};
 
 use time::monotonic;
 
-use acpi::Sdt;
+use acpi::{Sdt, load_table, get_sdt_signature};
 use super::{parse_aml_table, is_aml_table};
 
 pub fn parse_type1_opcode(data: &[u8],
@@ -155,8 +155,9 @@ fn parse_def_load(data: &[u8],
     let sdt = unsafe { &*(tbl.as_ptr() as *const Sdt) };
 
     if is_aml_table(sdt) {
+        load_table(get_sdt_signature(sdt));
         let delta = parse_aml_table(sdt)?;
-        ctx.modify(ddb_handle_object.val, AmlValue::DDBHandle(delta));
+        ctx.modify(ddb_handle_object.val, AmlValue::DDBHandle((delta, get_sdt_signature(sdt))));
         
         Ok(AmlParseType {
             val: AmlValue::None,
@@ -363,7 +364,7 @@ fn parse_def_unload(data: &[u8],
     let mut namespace = ctx.prelock();
 
     if let Some(ref mut ns) = *namespace {
-        for o in delta {
+        for o in delta.0 {
             ns.remove(&o);
         }
     }
