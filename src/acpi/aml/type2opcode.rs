@@ -2,217 +2,16 @@ use alloc::boxed::Box;
 use collections::string::String;
 use collections::vec::Vec;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace};
+use super::{AmlError, parse_aml_with_scope};
+use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
+use super::namespace::{AmlValue, ObjectReference, OperationRegion};
 use super::pkglength::parse_pkg_length;
-use super::termlist::{parse_term_arg, parse_method_invocation, TermArg, MethodInvocation};
-use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name,
-                        SuperName, Target};
-use super::dataobj::{parse_data_ref_obj, DataRefObj};
+use super::termlist::{parse_term_arg, parse_method_invocation};
+use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name};
+use super::dataobj::parse_data_ref_obj;
 
-#[derive(Debug, Clone)]
-pub enum Type2OpCode {
-    DefAcquire {
-        object: SuperName,
-        timeout: u16
-    },
-    DefBuffer(DefBuffer),
-    DefPackage(DefPackage),
-    DefVarPackage(DefVarPackage),
-    DefDerefOf(TermArg),
-    DefRefOf(SuperName),
-    DefIncrement(SuperName),
-    DefIndex(DefIndex),
-    DefDecrement(SuperName),
-    DefFindSetLeftBit {
-        operand: TermArg,
-        target: Target
-    },
-    DefFindSetRightBit {
-        operand: TermArg,
-        target: Target
-    },
-    DefFromBCD {
-        operand: TermArg,
-        target: Target
-    },
-    DefDivide {
-        dividend: TermArg,
-        divisor: TermArg,
-        remainder: Target,
-        quotient: Target
-    },
-    DefCondRefOf {
-        operand: SuperName,
-        target: Target
-    },
-    DefCopyObject {
-        source: TermArg,
-        destination: SuperName
-    },
-    DefLAnd {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLEqual {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLGreater {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLLess {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefLNot(TermArg),
-    DefLOr {
-        lhs: TermArg,
-        rhs: TermArg
-    },
-    DefSizeOf(SuperName),
-    DefStore {
-        operand: TermArg,
-        target: SuperName
-    },
-    DefSubtract {
-        minuend: TermArg,
-        subtrahend: TermArg,
-        target: Target
-    },
-    DefToBuffer {
-        operand: TermArg,
-        target: Target
-    },
-    DefToHexString {
-        operand: TermArg,
-        target: Target
-    },
-    DefToBCD {
-        operand: TermArg,
-        target: Target
-    },
-    DefToDecimalString {
-        operand: TermArg,
-        target: Target
-    },
-    DefToInteger {
-        operand: TermArg,
-        target: Target
-    },
-    DefToString {
-        operand: TermArg,
-        length: TermArg,
-        target: Target
-    },
-    DefConcat {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefConcatRes {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefShiftLeft {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefShiftRight {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefAdd {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefMultiply {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefMod {
-        dividend: TermArg,
-        divisor: TermArg,
-        target: Target
-    },
-    DefAnd {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefNAnd {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefOr {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefXor {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefNOr {
-        lhs: TermArg,
-        rhs: TermArg,
-        target: Target
-    },
-    DefNot {
-        operand: TermArg,
-        target: Target
-    },
-    DefLoadTable {
-        signature: TermArg,
-        oem_id: TermArg,
-        oem_table_id: TermArg,
-        root_path: TermArg,
-        parameter_path: TermArg,
-        parameter_data: TermArg
-    },
-    DefMatch {
-        search_pkg: TermArg,
-        first_operation: MatchOpcode,
-        first_operand: TermArg,
-        second_operation: MatchOpcode,
-        second_operand: TermArg,
-        start_index: TermArg
-    },
-    DefMid {
-        source: TermArg,
-        index: TermArg,
-        length: TermArg,
-        target: Target
-    },
-    DefWait {
-        event_object: SuperName,
-        operand: TermArg
-    },
-    DefObjectType(DefObjectType),
-    DefTimer,
-    MethodInvocation(MethodInvocation)
-}
-
-impl AmlExecutable for Type2OpCode {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
-        None
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum DefObjectType {
-    SuperName(SuperName),
-    DefIndex(DefIndex),
-    DefRefOf(SuperName),
-    DefDerefOf(TermArg)
-}
+use time::monotonic;
+use acpi::{ACPI_TABLE, SDT_POINTERS};
 
 #[derive(Debug, Clone)]
 pub enum MatchOpcode {
@@ -224,84 +23,18 @@ pub enum MatchOpcode {
     MGT
 }
 
-#[derive(Debug, Clone)]
-pub enum Type6OpCode {
-    DefDerefOf(TermArg),
-    DefRefOf(Box<SuperName>),
-    DefIndex(DefIndex),
-    MethodInvocation(MethodInvocation)
-}
-
-#[derive(Debug, Clone)]
-pub struct DefIndex {
-    obj: TermArg,
-    idx: TermArg,
-    target: Box<Target>
-}
-
-#[derive(Debug, Clone)]
-pub enum DefBuffer {
-    Buffer {
-        buffer_size: TermArg,
-        byte_list: Vec<u8>
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-#[derive(Debug, Clone)]
-pub enum DefPackage {
-    Package {
-        num_elements: u8,
-        elements: Vec<PackageElement>
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-#[derive(Debug, Clone)]
-pub enum DefVarPackage {
-    Package {
-        num_elements: TermArg,
-        elements: Vec<PackageElement>
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-#[derive(Debug, Clone)]
-pub enum PackageElement {
-    DataRefObj(DataRefObj),
-    NameString(String)
-}
-
-impl AmlExecutable for DefPackage {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
-        match *self {
-            DefPackage::Package { ref num_elements, ref elements } => {
-                let mut values: Vec<AmlValue> = vec!();
-
-                for element in elements {
-                    match *element {
-                        PackageElement::DataRefObj(ref d) => {
-                            let elem = match d.execute(namespace, scope.clone()) {
-                                Some(e) => e,
-                                None => continue
-                            };
-
-                            values.push(elem);
-                        },
-                        _ => return None
-                    }
-                }
-
-                Some(AmlValue::Package(values))
-            },
-            _ => None
-        }
+pub fn parse_type2_opcode(data: &[u8],
+                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
     }
-}
-
-pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+    
     parser_selector! {
-        data,
+        data, ctx,
         parse_def_increment,
         parse_def_acquire,
         parse_def_wait,
@@ -344,589 +77,1703 @@ pub fn parse_type2_opcode(data: &[u8]) -> Result<(Type2OpCode, usize), AmlIntern
         parse_def_nor,
         parse_def_not,
         parse_def_timer,
-        parser_wrap!(Type2OpCode::DefBuffer, parse_def_buffer),
-        parser_wrap!(Type2OpCode::DefPackage, parse_def_package),
-        parser_wrap!(Type2OpCode::DefVarPackage, parse_def_var_package),
-        parser_wrap!(Type2OpCode::DefObjectType, parse_def_object_type),
-        parser_wrap!(Type2OpCode::DefDerefOf, parse_def_deref_of),
-        parser_wrap!(Type2OpCode::DefRefOf, parse_def_ref_of),
-        parser_wrap!(Type2OpCode::DefIndex, parse_def_index),
-        parser_wrap!(Type2OpCode::MethodInvocation, parse_method_invocation)
+        parse_def_buffer,
+        parse_def_package,
+        parse_def_var_package,
+        parse_def_object_type,
+        parse_def_deref_of,
+        parse_def_ref_of,
+        parse_def_index,
+        parse_method_invocation
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_type6_opcode(data: &[u8]) -> Result<(Type6OpCode, usize), AmlInternalError> {
+pub fn parse_type6_opcode(data: &[u8],
+                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_selector! {
-        data,
-        parser_wrap!(Type6OpCode::DefDerefOf, parse_def_deref_of),
-        parser_wrap!(Type6OpCode::DefRefOf, parser_wrap!(Box::new, parse_def_ref_of)),
-        parser_wrap!(Type6OpCode::DefIndex, parse_def_index),
-        parser_wrap!(Type6OpCode::MethodInvocation, parse_method_invocation)
+        data, ctx,
+        parse_def_deref_of,
+        parse_def_ref_of,
+        parse_def_index,
+        parse_method_invocation
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_def_object_type(data: &[u8]) -> Result<(DefObjectType, usize), AmlInternalError> {
+pub fn parse_def_object_type(data: &[u8],
+                             ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x8E);
     parser_selector! {
-        data,
-        parser_wrap!(DefObjectType::SuperName, parse_super_name),
-        parser_wrap!(DefObjectType::DefRefOf, parse_def_ref_of),
-        parser_wrap!(DefObjectType::DefDerefOf, parse_def_deref_of),
-        parser_wrap!(DefObjectType::DefIndex, parse_def_index)
+        data, ctx,
+        parse_super_name,
+        parse_def_ref_of,
+        parse_def_deref_of,
+        parse_def_index
     }
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_def_package(data: &[u8]) -> Result<(DefPackage, usize), AmlInternalError> {
+pub fn parse_def_package(data: &[u8],
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    // TODO: Handle deferred loads in here
     parser_opcode!(data, 0x12);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let num_elements = data[1 + pkg_length_len];
+    let numelements = data[1 + pkg_length_len] as usize;
+    let mut elements = parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length], ctx)?.val.get_as_package()?;
 
-    let elements = match parse_package_elements_list(&data[2 + pkg_length_len .. 1 + pkg_length]) {
-        Ok(e) => e,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((DefPackage::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()), 1 + pkg_length)),
-        Err(e) => return Err(e)
-    };
-
-    Ok((DefPackage::Package {num_elements, elements}, 1 + pkg_length))
+    if elements.len() > numelements {
+        elements = elements[0 .. numelements].to_vec();
+    } else if numelements > elements.len() {
+        for _ in 0..numelements - elements.len() {
+            elements.push(AmlValue::Uninitialized);
+        }
+    }
+    
+    Ok(AmlParseType {
+        val: AmlValue::Package(elements),
+        len: 1 + pkg_length
+    })
 }
 
-pub fn parse_def_var_package(data: &[u8]) -> Result<(DefVarPackage, usize), AmlInternalError> {
+pub fn parse_def_var_package(data: &[u8],
+                             ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    // TODO: Handle deferred loads in here
     parser_opcode!(data, 0x13);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let (num_elements, num_elements_len) = parse_term_arg(&data[1 + pkg_length_len ..])?;
+    let num_elements = parse_term_arg(&data[1 + pkg_length_len .. 1 + pkg_length], ctx)?;
+    let mut elements = parse_package_elements_list(&data[1 + pkg_length_len + num_elements.len ..
+                                                         1 + pkg_length], ctx)?.val.get_as_package()?;
 
-    let elements = match parse_package_elements_list(&data[1 + pkg_length_len + num_elements_len ..
-                                                           1 + pkg_length]) {
-        Ok(e) => e,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((DefVarPackage::DeferredLoad(data[0 .. 1 + pkg_length].to_vec()),
-                       1 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    let numelements = num_elements.val.get_as_integer()? as usize;
 
-    Ok((DefVarPackage::Package {num_elements, elements}, 1 + pkg_length))
-}
-
-fn parse_package_elements_list(data: &[u8]) -> Result<Vec<PackageElement>, AmlInternalError> {
-    let mut current_offset: usize = 0;
-    let mut elements: Vec<PackageElement> = vec!();
-
-    while current_offset < data.len() {
-        match parse_data_ref_obj(&data[current_offset ..]) {
-            Ok((data_ref_obj, data_ref_obj_len)) => {
-                elements.push(PackageElement::DataRefObj(data_ref_obj));
-                current_offset += data_ref_obj_len;
-            },
-            Err(AmlInternalError::AmlInvalidOpCode) =>
-                match parse_name_string(&data[current_offset ..]) {
-                    Ok((name_string, name_string_len)) => {
-                        elements.push(PackageElement::NameString(name_string));
-                        current_offset += name_string_len;
-                    },
-                    Err(e) => return Err(e)
-                },
-            Err(e) => return Err(e)
+    if elements.len() > numelements {
+        elements = elements[0 .. numelements].to_vec();
+    } else if numelements > elements.len() {
+        for _ in 0..numelements - elements.len() {
+            elements.push(AmlValue::Uninitialized);
         }
     }
-
-    Ok(elements)
+    
+    Ok(AmlParseType {
+        val: AmlValue::Package(elements),
+        len: 1 + pkg_length
+    })
 }
 
-pub fn parse_def_buffer(data: &[u8]) -> Result<(DefBuffer, usize), AmlInternalError> {
+fn parse_package_elements_list(data: &[u8],
+                               ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    let mut current_offset: usize = 0;
+    let mut elements: Vec<AmlValue> = vec!();
+
+    while current_offset < data.len() {
+        let dro = if let Ok(e) = parse_data_ref_obj(&data[current_offset..], ctx) {
+            e
+        } else {
+            let d = parse_name_string(&data[current_offset..], ctx)?;
+            AmlParseType {
+                val: AmlValue::ObjectReference(ObjectReference::Object(d.val.get_as_string()?)),
+                len: d.len
+            }
+        };
+
+        elements.push(dro.val);
+        current_offset += dro.len;
+    }
+
+    Ok(AmlParseType {
+        val: AmlValue::Package(elements),
+        len: data.len()
+    })
+}
+
+pub fn parse_def_buffer(data: &[u8],
+                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x11);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
-    let (buffer_size, buffer_size_len) = match parse_term_arg(&data[1 + pkg_length_len..]) {
-        Ok(s) => s,
-        Err(AmlInternalError::AmlDeferredLoad) => return Ok((DefBuffer::DeferredLoad(
-            data[0 .. 1 + pkg_length].to_vec()
-        ), 1 + pkg_length)),
-        Err(e) => return Err(e),
-    };
-    let byte_list = data[1 + pkg_length_len + buffer_size_len .. 1 + pkg_length].to_vec();
+    let buffer_size = parse_term_arg(&data[1 + pkg_length_len..], ctx)?;
+    let mut byte_list = data[1 + pkg_length_len + buffer_size.len .. 1 + pkg_length].to_vec().clone();
 
-    Ok((DefBuffer::Buffer {buffer_size, byte_list}, pkg_length + 1))
+    byte_list.truncate(buffer_size.val.get_as_integer()? as usize);        
+
+    Ok(AmlParseType {
+        val: AmlValue::Buffer(byte_list),
+        len: 1 + pkg_length
+    })
 }
 
-fn parse_def_ref_of(data: &[u8]) -> Result<(SuperName, usize), AmlInternalError> {
+fn parse_def_ref_of(data: &[u8],
+                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x71);
-    let (obj_reference, obj_reference_len) = parse_super_name(&data[1..])?;
 
-    Ok((obj_reference, obj_reference_len + 1))
+    let obj = parse_super_name(&data[1..], ctx)?;
+    let res = match obj.val {
+        AmlValue::String(ref s) => {
+            match ctx.get(AmlValue::String(s.clone()))? {
+                AmlValue::None => return Err(AmlError::AmlValueError),
+                _ => ObjectReference::Object(s.clone())
+            }
+        },
+        AmlValue::ObjectReference(ref o) => o.clone(),
+        _ => return Err(AmlError::AmlValueError)
+    };
+    
+    Ok(AmlParseType {
+        val: AmlValue::ObjectReference(res),
+        len: 1 + obj.len
+    })
 }
 
-fn parse_def_deref_of(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
+fn parse_def_deref_of(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x83);
-    let (obj_reference, obj_reference_len) = parse_term_arg(&data[1..])?;
 
-    Ok((obj_reference, obj_reference_len + 1))
+    let obj = parse_term_arg(&data[1..], ctx)?;
+    let res = ctx.get(obj.val)?;
+
+    match res {
+        AmlValue::None => Err(AmlError::AmlValueError),
+        _ => Ok(AmlParseType {
+            val: res,
+            len: 1 + obj.len
+        })
+    }
 }
 
-fn parse_def_acquire(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_acquire(data: &[u8],
+                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x23);
 
-    let (object, object_len) = parse_super_name(&data[2..])?;
-    let timeout = (data[2 + object_len] as u16) +
-        ((data[3 + object_len] as u16) << 8);
+    let obj = parse_super_name(&data[1..], ctx)?;
+    let timeout = (data[2 + obj.len] as u16) + ((data[3 + obj.len] as u16) << 8);
 
-    Ok((Type2OpCode::DefAcquire {object, timeout}, object_len + 4))
+    let (seconds, nanoseconds) = monotonic();
+    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+
+    loop {
+        match ctx.acquire_mutex(obj.val.clone()) {
+            Err(e) => return Err(e),
+            Ok(b) => if b {
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(0),
+                    len: 4 + obj.len
+                });
+            } else if timeout == 0xFFFF {
+                // TODO: Brief sleep here
+            } else {
+                let (seconds, nanoseconds) = monotonic();
+                let current_time_ns = nanoseconds + (seconds * 1000000000);
+                
+                if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                    return Ok(AmlParseType {
+                        val: AmlValue::Integer(1),
+                        len: 4 + obj.len
+                    });
+                }
+            }
+        }
+    }
 }
 
-fn parse_def_increment(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_increment(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x75);
 
-    let (obj, obj_len) = parse_super_name(&data[1..])?;
-    Ok((Type2OpCode::DefIncrement(obj), obj_len + 1))
+    let obj = parse_super_name(&data[1..], ctx)?;
+    
+    let mut namespace = ctx.prelock();
+    let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? + 1);
+    ctx.modify(obj.val, value.clone());
+    
+    Ok(AmlParseType {
+        val: value,
+        len: 1 + obj.len
+    })
 }
 
-fn parse_def_index(data: &[u8]) -> Result<(DefIndex, usize), AmlInternalError> {
+fn parse_def_index(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x88);
 
-    let (obj, obj_len) = parse_term_arg(&data[1..])?;
-    let (idx, idx_len) = parse_term_arg(&data[1 + obj_len..])?;
-    let (target, target_len) = parse_target(&data[1 + obj_len + idx_len..])?;
+    let obj = parse_term_arg(&data[1..], ctx)?;
+    let idx = parse_term_arg(&data[1 + obj.len..], ctx)?;
+    let target = parse_target(&data[1 + obj.len + idx.len..], ctx)?;
 
-    Ok((DefIndex {obj, idx, target: Box::new(target)}, 1 + obj_len + idx_len + target_len))
+    let reference = AmlValue::ObjectReference(ObjectReference::Index(Box::new(obj.val), Box::new(idx.val)));
+    ctx.modify(target.val, reference.clone());
+    
+    Ok(AmlParseType {
+        val: reference,
+        len: 1 + obj.len + idx.len + target.len
+    })
 }
 
-fn parse_def_land(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_land(data: &[u8],
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x90);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefLAnd {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? > 0 && rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lequal(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lequal(data: &[u8],
+                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x93);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefLEqual {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? == rhs.val.get_as_integer()? { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lgreater(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lgreater(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x94);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefLGreater {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? > rhs.val.get_as_integer()? { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lless(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lless(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x95);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefLLess {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? < rhs.val.get_as_integer()? { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_lnot(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lnot(data: &[u8],
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x92);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-
-    Ok((Type2OpCode::DefLNot(operand), 1 + operand_len))
+    let operand = parse_term_arg(&data[1..], ctx)?;
+    let result = if operand.val.get_as_integer()? == 0 { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + operand.len
+    })
 }
 
-fn parse_def_lor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_lor(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x91);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefLOr {lhs, rhs}, 1 + lhs_len + rhs_len))
+    let result = if lhs.val.get_as_integer()? > 0 || rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
+    
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(result),
+        len: 1 + lhs.len + rhs.len
+    })
 }
 
-fn parse_def_to_hex_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_hex_string(data: &[u8],
+                           ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x98);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    Ok((Type2OpCode::DefToHexString {operand, target}, 1 + operand_len + target_len))
+    let res = match operand.val {
+        AmlValue::Integer(_) => {
+            let result: String = format!("{:X}", operand.val.get_as_integer()?);
+            AmlValue::String(result)
+        },
+        AmlValue::String(s) => AmlValue::String(s),
+        AmlValue::Buffer(_) => {
+            let mut string: String = String::new();
+
+            for b in operand.val.get_as_buffer()? {
+                string.push_str(&format!("{:X}", b));
+            }
+
+            AmlValue::String(string)
+        },
+        _ => return Err(AmlError::AmlValueError)
+    };
+
+    ctx.modify(target.val, res.clone());
+
+    Ok(AmlParseType {
+        val: res,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_buffer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_buffer(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x96);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    Ok((Type2OpCode::DefToBuffer {operand, target}, 1 + operand_len + target_len))
+    let res = AmlValue::Buffer(operand.val.get_as_buffer()?);
+    ctx.modify(target.val, res.clone());
+
+    Ok(AmlParseType {
+        val: res,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_bcd(data: &[u8],
+                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x29);
 
-    let (operand, operand_len) = parse_term_arg(&data[2..])?;
-    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
+    
+    let mut i = operand.val.get_as_integer()?;
+    let mut result = 0;
 
-    Ok((Type2OpCode::DefToBCD {operand, target}, 2 + operand_len + target_len))
+    while i != 0 {
+        result <<= 4;
+        result += i % 10;
+        i /= 10;
+    }
+    
+    let result = AmlValue::Integer(result);
+    ctx.modify(target.val, result.clone());
+
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_decimal_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_decimal_string(data: &[u8],
+                               ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+
     parser_opcode!(data, 0x97);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
+    let res = match operand.val {
+        AmlValue::Integer(_) => {
+            let result: String = format!("{}", operand.val.get_as_integer()?);
+            AmlValue::String(result)
+        },
+        AmlValue::String(s) => AmlValue::String(s),
+        AmlValue::Buffer(_) => {
+            let mut string: String = String::new();
 
-    Ok((Type2OpCode::DefToDecimalString {operand, target}, 1 + operand_len + target_len))
+            for b in operand.val.get_as_buffer()? {
+                string.push_str(&format!("{}", b));
+            }
+
+            AmlValue::String(string)
+        },
+        _ => return Err(AmlError::AmlValueError)
+    };
+
+    ctx.modify(target.val, res.clone());
+
+    Ok(AmlParseType {
+        val: res,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_integer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_integer(data: &[u8],
+                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x99);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    Ok((Type2OpCode::DefToInteger {operand, target}, 1 + operand_len + target_len))
+    let res = AmlValue::Integer(operand.val.get_as_integer()?);
+
+    ctx.modify(target.val, res.clone());
+
+    Ok(AmlParseType {
+        val: res,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_to_string(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_to_string(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x9C);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (length, length_len) = parse_term_arg(&data[1 + operand_len..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len + length_len..])?;
+    let operand = parse_term_arg(&data[1..], ctx)?;
+    let length = parse_term_arg(&data[1 + operand.len..], ctx)?;
+    let target = parse_target(&data[1 + operand.len + length.len..], ctx)?;
 
-    Ok((Type2OpCode::DefToString {operand, length, target}, 1 + operand_len + length_len + target_len))
+    let buf = operand.val.get_as_buffer()?;
+    let mut string = match String::from_utf8(buf) {
+        Ok(s) => s,
+        Err(_) => return Err(AmlError::AmlValueError)
+    };
+
+    string.truncate(length.val.get_as_integer()? as usize);
+    let res = AmlValue::String(string);
+
+    ctx.modify(target.val, res.clone());
+
+    Ok(AmlParseType {
+        val: res,
+        len: 1 + operand.len + length.len + target.len
+    })
 }
 
-fn parse_def_subtract(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_subtract(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x74);
 
-    let (minuend, minuend_len) = parse_term_arg(&data[1..])?;
-    let (subtrahend, subtrahend_len) = parse_term_arg(&data[1 + minuend_len..])?;
-    let (target, target_len) = parse_target(&data[1 + minuend_len + subtrahend_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefSubtract {minuend, subtrahend, target}, 1 + minuend_len + subtrahend_len + target_len))
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? - rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_size_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_size_of(data: &[u8],
+                     ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x87);
 
-    let (name, name_len) = parse_super_name(&data[1..])?;
-    Ok((Type2OpCode::DefSizeOf(name), name_len + 1))
+    let name = parse_super_name(&data[1..], ctx)?;
+    let obj = ctx.get(name.val)?;
+
+    let res = match obj {
+        AmlValue::Buffer(ref v) => v.len(),
+        AmlValue::String(ref s) => s.len(),
+        AmlValue::Package(ref p) => p.len(),
+        _ => return Err(AmlError::AmlValueError)
+    };
+    
+    Ok(AmlParseType {
+        val: AmlValue::Integer(res as u64),
+        len: 1 + name.len
+    })
 }
 
-fn parse_def_store(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_store(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x70);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_super_name(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[1..], ctx)?;
+    let target = parse_super_name(&data[1 + operand.len..], ctx)?;
 
-    Ok((Type2OpCode::DefStore {operand, target}, operand_len + target_len + 1))
+    ctx.modify(target.val.clone(), operand.val);
+    
+    Ok(AmlParseType {
+        val: target.val,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_or(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_or(data: &[u8],
+                ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x7D);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+    
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?);
 
-    Ok((Type2OpCode::DefOr {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_shift_left(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_shift_left(data: &[u8],
+                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x79);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+    
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? >> rhs.val.get_as_integer()?);
 
-    Ok((Type2OpCode::DefShiftLeft {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_shift_right(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_shift_right(data: &[u8],
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x7A);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefShiftRight {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? << rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
+                                                              
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_add(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_add(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x72);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+    
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? + rhs.val.get_as_integer()?);
 
-    Ok((Type2OpCode::DefAdd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_and(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_and(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x7B);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+    
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?);
 
-    Ok((Type2OpCode::DefAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_xor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_xor(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x7F);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+    
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? ^ rhs.val.get_as_integer()?);
 
-    Ok((Type2OpCode::DefXor {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_concat_res(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_concat_res(data: &[u8],
+                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x84);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefConcatRes {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let mut buf1 = lhs.val.get_as_buffer()?.clone();
+    let mut buf2 = rhs.val.get_as_buffer()?.clone();
+
+    if buf1.len() == 1 || buf2.len() == 1 {
+        return Err(AmlError::AmlValueError);
+    }
+
+    if buf1.len() >= 2 && buf1[buf1.len() - 2] == 0x79 {
+        buf1 = buf1[0..buf1.len() - 2].to_vec();
+    }
+    
+    if buf2.len() >= 2 && buf2[buf2.len() - 2] == 0x79 {
+        buf2 = buf2[0..buf2.len() - 2].to_vec();
+    }
+
+    buf1.append(&mut buf2);
+    buf1.push(0x79);
+
+    let mut checksum: u8 = 0;
+    let loopbuf = buf1.clone();
+    for b in loopbuf {
+        checksum += b;
+    }
+
+    checksum = (!checksum) + 1;
+    buf1.push(checksum);
+    
+    let res = AmlValue::Buffer(buf1);
+    ctx.modify(target.val, res.clone())?;
+    
+    Ok(AmlParseType {
+        val: res,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_wait(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_wait(data: &[u8],
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x25);
 
-    let (event_object, event_object_len) = parse_super_name(&data[2..])?;
-    let (operand, operand_len) = parse_term_arg(&data[2 + event_object_len..])?;
+    let obj = parse_super_name(&data[2..], ctx)?;
+    let timeout_obj = parse_term_arg(&data[2 + obj.len..], ctx)?;
 
+    let timeout = timeout_obj.val.get_as_integer()?;
 
-    Ok((Type2OpCode::DefWait {event_object, operand}, 2 + event_object_len + operand_len))
+    let (seconds, nanoseconds) = monotonic();
+    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+
+    loop {
+        match ctx.wait_for_event(obj.val.clone()) {
+            Err(e) => return Err(e),
+            Ok(b) => if b {
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(0),
+                    len: 2 + obj.len + timeout_obj.len
+                })
+            } else if timeout >= 0xFFFF {
+                // TODO: Brief sleep here
+            } else {
+                let (seconds, nanoseconds) = monotonic();
+                let current_time_ns = nanoseconds + (seconds * 1000000000);
+                
+                if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                    return Ok(AmlParseType {
+                        val: AmlValue::Integer(1),
+                        len: 2 + obj.len + timeout_obj.len
+                    });
+                }
+            }
+        }
+    }
 }
 
-fn parse_def_cond_ref_of(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_cond_ref_of(data: &[u8],
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x12);
 
-    let (operand, operand_len) = parse_super_name(&data[2..])?;
-    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
+    let obj = parse_super_name(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + obj.len..], ctx)?;
 
-    Ok((Type2OpCode::DefCondRefOf {operand, target}, 2 + operand_len + target_len))
+    let res = match obj.val {
+        AmlValue::String(ref s) => {
+            match ctx.get(AmlValue::String(s.clone()))? {
+                AmlValue::None => return Ok(AmlParseType {
+                    val: AmlValue::Integer(0),
+                    len: 1 + obj.len + target.len
+                }),
+                _ => ObjectReference::Object(s.clone())
+            }
+        },
+        AmlValue::ObjectReference(ref o) => o.clone(),
+        _ => return Err(AmlError::AmlValueError)
+    };
+
+    ctx.modify(target.val, AmlValue::ObjectReference(res));
+    
+    Ok(AmlParseType {
+        val: AmlValue::Integer(1),
+        len: 1 + obj.len + target.len
+    })
 }
 
-fn parse_def_copy_object(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_copy_object(data: &[u8],
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    // TODO: Compute the result
+    // TODO: Store the result
     parser_opcode!(data, 0x9D);
 
-    let (source, source_len) = parse_term_arg(&data[1..])?;
-    let (destination, destination_len) = parse_simple_name(&data[1 + source_len..])?;
+    let source = parse_term_arg(&data[1..], ctx)?;
+    let destination = parse_simple_name(&data[1 + source.len..], ctx)?;
 
-    Ok((Type2OpCode::DefCopyObject {source, destination}, 1 + source_len + destination_len))
+    ctx.copy(destination.val, source.val.clone())?;
+
+    Ok(AmlParseType {
+        val: source.val,
+        len: 1 + source.len + destination.len
+    })
 }
 
-fn parse_def_concat(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_concat(data: &[u8],
+                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x73);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefConcat {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let result = match lhs.val {
+        AmlValue::Integer(i) => {
+            let j = AmlValue::Integer(rhs.val.get_as_integer()?);
+
+            let mut first = lhs.val.get_as_buffer()?.clone();
+            let mut second = j.get_as_buffer()?.clone();
+
+            first.append(&mut second);
+
+            AmlValue::Buffer(first)
+        },
+        AmlValue::String(s) => {
+            let t = if let Ok(t) = rhs.val.get_as_string() {
+                t
+            } else {
+                rhs.val.get_type_string()
+            };
+
+            AmlValue::String(format!("{}{}", s, t))
+        },
+        AmlValue::Buffer(b) => {
+            let mut b = b.clone();
+            let mut c = if let Ok(c) = rhs.val.get_as_buffer() {
+                c.clone()
+            } else {
+                AmlValue::String(rhs.val.get_type_string()).get_as_buffer()?.clone()
+            };
+
+            b.append(&mut c);
+
+            AmlValue::Buffer(b)
+        },
+        _ => {
+            let first = lhs.val.get_type_string();
+            let second = if let Ok(second) = rhs.val.get_as_string() {
+                second
+            } else {
+                rhs.val.get_type_string()
+            };
+
+            AmlValue::String(format!("{}{}", first, second))
+        }
+    };
+
+    ctx.modify(target.val, result.clone())?;
+
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_decrement(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_decrement(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x76);
 
-    let (target, target_len) = parse_super_name(&data[1..])?;
-
-    Ok((Type2OpCode::DefDecrement(target), 1 + target_len))
+    let obj = parse_super_name(&data[1..], ctx)?;
+    
+    let mut namespace = ctx.prelock();
+    let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? - 1);
+    ctx.modify(obj.val, value.clone());
+    
+    Ok(AmlParseType {
+        val: value,
+        len: 1 + obj.len
+    })
 }
 
-fn parse_def_divide(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_divide(data: &[u8],
+                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x78);
 
-    let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
-    let (divisor, divisor_len) = parse_term_arg(&data[1 + dividend_len..])?;
-    let (remainder, remainder_len) = parse_target(&data[1 + dividend_len + divisor_len..])?;
-    let (quotient, quotient_len) = parse_target(&data[1 + dividend_len + divisor_len + remainder_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target_remainder = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+    let target_quotient = parse_target(&data[1 + lhs.len + rhs.len + target_remainder.len..], ctx)?;
 
-    Ok((Type2OpCode::DefDivide {dividend, divisor, remainder, quotient},
-        1 + dividend_len + divisor_len + remainder_len + quotient_len))
+    let numerator = lhs.val.get_as_integer()?;
+    let denominator = rhs.val.get_as_integer()?;
+
+    let remainder = numerator % denominator;
+    let quotient = (numerator - remainder) / denominator;
+
+    ctx.modify(target_remainder.val, AmlValue::Integer(remainder));
+    ctx.modify(target_quotient.val, AmlValue::Integer(quotient));
+    
+    Ok(AmlParseType {
+        val: AmlValue::Integer(quotient),
+        len: 1 + lhs.len + rhs.len + target_remainder.len + target_quotient.len
+    })
 }
 
-fn parse_def_find_set_left_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
+fn parse_def_find_set_left_bit(data: &[u8],
+                               ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x81);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
 
-    Ok((Type2OpCode::DefFindSetLeftBit {operand, target}, 1 + operand_len + target_len))
-}
+    let mut first_bit = 32;
+    let mut test = operand.val.get_as_integer()?;
+    
+    while first_bit > 0{
+        if test & 0x8000000000000000 > 0 {
+            break;
+        }
 
-fn parse_def_find_set_right_bit(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x82 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+        test <<= 1;
+        first_bit -= 1;
     }
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
-
-    Ok((Type2OpCode::DefFindSetRightBit {operand, target}, 1 + operand_len + target_len))
+    let result = AmlValue::Integer(first_bit);
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_load_table(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x1F {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_find_set_right_bit(data: &[u8],
+                                ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode!(data, 0x82);
+
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
+
+    let mut first_bit = 1;
+    let mut test = operand.val.get_as_integer()?;
+    
+    while first_bit <= 32 {
+        if test & 1 > 0 {
+            break;
+        }
+
+        test >>= 1;
+        first_bit += 1;
     }
 
-    let (signature, signature_len) = parse_term_arg(&data[2..])?;
-    let (oem_id, oem_id_len) = parse_term_arg(&data[2 + signature_len..])?;
-    let (oem_table_id, oem_table_id_len) = parse_term_arg(&data[2 + signature_len + oem_id_len..])?;
-    let (root_path, root_path_len) =
-        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len..])?;
-    let (parameter_path, parameter_path_len) =
-        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len + root_path_len..])?;
-    let (parameter_data, parameter_data_len) =
-        parse_term_arg(&data[2 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
-                             parameter_path_len..])?;
+    if first_bit == 33 {
+        first_bit = 0;
+    }
 
-    Ok((Type2OpCode::DefLoadTable {signature, oem_id, oem_table_id, root_path,
-                                   parameter_path, parameter_data},
-        2 + signature_len + oem_id_len + oem_table_id_len + root_path_len +
-        parameter_path_len + parameter_data_len))
+    let result = AmlValue::Integer(first_bit);
+    ctx.modify(target.val, result.clone());
+
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + operand.len + target.len
+    })
 }
 
-fn parse_def_match(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x89 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_load_table(data: &[u8],
+                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    // TODO: Clean up
+    parser_opcode_extended!(data, 0x1F);
+
+    let signature = parse_term_arg(&data[2..], ctx)?;
+    let oem_id = parse_term_arg(&data[2 + signature.len..], ctx)?;
+    let oem_table_id = parse_term_arg(&data[2 + signature.len + oem_id.len..], ctx)?;
+    let root_path = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len..], ctx)?;
+    let parameter_path = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len..], ctx)?;
+    let parameter_data = parse_term_arg(&data[2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len..], ctx)?;
+
+    if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
+        let sig_str = unsafe {
+            let sig = *(signature.val.get_as_string()?.as_bytes().as_ptr() as *const [u8; 4]);
+            String::from_utf8(sig.to_vec()).expect("Error converting signature to string")
+        };
+        let oem_str = unsafe {
+            *(oem_id.val.get_as_string()?.as_bytes().as_ptr() as *const [u8; 6])
+        };
+        let oem_table_str = unsafe {
+            *(oem_table_id.val.get_as_string()?.as_bytes().as_ptr() as *const [u8; 8])
+        };
+
+        let sdt_signature = (sig_str, oem_str, oem_table_str);
+        
+        let sdt = ptrs.get(&sdt_signature);
+        
+        if let Some(sdt) = sdt {
+            let hdl = parse_aml_with_scope(sdt, root_path.val.get_as_string()?)?;
+            ctx.modify(parameter_path.val, parameter_data.val);
+            
+            return Ok(AmlParseType {
+                val: AmlValue::DDBHandle((hdl, sdt_signature)),
+                len: 2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len + parameter_data.len
+            });
+        }
     }
 
-    let (search_pkg, search_pkg_len) = parse_term_arg(&data[1..])?;
-    let first_operation = match data[1 + search_pkg_len] {
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(0),
+        len: 2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len + parameter_data.len
+    })
+}
+
+fn parse_def_match(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode!(data, 0x28);
+    
+    let search_pkg = parse_term_arg(&data[1..], ctx)?;
+    
+    let first_operation = match data[1 + search_pkg.len] {
         0 => MatchOpcode::MTR,
         1 => MatchOpcode::MEQ,
         2 => MatchOpcode::MLE,
         3 => MatchOpcode::MLT,
         4 => MatchOpcode::MGE,
         5 => MatchOpcode::MGT,
-        _ => return Err(AmlInternalError::AmlParseError("DefMatch - Invalid Opcode"))
+        _ => return Err(AmlError::AmlParseError("DefMatch - Invalid Opcode"))
     };
-    let (first_operand, first_operand_len) = parse_term_arg(&data[2 + search_pkg_len..])?;
+    let first_operand = parse_term_arg(&data[2 + search_pkg.len..], ctx)?;
 
-    let second_operation = match data[2 + search_pkg_len + first_operand_len] {
+    let second_operation = match data[2 + search_pkg.len + first_operand.len] {
         0 => MatchOpcode::MTR,
         1 => MatchOpcode::MEQ,
         2 => MatchOpcode::MLE,
         3 => MatchOpcode::MLT,
         4 => MatchOpcode::MGE,
         5 => MatchOpcode::MGT,
-        _ => return Err(AmlInternalError::AmlParseError("DefMatch - Invalid Opcode"))
+        _ => return Err(AmlError::AmlParseError("DefMatch - Invalid Opcode"))
     };
-    let (second_operand, second_operand_len) =
-        parse_term_arg(&data[3 + search_pkg_len + first_operand_len..])?;
+    let second_operand = parse_term_arg(&data[3 + search_pkg.len + first_operand.len..], ctx)?;
+    
+    let start_index = parse_term_arg(&data[3 + search_pkg.len + first_operand.len + second_operand.len..], ctx)?;
 
-    let (start_index, start_index_len) =
-        parse_term_arg(&data[3 + search_pkg_len + first_operand_len + second_operand_len..])?;
+    let pkg = search_pkg.val.get_as_package()?;
+    let mut idx = start_index.val.get_as_integer()? as usize;
 
-    Ok((Type2OpCode::DefMatch {search_pkg, first_operation, first_operand,
-                               second_operation, second_operand, start_index},
-        3 + search_pkg_len + first_operand_len + second_operand_len + start_index_len))
-}
+    match first_operand.val {
+        AmlValue::Integer(i) => {
+            let j = second_operand.val.get_as_integer()?;
 
-fn parse_def_from_bcd(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x28 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+            while idx < pkg.len() {
+                let val = if let Ok(v) = pkg[idx].get_as_integer() { v } else { idx += 1; continue; };
+                idx += 1;
+
+                match first_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                match second_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != j { continue },
+                    MatchOpcode::MLE => if val > j { continue },
+                    MatchOpcode::MLT => if val >= j { continue },
+                    MatchOpcode::MGE => if val < j { continue },
+                    MatchOpcode::MGT => if val <= j { continue }
+                }
+
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(idx as u64),
+                    len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+                })
+            }
+        },
+        AmlValue::String(i) => {
+            let j = second_operand.val.get_as_string()?;
+
+            while idx < pkg.len() {
+                let val = if let Ok(v) = pkg[idx].get_as_string() { v } else { idx += 1; continue; };
+                idx += 1;
+
+                match first_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                match second_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != j { continue },
+                    MatchOpcode::MLE => if val > j { continue },
+                    MatchOpcode::MLT => if val >= j { continue },
+                    MatchOpcode::MGE => if val < j { continue },
+                    MatchOpcode::MGT => if val <= j { continue }
+                }
+
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(idx as u64),
+                    len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+                })
+            }
+        },
+        _ => {
+            let i = first_operand.val.get_as_buffer()?;
+            let j = second_operand.val.get_as_buffer()?;
+
+            while idx < pkg.len() {
+                let val = if let Ok(v) = pkg[idx].get_as_buffer() { v } else { idx += 1; continue; };
+                idx += 1;
+
+                match first_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != i { continue },
+                    MatchOpcode::MLE => if val > i { continue },
+                    MatchOpcode::MLT => if val >= i { continue },
+                    MatchOpcode::MGE => if val < i { continue },
+                    MatchOpcode::MGT => if val <= i { continue }
+                }
+
+                match second_operation {
+                    MatchOpcode::MTR => (),
+                    MatchOpcode::MEQ => if val != j { continue },
+                    MatchOpcode::MLE => if val > j { continue },
+                    MatchOpcode::MLT => if val >= j { continue },
+                    MatchOpcode::MGE => if val < j { continue },
+                    MatchOpcode::MGT => if val <= j { continue }
+                }
+
+                return Ok(AmlParseType {
+                    val: AmlValue::Integer(idx as u64),
+                    len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+                })
+            }
+        }
     }
 
-    let (operand, operand_len) = parse_term_arg(&data[2..])?;
-    let (target, target_len) = parse_target(&data[2 + operand_len..])?;
-
-    Ok((Type2OpCode::DefFromBCD {operand, target}, 2 + operand_len + target_len))
+    Ok(AmlParseType {
+        val: AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF),
+        len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
+    })
 }
 
-fn parse_def_mid(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x9E {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_from_bcd(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode_extended!(data, 0x28);
+
+    let operand = parse_term_arg(&data[2..], ctx)?;
+    let target = parse_target(&data[2 + operand.len..], ctx)?;
+
+    let mut i = operand.val.get_as_integer()?;
+    let mut result = 0;
+
+    while i != 0 {
+        if i & 0x0F > 10 {
+            return Err(AmlError::AmlValueError);
+        }
+        
+        result *= 10;
+        result += i & 0x0F;
+        i >>= 4;
     }
 
-    let (source, source_len) = parse_term_arg(&data[1..])?;
-    let (index, index_len) = parse_term_arg(&data[1 + source_len..])?;
-    let (length, length_len) = parse_term_arg(&data[1 + source_len + index_len..])?;
-    let (target, target_len) = parse_target(&data[1 + source_len + index_len + length_len..])?;
+    let result = AmlValue::Integer(result);
 
-    Ok((Type2OpCode::DefMid {source, index, length, target},
-        1 + source_len + index_len + length_len + target_len))
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 2 + operand.len + target.len
+    })
 }
 
-fn parse_def_mod(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x85 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_mid(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
     }
+    
+    parser_opcode!(data, 0x9E);
 
-    let (dividend, dividend_len) = parse_term_arg(&data[1..])?;
-    let (divisor, divisor_len) = parse_term_arg(&data[1 + dividend_len..])?;
-    let (target, target_len) = parse_target(&data[1 + dividend_len + divisor_len..])?;
+    let source = parse_term_arg(&data[1..], ctx)?;
+    let index = parse_term_arg(&data[1 + source.len..], ctx)?;
+    let length = parse_term_arg(&data[1 + source.len + index.len..], ctx)?;
+    let target = parse_target(&data[1 + source.len + index.len + length.len..], ctx)?;
 
-    Ok((Type2OpCode::DefMod {dividend, divisor, target}, 1 + dividend_len + divisor_len + target_len))
+    let idx = index.val.get_as_integer()? as usize;
+    let mut len = length.val.get_as_integer()? as usize;
+    
+    let result = match source.val {
+        AmlValue::String(s) => {
+            if idx > s.len() {
+                AmlValue::String(String::new())
+            } else {
+                let mut res = s.clone().split_off(idx);
+
+                if len < res.len() {
+                    res.split_off(len);
+                }
+
+                AmlValue::String(res)
+            }
+        },
+        _ => {
+            // If it isn't a string already, treat it as a buffer. Must perform that check first,
+            // as Mid can operate on both strings and buffers, but a string can be cast as a buffer
+            // implicitly.
+            // Additionally, any type that can be converted to a buffer can also be converted to a
+            // string, so no information is lost
+            let b = source.val.get_as_buffer()?;
+            
+            if idx > b.len() {
+                AmlValue::Buffer(vec!())
+            } else {
+                if idx + len > b.len() {
+                    len = b.len() - idx;
+                }
+
+                AmlValue::Buffer(b[idx .. idx + len].to_vec())
+            }
+        }
+    };
+    
+    ctx.modify(target.val, result.clone());
+
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + source.len + index.len + length.len + target.len
+    })
 }
 
-fn parse_def_multiply(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x77 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_mod(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode!(data, 0x85);
+
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
+
+    if rhs.val.get_as_integer()? == 0 {
+        return Err(AmlError::AmlValueError);
     }
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? % rhs.val.get_as_integer()?);
 
-    Ok((Type2OpCode::DefMultiply {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_nand(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7C {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_multiply(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
     }
+    
+    // TODO: Handle overflow
+    parser_opcode!(data, 0x77);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefNAnd {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let result = AmlValue::Integer(lhs.val.get_as_integer()? * rhs.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_nor(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x7E {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_nand(data: &[u8],
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
     }
+    
+    parser_opcode!(data, 0x7C);
 
-    let (lhs, lhs_len) = parse_term_arg(&data[1..])?;
-    let (rhs, rhs_len) = parse_term_arg(&data[1 + lhs_len..])?;
-    let (target, target_len) = parse_target(&data[1 + lhs_len + rhs_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefNOr {lhs, rhs, target}, 1 + lhs_len + rhs_len + target_len))
+    let result = AmlValue::Integer(!(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?));
+
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_not(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x80 {
-        return Err(AmlInternalError::AmlInvalidOpCode);
+fn parse_def_nor(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
     }
+    
+    parser_opcode!(data, 0x7E);
 
-    let (operand, operand_len) = parse_term_arg(&data[1..])?;
-    let (target, target_len) = parse_target(&data[1 + operand_len..])?;
+    let lhs = parse_term_arg(&data[1..], ctx)?;
+    let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
+    let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
-    Ok((Type2OpCode::DefNot {operand, target}, 1 + operand_len + target_len))
+    let result = AmlValue::Integer(!(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?));
+
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + lhs.len + rhs.len + target.len
+    })
 }
 
-fn parse_def_timer(data: &[u8]) -> Result<(Type2OpCode, usize), AmlInternalError> {
-    if data[0] != 0x5B || data[1] != 0x33 {
-        return Err(AmlInternalError::AmlInvalidOpCode)
+fn parse_def_not(data: &[u8],
+                 ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
     }
+    
+    parser_opcode!(data, 0x80);
 
-    Ok((Type2OpCode::DefTimer, 2 as usize))
+    let operand = parse_term_arg(&data[1..], ctx)?;
+    let target = parse_target(&data[1 + operand.len..], ctx)?;
+
+    let result = AmlValue::Integer(!operand.val.get_as_integer()?);
+
+    ctx.modify(target.val, result.clone());
+    
+    Ok(AmlParseType {
+        val: result,
+        len: 1 + operand.len + target.len
+    })
+}
+
+fn parse_def_timer(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode_extended!(data, 0x33);
+
+    let (seconds, nanoseconds) = monotonic();
+    let monotonic_ns = nanoseconds + (seconds * 1000000000);
+    
+    Ok(AmlParseType {
+        val: AmlValue::Integer(monotonic_ns),
+        len: 2 as usize
+    })
 }

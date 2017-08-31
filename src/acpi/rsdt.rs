@@ -1,6 +1,8 @@
 use core::mem;
+use alloc::boxed::Box;
 
 use super::sdt::Sdt;
+use super::rxsdt::Rxsdt;
 
 #[derive(Debug)]
 pub struct Rsdt(&'static Sdt);
@@ -13,12 +15,14 @@ impl Rsdt {
             None
         }
     }
+}
 
-    pub fn iter(&self) -> RsdtIter {
-        RsdtIter {
+impl Rxsdt for Rsdt {
+    fn iter(&self) -> Box<Iterator<Item = usize>> {
+        Box::new(RsdtIter {
             sdt: self.0,
             i: 0
-        }
+        })
     }
 }
 
