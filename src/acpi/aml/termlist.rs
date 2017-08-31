@@ -1,135 +1,174 @@
-use alloc::boxed::Box;
-use collections::string::String;
 use collections::vec::Vec;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, get_namespace_string};
-use super::namespacemodifier::{parse_namespace_modifier, NamespaceModifier};
-use super::namedobj::{parse_named_obj, NamedObj};
-use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj, DataObj, ArgObj, LocalObj};
-use super::type1opcode::{parse_type1_opcode, Type1OpCode};
-use super::type2opcode::{parse_type2_opcode, Type2OpCode};
+use super::AmlError;
+use super::parser::{ AmlParseType, ParseResult, AmlExecutionContext, ExecutionState };
+use super::namespace::{AmlValue, get_namespace_string};
+use super::namespacemodifier::parse_namespace_modifier;
+use super::namedobj::parse_named_obj;
+use super::dataobj::{parse_data_obj, parse_arg_obj, parse_local_obj};
+use super::type1opcode::parse_type1_opcode;
+use super::type2opcode::parse_type2_opcode;
 use super::namestring::parse_name_string;
 
-#[derive(Debug, Clone)]
-pub enum TermArg {
-    LocalObj(Box<LocalObj>),
-    DataObj(Box<DataObj>),
-    ArgObj(Box<ArgObj>),
-    Type2Opcode(Box<Type2OpCode>)
-}
-
-#[derive(Debug, Clone)]
-pub enum TermObj {
-    NamespaceModifier(Box<NamespaceModifier>),
-    NamedObj(Box<NamedObj>),
-    Type1Opcode(Box<Type1OpCode>),
-    Type2Opcode(Box<Type2OpCode>)
-}
-
-#[derive(Debug, Clone)]
-pub enum Object {
-    NamespaceModifier(Box<NamespaceModifier>),
-    NamedObj(Box<NamedObj>)
-}
-
-#[derive(Debug, Clone)]
-pub struct MethodInvocation {
-
-}
-
-impl AmlExecutable for Vec<TermObj> {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
-        for term in self {
-            term.execute(namespace, scope.clone());
-        }
-
-        None
+pub fn parse_term_list(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
     }
-}
-
-impl AmlExecutable for TermArg {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
-        match *self {
-            TermArg::LocalObj(ref l) => Some(AmlValue::Integer),
-            TermArg::DataObj(ref d) => d.execute(namespace, scope),
-            TermArg::ArgObj(ref a) => Some(AmlValue::Integer),
-            TermArg::Type2Opcode(ref o) => Some(AmlValue::Integer)
-        }
-    }
-}
-
-impl AmlExecutable for TermObj {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
-        match *self {
-            TermObj::NamespaceModifier(ref res) => res.execute(namespace, scope.clone()),
-            TermObj::NamedObj(ref res) => res.execute(namespace, scope.clone()),
-            TermObj::Type1Opcode(ref res) => res.execute(namespace, scope.clone()),
-            TermObj::Type2Opcode(ref res) => res.execute(namespace, scope.clone())
-        }
-    }
-}
-
-pub fn parse_term_list(data: &[u8]) -> Result<Vec<TermObj>, AmlInternalError> {
-    let mut terms: Vec<TermObj> = vec!();
+    
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        let (res, len) = parse_term_obj(&data[current_offset..])?;
-        terms.push(res);
-        current_offset += len;
+        let res = parse_term_obj(&data[current_offset..], ctx)?;
+        
+        match ctx.state {
+            ExecutionState::EXECUTING => (),
+            _ => return Ok(AmlParseType {
+                val: AmlValue::None,
+                len: data.len()
+            })
+        }
+    
+        current_offset += res.len;
     }
 
-    Ok(terms)
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: data.len()
+    })
 }
 
-pub fn parse_term_arg(data: &[u8]) -> Result<(TermArg, usize), AmlInternalError> {
+pub fn parse_term_arg(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_selector! {
-        data,
-        parser_wrap!(TermArg::LocalObj, parser_wrap!(Box::new, parse_local_obj)),
-        parser_wrap!(TermArg::DataObj, parser_wrap!(Box::new, parse_data_obj)),
-        parser_wrap!(TermArg::ArgObj, parser_wrap!(Box::new, parse_arg_obj)),
-        parser_wrap!(TermArg::Type2Opcode, parser_wrap!(Box::new, parse_type2_opcode))
+        data, ctx,
+        parse_local_obj,
+        parse_data_obj,
+        parse_arg_obj,
+        parse_type2_opcode
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_object_list(data: &[u8]) -> Result<Vec<Object>, AmlInternalError> {
-    let mut terms: Vec<Object> = vec!();
+pub fn parse_object_list(data: &[u8],
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
-        let (res, len) = parse_object(&data[current_offset..])?;
-        terms.push(res);
-        current_offset += len;
+        let res = parse_object(&data[current_offset..], ctx)?;
+        
+        match ctx.state {
+            ExecutionState::EXECUTING => (),
+            _ => return Ok(AmlParseType {
+                val: AmlValue::None,
+                len: data.len()
+            })
+        }
+    
+        current_offset += res.len;
     }
 
-    Ok(terms)
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: data.len()
+    })
 }
 
-fn parse_object(data: &[u8]) -> Result<(Object, usize), AmlInternalError> {
+fn parse_object(data: &[u8],
+                ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_selector! {
-        data,
-        parser_wrap!(Object::NamespaceModifier, parser_wrap!(Box::new, parse_namespace_modifier)),
-        parser_wrap!(Object::NamedObj, parser_wrap!(Box::new, parse_named_obj))
+        data, ctx,
+        parse_namespace_modifier,
+        parse_named_obj
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-pub fn parse_method_invocation(data: &[u8]) -> Result<(MethodInvocation, usize), AmlInternalError> {
-    let (name, name_len) = parse_name_string(data)?;
-    Err(AmlInternalError::AmlDeferredLoad)
+pub fn parse_method_invocation(data: &[u8],
+                               ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    let name = parse_name_string(data, ctx)?;
+    let method = ctx.get(name.val.clone())?;
+
+    let method = match method {
+        AmlValue::None => return Err(AmlError::AmlDeferredLoad),
+        _ => method.get_as_method()?
+    };
+    
+    let mut cur = 0;
+    let mut params: Vec<AmlValue> = vec!();
+
+    let mut current_offset = name.len;
+    
+    while cur < method.arg_count {
+        let res = parse_term_arg(&data[current_offset..], ctx)?;
+        
+        current_offset += res.len;
+        cur += 1;
+
+        params.push(res.val);
+    }
+
+    Ok(AmlParseType {
+        val: method.execute(get_namespace_string(ctx.scope.clone(), name.val)?, params),
+        len: current_offset
+    })
 }
 
-fn parse_term_obj(data: &[u8]) -> Result<(TermObj, usize), AmlInternalError> {
+fn parse_term_obj(data: &[u8],
+                  ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_selector! {
-        data,
-        parser_wrap!(TermObj::NamespaceModifier, parser_wrap!(Box::new, parse_namespace_modifier)),
-        parser_wrap!(TermObj::NamedObj, parser_wrap!(Box::new, parse_named_obj)),
-        parser_wrap!(TermObj::Type1Opcode, parser_wrap!(Box::new, parse_type1_opcode)),
-        parser_wrap!(TermObj::Type2Opcode, parser_wrap!(Box::new, parse_type2_opcode))
+        data, ctx,
+        parse_namespace_modifier,
+        parse_named_obj,
+        parse_type1_opcode,
+        parse_type2_opcode
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }

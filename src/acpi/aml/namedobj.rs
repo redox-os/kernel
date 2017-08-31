@@ -1,174 +1,16 @@
 use alloc::boxed::Box;
 use collections::string::String;
-use collections::vec::Vec;
+use collections::btree_map::BTreeMap;
 
-use super::{AmlInternalError, AmlExecutable, AmlValue, AmlNamespace, AmlNamespaceContents, get_namespace_string};
+use super::AmlError;
+use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
+use super::namespace::{AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string,
+                       Accessor, BufferField, FieldUnit, Processor, PowerResource, OperationRegion,
+                       Device, ThermalZone};
 use super::namestring::{parse_name_string, parse_name_seg};
-use super::termlist::{parse_term_arg, parse_term_list, parse_object_list, TermArg, TermObj, Object};
+use super::termlist::{parse_term_arg, parse_object_list};
 use super::pkglength::parse_pkg_length;
-use super::type2opcode::{parse_def_buffer, DefBuffer};
-
-#[derive(Debug, Clone)]
-pub enum NamedObj {
-    DefBankField {
-        region_name: String,
-        bank_name: String,
-        bank_value: TermArg,
-        flags: FieldFlags,
-        field_list: Vec<FieldElement>
-    },
-    DefCreateBitField {
-        name: String,
-        source_buf: TermArg,
-        bit_index: TermArg
-    },
-    DefCreateByteField {
-        name: String,
-        source_buf: TermArg,
-        byte_index: TermArg
-    },
-    DefCreateWordField {
-        name: String,
-        source_buf: TermArg,
-        byte_index: TermArg
-    },
-    DefCreateDWordField {
-        name: String,
-        source_buf: TermArg,
-        byte_index: TermArg
-    },
-    DefCreateQWordField {
-        name: String,
-        source_buf: TermArg,
-        byte_index: TermArg
-    },
-    DefCreateField {
-        name: String,
-        source_buf: TermArg,
-        bit_index: TermArg,
-        num_bits: TermArg
-    },
-    DefDataRegion {
-        name: String,
-        signature: TermArg,
-        oem_id: TermArg,
-        oem_table_id: TermArg
-    },
-    DefDevice {
-        name: String,
-        obj_list: Vec<Object>
-    },
-    DefEvent {
-        name: String
-    },
-    DefOpRegion {
-        name: String,
-        region: RegionSpace,
-        offset: TermArg,
-        len: TermArg
-    },
-    DefField {
-        name: String,
-        flags: FieldFlags,
-        field_list: Vec<FieldElement>
-    },
-    DefIndexField {
-        idx_name: String,
-        data_name: String,
-        flags: FieldFlags,
-        field_list: Vec<FieldElement>
-    },
-    DefMethod {
-        name: String,
-        method: Method
-    },
-    DefMutex {
-        name: String,
-        sync_level: u8
-    },
-    DefPowerRes {
-        name: String,
-        system_level: u8,
-        resource_order: u16,
-        obj_list: Vec<Object>
-    },
-    DefProcessor {
-        name: String,
-        proc_id: u8,
-        p_blk_addr: u32,
-        p_blk_len: u8,
-        obj_list: Vec<Object>
-    },
-    DefThermalZone {
-        name: String,
-        obj_list: Vec<Object>
-    },
-    DeferredLoad(Vec<u8>)
-}
-
-#[derive(Debug, Clone)]
-pub struct Method {
-    arg_count: u8,
-    serialized: bool,
-    sync_level: u8,
-    term_list: Vec<TermObj>
-}
-
-impl AmlExecutable for NamedObj {
-    fn execute(&self, namespace: &mut AmlNamespace, scope: String) -> Option<AmlValue> {
-        match *self {
-            NamedObj::DefOpRegion { ref name, ref region, ref offset, ref len } => {
-                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
-
-                let resolved_offset = match offset.execute(namespace, scope.clone()) {
-                    Some(r) => r,
-                    _ => return None
-                };
-
-                let resolved_len = match len.execute(namespace, scope.clone()) {
-                    Some(r) => r,
-                    _ => return None
-                };
-
-                namespace.push_to(local_scope_string, AmlNamespaceContents::OpRegion {
-                    region: *region,
-                    offset: resolved_offset,
-                    len: resolved_len
-                });
-            },
-            NamedObj::DefField { ref name, ref flags, ref field_list } => {
-                let mut offset: usize = 0;
-
-                for f in field_list {
-                    match *f {
-                        FieldElement::ReservedField { length } => offset += length,
-                        FieldElement::NamedField { name: ref field_name, length } => {
-                            let local_scope_string = get_namespace_string(scope.clone(),
-                                                                          field_name.clone());
-                            namespace.push_to(local_scope_string, AmlNamespaceContents::Field {
-                                op_region: name.clone(),
-                                flags: flags.clone(),
-                                offset: offset.clone(),
-                                length: length.clone()
-                            });
-
-                            offset += length;
-                        },
-                        _ => ()
-                    }
-                }
-            },
-            NamedObj::DefMethod { ref name, ref method } => {
-                let local_scope_string = get_namespace_string(scope.clone(), name.clone());
-                namespace.push_to(local_scope_string, AmlNamespaceContents::Value(
-                                  AmlValue::Method(method.clone())));
-            },
-            _ => ()
-        }
-
-        None
-    }
-}
+use super::type2opcode::parse_def_buffer;
 
 #[derive(Debug, Copy, Clone)]
 pub enum RegionSpace {
@@ -199,7 +41,7 @@ pub enum AccessType {
     WordAcc,
     DWordAcc,
     QWordAcc,
-    BufferAcc
+    BufferAcc(AccessAttrib)
 }
 
 #[derive(Debug, Clone)]
@@ -210,20 +52,15 @@ pub enum UpdateRule {
 }
 
 #[derive(Debug, Clone)]
-pub enum FieldElement {
-    NamedField {
-        name: String,
-        length: usize
-    },
-    ReservedField {
-        length: usize
-    },
-    AccessField {
-        access_type: AccessType,
-        access_attrib: AccessAttrib
-    },
-    ConnectFieldNameString(String),
-    ConnectFieldBufferData(DefBuffer),
+pub struct NamedField {
+    name: String,
+    length: usize
+}
+
+#[derive(Debug, Clone)]
+pub struct AccessField {
+    access_type: AccessType,
+    access_attrib: AccessAttrib
 }
 
 #[derive(Debug, Clone)]
@@ -240,9 +77,18 @@ pub enum AccessAttrib {
     AttribBlockProcessCall
 }
 
-pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+pub fn parse_named_obj(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_selector! {
-        data,
+        data, ctx,
         parse_def_bank_field,
         parse_def_create_bit_field,
         parse_def_create_byte_field,
@@ -252,6 +98,7 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         parse_def_create_field,
         parse_def_data_region,
         parse_def_event,
+        parse_def_external,
         parse_def_device,
         parse_def_op_region,
         parse_def_field,
@@ -263,185 +110,351 @@ pub fn parse_named_obj(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         parse_def_thermal_zone
     };
 
-    Err(AmlInternalError::AmlInvalidOpCode)
+    Err(AmlError::AmlInvalidOpCode)
 }
 
-fn parse_def_bank_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_bank_field(data: &[u8],
+                        ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x87);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
-    let (region_name, region_name_len) = match parse_name_string(
-            &data[2 + pkg_length_len .. 2 + pkg_length]) {
-        Ok(res) => res,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    let data = &data[2 + pkg_length_len .. 2 + pkg_length];
+    
+    let region_name = parse_name_string(data, ctx)?;
+    let bank_name = parse_name_string(&data[2 + pkg_length_len + region_name.len .. 2 + pkg_length], ctx)?;
 
-    let (bank_name, bank_name_len) = match parse_name_string(
-            &data[2 + pkg_length_len + region_name_len .. 2 + pkg_length]) {
-        Ok(res) => res,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    let bank_value = parse_term_arg(&data[2 + pkg_length_len + region_name.len .. 2 + pkg_length], ctx)?;
 
-    let (bank_value, bank_value_len) = match parse_term_arg(
-            &data[2 + pkg_length_len + region_name_len .. 2 + pkg_length]) {
-        Ok(res) => res,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
-
-    let flags_raw = data[2 + pkg_length_len + region_name_len + bank_name_len + bank_value_len];
-    let flags = FieldFlags {
+    let flags_raw = data[2 + pkg_length_len + region_name.len + bank_name.len + bank_value.len];
+    let mut flags = FieldFlags {
         access_type: match flags_raw & 0x0F {
             0 => AccessType::AnyAcc,
             1 => AccessType::ByteAcc,
             2 => AccessType::WordAcc,
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
-            5 => AccessType::BufferAcc,
-            _ => return Err(AmlInternalError::AmlParseError("BankField - invalid access type"))
+            5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
+            _ => return Err(AmlError::AmlParseError("BankField - invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
         update_rule: match (flags_raw & 0x60) >> 5 {
             0 => UpdateRule::Preserve,
             1 => UpdateRule::WriteAsOnes,
             2 => UpdateRule::WriteAsZeros,
-            _ => return Err(AmlInternalError::AmlParseError("BankField - invalid update rule"))
+            _ => return Err(AmlError::AmlParseError("BankField - invalid update rule"))
         }
     };
 
-    let field_list = match parse_field_list(
-        &data[3 + pkg_length_len + region_name_len + bank_name_len + bank_value_len ..
-              2 + pkg_length]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
+    let selector = FieldSelector::Bank {
+        region: region_name.val.get_as_string()?,
+        bank_register: bank_name.val.get_as_string()?,
+        bank_selector: Box::new(bank_value.val)
     };
 
-    Ok((NamedObj::DefBankField {region_name, bank_name, bank_value, flags, field_list},
-        2 + pkg_length))
+    parse_field_list(&data[3 + pkg_length_len + region_name.len + bank_name.len + bank_value.len ..
+                           2 + pkg_length], ctx, selector, &mut flags)?;
+
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + pkg_length
+    })
 }
 
-fn parse_def_create_bit_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_create_bit_field(data: &[u8],
+                              ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x8D);
 
-    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
-    let (bit_index, bit_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
-    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + bit_index_len..])?;
+    let source_buf = parse_term_arg(&data[2..], ctx)?;
+    let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
+    let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
+        source_buf: Box::new(source_buf.val),
+        index: Box::new(bit_index.val),
+        length: Box::new(AmlValue::IntegerConstant(1))
+    }))?;
 
-    Ok((NamedObj::DefCreateBitField {name, source_buf, bit_index},
-        1 + source_buf_len + bit_index_len + name_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len + source_buf.len + bit_index.len
+    })
 }
 
-fn parse_def_create_byte_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_create_byte_field(data: &[u8],
+                               ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x8C);
 
-    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
-    let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
-    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
+    let source_buf = parse_term_arg(&data[2..], ctx)?;
+    let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
+    let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
+        source_buf: Box::new(source_buf.val),
+        index: Box::new(bit_index.val),
+        length: Box::new(AmlValue::IntegerConstant(8))
+    }))?;
 
-    Ok((NamedObj::DefCreateByteField {name, source_buf, byte_index},
-        1 + source_buf_len + byte_index_len + name_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len + source_buf.len + bit_index.len
+    })
 }
 
-fn parse_def_create_word_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_create_word_field(data: &[u8],
+                               ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x8B);
 
-    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
-    let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
-    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
+    let source_buf = parse_term_arg(&data[2..], ctx)?;
+    let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
+    let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
+        source_buf: Box::new(source_buf.val),
+        index: Box::new(bit_index.val),
+        length: Box::new(AmlValue::IntegerConstant(16))
+    }))?;
 
-    Ok((NamedObj::DefCreateWordField {name, source_buf, byte_index},
-        1 + source_buf_len + byte_index_len + name_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len + source_buf.len + bit_index.len
+    })
 }
 
-fn parse_def_create_dword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_create_dword_field(data: &[u8],
+                                ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x8A);
 
-    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
-    let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
-    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
+    let source_buf = parse_term_arg(&data[2..], ctx)?;
+    let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
+    let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
+        source_buf: Box::new(source_buf.val),
+        index: Box::new(bit_index.val),
+        length: Box::new(AmlValue::IntegerConstant(32))
+    }));
 
-    Ok((NamedObj::DefCreateDWordField {name, source_buf, byte_index},
-        1 + source_buf_len + byte_index_len + name_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len + source_buf.len + bit_index.len
+    })
 }
 
-fn parse_def_create_qword_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_create_qword_field(data: &[u8],
+                                ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x8F);
 
-    let (source_buf, source_buf_len) = parse_term_arg(&data[1..])?;
-    let (byte_index, byte_index_len) = parse_term_arg(&data[1 + source_buf_len..])?;
-    let (name, name_len) = parse_name_string(&data[1 + source_buf_len + byte_index_len..])?;
+    let source_buf = parse_term_arg(&data[2..], ctx)?;
+    let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
+    let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
+        source_buf: Box::new(source_buf.val),
+        index: Box::new(bit_index.val),
+        length: Box::new(AmlValue::IntegerConstant(64))
+    }))?;
 
-    Ok((NamedObj::DefCreateQWordField {name, source_buf, byte_index},
-        1 + source_buf_len + byte_index_len + name_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len + source_buf.len + bit_index.len
+    })
 }
 
-fn parse_def_create_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_create_field(data: &[u8],
+                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x13);
 
-    let (source_buf, source_buf_len) = parse_term_arg(&data[2..])?;
-    let (bit_index, bit_index_len) = parse_term_arg(&data[2 + source_buf_len..])?;
-    let (num_bits, num_bits_len) = parse_term_arg(&data[2 + source_buf_len + bit_index_len..])?;
-    let (name, name_len) = parse_name_string(
-        &data[2 + source_buf_len + bit_index_len + num_bits_len..])?;
-
-    Ok((NamedObj::DefCreateField {name, source_buf, bit_index, num_bits},
-        2 + source_buf_len + bit_index_len + num_bits_len + name_len))
+    let source_buf = parse_term_arg(&data[2..], ctx)?;
+    let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
+    let num_bits = parse_term_arg(&data[2 + source_buf.len + bit_index.len..], ctx)?;
+    let name = parse_name_string(&data[2 + source_buf.len + bit_index.len + num_bits.len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
+        source_buf: Box::new(source_buf.val),
+        index: Box::new(bit_index.val),
+        length: Box::new(num_bits.val)
+    }))?;
+    
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len + source_buf.len + bit_index.len + num_bits.len
+    })
 }
 
-fn parse_def_data_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_data_region(data: &[u8],
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    // TODO: Find the actual offset and length, once table mapping is implemented
     parser_opcode_extended!(data, 0x88);
 
-    let (name, name_len) = parse_name_string(&data[2..])?;
-    let (signature, signature_len) = parse_term_arg(&data[2 + name_len..])?;
-    let (oem_id, oem_id_len) = parse_term_arg(&data[2 + name_len + signature_len..])?;
-    let (oem_table_id, oem_table_id_len) = parse_term_arg(
-        &data[2 + name_len + signature_len + oem_id_len..])?;
+    let name = parse_name_string(&data[2..], ctx)?;
+    let signature = parse_term_arg(&data[2 + name.len..], ctx)?;
+    let oem_id = parse_term_arg(&data[2 + name.len + signature.len..], ctx)?;
+    let oem_table_id = parse_term_arg(&data[2 + name.len + signature.len + oem_id.len..], ctx)?;
 
-    Ok((NamedObj::DefDataRegion {name, signature, oem_id, oem_table_id},
-        2 + name_len + signature_len + oem_id_len + oem_table_id_len))
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+
+    ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion(OperationRegion {
+        region: RegionSpace::SystemMemory,
+        offset: Box::new(AmlValue::IntegerConstant(0)),
+        len: Box::new(AmlValue::IntegerConstant(0)),
+        accessor: Accessor {
+            read: |x| 0 as u64,
+            write: |x, y| ()
+        },
+        accessed_by: None
+    }))?;
+
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len + signature.len + oem_id.len + oem_table_id.len
+    })
 }
 
-fn parse_def_event(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_event(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x02);
 
-    let (name, name_len) = parse_name_string(&data[2..])?;
+    let name = parse_name_string(&data[2..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    ctx.add_to_namespace(local_scope_string, AmlValue::Event(0))?;
 
-    Ok((NamedObj::DefEvent {name}, 2 + name_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + name.len
+    })
 }
 
-fn parse_def_device(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_device(data: &[u8],
+                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    // TODO: How to handle local context deferreds
     parser_opcode_extended!(data, 0x82);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
-    let (name, name_len) = match parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    let name = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
+    
+    parse_object_list(&data[2 + pkg_length_len + name.len .. 2 + pkg_length], &mut local_ctx)?;
 
-    let obj_list = match parse_object_list(&data[2 + pkg_length_len + name_len .. 2 + pkg_length]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    ctx.add_to_namespace(local_scope_string, AmlValue::Device(Device {
+        obj_list: local_ctx.namespace_delta.clone(),
+        notify_methods: BTreeMap::new()
+    }))?;
 
-    Ok((NamedObj::DefDevice {name, obj_list}, 2 + pkg_length_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + pkg_length
+    })
 }
 
-fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_op_region(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x80);
 
-    let (name, name_len) = parse_name_string(&data[2..])?;
-    let region = match data[2 + name_len] {
+    let name = parse_name_string(&data[2..], ctx)?;
+    let region = match data[2 + name.len] {
         0x00 => RegionSpace::SystemMemory,
         0x01 => RegionSpace::SystemIO,
         0x02 => RegionSpace::PCIConfig,
@@ -452,158 +465,241 @@ fn parse_def_op_region(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalErro
         0x07 => RegionSpace::IPMI,
         0x08 => RegionSpace::GeneralPurposeIO,
         0x09 => RegionSpace::GenericSerialBus,
-        0x80 ... 0xFF => RegionSpace::UserDefined(data[2 + name_len]),
-        _ => return Err(AmlInternalError::AmlParseError("OpRegion - invalid region"))
+        0x80 ... 0xFF => RegionSpace::UserDefined(data[2 + name.len]),
+        _ => return Err(AmlError::AmlParseError("OpRegion - invalid region"))
     };
 
-    let (offset, offset_len) = parse_term_arg(&data[3 + name_len..])?;
-    let (len, len_len) = parse_term_arg(&data[3 + name_len + offset_len..])?;
+    let offset = parse_term_arg(&data[3 + name.len..], ctx)?;
+    let len = parse_term_arg(&data[3 + name.len + offset.len..], ctx)?;
 
-    Ok((NamedObj::DefOpRegion {name, region, offset, len}, 3 + name_len + offset_len + len_len))
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    ctx.add_to_namespace(local_scope_string, AmlValue::OperationRegion(OperationRegion {
+        region: region,
+        offset: Box::new(offset.val),
+        len: Box::new(len.val),
+        accessor: Accessor {
+            read: |x| 0 as u64,
+            write: |x, y| ()
+        },
+        accessed_by: None
+    }))?;
+
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 3 + name.len + offset.len + len.len
+    })
 }
 
-fn parse_def_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_field(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x81);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
-    let (name, name_len) = match parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length])  {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    let name = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length], ctx)?;
 
-    let flags_raw = data[2 + pkg_length_len + name_len];
-    let flags = FieldFlags {
+    let flags_raw = data[2 + pkg_length_len + name.len];
+    let mut flags = FieldFlags {
         access_type: match flags_raw & 0x0F {
             0 => AccessType::AnyAcc,
             1 => AccessType::ByteAcc,
             2 => AccessType::WordAcc,
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
-            5 => AccessType::BufferAcc,
-            _ => return Err(AmlInternalError::AmlParseError("Field - Invalid access type"))
+            5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
+            _ => return Err(AmlError::AmlParseError("Field - Invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
         update_rule: match (flags_raw & 0x60) >> 5 {
             0 => UpdateRule::Preserve,
             1 => UpdateRule::WriteAsOnes,
             2 => UpdateRule::WriteAsZeros,
-            _ => return Err(AmlInternalError::AmlParseError("Field - Invalid update rule"))
+            _ => return Err(AmlError::AmlParseError("Field - Invalid update rule"))
         }
     };
 
-    let field_list = match parse_field_list(&data[3 + pkg_length_len + name_len .. 2 + pkg_length]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    let selector = FieldSelector::Region(name.val.get_as_string()?);
 
-    Ok((NamedObj::DefField {name, flags, field_list}, 2 + pkg_length))
+    parse_field_list(&data[3 + pkg_length_len + name.len .. 2 + pkg_length], ctx, selector, &mut flags)?;
+
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + pkg_length
+    })
 }
 
-fn parse_def_index_field(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_index_field(data: &[u8],
+                         ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x86);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
-    let (idx_name, idx_name_len) = match parse_name_string(
-        &data[2 + pkg_length_len .. 2 + pkg_length])  {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
+    let idx_name = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length], ctx)?;
+    let data_name = parse_name_string(&data[2 + pkg_length_len + idx_name.len .. 2 + pkg_length], ctx)?;
 
-    let (data_name, data_name_len) = match parse_name_string(
-        &data[2 + pkg_length_len + idx_name_len .. 2 + pkg_length])  {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
-    };
-
-    let flags_raw = data[2 + pkg_length_len + idx_name_len + data_name_len];
-    let flags = FieldFlags {
+    let flags_raw = data[2 + pkg_length_len + idx_name.len + data_name.len];
+    let mut flags = FieldFlags {
         access_type: match flags_raw & 0x0F {
             0 => AccessType::AnyAcc,
             1 => AccessType::ByteAcc,
             2 => AccessType::WordAcc,
             3 => AccessType::DWordAcc,
             4 => AccessType::QWordAcc,
-            5 => AccessType::BufferAcc,
-            _ => return Err(AmlInternalError::AmlParseError("IndexField - Invalid access type"))
+            5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
+            _ => return Err(AmlError::AmlParseError("IndexField - Invalid access type"))
         },
         lock_rule: (flags_raw & 0x10) == 0x10,
         update_rule: match (flags_raw & 0x60) >> 5 {
             0 => UpdateRule::Preserve,
             1 => UpdateRule::WriteAsOnes,
             2 => UpdateRule::WriteAsZeros,
-            _ => return Err(AmlInternalError::AmlParseError("IndexField - Invalid update rule"))
+            _ => return Err(AmlError::AmlParseError("IndexField - Invalid update rule"))
         }
     };
 
-    let field_list = match parse_field_list(
-        &data[3 + pkg_length_len + idx_name_len + data_name_len .. 2 + pkg_length]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_length].to_vec()), 2 + pkg_length)),
-        Err(e) => return Err(e)
+    let selector = FieldSelector::Index {
+        index_selector: idx_name.val.get_as_string()?,
+        data_selector: data_name.val.get_as_string()?
     };
 
-    Ok((NamedObj::DefIndexField {idx_name, data_name, flags, field_list}, 2 + pkg_length))
+    parse_field_list(&data[3 + pkg_length_len + idx_name.len + data_name.len .. 2 + pkg_length],
+                     ctx, selector, &mut flags)?;
+
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + pkg_length
+    })
 }
 
-fn parse_field_list(data: &[u8]) -> Result<Vec<FieldElement>, AmlInternalError> {
-    let mut terms: Vec<FieldElement> = vec!();
+fn parse_field_list(data: &[u8],
+                    ctx: &mut AmlExecutionContext,
+                    selector: FieldSelector,
+                    flags: &mut FieldFlags) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     let mut current_offset: usize = 0;
+    let mut field_offset: usize = 0;
+    let mut connection = AmlValue::Uninitialized;
 
     while current_offset < data.len() {
-        let (res, len) = match parse_field_element(&data[current_offset..]) {
-            Ok(r) => r,
-            Err(AmlInternalError::AmlInvalidOpCode) =>
-                return Err(AmlInternalError::AmlParseError("FieldList - no valid field")),
-            Err(e) => return Err(e)
-        };
-
-        terms.push(res);
-        current_offset += len;
+        let res = parse_field_element(&data[current_offset..], ctx, selector.clone(), &mut connection, flags, &mut field_offset)?;
+        
+        match ctx.state {
+            ExecutionState::EXECUTING => (),
+            _ => return Ok(AmlParseType {
+                val: AmlValue::None,
+                len: 0 as usize
+            })
+        }
+    
+        current_offset += res.len;
     }
 
-    Ok(terms)
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: data.len()
+    })
 }
 
-fn parse_field_element(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
-    parser_selector! {
-        data,
-        parse_named_field,
-        parse_reserved_field,
-        parse_access_field,
-        parse_connect_field
+fn parse_field_element(data: &[u8],
+                       ctx: &mut AmlExecutionContext,
+                       selector: FieldSelector,
+                       connection: &mut AmlValue,
+                       flags: &mut FieldFlags,
+                       offset: &mut usize) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    let length = if let Ok(field) = parse_named_field(data, ctx) {
+        let local_scope_string = get_namespace_string(ctx.scope.clone(), AmlValue::String(field.val.name.clone()))?;
+        
+        ctx.add_to_namespace(local_scope_string, AmlValue::FieldUnit(FieldUnit {
+            selector: selector.clone(),
+            connection: Box::new(connection.clone()),
+            flags: flags.clone(),
+            offset: offset.clone(),
+            length: field.val.length
+        }))?;
+
+        *offset += field.val.length;
+        field.len
+    } else if let Ok(field) = parse_reserved_field(data, ctx) {
+        *offset += field.val;
+        field.len
+    } else if let Ok(field) = parse_access_field(data, ctx) {
+        match field.val.access_type {
+            AccessType::BufferAcc(_) =>
+                flags.access_type = AccessType::BufferAcc(field.val.access_attrib.clone()),
+            ref a => flags.access_type = a.clone()
+        }
+        
+        field.len
+    } else if let Ok(field) = parse_connect_field(data, ctx) {
+        *connection = field.val.clone();
+        field.len
+    } else {
+        return Err(AmlError::AmlInvalidOpCode);
     };
-
-    Err(AmlInternalError::AmlInvalidOpCode)
+    
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: length
+    })
 }
 
-fn parse_named_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
+fn parse_named_field(data: &[u8],
+                     ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<NamedField>, AmlError> {
     let (name_seg, name_seg_len) = parse_name_seg(&data[0..4])?;
     let name = match String::from_utf8(name_seg) {
         Ok(s) => s,
-        Err(_) => return Err(AmlInternalError::AmlParseError("NamedField - invalid name"))
+        Err(_) => return Err(AmlError::AmlParseError("NamedField - invalid name"))
     };
     let (length, length_len) = parse_pkg_length(&data[4..])?;
 
-    Ok((FieldElement::NamedField {name, length}, 4 + length_len))
+    Ok(AmlParseTypeGeneric {
+        val: NamedField { name, length },
+        len: name_seg_len + length_len
+    })
 }
 
-fn parse_reserved_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
+fn parse_reserved_field(data: &[u8],
+                        ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<usize>, AmlError> {
     parser_opcode!(data, 0x00);
 
     let (length, length_len) = parse_pkg_length(&data[1..])?;
-    Ok((FieldElement::ReservedField {length}, 1 + length_len))
+    Ok(AmlParseTypeGeneric {
+        val: length,
+        len: 1 + length_len
+    })
 }
 
-fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
+fn parse_access_field(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<AccessField>, AmlError> {
     parser_opcode!(data, 0x01, 0x03);
 
     let flags_raw = data[1];
@@ -613,8 +709,8 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
         2 => AccessType::WordAcc,
         3 => AccessType::DWordAcc,
         4 => AccessType::QWordAcc,
-        5 => AccessType::BufferAcc,
-        _ => return Err(AmlInternalError::AmlParseError("AccessField - Invalid access type"))
+        5 => AccessType::BufferAcc(AccessAttrib::AttribByte),
+        _ => return Err(AmlError::AmlParseError("AccessField - Invalid access type"))
     };
 
     let access_attrib = match (flags_raw & 0xC0) >> 6 {
@@ -629,155 +725,252 @@ fn parse_access_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalE
             0x0D => AccessAttrib::AttribBlockProcessCall,
             0x0E => AccessAttrib::AttribRawBytes(data[3]),
             0x0F => AccessAttrib::AttribRawProcessBytes(data[3]),
-            _ => return Err(AmlInternalError::AmlParseError("AccessField - Invalid access attrib"))
+            _ => return Err(AmlError::AmlParseError("AccessField - Invalid access attrib"))
         },
         1 => AccessAttrib::AttribBytes(data[2]),
         2 => AccessAttrib::AttribRawBytes(data[2]),
         3 => AccessAttrib::AttribRawProcessBytes(data[2]),
-        _ => return Err(AmlInternalError::AmlParseError("AccessField - Invalid access attrib"))
+        _ => return Err(AmlError::AmlParseError("AccessField - Invalid access attrib"))
             // This should never happen but the compiler bitches if I don't cover this
     };
 
-    return Ok((FieldElement::AccessField {access_type, access_attrib}, if data[0] == 0x01 {
-        3 as usize
-    } else {
-        4 as usize
-    }))
+    Ok(AmlParseTypeGeneric {
+        val: AccessField { access_type, access_attrib },
+        len: if data[0] == 0x01 {
+            3 as usize
+        } else {
+            4 as usize
+        }
+    })
 }
 
-fn parse_connect_field(data: &[u8]) -> Result<(FieldElement, usize), AmlInternalError> {
+fn parse_connect_field(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x02);
 
-    match parse_def_buffer(&data[1..]) {
-        Ok((buf, buf_len)) => return Ok((FieldElement::ConnectFieldBufferData(buf), buf_len + 1)),
-        Err(AmlInternalError::AmlInvalidOpCode) => (),
-        Err(e) => return Err(e)
-    }
-
-    match parse_name_string(&data[1..]) {
-        Ok((name, name_len)) => Ok((FieldElement::ConnectFieldNameString(name), name_len + 1)),
-        Err(AmlInternalError::AmlInvalidOpCode) => Err(AmlInternalError::AmlParseError("ConnectField - unable to match field")),
-        Err(e) => Err(e)
+    if let Ok(e) = parse_def_buffer(&data[1..], ctx) {
+        Ok(AmlParseType {
+            val: e.val,
+            len: e.len + 1
+        })
+    } else {
+        let name = parse_name_string(&data[1..], ctx)?;
+        Ok(AmlParseType {
+            val: AmlValue::Alias(name.val.get_as_string()?),
+            len: name.len + 1
+        })
     }
 }
 
-fn parse_def_method(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_method(data: &[u8],
+                    ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode!(data, 0x14);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[1..])?;
-    let (name, name_len) = match parse_name_string(&data[1 + pkg_len_len..]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len)),
-        Err(e) => return Err(e)
-    };
-    let flags = data[1 + pkg_len_len + name_len];
+    let name = parse_name_string(&data[1 + pkg_len_len..], ctx)?;
+    let flags = data[1 + pkg_len_len + name.len];
 
     let arg_count = flags & 0x07;
     let serialized = (flags & 0x08) == 0x08;
     let sync_level = flags & 0xF0 >> 4;
 
-    let term_list = match parse_term_list(&data[2 + pkg_len_len + name_len .. 1 + pkg_len]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 1 + pkg_len].to_vec()), 1 + pkg_len)),
-        Err(e) => return Err(e)
-    };
+    let term_list = &data[2 + pkg_len_len + name.len .. 1 + pkg_len];
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    ctx.add_to_namespace(local_scope_string, AmlValue::Method(Method {
+        arg_count,
+        serialized,
+        sync_level,
+        term_list: term_list.to_vec()
+    }))?;
 
-    Ok((NamedObj::DefMethod {
-        name: name,
-        method: Method {
-            arg_count,
-            serialized,
-            sync_level,
-            term_list
-        }
-    }, pkg_len + 1))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 1 + pkg_len
+    })
 }
 
-fn parse_def_mutex(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_mutex(data: &[u8],
+                   ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x01);
 
-    let (name, name_len) = match parse_name_string(&data[2 ..]) {
-        Ok(p) => p,
-        Err(e) => return Err(e),
-    };
-    let flags = data[2 + name_len];
+    let name = parse_name_string(&data[2 ..], ctx)?;
+    let flags = data[2 + name.len];
     let sync_level = flags & 0x0F;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    ctx.add_to_namespace(local_scope_string, AmlValue::Mutex((sync_level, None)))?;
 
-    Ok((NamedObj::DefMutex {name, sync_level}, name_len + 3))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 3 + name.len
+    })
 }
 
-fn parse_def_power_res(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_power_res(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    // TODO: How to handle local context deferreds
     parser_opcode_extended!(data, 0x84);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
-    let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
-        Err(e) => return Err(e)
-    };
+    let name = parse_name_string(&data[2 + pkg_len_len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
-    let system_level = data[2 + pkg_len_len + name_len];
-    let resource_order: u16 = (data[3 + pkg_len_len + name_len] as u16) +
-        ((data[4 + pkg_len_len + name_len] as u16) << 8);
+    let system_level = data[2 + pkg_len_len + name.len];
+    let resource_order: u16 = (data[3 + pkg_len_len + name.len] as u16) +
+        ((data[4 + pkg_len_len + name.len] as u16) << 8);
 
-    let obj_list = match parse_object_list(&data[5 + pkg_len_len + name_len .. 2 + pkg_len]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
-        Err(e) => return Err(e)
-    };
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
+    parse_object_list(&data[5 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::PowerResource(PowerResource {
+        system_level,
+        resource_order,
+        obj_list: local_ctx.namespace_delta.clone()
+    }))?;
 
-    Ok((NamedObj::DefPowerRes {name, system_level, resource_order, obj_list}, 2 + pkg_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + pkg_len
+    })
 }
 
-fn parse_def_processor(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
+fn parse_def_processor(data: &[u8],
+                       ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
     parser_opcode_extended!(data, 0x83);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
-    let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
-        Err(e) => return Err(e)
-    };
+    let name = parse_name_string(&data[2 + pkg_len_len..], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+    
+    let proc_id = data[2 + pkg_len_len + name.len];
+    let p_blk_addr: u32 = (data[3 + pkg_len_len + name.len] as u32) +
+        ((data[4 + pkg_len_len + name.len] as u32) << 8) +
+        ((data[5 + pkg_len_len + name.len] as u32) << 16) +
+        ((data[6 + pkg_len_len + name.len] as u32) << 24);
+    let p_blk_len = data[7 + pkg_len_len + name.len];
 
-    let proc_id = data[2 + pkg_len_len + name_len];
-    let p_blk_addr: u32 = (data[3 + pkg_len_len + name_len] as u32) +
-        ((data[4 + pkg_len_len + name_len] as u32) << 8) +
-        ((data[5 + pkg_len_len + name_len] as u32) << 16) +
-        ((data[6 + pkg_len_len + name_len] as u32) << 24);
-    let p_blk_len = data[7 + pkg_len_len + name_len];
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
+    parse_object_list(&data[8 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
 
-    let obj_list = match parse_object_list(&data[8 + pkg_len_len + name_len .. 2 + pkg_len]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
-        Err(e) => return Err(e)
-    };
+    ctx.add_to_namespace(local_scope_string, AmlValue::Processor(Processor {
+        proc_id: proc_id,
+        p_blk: if p_blk_len > 0 { Some(p_blk_addr) } else { None },
+        obj_list: local_ctx.namespace_delta.clone(),
+        notify_methods: BTreeMap::new()
+    }))?;
 
-    Ok((NamedObj::DefProcessor {name, proc_id, p_blk_addr, p_blk_len, obj_list}, 2 + pkg_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + pkg_len
+    })
 }
 
-fn parse_def_thermal_zone(data: &[u8]) -> Result<(NamedObj, usize), AmlInternalError> {
-    parser_opcode_extended!(data, 0x85);
-
+fn parse_def_thermal_zone(data: &[u8],
+                          ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode_extended!(data, 0x85);    
+    
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
-    let (name, name_len) = match parse_name_string(&data[2 + pkg_len_len..]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
-        Err(e) => return Err(e)
+    let name = parse_name_string(&data[2 + pkg_len_len .. 2 + pkg_len], ctx)?;
+    
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
+
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());    
+    parse_object_list(&data[2 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
+    
+    ctx.add_to_namespace(local_scope_string, AmlValue::ThermalZone(ThermalZone {
+        obj_list: local_ctx.namespace_delta.clone(),
+        notify_methods: BTreeMap::new()
+    }))?;
+
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 2 + pkg_len
+    })
+}
+
+fn parse_def_external(data: &[u8],
+                      ctx: &mut AmlExecutionContext) -> ParseResult {
+    match ctx.state {
+        ExecutionState::EXECUTING => (),
+        _ => return Ok(AmlParseType {
+            val: AmlValue::None,
+            len: 0 as usize
+        })
+    }
+    
+    parser_opcode_extended!(data, 0x15);
+
+    let object_name = parse_name_string(&data[1..], ctx)?;
+    let object_type = data[1 + object_name.len];
+    let argument_count = data[2 + object_name.len];
+
+    let local_scope_string = get_namespace_string(ctx.scope.clone(), object_name.val)?;
+
+    let obj = match object_type {
+        8 => AmlValue::Method(Method {
+            arg_count: argument_count,
+            serialized: false,
+            sync_level: 0,
+            term_list: vec!()
+        }),
+        _ => AmlValue::Uninitialized
     };
 
-    let obj_list = match parse_object_list(&data[2 + pkg_len_len + name_len .. 2 + pkg_len]) {
-        Ok(p) => p,
-        Err(AmlInternalError::AmlDeferredLoad) =>
-            return Ok((NamedObj::DeferredLoad(data[0 .. 2 + pkg_len].to_vec()), 2 + pkg_len)),
-        Err(e) => return Err(e)
-    };
+    ctx.add_to_namespace(local_scope_string, obj)?;
 
-    Ok((NamedObj::DefThermalZone {name, obj_list}, 2 + pkg_len))
+    Ok(AmlParseType {
+        val: AmlValue::None,
+        len: 3 + object_name.len
+    })
 }
