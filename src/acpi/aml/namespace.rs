@@ -12,7 +12,7 @@ use super::namedobj::{ RegionSpace, FieldFlags };
 use super::parser::{AmlExecutionContext, ExecutionState};
 use super::AmlError;
 
-use acpi::SdtSignature;
+use acpi::{SdtSignature, get_signature_from_index, get_index_from_signature};
 
 #[derive(Clone)]
 pub enum FieldSelector {
@@ -255,9 +255,13 @@ impl AmlValue {
     }
 
     pub fn get_as_ddb_handle(&self) -> Result<(Vec<String>, SdtSignature), AmlError> {
-        // TODO: Integer conversion
         match *self {
             AmlValue::DDBHandle(ref v) => Ok(v.clone()),
+            AmlValue::Integer(i) => if let Some(sig) = get_signature_from_index(i as usize) {
+                Ok((vec!(), sig))
+            } else {
+                Err(AmlError::AmlValueError)
+            },
             _ => Err(AmlError::AmlValueError)
         }
     }
@@ -316,6 +320,11 @@ impl AmlValue {
                 }
 
                 Ok(i)
+            },
+            AmlValue::DDBHandle(ref v) => if let Some(idx) = get_index_from_signature(v.1.clone()) {
+                Ok(idx as u64)
+            } else {
+                Err(AmlError::AmlValueError)
             },
             AmlValue::String(ref s) => {
                 let mut s = s.clone()[0..8].to_string().to_uppercase();

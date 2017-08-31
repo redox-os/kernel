@@ -227,6 +227,33 @@ pub fn load_table(signature: SdtSignature) {
     }
 }
 
+pub fn get_signature_from_index(index: usize) -> Option<SdtSignature> {
+    if let Some(ref order) = *(SDT_ORDER.read()) {
+        if index < order.len() {
+            Some(order[index].clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+pub fn get_index_from_signature(signature: SdtSignature) -> Option<usize> {
+    if let Some(ref order) = *(SDT_ORDER.read()) {
+        let mut i = order.len();
+        while i > 0 {
+            i -= 1;
+
+            if order[i] == signature {
+                return Some(i);
+            }
+        }
+    }
+
+    None
+}
+
 pub struct Acpi {
     pub fadt: RwLock<Option<Fadt>>,
     pub namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
