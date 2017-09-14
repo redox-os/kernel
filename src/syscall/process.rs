@@ -225,13 +225,12 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                         tls.mem.size(),
                         entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
                         true
-                    )
+                    ),
+                    offset: tls.offset,
                 };
 
                 unsafe {
-                    intrinsics::copy(tls.master.get() as *const u8,
-                                    new_tls.mem.start_address().get() as *mut u8,
-                                    tls.file_size);
+                    new_tls.load();
                 }
 
                 new_tls.mem.remap(tls.mem.flags());
@@ -668,15 +667,18 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                                 entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
                                 true
                             );
-
-                            unsafe { *(::USER_TCB_OFFSET as *mut usize) = ::USER_TLS_OFFSET + segment.p_memsz as usize; }
+                            let rounded_size = ((segment.p_memsz + 4095)/4096) * 4096;
+                            let rounded_offset = rounded_size - segment.p_memsz;
+                            let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
+                            unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
 
                             context.image.push(memory.to_shared());
 
                             tls_option = Some((
                                 VirtualAddress::new(segment.p_vaddr as usize),
                                 segment.p_filesz as usize,
-                                segment.p_memsz as usize
+                                rounded_size as usize,
+                                rounded_offset as usize,
                             ));
                         }
                     }
@@ -706,8 +708,8 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     ));
 
                     // Map TLS
-                    if let Some((master, file_size, size)) = tls_option {
-                        let tls = context::memory::Tls {
+                    if let Some((master, file_size, size, offset)) = tls_option {
+                        let mut tls = context::memory::Tls {
                             master: master,
                             file_size: file_size,
                             mem: context::memory::Memory::new(
@@ -715,14 +717,12 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                                 size,
                                 entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
                                 true
-                            )
+                            ),
+                            offset: offset,
                         };
 
                         unsafe {
-                            // Copy file data
-                            intrinsics::copy(master.get() as *const u8,
-                                    tls.mem.start_address().get() as *mut u8,
-                                    file_size);
+                            tls.load();
                         }
 
                         context.tls = Some(tls);
