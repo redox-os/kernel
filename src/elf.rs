@@ -2,8 +2,6 @@
 
 use collections::String;
 
-use core::str;
-
 use goblin::elf::section_header::SHT_SYMTAB;
 
 #[cfg(target_arch = "x86")]

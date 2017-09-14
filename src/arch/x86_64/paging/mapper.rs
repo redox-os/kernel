@@ -98,9 +98,9 @@ impl Mapper {
 
     /// Map a page to a frame
     pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) -> MapperFlush {
-        let mut p3 = self.p4_mut().next_table_create(page.p4_index());
-        let mut p2 = p3.next_table_create(page.p3_index());
-        let mut p1 = p2.next_table_create(page.p2_index());
+        let p3 = self.p4_mut().next_table_create(page.p4_index());
+        let p2 = p3.next_table_create(page.p3_index());
+        let p1 = p2.next_table_create(page.p2_index());
 
         assert!(p1[page.p1_index()].is_unused(),
             "{:X}: Set to {:X}: {:?}, requesting {:X}: {:?}",
@@ -119,9 +119,9 @@ impl Mapper {
 
     /// Update flags for a page
     pub fn remap(&mut self, page: Page, flags: EntryFlags) -> MapperFlush {
-        let mut p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("failed to remap: no p3");
-        let mut p2 = p3.next_table_mut(page.p3_index()).expect("failed to remap: no p2");
-        let mut p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
+        let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("failed to remap: no p3");
+        let p2 = p3.next_table_mut(page.p3_index()).expect("failed to remap: no p2");
+        let p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
         let frame = p1[page.p1_index()].pointed_frame().expect("failed to remap: not mapped");
         p1[page.p1_index()].set(frame, flags | entry::PRESENT);
         MapperFlush::new(page)

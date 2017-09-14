@@ -4,20 +4,10 @@ use memory::{allocate_frames, Frame};
 use paging::{entry, ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 
 use super::sdt::Sdt;
-use super::{ACPI_TABLE, SDT_POINTERS, AP_STARTUP, TRAMPOLINE, find_sdt, load_table, get_sdt_signature};
+use super::{AP_STARTUP, TRAMPOLINE, find_sdt, load_table, get_sdt_signature};
 
 use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
-use collections::btree_map::BTreeMap;
-use collections::string::String;
-use collections::vec::Vec;
-use alloc::boxed::Box;
-
-use syscall::io::{Io, Pio};
-
-use spin::RwLock;
-
-use stop::kstop;
 
 use device::local_apic::LOCAL_APIC;
 use interrupt;
@@ -41,7 +31,7 @@ impl Madt {
             println!("Unable to find MADT");
             return;
         };
-        
+
         if let Some(madt) = madt {
             println!("  APIC: {:>08X}: {}", madt.local_address, madt.flags);
 
@@ -148,7 +138,7 @@ impl Madt {
             }
         }
     }
-    
+
     pub fn new(sdt: &'static Sdt) -> Option<Madt> {
         if &sdt.signature == b"APIC" && sdt.data_len() >= 8 { //Not valid if no local address and flags
             let local_address = unsafe { *(sdt.data_address() as *const u32) };

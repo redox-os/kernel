@@ -282,7 +282,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         // If not cloning files, dup to get a new number from scheme
         // This has to be done outside the context lock to prevent deadlocks
         if flags & CLONE_FILES == 0 {
-            for (_fd, mut file_option) in files.lock().iter_mut().enumerate() {
+            for (_fd, file_option) in files.lock().iter_mut().enumerate() {
                 let new_file_option = if let Some(ref file) = *file_option {
                     Some(FileDescriptor {
                         description: Arc::clone(&file.description),
@@ -402,9 +402,9 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 // Copy percpu mapping
                 for cpu_id in 0..::cpu_count() {
                     extern {
-                        /// The starting byte of the thread data segment
+                        // The starting byte of the thread data segment
                         static mut __tdata_start: u8;
-                        /// The ending byte of the thread BSS segment
+                        // The ending byte of the thread BSS segment
                         static mut __tbss_end: u8;
                     }
 
@@ -840,20 +840,20 @@ pub fn exit(status: usize) -> ! {
             context.id
         };
 
-        /// Files must be closed while context is valid so that messages can be passed
+        // Files must be closed while context is valid so that messages can be passed
         for (fd, file_option) in close_files.drain(..).enumerate() {
             if let Some(file) = file_option {
                 let _ = file.close(FileHandle::from(fd));
             }
         }
 
-        /// PPID must be grabbed after close, as context switches could change PPID if parent exits
+        // PPID must be grabbed after close, as context switches could change PPID if parent exits
         let ppid = {
             let context = context_lock.read();
             context.ppid
         };
 
-        /// Transfer child processes to parent
+        // Transfer child processes to parent
         {
             let contexts = context::contexts();
             for (_id, context_lock) in contexts.iter() {

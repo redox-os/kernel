@@ -20,6 +20,6 @@ pub fn parse_pkg_length(data: &[u8]) -> Result<(usize, usize), AmlError> {
         pkg_len += (data[1 + current_byte] as u32 * 16 * (256 as u32).pow(current_byte as u32)) as usize;
         current_byte += 1;
     }
-    
+
     return Ok((pkg_len, count_bytes + 1));
 }

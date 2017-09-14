@@ -13,11 +13,11 @@ pub trait Rxsdt {
             get_sdt(sdt, active_table);
         }
     }
-            
+
     fn find(&self, signature: [u8; 4], oem_id: [u8; 6], oem_table_id: [u8; 8]) -> Option<&'static Sdt> {
         for sdt in self.iter() {
             let sdt = unsafe { &*(sdt as *const Sdt) };
-            
+
             if sdt.match_pattern(signature, oem_id, oem_table_id) {
                 return Some(sdt);
             }

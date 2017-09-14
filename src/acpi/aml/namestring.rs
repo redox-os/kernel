@@ -16,7 +16,7 @@ pub fn parse_name_string(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     let mut characters: Vec<u8> = vec!();
     let mut starting_index: usize = 0;
 
@@ -127,7 +127,7 @@ fn parse_multi_name_path(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
     let mut current_seg = 0;
     let mut characters: Vec<u8> = vec!();
     let mut multi_len: usize = 2;
-    
+
     while current_seg < seg_count {
         match parse_name_seg(&data[(current_seg as usize * 4) + 2 ..]) {
             Ok((mut v, len)) => {
@@ -156,7 +156,7 @@ pub fn parse_super_name(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_simple_name,
@@ -176,7 +176,7 @@ fn parse_debug_obj(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x31);
 
     Ok(AmlParseType {
@@ -194,7 +194,7 @@ pub fn parse_simple_name(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_name_string,
@@ -214,7 +214,7 @@ pub fn parse_target(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     if data[0] == 0x00 {
         Ok(AmlParseType {
             val: AmlValue::None,

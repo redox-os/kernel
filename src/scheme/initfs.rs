@@ -90,7 +90,7 @@ impl Scheme for InitFsScheme {
 
     fn read(&self, id: usize, buffer: &mut [u8]) -> Result<usize> {
         let mut handles = self.handles.write();
-        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let mut i = 0;
         while i < buffer.len() && handle.seek < handle.data.len() {
@@ -104,7 +104,7 @@ impl Scheme for InitFsScheme {
 
     fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
         let mut handles = self.handles.write();
-        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         handle.seek = match whence {
             SEEK_SET => cmp::min(handle.data.len(), pos),

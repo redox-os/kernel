@@ -3,7 +3,6 @@
 use alloc::arc::Arc;
 use spin::RwLock;
 use scheme::{self, SchemeId};
-use core::mem;
 use syscall::error::{Result, Error, EBADF};
 use scheme::FileHandle;
 use context;

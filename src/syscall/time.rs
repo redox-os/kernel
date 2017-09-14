@@ -32,7 +32,7 @@ pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize
 
     unsafe { context::switch(); }
 
-    if let Some(mut rem) = rem_opt {
+    if let Some(rem) = rem_opt {
         //TODO let current = time::monotonic();
         rem.tv_sec = 0;
         rem.tv_nsec = 0;

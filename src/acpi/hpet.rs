@@ -6,7 +6,7 @@ use memory::Frame;
 use paging::{entry, ActivePageTable, PhysicalAddress, Page, VirtualAddress};
 
 use super::sdt::Sdt;
-use super::{ACPI_TABLE, SDT_POINTERS, get_sdt, find_sdt, load_table, get_sdt_signature};
+use super::{ACPI_TABLE, find_sdt, load_table, get_sdt_signature};
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -44,15 +44,15 @@ impl Hpet {
             println!("Unable to find HPET");
             return;
         };
-        
+
         if let Some(hpet) = hpet {
             println!("  HPET: {:X}", hpet.hpet_number);
-            
+
             let mut hpet_t = ACPI_TABLE.hpet.write();
             *hpet_t = Some(hpet);
         }
     }
-    
+
     pub fn new(sdt: &'static Sdt, active_table: &mut ActivePageTable) -> Option<Hpet> {
         if &sdt.signature == b"HPET" && sdt.length as usize >= mem::size_of::<Hpet>() {
             let s = unsafe { ptr::read((sdt as *const Sdt) as *const Hpet) };
@@ -71,7 +71,7 @@ impl GenericAddressStructure {
         let result = active_table.map_to(page, frame, entry::PRESENT | entry::WRITABLE | entry::NO_EXECUTE);
         result.flush(active_table);
     }
-    
+
     pub unsafe fn read_u64(&self, offset: usize) -> u64{
         volatile_load((self.address as usize + offset) as *const u64)
     }

@@ -1,4 +1,4 @@
-use memory::{allocate_frames, Frame};
+use memory::Frame;
 use paging::{entry, ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 
 /// RSDP
@@ -18,10 +18,10 @@ pub struct RSDP {
 
 impl RSDP {
     /// Search for the RSDP
-    pub fn get_rsdp(active_table: &mut ActivePageTable) -> Option<RSDP> {    
+    pub fn get_rsdp(active_table: &mut ActivePageTable) -> Option<RSDP> {
         let start_addr = 0xE0000;
         let end_addr = 0xFFFFF;
-        
+
         // Map all of the ACPI RSDP space
         {
             let start_frame = Frame::containing_address(PhysicalAddress::new(start_addr));
@@ -35,7 +35,7 @@ impl RSDP {
 
         RSDP::search(start_addr, end_addr)
     }
-    
+
     fn search(start_addr: usize, end_addr: usize) -> Option<RSDP> {
         for i in 0 .. (end_addr + 1 - start_addr)/16 {
             let rsdp = unsafe { &*((start_addr + i * 16) as *const RSDP) };

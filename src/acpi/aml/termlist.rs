@@ -19,12 +19,12 @@ pub fn parse_term_list(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
         let res = parse_term_obj(&data[current_offset..], ctx)?;
-        
+
         match ctx.state {
             ExecutionState::EXECUTING => (),
             _ => return Ok(AmlParseType {
@@ -32,7 +32,7 @@ pub fn parse_term_list(data: &[u8],
                 len: data.len()
             })
         }
-    
+
         current_offset += res.len;
     }
 
@@ -51,7 +51,7 @@ pub fn parse_term_arg(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_local_obj,
@@ -72,12 +72,12 @@ pub fn parse_object_list(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     let mut current_offset: usize = 0;
 
     while current_offset < data.len() {
         let res = parse_object(&data[current_offset..], ctx)?;
-        
+
         match ctx.state {
             ExecutionState::EXECUTING => (),
             _ => return Ok(AmlParseType {
@@ -85,7 +85,7 @@ pub fn parse_object_list(data: &[u8],
                 len: data.len()
             })
         }
-    
+
         current_offset += res.len;
     }
 
@@ -104,7 +104,7 @@ fn parse_object(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_namespace_modifier,
@@ -123,7 +123,7 @@ pub fn parse_method_invocation(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     let name = parse_name_string(data, ctx)?;
     let method = ctx.get(name.val.clone())?;
 
@@ -131,15 +131,15 @@ pub fn parse_method_invocation(data: &[u8],
         AmlValue::None => return Err(AmlError::AmlDeferredLoad),
         _ => method.get_as_method()?
     };
-    
+
     let mut cur = 0;
     let mut params: Vec<AmlValue> = vec!();
 
     let mut current_offset = name.len;
-    
+
     while cur < method.arg_count {
         let res = parse_term_arg(&data[current_offset..], ctx)?;
-        
+
         current_offset += res.len;
         cur += 1;
 
@@ -161,7 +161,7 @@ fn parse_term_obj(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_namespace_modifier,

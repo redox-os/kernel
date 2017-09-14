@@ -251,7 +251,7 @@ impl Context {
     /// Return the file descriptor number or None if no slot was found
     pub fn add_file_min(&self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
         let mut files = self.files.lock();
-        for (i, mut file_option) in files.iter_mut().enumerate() {
+        for (i, file_option) in files.iter_mut().enumerate() {
             if file_option.is_none() && i >= min {
                 *file_option = Some(file);
                 return Some(FileHandle::from(i));

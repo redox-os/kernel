@@ -4,7 +4,7 @@ use collections::btree_map::BTreeMap;
 
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };
-use super::namespace::{AmlValue, ObjectReference, FieldSelector, Method, get_namespace_string,
+use super::namespace::{AmlValue, FieldSelector, Method, get_namespace_string,
                        Accessor, BufferField, FieldUnit, Processor, PowerResource, OperationRegion,
                        Device, ThermalZone};
 use super::namestring::{parse_name_string, parse_name_seg};
@@ -86,7 +86,7 @@ pub fn parse_named_obj(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_def_bank_field,
@@ -122,12 +122,12 @@ fn parse_def_bank_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x87);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let data = &data[2 + pkg_length_len .. 2 + pkg_length];
-    
+
     let region_name = parse_name_string(data, ctx)?;
     let bank_name = parse_name_string(&data[2 + pkg_length_len + region_name.len .. 2 + pkg_length], ctx)?;
 
@@ -177,15 +177,15 @@ fn parse_def_create_bit_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x8D);
 
     let source_buf = parse_term_arg(&data[2..], ctx)?;
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
@@ -207,15 +207,15 @@ fn parse_def_create_byte_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x8C);
 
     let source_buf = parse_term_arg(&data[2..], ctx)?;
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
@@ -237,15 +237,15 @@ fn parse_def_create_word_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x8B);
 
     let source_buf = parse_term_arg(&data[2..], ctx)?;
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
@@ -267,15 +267,15 @@ fn parse_def_create_dword_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x8A);
 
     let source_buf = parse_term_arg(&data[2..], ctx)?;
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
@@ -297,15 +297,15 @@ fn parse_def_create_qword_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x8F);
 
     let source_buf = parse_term_arg(&data[2..], ctx)?;
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let name = parse_name_string(&data[1 + source_buf.len + bit_index.len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
@@ -327,22 +327,22 @@ fn parse_def_create_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x13);
 
     let source_buf = parse_term_arg(&data[2..], ctx)?;
     let bit_index = parse_term_arg(&data[2 + source_buf.len..], ctx)?;
     let num_bits = parse_term_arg(&data[2 + source_buf.len + bit_index.len..], ctx)?;
     let name = parse_name_string(&data[2 + source_buf.len + bit_index.len + num_bits.len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(num_bits.val)
     }))?;
-    
+
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 2 + name.len + source_buf.len + bit_index.len + num_bits.len
@@ -358,7 +358,7 @@ fn parse_def_data_region(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: Find the actual offset and length, once table mapping is implemented
     parser_opcode_extended!(data, 0x88);
 
@@ -374,8 +374,8 @@ fn parse_def_data_region(data: &[u8],
         offset: Box::new(AmlValue::IntegerConstant(0)),
         len: Box::new(AmlValue::IntegerConstant(0)),
         accessor: Accessor {
-            read: |x| 0 as u64,
-            write: |x, y| ()
+            read: |_x| 0 as u64,
+            write: |_x, _y| ()
         },
         accessed_by: None
     }))?;
@@ -395,11 +395,11 @@ fn parse_def_event(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x02);
 
     let name = parse_name_string(&data[2..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     ctx.add_to_namespace(local_scope_string, AmlValue::Event(0))?;
 
@@ -418,16 +418,16 @@ fn parse_def_device(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: How to handle local context deferreds
     parser_opcode_extended!(data, 0x82);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_length_len .. 2 + pkg_length], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
-    
+
     parse_object_list(&data[2 + pkg_length_len + name.len .. 2 + pkg_length], &mut local_ctx)?;
 
     ctx.add_to_namespace(local_scope_string, AmlValue::Device(Device {
@@ -450,7 +450,7 @@ fn parse_def_op_region(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x80);
 
     let name = parse_name_string(&data[2..], ctx)?;
@@ -478,8 +478,8 @@ fn parse_def_op_region(data: &[u8],
         offset: Box::new(offset.val),
         len: Box::new(len.val),
         accessor: Accessor {
-            read: |x| 0 as u64,
-            write: |x, y| ()
+            read: |_x| 0 as u64,
+            write: |_x, _y| ()
         },
         accessed_by: None
     }))?;
@@ -499,7 +499,7 @@ fn parse_def_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x81);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
@@ -544,7 +544,7 @@ fn parse_def_index_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x86);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[2..])?;
@@ -596,14 +596,14 @@ fn parse_field_list(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     let mut current_offset: usize = 0;
     let mut field_offset: usize = 0;
     let mut connection = AmlValue::Uninitialized;
 
     while current_offset < data.len() {
         let res = parse_field_element(&data[current_offset..], ctx, selector.clone(), &mut connection, flags, &mut field_offset)?;
-        
+
         match ctx.state {
             ExecutionState::EXECUTING => (),
             _ => return Ok(AmlParseType {
@@ -611,7 +611,7 @@ fn parse_field_list(data: &[u8],
                 len: 0 as usize
             })
         }
-    
+
         current_offset += res.len;
     }
 
@@ -634,10 +634,10 @@ fn parse_field_element(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     let length = if let Ok(field) = parse_named_field(data, ctx) {
         let local_scope_string = get_namespace_string(ctx.scope.clone(), AmlValue::String(field.val.name.clone()))?;
-        
+
         ctx.add_to_namespace(local_scope_string, AmlValue::FieldUnit(FieldUnit {
             selector: selector.clone(),
             connection: Box::new(connection.clone()),
@@ -657,7 +657,7 @@ fn parse_field_element(data: &[u8],
                 flags.access_type = AccessType::BufferAcc(field.val.access_attrib.clone()),
             ref a => flags.access_type = a.clone()
         }
-        
+
         field.len
     } else if let Ok(field) = parse_connect_field(data, ctx) {
         *connection = field.val.clone();
@@ -665,15 +665,14 @@ fn parse_field_element(data: &[u8],
     } else {
         return Err(AmlError::AmlInvalidOpCode);
     };
-    
+
     Ok(AmlParseType {
         val: AmlValue::None,
         len: length
     })
 }
 
-fn parse_named_field(data: &[u8],
-                     ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<NamedField>, AmlError> {
+fn parse_named_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<NamedField>, AmlError> {
     let (name_seg, name_seg_len) = parse_name_seg(&data[0..4])?;
     let name = match String::from_utf8(name_seg) {
         Ok(s) => s,
@@ -687,8 +686,7 @@ fn parse_named_field(data: &[u8],
     })
 }
 
-fn parse_reserved_field(data: &[u8],
-                        ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<usize>, AmlError> {
+fn parse_reserved_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<usize>, AmlError> {
     parser_opcode!(data, 0x00);
 
     let (length, length_len) = parse_pkg_length(&data[1..])?;
@@ -698,8 +696,7 @@ fn parse_reserved_field(data: &[u8],
     })
 }
 
-fn parse_access_field(data: &[u8],
-                      ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<AccessField>, AmlError> {
+fn parse_access_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<AccessField>, AmlError> {
     parser_opcode!(data, 0x01, 0x03);
 
     let flags_raw = data[1];
@@ -753,7 +750,7 @@ fn parse_connect_field(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x02);
 
     if let Ok(e) = parse_def_buffer(&data[1..], ctx) {
@@ -779,7 +776,7 @@ fn parse_def_method(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x14);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[1..])?;
@@ -791,7 +788,7 @@ fn parse_def_method(data: &[u8],
     let sync_level = flags & 0xF0 >> 4;
 
     let term_list = &data[2 + pkg_len_len + name.len .. 1 + pkg_len];
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     ctx.add_to_namespace(local_scope_string, AmlValue::Method(Method {
         arg_count,
@@ -815,13 +812,13 @@ fn parse_def_mutex(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x01);
 
     let name = parse_name_string(&data[2 ..], ctx)?;
     let flags = data[2 + name.len];
     let sync_level = flags & 0x0F;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
     ctx.add_to_namespace(local_scope_string, AmlValue::Mutex((sync_level, None)))?;
 
@@ -840,13 +837,13 @@ fn parse_def_power_res(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: How to handle local context deferreds
     parser_opcode_extended!(data, 0x84);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_len_len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
     let system_level = data[2 + pkg_len_len + name.len];
@@ -855,7 +852,7 @@ fn parse_def_power_res(data: &[u8],
 
     let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
     parse_object_list(&data[5 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::PowerResource(PowerResource {
         system_level,
         resource_order,
@@ -877,14 +874,14 @@ fn parse_def_processor(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x83);
 
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_len_len..], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
-    
+
     let proc_id = data[2 + pkg_len_len + name.len];
     let p_blk_addr: u32 = (data[3 + pkg_len_len + name.len] as u32) +
         ((data[4 + pkg_len_len + name.len] as u32) << 8) +
@@ -917,17 +914,17 @@ fn parse_def_thermal_zone(data: &[u8],
             len: 0 as usize
         })
     }
-    
-    parser_opcode_extended!(data, 0x85);    
-    
+
+    parser_opcode_extended!(data, 0x85);
+
     let (pkg_len, pkg_len_len) = parse_pkg_length(&data[2..])?;
     let name = parse_name_string(&data[2 + pkg_len_len .. 2 + pkg_len], ctx)?;
-    
+
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
-    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());    
+    let mut local_ctx = AmlExecutionContext::new(local_scope_string.clone());
     parse_object_list(&data[2 + pkg_len_len + name.len .. 2 + pkg_len], &mut local_ctx)?;
-    
+
     ctx.add_to_namespace(local_scope_string, AmlValue::ThermalZone(ThermalZone {
         obj_list: local_ctx.namespace_delta.clone(),
         notify_methods: BTreeMap::new()
@@ -948,7 +945,7 @@ fn parse_def_external(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x15);
 
     let object_name = parse_name_string(&data[1..], ctx)?;

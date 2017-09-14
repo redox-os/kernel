@@ -1,5 +1,4 @@
 use core::{mem, ptr};
-use collections::string::String;
 
 use super::sdt::Sdt;
 use super::{ACPI_TABLE, SDT_POINTERS, get_sdt, find_sdt, get_sdt_signature, load_table};
@@ -97,7 +96,7 @@ impl Fadt {
             None
         }
     }
-    
+
     pub fn init(active_table: &mut ActivePageTable) {
         let fadt_sdt = find_sdt("FACP");
         let fadt = if fadt_sdt.len() == 1 {
@@ -110,7 +109,7 @@ impl Fadt {
 
         if let Some(fadt) = fadt {
             println!("  FACP: {:X}", fadt.dsdt);
-            
+
             let dsdt_sdt = get_sdt(fadt.dsdt as usize, active_table);
 
             let signature = get_sdt_signature(dsdt_sdt);

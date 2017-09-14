@@ -1,8 +1,6 @@
 //! # ACPI
 //! Code to parse the ACPI tables
 
-use core::intrinsics::{atomic_load, atomic_store};
-use core::sync::atomic::Ordering;
 use collections::btree_map::BTreeMap;
 use collections::string::String;
 use collections::vec::Vec;
@@ -14,15 +12,12 @@ use spin::RwLock;
 
 use stop::kstop;
 
-use device::local_apic::LOCAL_APIC;
-use interrupt;
-use memory::{allocate_frames, Frame};
+use memory::Frame;
 use paging::{entry, ActivePageTable, Page, PhysicalAddress, VirtualAddress};
-use start::{kstart_ap, CPU_COUNT, AP_READY};
 
-use self::dmar::{Dmar, DmarEntry};
+use self::dmar::Dmar;
 use self::fadt::Fadt;
-use self::madt::{Madt, MadtEntry};
+use self::madt::Madt;
 use self::rsdt::Rsdt;
 use self::sdt::Sdt;
 use self::xsdt::Xsdt;
@@ -30,7 +25,7 @@ use self::hpet::Hpet;
 use self::rxsdt::Rxsdt;
 use self::rsdp::RSDP;
 
-use self::aml::{is_aml_table, parse_aml_table, AmlError, AmlValue};
+use self::aml::{parse_aml_table, AmlError, AmlValue};
 
 pub mod hpet;
 mod dmar;
@@ -97,7 +92,7 @@ fn init_namespace() {
         let mut namespace = ACPI_TABLE.namespace.write();
         *namespace = Some(BTreeMap::new());
     }
-    
+
     let dsdt = find_sdt("DSDT");
     if dsdt.len() == 1 {
         print!("  DSDT");
@@ -107,7 +102,7 @@ fn init_namespace() {
         println!("Unable to find DSDT");
         return;
     };
-    
+
     let ssdts = find_sdt("SSDT");
 
     for ssdt in ssdts {
@@ -128,7 +123,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         let mut order = SDT_ORDER.write();
         *order = Some(vec!());
     }
-    
+
     // Search for RSDP
     if let Some(rsdp) = RSDP::get_rsdp(active_table) {
         let rxsdt = get_sdt(rsdp.sdt_address(), active_table);
@@ -146,12 +141,12 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
             println!("UNKNOWN RSDT OR XSDT SIGNATURE");
             return;
         };
-        
+
         rxsdt.map_all(active_table);
-        
+
         for sdt_address in rxsdt.iter() {
             let sdt = unsafe { &*(sdt_address as *const Sdt) };
-            
+
             let signature = get_sdt_signature(sdt);
             if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
                 ptrs.insert(signature, sdt);
@@ -171,7 +166,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
 pub fn set_global_s_state(state: u8) {
     if state == 5 {
         let fadt = ACPI_TABLE.fadt.read();
-        
+
         if let Some(ref fadt) = *fadt {
             let port = fadt.pm1a_control_block as u16;
             let mut val = 1 << 13;
@@ -183,10 +178,10 @@ pub fn set_global_s_state(state: u8) {
                     if let Ok(p) = s.get_as_package() {
                         let slp_typa = p[0].get_as_integer().expect("SLP_TYPa is not an integer");
                         let slp_typb = p[1].get_as_integer().expect("SLP_TYPb is not an integer");
-                        
+
                         println!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
                         val |= slp_typa as u16;
-                        
+
                         println!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
                         Pio::<u16>::new(port).write(val);
                     }
@@ -202,7 +197,7 @@ pub static SDT_ORDER: RwLock<Option<Vec<SdtSignature>>> = RwLock::new(None);
 
 pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
     let mut sdts: Vec<&'static Sdt> = vec!();
-    
+
     if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
         for (signature, sdt) in ptrs {
             if signature.0 == name {

@@ -1,4 +1,4 @@
-use core::{mem, str};
+use core::mem;
 use goblin::elf::sym;
 
 use paging::{ActivePageTable, VirtualAddress};

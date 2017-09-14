@@ -18,14 +18,14 @@ pub fn parse_data_obj(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_computational_data,
         parse_def_package,
         parse_def_var_package
     };
-    
+
     Err(AmlError::AmlInvalidOpCode)
 }
 
@@ -38,13 +38,13 @@ pub fn parse_data_ref_obj(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_data_obj,
         parse_term_arg
     };
-    
+
     match parse_super_name(data, ctx) {
         Ok(res) => match res.val {
             AmlValue::String(s) => Ok(AmlParseType {
@@ -66,7 +66,7 @@ pub fn parse_arg_obj(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     match data[0] {
         0x68 ... 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::ArgObj(data[0] - 0x68)),
@@ -85,7 +85,7 @@ pub fn parse_local_obj(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     match data[0] {
         0x68 ... 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::LocalObj(data[0] - 0x60)),
@@ -104,7 +104,7 @@ fn parse_computational_data(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     match data[0] {
         0x0A => Ok(AmlParseType {
             val: AmlValue::Integer(data[1] as u64),

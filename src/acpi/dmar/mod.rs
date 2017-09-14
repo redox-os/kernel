@@ -5,7 +5,7 @@ use self::drhd::Drhd;
 use memory::Frame;
 use paging::{entry, ActivePageTable, PhysicalAddress};
 
-use super::{ACPI_TABLE, SDT_POINTERS, get_sdt, find_sdt, load_table, get_sdt_signature};
+use super::{find_sdt, load_table, get_sdt_signature};
 
 pub mod drhd;
 
@@ -28,7 +28,7 @@ impl Dmar {
             println!("Unable to find DMAR");
             return;
         };
-        
+
         if let Some(dmar) = dmar {
             println!("  DMAR: {}: {}", dmar.addr_width, dmar.flags);
 
@@ -50,7 +50,7 @@ impl Dmar {
             }
         }
     }
-        
+
     pub fn new(sdt: &'static Sdt) -> Option<Dmar> {
         if &sdt.signature == b"DMAR" && sdt.data_len() >= 12 { //Not valid if no local address and flags
             let addr_width = unsafe { *(sdt.data_address() as *const u8) };

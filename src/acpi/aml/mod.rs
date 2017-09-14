@@ -42,7 +42,7 @@ pub fn parse_aml_table(sdt: &Sdt) -> Result<Vec<String>, AmlError> {
 pub fn parse_aml_with_scope(sdt: &Sdt, scope: String) -> Result<Vec<String>, AmlError> {
     let data = sdt.data();
     let mut ctx = AmlExecutionContext::new(scope);
-    
+
     parse_term_list(data, &mut ctx)?;
 
     Ok(ctx.namespace_delta)

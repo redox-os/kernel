@@ -4,14 +4,14 @@ use collections::vec::Vec;
 
 use super::{AmlError, parse_aml_with_scope};
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
-use super::namespace::{AmlValue, ObjectReference, OperationRegion};
+use super::namespace::{AmlValue, ObjectReference};
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_method_invocation};
 use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name};
 use super::dataobj::parse_data_ref_obj;
 
 use time::monotonic;
-use acpi::{ACPI_TABLE, SDT_POINTERS};
+use acpi::SDT_POINTERS;
 
 #[derive(Debug, Clone)]
 pub enum MatchOpcode {
@@ -32,7 +32,7 @@ pub fn parse_type2_opcode(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_def_increment,
@@ -99,7 +99,7 @@ pub fn parse_type6_opcode(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_def_deref_of,
@@ -120,7 +120,7 @@ pub fn parse_def_object_type(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x8E);
     parser_selector! {
         data, ctx,
@@ -142,7 +142,7 @@ pub fn parse_def_package(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: Handle deferred loads in here
     parser_opcode!(data, 0x12);
 
@@ -157,7 +157,7 @@ pub fn parse_def_package(data: &[u8],
             elements.push(AmlValue::Uninitialized);
         }
     }
-    
+
     Ok(AmlParseType {
         val: AmlValue::Package(elements),
         len: 1 + pkg_length
@@ -173,7 +173,7 @@ pub fn parse_def_var_package(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: Handle deferred loads in here
     parser_opcode!(data, 0x13);
 
@@ -191,7 +191,7 @@ pub fn parse_def_var_package(data: &[u8],
             elements.push(AmlValue::Uninitialized);
         }
     }
-    
+
     Ok(AmlParseType {
         val: AmlValue::Package(elements),
         len: 1 + pkg_length
@@ -207,7 +207,7 @@ fn parse_package_elements_list(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     let mut current_offset: usize = 0;
     let mut elements: Vec<AmlValue> = vec!();
 
@@ -241,14 +241,14 @@ pub fn parse_def_buffer(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x11);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let buffer_size = parse_term_arg(&data[1 + pkg_length_len..], ctx)?;
     let mut byte_list = data[1 + pkg_length_len + buffer_size.len .. 1 + pkg_length].to_vec().clone();
 
-    byte_list.truncate(buffer_size.val.get_as_integer()? as usize);        
+    byte_list.truncate(buffer_size.val.get_as_integer()? as usize);
 
     Ok(AmlParseType {
         val: AmlValue::Buffer(byte_list),
@@ -265,7 +265,7 @@ fn parse_def_ref_of(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x71);
 
     let obj = parse_super_name(&data[1..], ctx)?;
@@ -279,7 +279,7 @@ fn parse_def_ref_of(data: &[u8],
         AmlValue::ObjectReference(ref o) => o.clone(),
         _ => return Err(AmlError::AmlValueError)
     };
-    
+
     Ok(AmlParseType {
         val: AmlValue::ObjectReference(res),
         len: 1 + obj.len
@@ -295,7 +295,7 @@ fn parse_def_deref_of(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x83);
 
     let obj = parse_term_arg(&data[1..], ctx)?;
@@ -319,7 +319,7 @@ fn parse_def_acquire(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x23);
 
     let obj = parse_super_name(&data[1..], ctx)?;
@@ -341,7 +341,7 @@ fn parse_def_acquire(data: &[u8],
             } else {
                 let (seconds, nanoseconds) = monotonic();
                 let current_time_ns = nanoseconds + (seconds * 1000000000);
-                
+
                 if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
                     return Ok(AmlParseType {
                         val: AmlValue::Integer(1),
@@ -362,15 +362,15 @@ fn parse_def_increment(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x75);
 
     let obj = parse_super_name(&data[1..], ctx)?;
-    
-    let mut namespace = ctx.prelock();
+
+    let mut _namespace = ctx.prelock();
     let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? + 1);
     ctx.modify(obj.val, value.clone());
-    
+
     Ok(AmlParseType {
         val: value,
         len: 1 + obj.len
@@ -386,7 +386,7 @@ fn parse_def_index(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x88);
 
     let obj = parse_term_arg(&data[1..], ctx)?;
@@ -395,7 +395,7 @@ fn parse_def_index(data: &[u8],
 
     let reference = AmlValue::ObjectReference(ObjectReference::Index(Box::new(obj.val), Box::new(idx.val)));
     ctx.modify(target.val, reference.clone());
-    
+
     Ok(AmlParseType {
         val: reference,
         len: 1 + obj.len + idx.len + target.len
@@ -411,14 +411,14 @@ fn parse_def_land(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x90);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
     let result = if lhs.val.get_as_integer()? > 0 && rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
-    
+
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
         len: 1 + lhs.len + rhs.len
@@ -434,14 +434,14 @@ fn parse_def_lequal(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x93);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
     let result = if lhs.val.get_as_integer()? == rhs.val.get_as_integer()? { 1 } else { 0 };
-    
+
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
         len: 1 + lhs.len + rhs.len
@@ -457,14 +457,14 @@ fn parse_def_lgreater(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x94);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
     let result = if lhs.val.get_as_integer()? > rhs.val.get_as_integer()? { 1 } else { 0 };
-    
+
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
         len: 1 + lhs.len + rhs.len
@@ -480,14 +480,14 @@ fn parse_def_lless(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x95);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
     let result = if lhs.val.get_as_integer()? < rhs.val.get_as_integer()? { 1 } else { 0 };
-    
+
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
         len: 1 + lhs.len + rhs.len
@@ -503,12 +503,12 @@ fn parse_def_lnot(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x92);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
     let result = if operand.val.get_as_integer()? == 0 { 1 } else { 0 };
-    
+
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
         len: 1 + operand.len
@@ -524,14 +524,14 @@ fn parse_def_lor(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x91);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
 
     let result = if lhs.val.get_as_integer()? > 0 || rhs.val.get_as_integer()? > 0 { 1 } else { 0 };
-    
+
     Ok(AmlParseType {
         val: AmlValue::IntegerConstant(result),
         len: 1 + lhs.len + rhs.len
@@ -547,7 +547,7 @@ fn parse_def_to_hex_string(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x98);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -588,7 +588,7 @@ fn parse_def_to_buffer(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x96);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -612,12 +612,12 @@ fn parse_def_to_bcd(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x29);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
     let target = parse_target(&data[2 + operand.len..], ctx)?;
-    
+
     let mut i = operand.val.get_as_integer()?;
     let mut result = 0;
 
@@ -626,7 +626,7 @@ fn parse_def_to_bcd(data: &[u8],
         result += i % 10;
         i /= 10;
     }
-    
+
     let result = AmlValue::Integer(result);
     ctx.modify(target.val, result.clone());
 
@@ -685,7 +685,7 @@ fn parse_def_to_integer(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x99);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -710,7 +710,7 @@ fn parse_def_to_string(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x9C);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
@@ -743,7 +743,7 @@ fn parse_def_subtract(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x74);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -753,7 +753,7 @@ fn parse_def_subtract(data: &[u8],
     let result = AmlValue::Integer(lhs.val.get_as_integer()? - rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -769,7 +769,7 @@ fn parse_def_size_of(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x87);
 
     let name = parse_super_name(&data[1..], ctx)?;
@@ -781,7 +781,7 @@ fn parse_def_size_of(data: &[u8],
         AmlValue::Package(ref p) => p.len(),
         _ => return Err(AmlError::AmlValueError)
     };
-    
+
     Ok(AmlParseType {
         val: AmlValue::Integer(res as u64),
         len: 1 + name.len
@@ -797,14 +797,14 @@ fn parse_def_store(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x70);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
     let target = parse_super_name(&data[1 + operand.len..], ctx)?;
 
     ctx.modify(target.val.clone(), operand.val);
-    
+
     Ok(AmlParseType {
         val: target.val,
         len: 1 + operand.len + target.len
@@ -820,17 +820,17 @@ fn parse_def_or(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x7D);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
-    
+
     let result = AmlValue::Integer(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -846,17 +846,17 @@ fn parse_def_shift_left(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x79);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
-    
+
     let result = AmlValue::Integer(lhs.val.get_as_integer()? >> rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -872,7 +872,7 @@ fn parse_def_shift_right(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x7A);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -882,7 +882,7 @@ fn parse_def_shift_right(data: &[u8],
     let result = AmlValue::Integer(lhs.val.get_as_integer()? << rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-                                                              
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -898,17 +898,17 @@ fn parse_def_add(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x72);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
-    
+
     let result = AmlValue::Integer(lhs.val.get_as_integer()? + rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -924,17 +924,17 @@ fn parse_def_and(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x7B);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
-    
+
     let result = AmlValue::Integer(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -950,17 +950,17 @@ fn parse_def_xor(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x7F);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
     let rhs = parse_term_arg(&data[1 + lhs.len..], ctx)?;
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
-    
+
     let result = AmlValue::Integer(lhs.val.get_as_integer()? ^ rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -976,7 +976,7 @@ fn parse_def_concat_res(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x84);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -993,7 +993,7 @@ fn parse_def_concat_res(data: &[u8],
     if buf1.len() >= 2 && buf1[buf1.len() - 2] == 0x79 {
         buf1 = buf1[0..buf1.len() - 2].to_vec();
     }
-    
+
     if buf2.len() >= 2 && buf2[buf2.len() - 2] == 0x79 {
         buf2 = buf2[0..buf2.len() - 2].to_vec();
     }
@@ -1009,10 +1009,10 @@ fn parse_def_concat_res(data: &[u8],
 
     checksum = (!checksum) + 1;
     buf1.push(checksum);
-    
+
     let res = AmlValue::Buffer(buf1);
     ctx.modify(target.val, res.clone())?;
-    
+
     Ok(AmlParseType {
         val: res,
         len: 1 + lhs.len + rhs.len + target.len
@@ -1028,7 +1028,7 @@ fn parse_def_wait(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x25);
 
     let obj = parse_super_name(&data[2..], ctx)?;
@@ -1052,7 +1052,7 @@ fn parse_def_wait(data: &[u8],
             } else {
                 let (seconds, nanoseconds) = monotonic();
                 let current_time_ns = nanoseconds + (seconds * 1000000000);
-                
+
                 if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
                     return Ok(AmlParseType {
                         val: AmlValue::Integer(1),
@@ -1073,7 +1073,7 @@ fn parse_def_cond_ref_of(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x12);
 
     let obj = parse_super_name(&data[2..], ctx)?;
@@ -1094,7 +1094,7 @@ fn parse_def_cond_ref_of(data: &[u8],
     };
 
     ctx.modify(target.val, AmlValue::ObjectReference(res));
-    
+
     Ok(AmlParseType {
         val: AmlValue::Integer(1),
         len: 1 + obj.len + target.len
@@ -1110,7 +1110,7 @@ fn parse_def_copy_object(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: Compute the result
     // TODO: Store the result
     parser_opcode!(data, 0x9D);
@@ -1135,7 +1135,7 @@ fn parse_def_concat(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x73);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1143,7 +1143,7 @@ fn parse_def_concat(data: &[u8],
     let target = parse_target(&data[1 + lhs.len + rhs.len..], ctx)?;
 
     let result = match lhs.val {
-        AmlValue::Integer(i) => {
+        AmlValue::Integer(_i) => {
             let j = AmlValue::Integer(rhs.val.get_as_integer()?);
 
             let mut first = lhs.val.get_as_buffer()?.clone();
@@ -1203,15 +1203,15 @@ fn parse_def_decrement(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x76);
 
     let obj = parse_super_name(&data[1..], ctx)?;
-    
-    let mut namespace = ctx.prelock();
+
+    let namespace = ctx.prelock();
     let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? - 1);
     ctx.modify(obj.val, value.clone());
-    
+
     Ok(AmlParseType {
         val: value,
         len: 1 + obj.len
@@ -1227,7 +1227,7 @@ fn parse_def_divide(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x78);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1243,7 +1243,7 @@ fn parse_def_divide(data: &[u8],
 
     ctx.modify(target_remainder.val, AmlValue::Integer(remainder));
     ctx.modify(target_quotient.val, AmlValue::Integer(quotient));
-    
+
     Ok(AmlParseType {
         val: AmlValue::Integer(quotient),
         len: 1 + lhs.len + rhs.len + target_remainder.len + target_quotient.len
@@ -1259,7 +1259,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x81);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -1267,7 +1267,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
 
     let mut first_bit = 32;
     let mut test = operand.val.get_as_integer()?;
-    
+
     while first_bit > 0{
         if test & 0x8000000000000000 > 0 {
             break;
@@ -1279,7 +1279,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
 
     let result = AmlValue::Integer(first_bit);
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + operand.len + target.len
@@ -1295,7 +1295,7 @@ fn parse_def_find_set_right_bit(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x82);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -1303,7 +1303,7 @@ fn parse_def_find_set_right_bit(data: &[u8],
 
     let mut first_bit = 1;
     let mut test = operand.val.get_as_integer()?;
-    
+
     while first_bit <= 32 {
         if test & 1 > 0 {
             break;
@@ -1335,7 +1335,7 @@ fn parse_def_load_table(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: Clean up
     parser_opcode_extended!(data, 0x1F);
 
@@ -1359,13 +1359,13 @@ fn parse_def_load_table(data: &[u8],
         };
 
         let sdt_signature = (sig_str, oem_str, oem_table_str);
-        
+
         let sdt = ptrs.get(&sdt_signature);
-        
+
         if let Some(sdt) = sdt {
             let hdl = parse_aml_with_scope(sdt, root_path.val.get_as_string()?)?;
             ctx.modify(parameter_path.val, parameter_data.val);
-            
+
             return Ok(AmlParseType {
                 val: AmlValue::DDBHandle((hdl, sdt_signature)),
                 len: 2 + signature.len + oem_id.len + oem_table_id.len + root_path.len + parameter_path.len + parameter_data.len
@@ -1388,11 +1388,11 @@ fn parse_def_match(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x28);
-    
+
     let search_pkg = parse_term_arg(&data[1..], ctx)?;
-    
+
     let first_operation = match data[1 + search_pkg.len] {
         0 => MatchOpcode::MTR,
         1 => MatchOpcode::MEQ,
@@ -1414,7 +1414,7 @@ fn parse_def_match(data: &[u8],
         _ => return Err(AmlError::AmlParseError("DefMatch - Invalid Opcode"))
     };
     let second_operand = parse_term_arg(&data[3 + search_pkg.len + first_operand.len..], ctx)?;
-    
+
     let start_index = parse_term_arg(&data[3 + search_pkg.len + first_operand.len + second_operand.len..], ctx)?;
 
     let pkg = search_pkg.val.get_as_package()?;
@@ -1532,7 +1532,7 @@ fn parse_def_from_bcd(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x28);
 
     let operand = parse_term_arg(&data[2..], ctx)?;
@@ -1545,7 +1545,7 @@ fn parse_def_from_bcd(data: &[u8],
         if i & 0x0F > 10 {
             return Err(AmlError::AmlValueError);
         }
-        
+
         result *= 10;
         result += i & 0x0F;
         i >>= 4;
@@ -1554,7 +1554,7 @@ fn parse_def_from_bcd(data: &[u8],
     let result = AmlValue::Integer(result);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 2 + operand.len + target.len
@@ -1570,7 +1570,7 @@ fn parse_def_mid(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x9E);
 
     let source = parse_term_arg(&data[1..], ctx)?;
@@ -1580,7 +1580,7 @@ fn parse_def_mid(data: &[u8],
 
     let idx = index.val.get_as_integer()? as usize;
     let mut len = length.val.get_as_integer()? as usize;
-    
+
     let result = match source.val {
         AmlValue::String(s) => {
             if idx > s.len() {
@@ -1602,7 +1602,7 @@ fn parse_def_mid(data: &[u8],
             // Additionally, any type that can be converted to a buffer can also be converted to a
             // string, so no information is lost
             let b = source.val.get_as_buffer()?;
-            
+
             if idx > b.len() {
                 AmlValue::Buffer(vec!())
             } else {
@@ -1614,7 +1614,7 @@ fn parse_def_mid(data: &[u8],
             }
         }
     };
-    
+
     ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
@@ -1632,7 +1632,7 @@ fn parse_def_mod(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x85);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1646,7 +1646,7 @@ fn parse_def_mod(data: &[u8],
     let result = AmlValue::Integer(lhs.val.get_as_integer()? % rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -1662,7 +1662,7 @@ fn parse_def_multiply(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     // TODO: Handle overflow
     parser_opcode!(data, 0x77);
 
@@ -1673,7 +1673,7 @@ fn parse_def_multiply(data: &[u8],
     let result = AmlValue::Integer(lhs.val.get_as_integer()? * rhs.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -1689,7 +1689,7 @@ fn parse_def_nand(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x7C);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1699,7 +1699,7 @@ fn parse_def_nand(data: &[u8],
     let result = AmlValue::Integer(!(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?));
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -1715,7 +1715,7 @@ fn parse_def_nor(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x7E);
 
     let lhs = parse_term_arg(&data[1..], ctx)?;
@@ -1725,7 +1725,7 @@ fn parse_def_nor(data: &[u8],
     let result = AmlValue::Integer(!(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?));
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + lhs.len + rhs.len + target.len
@@ -1741,7 +1741,7 @@ fn parse_def_not(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x80);
 
     let operand = parse_term_arg(&data[1..], ctx)?;
@@ -1750,7 +1750,7 @@ fn parse_def_not(data: &[u8],
     let result = AmlValue::Integer(!operand.val.get_as_integer()?);
 
     ctx.modify(target.val, result.clone());
-    
+
     Ok(AmlParseType {
         val: result,
         len: 1 + operand.len + target.len
@@ -1766,12 +1766,12 @@ fn parse_def_timer(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x33);
 
     let (seconds, nanoseconds) = monotonic();
     let monotonic_ns = nanoseconds + (seconds * 1000000000);
-    
+
     Ok(AmlParseType {
         val: AmlValue::Integer(monotonic_ns),
         len: 2 as usize

@@ -33,7 +33,7 @@ impl<T: FrameAllocator> RecycleAllocator<T> {
     fn merge(&mut self, address: usize, count: usize) -> bool {
         for i in 0 .. self.free.len() {
             let changed = {
-                let mut free = &mut self.free[i];
+                let free = &mut self.free[i];
                 if address + count * 4096 == free.0 {
                     free.0 = address;
                     free.1 += count;

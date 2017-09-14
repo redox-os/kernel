@@ -163,7 +163,7 @@ impl AmlValue {
             _ => String::new()
         }
     }
-    
+
     pub fn get_as_type(&self, t: AmlValue) -> Result<AmlValue, AmlError> {
         match t {
             AmlValue::None => Ok(AmlValue::None),
@@ -229,7 +229,7 @@ impl AmlValue {
                 if idx + len > buf.len() {
                     return Err(AmlError::AmlValueError);
                 }
-                
+
                 Ok(buf[idx .. idx + len].to_vec())
             },
             _ => Err(AmlError::AmlValueError)
@@ -272,14 +272,14 @@ impl AmlValue {
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_event(&self) -> Result<u64, AmlError> {
         match *self {
             AmlValue::Event(ref e) => Ok(e.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_field_unit(&self) -> Result<FieldUnit, AmlError> {
         match *self {
             AmlValue::FieldUnit(ref e) => Ok(e.clone()),
@@ -327,14 +327,14 @@ impl AmlValue {
                 Err(AmlError::AmlValueError)
             },
             AmlValue::String(ref s) => {
-                let mut s = s.clone()[0..8].to_string().to_uppercase();
+                let s = s.clone()[0..8].to_string().to_uppercase();
                 let mut i: u64 = 0;
 
                 for c in s.chars() {
                     if !c.is_digit(16) {
                         break;
                     }
-                    
+
                     i <<= 8;
                     i += c.to_digit(16).unwrap() as u64;
                 }
@@ -372,21 +372,21 @@ impl AmlValue {
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_operation_region(&self) -> Result<OperationRegion, AmlError> {
         match *self {
             AmlValue::OperationRegion(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_package(&self) -> Result<Vec<AmlValue>, AmlError> {
         match *self {
             AmlValue::Package(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_string(&self) -> Result<String, AmlError> {
         match *self {
             AmlValue::String(ref s) => Ok(s.clone()),
@@ -400,28 +400,28 @@ impl AmlValue {
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_power_resource(&self) -> Result<PowerResource, AmlError> {
         match *self {
             AmlValue::PowerResource(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_processor(&self) -> Result<Processor, AmlError> {
         match *self {
             AmlValue::Processor(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_raw_data_buffer(&self) -> Result<Vec<u8>, AmlError> {
         match *self {
             AmlValue::RawDataBuffer(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
-    
+
     pub fn get_as_thermal_zone(&self) -> Result<ThermalZone, AmlError> {
         match *self {
             AmlValue::ThermalZone(ref p) => Ok(p.clone()),
@@ -447,7 +447,7 @@ impl Method {
 
 pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> Result<String, AmlError> {
     let mut modifier = modifier_v.get_as_string()?;
-    
+
     if current.len() == 0 {
         return Ok(modifier);
     }
@@ -455,7 +455,7 @@ pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> Result<Str
     if modifier.len() == 0 {
         return Ok(current);
     }
-    
+
     if modifier.starts_with("\\") {
         return Ok(modifier);
     }
@@ -486,6 +486,6 @@ pub fn get_namespace_string(current: String, modifier_v: AmlValue) -> Result<Str
     if !namespace.ends_with("\\") {
         namespace.push('.');
     }
-    
+
     Ok(namespace + &modifier)
 }

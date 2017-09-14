@@ -41,7 +41,7 @@ impl AmlExecutionContext {
         let id: u64 = *idptr;
 
         *idptr += 1;
-        
+
         AmlExecutionContext {
             scope: scope,
             local_vars: [AmlValue::Uninitialized,
@@ -69,11 +69,11 @@ impl AmlExecutionContext {
 
     pub fn wait_for_event(&mut self, event_ptr: AmlValue) -> Result<bool, AmlError> {
         let mut namespace_ptr = self.prelock();
-        let mut namespace = match *namespace_ptr {
+        let namespace = match *namespace_ptr {
             Some(ref mut n) => n,
             None => return Err(AmlError::AmlHardFatal)
         };
-        
+
         let mutex_idx = match event_ptr {
             AmlValue::String(ref s) => s.clone(),
             AmlValue::ObjectReference(ref o) => match *o {
@@ -103,12 +103,12 @@ impl AmlExecutionContext {
 
     pub fn signal_event(&mut self, event_ptr: AmlValue) -> Result<(), AmlError> {
         let mut namespace_ptr = self.prelock();
-        let mut namespace = match *namespace_ptr {
+        let namespace = match *namespace_ptr {
             Some(ref mut n) => n,
             None => return Err(AmlError::AmlHardFatal)
         };
 
-        
+
         let mutex_idx = match event_ptr {
             AmlValue::String(ref s) => s.clone(),
             AmlValue::ObjectReference(ref o) => match *o {
@@ -126,23 +126,22 @@ impl AmlExecutionContext {
         match mutex {
             AmlValue::Event(count) => {
                 namespace.insert(mutex_idx, AmlValue::Event(count + 1));
-                return Ok(());
             },
             _ => return Err(AmlError::AmlValueError)
         }
 
         Ok(())
     }
-    
+
     pub fn release_mutex(&mut self, mutex_ptr: AmlValue) -> Result<(), AmlError> {
         let id = self.ctx_id;
-        
+
         let mut namespace_ptr = self.prelock();
-        let mut namespace = match *namespace_ptr {
+        let namespace = match *namespace_ptr {
             Some(ref mut n) => n,
             None => return Err(AmlError::AmlHardFatal)
         };
-        
+
         let mutex_idx = match mutex_ptr {
             AmlValue::String(ref s) => s.clone(),
             AmlValue::ObjectReference(ref o) => match *o {
@@ -156,7 +155,7 @@ impl AmlExecutionContext {
             Some(s) => s.clone(),
             None => return Err(AmlError::AmlValueError)
         };
-        
+
         match mutex {
             AmlValue::Mutex((sync_level, owner)) => {
                 if let Some(o) = owner {
@@ -177,7 +176,7 @@ impl AmlExecutionContext {
                     if o == id {
                         let mut new_region = region.clone();
                         new_region.accessed_by = None;
-                        
+
                         namespace.insert(mutex_idx, AmlValue::OperationRegion(new_region));
                         return Ok(());
                     } else {
@@ -192,10 +191,10 @@ impl AmlExecutionContext {
     }
 
     pub fn acquire_mutex(&mut self, mutex_ptr: AmlValue) -> Result<bool, AmlError> {
-        let id = self.ctx_id;        
-        
+        let id = self.ctx_id;
+
         let mut namespace_ptr = self.prelock();
-        let mut namespace = match *namespace_ptr {
+        let namespace = match *namespace_ptr {
             Some(ref mut n) => n,
             None => return Err(AmlError::AmlHardFatal)
         };
@@ -212,17 +211,17 @@ impl AmlExecutionContext {
             Some(s) => s.clone(),
             None => return Err(AmlError::AmlValueError)
         };
-        
+
         match mutex {
             AmlValue::Mutex((sync_level, owner)) => {
                 if owner == None {
                     if sync_level < self.sync_level {
                         return Err(AmlError::AmlValueError);
                     }
-                    
+
                     namespace.insert(mutex_idx, AmlValue::Mutex((sync_level, Some(id))));
                     self.sync_level = sync_level;
-                    
+
                     return Ok(true);
                 }
             },
@@ -243,7 +242,7 @@ impl AmlExecutionContext {
 
     pub fn add_to_namespace(&mut self, name: String, value: AmlValue) -> Result<(), AmlError> {
         let mut namespace = ACPI_TABLE.namespace.write();
-        
+
         if let Some(ref mut namespace) = *namespace {
             if let Some(obj) = namespace.get(&name) {
                 match *obj {
@@ -256,7 +255,7 @@ impl AmlExecutionContext {
                     _ => return Err(AmlError::AmlValueError)
                 }
             }
-            
+
             self.namespace_delta.push(name.clone());
             namespace.insert(name, value);
 
@@ -339,10 +338,10 @@ impl AmlExecutionContext {
                 if indices.len() != 1 {
                     return Err(AmlError::AmlValueError);
                 }
-                
+
                 let mut bytes = string.clone().into_bytes();
                 bytes[indices[0] as usize] = value.get_as_integer()? as u8;
-                
+
                 let string = String::from_utf8(bytes).unwrap();
 
                 Ok(AmlValue::String(string))
@@ -351,7 +350,7 @@ impl AmlExecutionContext {
                 if indices.len() != 1 {
                     return Err(AmlError::AmlValueError);
                 }
-                
+
                 let mut b = b.clone();
                 b[indices[0] as usize] = value.get_as_integer()? as u8;
 
@@ -373,7 +372,7 @@ impl AmlExecutionContext {
                 if indices.len() < 0 {
                     return Err(AmlError::AmlValueError);
                 }
-                
+
                 let mut p = p.clone();
 
                 if indices.len() == 1 {
@@ -381,7 +380,7 @@ impl AmlExecutionContext {
                 } else {
                     p[indices[0] as usize] = self.modify_index_core(p[indices[0] as usize].clone(), value, indices[1..].to_vec())?;
                 }
-                
+
                 Ok(AmlValue::Package(p))
             },
             _ => return Err(AmlError::AmlValueError)
@@ -470,8 +469,8 @@ impl AmlExecutionContext {
                 if indices.len() != 1 {
                     return Err(AmlError::AmlValueError);
                 }
-                
-                let mut bytes = string.clone().into_bytes();
+
+                let bytes = string.clone().into_bytes();
                 Ok(AmlValue::Integer(bytes[indices[0] as usize] as u64))
             },
             AmlValue::Buffer(ref b) => {

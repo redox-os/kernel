@@ -1,6 +1,6 @@
 use super::AmlError;
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};
-use super::namespace::{AmlValue, ObjectReference, OperationRegion};
+use super::namespace::AmlValue;
 use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list};
 use super::namestring::{parse_name_string, parse_super_name};
@@ -19,7 +19,7 @@ pub fn parse_type1_opcode(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_selector! {
         data, ctx,
         parse_def_break,
@@ -52,7 +52,7 @@ fn parse_def_break(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0xA5);
     ctx.state = ExecutionState::BREAK;
 
@@ -71,7 +71,7 @@ fn parse_def_breakpoint(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0xCC);
 
     Ok(AmlParseType {
@@ -89,7 +89,7 @@ fn parse_def_continue(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x9F);
     ctx.state = ExecutionState::CONTINUE;
 
@@ -108,7 +108,7 @@ fn parse_def_noop(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0xA3);
 
     Ok(AmlParseType {
@@ -126,7 +126,7 @@ fn parse_def_fatal(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x32);
 
     let fatal_type = data[2];
@@ -145,7 +145,7 @@ fn parse_def_load(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x20);
 
     let name = parse_name_string(&data[2..], ctx)?;
@@ -158,7 +158,7 @@ fn parse_def_load(data: &[u8],
         load_table(get_sdt_signature(sdt));
         let delta = parse_aml_table(sdt)?;
         ctx.modify(ddb_handle_object.val, AmlValue::DDBHandle((delta, get_sdt_signature(sdt))));
-        
+
         Ok(AmlParseType {
             val: AmlValue::None,
             len: 2 + name.len + ddb_handle_object.len
@@ -177,7 +177,7 @@ fn parse_def_notify(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0x86);
 
     let object = parse_super_name(&data[1..], ctx)?;
@@ -225,12 +225,12 @@ fn parse_def_release(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x27);
 
     let obj = parse_super_name(&data[2..], ctx)?;
     ctx.release_mutex(obj.val);
-    
+
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 2 + obj.len
@@ -246,7 +246,7 @@ fn parse_def_reset(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x26);
 
     let object = parse_super_name(&data[2..], ctx)?;
@@ -269,7 +269,7 @@ fn parse_def_signal(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x24);
     let object = parse_super_name(&data[2..], ctx)?;
 
@@ -289,19 +289,19 @@ fn parse_def_sleep(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x22);
 
     let time = parse_term_arg(&data[2..], ctx)?;
     let timeout = time.val.get_as_integer()?;
-    
+
     let (seconds, nanoseconds) = monotonic();
     let starting_time_ns = nanoseconds + (seconds * 1000000000);
-    
+
     loop {
         let (seconds, nanoseconds) = monotonic();
         let current_time_ns = nanoseconds + (seconds * 1000000000);
-        
+
         if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
             break;
         }
@@ -322,19 +322,19 @@ fn parse_def_stall(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x21);
 
     let time = parse_term_arg(&data[2..], ctx)?;
     let timeout = time.val.get_as_integer()?;
-    
+
     let (seconds, nanoseconds) = monotonic();
     let starting_time_ns = nanoseconds + (seconds * 1000000000);
-    
+
     loop {
         let (seconds, nanoseconds) = monotonic();
         let current_time_ns = nanoseconds + (seconds * 1000000000);
-        
+
         if current_time_ns - starting_time_ns > timeout as u64 * 1000 {
             break;
         }
@@ -355,7 +355,7 @@ fn parse_def_unload(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode_extended!(data, 0x2A);
 
     let object = parse_super_name(&data[2..], ctx)?;
@@ -384,12 +384,12 @@ fn parse_def_if_else(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0xA0);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
     let if_condition = parse_term_arg(&data[1 + pkg_length_len .. 1 + pkg_length], ctx)?;
-    
+
     let (else_length, else_length_len) = if data.len() > 1 + pkg_length && data[1 + pkg_length] == 0xA1 {
         parse_pkg_length(&data[2 + pkg_length..])?
     } else {
@@ -417,7 +417,7 @@ fn parse_def_while(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0xA2);
 
     let (pkg_length, pkg_length_len) = parse_pkg_length(&data[1..])?;
@@ -427,7 +427,7 @@ fn parse_def_while(data: &[u8],
         if predicate.val.get_as_integer()? == 0 {
             break;
         }
-        
+
         parse_term_list(&data[1 + pkg_length_len + predicate.len .. 1 + pkg_length], ctx)?;
 
         match ctx.state {
@@ -443,7 +443,7 @@ fn parse_def_while(data: &[u8],
             })
         }
     }
-    
+
     Ok(AmlParseType {
         val: AmlValue::None,
         len: 1 + pkg_length
@@ -459,7 +459,7 @@ fn parse_def_return(data: &[u8],
             len: 0 as usize
         })
     }
-    
+
     parser_opcode!(data, 0xA4);
 
     let arg_object = parse_term_arg(&data[1..], ctx)?;

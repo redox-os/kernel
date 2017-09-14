@@ -72,7 +72,7 @@ static ALLOCATOR: Mutex<Option<RecycleAllocator<BumpAllocator>>> = Mutex::new(No
 /// Must be called once, and only once,
 pub unsafe fn init(kernel_start: usize, kernel_end: usize) {
     // Copy memory map from bootloader location
-    for (i, mut entry) in MEMORY_MAP.iter_mut().enumerate() {
+    for (i, entry) in MEMORY_MAP.iter_mut().enumerate() {
         *entry = *(0x500 as *const MemoryArea).offset(i as isize);
         if entry._type != MEMORY_AREA_NULL {
             println!("{:?}", entry);
