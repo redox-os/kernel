@@ -20,6 +20,9 @@ use context::ContextId;
 use interrupt::syscall::SyscallStack;
 use scheme::{FileHandle, SchemeNamespace};
 
+/// Debug
+pub mod debug;
+
 /// Driver syscalls
 pub mod driver;
 
@@ -130,17 +133,54 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
         }
     }
 
-    let result = inner(a, b, c, d, e, f, bp, stack);
-
     /*
-    if let Err(ref err) = result {
+    let debug = {
         let contexts = ::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{}: {}: ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
+            if unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) } == "file:/bin/acid" {
+                if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+
+    if debug {
+        let contexts = ::context::contexts();
+        if let Some(context_lock) = contexts.current() {
+            let context = context_lock.read();
+            print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
         }
 
-        println!("{:X}, {:X}, {:X}, {:X}: {}", a, b, c, d, err);
+        println!("{} ({:X}), {:X}, {:X}, {:X}", debug::name(a), a, b, c, d);
+    }
+    */
+
+    let result = inner(a, b, c, d, e, f, bp, stack);
+
+    /*
+    if debug {
+        let contexts = ::context::contexts();
+        if let Some(context_lock) = contexts.current() {
+            let context = context_lock.read();
+            print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
+        }
+
+        match result {
+            Ok(ref ok) => {
+                println!("{} ({:X}), {:X}, {:X}, {:X}: Ok({:X})", debug::name(a), a, b, c, d, ok);
+            },
+            Err(ref err) => {
+                println!("{} ({:X}), {:X}, {:X}, {:X}: Err({} ({:X}))", debug::name(a), a, b, c, d, err, err.errno);
+            }
+        }
     }
     */
 

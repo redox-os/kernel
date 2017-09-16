@@ -2,11 +2,12 @@ use alloc::arc::{Arc, Weak};
 use collections::{BTreeMap, VecDeque};
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 
+use context;
+use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use sync::WaitCondition;
 use syscall::error::{Error, Result, EAGAIN, EBADF, EINVAL, EPIPE, ESPIPE};
-use syscall::flag::{F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
+use syscall::flag::{EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
 use syscall::scheme::Scheme;
 use syscall::data::Stat;
 
@@ -32,10 +33,11 @@ fn pipes_mut() -> RwLockWriteGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTr
 
 pub fn pipe(flags: usize) -> (usize, usize) {
     let mut pipes = pipes_mut();
+    let scheme_id = PIPE_SCHEME_ID.load(Ordering::SeqCst);
     let read_id = PIPE_NEXT_ID.fetch_add(1, Ordering::SeqCst);
     let write_id = PIPE_NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    let read = PipeRead::new(flags);
-    let write = PipeWrite::new(flags, &read);
+    let read = PipeRead::new(scheme_id, read_id, flags);
+    let write = PipeWrite::new(&read, flags);
     pipes.0.insert(read_id, Arc::new(read));
     pipes.1.insert(write_id, Arc::new(write));
     (read_id, write_id)
@@ -117,6 +119,16 @@ impl Scheme for PipeScheme {
         Err(Error::new(EBADF))
     }
 
+    fn fevent(&self, id: usize, flags: usize) -> Result<usize> {
+        let pipes = pipes();
+
+        if let Some(pipe) = pipes.0.get(&id) {
+            return pipe.fevent(flags);
+        }
+
+        Err(Error::new(EBADF))
+    }
+
     fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
         let mut i = 0;
         let scheme_path = b"pipe:";
@@ -156,14 +168,18 @@ impl Scheme for PipeScheme {
 
 /// Read side of a pipe
 pub struct PipeRead {
+    scheme_id: SchemeId,
+    event_id: usize,
     flags: AtomicUsize,
     condition: Arc<WaitCondition>,
     vec: Arc<Mutex<VecDeque<u8>>>
 }
 
 impl PipeRead {
-    pub fn new(flags: usize) -> Self {
+    pub fn new(scheme_id: SchemeId, event_id: usize, flags: usize) -> Self {
         PipeRead {
+            scheme_id: scheme_id,
+            event_id: event_id,
             flags: AtomicUsize::new(flags),
             condition: Arc::new(WaitCondition::new()),
             vec: Arc::new(Mutex::new(VecDeque::new())),
@@ -172,6 +188,8 @@ impl PipeRead {
 
     fn dup(&self) -> Result<Self> {
         Ok(PipeRead {
+            scheme_id: self.scheme_id,
+            event_id: self.event_id,
             flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
             condition: self.condition.clone(),
             vec: self.vec.clone()
@@ -187,6 +205,10 @@ impl PipeRead {
             },
             _ => Err(Error::new(EINVAL))
         }
+    }
+
+    fn fevent(&self, _flags: usize) -> Result<usize> {
+        Ok(self.event_id)
     }
 
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
@@ -222,14 +244,18 @@ impl PipeRead {
 
 /// Read side of a pipe
 pub struct PipeWrite {
+    scheme_id: SchemeId,
+    event_id: usize,
     flags: AtomicUsize,
     condition: Arc<WaitCondition>,
     vec: Option<Weak<Mutex<VecDeque<u8>>>>
 }
 
 impl PipeWrite {
-    pub fn new(flags: usize, read: &PipeRead) -> Self {
+    pub fn new(read: &PipeRead, flags: usize) -> Self {
         PipeWrite {
+            scheme_id: read.scheme_id,
+            event_id: read.event_id,
             flags: AtomicUsize::new(flags),
             condition: read.condition.clone(),
             vec: Some(Arc::downgrade(&read.vec)),
@@ -238,6 +264,8 @@ impl PipeWrite {
 
     fn dup(&self) -> Result<Self> {
         Ok(PipeWrite {
+            scheme_id: self.scheme_id,
+            event_id: self.event_id,
             flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
             condition: self.condition.clone(),
             vec: self.vec.clone()
@@ -258,12 +286,17 @@ impl PipeWrite {
     fn write(&self, buf: &[u8]) -> Result<usize> {
         if let Some(ref vec_weak) = self.vec {
             if let Some(vec_lock) = vec_weak.upgrade() {
-                let mut vec = vec_lock.lock();
+                let len = {
+                    let mut vec = vec_lock.lock();
 
-                for &b in buf.iter() {
-                    vec.push_back(b);
-                }
+                    for &b in buf.iter() {
+                        vec.push_back(b);
+                    }
 
+                    vec.len()
+                };
+
+                context::event::trigger(self.scheme_id, self.event_id, EVENT_READ, len);
                 self.condition.notify();
 
                 Ok(buf.len())
@@ -279,6 +312,7 @@ impl PipeWrite {
 impl Drop for PipeWrite {
     fn drop(&mut self) {
         drop(self.vec.take());
+        context::event::trigger(self.scheme_id, self.event_id, EVENT_READ, 0);
         self.condition.notify();
     }
 }
