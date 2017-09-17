@@ -44,6 +44,10 @@ pub mod time;
 /// Validate input
 pub mod validate;
 
+//mod print_call;
+//use self::print_call::print_call;
+
+
 #[no_mangle]
 pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> usize {
     #[inline(always)]
@@ -181,6 +185,23 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                 println!("{} ({:X}), {:X}, {:X}, {:X}: Err({} ({:X}))", debug::name(a), a, b, c, d, err, err.errno);
             }
         }
+    }
+    */
+
+    /*
+    let result = inner(a, b, c, d, e, f, bp, stack);
+    {
+    let contexts = ::context::contexts();
+    if let Some(context_lock) = contexts.current() {
+        let context = context_lock.read();
+        let context_name = context.name.lock();
+        let name = unsafe { ::core::str::from_utf8_unchecked(&context_name) };
+        if name == "file:/bin/rustc" {
+            print!("{}: {:?}: ", name, context.id);
+            let _ = print_call(a, b, c, d, e, f);
+            println!(" = {:?}", result);
+        }
+    }
     }
     */
 
