@@ -163,7 +163,8 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
             print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
         }
 
-        println!("{} ({:X}), {:X}, {:X}, {:X}", debug::name(a), a, b, c, d);
+        let _ = debug::print_call(a, b, c, d, e, f);
+        println!("");
     }
     */
 
@@ -177,31 +178,16 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
             print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
         }
 
+        let _ = debug::print_call(a, b, c, d, e, f);
+
         match result {
             Ok(ref ok) => {
-                println!("{} ({:X}), {:X}, {:X}, {:X}: Ok({:X})", debug::name(a), a, b, c, d, ok);
+                println!(" = Ok({} ({:#X}))", ok, ok);
             },
             Err(ref err) => {
-                println!("{} ({:X}), {:X}, {:X}, {:X}: Err({} ({:X}))", debug::name(a), a, b, c, d, err, err.errno);
+                println!(" = Err({} ({:#X}))", err, err.errno);
             }
         }
-    }
-    */
-
-    /*
-    let result = inner(a, b, c, d, e, f, bp, stack);
-    {
-    let contexts = ::context::contexts();
-    if let Some(context_lock) = contexts.current() {
-        let context = context_lock.read();
-        let context_name = context.name.lock();
-        let name = unsafe { ::core::str::from_utf8_unchecked(&context_name) };
-        if name == "file:/bin/rustc" {
-            print!("{}: {:?}: ", name, context.id);
-            let _ = print_call(a, b, c, d, e, f);
-            println!(" = {:?}", result);
-        }
-    }
     }
     */
 
