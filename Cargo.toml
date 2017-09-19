@@ -28,3 +28,6 @@ default-features = false
 default = []
 live = []
 multi_core = []
+
+[replace]
+"spin:0.4.5" = { git = "https://github.com/messense/spin-rs" }
