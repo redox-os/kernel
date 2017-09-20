@@ -32,7 +32,7 @@ pub unsafe extern fn memcpy(dest: *mut u8, src: *const u8,
 #[no_mangle]
 pub unsafe extern fn memcpy(dest: *mut u8, src: *const u8,
                             n: usize) -> *mut u8 {
-    let n_32: usize = n/8; // Number of 32-bit groups
+    let n_32: usize = n/4; // Number of 32-bit groups
     let mut i: usize = 0;
 
     // Copy 4 bytes at a time
