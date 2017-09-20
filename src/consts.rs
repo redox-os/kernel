@@ -15,10 +15,7 @@
     /// Offset to kernel heap
     pub const KERNEL_HEAP_OFFSET: usize = KERNEL_OFFSET + PML4_SIZE/2;
     /// Size of kernel heap
-    #[cfg(not(feature = "live"))]
-    pub const KERNEL_HEAP_SIZE: usize = 128 * 1024 * 1024; // 128 MB
-    #[cfg(feature = "live")]
-    pub const KERNEL_HEAP_SIZE: usize = 640 * 1024 * 1024; // 640 MB - 128 default + 512 for the live disk
+    pub const KERNEL_HEAP_SIZE: usize = 64 * 1024 * 1024; // 64 MB
 
     /// Offset to kernel percpu variables
     //TODO: Use 64-bit fs offset to enable this pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;

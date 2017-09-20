@@ -1,8 +1,8 @@
 /// Disk scheme replacement when making live disk
 
 use alloc::arc::Arc;
-use collections::{BTreeMap, Vec};
-use core::cmp;
+use collections::BTreeMap;
+use core::{cmp, slice};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
@@ -11,26 +11,41 @@ use syscall::error::*;
 use syscall::flag::{MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
 use syscall::scheme::Scheme;
 
-static FILESYSTEM: &'static [u8] = include_bytes!(env!("FILESYSTEM"));
-
 struct Handle {
     path: &'static [u8],
-    data: Arc<RwLock<Vec<u8>>>,
+    data: Arc<RwLock<&'static mut [u8]>>,
     mode: u16,
     seek: usize
 }
 
 pub struct DiskScheme {
     next_id: AtomicUsize,
-    data: Arc<RwLock<Vec<u8>>>,
+    data: Arc<RwLock<&'static mut [u8]>>,
     handles: RwLock<BTreeMap<usize, Handle>>
 }
 
 impl DiskScheme {
     pub fn new() -> DiskScheme {
+        let data;
+        unsafe {
+            extern {
+                static mut __live_start: u8;
+                static mut __live_end: u8;
+            }
+
+            let start = &mut __live_start as *mut u8;
+            let end = &mut __live_end as *mut u8;
+
+            if end as usize >= start as usize {
+                data = slice::from_raw_parts_mut(start, end as usize - start as usize);
+            } else {
+                data = &mut [];
+            };
+        }
+
         DiskScheme {
             next_id: AtomicUsize::new(0),
-            data: Arc::new(RwLock::new(FILESYSTEM.to_vec())),
+            data: Arc::new(RwLock::new(data)),
             handles: RwLock::new(BTreeMap::new())
         }
     }

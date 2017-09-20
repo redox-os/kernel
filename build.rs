@@ -87,6 +87,8 @@ fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), (Error)> {
 }
 
 fn main() {
+    println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
+
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("gen.rs");
     let mut f = fs::File::create(&dest_path).unwrap();
@@ -114,8 +116,4 @@ b"        files.clear();" // Silence mutability warning
     }
 }
     ").unwrap();
-
-    fn main() {
-        println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
-    }
 }
