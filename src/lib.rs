@@ -9,7 +9,10 @@
 #![feature(asm)]
 #![feature(collections)]
 #![feature(concat_idents)]
+#![feature(conservative_impl_trait)]
+#![feature(const_atomic_usize_new)]
 #![feature(const_fn)]
+#![feature(const_max_value)]
 #![feature(core_intrinsics)]
 #![feature(drop_types_in_const)]
 #![feature(global_allocator)]
@@ -19,7 +22,6 @@
 #![feature(never_type)]
 #![feature(thread_local)]
 #![feature(unique)]
-#![feature(conservative_impl_trait)]
 #![no_std]
 
 extern crate alloc_kernel as allocator;
