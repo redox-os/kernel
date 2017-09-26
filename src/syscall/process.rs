@@ -15,6 +15,7 @@ use interrupt;
 use context;
 use context::ContextId;
 use context::file::FileDescriptor;
+#[cfg(not(feature="doc"))]
 use elf::{self, program_header};
 use scheme::FileHandle;
 use syscall;

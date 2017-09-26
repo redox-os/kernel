@@ -2,11 +2,9 @@
 
 use interrupt;
 
-#[cfg(not(test))]
 #[lang = "eh_personality"]
 pub extern "C" fn eh_personality() {}
 
-#[cfg(not(test))]
 /// Required to handle panics
 #[lang = "panic_fmt"]
 #[no_mangle]

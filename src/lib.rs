@@ -61,6 +61,7 @@ pub mod context;
 pub mod devices;
 
 /// ELF file parsing
+#[cfg(not(feature="doc"))]
 pub mod elf;
 
 /// External functions
@@ -70,6 +71,7 @@ pub mod externs;
 pub mod memory;
 
 /// Panic
+#[cfg(not(any(feature="doc", test)))]
 pub mod panic;
 
 /// Schemes, filesystem handlers
