@@ -12,11 +12,11 @@ crate-type = ["staticlib"]
 alloc_kernel = { path = "alloc_kernel" }
 bitflags = "0.7"
 spin = "0.4"
-raw-cpuid = { git = "https://github.com/gz/rust-cpuid", branch = "master" }
+raw-cpuid = "3.0"
 redox_syscall = { path = "syscall" }
 
 [dependencies.goblin]
-version = "0.0.10"
+version = "0.0.11"
 default-features = false
 features = ["elf32", "elf64"]
 
@@ -28,6 +28,3 @@ default-features = false
 default = []
 live = []
 multi_core = []
-
-[replace]
-"spin:0.4.5" = { git = "https://github.com/messense/spin-rs" }
