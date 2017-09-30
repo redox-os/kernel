@@ -1,21 +1,50 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
-use collections::BTreeMap;
+use collections::{BTreeMap, Vec};
+use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::RwLock;
+use spin::{Mutex, RwLock};
 
 use context;
+use syscall::data::Stat;
 use syscall::error::*;
+use syscall::flag::{O_CREAT, MODE_FILE, MODE_DIR};
 use syscall::scheme::Scheme;
 use scheme::{self, SchemeNamespace, SchemeId};
 use scheme::user::{UserInner, UserScheme};
+
+struct FolderInner {
+    data: Box<[u8]>,
+    pos: Mutex<usize>
+}
+
+impl FolderInner {
+    fn read(&self, buf: &mut [u8]) -> Result<usize> {
+        let mut i = 0;
+        let mut pos = self.pos.lock();
+
+        while i < buf.len() && *pos < self.data.len() {
+            buf[i] = self.data[*pos];
+            i += 1;
+            *pos += 1;
+        }
+
+        Ok(i)
+    }
+}
+
+#[derive(Clone)]
+enum Handle {
+    Scheme(Arc<UserInner>),
+    File(Arc<Box<[u8]>>),
+    Folder(Arc<FolderInner>)
+}
 
 pub struct RootScheme {
     scheme_ns: SchemeNamespace,
     scheme_id: SchemeId,
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Arc<UserInner>>>,
-    ls_handles: RwLock<BTreeMap<usize, AtomicUsize>>,
+    handles: RwLock<BTreeMap<usize, Handle>>,
 }
 
 impl RootScheme {
@@ -25,49 +54,76 @@ impl RootScheme {
             scheme_id: scheme_id,
             next_id: AtomicUsize::new(0),
             handles: RwLock::new(BTreeMap::new()),
-            ls_handles: RwLock::new(BTreeMap::new()),
         }
     }
 }
 
 impl Scheme for RootScheme {
     fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        use syscall::flag::*;
+        let path_utf8 = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
+        let path_trimmed = path_utf8.trim_matches('/');
 
-        if uid == 0 {
-            if flags & O_DIRECTORY == O_DIRECTORY {
-                if flags & O_ACCMODE != O_RDONLY {
-                    return Err(Error::new(EACCES));
-                }
+        //TODO: Make this follow standards for flags and errors
+        if flags & O_CREAT == O_CREAT {
+            if uid == 0 {
+                let context = {
+                    let contexts = context::contexts();
+                    let context = contexts.current().ok_or(Error::new(ESRCH))?;
+                    Arc::downgrade(&context)
+                };
+
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                self.ls_handles.write().insert(id, AtomicUsize::new(0));
-                return Ok(id);
+
+                let inner = {
+                    let path_box = path_trimmed.as_bytes().to_vec().into_boxed_slice();
+                    let mut schemes = scheme::schemes_mut();
+                    let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
+                    schemes.insert(self.scheme_ns, path_box, |scheme_id| {
+                        inner.scheme_id.store(scheme_id, Ordering::SeqCst);
+                        Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
+                    })?;
+                    inner
+                };
+
+                self.handles.write().insert(id, Handle::Scheme(inner));
+
+                Ok(id)
+            } else {
+                Err(Error::new(EACCES))
+            }
+        } else if path_trimmed.is_empty() {
+            let scheme_ns = {
+                let contexts = context::contexts();
+                let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+                let context = context_lock.read();
+                context.ens
+            };
+
+            let mut data = Vec::new();
+            {
+                let schemes = scheme::schemes();
+                for (name, _scheme_id) in schemes.iter_name(scheme_ns) {
+                    data.extend_from_slice(name);
+                    data.push(b'\n');
+                }
             }
 
-            let context = {
-                let contexts = context::contexts();
-                let context = contexts.current().ok_or(Error::new(ESRCH))?;
-                Arc::downgrade(&context)
-            };
+            let inner = Arc::new(FolderInner {
+                data: data.into_boxed_slice(),
+                pos: Mutex::new(0)
+            });
 
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-
-            let inner = {
-                let path_box = path.to_vec().into_boxed_slice();
-                let mut schemes = scheme::schemes_mut();
-                let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
-                schemes.insert(self.scheme_ns, path_box, |scheme_id| {
-                    inner.scheme_id.store(scheme_id, Ordering::SeqCst);
-                    Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
-                })?;
-                inner
-            };
-
-            self.handles.write().insert(id, inner);
-
+            self.handles.write().insert(id, Handle::Folder(inner));
             Ok(id)
         } else {
-            Err(Error::new(EACCES))
+            let inner = Arc::new(
+                path_trimmed.as_bytes().to_vec().into_boxed_slice()
+            );
+
+            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+            self.handles.write().insert(id, Handle::File(inner));
+            Ok(id)
         }
     }
 
@@ -89,75 +145,70 @@ impl Scheme for RootScheme {
     }
 
     fn read(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
-        let inner = {
+        let handle = {
             let handles = self.handles.read();
-            handles.get(&file).map(Clone::clone)
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
         };
 
-        if let Some(inner) = inner {
-            inner.read(buf)
-        } else {
-            let scheme_ns = {
-                let contexts = context::contexts();
-                let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                let context = context_lock.read();
-                context.ens
-            };
-
-            let schemes = scheme::schemes();
-            let mut schemes_iter = schemes.iter_name(scheme_ns);
-
-            let num = {
-                let handles = self.ls_handles.read();
-                let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-                inner.load(Ordering::SeqCst)
-            };
-
-            if let Some(scheme) = schemes_iter.nth(num) {
-                let mut i = 0;
-                while i < buf.len() && i < scheme.0.len() {
-                    buf[i] = scheme.0[i];
-                    i += 1;
-                }
-
-                {
-                    let handles = self.ls_handles.read();
-                    let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-                    inner.fetch_add(1, Ordering::SeqCst)
-                };
-
-                Ok(i)
-            } else {
-                Ok(0)
+        match handle {
+            Handle::Scheme(inner) => {
+                inner.read(buf)
+            },
+            Handle::File(_) => {
+                Err(Error::new(EBADF))
+            },
+            Handle::Folder(inner) => {
+                inner.read(buf)
             }
         }
     }
 
     fn write(&self, file: usize, buf: &[u8]) -> Result<usize> {
-        let inner = {
+        let handle = {
             let handles = self.handles.read();
-            let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-            inner.clone()
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
         };
 
-        inner.write(buf)
+        match handle {
+            Handle::Scheme(inner) => {
+                inner.write(buf)
+            },
+            Handle::File(_) => {
+                Err(Error::new(EBADF))
+            },
+            Handle::Folder(_) => {
+                Err(Error::new(EBADF))
+            }
+        }
     }
 
     fn fevent(&self, file: usize, flags: usize) -> Result<usize> {
-        let inner = {
+        let handle = {
             let handles = self.handles.read();
-            let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-            inner.clone()
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
         };
 
-        inner.fevent(flags)
+        match handle {
+            Handle::Scheme(inner) => {
+                inner.fevent(flags)
+            },
+            Handle::File(_) => {
+                Err(Error::new(EBADF))
+            },
+            Handle::Folder(_) => {
+                Err(Error::new(EBADF))
+            }
+        }
     }
 
     fn fpath(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
-        let inner = {
+        let handle = {
             let handles = self.handles.read();
-            let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-            inner.clone()
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
         };
 
         let mut i = 0;
@@ -167,30 +218,82 @@ impl Scheme for RootScheme {
             i += 1;
         }
 
-        let mut j = 0;
-        while i < buf.len() && j < inner.name.len() {
-            buf[i] = inner.name[j];
-            i += 1;
-            j += 1;
+        match handle {
+            Handle::Scheme(inner) => {
+                let mut j = 0;
+                while i < buf.len() && j < inner.name.len() {
+                    buf[i] = inner.name[j];
+                    i += 1;
+                    j += 1;
+                }
+            },
+            Handle::File(inner) => {
+                let mut j = 0;
+                while i < buf.len() && j < inner.len() {
+                    buf[i] = inner[j];
+                    i += 1;
+                    j += 1;
+                }
+            },
+            Handle::Folder(_) => ()
         }
 
         Ok(i)
     }
 
-    fn fsync(&self, file: usize) -> Result<usize> {
-        let inner = {
+    fn fstat(&self, file: usize, stat: &mut Stat) -> Result<usize> {
+        let handle = {
             let handles = self.handles.read();
-            let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-            inner.clone()
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
         };
 
-        inner.fsync()
+        match handle {
+            Handle::Scheme(_) => {
+                stat.st_mode = MODE_FILE;
+                stat.st_uid = 0;
+                stat.st_gid = 0;
+                stat.st_size = 0;
+            },
+            Handle::File(_) => {
+                stat.st_mode = MODE_FILE;
+                stat.st_uid = 0;
+                stat.st_gid = 0;
+                stat.st_size = 0;
+            },
+            Handle::Folder(inner) => {
+                stat.st_mode = MODE_DIR;
+                stat.st_uid = 0;
+                stat.st_gid = 0;
+                stat.st_size = inner.data.len() as u64;
+            }
+        }
+
+        Ok(0)
+    }
+
+    fn fsync(&self, file: usize) -> Result<usize> {
+        let handle = {
+            let handles = self.handles.read();
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        match handle {
+            Handle::Scheme(inner) => {
+                inner.fsync()
+            },
+            Handle::File(_) => {
+                Err(Error::new(EBADF))
+            },
+            Handle::Folder(_) => {
+                Err(Error::new(EBADF))
+            }
+        }
     }
 
     fn close(&self, file: usize) -> Result<usize> {
-        if self.handles.write().remove(&file).is_none() {
-            self.ls_handles.write().remove(&file).ok_or(Error::new(EBADF))?;
-        }
+        self.handles.write().remove(&file);
         Ok(0)
     }
 }
