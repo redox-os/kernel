@@ -39,10 +39,25 @@ extern {
     fn kmain_ap(id: usize) -> !;
 }
 
+#[repr(packed)]
+pub struct KernelArgs {
+    kernel_base: u64,
+    kernel_size: u64,
+    stack_base: u64,
+    stack_size: u64,
+}
+
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
-pub unsafe extern fn kstart(kernel_base: usize, kernel_size: usize, stack_base: usize, stack_size: usize) -> ! {
+pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
     {
+        let args = &*args_ptr;
+
+        let kernel_base = args.kernel_base as usize;
+        let kernel_size = args.kernel_size as usize;
+        let stack_base = args.stack_base as usize;
+        let stack_size = args.stack_size as usize;
+
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
@@ -118,9 +133,23 @@ pub unsafe extern fn kstart(kernel_base: usize, kernel_size: usize, stack_base: 
     kmain(CPU_COUNT.load(Ordering::SeqCst));
 }
 
+#[repr(packed)]
+pub struct KernelArgsAp {
+    cpu_id: u64,
+    page_table: u64,
+    stack_start: u64,
+    stack_end: u64,
+}
+
 /// Entry to rust for an AP
-pub unsafe extern fn kstart_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack_end: usize) -> ! {
-    {
+pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
+    let cpu_id = {
+        let args = &*args_ptr;
+        let cpu_id = args.cpu_id as usize;
+        let bsp_table = args.page_table as usize;
+        let stack_start = args.stack_start as usize;
+        let stack_end = args.stack_end as usize;
+
         assert_eq!(BSS_TEST_ZERO, 0);
         assert_eq!(DATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFF);
 
@@ -147,7 +176,9 @@ pub unsafe extern fn kstart_ap(cpu_id: usize, bsp_table: usize, stack_start: usi
         device::init_ap();
 
         AP_READY.store(true, Ordering::SeqCst);
-    }
+
+        cpu_id
+    };
 
     while ! BSP_READY.load(Ordering::SeqCst) {
         interrupt::pause();

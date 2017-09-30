@@ -95,9 +95,6 @@ pub mod tests;
 #[global_allocator]
 static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
-#[cfg(feature = "multi_core")]
-static MULTI_CORE_IS_NOT_SUPPORTED_AT_THE_MOMENT: u8 = ();
-
 /// A unique number that identifies the current CPU - used for scheduling
 #[thread_local]
 static CPU_ID: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -169,6 +166,8 @@ pub extern fn kmain(cpus: usize) {
 #[no_mangle]
 #[allow(unreachable_code, unused_variables)]
 pub extern fn kmain_ap(id: usize) {
+    println!("AP {}: Disabled", id);
+
     loop {
         unsafe {
             interrupt::disable();
