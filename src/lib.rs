@@ -36,7 +36,10 @@ extern crate bitflags;
 extern crate goblin;
 extern crate spin;
 
+use alloc::arc::Arc;
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+use spin::Mutex;
+
 use scheme::FileHandle;
 
 pub use consts::*;
@@ -129,8 +132,7 @@ pub extern fn userspace_init() {
 }
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-#[no_mangle]
-pub extern fn kmain(cpus: usize) {
+pub fn kmain(cpus: usize, env: &[u8]) -> ! {
     CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
 
@@ -138,11 +140,25 @@ pub extern fn kmain(cpus: usize) {
 
     let pid = syscall::getpid();
     println!("BSP: {:?} {}", pid, cpus);
+    println!("Env: {:?}", ::core::str::from_utf8(env));
 
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
             context.status = context::Status::Runnable;
+
+            let mut context_env = context.env.lock();
+            for line in env.split(|b| *b == b'\n') {
+                let mut parts = line.splitn(2, |b| *b == b'=');
+                if let Some(name) = parts.next() {
+                    if let Some(data) = parts.next() {
+                        context_env.insert(
+                            name.to_vec().into_boxed_slice(),
+                            Arc::new(Mutex::new(data.to_vec()))
+                        );
+                    }
+                }
+            }
         },
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
@@ -163,21 +179,11 @@ pub extern fn kmain(cpus: usize) {
 }
 
 /// This is the main kernel entry point for secondary CPUs
-#[no_mangle]
 #[allow(unreachable_code, unused_variables)]
-pub extern fn kmain_ap(id: usize) {
-    println!("AP {}: Disabled", id);
-
-    loop {
-        unsafe {
-            interrupt::disable();
-            interrupt::halt();
-        }
-    }
+pub fn kmain_ap(id: usize) -> ! {
+    CPU_ID.store(id, Ordering::SeqCst);
 
     if cfg!(feature = "multi_core"){
-        CPU_ID.store(id, Ordering::SeqCst);
-
         context::init();
 
         let pid = syscall::getpid();
@@ -194,8 +200,16 @@ pub extern fn kmain_ap(id: usize) {
                 }
             }
         }
-    }
+    } else {
+        println!("AP {}: Disabled", id);
 
+        loop {
+            unsafe {
+                interrupt::disable();
+                interrupt::halt();
+            }
+        }
+    }
 }
 
 /// Allow exception handlers to send signal to arch-independant kernel

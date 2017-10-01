@@ -3,6 +3,7 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 
+use core::slice;
 use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use acpi;
@@ -32,31 +33,28 @@ pub static CPU_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static AP_READY: AtomicBool = ATOMIC_BOOL_INIT;
 static BSP_READY: AtomicBool = ATOMIC_BOOL_INIT;
 
-extern {
-    /// Kernel main function
-    fn kmain(cpus: usize) -> !;
-    /// Kernel main for APs
-    fn kmain_ap(id: usize) -> !;
-}
-
 #[repr(packed)]
 pub struct KernelArgs {
     kernel_base: u64,
     kernel_size: u64,
     stack_base: u64,
     stack_size: u64,
+    env_base: u64,
+    env_size: u64,
 }
 
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
 pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
-    {
+    let env = {
         let args = &*args_ptr;
 
         let kernel_base = args.kernel_base as usize;
         let kernel_size = args.kernel_size as usize;
         let stack_base = args.stack_base as usize;
         let stack_size = args.stack_size as usize;
+        let env_base = args.env_base as usize;
+        let env_size = args.env_size as usize;
 
         // BSS should already be zero
         {
@@ -69,6 +67,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
         println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
+        println!("Env: {:X}:{:X}", env_base, env_base + env_size);
 
         // Initialize memory management
         memory::init(0, kernel_base + ((kernel_size + 4095)/4096) * 4096);
@@ -128,9 +127,11 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         memory::init_noncore();
 
         BSP_READY.store(true, Ordering::SeqCst);
-    }
 
-    kmain(CPU_COUNT.load(Ordering::SeqCst));
+        slice::from_raw_parts(env_base as *const u8, env_size)
+    };
+
+    ::kmain(CPU_COUNT.load(Ordering::SeqCst), env);
 }
 
 #[repr(packed)]
@@ -184,7 +185,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         interrupt::pause();
     }
 
-    kmain_ap(cpu_id);
+    ::kmain_ap(cpu_id);
 }
 
 pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
