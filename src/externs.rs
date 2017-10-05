@@ -60,7 +60,7 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
                 *((src as usize + i) as *const u8);
         }
     } else {
-        let n_usize: usize = n/WORD_SIZE; // Number of 64-bit groups
+        let n_usize: usize = n/WORD_SIZE; // Number of word sized groups
         let mut i: usize = 0;
 
         // Copy `WORD_SIZE` bytes at a time
