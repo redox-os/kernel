@@ -22,6 +22,7 @@
 #![feature(never_type)]
 #![feature(thread_local)]
 #![feature(unique)]
+#![feature(const_size_of)]
 #![no_std]
 
 extern crate alloc_kernel as allocator;
