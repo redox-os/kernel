@@ -41,7 +41,7 @@ use alloc::arc::Arc;
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use spin::Mutex;
 
-use scheme::FileHandle;
+use scheme::{FileHandle, SchemeNamespace};
 
 pub use consts::*;
 
@@ -146,6 +146,8 @@ pub fn kmain(cpus: usize, env: &[u8]) -> ! {
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
+            context.rns = SchemeNamespace::from(1);
+            context.ens = SchemeNamespace::from(1);
             context.status = context::Status::Runnable;
 
             let mut context_env = context.env.lock();
