@@ -99,7 +99,8 @@ impl SchemeList {
         let mut list = SchemeList {
             map: BTreeMap::new(),
             names: BTreeMap::new(),
-            next_ns: 0,
+            // Scheme namespaces always start at 1. 0 is a reserved namespace, the null namespace
+            next_ns: 1,
             next_id: 1
         };
         list.new_root();
