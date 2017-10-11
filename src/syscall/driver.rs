@@ -1,6 +1,7 @@
 use interrupt::syscall::SyscallStack;
 use memory::{allocate_frames, deallocate_frames, Frame};
-use paging::{entry, ActivePageTable, PhysicalAddress, VirtualAddress};
+use paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
+use paging::entry::EntryFlags;
 use context;
 use context::memory::Grant;
 use syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
@@ -61,12 +62,12 @@ pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usi
         let full_size = ((offset + size + 4095)/4096) * 4096;
         let mut to_address = ::USER_GRANT_OFFSET;
 
-        let mut entry_flags = entry::PRESENT | entry::NO_EXECUTE | entry::USER_ACCESSIBLE;
+        let mut entry_flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
         if flags & MAP_WRITE == MAP_WRITE {
-            entry_flags |= entry::WRITABLE;
+            entry_flags |= EntryFlags::WRITABLE;
         }
         if flags & MAP_WRITE_COMBINE == MAP_WRITE_COMBINE {
-            entry_flags |= entry::HUGE_PAGE;
+            entry_flags |= EntryFlags::HUGE_PAGE;
         }
 
         for i in 0 .. grants.len() {

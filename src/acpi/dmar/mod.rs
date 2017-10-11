@@ -3,7 +3,8 @@ use core::mem;
 use super::sdt::Sdt;
 use self::drhd::Drhd;
 use memory::Frame;
-use paging::{entry, ActivePageTable, PhysicalAddress};
+use paging::{ActivePageTable, PhysicalAddress};
+use paging::entry::EntryFlags;
 
 use super::{find_sdt, load_table, get_sdt_signature};
 
@@ -93,7 +94,7 @@ pub struct DmarDrhd {
 
 impl DmarDrhd {
     pub fn get(&self, active_table: &mut ActivePageTable) -> &'static mut Drhd {
-        let result = active_table.identity_map(Frame::containing_address(PhysicalAddress::new(self.base as usize)), entry::PRESENT | entry::WRITABLE | entry::NO_EXECUTE);
+        let result = active_table.identity_map(Frame::containing_address(PhysicalAddress::new(self.base as usize)), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
         result.flush(active_table);
         unsafe { &mut *(self.base as *mut Drhd) }
     }

@@ -4,7 +4,7 @@ use core::ptr::Unique;
 use memory::{allocate_frames, deallocate_frames, Frame};
 
 use super::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
-use super::entry::{self, EntryFlags};
+use super::entry::EntryFlags;
 use super::table::{self, Table, Level4};
 
 /// In order to enforce correct paging operations in the kernel, these types
@@ -107,7 +107,7 @@ impl Mapper {
             page.start_address().get(),
             p1[page.p1_index()].address().get(), p1[page.p1_index()].flags(),
             frame.start_address().get(), flags);
-        p1[page.p1_index()].set(frame, flags | entry::PRESENT);
+        p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
         MapperFlush::new(page)
     }
 
@@ -123,7 +123,7 @@ impl Mapper {
         let p2 = p3.next_table_mut(page.p3_index()).expect("failed to remap: no p2");
         let p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
         let frame = p1[page.p1_index()].pointed_frame().expect("failed to remap: not mapped");
-        p1[page.p1_index()].set(frame, flags | entry::PRESENT);
+        p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
         MapperFlush::new(page)
     }
 

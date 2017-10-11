@@ -13,7 +13,8 @@ use spin::RwLock;
 use stop::kstop;
 
 use memory::Frame;
-use paging::{entry, ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use paging::entry::EntryFlags;
 
 use self::dmar::Dmar;
 use self::fadt::Fadt;
@@ -46,7 +47,7 @@ fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static S
         let page = Page::containing_address(VirtualAddress::new(sdt_address));
         if active_table.translate_page(page).is_none() {
             let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
-            let result = active_table.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE);
+            let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
             result.flush(active_table);
         }
     }
@@ -60,7 +61,7 @@ fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static S
         for page in Page::range_inclusive(start_page, end_page) {
             if active_table.translate_page(page).is_none() {
                 let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
-                let result = active_table.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE);
+                let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
                 result.flush(active_table);
             }
         }

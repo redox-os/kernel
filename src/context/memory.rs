@@ -5,7 +5,7 @@ use spin::Mutex;
 
 use memory::Frame;
 use paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
-use paging::entry::{self, EntryFlags};
+use paging::entry::EntryFlags;
 use paging::mapper::MapperFlushAll;
 use paging::temporary_page::TemporaryPage;
 
@@ -212,7 +212,7 @@ impl Memory {
         flush_all.flush(&mut active_table);
 
         if clear {
-            assert!(self.flags.contains(entry::WRITABLE));
+            assert!(self.flags.contains(EntryFlags::WRITABLE));
             unsafe {
                 intrinsics::write_bytes(self.start_address().get() as *mut u8, 0, self.size);
             }

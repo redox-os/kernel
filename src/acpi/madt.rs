@@ -1,7 +1,8 @@
 use core::mem;
 
 use memory::{allocate_frames, Frame};
-use paging::{entry, ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use paging::entry::EntryFlags;
 
 use super::sdt::Sdt;
 use super::{AP_STARTUP, TRAMPOLINE, find_sdt, load_table, get_sdt_signature};
@@ -49,7 +50,7 @@ impl Madt {
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
 
                 // Map trampoline
-                let result = active_table.map_to(trampoline_page, trampoline_frame, entry::PRESENT | entry::WRITABLE);
+                let result = active_table.map_to(trampoline_page, trampoline_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
                 result.flush(active_table);
 
                 for madt_entry in madt.iter() {

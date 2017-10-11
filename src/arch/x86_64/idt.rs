@@ -63,21 +63,21 @@ pub unsafe fn init() {
 
     // Set syscall function
     IDT[0x80].set_func(syscall::syscall);
-    IDT[0x80].set_flags(IDT_PRESENT | IDT_RING_3 | IDT_INTERRUPT);
+    IDT[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
 
     dtables::lidt(&IDTR);
 }
 
 bitflags! {
-    pub flags IdtFlags: u8 {
-        const IDT_PRESENT = 1 << 7,
-        const IDT_RING_0 = 0 << 5,
-        const IDT_RING_1 = 1 << 5,
-        const IDT_RING_2 = 2 << 5,
-        const IDT_RING_3 = 3 << 5,
-        const IDT_SS = 1 << 4,
-        const IDT_INTERRUPT = 0xE,
-        const IDT_TRAP = 0xF,
+    pub struct IdtFlags: u8 {
+        const PRESENT = 1 << 7;
+        const RING_0 = 0 << 5;
+        const RING_1 = 1 << 5;
+        const RING_2 = 2 << 5;
+        const RING_3 = 3 << 5;
+        const SS = 1 << 4;
+        const INTERRUPT = 0xE;
+        const TRAP = 0xF;
     }
 }
 
@@ -119,7 +119,7 @@ impl IdtEntry {
 
     // A function to set the offset more easily
     pub fn set_func(&mut self, func: unsafe extern fn()) {
-        self.set_flags(IDT_PRESENT | IDT_RING_0 | IDT_INTERRUPT);
+        self.set_flags(IdtFlags::PRESENT | IdtFlags::RING_0 | IdtFlags::INTERRUPT);
         self.set_offset(8, func as usize);
     }
 }
