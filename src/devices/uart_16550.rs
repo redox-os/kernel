@@ -5,21 +5,21 @@ use syscall::io::{Io, Pio, Mmio, ReadOnly};
 
 bitflags! {
     /// Interrupt enable flags
-    flags IntEnFlags: u8 {
-        const RECEIVED = 1,
-        const SENT = 1 << 1,
-        const ERRORED = 1 << 2,
-        const STATUS_CHANGE = 1 << 3,
+    struct IntEnFlags: u8 {
+        const RECEIVED = 1;
+        const SENT = 1 << 1;
+        const ERRORED = 1 << 2;
+        const STATUS_CHANGE = 1 << 3;
         // 4 to 7 are unused
     }
 }
 
 bitflags! {
     /// Line status flags
-    flags LineStsFlags: u8 {
-        const INPUT_FULL = 1,
+    struct LineStsFlags: u8 {
+        const INPUT_FULL = 1;
         // 1 to 4 unknown
-        const OUTPUT_EMPTY = 1 << 5,
+        const OUTPUT_EMPTY = 1 << 5;
         // 6 and 7 unknown
     }
 }
@@ -88,7 +88,7 @@ impl<T: Io<Value = u8>> SerialPort<T> {
     }
 
     pub fn receive(&mut self) {
-        while self.line_sts().contains(INPUT_FULL) {
+        while self.line_sts().contains(LineStsFlags::INPUT_FULL) {
             debug_input(self.data.read());
         }
     }
@@ -96,15 +96,15 @@ impl<T: Io<Value = u8>> SerialPort<T> {
     pub fn send(&mut self, data: u8) {
         match data {
             8 | 0x7F => {
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
                 self.data.write(8);
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
                 self.data.write(b' ');
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
                 self.data.write(8);
             },
             _ => {
-                while ! self.line_sts().contains(OUTPUT_EMPTY) {}
+                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
                 self.data.write(data);
             }
         }

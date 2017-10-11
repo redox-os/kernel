@@ -1,9 +1,10 @@
 use core::{mem, slice};
 
-use paging::{ActivePageTable, Page, VirtualAddress, entry};
+use paging::{ActivePageTable, Page, VirtualAddress};
+use paging::entry::EntryFlags;
 use syscall::error::*;
 
-fn validate(address: usize, size: usize, flags: entry::EntryFlags) -> Result<()> {
+fn validate(address: usize, size: usize, flags: EntryFlags) -> Result<()> {
     let active_table = unsafe { ActivePageTable::new() };
 
     let start_page = Page::containing_address(VirtualAddress::new(address));
@@ -28,7 +29,7 @@ pub fn validate_slice<T>(ptr: *const T, len: usize) -> Result<&'static [T]> {
     if len == 0 {
         Ok(&[])
     } else {
-        validate(ptr as usize, len * mem::size_of::<T>(), entry::PRESENT /* TODO | entry::USER_ACCESSIBLE */)?;
+        validate(ptr as usize, len * mem::size_of::<T>(), EntryFlags::PRESENT /* TODO | EntryFlags::USER_ACCESSIBLE */)?;
         Ok(unsafe { slice::from_raw_parts(ptr, len) })
     }
 }
@@ -38,7 +39,7 @@ pub fn validate_slice_mut<T>(ptr: *mut T, len: usize) -> Result<&'static mut [T]
     if len == 0 {
         Ok(&mut [])
     } else {
-        validate(ptr as usize, len * mem::size_of::<T>(), entry::PRESENT | entry::WRITABLE /* TODO | entry::USER_ACCESSIBLE */)?;
+        validate(ptr as usize, len * mem::size_of::<T>(), EntryFlags::PRESENT | EntryFlags::WRITABLE /* TODO | EntryFlags::USER_ACCESSIBLE */)?;
         Ok(unsafe { slice::from_raw_parts_mut(ptr, len) })
     }
 }

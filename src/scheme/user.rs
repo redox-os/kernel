@@ -5,7 +5,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::{mem, slice, usize};
 use spin::{Mutex, RwLock};
 
-use paging::{InactivePageTable, Page, VirtualAddress, entry};
+use paging::{InactivePageTable, Page, VirtualAddress};
+use paging::entry::EntryFlags;
 use paging::temporary_page::TemporaryPage;
 use context::{self, Context};
 use context::memory::Grant;
@@ -100,9 +101,9 @@ impl UserInner {
             let full_size = ((offset + size + 4095)/4096) * 4096;
             let mut to_address = ::USER_GRANT_OFFSET;
 
-            let mut flags = entry::PRESENT | entry::NO_EXECUTE | entry::USER_ACCESSIBLE;
+            let mut flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
             if writable {
-                flags |= entry::WRITABLE;
+                flags |= EntryFlags::WRITABLE;
             }
 
             for i in 0 .. grants.len() {
