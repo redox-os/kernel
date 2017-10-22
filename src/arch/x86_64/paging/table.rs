@@ -6,7 +6,7 @@ use core::ops::{Index, IndexMut};
 
 use memory::allocate_frames;
 
-use super::entry::*;
+use super::entry::{EntryFlags, Entry};
 use super::ENTRY_COUNT;
 
 pub const P4: *mut Table<Level4> = 0xffff_ffff_ffff_f000 as *mut _;
@@ -73,10 +73,10 @@ impl<L> Table<L> where L: HierarchicalLevel {
 
     pub fn next_table_create(&mut self, index: usize) -> &mut Table<L::NextLevel> {
         if self.next_table(index).is_none() {
-            assert!(!self[index].flags().contains(HUGE_PAGE),
+            assert!(!self[index].flags().contains(EntryFlags::HUGE_PAGE),
                     "next_table_create does not support huge pages");
             let frame = allocate_frames(1).expect("no frames available");
-            self[index].set(frame, PRESENT | WRITABLE | USER_ACCESSIBLE /* Allow users to go down the page table, implement permissions at the page level */);
+            self[index].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE /* Allow users to go down the page table, implement permissions at the page level */);
             self.next_table_mut(index).unwrap().zero();
         }
         self.next_table_mut(index).unwrap()
@@ -84,7 +84,7 @@ impl<L> Table<L> where L: HierarchicalLevel {
 
     fn next_table_address(&self, index: usize) -> Option<usize> {
         let entry_flags = self[index].flags();
-        if entry_flags.contains(PRESENT) && !entry_flags.contains(HUGE_PAGE) {
+        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE) {
             let table_address = self as *const _ as usize;
             Some((table_address << 9) | (index << 12))
         } else {

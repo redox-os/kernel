@@ -8,7 +8,8 @@ use core::ops::DerefMut;
 use spin::Mutex;
 
 use memory::allocate_frames;
-use paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, entry};
+use paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress};
+use paging::entry::EntryFlags;
 use paging::temporary_page::TemporaryPage;
 use start::usermode;
 use interrupt;
@@ -145,7 +146,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                         let mut new_memory = context::memory::Memory::new(
                             VirtualAddress::new(memory.start_address().get() + ::USER_TMP_OFFSET),
                             memory.size(),
-                            entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
+                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             false
                         );
 
@@ -165,7 +166,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                         let mut new_heap = context::memory::Memory::new(
                             VirtualAddress::new(::USER_TMP_HEAP_OFFSET),
                             heap.size(),
-                            entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
+                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             false
                         );
 
@@ -185,7 +186,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 let mut new_stack = context::memory::Memory::new(
                     VirtualAddress::new(::USER_TMP_STACK_OFFSET),
                     stack.size(),
-                    entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
+                    EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                     false
                 );
 
@@ -203,7 +204,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 let mut new_sigstack = context::memory::Memory::new(
                     VirtualAddress::new(::USER_TMP_SIGSTACK_OFFSET),
                     sigstack.size(),
-                    entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
+                    EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                     false
                 );
 
@@ -224,7 +225,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                     mem: context::memory::Memory::new(
                         VirtualAddress::new(::USER_TMP_TLS_OFFSET),
                         tls.mem.size(),
-                        entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE,
+                        EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                         true
                     ),
                     offset: tls.offset,
@@ -418,7 +419,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                     for page in Page::range_inclusive(start_page, end_page) {
                         let frame = active_table.translate_page(page).expect("kernel percpu not mapped");
                         active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                            let result = mapper.map_to(page, frame, entry::PRESENT | entry::NO_EXECUTE | entry::WRITABLE);
+                            let result = mapper.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
                             // Ignore result due to operating on inactive table
                             unsafe { result.ignore(); }
                         });
@@ -634,7 +635,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                             let mut memory = context::memory::Memory::new(
                                 VirtualAddress::new(vaddr as usize),
                                 segment.p_memsz as usize + voff as usize,
-                                entry::NO_EXECUTE | entry::WRITABLE,
+                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                                 true
                             );
 
@@ -645,17 +646,17 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                                                 segment.p_filesz as usize);
                             }
 
-                            let mut flags = entry::NO_EXECUTE | entry::USER_ACCESSIBLE;
+                            let mut flags = EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
 
                             if segment.p_flags & program_header::PF_R == program_header::PF_R {
-                                flags.insert(entry::PRESENT);
+                                flags.insert(EntryFlags::PRESENT);
                             }
 
                             // W ^ X. If it is executable, do not allow it to be writable, even if requested
                             if segment.p_flags & program_header::PF_X == program_header::PF_X {
-                                flags.remove(entry::NO_EXECUTE);
+                                flags.remove(EntryFlags::NO_EXECUTE);
                             } else if segment.p_flags & program_header::PF_W == program_header::PF_W {
-                                flags.insert(entry::WRITABLE);
+                                flags.insert(EntryFlags::WRITABLE);
                             }
 
                             memory.remap(flags);
@@ -665,7 +666,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                             let memory = context::memory::Memory::new(
                                 VirtualAddress::new(::USER_TCB_OFFSET),
                                 4096,
-                                entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
+                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                                 true
                             );
                             let rounded_size = ((segment.p_memsz + 4095)/4096) * 4096;
@@ -688,7 +689,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     context.heap = Some(context::memory::Memory::new(
                         VirtualAddress::new(::USER_HEAP_OFFSET),
                         0,
-                        entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
+                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                         true
                     ).to_shared());
 
@@ -696,7 +697,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     context.stack = Some(context::memory::Memory::new(
                         VirtualAddress::new(::USER_STACK_OFFSET),
                         ::USER_STACK_SIZE,
-                        entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
+                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                         true
                     ));
 
@@ -704,7 +705,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                     context.sigstack = Some(context::memory::Memory::new(
                         VirtualAddress::new(::USER_SIGSTACK_OFFSET),
                         ::USER_SIGSTACK_SIZE,
-                        entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
+                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                         true
                     ));
 
@@ -716,7 +717,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                             mem: context::memory::Memory::new(
                                 VirtualAddress::new(::USER_TLS_OFFSET),
                                 size,
-                                entry::NO_EXECUTE | entry::WRITABLE | entry::USER_ACCESSIBLE,
+                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                                 true
                             ),
                             offset: offset,
@@ -747,7 +748,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                         let mut memory = context::memory::Memory::new(
                             VirtualAddress::new(::USER_ARG_OFFSET),
                             arg_size,
-                            entry::NO_EXECUTE | entry::WRITABLE,
+                            EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             true
                         );
 
@@ -762,7 +763,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                             arg_offset += arg.len();
                         }
 
-                        memory.remap(entry::NO_EXECUTE | entry::USER_ACCESSIBLE);
+                        memory.remap(EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE);
 
                         context.image.push(memory.to_shared());
                     }

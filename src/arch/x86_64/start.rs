@@ -13,7 +13,8 @@ use gdt;
 use idt;
 use interrupt;
 use memory;
-use paging::{self, entry, Page, VirtualAddress};
+use paging::{self, Page, VirtualAddress};
+use paging::entry::EntryFlags;
 use paging::mapper::MapperFlushAll;
 
 /// Test of zero values in BSS.
@@ -104,7 +105,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             let heap_start_page = Page::containing_address(VirtualAddress::new(::KERNEL_HEAP_OFFSET));
             let heap_end_page = Page::containing_address(VirtualAddress::new(::KERNEL_HEAP_OFFSET + ::KERNEL_HEAP_SIZE-1));
             for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-                let result = active_table.map(page, entry::PRESENT | entry::GLOBAL | entry::WRITABLE | entry::NO_EXECUTE);
+                let result = active_table.map(page, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
                 flush_all.consume(result);
             }
 

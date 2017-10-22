@@ -7,7 +7,7 @@ use x86::{msr, tlb};
 
 use memory::{allocate_frames, Frame};
 
-use self::entry::{EntryFlags, PRESENT, GLOBAL, WRITABLE, NO_EXECUTE};
+use self::entry::EntryFlags;
 use self::mapper::Mapper;
 use self::temporary_page::TemporaryPage;
 
@@ -124,7 +124,7 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
             let end_frame = Frame::containing_address(PhysicalAddress::new(stack_end - ::KERNEL_OFFSET - 1));
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + ::KERNEL_OFFSET));
-                let result = mapper.map_to(page, frame, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
+                let result = mapper.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
                 // The flush can be ignored as this is not the active table. See later active_table.switch
                 unsafe { result.ignore(); }
             }
@@ -147,22 +147,22 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
 
                 let flags = if in_section!(text) {
                     // Remap text read-only
-                    PRESENT | GLOBAL
+                    EntryFlags::PRESENT | EntryFlags::GLOBAL
                 } else if in_section!(rodata) {
                     // Remap rodata read-only, no execute
-                    PRESENT | GLOBAL | NO_EXECUTE
+                    EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE
                 } else if in_section!(data) {
                     // Remap data writable, no execute
-                    PRESENT | GLOBAL | NO_EXECUTE | WRITABLE
+                    EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE
                 } else if in_section!(tdata) {
                     // Remap tdata master read-only, no execute
-                    PRESENT | GLOBAL | NO_EXECUTE
+                    EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE
                 } else if in_section!(bss) {
                     // Remap bss writable, no execute
-                    PRESENT | GLOBAL | NO_EXECUTE | WRITABLE
+                    EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE
                 } else {
                     // Remap anything else read-only, no execute
-                    PRESENT | GLOBAL | NO_EXECUTE
+                    EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE
                 };
 
                 let page = Page::containing_address(VirtualAddress::new(virt_addr));
@@ -182,7 +182,7 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
             let start_page = Page::containing_address(VirtualAddress::new(start));
             let end_page = Page::containing_address(VirtualAddress::new(end - 1));
             for page in Page::range_inclusive(start_page, end_page) {
-                let result = mapper.map(page, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
+                let result = mapper.map(page, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
                 // The flush can be ignored as this is not the active table. See later active_table.switch
                 result.ignore();
             }
@@ -227,7 +227,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
             let start_page = Page::containing_address(VirtualAddress::new(start));
             let end_page = Page::containing_address(VirtualAddress::new(end - 1));
             for page in Page::range_inclusive(start_page, end_page) {
-                let result = mapper.map(page, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
+                let result = mapper.map(page, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
                 // The flush can be ignored as this is not the active table. See later active_table.switch
                 result.ignore();
             }
@@ -247,7 +247,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
         };
 
         // Remap stack writable, no execute
-        remap(stack_start - ::KERNEL_OFFSET, stack_end - ::KERNEL_OFFSET, PRESENT | GLOBAL | NO_EXECUTE | WRITABLE);
+        remap(stack_start - ::KERNEL_OFFSET, stack_end - ::KERNEL_OFFSET, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
     });
 
     // This switches the active table, which is setup by the bootloader, to a correct table
@@ -313,17 +313,17 @@ impl ActivePageTable {
             let backup = Frame::containing_address(PhysicalAddress::new(unsafe { controlregs::cr3() as usize }));
 
             // map temporary_page to current p4 table
-            let p4_table = temporary_page.map_table_frame(backup.clone(), PRESENT | WRITABLE | NO_EXECUTE, self);
+            let p4_table = temporary_page.map_table_frame(backup.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE, self);
 
             // overwrite recursive mapping
-            self.p4_mut()[511].set(table.p4_frame.clone(), PRESENT | WRITABLE | NO_EXECUTE);
+            self.p4_mut()[511].set(table.p4_frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
             self.flush_all();
 
             // execute f in the new context
             f(self);
 
             // restore recursive mapping to original p4 table
-            p4_table[511].set(backup, PRESENT | WRITABLE | NO_EXECUTE);
+            p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
             self.flush_all();
         }
 
@@ -343,11 +343,11 @@ pub struct InactivePageTable {
 impl InactivePageTable {
     pub fn new(frame: Frame, active_table: &mut ActivePageTable, temporary_page: &mut TemporaryPage) -> InactivePageTable {
         {
-            let table = temporary_page.map_table_frame(frame.clone(), PRESENT | WRITABLE | NO_EXECUTE, active_table);
+            let table = temporary_page.map_table_frame(frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE, active_table);
             // now we are able to zero the table
             table.zero();
             // set up recursive mapping for the table
-            table[511].set(frame.clone(), PRESENT | WRITABLE | NO_EXECUTE);
+            table[511].set(frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
         }
         temporary_page.unmap(active_table);
 
