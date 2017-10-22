@@ -364,12 +364,12 @@ impl AmlExecutionContext {
                 let mut idx = indices[0];
                 idx += b.index.get_as_integer()?;
 
-                self.modify(AmlValue::ObjectReference(ObjectReference::Index(b.source_buf.clone(), Box::new(AmlValue::Integer(idx.clone())))), value);
+                let _ = self.modify(AmlValue::ObjectReference(ObjectReference::Index(b.source_buf.clone(), Box::new(AmlValue::Integer(idx.clone())))), value);
 
                 Ok(AmlValue::BufferField(b.clone()))
             },
             AmlValue::Package(ref p) => {
-                if indices.len() < 0 {
+                if indices.len() == 0 {
                     return Err(AmlError::AmlValueError);
                 }
 
@@ -491,7 +491,7 @@ impl AmlExecutionContext {
                 Ok(AmlValue::Integer(b.source_buf.get_as_buffer()?[idx as usize] as u64))
             },
             AmlValue::Package(ref p) => {
-                if indices.len() < 0 {
+                if indices.len() == 0 {
                     return Err(AmlError::AmlValueError);
                 }
 

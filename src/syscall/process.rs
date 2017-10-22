@@ -473,7 +473,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         }
     }
 
-    unsafe { context::switch(); }
+    let _ = unsafe { context::switch() };
 
     Ok(pid)
 }
@@ -919,7 +919,7 @@ pub fn exit(status: usize) -> ! {
         }
     }
 
-    unsafe { context::switch(); }
+    let _ = unsafe { context::switch() };
 
     unreachable!();
 }
@@ -1098,7 +1098,7 @@ pub fn sigreturn() -> Result<usize> {
         context.block();
     }
 
-    unsafe { context::switch(); }
+    let _ = unsafe { context::switch() };
 
     unreachable!();
 }

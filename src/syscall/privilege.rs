@@ -78,10 +78,10 @@ pub fn setregid(rgid: u32, egid: u32) -> Result<usize> {
             // Allow changing RGID if root
             true
         } else if rgid == context.egid {
-            /// Allow changing RGID if used for EGID
+            // Allow changing RGID if used for EGID
             true
         } else if rgid == context.rgid {
-            /// Allow changing RGID if used for RGID
+            // Allow changing RGID if used for RGID
             true
         } else if rgid as i32 == -1 {
             // Ignore RGID if -1 is passed
@@ -96,10 +96,10 @@ pub fn setregid(rgid: u32, egid: u32) -> Result<usize> {
             // Allow changing EGID if root
             true
         } else if egid == context.egid {
-            /// Allow changing EGID if used for EGID
+            // Allow changing EGID if used for EGID
             true
         } else if egid == context.rgid {
-            /// Allow changing EGID if used for RGID
+            // Allow changing EGID if used for RGID
             true
         } else if egid as i32 == -1 {
             // Ignore EGID if -1 is passed

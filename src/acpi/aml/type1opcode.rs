@@ -157,7 +157,7 @@ fn parse_def_load(data: &[u8],
     if is_aml_table(sdt) {
         load_table(get_sdt_signature(sdt));
         let delta = parse_aml_table(sdt)?;
-        ctx.modify(ddb_handle_object.val, AmlValue::DDBHandle((delta, get_sdt_signature(sdt))));
+        let _ = ctx.modify(ddb_handle_object.val, AmlValue::DDBHandle((delta, get_sdt_signature(sdt))));
 
         Ok(AmlParseType {
             val: AmlValue::None,
@@ -229,7 +229,7 @@ fn parse_def_release(data: &[u8],
     parser_opcode_extended!(data, 0x27);
 
     let obj = parse_super_name(&data[2..], ctx)?;
-    ctx.release_mutex(obj.val);
+    let _ = ctx.release_mutex(obj.val);
 
     Ok(AmlParseType {
         val: AmlValue::None,
@@ -252,7 +252,7 @@ fn parse_def_reset(data: &[u8],
     let object = parse_super_name(&data[2..], ctx)?;
     ctx.get(object.val.clone())?.get_as_event()?;
 
-    ctx.modify(object.val.clone(), AmlValue::Event(0));
+    let _ = ctx.modify(object.val.clone(), AmlValue::Event(0));
 
     Ok(AmlParseType {
         val: AmlValue::None,

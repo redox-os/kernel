@@ -276,7 +276,7 @@ fn parse_def_create_dword_field(data: &[u8],
 
     let local_scope_string = get_namespace_string(ctx.scope.clone(), name.val)?;
 
-    ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
+    let _ = ctx.add_to_namespace(local_scope_string, AmlValue::BufferField(BufferField {
         source_buf: Box::new(source_buf.val),
         index: Box::new(bit_index.val),
         length: Box::new(AmlValue::IntegerConstant(32))

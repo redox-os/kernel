@@ -27,7 +27,7 @@ impl<K, V> WaitMap<K, V> where K: Clone + Ord {
             if let Some(value) = self.receive_nonblock(key) {
                 return value;
             }
-            self.condition.wait();
+            let _ = self.condition.wait();
         }
     }
 
@@ -45,7 +45,7 @@ impl<K, V> WaitMap<K, V> where K: Clone + Ord {
             if let Some(entry) = self.receive_any_nonblock() {
                 return entry;
             }
-            self.condition.wait();
+            let _ = self.condition.wait();
         }
     }
 

@@ -14,7 +14,6 @@
 #![feature(const_fn)]
 #![feature(const_max_value)]
 #![feature(core_intrinsics)]
-#![feature(drop_types_in_const)]
 #![feature(global_allocator)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
@@ -41,6 +40,7 @@ use alloc::arc::Arc;
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use spin::Mutex;
 
+use context::SwitchResult;
 use scheme::{FileHandle, SchemeNamespace};
 
 pub use consts::*;
@@ -171,11 +171,14 @@ pub fn kmain(cpus: usize, env: &[u8]) -> ! {
     loop {
         unsafe {
             interrupt::disable();
-            if context::switch() {
-                interrupt::enable_and_nop();
-            } else {
-                // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                interrupt::enable_and_halt();
+            match context::switch() {
+                SwitchResult::None => {
+                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
+                    interrupt::enable_and_halt();
+                }
+                _ => {
+                    interrupt::enable_and_nop();
+                }
             }
         }
     }
@@ -195,11 +198,14 @@ pub fn kmain_ap(id: usize) -> ! {
         loop {
             unsafe {
                 interrupt::disable();
-                if context::switch() {
-                    interrupt::enable_and_nop();
-                } else {
-                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                    interrupt::enable_and_halt();
+                match context::switch() {
+                    SwitchResult::None => {
+                        // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
+                        interrupt::enable_and_halt();
+                    }
+                    _ => {
+                        interrupt::enable_and_nop();
+                    }
                 }
             }
         }

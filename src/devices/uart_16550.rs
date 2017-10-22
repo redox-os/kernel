@@ -57,7 +57,7 @@ impl SerialPort<Pio<u8>> {
 }
 
 impl SerialPort<Mmio<u8>> {
-    pub fn new(base: usize) -> SerialPort<Mmio<u8>> {
+    pub fn new(_base: usize) -> SerialPort<Mmio<u8>> {
         SerialPort {
             data: Mmio::new(),
             int_en: Mmio::new(),

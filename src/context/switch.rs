@@ -10,12 +10,22 @@ use interrupt::irq::PIT_TICKS;
 use syscall;
 use time;
 
+#[must_use]
+pub enum SwitchResult {
+    /// No context to switch to
+    None,
+    /// Received a signal
+    Signal,
+    /// Switched correctly
+    Normal,
+}
+
 /// Switch to the next context
 ///
 /// # Safety
 ///
 /// Do not call this while holding locks!
-pub unsafe fn switch() -> bool {
+pub unsafe fn switch() -> SwitchResult {
     use core::ops::DerefMut;
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
@@ -122,23 +132,26 @@ pub unsafe fn switch() -> bool {
         }
     };
 
-    if to_ptr as usize == 0 {
-        // Unset global lock if no context found
-        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-        return false;
+    // Switch process states, TSS stack pointer, and store new context ID
+    if to_ptr as usize != 0 {
+        (&mut *from_ptr).running = false;
+        (&mut *to_ptr).running = true;
+        if let Some(ref stack) = (*to_ptr).kstack {
+            gdt::TSS.rsp[0] = (stack.as_ptr() as usize + stack.len() - 256) as u64;
+        }
+        CONTEXT_ID.store((&mut *to_ptr).id, Ordering::SeqCst);
     }
-
-    (&mut *from_ptr).running = false;
-    (&mut *to_ptr).running = true;
-    if let Some(ref stack) = (*to_ptr).kstack {
-        gdt::TSS.rsp[0] = (stack.as_ptr() as usize + stack.len() - 256) as u64;
-    }
-    CONTEXT_ID.store((&mut *to_ptr).id, Ordering::SeqCst);
 
     // Unset global lock before switch, as arch is only usable by the current CPU at this time
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
-    if let Some(sig) = to_sig {
+    if to_ptr as usize == 0 {
+        // No target was found, return
+
+        SwitchResult::None
+    } else if let Some(sig) = to_sig {
+        // Signal was found, run signal handler
+
         //TODO: Allow nested signals
         assert!((&mut *to_ptr).ksig.is_none());
 
@@ -147,11 +160,17 @@ pub unsafe fn switch() -> bool {
         let kstack = (&mut *to_ptr).kstack.clone();
         (&mut *to_ptr).ksig = Some((arch, kfx, kstack));
         (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
+
+        (&mut *from_ptr).arch.switch_to(&mut (&mut *to_ptr).arch);
+
+        SwitchResult::Signal
+    } else {
+        // Found a target, had no signals
+
+        (&mut *from_ptr).arch.switch_to(&mut (&mut *to_ptr).arch);
+
+        SwitchResult::Normal
     }
-
-    (&mut *from_ptr).arch.switch_to(&mut (&mut *to_ptr).arch);
-
-    true
 }
 
 extern "C" fn signal_handler(sig: usize) {

@@ -3,10 +3,10 @@ use collections::{BTreeMap, VecDeque};
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use context;
+use context::{self, SwitchResult};
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use sync::WaitCondition;
-use syscall::error::{Error, Result, EAGAIN, EBADF, EINVAL, EPIPE, ESPIPE};
+use syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
 use syscall::flag::{EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
 use syscall::scheme::Scheme;
 use syscall::data::Stat;
@@ -236,7 +236,13 @@ impl PipeRead {
             } else if self.flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
                 return Err(Error::new(EAGAIN));
             } else {
-                self.condition.wait();
+                match self.condition.wait() {
+                    SwitchResult::Signal => {
+                        println!("Received signal during pipe read");
+                        return Err(Error::new(EINTR));
+                    },
+                    _ => ()
+                }
             }
         }
     }

@@ -33,7 +33,7 @@ impl<T> WaitQueue<T> {
             if let Some(value) = self.inner.lock().pop_front() {
                 return value;
             }
-            self.condition.wait();
+            let _ = self.condition.wait();
         }
     }
 

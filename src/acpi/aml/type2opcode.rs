@@ -367,9 +367,9 @@ fn parse_def_increment(data: &[u8],
 
     let obj = parse_super_name(&data[1..], ctx)?;
 
-    let mut _namespace = ctx.prelock();
+    let _namespace = ctx.prelock();
     let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? + 1);
-    ctx.modify(obj.val, value.clone());
+    let _ = ctx.modify(obj.val, value.clone());
 
     Ok(AmlParseType {
         val: value,
@@ -394,7 +394,7 @@ fn parse_def_index(data: &[u8],
     let target = parse_target(&data[1 + obj.len + idx.len..], ctx)?;
 
     let reference = AmlValue::ObjectReference(ObjectReference::Index(Box::new(obj.val), Box::new(idx.val)));
-    ctx.modify(target.val, reference.clone());
+    let _ = ctx.modify(target.val, reference.clone());
 
     Ok(AmlParseType {
         val: reference,
@@ -571,7 +571,7 @@ fn parse_def_to_hex_string(data: &[u8],
         _ => return Err(AmlError::AmlValueError)
     };
 
-    ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -595,7 +595,7 @@ fn parse_def_to_buffer(data: &[u8],
     let target = parse_target(&data[2 + operand.len..], ctx)?;
 
     let res = AmlValue::Buffer(operand.val.get_as_buffer()?);
-    ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -628,7 +628,7 @@ fn parse_def_to_bcd(data: &[u8],
     }
 
     let result = AmlValue::Integer(result);
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -668,7 +668,7 @@ fn parse_def_to_decimal_string(data: &[u8],
         _ => return Err(AmlError::AmlValueError)
     };
 
-    ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -693,7 +693,7 @@ fn parse_def_to_integer(data: &[u8],
 
     let res = AmlValue::Integer(operand.val.get_as_integer()?);
 
-    ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -726,7 +726,7 @@ fn parse_def_to_string(data: &[u8],
     string.truncate(length.val.get_as_integer()? as usize);
     let res = AmlValue::String(string);
 
-    ctx.modify(target.val, res.clone());
+    let _ = ctx.modify(target.val, res.clone());
 
     Ok(AmlParseType {
         val: res,
@@ -752,7 +752,7 @@ fn parse_def_subtract(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? - rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -803,7 +803,7 @@ fn parse_def_store(data: &[u8],
     let operand = parse_term_arg(&data[1..], ctx)?;
     let target = parse_super_name(&data[1 + operand.len..], ctx)?;
 
-    ctx.modify(target.val.clone(), operand.val);
+    let _ = ctx.modify(target.val.clone(), operand.val);
 
     Ok(AmlParseType {
         val: target.val,
@@ -829,7 +829,7 @@ fn parse_def_or(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -855,7 +855,7 @@ fn parse_def_shift_left(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? >> rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -881,7 +881,7 @@ fn parse_def_shift_right(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? << rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -907,7 +907,7 @@ fn parse_def_add(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? + rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -933,7 +933,7 @@ fn parse_def_and(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -959,7 +959,7 @@ fn parse_def_xor(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? ^ rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1093,7 +1093,7 @@ fn parse_def_cond_ref_of(data: &[u8],
         _ => return Err(AmlError::AmlValueError)
     };
 
-    ctx.modify(target.val, AmlValue::ObjectReference(res));
+    let _ = ctx.modify(target.val, AmlValue::ObjectReference(res));
 
     Ok(AmlParseType {
         val: AmlValue::Integer(1),
@@ -1208,9 +1208,9 @@ fn parse_def_decrement(data: &[u8],
 
     let obj = parse_super_name(&data[1..], ctx)?;
 
-    let namespace = ctx.prelock();
+    let _namespace = ctx.prelock();
     let value = AmlValue::Integer(ctx.get(obj.val.clone())?.get_as_integer()? - 1);
-    ctx.modify(obj.val, value.clone());
+    let _ = ctx.modify(obj.val, value.clone());
 
     Ok(AmlParseType {
         val: value,
@@ -1241,8 +1241,8 @@ fn parse_def_divide(data: &[u8],
     let remainder = numerator % denominator;
     let quotient = (numerator - remainder) / denominator;
 
-    ctx.modify(target_remainder.val, AmlValue::Integer(remainder));
-    ctx.modify(target_quotient.val, AmlValue::Integer(quotient));
+    let _ = ctx.modify(target_remainder.val, AmlValue::Integer(remainder));
+    let _ = ctx.modify(target_quotient.val, AmlValue::Integer(quotient));
 
     Ok(AmlParseType {
         val: AmlValue::Integer(quotient),
@@ -1278,7 +1278,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
     }
 
     let result = AmlValue::Integer(first_bit);
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1318,7 +1318,7 @@ fn parse_def_find_set_right_bit(data: &[u8],
     }
 
     let result = AmlValue::Integer(first_bit);
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1364,7 +1364,7 @@ fn parse_def_load_table(data: &[u8],
 
         if let Some(sdt) = sdt {
             let hdl = parse_aml_with_scope(sdt, root_path.val.get_as_string()?)?;
-            ctx.modify(parameter_path.val, parameter_data.val);
+            let _ = ctx.modify(parameter_path.val, parameter_data.val);
 
             return Ok(AmlParseType {
                 val: AmlValue::DDBHandle((hdl, sdt_signature)),
@@ -1553,7 +1553,7 @@ fn parse_def_from_bcd(data: &[u8],
 
     let result = AmlValue::Integer(result);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1615,7 +1615,7 @@ fn parse_def_mid(data: &[u8],
         }
     };
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1645,7 +1645,7 @@ fn parse_def_mod(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? % rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1672,7 +1672,7 @@ fn parse_def_multiply(data: &[u8],
 
     let result = AmlValue::Integer(lhs.val.get_as_integer()? * rhs.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1698,7 +1698,7 @@ fn parse_def_nand(data: &[u8],
 
     let result = AmlValue::Integer(!(lhs.val.get_as_integer()? & rhs.val.get_as_integer()?));
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1724,7 +1724,7 @@ fn parse_def_nor(data: &[u8],
 
     let result = AmlValue::Integer(!(lhs.val.get_as_integer()? | rhs.val.get_as_integer()?));
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,
@@ -1749,7 +1749,7 @@ fn parse_def_not(data: &[u8],
 
     let result = AmlValue::Integer(!operand.val.get_as_integer()?);
 
-    ctx.modify(target.val, result.clone());
+    let _ = ctx.modify(target.val, result.clone());
 
     Ok(AmlParseType {
         val: result,

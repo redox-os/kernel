@@ -145,7 +145,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         rxsdt.map_all(active_table);
 
         for sdt_address in rxsdt.iter() {
-            let sdt = unsafe { &*(sdt_address as *const Sdt) };
+            let sdt = &*(sdt_address as *const Sdt);
 
             let signature = get_sdt_signature(sdt);
             if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {

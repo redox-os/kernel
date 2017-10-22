@@ -132,12 +132,12 @@ pub enum AmlValue {
     String(String),
     PowerResource(PowerResource),
     Processor(Processor),
-    RawDataBuffer(Vec<u8>),
+    //RawDataBuffer(Vec<u8>),
     ThermalZone(ThermalZone)
 }
 
 impl Debug for AmlValue {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> { Ok(()) }
+    fn fmt(&self, _f: &mut Formatter) -> Result<(), Error> { Ok(()) }
 }
 
 impl AmlValue {
@@ -373,12 +373,14 @@ impl AmlValue {
         }
     }
 
+    /*
     pub fn get_as_operation_region(&self) -> Result<OperationRegion, AmlError> {
         match *self {
             AmlValue::OperationRegion(ref p) => Ok(p.clone()),
             _ => Err(AmlError::AmlValueError)
         }
     }
+    */
 
     pub fn get_as_package(&self) -> Result<Vec<AmlValue>, AmlError> {
         match *self {
@@ -435,7 +437,7 @@ impl Method {
         let mut ctx = AmlExecutionContext::new(scope);
         ctx.init_arg_vars(parameters);
 
-        parse_term_list(&self.term_list[..], &mut ctx);
+        let _ = parse_term_list(&self.term_list[..], &mut ctx);
         ctx.clean_namespace();
 
         match ctx.state {
