@@ -53,6 +53,8 @@ pub struct Context {
     pub running: bool,
     /// CPU ID, if locked
     pub cpu_id: Option<usize>,
+    /// Current system call
+    pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Context is halting parent
     pub vfork: bool,
     /// Context is being waited on
@@ -112,6 +114,7 @@ impl Context {
             status: Status::Blocked,
             running: false,
             cpu_id: None,
+            syscall: None,
             vfork: false,
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),

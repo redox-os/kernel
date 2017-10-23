@@ -238,7 +238,6 @@ impl PipeRead {
             } else {
                 match self.condition.wait() {
                     SwitchResult::Signal => {
-                        println!("Received signal during pipe read");
                         return Err(Error::new(EINTR));
                     },
                     _ => ()

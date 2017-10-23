@@ -168,7 +168,23 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
     }
     */
 
+    {
+        let contexts = ::context::contexts();
+        if let Some(context_lock) = contexts.current() {
+            let mut context = context_lock.write();
+            context.syscall = Some((a, b, c, d, e, f));
+        }
+    }
+
     let result = inner(a, b, c, d, e, f, bp, stack);
+
+    {
+        let contexts = ::context::contexts();
+        if let Some(context_lock) = contexts.current() {
+            let mut context = context_lock.write();
+            context.syscall = None;
+        }
+    }
 
     /*
     if debug {

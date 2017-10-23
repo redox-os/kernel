@@ -1,6 +1,6 @@
 use core::mem;
 use core::ops::Range;
-use collections::Vec;
+use collections::{String, Vec};
 
 use super::data::{Stat, TimeSpec};
 use super::error::Result;
@@ -58,53 +58,53 @@ impl<'a> ::core::fmt::Debug for ByteStr<'a> {
 }
 
 
-pub fn print_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> Result<()> {
-    match a {
-        SYS_OPEN => print!(
+pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> Result<String> {
+    Ok(match a {
+        SYS_OPEN => format!(
             "open({:?}, {:#X})",
             validate_slice(b as *const u8, c).map(ByteStr),
             d
         ),
-        SYS_CHMOD => print!(
+        SYS_CHMOD => format!(
             "chmod({:?}, {:#o})",
             validate_slice(b as *const u8, c).map(ByteStr),
             d
         ),
-        SYS_RMDIR => print!(
+        SYS_RMDIR => format!(
             "rmdir({:?})",
             validate_slice(b as *const u8, c).map(ByteStr)
         ),
-        SYS_UNLINK => print!(
+        SYS_UNLINK => format!(
             "unlink({:?})",
             validate_slice(b as *const u8, c).map(ByteStr)
         ),
-        SYS_CLOSE => print!(
+        SYS_CLOSE => format!(
             "close({})", b
         ),
-        SYS_DUP => print!(
+        SYS_DUP => format!(
             "dup({}, {:?})",
             b,
             validate_slice(c as *const u8, d).map(ByteStr)
         ),
-        SYS_DUP2 => print!(
+        SYS_DUP2 => format!(
             "dup2({}, {}, {:?})",
             b,
             c,
             validate_slice(d as *const u8, e).map(ByteStr)
         ),
-        SYS_READ => print!(
+        SYS_READ => format!(
             "read({}, {:#X}, {})",
             b,
             c,
             d
         ),
-        SYS_WRITE => print!(
+        SYS_WRITE => format!(
             "write({}, {:#X}, {})",
             b,
             c,
             d
         ),
-        SYS_LSEEK => print!(
+        SYS_LSEEK => format!(
             "lseek({}, {}, {} ({}))",
             b,
             c as isize,
@@ -116,7 +116,7 @@ pub fn print_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) ->
             },
             d
         ),
-        SYS_FCNTL => print!(
+        SYS_FCNTL => format!(
             "fcntl({}, {} ({}), {:#X})",
             b,
             match c {
@@ -130,28 +130,28 @@ pub fn print_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) ->
             c,
             d
         ),
-        SYS_FEVENT => print!(
+        SYS_FEVENT => format!(
             "fevent({}, {:#X})",
             b,
             c
         ),
-        SYS_FMAP => print!(
+        SYS_FMAP => format!(
             "fmap({}, {:#X}, {})",
             b,
             c,
             d
         ),
-        SYS_FUNMAP => print!(
+        SYS_FUNMAP => format!(
             "funmap({:#X})",
             b
         ),
-        SYS_FPATH => print!(
+        SYS_FPATH => format!(
             "fpath({}, {:#X}, {})",
             b,
             c,
             d
         ),
-        SYS_FSTAT => print!(
+        SYS_FSTAT => format!(
             "fstat({}, {:?})",
             b,
             validate_slice(
@@ -159,41 +159,41 @@ pub fn print_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) ->
                 d/mem::size_of::<Stat>()
             ),
         ),
-        SYS_FSTATVFS => print!(
+        SYS_FSTATVFS => format!(
             "fstatvfs({}, {:#X}, {})",
             b,
             c,
             d
         ),
-        SYS_FSYNC => print!(
+        SYS_FSYNC => format!(
             "fsync({})",
             b
         ),
-        SYS_FTRUNCATE => print!(
+        SYS_FTRUNCATE => format!(
             "ftruncate({}, {})",
             b,
             c
         ),
 
-        SYS_BRK => print!(
+        SYS_BRK => format!(
             "brk({:#X})",
             b
         ),
-        SYS_CHDIR => print!(
+        SYS_CHDIR => format!(
             "chdir({:?})",
             validate_slice(b as *const u8, c).map(ByteStr)
         ),
-        SYS_CLOCK_GETTIME => print!(
+        SYS_CLOCK_GETTIME => format!(
             "clock_gettime({}, {:?})",
             b,
             validate_slice_mut(c as *mut TimeSpec, 1)
         ),
-        SYS_CLONE => print!(
+        SYS_CLONE => format!(
             "clone({})",
             b
         ),
         //TODO: Cleanup, do not allocate
-        SYS_EXECVE => print!(
+        SYS_EXECVE => format!(
             "execve({:?}, {:?})",
             validate_slice(b as *const u8, c).map(ByteStr),
             validate_slice(
@@ -206,11 +206,11 @@ pub fn print_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) ->
                 .and_then(|s| ::core::str::from_utf8(s).ok())
             ).collect::<Vec<Option<&str>>>()
         ),
-        SYS_EXIT => print!(
+        SYS_EXIT => format!(
             "exit({})",
             b
         ),
-        SYS_FUTEX => print!(
+        SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,
             validate_slice_mut(b as *mut i32, 1).map(|uaddr| &mut uaddr[0]),
@@ -219,96 +219,96 @@ pub fn print_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) ->
             e,
             f
         ),
-        SYS_GETCWD => print!(
+        SYS_GETCWD => format!(
             "getcwd({:#X}, {})",
             b,
             c
         ),
-        SYS_GETEGID => print!("getgid()"),
-        SYS_GETENS => print!("getens()"),
-        SYS_GETEUID => print!("geteuid()"),
-        SYS_GETGID => print!("getgid()"),
-        SYS_GETNS => print!("getns()"),
-        SYS_GETPID => print!("getpid()"),
-        SYS_GETUID => print!("getuid()"),
-        SYS_IOPL => print!(
+        SYS_GETEGID => format!("getgid()"),
+        SYS_GETENS => format!("getens()"),
+        SYS_GETEUID => format!("geteuid()"),
+        SYS_GETGID => format!("getgid()"),
+        SYS_GETNS => format!("getns()"),
+        SYS_GETPID => format!("getpid()"),
+        SYS_GETUID => format!("getuid()"),
+        SYS_IOPL => format!(
             "iopl({})",
             b
         ),
-        SYS_KILL => print!(
+        SYS_KILL => format!(
             "kill({}, {})",
             b,
             c
         ),
-        SYS_SIGRETURN => print!("sigreturn()"),
-        SYS_SIGACTION => print!(
+        SYS_SIGRETURN => format!("sigreturn()"),
+        SYS_SIGACTION => format!(
             "sigaction({}, {:#X}, {:#X}, {:#X})",
             b,
             c,
             d,
             e
         ),
-        SYS_MKNS => print!(
+        SYS_MKNS => format!(
             "mkns({:?})",
             validate_slice(b as *const [usize; 2], c)
         ),
-        SYS_NANOSLEEP => print!(
+        SYS_NANOSLEEP => format!(
             "nanosleep({:?}, ({}, {}))",
             validate_slice(b as *const TimeSpec, 1),
             c,
             d
         ),
-        SYS_PHYSALLOC => print!(
+        SYS_PHYSALLOC => format!(
             "physalloc({})",
             b
         ),
-        SYS_PHYSFREE => print!(
+        SYS_PHYSFREE => format!(
             "physfree({:#X}, {})",
             b,
             c
         ),
-        SYS_PHYSMAP => print!(
+        SYS_PHYSMAP => format!(
             "physmap({:#X}, {}, {:#X})",
             b,
             c,
             d
         ),
-        SYS_PHYSUNMAP => print!(
+        SYS_PHYSUNMAP => format!(
             "physunmap({:#X})",
             b
         ),
-        SYS_VIRTTOPHYS => print!(
+        SYS_VIRTTOPHYS => format!(
             "virttophys({:#X})",
             b
         ),
-        SYS_PIPE2 => print!(
+        SYS_PIPE2 => format!(
             "pipe2({:?}, {})",
             validate_slice_mut(b as *mut usize, 2),
             c
         ),
-        SYS_SETREGID => print!(
+        SYS_SETREGID => format!(
             "setregid({}, {})",
             b,
             c
         ),
-        SYS_SETRENS => print!(
+        SYS_SETRENS => format!(
             "setrens({}, {})",
             b,
             c
         ),
-        SYS_SETREUID => print!(
+        SYS_SETREUID => format!(
             "setreuid({}, {})",
             b,
             c
         ),
-        SYS_WAITPID => print!(
-            "waitpid({}, {}, {})",
+        SYS_WAITPID => format!(
+            "waitpid({}, {:#X}, {})",
             b,
             c,
             d
         ),
-        SYS_YIELD => print!("yield()"),
-        _ => print!(
+        SYS_YIELD => format!("yield()"),
+        _ => format!(
             "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
             a, a,
             b,
@@ -317,7 +317,5 @@ pub fn print_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) ->
             e,
             f
         )
-    }
-
-    Ok(())
+    })
 }
