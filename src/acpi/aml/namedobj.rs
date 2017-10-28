@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
-use collections::string::String;
-use collections::btree_map::BTreeMap;
+use alloc::string::String;
+use alloc::btree_map::BTreeMap;
 
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlParseTypeGeneric, AmlExecutionContext, ExecutionState };

@@ -1,4 +1,4 @@
-use collections::vec_deque::VecDeque;
+use alloc::vec_deque::VecDeque;
 use core::mem;
 use spin::{Once, Mutex, MutexGuard};
 

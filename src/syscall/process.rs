@@ -2,7 +2,7 @@ use alloc::allocator::{Alloc, Layout};
 use alloc::arc::Arc;
 use alloc::boxed::Box;
 use alloc::heap::Heap;
-use collections::{BTreeMap, Vec};
+use alloc::{BTreeMap, Vec};
 use core::{intrinsics, mem, str};
 use core::ops::DerefMut;
 use spin::Mutex;

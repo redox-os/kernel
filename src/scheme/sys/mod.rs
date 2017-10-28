@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use collections::{BTreeMap, Vec};
+use alloc::{BTreeMap, Vec};
 use core::{cmp, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;

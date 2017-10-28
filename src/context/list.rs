@@ -2,7 +2,7 @@ use alloc::allocator::{Alloc, Layout};
 use alloc::arc::Arc;
 use alloc::boxed::Box;
 use alloc::heap::Heap;
-use collections::BTreeMap;
+use alloc::BTreeMap;
 use core::mem;
 use core::sync::atomic::Ordering;
 use paging;
@@ -36,7 +36,7 @@ impl ContextList {
         self.map.get(&super::CONTEXT_ID.load(Ordering::SeqCst))
     }
 
-    pub fn iter(&self) -> ::collections::btree_map::Iter<ContextId, Arc<RwLock<Context>>> {
+    pub fn iter(&self) -> ::alloc::btree_map::Iter<ContextId, Arc<RwLock<Context>>> {
         self.map.iter()
     }
 

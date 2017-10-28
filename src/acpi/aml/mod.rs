@@ -1,8 +1,8 @@
 //! # AML
 //! Code to parse and execute AML tables
 
-use collections::string::String;
-use collections::vec::Vec;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::str::FromStr;
 
 use super::sdt::Sdt;

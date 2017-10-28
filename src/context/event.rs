@@ -1,5 +1,5 @@
 use alloc::arc::{Arc, Weak};
-use collections::BTreeMap;
+use alloc::BTreeMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use context;

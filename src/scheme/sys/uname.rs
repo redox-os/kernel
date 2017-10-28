@@ -1,4 +1,4 @@
-use collections::Vec;
+use alloc::Vec;
 use syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {

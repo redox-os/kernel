@@ -1,6 +1,6 @@
-use collections::string::String;
-use collections::btree_map::BTreeMap;
-use collections::vec::Vec;
+use alloc::string::String;
+use alloc::btree_map::BTreeMap;
+use alloc::vec::Vec;
 use alloc::boxed::Box;
 
 use spin::RwLockWriteGuard;

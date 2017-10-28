@@ -1,8 +1,8 @@
 use alloc::boxed::Box;
-use collections::string::String;
-use collections::string::ToString;
-use collections::vec::Vec;
-use collections::btree_map::BTreeMap;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use alloc::btree_map::BTreeMap;
 
 use core::fmt::{Debug, Formatter, Error};
 use core::str::FromStr;

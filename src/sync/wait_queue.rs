@@ -1,4 +1,4 @@
-use collections::vec_deque::VecDeque;
+use alloc::vec_deque::VecDeque;
 use spin::Mutex;
 
 use sync::WaitCondition;

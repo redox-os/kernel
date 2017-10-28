@@ -8,7 +8,7 @@
 
 use alloc::arc::Arc;
 use alloc::boxed::Box;
-use collections::BTreeMap;
+use alloc::BTreeMap;
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -174,11 +174,11 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter(&self) -> ::collections::btree_map::Iter<SchemeId, Arc<Box<Scheme + Send + Sync>>> {
+    pub fn iter(&self) -> ::alloc::btree_map::Iter<SchemeId, Arc<Box<Scheme + Send + Sync>>> {
         self.map.iter()
     }
 
-    pub fn iter_name(&self, ns: SchemeNamespace) -> ::collections::btree_map::Iter<Box<[u8]>, SchemeId> {
+    pub fn iter_name(&self, ns: SchemeNamespace) -> ::alloc::btree_map::Iter<Box<[u8]>, SchemeId> {
         self.names[&ns].iter()
     }
 

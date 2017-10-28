@@ -1,9 +1,9 @@
 //! # ACPI
 //! Code to parse the ACPI tables
 
-use collections::btree_map::BTreeMap;
-use collections::string::String;
-use collections::vec::Vec;
+use alloc::btree_map::BTreeMap;
+use alloc::string::String;
+use alloc::vec::Vec;
 use alloc::boxed::Box;
 
 use syscall::io::{Io, Pio};

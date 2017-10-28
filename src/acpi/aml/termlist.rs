@@ -1,4 +1,4 @@
-use collections::vec::Vec;
+use alloc::vec::Vec;
 
 use super::AmlError;
 use super::parser::{ AmlParseType, ParseResult, AmlExecutionContext, ExecutionState };
