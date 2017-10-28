@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
-use collections::string::String;
-use collections::vec::Vec;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use super::{AmlError, parse_aml_with_scope};
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};

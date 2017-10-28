@@ -1,5 +1,5 @@
 use alloc::arc::{Arc, Weak};
-use collections::BTreeMap;
+use alloc::BTreeMap;
 use core::{mem, slice};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;

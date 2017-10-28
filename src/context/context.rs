@@ -1,6 +1,6 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
-use collections::{BTreeMap, Vec, VecDeque};
+use alloc::{BTreeMap, Vec, VecDeque};
 use core::mem;
 use spin::Mutex;
 

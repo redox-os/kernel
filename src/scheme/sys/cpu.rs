@@ -1,4 +1,4 @@
-use collections::Vec;
+use alloc::Vec;
 
 use device::cpu::cpu_info;
 use syscall::error::{Error, EIO, Result};

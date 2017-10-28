@@ -1,7 +1,7 @@
 //! Recycle allocator
 //! Uses freed frames if possible, then uses inner allocator
 
-use collections::Vec;
+use alloc::Vec;
 
 use paging::PhysicalAddress;
 

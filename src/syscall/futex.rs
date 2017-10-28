@@ -1,5 +1,5 @@
 use alloc::arc::Arc;
-use collections::VecDeque;
+use alloc::VecDeque;
 use core::intrinsics;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 

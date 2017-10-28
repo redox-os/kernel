@@ -1,4 +1,4 @@
-use collections::Vec;
+use alloc::Vec;
 
 use context;
 use syscall::error::{Error, ESRCH, Result};

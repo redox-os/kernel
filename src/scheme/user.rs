@@ -1,6 +1,6 @@
 use alloc::arc::{Arc, Weak};
 use alloc::boxed::Box;
-use collections::BTreeMap;
+use alloc::BTreeMap;
 use core::sync::atomic::{AtomicU64, Ordering};
 use core::{mem, slice, usize};
 use spin::{Mutex, RwLock};

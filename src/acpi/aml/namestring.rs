@@ -1,5 +1,5 @@
-use collections::vec::Vec;
-use collections::string::String;
+use alloc::vec::Vec;
+use alloc::string::String;
 
 use super::AmlError;
 use super::parser::{AmlParseType, ParseResult, AmlExecutionContext, ExecutionState};

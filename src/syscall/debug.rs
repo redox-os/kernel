@@ -1,6 +1,6 @@
 use core::mem;
 use core::ops::Range;
-use collections::{String, Vec};
+use alloc::{String, Vec};
 
 use super::data::{Stat, TimeSpec};
 use super::error::Result;

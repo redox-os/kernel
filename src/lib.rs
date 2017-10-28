@@ -27,9 +27,8 @@
 extern crate alloc_kernel as allocator;
 pub extern crate x86;
 
-extern crate alloc;
 #[macro_use]
-extern crate collections;
+extern crate alloc;
 
 #[macro_use]
 extern crate bitflags;

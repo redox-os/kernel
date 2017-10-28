@@ -1,4 +1,4 @@
-use collections::BTreeMap;
+use alloc::BTreeMap;
 use core::mem;
 use spin::Mutex;
 
