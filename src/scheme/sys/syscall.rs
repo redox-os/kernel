@@ -26,14 +26,7 @@ pub fn resource() -> Result<Vec<u8>> {
             let _ = writeln!(string, "{}: {}", id, name);
 
             if let Some((a, b, c, d, e, f)) = row.2 {
-                match syscall::debug::format_call(a, b, c, d, e, f) {
-                    Ok(data) => {
-                        let _ = writeln!(string, "  {}", data);
-                    },
-                    Err(err) => {
-                        let _ = writeln!(string, "  error: {}", err);
-                    }
-                };
+                let _ = writeln!(string, "  {}", syscall::debug::format_call(a, b, c, d, e, f));
             }
         }
     }

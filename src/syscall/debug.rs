@@ -3,7 +3,6 @@ use core::ops::Range;
 use alloc::{String, Vec};
 
 use super::data::{Stat, TimeSpec};
-use super::error::Result;
 use super::flag::*;
 use super::number::*;
 use super::validate::*;
@@ -58,8 +57,8 @@ impl<'a> ::core::fmt::Debug for ByteStr<'a> {
 }
 
 
-pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> Result<String> {
-    Ok(match a {
+pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> String {
+    match a {
         SYS_OPEN => format!(
             "open({:?}, {:#X})",
             validate_slice(b as *const u8, c).map(ByteStr),
@@ -199,12 +198,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             validate_slice(
                 d as *const [usize; 2],
                 e
-            )?
-            .iter()
-            .map(|a|
-                validate_slice(a[0] as *const u8, a[1]).ok()
-                .and_then(|s| ::core::str::from_utf8(s).ok())
-            ).collect::<Vec<Option<&str>>>()
+            ).map(|slice| {
+                slice.iter().map(|a|
+                    validate_slice(a[0] as *const u8, a[1]).ok()
+                    .and_then(|s| ::core::str::from_utf8(s).ok())
+                ).collect::<Vec<Option<&str>>>()
+            })
         ),
         SYS_EXIT => format!(
             "exit({})",
@@ -317,5 +316,5 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             e,
             f
         )
-    })
+    }
 }
