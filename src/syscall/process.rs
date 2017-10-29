@@ -1160,20 +1160,18 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<Contex
     } else {
         let status = {
             let contexts = context::contexts();
-            if let Some(context_lock) = contexts.get(pid) {
-                let mut context = context_lock.write();
-                if context.ppid != ppid {
-                    println!("Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
-                    context.ppid = ppid;
-                    //return Err(Error::new(ECHILD));
-                }
-                Some(context.status.clone())
-            } else {
-                None
+            let context_lock = contexts.get(pid).ok_or(Error::new(ECHILD))?;
+            let mut context = context_lock.write();
+            if context.ppid != ppid {
+                println!("Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
+                context.ppid = ppid;
+                //return Err(Error::new(ECHILD));
             }
+            context.status.clone()
         };
 
-        if let Some(context::Status::Exited(status)) = status {
+        if let context::Status::Exited(status) = status {
+            let _ = waitpid.receive_nonblock(&pid);
             status_slice[0] = status;
             reap(pid)
         } else if flags & WNOHANG == WNOHANG {
