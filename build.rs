@@ -5,10 +5,10 @@ use std::path::Path;
 use std::collections::HashMap;
 
 
-// View loc folder with subfolders, get listings
-// Returns touple (folder_map, file_list)
-// folder_map keys are folders, and values are lists of direct childs
-// file_list is a vector of all detected files with full path
+// Recursively scan the given folder and its subfolders
+// Returns a tuple (folders, files)
+// folders maps all directories to their respective child entries
+// files is a list of the full paths for all detected files
 fn scan_folder(loc: &Path) -> (HashMap<String, Vec<String>>, Vec<String>) {
     let mut folders: HashMap<String, Vec<String>> = HashMap::new();
     let mut files: Vec<String> = Vec::new();
