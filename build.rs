@@ -12,31 +12,26 @@ use std::collections::HashMap;
 fn scan_folder(loc: &Path) -> (HashMap<String, Vec<String>>, Vec<String>) {
     let mut folders: HashMap<String, Vec<String>> = HashMap::new();
     let mut files: Vec<String> = Vec::new();
-    let mut current = Vec::new();
+    let loc_str = loc.to_str().unwrap().to_string().replace("\\", "/");
 
     if loc.is_dir() {
+        folders.insert(loc_str.clone(), Vec::new());
         for entry in fs::read_dir(loc).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            let path_str = String::from(path.to_str().unwrap()).replace("\\", "/");
+            let path = entry.unwrap().path();
+            let path_str = path.to_str().unwrap().to_string().replace("\\", "/");
+            folders.get_mut(&loc_str).unwrap().push(path_str.clone());
 
-            current.push(path_str.clone());
-
-            // if folder then scan recursively
             if path.is_dir() {
-                let (d, mut f) = scan_folder(&path);
-                for (key, value) in d.into_iter() {
+                let (subfolders, mut subfiles) = scan_folder(&path);
+                for (key, value) in subfolders.into_iter() {
                     folders.insert(key, value);
                 }
-
-                files.append(&mut f);
+                files.append(&mut subfiles);
             } else {
                 files.push(path_str);
             }
         }
-
-        current.sort();
-        folders.entry(String::from(loc.to_str().unwrap()).replace("\\", "/")).or_insert(current);
+        folders.get_mut(&loc_str).unwrap().sort();
     } else {
         panic!("{:?} is not a folder!", loc);
     }
@@ -45,9 +40,9 @@ fn scan_folder(loc: &Path) -> (HashMap<String, Vec<String>>, Vec<String>) {
 }
 
 // Write folder/file information to output file
-fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), (Error)> {
+fn fill_from_location(f: &mut fs::File, loc: &Path) -> Result<(), (Error)> {
     let (folders, mut files) = scan_folder(loc);
-    let mut folder_it:Vec<_> = folders.keys().collect();
+    let mut folder_it: Vec<_> = folders.keys().collect();
 
     let loc_str = loc.to_str().unwrap();
     let mut idx = loc_str.len();
