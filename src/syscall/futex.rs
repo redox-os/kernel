@@ -4,9 +4,11 @@ use core::intrinsics;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use context::{self, Context};
+use time;
+use syscall::data::TimeSpec;
 use syscall::error::{Error, Result, ESRCH, EAGAIN, EINVAL};
 use syscall::flag::{FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE};
-use syscall::validate::validate_slice_mut;
+use syscall::validate::{validate_slice, validate_slice_mut};
 
 type FutexList = VecDeque<(usize, Arc<RwLock<Context>>)>;
 
@@ -31,6 +33,12 @@ pub fn futexes_mut() -> RwLockWriteGuard<'static, FutexList> {
 pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) -> Result<usize> {
     match op {
         FUTEX_WAIT => {
+            let timeout_opt = if val2 != 0 {
+                Some(validate_slice(val2 as *const TimeSpec, 1).map(|req| &req[0])?)
+            } else {
+                None
+            };
+
             {
                 let mut futexes = futexes_mut();
 
@@ -44,12 +52,36 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                     return Err(Error::new(EAGAIN));
                 }
 
-                context_lock.write().block();
+                {
+                    let mut context = context_lock.write();
+
+                    if let Some(timeout) = timeout_opt {
+                        let start = time::monotonic();
+                        let sum = start.1 + timeout.tv_nsec as u64;
+                        let end = (start.0 + timeout.tv_sec as u64 + sum / 1000000000, sum % 1000000000);
+                        context.wake = Some(end);
+                    }
+
+                    context.block();
+                }
 
                 futexes.push_back((addr as *mut i32 as usize, context_lock));
             }
 
             unsafe { context::switch(); }
+
+            if timeout_opt.is_some() {
+                let context_lock = {
+                    let contexts = context::contexts();
+                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+                    context_lock.clone()
+                };
+
+                {
+                    let mut context = context_lock.write();
+                    context.wake = None;
+                }
+            }
 
             Ok(0)
         },
