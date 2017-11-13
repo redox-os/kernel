@@ -22,7 +22,7 @@ impl<'a> Elf<'a> {
         if data.len() < header::SIZEOF_EHDR {
             Err(format!("Elf: Not enough data: {} < {}", data.len(), header::SIZEOF_EHDR))
         } else if &data[..header::SELFMAG] != header::ELFMAG {
-            Err(format!("Elf: Invalid magic: {:?} != {:?}", &data[..4], header::ELFMAG))
+            Err(format!("Elf: Invalid magic: {:?} != {:?}", &data[..header::SELFMAG], header::ELFMAG))
         } else if data.get(header::EI_CLASS) != Some(&header::ELFCLASS) {
             Err(format!("Elf: Invalid architecture: {:?} != {:?}", data.get(header::EI_CLASS), header::ELFCLASS))
         } else {
