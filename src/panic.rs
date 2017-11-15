@@ -3,7 +3,8 @@
 use interrupt;
 
 #[lang = "eh_personality"]
-pub extern "C" fn eh_personality() {}
+#[no_mangle]
+pub extern "C" fn rust_eh_personality() {}
 
 /// Required to handle panics
 #[lang = "panic_fmt"]
