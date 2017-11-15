@@ -3,7 +3,7 @@ use alloc::{BTreeMap, VecDeque};
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use context::{self, SwitchResult};
+use context;
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use sync::WaitCondition;
 use syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
@@ -236,11 +236,8 @@ impl PipeRead {
             } else if self.flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
                 return Err(Error::new(EAGAIN));
             } else {
-                match self.condition.wait() {
-                    SwitchResult::Signal => {
-                        return Err(Error::new(EINTR));
-                    },
-                    _ => ()
+                if ! self.condition.wait() {
+                    return Err(Error::new(EINTR));
                 }
             }
         }

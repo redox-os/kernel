@@ -2,7 +2,7 @@ use alloc::arc::Arc;
 use alloc::Vec;
 use spin::{Mutex, RwLock};
 
-use context::{self, Context, SwitchResult};
+use context::{self, Context};
 
 #[derive(Debug)]
 pub struct WaitCondition {
@@ -25,7 +25,8 @@ impl WaitCondition {
         len
     }
 
-    pub fn wait(&self) -> SwitchResult {
+    pub fn wait(&self) -> bool {
+        let id;
         {
             let context_lock = {
                 let contexts = context::contexts();
@@ -33,12 +34,40 @@ impl WaitCondition {
                 context_lock.clone()
             };
 
-            context_lock.write().block();
+            {
+                let mut context = context_lock.write();
+                id = context.id;
+                context.block();
+            }
 
             self.contexts.lock().push(context_lock);
         }
 
-        unsafe { context::switch() }
+        unsafe { context::switch(); }
+
+        let mut waited = true;
+
+        {
+            let mut contexts = self.contexts.lock();
+
+            let mut i = 0;
+            while i < contexts.len() {
+                let remove = {
+                    let context = contexts[i].read();
+                    context.id == id
+                };
+
+                if remove {
+                    contexts.remove(i);
+                    waited = false;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        waited
     }
 }
 

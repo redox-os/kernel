@@ -142,7 +142,9 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
         let contexts = ::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            if unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) } == "file:/bin/acid" {
+            let name_raw = context.name.lock();
+            let name = unsafe { ::core::str::from_utf8_unchecked(&name_raw) };
+            if name == "file:/bin/cargo" || name == "file:/bin/rustc" {
                 if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
                     false
                 } else {
@@ -163,8 +165,7 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
             print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
         }
 
-        let _ = debug::print_call(a, b, c, d, e, f);
-        println!("");
+        println!("{}", debug::format_call(a, b, c, d, e, f));
     }
     */
 
@@ -194,14 +195,14 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
             print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
         }
 
-        let _ = debug::print_call(a, b, c, d, e, f);
+        print!("{} = ", debug::format_call(a, b, c, d, e, f));
 
         match result {
             Ok(ref ok) => {
-                println!(" = Ok({} ({:#X}))", ok, ok);
+                println!("Ok({} ({:#X}))", ok, ok);
             },
             Err(ref err) => {
-                println!(" = Err({} ({:#X}))", err, err.errno);
+                println!("Err({} ({:#X}))", err, err.errno);
             }
         }
     }

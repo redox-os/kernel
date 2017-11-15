@@ -10,22 +10,12 @@ use interrupt::irq::PIT_TICKS;
 use syscall;
 use time;
 
-#[must_use]
-pub enum SwitchResult {
-    /// No context to switch to
-    None,
-    /// Received a signal
-    Signal,
-    /// Switched correctly
-    Normal,
-}
-
 /// Switch to the next context
 ///
 /// # Safety
 ///
 /// Do not call this while holding locks!
-pub unsafe fn switch() -> SwitchResult {
+pub unsafe fn switch() -> bool {
     use core::ops::DerefMut;
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
@@ -148,28 +138,24 @@ pub unsafe fn switch() -> SwitchResult {
     if to_ptr as usize == 0 {
         // No target was found, return
 
-        SwitchResult::None
-    } else if let Some(sig) = to_sig {
-        // Signal was found, run signal handler
-
-        //TODO: Allow nested signals
-        assert!((&mut *to_ptr).ksig.is_none());
-
-        let arch = (&mut *to_ptr).arch.clone();
-        let kfx = (&mut *to_ptr).kfx.clone();
-        let kstack = (&mut *to_ptr).kstack.clone();
-        (&mut *to_ptr).ksig = Some((arch, kfx, kstack));
-        (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
-
-        (&mut *from_ptr).arch.switch_to(&mut (&mut *to_ptr).arch);
-
-        SwitchResult::Signal
+        false
     } else {
-        // Found a target, had no signals
+        if let Some(sig) = to_sig {
+            // Signal was found, run signal handler
+
+            //TODO: Allow nested signals
+            assert!((&mut *to_ptr).ksig.is_none());
+
+            let arch = (&mut *to_ptr).arch.clone();
+            let kfx = (&mut *to_ptr).kfx.clone();
+            let kstack = (&mut *to_ptr).kstack.clone();
+            (&mut *to_ptr).ksig = Some((arch, kfx, kstack));
+            (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
+        }
 
         (&mut *from_ptr).arch.switch_to(&mut (&mut *to_ptr).arch);
 
-        SwitchResult::Normal
+        true
     }
 }
 
