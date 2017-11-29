@@ -280,6 +280,16 @@ impl Scheme for UserScheme {
         inner.call(SYS_LSEEK, file, position, whence)
     }
 
+    fn fchmod(&self, file: usize, mode: u16) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        inner.call(SYS_FCHMOD, file, mode as usize, 0)
+    }
+
+    fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        inner.call(SYS_FCHOWN, file, uid as usize, gid as usize)
+    }
+
     fn fcntl(&self, file: usize, cmd: usize, arg: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner.call(SYS_FCNTL, file, cmd, arg)
