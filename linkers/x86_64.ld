@@ -51,7 +51,6 @@ SECTIONS {
 
     /DISCARD/ : {
         *(.comment*)
-        *(.debug*)
         *(.eh_frame*)
         *(.gcc_except_table*)
         *(.note*)
