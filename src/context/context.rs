@@ -231,11 +231,13 @@ impl Context {
     pub fn unblock(&mut self) -> bool {
         if self.status == Status::Blocked {
             self.status = Status::Runnable;
-            if let Some(cpu_id) = self.cpu_id {
-                if cpu_id != ::cpu_id() {
-                    // Send IPI if not on current CPU
-                    // TODO: Make this more architecture independent
-                    unsafe { device::local_apic::LOCAL_APIC.ipi(cpu_id) };
+            if cfg!(feature = "multi_core") {
+                if let Some(cpu_id) = self.cpu_id {
+                    if cpu_id != ::cpu_id() {
+                        // Send IPI if not on current CPU
+                        // TODO: Make this more architecture independent
+                        unsafe { device::local_apic::LOCAL_APIC.set_icr(3 << 18 | 1 << 14 | 0x40) };
+                    }
                 }
             }
             true

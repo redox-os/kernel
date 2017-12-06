@@ -42,14 +42,14 @@ pub unsafe fn switch() -> bool {
         }
 
         let check_context = |context: &mut Context| -> bool {
+            // Take ownership if not already owned
             if context.cpu_id == None {
                 context.cpu_id = Some(cpu_id);
                 // println!("{}: take {} {}", cpu_id, context.id, ::core::str::from_utf8_unchecked(&context.name.lock()));
             }
 
+            // Restore from signal
             if context.ksig_restore {
-                println!("Restore from ksig");
-
                 let ksig = context.ksig.take().expect("context::switch: ksig not set with ksig_restore");
                 context.arch = ksig.0;
                 if let Some(ref mut kfx) = context.kfx {
@@ -64,16 +64,15 @@ pub unsafe fn switch() -> bool {
                 }
                 context.ksig_restore = false;
 
-                //TODO: Interrupt
-                if context.status == Status::Blocked {
-                    context.unblock();
-                }
+                context.unblock();
             }
 
+            // Unblock when there are pending signals
             if context.status == Status::Blocked && !context.pending.is_empty() {
                 context.unblock();
             }
 
+            // Wake from sleep
             if context.status == Status::Blocked && context.wake.is_some() {
                 let wake = context.wake.expect("context::switch: wake not set");
 
@@ -84,13 +83,8 @@ pub unsafe fn switch() -> bool {
                 }
             }
 
-            if context.cpu_id == Some(cpu_id) {
-                if context.status == Status::Runnable && !context.running {
-                    return true;
-                }
-            }
-
-            false
+            // Switch to context if it needs to run, is not currently running, and is owned by the current CPU
+            !context.running && context.status == Status::Runnable && context.cpu_id == Some(cpu_id)
         };
 
         for (pid, context_lock) in contexts.iter() {

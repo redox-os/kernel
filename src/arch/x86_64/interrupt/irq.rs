@@ -1,10 +1,10 @@
-use context::timeout;
-use device::pic;
-use device::serial::{COM1, COM2};
 use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
-use time;
 use context;
+use context::timeout;
+use device::{local_apic, pic};
+use device::serial::{COM1, COM2};
+use time;
 
 //resets to 0 in context::switch()
 pub static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -39,6 +39,11 @@ pub unsafe fn acknowledge(irq: usize) {
 }
 
 interrupt!(pit, {
+    // Wake up other CPUs
+    if cfg!(feature = "multi_core") {
+        local_apic::LOCAL_APIC.set_icr(3 << 18 | 1 << 14 | 0x41);
+    }
+
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
     const PIT_RATE: u64 = 2250286;
@@ -52,12 +57,12 @@ interrupt!(pit, {
 
     pic::MASTER.ack();
 
+    // Any better way of doing this?
+    timeout::trigger();
+
     if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
         let _ = context::switch();
     }
-
-    // Any better way of doing this?
-    timeout::trigger();
 });
 
 interrupt!(keyboard, {

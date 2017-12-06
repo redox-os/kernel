@@ -184,7 +184,7 @@ pub fn kmain(cpus: usize, env: &[u8]) -> ! {
 pub fn kmain_ap(id: usize) -> ! {
     CPU_ID.store(id, Ordering::SeqCst);
 
-    if cfg!(feature = "multi_core"){
+    if cfg!(feature = "multi_core") {
         context::init();
 
         let pid = syscall::getpid();

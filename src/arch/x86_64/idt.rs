@@ -60,6 +60,7 @@ pub unsafe fn init() {
 
     // Set IPI handler (null)
     IDT[0x40].set_func(ipi::ipi);
+    IDT[0x41].set_func(ipi::pit);
 
     // Set syscall function
     IDT[0x80].set_func(syscall::syscall);

@@ -45,7 +45,7 @@ impl Madt {
                 println!("    XAPIC {}: {:>08X}", me, local_apic.address);
             }
 
-            if cfg!(feature = "multi_core"){
+            if cfg!(feature = "multi_core") {
                 let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
 
