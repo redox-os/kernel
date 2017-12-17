@@ -61,7 +61,7 @@ impl<L> Table<L> where L: TableLevel {
 
     /// Set number of entries in first table entry
     fn set_entry_count(&mut self, count: u64) {
-        assert!(count <= ENTRY_COUNT, "count can't be greater than ENTRY_COUNT");
+        assert!(count <= ENTRY_COUNT as u64, "count can't be greater than ENTRY_COUNT");
         self.entries[0].set_counter_bits(count);
     }
 

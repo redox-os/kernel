@@ -67,6 +67,6 @@ impl Entry {
 
     /// Set bits 52-61 in entry, used as counter for page table    
     pub fn set_counter_bits(&mut self, count: u64) {
-        self.0 = ((self.0 & 0xc00fffff_ffffffff) | (count << 52));
+        self.0 = (self.0 & 0xc00fffff_ffffffff) | (count << 52);
     }
 }
