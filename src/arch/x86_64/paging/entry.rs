@@ -29,12 +29,12 @@ pub const COUNTER_MASK: u64 = 0x3ff00000_00000000;
 impl Entry {
     /// Is the entry unused?
     pub fn is_unused(&self) -> bool {
-        self.0 == 0
+        self.0 == (self.0 & COUNTER_MASK)
     }
 
     /// Make the entry unused
     pub fn set_unused(&mut self) {
-        self.0 = 0;
+        self.0 = self.0 & COUNTER_MASK;
     }
 
     /// Get the address this page references
