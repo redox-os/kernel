@@ -24,6 +24,7 @@ bitflags! {
 }
 
 pub const ADDRESS_MASK: usize = 0x000f_ffff_ffff_f000;
+pub const COUNTER_MASK: u64 = 0x3ff00000_00000000;
 
 impl Entry {
     /// Is the entry unused?
@@ -57,16 +58,16 @@ impl Entry {
 
     pub fn set(&mut self, frame: Frame, flags: EntryFlags) {
         debug_assert!(frame.start_address().get() & !ADDRESS_MASK == 0);
-        self.0 = (frame.start_address().get() as u64) | flags.bits();
+        self.0 = (frame.start_address().get() as u64) | flags.bits() | (self.0 & COUNTER_MASK);
     }
 
     /// Get bits 52-61 in entry, used as counter for page table
     pub fn counter_bits(&self) -> u64 {
-        (self.0 & 0x3ff00000_00000000) >> 52
+        (self.0 & COUNTER_MASK) >> 52
     }
 
     /// Set bits 52-61 in entry, used as counter for page table    
     pub fn set_counter_bits(&mut self, count: u64) {
-        self.0 = (self.0 & 0xc00fffff_ffffffff) | (count << 52);
+        self.0 = (self.0 & !COUNTER_MASK) | (count << 52);
     }
 }
