@@ -55,7 +55,7 @@ impl<L> Table<L> where L: TableLevel {
 
     pub fn zero(&mut self) {
         for entry in self.entries.iter_mut() {
-            entry.set_unused();
+            entry.set_zero();
         }
     }
 

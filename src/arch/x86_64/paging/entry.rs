@@ -27,6 +27,11 @@ pub const ADDRESS_MASK: usize = 0x000f_ffff_ffff_f000;
 pub const COUNTER_MASK: u64 = 0x3ff00000_00000000;
 
 impl Entry {
+    /// Zero entry
+    pub fn set_zero(&mut self) {
+        self.0 = 0;
+    }
+    
     /// Is the entry unused?
     pub fn is_unused(&self) -> bool {
         self.0 == (self.0 & COUNTER_MASK)
