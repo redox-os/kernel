@@ -107,6 +107,7 @@ impl Mapper {
             page.start_address().get(),
             p1[page.p1_index()].address().get(), p1[page.p1_index()].flags(),
             frame.start_address().get(), flags);
+        p1.increment_entry_count();
         p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
         MapperFlush::new(page)
     }
@@ -146,6 +147,7 @@ impl Mapper {
                         panic!("unmap_inner({:X}): frame not found", page.start_address().get())
                     };
 
+                    p1.decrement_entry_count();
                     p1[page.p1_index()].set_unused();
 
                     if keep_parents || ! p1.is_unused() {
@@ -157,13 +159,14 @@ impl Mapper {
 
                 if let Some(p1_frame) = p2[page.p2_index()].pointed_frame() {
                     //println!("Free p1 {:?}", p1_frame);
+                    p2.decrement_entry_count();
                     p2[page.p2_index()].set_unused();
                     deallocate_frames(p1_frame, 1);
                 } else {
                     panic!("unmap_inner({:X}): p1_frame not found", page.start_address().get());
                 }
 
-                if keep_parents || ! p2.is_unused() {
+                if ! p2.is_unused() {
                     return frame;
                 }
             } else {
@@ -172,13 +175,14 @@ impl Mapper {
 
             if let Some(p2_frame) = p3[page.p3_index()].pointed_frame() {
                 //println!("Free p2 {:?}", p2_frame);
+                p3.decrement_entry_count();
                 p3[page.p3_index()].set_unused();
                 deallocate_frames(p2_frame, 1);
             } else {
                 panic!("unmap_inner({:X}): p2_frame not found", page.start_address().get());
             }
 
-            if keep_parents || ! p3.is_unused() {
+            if ! p3.is_unused() {
                 return frame;
             }
         } else {
@@ -187,6 +191,7 @@ impl Mapper {
 
         if let Some(p3_frame) = p4[page.p4_index()].pointed_frame() {
             //println!("Free p3 {:?}", p3_frame);
+            p4.decrement_entry_count();
             p4[page.p4_index()].set_unused();
             deallocate_frames(p3_frame, 1);
         } else {

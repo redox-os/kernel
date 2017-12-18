@@ -46,10 +46,8 @@ pub struct Table<L: TableLevel> {
 
 impl<L> Table<L> where L: TableLevel {
     pub fn is_unused(&self) -> bool {
-        for entry in self.entries.iter() {
-            if ! entry.is_unused() {
-                return false;
-            }
+        if self.entry_count() > 0 {
+            return false;
         }
 
         true
@@ -57,8 +55,29 @@ impl<L> Table<L> where L: TableLevel {
 
     pub fn zero(&mut self) {
         for entry in self.entries.iter_mut() {
-            entry.set_unused();
+            entry.set_zero();
         }
+    }
+
+    /// Set number of entries in first table entry
+    fn set_entry_count(&mut self, count: u64) {
+        debug_assert!(count <= ENTRY_COUNT as u64, "count can't be greater than ENTRY_COUNT");
+        self.entries[0].set_counter_bits(count);
+    }
+
+    /// Get number of entries in first table entry
+    fn entry_count(&self) -> u64 {
+        self.entries[0].counter_bits()
+    }
+
+    pub fn increment_entry_count(&mut self) {
+        let current_count = self.entry_count();
+        self.set_entry_count(current_count + 1);
+    }
+
+    pub fn decrement_entry_count(&mut self) {
+        let current_count = self.entry_count();
+        self.set_entry_count(current_count - 1);
     }
 }
 
@@ -76,6 +95,7 @@ impl<L> Table<L> where L: HierarchicalLevel {
             assert!(!self[index].flags().contains(EntryFlags::HUGE_PAGE),
                     "next_table_create does not support huge pages");
             let frame = allocate_frames(1).expect("no frames available");
+            self.increment_entry_count();
             self[index].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE /* Allow users to go down the page table, implement permissions at the page level */);
             self.next_table_mut(index).unwrap().zero();
         }
