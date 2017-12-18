@@ -21,12 +21,10 @@ use self::env::EnvScheme;
 use self::initfs::InitFsScheme;
 use self::irq::IrqScheme;
 use self::memory::MemoryScheme;
-use self::null::NullScheme;
 use self::pipe::PipeScheme;
 use self::root::RootScheme;
 use self::sys::SysScheme;
 use self::time::TimeScheme;
-use self::zero::ZeroScheme;
 
 /// `debug:` - provides access to serial console
 pub mod debug;
@@ -50,9 +48,6 @@ pub mod live;
 /// `memory:` - a scheme for accessing physical memory
 pub mod memory;
 
-/// `null:` - a scheme that will discard all writes, and read no bytes
-pub mod null;
-
 /// `pipe:` - used internally by the kernel to implement `pipe`
 pub mod pipe;
 
@@ -67,9 +62,6 @@ pub mod time;
 
 /// A wrapper around userspace schemes, tightly dependent on `root`
 pub mod user;
-
-/// `zero:` - a scheme that will discard all writes, and always fill read buffers with zero
-pub mod zero;
 
 /// Limit on number of schemes
 pub const SCHEME_MAX_SCHEMES: usize = 65536;
@@ -117,10 +109,8 @@ impl SchemeList {
         self.insert(ns, Box::new(*b"event"), |_| Arc::new(Box::new(EventScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"env"), |_| Arc::new(Box::new(EnvScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"memory"), |_| Arc::new(Box::new(MemoryScheme))).unwrap();
-        self.insert(ns, Box::new(*b"null"), |_| Arc::new(Box::new(NullScheme))).unwrap();
         self.insert(ns, Box::new(*b"sys"), |_| Arc::new(Box::new(SysScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"time"), |scheme_id| Arc::new(Box::new(TimeScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"zero"), |_| Arc::new(Box::new(ZeroScheme))).unwrap();
 
         ns
     }
