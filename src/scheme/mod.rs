@@ -77,6 +77,18 @@ pub const ATOMIC_SCHEMEID_INIT: AtomicSchemeId = AtomicSchemeId::default();
 /// Unique identifier for a file descriptor.
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
+pub struct SchemeIter<'a> {
+    inner: Option<::alloc::btree_map::Iter<'a, Box<[u8]>, SchemeId>>
+}
+
+impl<'a> Iterator for SchemeIter<'a> {
+    type Item = (&'a Box<[u8]>, &'a SchemeId);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.as_mut().and_then(|iter| iter.next())
+    }
+}
+
 /// Scheme list type
 pub struct SchemeList {
     map: BTreeMap<SchemeId, Arc<Box<Scheme + Send + Sync>>>,
@@ -168,8 +180,10 @@ impl SchemeList {
         self.map.iter()
     }
 
-    pub fn iter_name(&self, ns: SchemeNamespace) -> ::alloc::btree_map::Iter<Box<[u8]>, SchemeId> {
-        self.names[&ns].iter()
+    pub fn iter_name(&self, ns: SchemeNamespace) -> SchemeIter {
+        SchemeIter {
+            inner: self.names.get(&ns).map(|names| names.iter())
+        }
     }
 
     /// Get the nth scheme.
@@ -178,19 +192,22 @@ impl SchemeList {
     }
 
     pub fn get_name(&self, ns: SchemeNamespace, name: &[u8]) -> Option<(SchemeId, &Arc<Box<Scheme + Send + Sync>>)> {
-        if let Some(&id) = self.names[&ns].get(name) {
-            self.get(id).map(|scheme| (id, scheme))
-        } else {
-            None
+        if let Some(names) = self.names.get(&ns) {
+            if let Some(&id) = names.get(name) {
+                return self.get(id).map(|scheme| (id, scheme));
+            }
         }
+        return None;
     }
 
     /// Create a new scheme.
     pub fn insert<F>(&mut self, ns: SchemeNamespace, name: Box<[u8]>, scheme_fn: F) -> Result<SchemeId>
         where F: Fn(SchemeId) -> Arc<Box<Scheme + Send + Sync>>
     {
-        if self.names[&ns].contains_key(&name) {
-            return Err(Error::new(EEXIST));
+        if let Some(names) = self.names.get(&ns) {
+            if names.contains_key(&name) {
+                return Err(Error::new(EEXIST));
+            }
         }
 
         if self.next_id >= SCHEME_MAX_SCHEMES {
@@ -216,7 +233,8 @@ impl SchemeList {
         if let Some(ref mut names) = self.names.get_mut(&ns) {
             assert!(names.insert(name, id).is_none());
         } else {
-            panic!("scheme namespace not found");
+            // Nonexistent namespace, posssibly null namespace
+            return Err(Error::new(ENODEV));
         }
         Ok(id)
     }
