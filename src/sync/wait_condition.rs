@@ -31,7 +31,7 @@ impl WaitCondition {
             let context_lock = {
                 let contexts = context::contexts();
                 let context_lock = contexts.current().expect("WaitCondition::wait: no context");
-                context_lock.clone()
+                Arc::clone(&context_lock)
             };
 
             {

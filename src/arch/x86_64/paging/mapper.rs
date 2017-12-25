@@ -39,7 +39,7 @@ impl Drop for MapperFlush {
 }
 
 /// To allow for combining multiple flushes into one, we have a way of flushing
-/// the active table, which can consume MapperFlush structs
+/// the active table, which can consume `MapperFlush` structs
 #[must_use = "The page table must be flushed, or the changes unsafely ignored"]
 pub struct MapperFlushAll(bool);
 

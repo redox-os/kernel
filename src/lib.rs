@@ -1,9 +1,17 @@
 //! # The Redox OS Kernel, version 2
 //!
-//! The Redox OS Kernel is a microkernel that supports X86_64 systems and
+//! The Redox OS Kernel is a microkernel that supports `x86_64` systems and
 //! provides Unix-like syscalls for primarily Rust applications
 
 //#![deny(warnings)]
+#![cfg_attr(feature = "clippy", allow(if_same_then_else))]
+#![cfg_attr(feature = "clippy", allow(inline_always))]
+#![cfg_attr(feature = "clippy", allow(many_single_char_names))]
+#![cfg_attr(feature = "clippy", allow(module_inception))]
+#![cfg_attr(feature = "clippy", allow(new_without_default))]
+#![cfg_attr(feature = "clippy", allow(not_unsafe_ptr_arg_deref))]
+#![cfg_attr(feature = "clippy", allow(or_fun_call))]
+#![cfg_attr(feature = "clippy", allow(too_many_arguments))]
 #![feature(alloc)]
 #![feature(allocator_api)]
 #![feature(asm)]

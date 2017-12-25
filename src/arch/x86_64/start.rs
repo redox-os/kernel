@@ -20,13 +20,13 @@ use paging::mapper::MapperFlushAll;
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
-static DATA_TEST_NONZERO: usize = 0xFFFFFFFFFFFFFFFF;
+static DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 /// Test of zero values in thread BSS
 #[thread_local]
 static mut TBSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in thread data.
 #[thread_local]
-static mut TDATA_TEST_NONZERO: usize = 0xFFFFFFFFFFFFFFFF;
+static mut TDATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
 pub static KERNEL_BASE: AtomicUsize = ATOMIC_USIZE_INIT;
 pub static KERNEL_SIZE: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -60,7 +60,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
-            assert_eq!(DATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFF);
+            assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
         }
 
         KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
@@ -87,9 +87,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             assert_eq!(TBSS_TEST_ZERO, 0);
             TBSS_TEST_ZERO += 1;
             assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFF);
+            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
             TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFE);
+            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFE);
         }
 
         // Reset AP variables
@@ -153,7 +153,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         let stack_end = args.stack_end as usize;
 
         assert_eq!(BSS_TEST_ZERO, 0);
-        assert_eq!(DATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFF);
+        assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
 
         // Initialize paging
         let tcb_offset = paging::init_ap(cpu_id, bsp_table, stack_start, stack_end);
@@ -169,9 +169,9 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             assert_eq!(TBSS_TEST_ZERO, 0);
             TBSS_TEST_ZERO += 1;
             assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFF);
+            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
             TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFFFFFFFFFFFFFE);
+            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFE);
         }
 
         // Initialize devices (for AP)
@@ -205,7 +205,7 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
         :   "{r10}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
             "{r11}"(gdt::GDT_USER_TLS << 3 | 3), // TLS segment
             "{r12}"(sp), // Stack pointer
-            "{r13}"(0 << 12 | 1 << 9), // Flags - Set IOPL and interrupt enable flag
+            "{r13}"(1 << 9), // Flags - Set interrupt enable flag
             "{r14}"(gdt::GDT_USER_CODE << 3 | 3), // Code segment
             "{r15}"(ip) // IP
             "{rdi}"(arg) // Argument

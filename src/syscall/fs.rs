@@ -8,7 +8,7 @@ use scheme::{self, FileHandle};
 use syscall;
 use syscall::data::{Packet, Stat};
 use syscall::error::*;
-use syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_DIRECTORY, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
 use context::file::{FileDescriptor, FileDescription};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
@@ -23,7 +23,7 @@ pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let scheme = schemes.get(file.description.read().scheme).ok_or(Error::new(EBADF))?;
-        scheme.clone()
+        Arc::clone(&scheme)
     };
 
     let mut packet = Packet {
@@ -52,7 +52,7 @@ pub fn file_op_mut_slice(a: usize, fd: FileHandle, slice: &mut [u8]) -> Result<u
 
 /// Change the current working directory
 pub fn chdir(path: &[u8]) -> Result<usize> {
-    let fd = open(path, syscall::flag::O_RDONLY | syscall::flag::O_DIRECTORY)?;
+    let fd = open(path, O_RDONLY | O_DIRECTORY)?;
     let mut stat = Stat::default();
     let stat_res = file_op_mut_slice(syscall::number::SYS_FSTAT, fd, &mut stat);
     let _ = close(fd);
@@ -103,7 +103,7 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
         let (scheme_id, scheme) = {
             let schemes = scheme::schemes();
             let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-            (scheme_id, scheme.clone())
+            (scheme_id, Arc::clone(&scheme))
         };
         let file_id = scheme.open(reference_opt.unwrap_or(b""), flags, uid, gid)?;
         (scheme_id, file_id)
@@ -178,7 +178,7 @@ pub fn chmod(path: &[u8], mode: u16) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        scheme.clone()
+        Arc::clone(&scheme)
     };
     scheme.chmod(reference_opt.unwrap_or(b""), mode, uid, gid)
 }
@@ -200,7 +200,7 @@ pub fn rmdir(path: &[u8]) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        scheme.clone()
+        Arc::clone(&scheme)
     };
     scheme.rmdir(reference_opt.unwrap_or(b""), uid, gid)
 }
@@ -222,7 +222,7 @@ pub fn unlink(path: &[u8]) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        scheme.clone()
+        Arc::clone(&scheme)
     };
     scheme.unlink(reference_opt.unwrap_or(b""), uid, gid)
 }
@@ -233,8 +233,7 @@ pub fn close(fd: FileHandle) -> Result<usize> {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        let file = context.remove_file(fd).ok_or(Error::new(EBADF))?;
-        file
+        context.remove_file(fd).ok_or(Error::new(EBADF))?
     };
 
     file.close(fd)
@@ -245,8 +244,7 @@ fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        let file = context.get_file(fd).ok_or(Error::new(EBADF))?;
-        file
+        context.get_file(fd).ok_or(Error::new(EBADF))?
     };
 
     if buf.is_empty() {
@@ -262,8 +260,7 @@ fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
             let scheme = {
                 let schemes = scheme::schemes();
                 let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-
-                scheme.clone()
+                Arc::clone(&scheme)
             };
             scheme.dup(description.number, buf)?
         };
@@ -313,8 +310,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        let file = context.get_file(fd).ok_or(Error::new(EBADF))?;
-        file
+        context.get_file(fd).ok_or(Error::new(EBADF))?
     };
 
     let description = file.description.read();
@@ -324,7 +320,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let scheme = {
             let schemes = scheme::schemes();
             let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-            scheme.clone()
+            Arc::clone(&scheme)
         };
         scheme.fcntl(description.number, cmd, arg)?;
     };
@@ -405,7 +401,7 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-        scheme.clone()
+        Arc::clone(&scheme)
     };
     let event_id = scheme.fevent(description.number, flags)?;
     {

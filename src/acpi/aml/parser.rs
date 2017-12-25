@@ -383,7 +383,7 @@ impl AmlExecutionContext {
 
                 Ok(AmlValue::Package(p))
             },
-            _ => return Err(AmlError::AmlValueError)
+            _ => Err(AmlError::AmlValueError)
         }
     }
 

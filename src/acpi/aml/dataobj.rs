@@ -15,7 +15,7 @@ pub fn parse_data_obj(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -35,7 +35,7 @@ pub fn parse_data_ref_obj(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -63,7 +63,7 @@ pub fn parse_arg_obj(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -82,7 +82,7 @@ pub fn parse_local_obj(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -101,7 +101,7 @@ fn parse_computational_data(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -172,14 +172,14 @@ fn parse_computational_data(data: &[u8],
         }),
         0x5B => if data[1] == 0x30 {
             Ok(AmlParseType {
-                val: AmlValue::IntegerConstant(20170630 as u64),
+                val: AmlValue::IntegerConstant(2017_0630 as u64),
                 len: 2 as usize
             })
         } else {
             Err(AmlError::AmlInvalidOpCode)
         },
         0xFF => Ok(AmlParseType {
-            val: AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF),
+            val: AmlValue::IntegerConstant(0xFFFF_FFFF_FFFF_FFFF),
             len: 1 as usize
         }),
         _ => parse_def_buffer(data, ctx)

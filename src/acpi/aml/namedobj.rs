@@ -83,7 +83,7 @@ pub fn parse_named_obj(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -119,7 +119,7 @@ fn parse_def_bank_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -174,7 +174,7 @@ fn parse_def_create_bit_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -204,7 +204,7 @@ fn parse_def_create_byte_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -234,7 +234,7 @@ fn parse_def_create_word_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -264,7 +264,7 @@ fn parse_def_create_dword_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -294,7 +294,7 @@ fn parse_def_create_qword_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -324,7 +324,7 @@ fn parse_def_create_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -355,7 +355,7 @@ fn parse_def_data_region(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -392,7 +392,7 @@ fn parse_def_event(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -415,7 +415,7 @@ fn parse_def_device(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -447,7 +447,7 @@ fn parse_def_op_region(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -496,7 +496,7 @@ fn parse_def_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -541,7 +541,7 @@ fn parse_def_index_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -593,7 +593,7 @@ fn parse_field_list(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -608,7 +608,7 @@ fn parse_field_list(data: &[u8],
             ExecutionState::EXECUTING => (),
             _ => return Ok(AmlParseType {
                 val: AmlValue::None,
-                len: 0 as usize
+                len: 0
             })
         }
 
@@ -631,7 +631,7 @@ fn parse_field_element(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -747,7 +747,7 @@ fn parse_connect_field(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -773,7 +773,7 @@ fn parse_def_method(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -809,7 +809,7 @@ fn parse_def_mutex(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -834,7 +834,7 @@ fn parse_def_power_res(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -871,7 +871,7 @@ fn parse_def_processor(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -911,7 +911,7 @@ fn parse_def_thermal_zone(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -942,7 +942,7 @@ fn parse_def_external(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 

@@ -12,7 +12,7 @@ pub fn parse_namespace_modifier(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -32,7 +32,7 @@ fn parse_alias_op(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -58,7 +58,7 @@ fn parse_name_op(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -83,7 +83,7 @@ fn parse_scope_op(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 

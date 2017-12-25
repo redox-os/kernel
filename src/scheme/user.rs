@@ -205,7 +205,7 @@ impl UserInner {
     }
 }
 
-/// UserInner has to be wrapped
+/// `UserInner` has to be wrapped
 pub struct UserScheme {
     inner: Weak<UserInner>
 }

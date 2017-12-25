@@ -29,7 +29,7 @@ pub fn parse_type2_opcode(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -96,7 +96,7 @@ pub fn parse_type6_opcode(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -117,7 +117,7 @@ pub fn parse_def_object_type(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -139,7 +139,7 @@ pub fn parse_def_package(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -170,7 +170,7 @@ pub fn parse_def_var_package(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -204,7 +204,7 @@ fn parse_package_elements_list(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -238,7 +238,7 @@ pub fn parse_def_buffer(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -262,7 +262,7 @@ fn parse_def_ref_of(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -292,7 +292,7 @@ fn parse_def_deref_of(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -316,7 +316,7 @@ fn parse_def_acquire(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -326,7 +326,7 @@ fn parse_def_acquire(data: &[u8],
     let timeout = (data[2 + obj.len] as u16) + ((data[3 + obj.len] as u16) << 8);
 
     let (seconds, nanoseconds) = monotonic();
-    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+    let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
     loop {
         match ctx.acquire_mutex(obj.val.clone()) {
@@ -340,9 +340,9 @@ fn parse_def_acquire(data: &[u8],
                 // TODO: Brief sleep here
             } else {
                 let (seconds, nanoseconds) = monotonic();
-                let current_time_ns = nanoseconds + (seconds * 1000000000);
+                let current_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
-                if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                if current_time_ns - starting_time_ns > timeout as u64 * 1_000_000 {
                     return Ok(AmlParseType {
                         val: AmlValue::Integer(1),
                         len: 4 + obj.len
@@ -359,7 +359,7 @@ fn parse_def_increment(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -383,7 +383,7 @@ fn parse_def_index(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -408,7 +408,7 @@ fn parse_def_land(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -431,7 +431,7 @@ fn parse_def_lequal(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -454,7 +454,7 @@ fn parse_def_lgreater(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -477,7 +477,7 @@ fn parse_def_lless(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -500,7 +500,7 @@ fn parse_def_lnot(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -521,7 +521,7 @@ fn parse_def_lor(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -544,7 +544,7 @@ fn parse_def_to_hex_string(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -585,7 +585,7 @@ fn parse_def_to_buffer(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -609,7 +609,7 @@ fn parse_def_to_bcd(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -642,7 +642,7 @@ fn parse_def_to_decimal_string(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -682,7 +682,7 @@ fn parse_def_to_integer(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -707,7 +707,7 @@ fn parse_def_to_string(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -740,7 +740,7 @@ fn parse_def_subtract(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -766,7 +766,7 @@ fn parse_def_size_of(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -794,7 +794,7 @@ fn parse_def_store(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -817,7 +817,7 @@ fn parse_def_or(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -843,7 +843,7 @@ fn parse_def_shift_left(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -869,7 +869,7 @@ fn parse_def_shift_right(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -895,7 +895,7 @@ fn parse_def_add(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -921,7 +921,7 @@ fn parse_def_and(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -947,7 +947,7 @@ fn parse_def_xor(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -973,7 +973,7 @@ fn parse_def_concat_res(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1025,7 +1025,7 @@ fn parse_def_wait(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1037,7 +1037,7 @@ fn parse_def_wait(data: &[u8],
     let timeout = timeout_obj.val.get_as_integer()?;
 
     let (seconds, nanoseconds) = monotonic();
-    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+    let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
     loop {
         match ctx.wait_for_event(obj.val.clone()) {
@@ -1051,9 +1051,9 @@ fn parse_def_wait(data: &[u8],
                 // TODO: Brief sleep here
             } else {
                 let (seconds, nanoseconds) = monotonic();
-                let current_time_ns = nanoseconds + (seconds * 1000000000);
+                let current_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
-                if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+                if current_time_ns - starting_time_ns > timeout as u64 * 1_000_000 {
                     return Ok(AmlParseType {
                         val: AmlValue::Integer(1),
                         len: 2 + obj.len + timeout_obj.len
@@ -1070,7 +1070,7 @@ fn parse_def_cond_ref_of(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1107,7 +1107,7 @@ fn parse_def_copy_object(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1132,7 +1132,7 @@ fn parse_def_concat(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1200,7 +1200,7 @@ fn parse_def_decrement(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1224,7 +1224,7 @@ fn parse_def_divide(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1256,7 +1256,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1269,7 +1269,7 @@ fn parse_def_find_set_left_bit(data: &[u8],
     let mut test = operand.val.get_as_integer()?;
 
     while first_bit > 0{
-        if test & 0x8000000000000000 > 0 {
+        if test & 0x8000_0000_0000_0000 > 0 {
             break;
         }
 
@@ -1292,7 +1292,7 @@ fn parse_def_find_set_right_bit(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1332,7 +1332,7 @@ fn parse_def_load_table(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1385,7 +1385,7 @@ fn parse_def_match(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1518,7 +1518,7 @@ fn parse_def_match(data: &[u8],
     }
 
     Ok(AmlParseType {
-        val: AmlValue::IntegerConstant(0xFFFFFFFFFFFFFFFF),
+        val: AmlValue::IntegerConstant(0xFFFF_FFFF_FFFF_FFFF),
         len: 3 + search_pkg.len + first_operand.len + second_operand.len + start_index.len
     })
 }
@@ -1529,7 +1529,7 @@ fn parse_def_from_bcd(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1567,7 +1567,7 @@ fn parse_def_mid(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1629,7 +1629,7 @@ fn parse_def_mod(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1659,7 +1659,7 @@ fn parse_def_multiply(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1686,7 +1686,7 @@ fn parse_def_nand(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1712,7 +1712,7 @@ fn parse_def_nor(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1738,7 +1738,7 @@ fn parse_def_not(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -1763,14 +1763,14 @@ fn parse_def_timer(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
     parser_opcode_extended!(data, 0x33);
 
     let (seconds, nanoseconds) = monotonic();
-    let monotonic_ns = nanoseconds + (seconds * 1000000000);
+    let monotonic_ns = nanoseconds + (seconds * 1_000_000_000);
 
     Ok(AmlParseType {
         val: AmlValue::Integer(monotonic_ns),

@@ -45,7 +45,7 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                 let context_lock = {
                     let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    context_lock.clone()
+                    Arc::clone(&context_lock)
                 };
 
                 if unsafe { intrinsics::atomic_load(addr) != val } {
@@ -58,7 +58,7 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                     if let Some(timeout) = timeout_opt {
                         let start = time::monotonic();
                         let sum = start.1 + timeout.tv_nsec as u64;
-                        let end = (start.0 + timeout.tv_sec as u64 + sum / 1000000000, sum % 1000000000);
+                        let end = (start.0 + timeout.tv_sec as u64 + sum / 1_000_000_000, sum % 1_000_000_000);
                         context.wake = Some(end);
                     }
 
@@ -74,7 +74,7 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                 let context_lock = {
                     let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    context_lock.clone()
+                    Arc::clone(&context_lock)
                 };
 
                 {

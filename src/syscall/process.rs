@@ -240,25 +240,25 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             }
 
             if flags & CLONE_VM == CLONE_VM {
-                grants = context.grants.clone();
+                grants = Arc::clone(&context.grants);
             } else {
                 grants = Arc::new(Mutex::new(Vec::new()));
             }
 
             if flags & CLONE_VM == CLONE_VM {
-                name = context.name.clone();
+                name = Arc::clone(&context.name);
             } else {
                 name = Arc::new(Mutex::new(context.name.lock().clone()));
             }
 
             if flags & CLONE_FS == CLONE_FS {
-                cwd = context.cwd.clone();
+                cwd = Arc::clone(&context.cwd);
             } else {
                 cwd = Arc::new(Mutex::new(context.cwd.lock().clone()));
             }
 
             if flags & CLONE_VM == CLONE_VM {
-                env = context.env.clone();
+                env = Arc::clone(&context.env);
             } else {
                 let mut new_env = BTreeMap::new();
                 for item in context.env.lock().iter() {
@@ -268,13 +268,13 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             }
 
             if flags & CLONE_FILES == CLONE_FILES {
-                files = context.files.clone();
+                files = Arc::clone(&context.files);
             } else {
                 files = Arc::new(Mutex::new(context.files.lock().clone()));
             }
 
             if flags & CLONE_SIGHAND == CLONE_SIGHAND {
-                actions = context.actions.clone();
+                actions = Arc::clone(&context.actions);
             } else {
                 actions = Arc::new(Mutex::new(context.actions.lock().clone()));
             }
@@ -826,7 +826,7 @@ pub fn exit(status: usize) -> ! {
         let context_lock = {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exit failed to find context");
-            context_lock.clone()
+            Arc::clone(&context_lock)
         };
 
         let mut close_files = Vec::new();
@@ -892,7 +892,7 @@ pub fn exit(status: usize) -> ! {
                             println!("{}: {} not blocked for exit vfork unblock", pid.into(), ppid.into());
                         }
                     }
-                    parent.waitpid.clone()
+                    Arc::clone(&parent.waitpid)
                 };
 
                 for (c_pid, c_status) in children {
@@ -1134,7 +1134,7 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<Contex
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.id, context.waitpid.clone())
+        (context.id, Arc::clone(&context.waitpid))
     };
 
     let mut tmp = [0];
@@ -1167,7 +1167,7 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<Contex
                 context.ppid = ppid;
                 //return Err(Error::new(ECHILD));
             }
-            context.status.clone()
+            context.status
         };
 
         if let context::Status::Exited(status) = status {
