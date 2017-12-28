@@ -334,6 +334,14 @@ impl Scheme for UserScheme {
         result
     }
 
+    fn frename(&self, file: usize, path: &[u8], _uid: u32, _gid: u32) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let address = inner.capture(path)?;
+        let result = inner.call(SYS_FRENAME, file, address, path.len());
+        let _ = inner.release(address);
+        result
+    }
+
     fn fstat(&self, file: usize, stat: &mut Stat) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_mut(stat)?;

@@ -422,6 +422,42 @@ pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
     Ok(0)
 }
 
+pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {
+    let file = {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        let file = context.get_file(fd).ok_or(Error::new(EBADF))?;
+        file
+    };
+
+    let (path_canon, uid, gid, scheme_ns) = {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        (context.canonicalize(path), context.euid, context.egid, context.ens)
+    };
+
+    let mut parts = path_canon.splitn(2, |&b| b == b':');
+    let scheme_name_opt = parts.next();
+    let reference_opt = parts.next();
+
+    let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
+    let (scheme_id, scheme) = {
+        let schemes = scheme::schemes();
+        let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+        (scheme_id, scheme.clone())
+    };
+
+    let description = file.description.read();
+
+    if scheme_id == description.scheme {
+        scheme.frename(description.number, reference_opt.unwrap_or(b""), uid, gid)
+    } else {
+        Err(Error::new(EXDEV))
+    }
+}
+
 pub fn funmap(virtual_address: usize) -> Result<usize> {
     if virtual_address == 0 {
         Ok(0)

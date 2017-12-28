@@ -64,6 +64,7 @@ pub extern fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize
                         SYS_DUP2 => dup2(fd, FileHandle::from(c), validate_slice(d as *const u8, e)?).map(FileHandle::into),
                         SYS_FCNTL => fcntl(fd, c, d),
                         SYS_FEVENT => fevent(fd, c),
+                        SYS_FRENAME => frename(fd, validate_slice(c as *const u8, d)?),
                         SYS_FUNMAP => funmap(b),
                         _ => file_op(a, fd, c, d)
                     }

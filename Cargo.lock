@@ -32,13 +32,13 @@ dependencies = [
 
 [[package]]
 name = "kernel"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "alloc_kernel 0.1.0",
  "bitflags 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "goblin 0.0.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "raw-cpuid 3.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "redox_syscall 0.1.32",
+ "redox_syscall 0.1.33",
  "spin 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "x86 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.1.32"
+version = "0.1.33"
 
 [[package]]
 name = "scroll"

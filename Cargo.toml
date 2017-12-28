@@ -1,6 +1,6 @@
 [package]
 name = "kernel"
-version = "0.1.32"
+version = "0.1.33"
 build = "build.rs"
 
 [lib]
