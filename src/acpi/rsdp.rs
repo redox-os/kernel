@@ -20,8 +20,8 @@ pub struct RSDP {
 impl RSDP {
     /// Search for the RSDP
     pub fn get_rsdp(active_table: &mut ActivePageTable) -> Option<RSDP> {
-        let start_addr = 0xE0000;
-        let end_addr = 0xFFFFF;
+        let start_addr = 0xE_0000;
+        let end_addr = 0xF_FFFF;
 
         // Map all of the ACPI RSDP space
         {

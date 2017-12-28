@@ -304,7 +304,7 @@ impl ActivePageTable {
         unsafe { tlb::flush_all(); }
     }
 
-    pub fn with<F>(&mut self, table: &mut InactivePageTable, temporary_page: &mut temporary_page::TemporaryPage, f: F)
+    pub fn with<F>(&mut self, table: &mut InactivePageTable, temporary_page: &mut TemporaryPage, f: F)
         where F: FnOnce(&mut Mapper)
     {
         use x86::controlregs;
@@ -415,7 +415,7 @@ impl Page {
     }
 
     pub fn p1_index(&self) -> usize {
-        (self.number >> 0) & 0o777
+        self.number & 0o777
     }
 
     pub fn containing_address(address: VirtualAddress) -> Page {

@@ -16,7 +16,7 @@ static T0_COMPARATOR_OFFSET: usize = 0x108;
 
 pub unsafe fn init(hpet: &mut Hpet) {
     let counter_clk_period_fs = hpet.base_address.read_u64(CAPABILITY_OFFSET) >> 32;
-    let desired_fs_period: u64 = 2250286 * 1000000;
+    let desired_fs_period: u64 = 2_250_286 * 1_000_000;
 
     let clk_periods_per_kernel_tick: u64 = desired_fs_period / counter_clk_period_fs;
 

@@ -71,7 +71,7 @@ impl ContextList {
             for b in fx.iter_mut() {
                 *b = 0;
             }
-            let mut stack = vec![0; 65536].into_boxed_slice();
+            let mut stack = vec![0; 65_536].into_boxed_slice();
             let offset = stack.len() - mem::size_of::<usize>();
             unsafe {
                 let offset = stack.len() - mem::size_of::<usize>();

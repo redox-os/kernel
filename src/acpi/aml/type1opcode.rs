@@ -16,7 +16,7 @@ pub fn parse_type1_opcode(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -49,7 +49,7 @@ fn parse_def_break(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -68,7 +68,7 @@ fn parse_def_breakpoint(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -86,7 +86,7 @@ fn parse_def_continue(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -105,7 +105,7 @@ fn parse_def_noop(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -123,7 +123,7 @@ fn parse_def_fatal(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -142,7 +142,7 @@ fn parse_def_load(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -174,7 +174,7 @@ fn parse_def_notify(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -222,7 +222,7 @@ fn parse_def_release(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -243,7 +243,7 @@ fn parse_def_reset(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -266,7 +266,7 @@ fn parse_def_signal(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -286,7 +286,7 @@ fn parse_def_sleep(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -296,13 +296,13 @@ fn parse_def_sleep(data: &[u8],
     let timeout = time.val.get_as_integer()?;
 
     let (seconds, nanoseconds) = monotonic();
-    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+    let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
     loop {
         let (seconds, nanoseconds) = monotonic();
-        let current_time_ns = nanoseconds + (seconds * 1000000000);
+        let current_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
-        if current_time_ns - starting_time_ns > timeout as u64 * 1000000 {
+        if current_time_ns - starting_time_ns > timeout as u64 * 1_000_000 {
             break;
         }
     }
@@ -319,7 +319,7 @@ fn parse_def_stall(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -329,11 +329,11 @@ fn parse_def_stall(data: &[u8],
     let timeout = time.val.get_as_integer()?;
 
     let (seconds, nanoseconds) = monotonic();
-    let starting_time_ns = nanoseconds + (seconds * 1000000000);
+    let starting_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
     loop {
         let (seconds, nanoseconds) = monotonic();
-        let current_time_ns = nanoseconds + (seconds * 1000000000);
+        let current_time_ns = nanoseconds + (seconds * 1_000_000_000);
 
         if current_time_ns - starting_time_ns > timeout as u64 * 1000 {
             break;
@@ -352,7 +352,7 @@ fn parse_def_unload(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -381,7 +381,7 @@ fn parse_def_if_else(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -414,7 +414,7 @@ fn parse_def_while(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -439,7 +439,7 @@ fn parse_def_while(data: &[u8],
             ExecutionState::CONTINUE => ctx.state = ExecutionState::EXECUTING,
             _ => return Ok(AmlParseType {
                 val: AmlValue::None,
-                len: 0 as usize
+                len: 0
             })
         }
     }
@@ -456,7 +456,7 @@ fn parse_def_return(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 

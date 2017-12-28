@@ -223,7 +223,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b,
             c
         ),
-        SYS_GETEGID => format!("getgid()"),
+        SYS_GETEGID => format!("getegid()"),
         SYS_GETENS => format!("getens()"),
         SYS_GETEUID => format!("geteuid()"),
         SYS_GETGID => format!("getgid()"),

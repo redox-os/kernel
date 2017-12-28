@@ -33,7 +33,7 @@ impl<K, V> WaitMap<K, V> where K: Clone + Ord {
 
     pub fn receive_any_nonblock(&self) -> Option<(K, V)> {
         let mut inner = self.inner.lock();
-        if let Some(key) = inner.keys().next().map(|key| key.clone()) {
+        if let Some(key) = inner.keys().next().cloned() {
             inner.remove(&key).map(|value| (key, value))
         } else {
             None

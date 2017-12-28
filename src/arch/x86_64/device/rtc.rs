@@ -19,16 +19,16 @@ pub struct Rtc {
 impl Rtc {
     /// Create new empty RTC
     pub fn new() -> Self {
-        return Rtc {
+        Rtc {
             addr: Pio::<u8>::new(0x70),
             data: Pio::<u8>::new(0x71),
-        };
+        }
     }
 
     /// Read
     unsafe fn read(&mut self, reg: u8) -> u8 {
         self.addr.write(reg);
-        return self.data.read();
+        self.data.read()
     }
 
     /// Wait
@@ -66,7 +66,7 @@ impl Rtc {
             if let Some(century_reg) = century_register {
                 self.read(century_reg) as usize
             } else */ {
-                20 as usize
+                20
             };
             register_b = self.read(0xB);
         }
@@ -93,32 +93,30 @@ impl Rtc {
         year += century * 100;
 
         // Unix time from clock
-        let mut secs: u64 = (year as u64 - 1970) * 31536000;
+        let mut secs: u64 = (year as u64 - 1970) * 31_536_000;
 
         let mut leap_days = (year as u64 - 1972) / 4 + 1;
-        if year % 4 == 0 {
-            if month <= 2 {
-                leap_days -= 1;
-            }
+        if year % 4 == 0 && month <= 2 {
+            leap_days -= 1;
         }
-        secs += leap_days * 86400;
+        secs += leap_days * 86_400;
 
         match month {
-            2 => secs += 2678400,
-            3 => secs += 5097600,
-            4 => secs += 7776000,
-            5 => secs += 10368000,
-            6 => secs += 13046400,
-            7 => secs += 15638400,
-            8 => secs += 18316800,
-            9 => secs += 20995200,
-            10 => secs += 23587200,
-            11 => secs += 26265600,
-            12 => secs += 28857600,
+            2 => secs += 2_678_400,
+            3 => secs += 5_097_600,
+            4 => secs += 7_776_000,
+            5 => secs += 10_368_000,
+            6 => secs += 13_046_400,
+            7 => secs += 15_638_400,
+            8 => secs += 18_316_800,
+            9 => secs += 20_995_200,
+            10 => secs += 23_587_200,
+            11 => secs += 26_265_600,
+            12 => secs += 28_857_600,
             _ => (),
         }
 
-        secs += (day as u64 - 1) * 86400;
+        secs += (day as u64 - 1) * 86_400;
         secs += hour as u64 * 3600;
         secs += minute as u64 * 60;
         secs += second as u64;

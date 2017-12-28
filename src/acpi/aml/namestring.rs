@@ -13,7 +13,7 @@ pub fn parse_name_string(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -57,7 +57,7 @@ pub fn parse_name_string(data: &[u8],
 
 fn parse_null_name(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
     parser_opcode!(data, 0x00);
-    Ok((vec!(), 1 as usize))
+    Ok((vec!(), 1 ))
 }
 
 pub fn parse_name_seg(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
@@ -86,7 +86,7 @@ pub fn parse_name_seg(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
         name_seg.pop();
     }
 
-    Ok((name_seg, 4 as usize))
+    Ok((name_seg, 4))
 }
 
 fn parse_dual_name_path(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
@@ -153,7 +153,7 @@ pub fn parse_super_name(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -173,7 +173,7 @@ fn parse_debug_obj(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -181,7 +181,7 @@ fn parse_debug_obj(data: &[u8],
 
     Ok(AmlParseType {
         val: AmlValue::DebugObject,
-        len: 2 as usize
+        len: 2
     })
 }
 
@@ -191,7 +191,7 @@ pub fn parse_simple_name(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
@@ -211,14 +211,14 @@ pub fn parse_target(data: &[u8],
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
             val: AmlValue::None,
-            len: 0 as usize
+            len: 0
         })
     }
 
     if data[0] == 0x00 {
         Ok(AmlParseType {
             val: AmlValue::None,
-            len: 1 as usize
+            len: 1
         })
     } else {
         parse_super_name(data, ctx)

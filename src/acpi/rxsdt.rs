@@ -23,6 +23,6 @@ pub trait Rxsdt {
             }
         }
 
-        return None;
+        None
     }
 }

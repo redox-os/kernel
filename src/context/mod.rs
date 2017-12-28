@@ -37,7 +37,7 @@ pub mod timeout;
 pub const CONTEXT_MAX_CONTEXTS: usize = (isize::max_value() as usize) - 1;
 
 /// Maximum context files
-pub const CONTEXT_MAX_FILES: usize = 65536;
+pub const CONTEXT_MAX_FILES: usize = 65_536;
 
 /// Contexts list
 static CONTEXTS: Once<RwLock<ContextList>> = Once::new();
@@ -77,6 +77,6 @@ pub fn contexts_mut() -> RwLockWriteGuard<'static, ContextList> {
     CONTEXTS.call_once(init_contexts).write()
 }
 
-pub fn context_id() -> context::ContextId {
+pub fn context_id() -> ContextId {
     CONTEXT_ID.load(Ordering::SeqCst)
 }

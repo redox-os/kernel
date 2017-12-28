@@ -10,7 +10,7 @@ pub struct Entry(u64);
 
 bitflags! {
     pub struct EntryFlags: u64 {
-        const PRESENT =         1 << 0;
+        const PRESENT =         1;
         const WRITABLE =        1 << 1;
         const USER_ACCESSIBLE = 1 << 2;
         const WRITE_THROUGH =   1 << 3;
@@ -39,7 +39,7 @@ impl Entry {
 
     /// Make the entry unused
     pub fn set_unused(&mut self) {
-        self.0 = self.0 & COUNTER_MASK;
+        self.0 &= COUNTER_MASK;
     }
 
     /// Get the address this page references
@@ -71,7 +71,7 @@ impl Entry {
         (self.0 & COUNTER_MASK) >> 52
     }
 
-    /// Set bits 52-61 in entry, used as counter for page table    
+    /// Set bits 52-61 in entry, used as counter for page table
     pub fn set_counter_bits(&mut self, count: u64) {
         self.0 = (self.0 & !COUNTER_MASK) | (count << 52);
     }

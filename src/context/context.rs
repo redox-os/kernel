@@ -18,7 +18,7 @@ use ::core::sync::atomic::AtomicUsize;
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
-/// See syscall::process::waitpid and the sync module for examples of usage
+/// See `syscall::process::waitpid` and the `sync` module for examples of usage
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Status {
     Runnable,
@@ -182,13 +182,11 @@ impl Context {
                     } else if part == b".." {
                         *nskip += 1;
                         Some(None)
-                    } else {
-                        if *nskip > 0 {
+                    } else if *nskip > 0 {
                             *nskip -= 1;
                             Some(None)
-                        } else {
-                            Some(Some(part))
-                        }
+                    } else {
+                        Some(Some(part))
                     }
                 })
                 .filter_map(|x| x)
@@ -206,7 +204,7 @@ impl Context {
         result.pop(); // remove extra '/'
 
         // replace with the root of the scheme if it's empty
-        if result.len() == 0 {
+        if result.is_empty() {
             let pos = canon.iter()
                             .position(|&b| b == b':')
                             .map_or(canon.len(), |p| p + 1);

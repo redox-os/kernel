@@ -64,7 +64,7 @@ pub mod time;
 pub mod user;
 
 /// Limit on number of schemes
-pub const SCHEME_MAX_SCHEMES: usize = 65536;
+pub const SCHEME_MAX_SCHEMES: usize = 65_536;
 
 /// Unique identifier for a scheme namespace.
 int_like!(SchemeNamespace, AtomicSchemeNamespace, usize, AtomicUsize);
@@ -197,7 +197,7 @@ impl SchemeList {
                 return self.get(id).map(|scheme| (id, scheme));
             }
         }
-        return None;
+        None
     }
 
     /// Create a new scheme.

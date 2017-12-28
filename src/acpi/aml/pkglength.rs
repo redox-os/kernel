@@ -21,5 +21,5 @@ pub fn parse_pkg_length(data: &[u8]) -> Result<(usize, usize), AmlError> {
         current_byte += 1;
     }
 
-    return Ok((pkg_len, count_bytes + 1));
+    Ok((pkg_len, count_bytes + 1))
 }

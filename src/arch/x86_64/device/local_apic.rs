@@ -27,7 +27,7 @@ pub struct LocalApic {
 
 impl LocalApic {
     unsafe fn init(&mut self, active_table: &mut ActivePageTable) {
-        self.address = (rdmsr(IA32_APIC_BASE) as usize & 0xFFFF0000) + ::KERNEL_OFFSET;
+        self.address = (rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000) + ::KERNEL_OFFSET;
         self.x2 = CpuId::new().get_feature_info().unwrap().has_x2apic();
 
         if ! self.x2 {
