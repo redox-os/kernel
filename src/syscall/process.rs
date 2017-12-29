@@ -669,8 +669,13 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
                                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                                 true
                             );
-                            let rounded_size = ((segment.p_memsz + 4095)/4096) * 4096;
-                            let rounded_offset = rounded_size - segment.p_memsz;
+                            let aligned_size = if segment.p_align > 0 {
+                                ((segment.p_memsz + (segment.p_align - 1))/segment.p_align) * segment.p_align
+                            } else {
+                                segment.p_memsz
+                            };
+                            let rounded_size = ((aligned_size + 4095)/4096) * 4096;
+                            let rounded_offset = rounded_size - aligned_size;
                             let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
                             unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
 
