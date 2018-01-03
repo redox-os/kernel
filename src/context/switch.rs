@@ -2,7 +2,7 @@ use core::mem;
 use core::sync::atomic::Ordering;
 use context::{arch, contexts, Context, Status, CONTEXT_ID};
 use start::usermode;
-use syscall::flag::{SIG_DFL, SIG_IGN};
+use syscall::flag::{SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
 
 use gdt;
 use interrupt;
@@ -163,10 +163,39 @@ extern "C" fn signal_handler(sig: usize) {
     };
 
     let handler = action.sa_handler as usize;
-    println!("Handler {:X}: {:X}", sig, handler);
+    println!("Handler {}: {:X}", sig, handler);
     if handler == SIG_DFL {
-        println!("Exit {:X}", sig);
-        syscall::exit(sig);
+        match sig {
+            SIGCHLD => {
+                println!("SIGCHLD");
+            },
+            SIGCONT => {
+                println!("Continue");
+
+                let contexts = contexts();
+                let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+                let mut context = context_lock.write();
+                if context.stopped {
+                    context.stopped = false;
+                    context.unblock();
+                }
+            },
+            SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU => {
+                println!("Stop");
+
+                let contexts = contexts();
+                let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+                let mut context = context_lock.write();
+                if ! context.stopped {
+                    context.stopped = true;
+                    context.block();
+                }
+            },
+            _ => {
+                println!("Exit {}", sig);
+                syscall::exit(sig);
+            }
+        }
     } else if handler == SIG_IGN {
         println!("Ignore");
     } else {

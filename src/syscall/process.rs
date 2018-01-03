@@ -956,7 +956,7 @@ pub fn getppid() -> Result<ContextId> {
 }
 
 pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
-    println!("Kill {} {:X}", pid.into() as isize, sig);
+    println!("Kill {} {}", pid.into() as isize, sig);
 
     let (ruid, euid, current_pgid) = {
         let contexts = context::contexts();
@@ -976,7 +976,6 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             || euid == context.ruid
             || ruid == context.ruid
             {
-                println!("Send {:X} to {}", sig, context.id.into());
                 context.pending.push_back(sig as u8);
                 true
             } else {
@@ -1014,8 +1013,6 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 ContextId::from(-(pid.into() as isize) as usize)
             };
 
-            println!("pgid {}", pgid.into());
-
             // Send to every process in the process group whose ID
             for (_id, context_lock) in contexts.iter() {
                 let mut context = context_lock.write();
@@ -1029,8 +1026,6 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 }
             }
         }
-
-        println!("Found {}, sent to {}", found, sent);
 
         if found == 0 {
             Err(Error::new(ESRCH))
