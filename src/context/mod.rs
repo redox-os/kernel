@@ -30,6 +30,9 @@ pub mod file;
 /// Memory struct - contains a set of pages for a context
 pub mod memory;
 
+/// Signal handling
+pub mod signal;
+
 /// Timeout handling
 pub mod timeout;
 

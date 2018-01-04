@@ -22,7 +22,7 @@ use scheme::FileHandle;
 use syscall;
 use syscall::data::{SigAction, Stat};
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, SIG_DFL, SIGTERM, WNOHANG};
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, SIG_DFL, SIGCONT, SIGTERM, WCONTINUED, WNOHANG, WUNTRACED};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
@@ -974,7 +974,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         (context.ruid, context.euid, context.pgid)
     };
 
-    if sig > 0 && sig <= 0x7F {
+    if sig > 0 && sig < 0x7F {
         let mut found = 0;
         let mut sent = 0;
 
@@ -986,6 +986,12 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 || euid == context.ruid
                 || ruid == context.ruid
                 {
+                    // Convert stopped processes to blocked if sending SIGCONT
+                    if sig == SIGCONT {
+                        if let context::Status::Stopped(_sig) = context.status {
+                            context.status = context::Status::Blocked;
+                        }
+                    }
                     context.pending.push_back(sig as u8);
                     true
                 } else {
@@ -1158,47 +1164,69 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<Contex
         &mut tmp
     };
 
-    if pid.into() == 0 {
-        if flags & WNOHANG == WNOHANG {
-            if let Some((w_pid, status)) = waitpid.receive_any_nonblock() {
+    let mut grim_reaper = |w_pid: ContextId, status: usize| -> Option<Result<ContextId>> {
+        if status == 0xFFFF {
+            if flags & WCONTINUED == WCONTINUED {
                 status_slice[0] = status;
-                reap(w_pid)
+                Some(Ok(w_pid))
             } else {
-                Ok(ContextId::from(0))
+                None
+            }
+        } else if status & 0xFF == 0x7F {
+            if flags & WUNTRACED == WUNTRACED {
+                status_slice[0] = status;
+                Some(Ok(w_pid))
+            } else {
+                None
             }
         } else {
-            let (w_pid, status) = waitpid.receive_any();
             status_slice[0] = status;
-            reap(w_pid)
+            Some(reap(w_pid))
         }
-    } else {
-        let status = {
-            let contexts = context::contexts();
-            let context_lock = contexts.get(pid).ok_or(Error::new(ECHILD))?;
-            let mut context = context_lock.write();
-            if context.ppid != ppid {
-                println!("Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
-                context.ppid = ppid;
-                //return Err(Error::new(ECHILD));
+    };
+
+    loop {
+        let res_opt = if pid.into() == 0 {
+            if flags & WNOHANG == WNOHANG {
+                if let Some((w_pid, status)) = waitpid.receive_any_nonblock() {
+                    grim_reaper(w_pid, status)
+                } else {
+                    Some(Ok(ContextId::from(0)))
+                }
+            } else {
+                let (w_pid, status) = waitpid.receive_any();
+                grim_reaper(w_pid, status)
             }
-            context.status
+        } else {
+            let status = {
+                let contexts = context::contexts();
+                let context_lock = contexts.get(pid).ok_or(Error::new(ECHILD))?;
+                let mut context = context_lock.write();
+                if context.ppid != ppid {
+                    println!("Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
+                    context.ppid = ppid;
+                    //return Err(Error::new(ECHILD));
+                }
+                context.status
+            };
+
+            if let context::Status::Exited(status) = status {
+                let _ = waitpid.receive_nonblock(&pid);
+                grim_reaper(pid, status)
+            } else if flags & WNOHANG == WNOHANG {
+                if let Some(status) = waitpid.receive_nonblock(&pid) {
+                    grim_reaper(pid, status)
+                } else {
+                    Some(Ok(ContextId::from(0)))
+                }
+            } else {
+                let status = waitpid.receive(&pid);
+                grim_reaper(pid, status)
+            }
         };
 
-        if let context::Status::Exited(status) = status {
-            let _ = waitpid.receive_nonblock(&pid);
-            status_slice[0] = status;
-            reap(pid)
-        } else if flags & WNOHANG == WNOHANG {
-            if let Some(status) = waitpid.receive_nonblock(&pid) {
-                status_slice[0] = status;
-                reap(pid)
-            } else {
-                Ok(ContextId::from(0))
-            }
-        } else {
-            let status = waitpid.receive(&pid);
-            status_slice[0] = status;
-            reap(pid)
+        if let Some(res) = res_opt {
+            return res;
         }
     }
 }
