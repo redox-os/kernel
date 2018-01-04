@@ -23,6 +23,7 @@ int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 pub enum Status {
     Runnable,
     Blocked,
+    Stopped(usize),
     Exited(usize)
 }
 
@@ -51,8 +52,6 @@ pub struct Context {
     pub status: Status,
     /// Context running or not
     pub running: bool,
-    /// Context is stopped
-    pub stopped: bool,
     /// CPU ID, if locked
     pub cpu_id: Option<usize>,
     /// Current system call
@@ -115,7 +114,6 @@ impl Context {
             ens: SchemeNamespace::from(0),
             status: Status::Blocked,
             running: false,
-            stopped: false,
             cpu_id: None,
             syscall: None,
             vfork: false,

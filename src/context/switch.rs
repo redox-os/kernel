@@ -172,23 +172,21 @@ extern "C" fn signal_handler(sig: usize) {
             SIGCONT => {
                 println!("Continue");
 
-                let contexts = contexts();
-                let context_lock = contexts.current().expect("context::signal_handler not inside of context");
-                let mut context = context_lock.write();
-                if context.stopped {
-                    context.stopped = false;
-                    context.unblock();
+                {
+                    let contexts = contexts();
+                    let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+                    let mut context = context_lock.write();
+                    context.status = Status::Runnable;
                 }
             },
             SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU => {
-                println!("Stop");
+                println!("Stop {}", sig);
 
-                let contexts = contexts();
-                let context_lock = contexts.current().expect("context::signal_handler not inside of context");
-                let mut context = context_lock.write();
-                if ! context.stopped {
-                    context.stopped = true;
-                    context.block();
+                {
+                    let contexts = contexts();
+                    let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+                    let mut context = context_lock.write();
+                    context.status = Status::Stopped(sig);
                 }
             },
             _ => {
