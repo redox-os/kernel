@@ -986,13 +986,13 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 || euid == context.ruid
                 || ruid == context.ruid
                 {
+                    context.pending.push_back(sig as u8);
                     // Convert stopped processes to blocked if sending SIGCONT
                     if sig == SIGCONT {
                         if let context::Status::Stopped(_sig) = context.status {
                             context.status = context::Status::Blocked;
                         }
                     }
-                    context.pending.push_back(sig as u8);
                     true
                 } else {
                     false

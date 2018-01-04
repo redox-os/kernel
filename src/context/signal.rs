@@ -1,7 +1,7 @@
 use alloc::arc::Arc;
 use core::mem;
 
-use context::{contexts, Status};
+use context::{contexts, switch, Status};
 use start::usermode;
 use syscall;
 use syscall::flag::{SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
@@ -16,7 +16,6 @@ pub extern "C" fn signal_handler(sig: usize) {
     };
 
     let handler = action.sa_handler as usize;
-    println!("Handler {}: {:X}", sig, handler);
     if handler == SIG_DFL {
         match sig {
             SIGCHLD => {
@@ -71,6 +70,8 @@ pub extern "C" fn signal_handler(sig: usize) {
                         println!("{}: {} not found for stop", pid.into(), ppid.into());
                     }
                 }
+
+                unsafe { switch() };
             },
             _ => {
                 println!("Exit {}", sig);
