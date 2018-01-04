@@ -231,8 +231,17 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                     offset: tls.offset,
                 };
 
-                unsafe {
-                    new_tls.load();
+
+                if flags & CLONE_VM == CLONE_VM {
+                    unsafe {
+                        new_tls.load();
+                    }
+                } else {
+                    unsafe {
+                        intrinsics::copy(tls.mem.start_address().get() as *const u8,
+                                        new_tls.mem.start_address().get() as *mut u8,
+                                        tls.mem.size());
+                    }
                 }
 
                 new_tls.mem.remap(tls.mem.flags());
@@ -966,62 +975,64 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     };
 
     if sig > 0 && sig <= 0x7F {
-        let contexts = context::contexts();
-
         let mut found = 0;
         let mut sent = 0;
 
-        let send = |context: &mut context::Context| -> bool {
-            if euid == 0
-            || euid == context.ruid
-            || ruid == context.ruid
-            {
-                context.pending.push_back(sig as u8);
-                true
-            } else {
-                false
-            }
-        };
+        {
+            let contexts = context::contexts();
 
-        if pid.into() as isize > 0 {
-            // Send to a single process
-            if let Some(context_lock) = contexts.get(pid) {
-                let mut context = context_lock.write();
-
-                found += 1;
-                if send(&mut context) {
-                    sent += 1;
+            let send = |context: &mut context::Context| -> bool {
+                if euid == 0
+                || euid == context.ruid
+                || ruid == context.ruid
+                {
+                    context.pending.push_back(sig as u8);
+                    true
+                } else {
+                    false
                 }
-            }
-        } else if pid.into() as isize == -1 {
-            // Send to every process with permission, except for init
-            for (_id, context_lock) in contexts.iter() {
-                let mut context = context_lock.write();
+            };
 
-                if context.id.into() > 2 {
+            if pid.into() as isize > 0 {
+                // Send to a single process
+                if let Some(context_lock) = contexts.get(pid) {
+                    let mut context = context_lock.write();
+
                     found += 1;
-
                     if send(&mut context) {
                         sent += 1;
                     }
                 }
-            }
-        } else {
-            let pgid = if pid.into() == 0 {
-                current_pgid
+            } else if pid.into() as isize == -1 {
+                // Send to every process with permission, except for init
+                for (_id, context_lock) in contexts.iter() {
+                    let mut context = context_lock.write();
+
+                    if context.id.into() > 2 {
+                        found += 1;
+
+                        if send(&mut context) {
+                            sent += 1;
+                        }
+                    }
+                }
             } else {
-                ContextId::from(-(pid.into() as isize) as usize)
-            };
+                let pgid = if pid.into() == 0 {
+                    current_pgid
+                } else {
+                    ContextId::from(-(pid.into() as isize) as usize)
+                };
 
-            // Send to every process in the process group whose ID
-            for (_id, context_lock) in contexts.iter() {
-                let mut context = context_lock.write();
+                // Send to every process in the process group whose ID
+                for (_id, context_lock) in contexts.iter() {
+                    let mut context = context_lock.write();
 
-                if context.pgid == pgid {
-                    found += 1;
+                    if context.pgid == pgid {
+                        found += 1;
 
-                    if send(&mut context) {
-                        sent += 1;
+                        if send(&mut context) {
+                            sent += 1;
+                        }
                     }
                 }
             }
@@ -1032,6 +1043,9 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         } else if sent == 0 {
             Err(Error::new(EPERM))
         } else {
+            // Switch to ensure delivery to self
+            unsafe { context::switch(); }
+
             Ok(0)
         }
     } else {
