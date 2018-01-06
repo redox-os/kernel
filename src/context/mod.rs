@@ -5,7 +5,7 @@ use alloc::heap::Heap;
 use core::sync::atomic::Ordering;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub use self::context::{Context, ContextId, Status};
+pub use self::context::{Context, ContextId, Status, WaitpidKey};
 pub use self::list::ContextList;
 pub use self::switch::switch;
 

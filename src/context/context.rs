@@ -1,6 +1,7 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
 use alloc::{BTreeMap, Vec, VecDeque};
+use core::cmp::Ordering;
 use core::mem;
 use spin::Mutex;
 
@@ -26,6 +27,65 @@ pub enum Status {
     Stopped(usize),
     Exited(usize)
 }
+
+#[derive(Copy, Clone, Debug)]
+pub struct WaitpidKey {
+    pub pid: Option<ContextId>,
+    pub pgid: Option<ContextId>,
+}
+
+impl Ord for WaitpidKey {
+    fn cmp(&self, other: &WaitpidKey) -> Ordering {
+        // If both have pid set, compare that
+        if let Some(s_pid) = self.pid {
+            if let Some(o_pid) = other.pid {
+                return s_pid.cmp(&o_pid);
+            }
+        }
+
+        // If both have pgid set, compare that
+        if let Some(s_pgid) = self.pgid {
+            if let Some(o_pgid) = other.pgid {
+                return s_pgid.cmp(&o_pgid);
+            }
+        }
+
+        // If either has pid set, it is greater
+        if self.pid.is_some() {
+            return Ordering::Greater;
+        }
+
+        if other.pid.is_some() {
+            return Ordering::Less;
+        }
+
+        // If either has pgid set, it is greater
+        if self.pgid.is_some() {
+            return Ordering::Greater;
+        }
+
+        if other.pgid.is_some() {
+            return Ordering::Less;
+        }
+
+        // If all pid and pgid are None, they are equal
+        Ordering::Equal
+    }
+}
+
+impl PartialOrd for WaitpidKey {
+    fn partial_cmp(&self, other: &WaitpidKey) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for WaitpidKey {
+    fn eq(&self, other: &WaitpidKey) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for WaitpidKey {}
 
 /// A context, which identifies either a process or a thread
 #[derive(Debug)]
@@ -59,7 +119,7 @@ pub struct Context {
     /// Context is halting parent
     pub vfork: bool,
     /// Context is being waited on
-    pub waitpid: Arc<WaitMap<ContextId, usize>>,
+    pub waitpid: Arc<WaitMap<WaitpidKey, (ContextId, usize)>>,
     /// Context should handle pending signals
     pub pending: VecDeque<u8>,
     /// Context should wake up at specified time
