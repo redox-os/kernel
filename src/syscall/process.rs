@@ -357,10 +357,10 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Copy kernel mapping
             {
-                let frame = active_table.p4()[510].pointed_frame().expect("kernel table not mapped");
-                let flags = active_table.p4()[510].flags();
+                let frame = active_table.p4()[::KERNEL_PML4].pointed_frame().expect("kernel table not mapped");
+                let flags = active_table.p4()[::KERNEL_PML4].flags();
                 active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                    mapper.p4_mut()[510].set(frame, flags);
+                    mapper.p4_mut()[::KERNEL_PML4].set(frame, flags);
                 });
             }
 
@@ -381,30 +381,30 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             if flags & CLONE_VM == CLONE_VM {
                 // Copy user image mapping, if found
                 if ! image.is_empty() {
-                    let frame = active_table.p4()[0].pointed_frame().expect("user image not mapped");
-                    let flags = active_table.p4()[0].flags();
+                    let frame = active_table.p4()[::USER_PML4].pointed_frame().expect("user image not mapped");
+                    let flags = active_table.p4()[::USER_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                        mapper.p4_mut()[0].set(frame, flags);
+                        mapper.p4_mut()[::USER_PML4].set(frame, flags);
                     });
                 }
                 context.image = image;
 
                 // Copy user heap mapping, if found
                 if let Some(heap_shared) = heap_option {
-                    let frame = active_table.p4()[1].pointed_frame().expect("user heap not mapped");
-                    let flags = active_table.p4()[1].flags();
+                    let frame = active_table.p4()[::USER_HEAP_PML4].pointed_frame().expect("user heap not mapped");
+                    let flags = active_table.p4()[::USER_HEAP_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                        mapper.p4_mut()[1].set(frame, flags);
+                        mapper.p4_mut()[::USER_HEAP_PML4].set(frame, flags);
                     });
                     context.heap = Some(heap_shared);
                 }
 
                 // Copy grant mapping
                 if ! grants.lock().is_empty() {
-                    let frame = active_table.p4()[2].pointed_frame().expect("user grants not mapped");
-                    let flags = active_table.p4()[2].flags();
+                    let frame = active_table.p4()[::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
+                    let flags = active_table.p4()[::USER_GRANT_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                        mapper.p4_mut()[2].set(frame, flags);
+                        mapper.p4_mut()[::USER_GRANT_PML4].set(frame, flags);
                     });
                 }
                 context.grants = grants;
