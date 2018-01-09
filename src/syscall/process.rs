@@ -355,12 +355,21 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             context.arch.set_page_table(unsafe { new_table.address() });
 
-            // Copy kernel mapping
+            // Copy kernel image mapping
             {
-                let frame = active_table.p4()[::KERNEL_PML4].pointed_frame().expect("kernel table not mapped");
+                let frame = active_table.p4()[::KERNEL_PML4].pointed_frame().expect("kernel image not mapped");
                 let flags = active_table.p4()[::KERNEL_PML4].flags();
                 active_table.with(&mut new_table, &mut temporary_page, |mapper| {
                     mapper.p4_mut()[::KERNEL_PML4].set(frame, flags);
+                });
+            }
+
+            // Copy kernel heap mapping
+            {
+                let frame = active_table.p4()[::KERNEL_HEAP_PML4].pointed_frame().expect("kernel heap not mapped");
+                let flags = active_table.p4()[::KERNEL_HEAP_PML4].flags();
+                active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+                    mapper.p4_mut()[::KERNEL_HEAP_PML4].set(frame, flags);
                 });
             }
 

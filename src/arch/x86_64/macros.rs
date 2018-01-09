@@ -166,7 +166,13 @@ macro_rules! interrupt {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner() {
+                // Map kernel
+                $crate::arch::x86_64::pti::map();
+
                 $func
+
+                // Unmap kernel
+                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -207,7 +213,13 @@ macro_rules! interrupt_stack {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStack) {
+                // Map kernel
+                $crate::arch::x86_64::pti::map();
+
                 $func
+
+                // Unmap kernel
+                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -254,7 +266,13 @@ macro_rules! interrupt_error {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &$crate::arch::x86_64::macros::InterruptErrorStack) {
+                // Map kernel
+                $crate::arch::x86_64::pti::map();
+
                 $func
+
+                // Unmap kernel
+                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -302,7 +320,13 @@ macro_rules! interrupt_stack_p {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStackP) {
+                // Map kernel
+                $crate::arch::x86_64::pti::map();
+
                 $func
+
+                // Unmap kernel
+                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -353,7 +377,13 @@ macro_rules! interrupt_error_p {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &$crate::arch::x86_64::macros::InterruptErrorStackP) {
+                // Map kernel
+                $crate::arch::x86_64::pti::map();
+
                 $func
+
+                // Unmap kernel
+                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers

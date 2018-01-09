@@ -8,6 +8,7 @@ use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE
 
 use acpi;
 use allocator;
+use arch::x86_64::pti;
 use device;
 use gdt;
 use idt;
@@ -190,6 +191,9 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 }
 
 pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
+    // Unmap kernel
+    pti::unmap();
+
     // Go to usermode
     asm!("mov ds, r10d
         mov es, r10d

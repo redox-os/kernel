@@ -1,20 +1,23 @@
+use arch::x86_64::pti;
+use syscall;
+
 #[naked]
 pub unsafe extern fn syscall() {
     #[inline(never)]
     unsafe fn inner(stack: &mut SyscallStack) {
-        extern {
-            fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, rbp: usize, stack: &mut SyscallStack) -> usize;
-        }
-
         let mut a;
-        {
-            let b;
-            let rbp;
-            asm!("" : "={rax}"(a), "={rbx}"(b), "={rbp}"(rbp)
+        let b;
+        let rbp;
+        asm!("" : "={rax}"(a), "={rbx}"(b), "={rbp}"(rbp)
                 : : : "intel", "volatile");
 
-            a = syscall(a, b, stack.rcx, stack.rdx, stack.rsi, stack.rdi, rbp, stack);
-        }
+        // Map kernel
+        pti::map();
+
+        a = syscall::syscall(a, b, stack.rcx, stack.rdx, stack.rsi, stack.rdi, rbp, stack);
+
+        // Unmap kernel
+        pti::unmap();
 
         asm!("" : : "{rax}"(a) : : "intel", "volatile");
     }
