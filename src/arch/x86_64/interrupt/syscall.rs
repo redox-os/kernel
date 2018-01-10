@@ -6,15 +6,14 @@ pub unsafe extern fn syscall() {
     #[inline(never)]
     unsafe fn inner(stack: &mut SyscallStack) {
         let mut a;
-        let b;
         let rbp;
-        asm!("" : "={rax}"(a), "={rbx}"(b), "={rbp}"(rbp)
+        asm!("" : "={rax}"(a), "={rbp}"(rbp)
                 : : : "intel", "volatile");
 
         // Map kernel
         pti::map();
 
-        a = syscall::syscall(a, b, stack.rcx, stack.rdx, stack.rsi, stack.rdi, rbp, stack);
+        a = syscall::syscall(a, stack.rbx, stack.rcx, stack.rdx, stack.rsi, stack.rdi, rbp, stack);
 
         // Unmap kernel
         pti::unmap();
@@ -31,6 +30,7 @@ pub unsafe extern fn syscall() {
         push r9
         push r10
         push r11
+        push rbx
         push fs
         mov r11, 0x18
         mov fs, r11"
@@ -44,6 +44,7 @@ pub unsafe extern fn syscall() {
 
     // Interrupt return
     asm!("pop fs
+        pop rbx
         pop r11
         pop r10
         pop r9
@@ -60,6 +61,7 @@ pub unsafe extern fn syscall() {
 #[repr(packed)]
 pub struct SyscallStack {
     pub fs: usize,
+    pub rbx: usize,
     pub r11: usize,
     pub r10: usize,
     pub r9: usize,
@@ -74,8 +76,7 @@ pub struct SyscallStack {
 }
 
 #[naked]
-pub unsafe extern fn clone_ret() -> usize {
-    asm!("pop rbp"
-        : : : : "intel", "volatile");
-        0
+pub unsafe extern fn clone_ret() {
+    asm!("pop rbp" : : : : "intel", "volatile");
+    asm!("" : : "{rax}"(0) : : "intel", "volatile");
 }
