@@ -190,7 +190,10 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
     ::kmain_ap(cpu_id);
 }
 
+#[naked]
 pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
+    asm!("xchg bx, bx" : : : : "intel", "volatile");
+
     // Unmap kernel
     pti::unmap();
 

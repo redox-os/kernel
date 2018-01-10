@@ -118,7 +118,13 @@ pub unsafe fn switch() -> bool {
         (&mut *from_ptr).running = false;
         (&mut *to_ptr).running = true;
         if let Some(ref stack) = (*to_ptr).kstack {
-            gdt::TSS.rsp[0] = (stack.as_ptr() as usize + stack.len() - 256) as u64;
+            if cfg!(feature = "pti") {
+                use arch::x86_64::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
+                gdt::TSS.rsp[0] = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64;
+                PTI_CONTEXT_STACK = stack.as_ptr() as usize + stack.len();
+            } else {
+                gdt::TSS.rsp[0] = (stack.as_ptr() as usize + stack.len()) as u64;
+            }
         }
         CONTEXT_ID.store((&mut *to_ptr).id, Ordering::SeqCst);
     }

@@ -166,21 +166,21 @@ macro_rules! interrupt {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner() {
-                // Map kernel
-                $crate::arch::x86_64::pti::map();
-
                 $func
-
-                // Unmap kernel
-                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
             scratch_push!();
             fs_push!();
 
+            // Map kernel
+            $crate::arch::x86_64::pti::map();
+
             // Call inner rust function
             inner();
+
+            // Unmap kernel
+            $crate::arch::x86_64::pti::unmap();
 
             // Pop scratch registers and return
             fs_pop!();
@@ -213,13 +213,7 @@ macro_rules! interrupt_stack {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStack) {
-                // Map kernel
-                $crate::arch::x86_64::pti::map();
-
                 $func
-
-                // Unmap kernel
-                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -230,8 +224,14 @@ macro_rules! interrupt_stack {
             let rsp: usize;
             asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
 
+            // Map kernel
+            $crate::arch::x86_64::pti::map();
+
             // Call inner rust function
             inner(&mut *(rsp as *mut $crate::arch::x86_64::macros::InterruptStack));
+
+            // Unmap kernel
+            $crate::arch::x86_64::pti::unmap();
 
             // Pop scratch registers and return
             fs_pop!();
@@ -266,13 +266,7 @@ macro_rules! interrupt_error {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &$crate::arch::x86_64::macros::InterruptErrorStack) {
-                // Map kernel
-                $crate::arch::x86_64::pti::map();
-
                 $func
-
-                // Unmap kernel
-                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -283,8 +277,14 @@ macro_rules! interrupt_error {
             let rsp: usize;
             asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
 
+            // Map kernel
+            $crate::arch::x86_64::pti::map();
+
             // Call inner rust function
             inner(&*(rsp as *const $crate::arch::x86_64::macros::InterruptErrorStack));
+
+            // Unmap kernel
+            $crate::arch::x86_64::pti::unmap();
 
             // Pop scratch registers, error code, and return
             fs_pop!();
@@ -320,13 +320,7 @@ macro_rules! interrupt_stack_p {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStackP) {
-                // Map kernel
-                $crate::arch::x86_64::pti::map();
-
                 $func
-
-                // Unmap kernel
-                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -338,8 +332,14 @@ macro_rules! interrupt_stack_p {
             let rsp: usize;
             asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
 
+            // Map kernel
+            $crate::arch::x86_64::pti::map();
+
             // Call inner rust function
             inner(&mut *(rsp as *mut $crate::arch::x86_64::macros::InterruptStackP));
+
+            // Unmap kernel
+            $crate::arch::x86_64::pti::unmap();
 
             // Pop scratch registers and return
             fs_pop!();
@@ -377,13 +377,7 @@ macro_rules! interrupt_error_p {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &$crate::arch::x86_64::macros::InterruptErrorStackP) {
-                // Map kernel
-                $crate::arch::x86_64::pti::map();
-
                 $func
-
-                // Unmap kernel
-                $crate::arch::x86_64::pti::unmap();
             }
 
             // Push scratch registers
@@ -395,8 +389,14 @@ macro_rules! interrupt_error_p {
             let rsp: usize;
             asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
 
+            // Map kernel
+            $crate::arch::x86_64::pti::map();
+
             // Call inner rust function
             inner(&*(rsp as *const $crate::arch::x86_64::macros::InterruptErrorStackP));
+
+            // Unmap kernel
+            $crate::arch::x86_64::pti::unmap();
 
             // Pop scratch registers, error code, and return
             fs_pop!();
