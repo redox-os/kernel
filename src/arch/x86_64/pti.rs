@@ -13,20 +13,14 @@ pub static mut PTI_CPU_STACK: [u8; 256] = [0; 256];
 pub static mut PTI_CONTEXT_STACK: usize = 0;
 
 #[cfg(feature = "pti")]
-#[inline(never)]
-#[naked]
+#[inline(always)]
 unsafe fn switch_stack(old: usize, new: usize) {
-    asm!("xchg bx, bx" : : : : "intel", "volatile");
-
     let old_rsp: usize;
-    let old_rbp: usize;
-    asm!("" : "={rsp}"(old_rsp), "={rbp}"(old_rbp) : : : "intel", "volatile");
+    asm!("" : "={rsp}"(old_rsp) : : : "intel", "volatile");
 
     let offset_rsp = old - old_rsp;
-    let offset_rbp = old - old_rbp;
 
     let new_rsp = new - offset_rsp;
-    let new_rbp = new - offset_rbp;
 
     ptr::copy_nonoverlapping(
         old_rsp as *const u8,
@@ -34,17 +28,12 @@ unsafe fn switch_stack(old: usize, new: usize) {
         offset_rsp
     );
 
-    asm!("xchg bx, bx" : : : : "intel", "volatile");
-
-    asm!("" : : "{rsp}"(new_rsp), "{rbp}"(new_rbp) : : "intel", "volatile");
+    asm!("" : : "{rsp}"(new_rsp) : : "intel", "volatile");
 }
 
 #[cfg(feature = "pti")]
-#[inline(never)]
-#[naked]
+#[inline(always)]
 pub unsafe fn map() {
-    asm!("xchg bx, bx" : : : : "intel", "volatile");
-
     // {
     //     let mut active_table = unsafe { ActivePageTable::new() };
     //
@@ -64,11 +53,8 @@ pub unsafe fn map() {
 }
 
 #[cfg(feature = "pti")]
-#[inline(never)]
-#[naked]
+#[inline(always)]
 pub unsafe fn unmap() {
-    asm!("xchg bx, bx" : : : : "intel", "volatile");
-
     // Switch to per-CPU stack
     switch_stack(PTI_CONTEXT_STACK, PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len());
 
