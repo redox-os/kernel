@@ -15,23 +15,32 @@ a [gdb] client to connect to it. To debug the redox kernel run.
 make qemu debug=yes
 ```
 
-This will start a VM with and listen on port 1234 for a [gdb] client. Run the following
-to connect to it.
+This will start a VM with and listen on port 1234 for a [gdb] or [lldb] client.
 
-```
-(gdb) target remote localhost:1234
-```
+## [gdb]
 
-This is great, but without debug info debugging can be quite difficult. The
-redox build process strips the kernel of debug info and copies the debug info
-to a separate file `kernel.sym`. You can import these symbols in [gdb] with
-the following
+If you are going to use [gdb], run the following to load debug symbols and connect
+to your running kernel.
 
 ```
 (gdb) symbol-file build/kernel.sym
+(gdb) target remote localhost:1234
 ```
 
-Now you can set some interesting breakpoints and `continue` the process.
+## [lldb]
+
+If you are going to use [lldb], run the following to start debugging.
+
+```
+(lldb) target create -s build/kernel.sym build/kernel
+(lldb) gdb-remote localhost:1234
+```
+
+## Debugging
+
+After connecting to your kernel you can set some interesting breakpoints and `continue`
+the process. See your debuggers man page for more information on useful commands to run.
 
 [qemu]: https://www.qemu.org
 [gdb]: https://www.gnu.org/software/gdb/
+[lldb]: https://lldb.llvm.org/
