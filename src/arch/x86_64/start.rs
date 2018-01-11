@@ -231,7 +231,7 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
          xor r13, r13
          xor r14, r14
          xor r15, r15
-         finit
+         fninit
          pop rdi
          iretq"
          : // No output because it never returns
