@@ -32,7 +32,6 @@
 #![feature(const_size_of)]
 #![no_std]
 
-extern crate alloc_kernel as allocator;
 pub extern crate x86;
 
 #[macro_use]
@@ -42,6 +41,7 @@ extern crate alloc;
 extern crate bitflags;
 extern crate goblin;
 extern crate spin;
+extern crate slab_allocator;
 
 use alloc::arc::Arc;
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
@@ -103,7 +103,7 @@ pub mod time;
 pub mod tests;
 
 #[global_allocator]
-static ALLOCATOR: allocator::Allocator = allocator::Allocator;
+static ALLOCATOR: memory::slab::Allocator = memory::slab::Allocator;
 
 /// A unique number that identifies the current CPU - used for scheduling
 #[thread_local]
