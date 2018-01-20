@@ -88,6 +88,18 @@ pub static mut TSS: TaskStateSegment = TaskStateSegment {
     iomap_base: 0xFFFF
 };
 
+#[cfg(feature = "pti")]
+pub unsafe fn set_tss_stack(stack: usize) {
+    use arch::x86_64::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
+    TSS.rsp[0] = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64;
+    PTI_CONTEXT_STACK = stack;
+}
+
+#[cfg(not(feature = "pti"))]
+pub unsafe fn set_tss_stack(stack: usize) {
+    TSS.rsp[0] = stack as u64;
+}
+
 /// Initialize GDT
 pub unsafe fn init(tcb_offset: usize, stack_offset: usize) {
     // Setup the initial GDT with TLS, so we can setup the TLS GDT (a little confusing)
@@ -124,7 +136,7 @@ pub unsafe fn init(tcb_offset: usize, stack_offset: usize) {
     GDT[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
 
     // Set the stack pointer when coming back from userspace
-    TSS.rsp[0] = stack_offset as u64;
+    set_tss_stack(stack_offset);
 
     // Load the new GDT, which is correctly located in thread local storage
     dtables::lgdt(&GDTR);

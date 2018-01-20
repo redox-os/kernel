@@ -190,30 +190,54 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
     ::kmain_ap(cpu_id);
 }
 
+#[naked]
 pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
+    asm!("push r10
+          push r11
+          push r12
+          push r13
+          push r14
+          push r15"
+          : // No output
+          :   "{r10}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
+              "{r11}"(sp), // Stack pointer
+              "{r12}"(1 << 9), // Flags - Set interrupt enable flag
+              "{r13}"(gdt::GDT_USER_CODE << 3 | 3), // Code segment
+              "{r14}"(ip), // IP
+              "{r15}"(arg) // Argument
+          : // No clobbers
+          : "intel", "volatile");
+
     // Unmap kernel
     pti::unmap();
 
     // Go to usermode
-    asm!("mov ds, r10d
-        mov es, r10d
-        mov fs, r11d
-        mov gs, r10d
-        push r10
-        push r12
-        push r13
-        push r14
-        push r15
-        iretq"
-        : // No output because it never returns
-        :   "{r10}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
-            "{r11}"(gdt::GDT_USER_TLS << 3 | 3), // TLS segment
-            "{r12}"(sp), // Stack pointer
-            "{r13}"(1 << 9), // Flags - Set interrupt enable flag
-            "{r14}"(gdt::GDT_USER_CODE << 3 | 3), // Code segment
-            "{r15}"(ip) // IP
-            "{rdi}"(arg) // Argument
-        : // No clobers because it never returns
-        : "intel", "volatile");
+    asm!("mov ds, r14d
+         mov es, r14d
+         mov fs, r15d
+         mov gs, r14d
+         xor rax, rax
+         xor rbx, rbx
+         xor rcx, rcx
+         xor rdx, rdx
+         xor rsi, rsi
+         xor rdi, rdi
+         xor rbp, rbp
+         xor r8, r8
+         xor r9, r9
+         xor r10, r10
+         xor r11, r11
+         xor r12, r12
+         xor r13, r13
+         xor r14, r14
+         xor r15, r15
+         fninit
+         pop rdi
+         iretq"
+         : // No output because it never returns
+         :   "{r14}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
+             "{r15}"(gdt::GDT_USER_TLS << 3 | 3) // TLS segment
+         : // No clobbers because it never returns
+         : "intel", "volatile");
     unreachable!();
 }

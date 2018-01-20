@@ -118,7 +118,7 @@ pub unsafe fn switch() -> bool {
         (&mut *from_ptr).running = false;
         (&mut *to_ptr).running = true;
         if let Some(ref stack) = (*to_ptr).kstack {
-            gdt::TSS.rsp[0] = (stack.as_ptr() as usize + stack.len() - 256) as u64;
+            gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
         }
         CONTEXT_ID.store((&mut *to_ptr).id, Ordering::SeqCst);
     }
