@@ -8,8 +8,6 @@ pub unsafe extern fn syscall() {
         let rbp;
         asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
-        println!("{:X}, {:X}", stack.rax, stack.rbx);
-
         syscall::syscall(stack.rax, stack.rbx, stack.rcx, stack.rdx, stack.rsi, stack.rdi, rbp, stack)
     }
 
