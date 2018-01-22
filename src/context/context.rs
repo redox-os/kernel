@@ -147,7 +147,7 @@ pub struct Context {
     /// User grants
     pub grants: Arc<Mutex<Vec<Grant>>>,
     /// The name of the context
-    pub name: Arc<Mutex<Vec<u8>>>,
+    pub name: Arc<Mutex<Box<[u8]>>>,
     /// The current working directory
     pub cwd: Arc<Mutex<Vec<u8>>>,
     /// Kernel events
@@ -191,7 +191,7 @@ impl Context {
             sigstack: None,
             tls: None,
             grants: Arc::new(Mutex::new(Vec::new())),
-            name: Arc::new(Mutex::new(Vec::new())),
+            name: Arc::new(Mutex::new(Vec::new().into_boxed_slice())),
             cwd: Arc::new(Mutex::new(Vec::new())),
             events: Arc::new(WaitQueue::new()),
             env: Arc::new(Mutex::new(BTreeMap::new())),

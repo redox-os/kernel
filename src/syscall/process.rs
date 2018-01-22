@@ -542,306 +542,355 @@ impl Drop for ExecFile {
     }
 }
 
-pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
-    let entry;
+fn exec_noreturn(elf: elf::Elf, canonical: Box<[u8]>, setuid: Option<u32>, setgid: Option<u32>, args: Box<[Box<[u8]>]>) -> ! {
+    let entry = elf.entry();
     let mut sp = ::USER_STACK_OFFSET + ::USER_STACK_SIZE - 256;
 
     {
-        let mut args = Vec::new();
-        for arg_ptr in arg_ptrs {
-            let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
-            args.push(arg.to_vec()); // Must be moved into kernel space before exec unmaps all memory
-        }
-
-        let (uid, gid, mut canonical) = {
+        let (vfork, ppid, files) = {
             let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            (context.euid, context.egid, context.canonicalize(path))
-        };
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exec_noreturn pid not found");
+            let mut context = context_lock.write();
 
-        let mut stat: Stat;
-        let mut data: Vec<u8>;
-        loop {
-            let file = ExecFile(syscall::open(&canonical, syscall::flag::O_RDONLY)?);
+            // Set name
+            context.name = Arc::new(Mutex::new(canonical));
 
-            stat = Stat::default();
-            syscall::file_op_mut_slice(syscall::number::SYS_FSTAT, file.0, &mut stat)?;
+            empty(&mut context, false);
 
-            let mut perm = stat.st_mode & 0o7;
-            if stat.st_uid == uid {
-                perm |= (stat.st_mode >> 6) & 0o7;
-            }
-            if stat.st_gid == gid {
-                perm |= (stat.st_mode >> 3) & 0o7;
-            }
-            if uid == 0 {
-                perm |= 0o7;
+            if let Some(uid) = setuid {
+                context.euid = uid;
             }
 
-            if perm & 0o1 != 0o1 {
-                return Err(Error::new(EACCES));
+            if let Some(gid) = setgid {
+                context.egid = gid;
             }
 
-            //TODO: Only read elf header, not entire file. Then read required segments
-            data = vec![0; stat.st_size as usize];
-            syscall::file_op_mut_slice(syscall::number::SYS_READ, file.0, &mut data)?;
-            drop(file);
+            // Map and copy new segments
+            let mut tls_option = None;
+            for segment in elf.segments() {
+                if segment.p_type == program_header::PT_LOAD {
+                    let voff = segment.p_vaddr % 4096;
+                    let vaddr = segment.p_vaddr - voff;
 
-            if data.starts_with(b"#!") {
-                if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
-                    // Strip whitespace
-                    let line = &line[line.iter().position(|&b| b != b' ')
-                                         .unwrap_or(0)..];
-                    let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
-                    let mut parts = line.split(|x| *x == b' ')
-                        .map(|x| x.iter().cloned().collect::<Vec<_>>())
-                        .collect::<Vec<_>>();
-                    if ! args.is_empty() {
-                        args.remove(0);
+                    let mut memory = context::memory::Memory::new(
+                        VirtualAddress::new(vaddr as usize),
+                        segment.p_memsz as usize + voff as usize,
+                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                        true
+                    );
+
+                    unsafe {
+                        // Copy file data
+                        intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
+                                        segment.p_vaddr as *mut u8,
+                                        segment.p_filesz as usize);
                     }
-                    parts.push(path.to_vec());
-                    parts.extend(args.iter().cloned());
-                    args = parts;
-                    canonical = {
-                        let contexts = context::contexts();
-                        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                        let context = context_lock.read();
-                        context.canonicalize(executable)
+
+                    let mut flags = EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
+
+                    if segment.p_flags & program_header::PF_R == program_header::PF_R {
+                        flags.insert(EntryFlags::PRESENT);
+                    }
+
+                    // W ^ X. If it is executable, do not allow it to be writable, even if requested
+                    if segment.p_flags & program_header::PF_X == program_header::PF_X {
+                        flags.remove(EntryFlags::NO_EXECUTE);
+                    } else if segment.p_flags & program_header::PF_W == program_header::PF_W {
+                        flags.insert(EntryFlags::WRITABLE);
+                    }
+
+                    memory.remap(flags);
+
+                    context.image.push(memory.to_shared());
+                } else if segment.p_type == program_header::PT_TLS {
+                    let memory = context::memory::Memory::new(
+                        VirtualAddress::new(::USER_TCB_OFFSET),
+                        4096,
+                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                        true
+                    );
+                    let aligned_size = if segment.p_align > 0 {
+                        ((segment.p_memsz + (segment.p_align - 1))/segment.p_align) * segment.p_align
+                    } else {
+                        segment.p_memsz
                     };
-                } else {
-                    println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
-                    return Err(Error::new(ENOEXEC));
+                    let rounded_size = ((aligned_size + 4095)/4096) * 4096;
+                    let rounded_offset = rounded_size - aligned_size;
+                    let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
+                    unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
+
+                    context.image.push(memory.to_shared());
+
+                    tls_option = Some((
+                        VirtualAddress::new(segment.p_vaddr as usize),
+                        segment.p_filesz as usize,
+                        rounded_size as usize,
+                        rounded_offset as usize,
+                    ));
                 }
-            } else {
-                break;
             }
-        }
 
-        match elf::Elf::from(&data) {
-            Ok(elf) => {
-                entry = elf.entry();
+            // Map heap
+            context.heap = Some(context::memory::Memory::new(
+                VirtualAddress::new(::USER_HEAP_OFFSET),
+                0,
+                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                true
+            ).to_shared());
 
-                drop(path); // Drop so that usage is not allowed after unmapping context
-                drop(arg_ptrs); // Drop so that usage is not allowed after unmapping context
+            // Map stack
+            context.stack = Some(context::memory::Memory::new(
+                VirtualAddress::new(::USER_STACK_OFFSET),
+                ::USER_STACK_SIZE,
+                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                true
+            ));
 
-                let (vfork, ppid, files) = {
-                    let contexts = context::contexts();
-                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    let mut context = context_lock.write();
+            // Map stack
+            context.sigstack = Some(context::memory::Memory::new(
+                VirtualAddress::new(::USER_SIGSTACK_OFFSET),
+                ::USER_SIGSTACK_SIZE,
+                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                true
+            ));
 
-                    // Set name
-                    context.name = Arc::new(Mutex::new(canonical));
-
-                    empty(&mut context, false);
-
-                    if stat.st_mode & syscall::flag::MODE_SETUID == syscall::flag::MODE_SETUID {
-                        context.euid = stat.st_uid;
-                    }
-
-                    if stat.st_mode & syscall::flag::MODE_SETGID == syscall::flag::MODE_SETGID {
-                        context.egid = stat.st_gid;
-                    }
-
-                    // Map and copy new segments
-                    let mut tls_option = None;
-                    for segment in elf.segments() {
-                        if segment.p_type == program_header::PT_LOAD {
-                            let voff = segment.p_vaddr % 4096;
-                            let vaddr = segment.p_vaddr - voff;
-
-                            let mut memory = context::memory::Memory::new(
-                                VirtualAddress::new(vaddr as usize),
-                                segment.p_memsz as usize + voff as usize,
-                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
-                                true
-                            );
-
-                            unsafe {
-                                // Copy file data
-                                intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
-                                                segment.p_vaddr as *mut u8,
-                                                segment.p_filesz as usize);
-                            }
-
-                            let mut flags = EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
-
-                            if segment.p_flags & program_header::PF_R == program_header::PF_R {
-                                flags.insert(EntryFlags::PRESENT);
-                            }
-
-                            // W ^ X. If it is executable, do not allow it to be writable, even if requested
-                            if segment.p_flags & program_header::PF_X == program_header::PF_X {
-                                flags.remove(EntryFlags::NO_EXECUTE);
-                            } else if segment.p_flags & program_header::PF_W == program_header::PF_W {
-                                flags.insert(EntryFlags::WRITABLE);
-                            }
-
-                            memory.remap(flags);
-
-                            context.image.push(memory.to_shared());
-                        } else if segment.p_type == program_header::PT_TLS {
-                            let memory = context::memory::Memory::new(
-                                VirtualAddress::new(::USER_TCB_OFFSET),
-                                4096,
-                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-                                true
-                            );
-                            let aligned_size = if segment.p_align > 0 {
-                                ((segment.p_memsz + (segment.p_align - 1))/segment.p_align) * segment.p_align
-                            } else {
-                                segment.p_memsz
-                            };
-                            let rounded_size = ((aligned_size + 4095)/4096) * 4096;
-                            let rounded_offset = rounded_size - aligned_size;
-                            let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
-                            unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
-
-                            context.image.push(memory.to_shared());
-
-                            tls_option = Some((
-                                VirtualAddress::new(segment.p_vaddr as usize),
-                                segment.p_filesz as usize,
-                                rounded_size as usize,
-                                rounded_offset as usize,
-                            ));
-                        }
-                    }
-
-                    // Map heap
-                    context.heap = Some(context::memory::Memory::new(
-                        VirtualAddress::new(::USER_HEAP_OFFSET),
-                        0,
+            // Map TLS
+            if let Some((master, file_size, size, offset)) = tls_option {
+                let mut tls = context::memory::Tls {
+                    master: master,
+                    file_size: file_size,
+                    mem: context::memory::Memory::new(
+                        VirtualAddress::new(::USER_TLS_OFFSET),
+                        size,
                         EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                         true
-                    ).to_shared());
-
-                    // Map stack
-                    context.stack = Some(context::memory::Memory::new(
-                        VirtualAddress::new(::USER_STACK_OFFSET),
-                        ::USER_STACK_SIZE,
-                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-                        true
-                    ));
-
-                    // Map stack
-                    context.sigstack = Some(context::memory::Memory::new(
-                        VirtualAddress::new(::USER_SIGSTACK_OFFSET),
-                        ::USER_SIGSTACK_SIZE,
-                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-                        true
-                    ));
-
-                    // Map TLS
-                    if let Some((master, file_size, size, offset)) = tls_option {
-                        let mut tls = context::memory::Tls {
-                            master: master,
-                            file_size: file_size,
-                            mem: context::memory::Memory::new(
-                                VirtualAddress::new(::USER_TLS_OFFSET),
-                                size,
-                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-                                true
-                            ),
-                            offset: offset,
-                        };
-
-                        unsafe {
-                            tls.load();
-                        }
-
-                        context.tls = Some(tls);
-                    }
-
-                    // Push arguments
-                    let mut arg_size = 0;
-                    for arg in args.iter().rev() {
-                        sp -= mem::size_of::<usize>();
-                        unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
-                        sp -= mem::size_of::<usize>();
-                        unsafe { *(sp as *mut usize) = arg.len(); }
-
-                        arg_size += arg.len();
-                    }
-
-                    sp -= mem::size_of::<usize>();
-                    unsafe { *(sp as *mut usize) = args.len(); }
-
-                    if arg_size > 0 {
-                        let mut memory = context::memory::Memory::new(
-                            VirtualAddress::new(::USER_ARG_OFFSET),
-                            arg_size,
-                            EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
-                            true
-                        );
-
-                        let mut arg_offset = 0;
-                        for arg in args.iter().rev() {
-                            unsafe {
-                                intrinsics::copy(arg.as_ptr(),
-                                       (::USER_ARG_OFFSET + arg_offset) as *mut u8,
-                                       arg.len());
-                            }
-
-                            arg_offset += arg.len();
-                        }
-
-                        memory.remap(EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE);
-
-                        context.image.push(memory.to_shared());
-                    }
-
-                    context.actions = Arc::new(Mutex::new(vec![(
-                        SigAction {
-                            sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                            sa_mask: [0; 2],
-                            sa_flags: 0,
-                        },
-                        0
-                    ); 128]));
-
-                    let vfork = context.vfork;
-                    context.vfork = false;
-
-                    let files = Arc::clone(&context.files);
-
-                    (vfork, context.ppid, files)
+                    ),
+                    offset: offset,
                 };
 
-                for (fd, file_option) in files.lock().iter_mut().enumerate() {
-                    let mut cloexec = false;
-                    if let Some(ref file) = *file_option {
-                        if file.cloexec {
-                            cloexec = true;
-                        }
-                    }
-
-                    if cloexec {
-                        let _ = file_option.take().unwrap().close(FileHandle::from(fd));
-                    }
+                unsafe {
+                    tls.load();
                 }
 
-                if vfork {
-                    let contexts = context::contexts();
-                    if let Some(context_lock) = contexts.get(ppid) {
-                        let mut context = context_lock.write();
-                        if ! context.unblock() {
-                            println!("{} not blocked for exec vfork unblock", ppid.into());
-                        }
-                    } else {
-                        println!("{} not found for exec vfork unblock", ppid.into());
+                context.tls = Some(tls);
+            }
+
+            // Push arguments
+            let mut arg_size = 0;
+            for arg in args.iter().rev() {
+                sp -= mem::size_of::<usize>();
+                unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
+                sp -= mem::size_of::<usize>();
+                unsafe { *(sp as *mut usize) = arg.len(); }
+
+                arg_size += arg.len();
+            }
+
+            sp -= mem::size_of::<usize>();
+            unsafe { *(sp as *mut usize) = args.len(); }
+
+            if arg_size > 0 {
+                let mut memory = context::memory::Memory::new(
+                    VirtualAddress::new(::USER_ARG_OFFSET),
+                    arg_size,
+                    EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                    true
+                );
+
+                let mut arg_offset = 0;
+                for arg in args.iter().rev() {
+                    unsafe {
+                        intrinsics::copy(arg.as_ptr(),
+                               (::USER_ARG_OFFSET + arg_offset) as *mut u8,
+                               arg.len());
                     }
+
+                    arg_offset += arg.len();
                 }
-            },
-            Err(err) => {
-                println!("failed to execute {}: {}", unsafe { str::from_utf8_unchecked(path) }, err);
-                return Err(Error::new(ENOEXEC));
+
+                memory.remap(EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE);
+
+                context.image.push(memory.to_shared());
+            }
+
+            context.actions = Arc::new(Mutex::new(vec![(
+                SigAction {
+                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                    sa_mask: [0; 2],
+                    sa_flags: 0,
+                },
+                0
+            ); 128]));
+
+            let vfork = context.vfork;
+            context.vfork = false;
+
+            let files = Arc::clone(&context.files);
+
+            (vfork, context.ppid, files)
+        };
+
+        for (fd, file_option) in files.lock().iter_mut().enumerate() {
+            let mut cloexec = false;
+            if let Some(ref file) = *file_option {
+                if file.cloexec {
+                    cloexec = true;
+                }
+            }
+
+            if cloexec {
+                let _ = file_option.take().unwrap().close(FileHandle::from(fd));
+            }
+        }
+
+        if vfork {
+            let contexts = context::contexts();
+            if let Some(context_lock) = contexts.get(ppid) {
+                let mut context = context_lock.write();
+                if ! context.unblock() {
+                    println!("{} not blocked for exec vfork unblock", ppid.into());
+                }
+            } else {
+                println!("{} not found for exec vfork unblock", ppid.into());
             }
         }
     }
 
     // Go to usermode
     unsafe { usermode(entry, sp, 0); }
+}
+
+pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
+    let mut args = Vec::new();
+    for arg_ptr in arg_ptrs {
+        let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
+        // Argument must be moved into kernel space before exec unmaps all memory
+        args.push(arg.to_vec().into_boxed_slice());
+    }
+
+    let (uid, gid, mut canonical) = {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        (context.euid, context.egid, context.canonicalize(path))
+    };
+
+    let mut stat: Stat;
+    let mut data: Vec<u8>;
+    loop {
+        let file = ExecFile(syscall::open(&canonical, syscall::flag::O_RDONLY)?);
+
+        stat = Stat::default();
+        syscall::file_op_mut_slice(syscall::number::SYS_FSTAT, file.0, &mut stat)?;
+
+        let mut perm = stat.st_mode & 0o7;
+        if stat.st_uid == uid {
+            perm |= (stat.st_mode >> 6) & 0o7;
+        }
+        if stat.st_gid == gid {
+            perm |= (stat.st_mode >> 3) & 0o7;
+        }
+        if uid == 0 {
+            perm |= 0o7;
+        }
+
+        if perm & 0o1 != 0o1 {
+            return Err(Error::new(EACCES));
+        }
+
+        //TODO: Only read elf header, not entire file. Then read required segments
+        data = vec![0; stat.st_size as usize];
+        syscall::file_op_mut_slice(syscall::number::SYS_READ, file.0, &mut data)?;
+        drop(file);
+
+        if data.starts_with(b"#!") {
+            if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
+                // Strip whitespace
+                let line = &line[line.iter().position(|&b| b != b' ')
+                                     .unwrap_or(0)..];
+                let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
+                let mut parts = line.split(|x| *x == b' ')
+                    .map(|x| x.iter().cloned().collect::<Vec<_>>().into_boxed_slice())
+                    .collect::<Vec<_>>();
+                if ! args.is_empty() {
+                    args.remove(0);
+                }
+                parts.push(path.to_vec().into_boxed_slice());
+                parts.extend(args.iter().cloned());
+                args = parts;
+                canonical = {
+                    let contexts = context::contexts();
+                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+                    let context = context_lock.read();
+                    context.canonicalize(executable)
+                };
+            } else {
+                println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
+                return Err(Error::new(ENOEXEC));
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Set UID and GID are determined after resolving any hashbangs
+    let setuid = if stat.st_mode & syscall::flag::MODE_SETUID == syscall::flag::MODE_SETUID {
+        Some(stat.st_uid)
+    } else {
+        None
+    };
+
+    let setgid = if stat.st_mode & syscall::flag::MODE_SETGID == syscall::flag::MODE_SETGID {
+        Some(stat.st_gid)
+    } else {
+        None
+    };
+
+    // The argument list is limited to avoid using too much userspace stack
+    // This check is done last to allow all hashbangs to be resolved
+    //
+    // This should be based on the size of the userspace stack, divided
+    // by the cost of each argument, which should be usize * 2, with
+    // one additional argument added to represent the total size of the
+    // argument pointer array and potential padding
+    //
+    // A limit of 4095 would mean a stack of (4095 + 1) * 8 * 2 = 65536, or 64KB
+    if args.len() > 4095 {
+        return Err(Error::new(E2BIG));
+    }
+
+    match elf::Elf::from(&data) {
+        Ok(elf) => {
+            // Drop so that usage is not allowed after unmapping context
+            drop(path);
+            drop(arg_ptrs);
+
+            // We check the validity of all loadable sections here
+            for segment in elf.segments() {
+                if segment.p_type == program_header::PT_LOAD {
+                    let voff = segment.p_vaddr % 4096;
+                    let vaddr = segment.p_vaddr - voff;
+
+                    // Due to the Userspace and kernel TLS bases being located right above 2GB,
+                    // limit any loadable sections to lower than that. Eventually we will need
+                    // to replace this with a more intelligent TLS address
+                    if vaddr >= 0x8000_0000 {
+                        println!("exec: invalid section address {:X}", segment.p_vaddr);
+                        return Err(Error::new(ENOEXEC));
+                    }
+                }
+            }
+
+            // This is the point of no return, quite literaly. Any checks for validity need
+            // to be done before, and appropriate errors returned. Otherwise, we have nothing
+            // to return to.
+            exec_noreturn(elf, canonical.into_boxed_slice(), setuid, setgid, args.into_boxed_slice());
+        },
+        Err(err) => {
+            println!("exec: failed to execute {}: {}", unsafe { str::from_utf8_unchecked(path) }, err);
+            Err(Error::new(ENOEXEC))
+        }
+    }
 }
 
 pub fn exit(status: usize) -> ! {

@@ -9,7 +9,7 @@ pub fn resource() -> Result<Vec<u8>> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
         let name = context.name.lock();
-        name.clone()
+        name.clone().into_vec()
     };
     name.push(b'\n');
     Ok(name)
