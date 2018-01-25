@@ -16,7 +16,8 @@ pub unsafe extern fn memcpy(dest: *mut u8, src: *const u8,
     let mut i: usize = 0;
 
     // Copy `WORD_SIZE` bytes at a time
-    while i < n_usize {
+    let n_fast = n_usize*WORD_SIZE;
+    while i < n_fast {
         *((dest as usize + i) as *mut usize) =
             *((src as usize + i) as *const usize);
         i += WORD_SIZE;
@@ -64,7 +65,8 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
         let mut i: usize = 0;
 
         // Copy `WORD_SIZE` bytes at a time
-        while i < n_usize {
+        let n_fast = n_usize*WORD_SIZE;
+        while i < n_fast {
             *((dest as usize + i) as *mut usize) =
                 *((src as usize + i) as *const usize);
             i += WORD_SIZE;
@@ -94,7 +96,8 @@ pub unsafe extern fn memset(dest: *mut u8, c: i32, n: usize) -> *mut u8 {
     let mut i: usize = 0;
 
     // Set `WORD_SIZE` bytes at a time
-    while i < n_usize {
+    let n_fast = n_usize*WORD_SIZE;
+    while i < n_fast {
         *((dest as usize + i) as *mut usize) = c;
         i += WORD_SIZE;
     }
@@ -121,7 +124,8 @@ pub unsafe extern fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
     let n_usize: usize = n/WORD_SIZE;
     let mut i: usize = 0;
 
-    while i < n_usize {
+    let n_fast = n_usize*WORD_SIZE;
+    while i < n_fast {
         let a = *((s1 as usize + i) as *const usize);
         let b = *((s2 as usize + i) as *const usize);
         if a != b {
