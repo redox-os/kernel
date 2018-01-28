@@ -1,3 +1,6 @@
 [submodule "syscall"]
 	path = syscall
 	url = https://github.com/redox-os/syscall.git
+[submodule "slab_allocator"]
+	path = slab_allocator
+	url = https://github.com/redox-os/slab_allocator

@@ -127,7 +127,7 @@ dependencies = [
  "goblin 0.0.10 (registry+https://github.com/rust-lang/crates.io-index)",
  "raw-cpuid 3.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.1.37",
- "slab_allocator 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "slab_allocator 0.3.0",
  "spin 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "x86 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -144,7 +144,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "linked_list_allocator"
-version = "0.4.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "spin 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -291,9 +291,8 @@ dependencies = [
 [[package]]
 name = "slab_allocator"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
- "linked_list_allocator 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "linked_list_allocator 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "spin 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -410,7 +409,7 @@ dependencies = [
 "checksum itoa 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "8324a32baf01e2ae060e9de58ed0bc2320c9a2833491ee36cd3b4c414de4db8c"
 "checksum lazy_static 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c8f31047daa365f19be14b47c29df4f7c3b581832407daabe6ae77397619237d"
 "checksum libc 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)" = "1e5d97d6708edaa407429faa671b942dc0f2727222fb6b6539bf1db936e4b121"
-"checksum linked_list_allocator 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)" = "55f7a0836a0636ad6d0c8d994e9b029c7e2f53f019c7f6ce744e4ced173f2e3b"
+"checksum linked_list_allocator 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a6420a3167cee611c9d0f53663c339e85058bf05234e9862a47bf56920db8542"
 "checksum matches 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "100aabe6b8ff4e4a7e32c1c13523379802df0772b82466207ac25b013f193376"
 "checksum memchr 2.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "796fba70e76612589ed2ce7f45282f5af869e0fdd7cc6199fa1aa1f1d591ba9d"
 "checksum num-traits 0.1.42 (registry+https://github.com/rust-lang/crates.io-index)" = "9936036cc70fe4a8b2d338ab665900323290efb03983c86cbe235ae800ad8017"
@@ -430,7 +429,6 @@ dependencies = [
 "checksum serde_derive 1.0.27 (registry+https://github.com/rust-lang/crates.io-index)" = "f4ba7591cfe93755e89eeecdbcc668885624829b020050e6aec99c2a03bd3fd0"
 "checksum serde_derive_internals 0.19.0 (registry+https://github.com/rust-lang/crates.io-index)" = "6e03f1c9530c3fb0a0a5c9b826bdd9246a5921ae995d75f512ac917fc4dd55b5"
 "checksum serde_json 1.0.9 (registry+https://github.com/rust-lang/crates.io-index)" = "c9db7266c7d63a4c4b7fe8719656ccdd51acf1bed6124b174f933b009fb10bcb"
-"checksum slab_allocator 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "f02b9fb14679f10430f38bfd3cae7f163952adc0c159b135ec37a50e17d93351"
 "checksum spin 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)" = "7e4deb3c2455c73779e6d3eebceae9599fc70957e54c69fe88f93aa48e62f432"
 "checksum syn 0.11.11 (registry+https://github.com/rust-lang/crates.io-index)" = "d3b891b9015c88c576343b9b3e41c2c11a51c219ef067b264bd9c8aa9b441dad"
 "checksum synom 0.11.3 (registry+https://github.com/rust-lang/crates.io-index)" = "a393066ed9010ebaed60b9eafa373d4b1baac186dd7e008555b0f702b51945b6"

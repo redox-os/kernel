@@ -21,15 +21,16 @@
 #![feature(const_atomic_usize_new)]
 #![feature(const_fn)]
 #![feature(const_max_value)]
+#![feature(const_size_of)]
 #![feature(core_intrinsics)]
 #![feature(global_allocator)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
 #![feature(naked_functions)]
 #![feature(never_type)]
+#![feature(ptr_internals)]
 #![feature(thread_local)]
 #![feature(unique)]
-#![feature(const_size_of)]
 #![no_std]
 
 pub extern crate x86;

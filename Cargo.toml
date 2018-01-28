@@ -11,7 +11,7 @@ crate-type = ["staticlib"]
 [dependencies]
 bitflags = "1"
 clippy = { version = "*", optional = true }
-slab_allocator = "0.3.0"
+slab_allocator = { path = "slab_allocator" }
 spin = "0.4"
 raw-cpuid = "3.0"
 redox_syscall = { path = "syscall" }
