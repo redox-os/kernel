@@ -10,6 +10,7 @@ use spin::Mutex;
 
 pub mod bump;
 pub mod recycle;
+pub mod slab;
 
 /// The current memory map. It's size is maxed out to 512 entries, due to it being
 /// from 0x500 to 0x5000 (800 is the absolute total)

@@ -7,13 +7,13 @@ use core::slice;
 use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use acpi;
-use allocator;
 use arch::x86_64::pti;
 use device;
 use gdt;
 use idt;
 use interrupt;
 use memory;
+use memory::slab as allocator;
 use paging::{self, Page, VirtualAddress};
 use paging::entry::EntryFlags;
 use paging::mapper::MapperFlushAll;
@@ -113,7 +113,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             flush_all.flush(&mut active_table);
 
             // Init the allocator
-            allocator::init(::KERNEL_HEAP_OFFSET, ::KERNEL_HEAP_SIZE);
+            allocator::init_heap(::KERNEL_HEAP_OFFSET, ::KERNEL_HEAP_SIZE);
         }
 
         // Initialize devices

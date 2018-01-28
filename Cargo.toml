@@ -9,9 +9,9 @@ path = "src/lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
-alloc_kernel = { path = "alloc_kernel" }
 bitflags = "1"
 clippy = { version = "*", optional = true }
+slab_allocator = "0.3.0"
 spin = "0.4"
 raw-cpuid = "3.0"
 redox_syscall = { path = "syscall" }
