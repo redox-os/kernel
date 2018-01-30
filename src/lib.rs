@@ -41,6 +41,7 @@ extern crate alloc;
 #[macro_use]
 extern crate bitflags;
 extern crate goblin;
+extern crate linked_list_allocator;
 extern crate spin;
 extern crate slab_allocator;
 
@@ -63,6 +64,9 @@ pub use arch::*;
 
 /// Constants like memory locations
 pub mod consts;
+
+/// Heap allocators
+pub mod allocator;
 
 /// ACPI table parsing
 mod acpi;
@@ -104,7 +108,7 @@ pub mod time;
 pub mod tests;
 
 #[global_allocator]
-static ALLOCATOR: memory::slab::Allocator = memory::slab::Allocator;
+static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// A unique number that identifies the current CPU - used for scheduling
 #[thread_local]

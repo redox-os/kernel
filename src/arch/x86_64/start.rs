@@ -6,6 +6,7 @@
 use core::slice;
 use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
+use allocator;
 use acpi;
 use arch::x86_64::pti;
 use device;
@@ -13,10 +14,7 @@ use gdt;
 use idt;
 use interrupt;
 use memory;
-use memory::slab as allocator;
-use paging::{self, Page, VirtualAddress};
-use paging::entry::EntryFlags;
-use paging::mapper::MapperFlushAll;
+use paging;
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -99,22 +97,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(false, Ordering::SeqCst);
 
         // Setup kernel heap
-        {
-            let mut flush_all = MapperFlushAll::new();
-
-            // Map heap pages
-            let heap_start_page = Page::containing_address(VirtualAddress::new(::KERNEL_HEAP_OFFSET));
-            let heap_end_page = Page::containing_address(VirtualAddress::new(::KERNEL_HEAP_OFFSET + ::KERNEL_HEAP_SIZE-1));
-            for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-                let result = active_table.map(page, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
-                flush_all.consume(result);
-            }
-
-            flush_all.flush(&mut active_table);
-
-            // Init the allocator
-            allocator::init_heap(::KERNEL_HEAP_OFFSET, ::KERNEL_HEAP_SIZE);
-        }
+        allocator::init(&mut active_table);
 
         // Initialize devices
         device::init(&mut active_table);

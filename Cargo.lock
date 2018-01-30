@@ -125,6 +125,7 @@ dependencies = [
  "bitflags 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "clippy 0.0.182 (registry+https://github.com/rust-lang/crates.io-index)",
  "goblin 0.0.10 (registry+https://github.com/rust-lang/crates.io-index)",
+ "linked_list_allocator 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "raw-cpuid 3.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.1.37",
  "slab_allocator 0.3.0",
