@@ -33,8 +33,6 @@ unsafe impl<'a> Alloc for &'a Allocator {
                         panic!("__rust_allocate: heap not initialized");
                     };
 
-                    println!("Expand heap at {} MB by {} MB", size/1024/1024, ::KERNEL_HEAP_SIZE/1024/1024);
-
                     super::map_heap(&mut ActivePageTable::new(), ::KERNEL_HEAP_OFFSET + size, ::KERNEL_HEAP_SIZE);
 
                     if let Some(ref mut heap) = *HEAP.lock() {
