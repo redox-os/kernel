@@ -7,6 +7,7 @@ use core::slice;
 use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use allocator;
+#[cfg(feature = "acpi")]
 use acpi;
 use arch::x86_64::pti;
 use device;
@@ -103,6 +104,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         device::init(&mut active_table);
 
         // Read ACPI tables, starts APs
+        #[cfg(feature = "acpi")]
         acpi::init(&mut active_table);
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization

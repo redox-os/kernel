@@ -1,3 +1,4 @@
+#[cfg(feature = "acpi")]
 use acpi;
 use syscall::io::{Io, Pio};
 
@@ -21,6 +22,8 @@ pub unsafe extern fn kreset() -> ! {
 #[no_mangle]
 pub unsafe extern fn kstop() -> ! {
     println!("kstop");
+
+    #[cfg(feature = "acpi")]
     acpi::set_global_s_state(5);
 
     // Magic shutdown code for bochs and qemu (older versions).

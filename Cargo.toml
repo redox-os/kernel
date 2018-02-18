@@ -27,7 +27,8 @@ version = "0.7"
 default-features = false
 
 [features]
-default = []
+default = ["acpi"]
+acpi = []
 doc = []
 live = []
 multi_core = []

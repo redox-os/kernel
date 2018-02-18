@@ -31,25 +31,15 @@ pub struct ScratchRegisters {
 
 impl ScratchRegisters {
     pub fn dump(&self) {
-        let rax = self.rax;
-        let rcx = self.rcx;
-        let rdx = self.rdx;
-        let rdi = self.rdi;
-        let rsi = self.rsi;
-        let r8 = self.r8;
-        let r9 = self.r9;
-        let r10 = self.r10;
-        let r11 = self.r11;
-
-        println!("RAX:   {:>016X}", rax);
-        println!("RCX:   {:>016X}", rcx);
-        println!("RDX:   {:>016X}", rdx);
-        println!("RDI:   {:>016X}", rdi);
-        println!("RSI:   {:>016X}", rsi);
-        println!("R8:    {:>016X}", r8);
-        println!("R9:    {:>016X}", r9);
-        println!("R10:   {:>016X}", r10);
-        println!("R11:   {:>016X}", r11);
+        println!("RAX:   {:>016X}", { self.rax });
+        println!("RCX:   {:>016X}", { self.rcx });
+        println!("RDX:   {:>016X}", { self.rdx });
+        println!("RDI:   {:>016X}", { self.rdi });
+        println!("RSI:   {:>016X}", { self.rsi });
+        println!("R8:    {:>016X}", { self.r8 });
+        println!("R9:    {:>016X}", { self.r9 });
+        println!("R10:   {:>016X}", { self.r10 });
+        println!("R11:   {:>016X}", { self.r11 });
     }
 }
 
@@ -96,19 +86,12 @@ pub struct PreservedRegisters {
 
 impl PreservedRegisters {
     pub fn dump(&self) {
-        let rbx = self.rbx;
-        let rbp = self.rbp;
-        let r12 = self.r12;
-        let r13 = self.r13;
-        let r14 = self.r14;
-        let r15 = self.r15;
-
-        println!("RBX:   {:>016X}", rbx);
-        println!("RBP:   {:>016X}", rbp);
-        println!("R12:   {:>016X}", r12);
-        println!("R13:   {:>016X}", r13);
-        println!("R14:   {:>016X}", r14);
-        println!("R15:   {:>016X}", r15);
+        println!("RBX:   {:>016X}", { self.rbx });
+        println!("RBP:   {:>016X}", { self.rbp });
+        println!("R12:   {:>016X}", { self.r12 });
+        println!("R13:   {:>016X}", { self.r13 });
+        println!("R14:   {:>016X}", { self.r14 });
+        println!("R15:   {:>016X}", { self.r15 });
     }
 }
 
@@ -162,13 +145,9 @@ pub struct IretRegisters {
 
 impl IretRegisters {
     pub fn dump(&self) {
-        let rflags = self.rflags;
-        let cs = self.cs;
-        let rip = self.rip;
-
-        println!("RFLAG: {:>016X}", rflags);
-        println!("CS:    {:>016X}", cs);
-        println!("RIP:   {:>016X}", rip);
+        println!("RFLAG: {:>016X}", { self.rflags });
+        println!("CS:    {:>016X}", { self.cs });
+        println!("RIP:   {:>016X}", { self.rip });
     }
 }
 
@@ -223,7 +202,7 @@ impl InterruptStack {
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
-        println!("FS:    {:>016X}", self.fs);
+        println!("FS:    {:>016X}", { self.fs });
     }
 }
 
@@ -274,9 +253,9 @@ pub struct InterruptErrorStack {
 impl InterruptErrorStack {
     pub fn dump(&self) {
         self.iret.dump();
-        println!("CODE:  {:>016X}", self.code);
+        println!("CODE:  {:>016X}", { self.code });
         self.scratch.dump();
-        println!("FS:    {:>016X}", self.fs);
+        println!("FS:    {:>016X}", { self.fs });
     }
 }
 
@@ -330,7 +309,7 @@ impl InterruptStackP {
         self.iret.dump();
         self.scratch.dump();
         self.preserved.dump();
-        println!("FS:    {:>016X}", self.fs);
+        println!("FS:    {:>016X}", { self.fs });
     }
 }
 
@@ -384,10 +363,10 @@ pub struct InterruptErrorStackP {
 impl InterruptErrorStackP {
     pub fn dump(&self) {
         self.iret.dump();
-        println!("CODE:  {:>016X}", self.code);
+        println!("CODE:  {:>016X}", { self.code });
         self.scratch.dump();
         self.preserved.dump();
-        println!("FS:    {:>016X}", self.fs);
+        println!("FS:    {:>016X}", { self.fs });
     }
 }
 

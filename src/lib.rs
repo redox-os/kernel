@@ -69,6 +69,7 @@ pub mod consts;
 pub mod allocator;
 
 /// ACPI table parsing
+#[cfg(feature = "acpi")]
 mod acpi;
 
 /// Context management

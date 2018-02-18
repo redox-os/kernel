@@ -1,5 +1,4 @@
 use paging::ActivePageTable;
-use acpi::ACPI_TABLE;
 
 pub mod cpu;
 pub mod local_apic;
@@ -7,6 +6,7 @@ pub mod pic;
 pub mod pit;
 pub mod rtc;
 pub mod serial;
+#[cfg(feature = "acpi")]
 pub mod hpet;
 
 pub unsafe fn init(active_table: &mut ActivePageTable){
@@ -14,18 +14,26 @@ pub unsafe fn init(active_table: &mut ActivePageTable){
     local_apic::init(active_table);
 }
 
-pub unsafe fn init_noncore() {
-    {
-        let using_hpet = if let Some(ref mut hpet) = *ACPI_TABLE.hpet.write() {
-            hpet::init(hpet)
-        } else {
-            false
-        };
-        if !using_hpet {
-            pit::init();
-        }
+#[cfg(feature = "acpi")]
+unsafe fn init_hpet() -> bool {
+    use acpi::ACPI_TABLE;
+    if let Some(ref mut hpet) = *ACPI_TABLE.hpet.write() {
+        hpet::init(hpet)
+    } else {
+        false
     }
-    
+}
+
+#[cfg(not(feature = "acpi"))]
+unsafe fn init_hpet() -> bool {
+    false
+}
+
+pub unsafe fn init_noncore() {
+    if ! init_hpet() {
+        pit::init();
+    }
+
     rtc::init();
     serial::init();
 }
