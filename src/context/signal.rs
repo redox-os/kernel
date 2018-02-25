@@ -50,7 +50,7 @@ pub extern "C" fn signal_handler(sig: usize) {
                 }
             },
             SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU => {
-                // println!("Stop {}", sig);
+                println!("Stop {}", sig);
 
                 {
                     let contexts = contexts();
@@ -100,4 +100,6 @@ pub extern "C" fn signal_handler(sig: usize) {
             usermode(handler, sp, sig);
         }
     }
+
+    syscall::sigreturn().unwrap();
 }
