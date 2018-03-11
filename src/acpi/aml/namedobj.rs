@@ -673,6 +673,10 @@ fn parse_field_element(data: &[u8],
 }
 
 fn parse_named_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<NamedField>, AmlError> {
+    if data.len() < 4 {
+        return Err(AmlError::AmlParseError("NamedField - data truncated"))
+    }
+
     let (name_seg, name_seg_len) = parse_name_seg(&data[0..4])?;
     let name = match String::from_utf8(name_seg) {
         Ok(s) => s,
@@ -687,6 +691,10 @@ fn parse_named_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlP
 }
 
 fn parse_reserved_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<usize>, AmlError> {
+    if data.len() < 1 {
+        return Err(AmlError::AmlParseError("ReservedField - data truncated"))
+    }
+
     parser_opcode!(data, 0x00);
 
     let (length, length_len) = parse_pkg_length(&data[1..])?;
@@ -697,6 +705,10 @@ fn parse_reserved_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<A
 }
 
 fn parse_access_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<AccessField>, AmlError> {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("AccessField - data truncated"))
+    }
+
     parser_opcode!(data, 0x01, 0x03);
 
     let flags_raw = data[1];
@@ -741,8 +753,11 @@ fn parse_access_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<Aml
     })
 }
 
-fn parse_connect_field(data: &[u8],
-                       ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_connect_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 1 {
+        return Err(AmlError::AmlParseError("ConnectField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -767,8 +782,11 @@ fn parse_connect_field(data: &[u8],
     }
 }
 
-fn parse_def_method(data: &[u8],
-                    ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_method(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 1 {
+        return Err(AmlError::AmlParseError("DefMethod - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -803,8 +821,11 @@ fn parse_def_method(data: &[u8],
     })
 }
 
-fn parse_def_mutex(data: &[u8],
-                   ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_mutex(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+   if data.len() < 1 {
+       return Err(AmlError::AmlParseError("DefMutex - data truncated"))
+   }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -828,8 +849,11 @@ fn parse_def_mutex(data: &[u8],
     })
 }
 
-fn parse_def_power_res(data: &[u8],
-                       ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_power_res(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 5 {
+        return Err(AmlError::AmlParseError("DefPowerRes - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -865,8 +889,11 @@ fn parse_def_power_res(data: &[u8],
     })
 }
 
-fn parse_def_processor(data: &[u8],
-                       ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_processor(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 8 {
+        return Err(AmlError::AmlParseError("DefProcessor - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -905,8 +932,11 @@ fn parse_def_processor(data: &[u8],
     })
 }
 
-fn parse_def_thermal_zone(data: &[u8],
-                          ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_thermal_zone(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefThermalZone - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -936,8 +966,11 @@ fn parse_def_thermal_zone(data: &[u8],
     })
 }
 
-fn parse_def_external(data: &[u8],
-                      ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_external(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefExternal - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
