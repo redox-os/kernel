@@ -3,6 +3,7 @@ use spin::Mutex;
 use memory::Frame;
 use paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 use paging::entry::EntryFlags;
+use paging::mapper::MapperFlushAll;
 
 pub use self::debug::DebugDisplay;
 use self::display::Display;
@@ -45,7 +46,7 @@ pub fn init(active_table: &mut ActivePageTable) {
 
         {
             let page = Page::containing_address(VirtualAddress::new(mode_info_addr));
-            let result = active_table.unmap_return(page);
+            let (result, _frame) = active_table.unmap_return(page, false);
             result.flush(active_table);
         }
     }
@@ -55,14 +56,16 @@ pub fn init(active_table: &mut ActivePageTable) {
 
         let onscreen = physbaseptr + ::KERNEL_OFFSET;
         {
+            let mut flush_all = MapperFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
             let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {
                 let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() - ::KERNEL_OFFSET));
                 let flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::HUGE_PAGE;
                 let result = active_table.map_to(page, frame, flags);
-                result.flush(active_table);
+                flush_all.consume(result);
             }
+            flush_all.flush(active_table);
         }
 
         unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
@@ -79,12 +82,14 @@ pub fn fini(active_table: &mut ActivePageTable) {
         let onscreen = display.onscreen.as_mut_ptr() as usize;
         let size = display.width * display.height;
         {
+            let mut flush_all = MapperFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
             let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {
-                let result = active_table.unmap_return(page);
-                result.flush(active_table);
+                let (result, _frame) = active_table.unmap_return(page, false);
+                flush_all.consume(result);
             }
+            flush_all.flush(active_table);
         }
     }
 
