@@ -113,8 +113,11 @@ pub fn parse_named_obj(data: &[u8],
     Err(AmlError::AmlInvalidOpCode)
 }
 
-fn parse_def_bank_field(data: &[u8],
-                        ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_bank_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 3 {
+        return Err(AmlError::AmlParseError("DefBankField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -168,8 +171,11 @@ fn parse_def_bank_field(data: &[u8],
     })
 }
 
-fn parse_def_create_bit_field(data: &[u8],
-                              ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_create_bit_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefCreateBitField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -198,8 +204,11 @@ fn parse_def_create_bit_field(data: &[u8],
     })
 }
 
-fn parse_def_create_byte_field(data: &[u8],
-                               ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_create_byte_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefCreateByteField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -228,8 +237,11 @@ fn parse_def_create_byte_field(data: &[u8],
     })
 }
 
-fn parse_def_create_word_field(data: &[u8],
-                               ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_create_word_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefCreateWordField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -258,8 +270,11 @@ fn parse_def_create_word_field(data: &[u8],
     })
 }
 
-fn parse_def_create_dword_field(data: &[u8],
-                                ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_create_dword_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefCreateDwordField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -288,8 +303,11 @@ fn parse_def_create_dword_field(data: &[u8],
     })
 }
 
-fn parse_def_create_qword_field(data: &[u8],
-                                ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_create_qword_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefCreateQwordField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -318,8 +336,11 @@ fn parse_def_create_qword_field(data: &[u8],
     })
 }
 
-fn parse_def_create_field(data: &[u8],
-                          ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_create_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefCreateField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -349,8 +370,11 @@ fn parse_def_create_field(data: &[u8],
     })
 }
 
-fn parse_def_data_region(data: &[u8],
-                         ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_data_region(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefDataRegion - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -386,8 +410,11 @@ fn parse_def_data_region(data: &[u8],
     })
 }
 
-fn parse_def_event(data: &[u8],
-                   ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_event(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefEvent - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -409,8 +436,11 @@ fn parse_def_event(data: &[u8],
     })
 }
 
-fn parse_def_device(data: &[u8],
-                    ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_device(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 2 {
+        return Err(AmlError::AmlParseError("DefDevice - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -441,8 +471,11 @@ fn parse_def_device(data: &[u8],
     })
 }
 
-fn parse_def_op_region(data: &[u8],
-                       ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_op_region(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 3 {
+        return Err(AmlError::AmlParseError("DefOpRegion - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -490,8 +523,11 @@ fn parse_def_op_region(data: &[u8],
     })
 }
 
-fn parse_def_field(data: &[u8],
-                   ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 3 {
+        return Err(AmlError::AmlParseError("DefField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
@@ -535,8 +571,11 @@ fn parse_def_field(data: &[u8],
     })
 }
 
-fn parse_def_index_field(data: &[u8],
-                         ctx: &mut AmlExecutionContext) -> ParseResult {
+fn parse_def_index_field(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResult {
+    if data.len() < 3 {
+        return Err(AmlError::AmlParseError("DefIndexField - data truncated"))
+    }
+
     match ctx.state {
         ExecutionState::EXECUTING => (),
         _ => return Ok(AmlParseType {
