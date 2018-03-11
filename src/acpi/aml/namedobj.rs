@@ -744,7 +744,7 @@ fn parse_reserved_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<A
 }
 
 fn parse_access_field(data: &[u8], _ctx: &mut AmlExecutionContext) -> Result<AmlParseTypeGeneric<AccessField>, AmlError> {
-    if data.len() < 2 {
+    if data.len() < 3 {
         return Err(AmlError::AmlParseError("AccessField - data truncated"))
     }
 
