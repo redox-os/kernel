@@ -89,7 +89,7 @@ pub unsafe fn switch() -> bool {
             from_ptr = context.deref_mut() as *mut Context;
         }
 
-        for (pid, context_lock) in contexts.iter() {
+        for (_pid, context_lock) in contexts.iter() {
             let mut context = context_lock.write();
             update(&mut context, cpu_id);
         }
