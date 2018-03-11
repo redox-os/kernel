@@ -9,6 +9,8 @@ use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE
 use allocator;
 #[cfg(feature = "acpi")]
 use acpi;
+#[cfg(feature = "graphical_debug")]
+use arch::x86_64::graphical_debug;
 use arch::x86_64::pti;
 use device;
 use gdt;
@@ -100,6 +102,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init(&mut active_table);
 
+        // Use graphical debug
+        #[cfg(feature="graphical_debug")]
+        graphical_debug::init(&mut active_table);
+
         // Initialize devices
         device::init(&mut active_table);
 
@@ -112,6 +118,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize memory functions after core has loaded
         memory::init_noncore();
+
+        // Stop graphical debug
+        #[cfg(feature="graphical_debug")]
+        graphical_debug::fini(&mut active_table);
 
         BSP_READY.store(true, Ordering::SeqCst);
 

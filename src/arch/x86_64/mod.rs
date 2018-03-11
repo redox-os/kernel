@@ -1,11 +1,18 @@
 #[macro_use]
 pub mod macros;
 
+/// Debugging support
+pub mod debug;
+
 /// Devices
 pub mod device;
 
 /// Global descriptor table
 pub mod gdt;
+
+/// Graphical debug
+#[cfg(feature = "graphical_debug")]
+mod graphical_debug;
 
 /// Interrupt descriptor table
 pub mod idt;

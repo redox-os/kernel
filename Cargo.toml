@@ -30,6 +30,7 @@ default-features = false
 default = ["acpi"]
 acpi = []
 doc = []
+graphical_debug = []
 live = []
 multi_core = []
 pti = []
