@@ -23,6 +23,10 @@ impl DebugDisplay {
         }
     }
 
+    pub fn into_display(self) -> Display {
+        self.display
+    }
+
     pub fn write(&mut self, c: char) {
         if self.x >= self.w || c == '\n' {
             self.x = 0;
@@ -63,7 +67,7 @@ impl DebugDisplay {
             );
 
             self.display.sync(
-                self.x, self.y,
+                self.x * 8, self.y * 16,
                 8, 16
             );
 

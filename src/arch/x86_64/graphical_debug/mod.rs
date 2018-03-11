@@ -19,8 +19,6 @@ pub static FONT: &'static [u8] = include_bytes!("../../../../res/unifont.font");
 pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
 
 pub fn init(active_table: &mut ActivePageTable) {
-    //TODO: Unmap mode_info and map physbaseptr in kernel space
-
     println!("Starting graphical debug");
 
     let width;
@@ -37,35 +35,58 @@ pub fn init(active_table: &mut ActivePageTable) {
             result.flush(active_table);
         }
 
-        let mode_info = unsafe { &*(mode_info_addr as *const VBEModeInfo) };
+        {
+            let mode_info = unsafe { &*(mode_info_addr as *const VBEModeInfo) };
 
-        width = mode_info.xresolution as usize;
-        height = mode_info.yresolution as usize;
-        physbaseptr = mode_info.physbaseptr as usize;
+            width = mode_info.xresolution as usize;
+            height = mode_info.yresolution as usize;
+            physbaseptr = mode_info.physbaseptr as usize;
+        }
+
+        {
+            let page = Page::containing_address(VirtualAddress::new(mode_info_addr));
+            let result = active_table.unmap_return(page);
+            result.flush(active_table);
+        }
     }
 
     {
         let size = width * height;
 
+        let onscreen = physbaseptr + ::KERNEL_OFFSET;
         {
-            let start_page = Page::containing_address(VirtualAddress::new(physbaseptr));
-            let end_page = Page::containing_address(VirtualAddress::new(physbaseptr + size * 4));
+            let start_page = Page::containing_address(VirtualAddress::new(onscreen));
+            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {
-                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
-                let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::HUGE_PAGE);
+                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() - ::KERNEL_OFFSET));
+                let flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::HUGE_PAGE;
+                let result = active_table.map_to(page, frame, flags);
                 result.flush(active_table);
             }
         }
 
-        unsafe { fast_set64(physbaseptr as *mut u64, 0, size/2) };
+        unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
 
-        *DEBUG_DISPLAY.lock() = Some(DebugDisplay::new(Display::new(width, height, physbaseptr)));
+        let display = Display::new(width, height, onscreen);
+        let debug_display = DebugDisplay::new(display);
+        *DEBUG_DISPLAY.lock() = Some(debug_display);
     }
 }
 
-pub fn fini(_active_table: &mut ActivePageTable) {
-    //TODO: Unmap physbaseptr
-    *DEBUG_DISPLAY.lock() = None;
+pub fn fini(active_table: &mut ActivePageTable) {
+    if let Some(debug_display) = DEBUG_DISPLAY.lock().take() {
+        let display = debug_display.into_display();
+        let onscreen = display.onscreen.as_mut_ptr() as usize;
+        let size = display.width * display.height;
+        {
+            let start_page = Page::containing_address(VirtualAddress::new(onscreen));
+            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
+            for page in Page::range_inclusive(start_page, end_page) {
+                let result = active_table.unmap_return(page);
+                result.flush(active_table);
+            }
+        }
+    }
 
     println!("Finished graphical debug");
 }

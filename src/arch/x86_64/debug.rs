@@ -33,9 +33,9 @@ impl<'a> fmt::Write for Writer<'a> {
     #[cfg(feature = "graphical_debug")]
     fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
         if let Some(ref mut display) = *self.display {
-            display.write_str(s)
-        } else {
-            self.serial.write_str(s)
+            let _ = display.write_str(s);
         }
+
+        self.serial.write_str(s)
     }
 }

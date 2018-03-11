@@ -13,18 +13,6 @@ pub unsafe fn fast_copy(dst: *mut u8, src: *const u8, len: usize) {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 #[cold]
-pub unsafe fn fast_copy64(dst: *mut u64, src: *const u64, len: usize) {
-    asm!("cld
-        rep movsq"
-        :
-        : "{rdi}"(dst as usize), "{rsi}"(src as usize), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rsi", "rcx"
-        : "intel", "volatile");
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline(always)]
-#[cold]
 pub unsafe fn fast_set32(dst: *mut u32, src: u32, len: usize) {
     asm!("cld
         rep stosd"
