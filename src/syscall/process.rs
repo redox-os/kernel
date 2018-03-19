@@ -1050,7 +1050,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         (context.ruid, context.euid, context.pgid)
     };
 
-    if sig > 0 && sig < 0x7F {
+    if sig >= 0 && sig < 0x7F {
         let mut found = 0;
         let mut sent = 0;
 
@@ -1062,11 +1062,15 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 || euid == context.ruid
                 || ruid == context.ruid
                 {
-                    context.pending.push_back(sig as u8);
-                    // Convert stopped processes to blocked if sending SIGCONT
-                    if sig == SIGCONT {
-                        if let context::Status::Stopped(_sig) = context.status {
-                            context.status = context::Status::Blocked;
+                    // If sig = 0, test that process exists and can be
+                    // signalled, but don't send any signal.
+                    if sig != 0 {
+                        context.pending.push_back(sig as u8);
+                        // Convert stopped processes to blocked if sending SIGCONT
+                        if sig == SIGCONT {
+                            if let context::Status::Stopped(_sig) = context.status {
+                                context.status = context::Status::Blocked;
+                            }
                         }
                     }
                     true
