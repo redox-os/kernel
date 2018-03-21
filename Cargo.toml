@@ -27,7 +27,7 @@ version = "0.7"
 default-features = false
 
 [features]
-default = ["acpi"]
+default = ["acpi", "graphical_debug"]
 acpi = []
 doc = []
 graphical_debug = []
