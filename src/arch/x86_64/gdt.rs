@@ -100,15 +100,12 @@ pub unsafe fn set_tss_stack(stack: usize) {
     TSS.rsp[0] = stack as u64;
 }
 
-/// Initialize GDT
-pub unsafe fn init(tcb_offset: usize, stack_offset: usize) {
+// Initialize GDT
+pub unsafe fn init() {
     // Setup the initial GDT with TLS, so we can setup the TLS GDT (a little confusing)
     // This means that each CPU will have its own GDT, but we only need to define it once as a thread local
     INIT_GDTR.limit = (INIT_GDT.len() * mem::size_of::<GdtEntry>() - 1) as u16;
     INIT_GDTR.base = INIT_GDT.as_ptr() as u64;
-
-    // Set the TLS segment to the offset of the Thread Control Block
-    INIT_GDT[GDT_KERNEL_TLS].set_offset(tcb_offset as u32);
 
     // Load the initial GDT, before we have access to thread locals
     dtables::lgdt(&INIT_GDTR);
@@ -117,9 +114,21 @@ pub unsafe fn init(tcb_offset: usize, stack_offset: usize) {
     segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16));
     segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16));
     segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16));
-    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16));
+    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16));
     segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16));
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16));
+}
+
+/// Initialize GDT with TLS
+pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
+    // Set the TLS segment to the offset of the Thread Control Block
+    INIT_GDT[GDT_KERNEL_TLS].set_offset(tcb_offset as u32);
+
+    // Load the initial GDT, before we have access to thread locals
+    dtables::lgdt(&INIT_GDTR);
+
+    // Load the segment descriptors
+    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16));
 
     // Now that we have access to thread locals, setup the AP's individual GDT
     GDTR.limit = (GDT.len() * mem::size_of::<GdtEntry>() - 1) as u16;
