@@ -54,15 +54,15 @@ Device | Notes
 
 ## Intended development sequence and status
 
-Item | Description | Status
------|-------|-----
-Redox AArch64 toolchain | Create an usable redox AArch64 toolchain specification | WIP |
+Item | Description | Status | Notes
+-----|-------|-----|-----
+Redox AArch64 toolchain | Create an usable redox AArch64 toolchain specification | Done | Using this JSON spec in isolated tests produces valid AArch64 soft float code
 Stubbed kernel image | Stub out AArch64 kernel support using the existing x86_64 arch code as a template <br /> Modify redox kernel build glue and work iteratively to get a linkable (non-functional) image |  Not done yet |
 Boot flow | Create a self hosted u-boot -> redox kernel workflow <br /> Should obtain the stubbed image from a local TFTP server, load it into RAM and jump to it  | Not done yet |
 GDB Debug flow | Create a debug workflow centered around qemu's GDB stub <br /> This should allow connecting to qemu's GDB stub and debug u-boot/redox stub via a GDB client and single stepping through code | Not done yet |
 Verify Redox entry | Verify that control reaches the redox kernel from u-boot | Not done yet |
 AArch64 early init stub | Add support for raw asm code for early AArch64 init in the redox kernel <br /> Verify that this code is located appropriately in the link map and that control reaches this code from u-boot | Not done yet |
-Basic DTB support | Integrate the [device_tree crate] (https://mbr.github.io/device_tree-rs/device_tree/) <br /> Use the crate to access the qemu supplied DTB image and extract the memory map | Not done yet |
+Basic DTB support | Integrate the [device_tree crate](https://mbr.github.io/device_tree-rs/device_tree/) <br /> Use the crate to access the qemu supplied DTB image and extract the memory map | Not done yet |
 Basic UART support | Use the device_tree crate to get the UART address from the DTB image and set up the initial console <br /> This is a polling mode only setup | Not done yet |
 Initial MMU support | Implement initial MMU support in the early init stub <br /> This forces the MMU into a clean state overriding any bootloader specific setup <br /> Create an identity map for MMU init <br /> Create a mapping for the kernel image <br /> Create a mapping for any devices needed at this stage (UART)| Not done yet |
 kmain entry | Verify that kmain entry works post early MMU init | Not done yet |
