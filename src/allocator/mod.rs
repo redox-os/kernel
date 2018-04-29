@@ -8,7 +8,10 @@ pub use self::linked_list::Allocator;
 #[cfg(feature="slab")]
 pub use self::slab::Allocator;
 
+#[cfg(not(feature="slab"))]
 mod linked_list;
+
+#[cfg(feature="slab")]
 mod slab;
 
 unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usize) {

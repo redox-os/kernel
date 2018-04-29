@@ -22,6 +22,11 @@ pub extern "C" fn rust_begin_unwind(fmt: ::core::fmt::Arguments, file: &str, lin
     }
 }
 
+#[lang = "oom"]
+pub extern fn rust_oom() -> ! {
+    panic!("kernel memory allocation failed");
+}
+
 #[allow(non_snake_case)]
 #[no_mangle]
 /// Required to handle panics

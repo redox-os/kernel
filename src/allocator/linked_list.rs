@@ -1,4 +1,5 @@
-use alloc::heap::{Alloc, AllocErr, Layout};
+use alloc::heap::{AllocErr, GlobalAlloc, Layout, Opaque};
+use core::ptr::NonNull;
 use linked_list_allocator::Heap;
 use spin::Mutex;
 
@@ -14,8 +15,8 @@ impl Allocator {
     }
 }
 
-unsafe impl<'a> Alloc for &'a Allocator {
-    unsafe fn alloc(&mut self, mut layout: Layout) -> Result<*mut u8, AllocErr> {
+unsafe impl GlobalAlloc for Allocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut Opaque {
         loop {
             let res = if let Some(ref mut heap) = *HEAP.lock() {
                 heap.allocate_first_fit(layout)
@@ -24,9 +25,7 @@ unsafe impl<'a> Alloc for &'a Allocator {
             };
 
             match res {
-                Err(AllocErr::Exhausted { request }) => {
-                    layout = request;
-
+                Err(AllocErr) => {
                     let size = if let Some(ref heap) = *HEAP.lock() {
                         heap.size()
                     } else {
@@ -41,28 +40,16 @@ unsafe impl<'a> Alloc for &'a Allocator {
                         panic!("__rust_allocate: heap not initialized");
                     }
                 },
-                other => return other,
+                other => return other.ok().map_or(0 as *mut Opaque, |allocation| allocation.as_ptr()),
             }
         }
     }
 
-    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut Opaque, layout: Layout) {
         if let Some(ref mut heap) = *HEAP.lock() {
-            heap.deallocate(ptr, layout)
+            heap.deallocate(NonNull::new_unchecked(ptr), layout)
         } else {
             panic!("__rust_deallocate: heap not initialized");
-        }
-    }
-
-    fn oom(&mut self, error: AllocErr) -> ! {
-        panic!("Out of memory: {:?}", error);
-    }
-
-    fn usable_size(&self, layout: &Layout) -> (usize, usize) {
-        if let Some(ref mut heap) = *HEAP.lock() {
-            heap.usable_size(layout)
-        } else {
-            panic!("__rust_usable_size: heap not initialized");
         }
     }
 }

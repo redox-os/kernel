@@ -43,6 +43,7 @@ extern crate bitflags;
 extern crate goblin;
 extern crate linked_list_allocator;
 extern crate spin;
+#[cfg(feature = "slab")]
 extern crate slab_allocator;
 
 use alloc::arc::Arc;

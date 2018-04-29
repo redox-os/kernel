@@ -14,7 +14,7 @@ clippy = { version = "*", optional = true }
 linked_list_allocator = "0.6"
 raw-cpuid = "3.0"
 redox_syscall = { path = "syscall" }
-slab_allocator = { path = "slab_allocator" }
+slab_allocator = { path = "slab_allocator", optional = true }
 spin = "0.4"
 
 [dependencies.goblin]
@@ -27,11 +27,11 @@ version = "0.7"
 default-features = false
 
 [features]
-default = ["acpi", "graphical_debug"]
+default = []
 acpi = []
 doc = []
 graphical_debug = []
 live = []
 multi_core = []
 pti = []
-slab = []
+slab = ["slab_allocator"]
