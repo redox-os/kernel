@@ -23,6 +23,7 @@ pub extern "C" fn rust_begin_unwind(fmt: ::core::fmt::Arguments, file: &str, lin
 }
 
 #[lang = "oom"]
+#[no_mangle]
 pub extern fn rust_oom() -> ! {
     panic!("kernel memory allocation failed");
 }
