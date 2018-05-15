@@ -1265,6 +1265,24 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<Contex
 
     loop {
         let res_opt = if pid.into() == 0 {
+            // Check for existence of child
+            {
+                let mut found = false;
+
+                let contexts = context::contexts();
+                for (_id, context_lock) in contexts.iter() {
+                    let context = context_lock.read();
+                    if context.ppid == ppid {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if ! found {
+                    return Err(Error::new(ECHILD));
+                }
+            }
+
             if flags & WNOHANG == WNOHANG {
                 if let Some((_wid, (w_pid, status))) = waitpid.receive_any_nonblock() {
                     grim_reaper(w_pid, status)
@@ -1277,7 +1295,25 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<Contex
             }
         } else if (pid.into() as isize) < 0 {
             let pgid = ContextId::from(-(pid.into() as isize) as usize);
-            //TODO: Check for existence of child in process group PGID
+
+            // Check for existence of child in process group PGID
+            {
+                let mut found = false;
+
+                let contexts = context::contexts();
+                for (_id, context_lock) in contexts.iter() {
+                    let context = context_lock.read();
+                    if context.pgid == pgid {
+                        found = true;
+                        break;
+                    }
+                }
+
+                if ! found {
+                    return Err(Error::new(ECHILD));
+                }
+            }
+
             if flags & WNOHANG == WNOHANG {
                 if let Some((w_pid, status)) = waitpid.receive_nonblock(&WaitpidKey {
                     pid: None,
