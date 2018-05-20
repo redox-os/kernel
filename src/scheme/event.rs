@@ -1,75 +1,73 @@
-use alloc::arc::{Arc, Weak};
-use alloc::BTreeMap;
+use alloc::arc::Arc;
 use core::{mem, slice};
-use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::RwLock;
 
-use context;
-use sync::WaitQueue;
+use event::{EventQueue, EventQueueId, next_queue_id, queues, queues_mut};
 use syscall::data::Event;
 use syscall::error::*;
 use syscall::scheme::Scheme;
 
-pub struct EventScheme {
-    next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Weak<WaitQueue<Event>>>>
-}
-
-impl EventScheme {
-    pub fn new() -> EventScheme {
-        EventScheme {
-            next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
-        }
-    }
-}
+pub struct EventScheme;
 
 impl Scheme for EventScheme {
     fn open(&self, _path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let handle = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            context.events.clone()
-        };
+        let id = next_queue_id();
+        queues_mut().insert(id, Arc::new(EventQueue::new(id)));
 
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Arc::downgrade(&handle));
-
-        Ok(id)
+        Ok(id.into())
     }
 
     fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
+        let id = EventQueueId::from(id);
+
         if ! buf.is_empty() {
             return Err(Error::new(EINVAL));
         }
 
-        let handle = {
-            let handles = self.handles.read();
-            let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;
-            handle_weak.upgrade().ok_or(Error::new(EBADF))?
+        let old_queue = {
+            let handles = queues();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
         };
 
-        let new_id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(new_id, Arc::downgrade(&handle));
-        Ok(new_id)
+        let new_id = next_queue_id();
+        let new_queue = Arc::new(EventQueue::new(new_id));
+        queues_mut().insert(new_id, new_queue.clone());
+        new_queue.dup(&old_queue);
+
+        Ok(new_id.into())
     }
 
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handle = {
-            let handles = self.handles.read();
-            let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;
-            handle_weak.upgrade().ok_or(Error::new(EBADF))?
+        let id = EventQueueId::from(id);
+
+        let queue = {
+            let handles = queues();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
         };
 
         let event_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Event, buf.len()/mem::size_of::<Event>()) };
-        Ok(handle.receive_into(event_buf, true) * mem::size_of::<Event>())
+        Ok(queue.read(event_buf)? * mem::size_of::<Event>())
+    }
+
+    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
+        let id = EventQueueId::from(id);
+
+        let queue = {
+            let handles = queues();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        let event_buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const Event, buf.len()/mem::size_of::<Event>()) };
+        Ok(queue.write(event_buf)? * mem::size_of::<Event>())
     }
 
     fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;
-        handle_weak.upgrade().ok_or(Error::new(EBADF)).and(Ok(0))
+        let id = EventQueueId::from(id);
+
+        let handles = queues();
+        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 
     fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -83,12 +81,14 @@ impl Scheme for EventScheme {
     }
 
     fn fsync(&self, id: usize) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle_weak = handles.get(&id).ok_or(Error::new(EBADF))?;
-        handle_weak.upgrade().ok_or(Error::new(EBADF)).and(Ok(0))
+        let id = EventQueueId::from(id);
+
+        let handles = queues();
+        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        let id = EventQueueId::from(id);
+        queues_mut().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }

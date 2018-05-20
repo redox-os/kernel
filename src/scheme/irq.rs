@@ -2,8 +2,8 @@ use core::{mem, str};
 use core::sync::atomic::Ordering;
 use spin::Mutex;
 
+use event;
 use interrupt::irq::acknowledge;
-use context;
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use syscall::error::*;
 use syscall::flag::EVENT_READ;
@@ -19,7 +19,7 @@ static COUNTS: Mutex<[usize; 16]> = Mutex::new([0; 16]);
 #[no_mangle]
 pub extern fn irq_trigger(irq: u8) {
     COUNTS.lock()[irq as usize] += 1;
-    context::event::trigger(IRQ_SCHEME_ID.load(Ordering::SeqCst), irq as usize, EVENT_READ, mem::size_of::<usize>());
+    event::trigger(IRQ_SCHEME_ID.load(Ordering::SeqCst), irq as usize, EVENT_READ);
 }
 
 pub struct IrqScheme;

@@ -17,7 +17,6 @@
 #![feature(asm)]
 #![feature(collections)]
 #![feature(concat_idents)]
-#![feature(conservative_impl_trait)]
 #![feature(const_atomic_usize_new)]
 #![feature(const_fn)]
 #![feature(const_max_value)]
@@ -82,6 +81,9 @@ pub mod devices;
 /// ELF file parsing
 #[cfg(not(feature="doc"))]
 pub mod elf;
+
+/// Event handling
+pub mod event;
 
 /// External functions
 pub mod externs;

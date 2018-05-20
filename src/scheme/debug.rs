@@ -1,8 +1,8 @@
 use core::sync::atomic::Ordering;
 use spin::Once;
 
-use context;
 use device::serial::COM1;
+use event;
 use scheme::*;
 use sync::WaitQueue;
 use syscall::flag::{EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
@@ -20,8 +20,8 @@ fn init_input() -> WaitQueue<u8> {
 
 /// Add to the input queue
 pub fn debug_input(b: u8) {
-    let len = INPUT.call_once(init_input).send(b);
-    context::event::trigger(DEBUG_SCHEME_ID.load(Ordering::SeqCst), 0, EVENT_READ, len);
+    INPUT.call_once(init_input).send(b);
+    event::trigger(DEBUG_SCHEME_ID.load(Ordering::SeqCst), 0, EVENT_READ);
 }
 
 pub struct DebugScheme {

@@ -118,7 +118,7 @@ impl SchemeList {
         self.names.insert(ns, BTreeMap::new());
 
         self.insert(ns, Box::new(*b""), |scheme_id| Arc::new(Box::new(RootScheme::new(ns, scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"event"), |_| Arc::new(Box::new(EventScheme::new()))).unwrap();
+        self.insert(ns, Box::new(*b"event"), |_| Arc::new(Box::new(EventScheme))).unwrap();
         self.insert(ns, Box::new(*b"env"), |_| Arc::new(Box::new(EnvScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"memory"), |_| Arc::new(Box::new(MemoryScheme))).unwrap();
         self.insert(ns, Box::new(*b"sys"), |_| Arc::new(Box::new(SysScheme::new()))).unwrap();

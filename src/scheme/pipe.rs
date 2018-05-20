@@ -3,7 +3,7 @@ use alloc::{BTreeMap, VecDeque};
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use context;
+use event;
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use sync::WaitCondition;
 use syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
@@ -288,17 +288,15 @@ impl PipeWrite {
     fn write(&self, buf: &[u8]) -> Result<usize> {
         if let Some(ref vec_weak) = self.vec {
             if let Some(vec_lock) = vec_weak.upgrade() {
-                let len = {
+                {
                     let mut vec = vec_lock.lock();
 
                     for &b in buf.iter() {
                         vec.push_back(b);
                     }
+                }
 
-                    vec.len()
-                };
-
-                context::event::trigger(self.scheme_id, self.event_id, EVENT_READ, len);
+                event::trigger(self.scheme_id, self.event_id, EVENT_READ);
                 self.condition.notify();
 
                 Ok(buf.len())
@@ -314,7 +312,7 @@ impl PipeWrite {
 impl Drop for PipeWrite {
     fn drop(&mut self) {
         drop(self.vec.take());
-        context::event::trigger(self.scheme_id, self.event_id, EVENT_READ, 0);
+        event::trigger(self.scheme_id, self.event_id, EVENT_READ);
         self.condition.notify();
     }
 }

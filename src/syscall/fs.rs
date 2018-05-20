@@ -118,7 +118,6 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
             number: file_id,
             flags: flags & !O_CLOEXEC,
         })),
-        event: None,
         cloexec: flags & O_CLOEXEC == O_CLOEXEC,
     }).ok_or(Error::new(EMFILE))
 }
@@ -138,7 +137,6 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
                 number: read_id,
                 flags: O_RDONLY | flags & !O_ACCMODE & !O_CLOEXEC,
             })),
-            event: None,
             cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         }).ok_or(Error::new(EMFILE))?;
 
@@ -148,7 +146,6 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
                 number: write_id,
                 flags: O_WRONLY | flags & !O_ACCMODE & !O_CLOEXEC,
             })),
-            event: None,
             cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         }).ok_or(Error::new(EMFILE))?;
 
@@ -236,7 +233,7 @@ pub fn close(fd: FileHandle) -> Result<usize> {
         context.remove_file(fd).ok_or(Error::new(EBADF))?
     };
 
-    file.close(fd)
+    file.close()
 }
 
 fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
@@ -250,7 +247,6 @@ fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
     if buf.is_empty() {
         Ok(FileDescriptor {
             description: Arc::clone(&file.description),
-            event: None,
             cloexec: false,
         })
     } else {
@@ -271,7 +267,6 @@ fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
                 number: new_id,
                 flags: description.flags,
             })),
-            event: None,
             cloexec: false,
         })
     }
@@ -378,44 +373,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 
 /// Register events for file
 pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
-    let file = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        let mut files = context.files.lock();
-        match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
-            Some(ref mut file) => {
-                let description = file.description.read();
-                if let Some(event_id) = file.event.take() {
-                    println!("{:?}: {:?}:{}: events already registered: {}", fd, description.scheme, description.number, event_id);
-                    context::event::unregister(fd, description.scheme, event_id);
-                }
-                file.clone()
-            },
-            None => return Err(Error::new(EBADF))
-        }
-    };
-
-    let description = file.description.read();
-
-    let scheme = {
-        let schemes = scheme::schemes();
-        let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-        Arc::clone(&scheme)
-    };
-    let event_id = scheme.fevent(description.number, flags)?;
-    {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        let mut files = context.files.lock();
-        match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
-            Some(ref mut file) => file.event = Some(event_id),
-            None => return Err(Error::new(EBADF)),
-        }
-    }
-    context::event::register(fd, description.scheme, event_id);
-    Ok(0)
+    Err(Error::new(ENOSYS))
 }
 
 pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {

@@ -21,9 +21,6 @@ mod list;
 /// Context switch function
 mod switch;
 
-/// Event handling
-pub mod event;
-
 /// File struct - defines a scheme and a file number
 pub mod file;
 

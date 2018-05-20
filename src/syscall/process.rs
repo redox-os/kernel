@@ -296,7 +296,6 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 let new_file_option = if let Some(ref file) = *file_option {
                     Some(FileDescriptor {
                         description: Arc::clone(&file.description),
-                        event: None,
                         cloexec: file.cloexec,
                     })
                 } else {
@@ -755,7 +754,7 @@ fn exec_noreturn(
             }
 
             if cloexec {
-                let _ = file_option.take().unwrap().close(FileHandle::from(fd));
+                let _ = file_option.take().unwrap().close();
             }
         }
 
@@ -933,7 +932,7 @@ pub fn exit(status: usize) -> ! {
         // Files must be closed while context is valid so that messages can be passed
         for (fd, file_option) in close_files.drain(..).enumerate() {
             if let Some(file) = file_option {
-                let _ = file.close(FileHandle::from(fd));
+                let _ = file.close();
             }
         }
 

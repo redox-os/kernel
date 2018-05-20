@@ -10,9 +10,9 @@ use context::file::FileDescriptor;
 use context::memory::{Grant, Memory, SharedMemory, Tls};
 use device;
 use scheme::{SchemeNamespace, FileHandle};
-use syscall::data::{Event, SigAction};
+use syscall::data::SigAction;
 use syscall::flag::SIG_DFL;
-use sync::{WaitMap, WaitQueue};
+use sync::WaitMap;
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
@@ -150,8 +150,6 @@ pub struct Context {
     pub name: Arc<Mutex<Box<[u8]>>>,
     /// The current working directory
     pub cwd: Arc<Mutex<Vec<u8>>>,
-    /// Kernel events
-    pub events: Arc<WaitQueue<Event>>,
     /// The process environment
     pub env: Arc<Mutex<BTreeMap<Box<[u8]>, Arc<Mutex<Vec<u8>>>>>>,
     /// The open files in the scheme
@@ -193,7 +191,6 @@ impl Context {
             grants: Arc::new(Mutex::new(Vec::new())),
             name: Arc::new(Mutex::new(Vec::new().into_boxed_slice())),
             cwd: Arc::new(Mutex::new(Vec::new())),
-            events: Arc::new(WaitQueue::new()),
             env: Arc::new(Mutex::new(BTreeMap::new())),
             files: Arc::new(Mutex::new(Vec::new())),
             actions: Arc::new(Mutex::new(vec![(

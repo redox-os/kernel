@@ -1,8 +1,7 @@
 use alloc::vec_deque::VecDeque;
-use core::mem;
 use spin::{Once, Mutex, MutexGuard};
 
-use context::event;
+use event;
 use scheme::SchemeId;
 use syscall::data::TimeSpec;
 use syscall::flag::{CLOCK_MONOTONIC, CLOCK_REALTIME, EVENT_READ};
@@ -65,7 +64,7 @@ pub fn trigger() {
 
         if trigger {
             let timeout = registry.remove(i).unwrap();
-            event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ, mem::size_of::<TimeSpec>());
+            event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ);
         } else {
             i += 1;
         }
