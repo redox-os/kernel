@@ -26,7 +26,7 @@ fn pipes() -> RwLockReadGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap
     PIPES.call_once(init_pipes).read()
 }
 
-/// Get the global schemes list, mutable
+/// Get the global pipes list, mutable
 fn pipes_mut() -> RwLockWriteGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> {
     PIPES.call_once(init_pipes).write()
 }
