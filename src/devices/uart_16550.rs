@@ -89,7 +89,8 @@ impl<T: Io<Value = u8>> SerialPort<T> {
 
     pub fn receive(&mut self) {
         while self.line_sts().contains(LineStsFlags::INPUT_FULL) {
-            debug_input(self.data.read());
+            let b = self.data.read();
+            debug_input(b);
         }
     }
 
