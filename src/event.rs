@@ -161,21 +161,7 @@ pub fn send_flags(reg_key: RegKey) -> Result<()> {
     };
 
     if event_id != reg_key.number {
-        let scheme_ns = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            context.ens
-        };
-
-        let schemes = scheme::schemes();
-        for (name, &scheme_id) in schemes.iter_name(scheme_ns) {
-            if scheme_id == reg_key.scheme {
-                println!("  {}", unsafe { ::core::str::from_utf8_unchecked(name) });
-            }
-        }
-
-        panic!("schemes returned event id {} instead of {}", event_id, reg_key.number);
+        println!("scheme {} returned event id {} instead of {}", reg_key.scheme.into(), event_id, reg_key.number);
     }
 
     Ok(())
