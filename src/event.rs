@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use context;
-use scheme::SchemeId;
+use scheme::{self, SchemeId};
 use sync::WaitQueue;
 use syscall::data::Event;
 use syscall::error::{Error, Result, EBADF, ESRCH};
@@ -55,6 +55,8 @@ impl EventQueue {
                 QueueKey { queue: self.id, id: event.id, data: event.data },
                 event.flags
             );
+
+            send_flags(RegKey { scheme, number })?;
         }
 
         Ok(events.len())
@@ -133,6 +135,29 @@ pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: usize) {
     } else {
         entry.insert(queue_key, flags);
     }
+}
+
+pub fn send_flags(reg_key: RegKey) -> Result<usize> {
+    let mut flags = 0;
+
+    {
+        let registry = registry();
+
+        if let Some(queue_list) = registry.get(&reg_key) {
+            for (_queue_key, queue_flags) in queue_list.iter() {
+                flags |= queue_flags;
+            }
+        }
+    }
+
+
+    let scheme = {
+        let schemes = scheme::schemes();
+        let scheme = schemes.get(reg_key.scheme).ok_or(Error::new(EBADF))?;
+        Arc::clone(&scheme)
+    };
+
+    scheme.fevent(reg_key.number, flags)
 }
 
 pub fn unregister_file(scheme: SchemeId, number: usize) {
