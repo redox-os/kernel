@@ -137,7 +137,7 @@ pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: usize) {
     }
 }
 
-pub fn send_flags(reg_key: RegKey) -> Result<usize> {
+pub fn send_flags(reg_key: RegKey) -> Result<()> {
     let mut flags = 0;
 
     {
@@ -150,14 +150,35 @@ pub fn send_flags(reg_key: RegKey) -> Result<usize> {
         }
     }
 
+    let event_id = {
+        let scheme = {
+            let schemes = scheme::schemes();
+            let scheme = schemes.get(reg_key.scheme).ok_or(Error::new(EBADF))?;
+            Arc::clone(&scheme)
+        };
 
-    let scheme = {
-        let schemes = scheme::schemes();
-        let scheme = schemes.get(reg_key.scheme).ok_or(Error::new(EBADF))?;
-        Arc::clone(&scheme)
+        scheme.fevent(reg_key.number, flags)?
     };
 
-    scheme.fevent(reg_key.number, flags)
+    if event_id != reg_key.number {
+        let scheme_ns = {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+            context.ens
+        };
+
+        let schemes = scheme::schemes();
+        for (name, &scheme_id) in schemes.iter_name(scheme_ns) {
+            if scheme_id == reg_key.scheme {
+                println!("  {}", unsafe { ::core::str::from_utf8_unchecked(name) });
+            }
+        }
+
+        panic!("schemes returned event id {} instead of {}", event_id, reg_key.number);
+    }
+
+    Ok(())
 }
 
 pub fn unregister_file(scheme: SchemeId, number: usize) {
