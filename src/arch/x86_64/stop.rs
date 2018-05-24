@@ -14,7 +14,10 @@ pub unsafe extern fn kreset() -> ! {
         port.write(0xFE);
     }
 
-    // TODO: Use triple fault to guarantee reset
+    // Use triple fault to guarantee reset
+    asm!("cli" : : : : "intel", "volatile");
+    asm!("lidt cs:0" : : : : "intel", "volatile");
+    asm!("int $$3" : : : : "intel", "volatile");
 
     unreachable!();
 }
