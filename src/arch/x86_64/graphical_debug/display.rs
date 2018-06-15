@@ -1,6 +1,7 @@
 use alloc::allocator::{Alloc, Layout};
 use alloc::heap::Heap;
 use core::{cmp, slice};
+use core::ptr::NonNull;
 
 use super::FONT;
 use super::primitive::{fast_set32, fast_set64, fast_copy};
@@ -16,7 +17,7 @@ pub struct Display {
 impl Display {
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { Heap.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap() };
+        let offscreen = unsafe { Heap.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap().as_ptr() };
         unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
         Display {
             width: width,
@@ -145,6 +146,6 @@ impl Display {
 
 impl Drop for Display {
     fn drop(&mut self) {
-        unsafe { Heap.dealloc(self.offscreen.as_mut_ptr() as *mut u8, Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
+        unsafe { Heap.dealloc(NonNull::new(self.offscreen.as_mut_ptr()).unwrap().as_opaque(), Layout::from_size_align_unchecked(self.offscreen.len() * 4, 4096)) };
     }
 }
