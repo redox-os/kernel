@@ -5,7 +5,6 @@ use event;
 use spin::RwLock;
 use scheme::{self, SchemeId};
 use syscall::error::{Result, Error, EBADF};
-use scheme::FileHandle;
 
 /// A file description
 #[derive(Debug)]

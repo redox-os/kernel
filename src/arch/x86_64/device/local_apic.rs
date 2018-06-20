@@ -1,6 +1,6 @@
 use core::intrinsics::{volatile_load, volatile_store};
-use x86::cpuid::CpuId;
-use x86::msr::*;
+use x86::shared::cpuid::CpuId;
+use x86::shared::msr::*;
 
 use memory::Frame;
 use paging::{ActivePageTable, PhysicalAddress, Page, VirtualAddress};

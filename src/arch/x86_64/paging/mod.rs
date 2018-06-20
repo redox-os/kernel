@@ -3,7 +3,7 @@
 
 use core::{mem, ptr};
 use core::ops::{Deref, DerefMut};
-use x86::{msr, tlb};
+use x86::shared::{control_regs, msr, tlb};
 
 use memory::{allocate_frames, Frame};
 
@@ -283,15 +283,13 @@ impl ActivePageTable {
     }
 
     pub fn switch(&mut self, new_table: InactivePageTable) -> InactivePageTable {
-        use x86::controlregs;
-
         let old_table = InactivePageTable {
             p4_frame: Frame::containing_address(
-                PhysicalAddress::new(unsafe { controlregs::cr3() } as usize)
+                PhysicalAddress::new(unsafe { control_regs::cr3() } as usize)
             ),
         };
         unsafe {
-            controlregs::cr3_write(new_table.p4_frame.start_address().get() as u64);
+            control_regs::cr3_write(new_table.p4_frame.start_address().get() as u64);
         }
         old_table
     }
@@ -307,10 +305,8 @@ impl ActivePageTable {
     pub fn with<F>(&mut self, table: &mut InactivePageTable, temporary_page: &mut TemporaryPage, f: F)
         where F: FnOnce(&mut Mapper)
     {
-        use x86::controlregs;
-
         {
-            let backup = Frame::containing_address(PhysicalAddress::new(unsafe { controlregs::cr3() as usize }));
+            let backup = Frame::containing_address(PhysicalAddress::new(unsafe { control_regs::cr3() as usize }));
 
             // map temporary_page to current p4 table
             let p4_table = temporary_page.map_table_frame(backup.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE, self);
@@ -331,8 +327,7 @@ impl ActivePageTable {
     }
 
     pub unsafe fn address(&self) -> usize {
-        use x86::controlregs;
-        controlregs::cr3() as usize
+        control_regs::cr3() as usize
     }
 }
 

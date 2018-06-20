@@ -1,4 +1,4 @@
-use alloc::heap::{Alloc, AllocErr, Layout};
+use core::alloc::{Alloc, AllocErr, Layout};
 use spin::Mutex;
 use slab_allocator::Heap;
 
