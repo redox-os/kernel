@@ -1,5 +1,7 @@
 //! Intrinsics for panic handling
 
+use core::panic::PanicInfo;
+
 use interrupt;
 
 #[lang = "eh_personality"]
@@ -7,12 +9,10 @@ use interrupt;
 pub extern "C" fn rust_eh_personality() {}
 
 /// Required to handle panics
-#[lang = "panic_fmt"]
+#[panic_implementation]
 #[no_mangle]
-pub extern "C" fn rust_begin_unwind(fmt: ::core::fmt::Arguments, file: &str, line: u32) -> ! {
-    println!("PANIC: {}", fmt);
-    println!("FILE: {}", file);
-    println!("LINE: {}", line);
+pub extern "C" fn rust_begin_unwind(info: &PanicInfo) -> ! {
+    println!("KERNEL PANIC: {}", info);
 
     unsafe { interrupt::stack_trace(); }
 

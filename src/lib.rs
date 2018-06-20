@@ -27,6 +27,7 @@
 #![feature(lang_items)]
 #![feature(naked_functions)]
 #![feature(never_type)]
+#![feature(panic_implementation)]
 #![feature(ptr_internals)]
 #![feature(thread_local)]
 #![feature(unique)]

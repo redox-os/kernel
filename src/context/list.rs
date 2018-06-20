@@ -1,8 +1,7 @@
-use alloc::allocator::{Alloc, Layout};
 use alloc::arc::Arc;
 use alloc::boxed::Box;
-use alloc::heap::Heap;
 use alloc::BTreeMap;
+use core::alloc::{Alloc, GlobalAlloc, Layout};
 use core::mem;
 use core::sync::atomic::Ordering;
 use paging;
@@ -67,7 +66,7 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let mut fx = unsafe { Box::from_raw(Heap.alloc(Layout::from_size_align_unchecked(512, 16)).unwrap().as_ptr() as *mut [u8; 512]) };
+            let mut fx = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
             for b in fx.iter_mut() {
                 *b = 0;
             }
