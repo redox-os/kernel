@@ -691,10 +691,8 @@ fn exec_noreturn(
             for arg in args.iter().rev() {
                 sp -= mem::size_of::<usize>();
                 unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
-                sp -= mem::size_of::<usize>();
-                unsafe { *(sp as *mut usize) = arg.len(); }
 
-                arg_size += arg.len();
+                arg_size += arg.len() + 1;
             }
 
             sp -= mem::size_of::<usize>();
@@ -715,8 +713,12 @@ fn exec_noreturn(
                                (::USER_ARG_OFFSET + arg_offset) as *mut u8,
                                arg.len());
                     }
-
                     arg_offset += arg.len();
+
+                    unsafe {
+                        *((::USER_ARG_OFFSET + arg_offset) as *mut u8) = 0;
+                    }
+                    arg_offset += 1;
                 }
 
                 memory.remap(EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE);
