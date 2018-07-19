@@ -1,4 +1,6 @@
-///! Syscall handlers
+//!
+//! This module provides syscall definitions and the necessary resources to parse incoming
+//! syscalls
 
 extern crate syscall;
 
@@ -44,9 +46,12 @@ pub mod time;
 /// Validate input
 pub mod validate;
 
+/// This function is composed of an inner function that returns a `Result<usize>`, then the syscall
+/// function calls [`Error::mux`] on it
 pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> usize {
     #[inline(always)]
     fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> Result<usize> {
+        //SYS_* is declared in kernel/syscall/src/number.rs
         match a & SYS_CLASS {
             SYS_CLASS_FILE => {
                 let fd = FileHandle::from(b);
@@ -204,5 +209,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
     }
     */
 
+    // errormux turns Result<usize> into -errno
     Error::mux(result)
 }

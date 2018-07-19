@@ -1,4 +1,6 @@
 //! Context management
+//! https://en.wikipedia.org/wiki/Context_switch
+//! https://wiki.osdev.org/Context_Switching
 use alloc::boxed::Box;
 use core::alloc::{Alloc, GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;

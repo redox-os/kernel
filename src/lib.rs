@@ -153,6 +153,7 @@ pub fn kmain(cpus: usize, env: &[u8]) -> ! {
     CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
 
+    //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
 
     let pid = syscall::getpid();
