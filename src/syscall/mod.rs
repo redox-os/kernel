@@ -170,6 +170,11 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
     }
     */
 
+    // The next lines set the current syscall in the context struct, then once the inner() function
+    // completes, we set the current syscall to none.
+    //
+    // When the code below falls out of scope it will release the lock
+    // see the spin crate for details
     {
         let contexts = ::context::contexts();
         if let Some(context_lock) = contexts.current() {

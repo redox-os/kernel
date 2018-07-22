@@ -70,6 +70,8 @@ fn init_contexts() -> RwLock<ContextList> {
 
 /// Get the global schemes list, const
 pub fn contexts() -> RwLockReadGuard<'static, ContextList> {
+    //call once will init_contexts only once during the kernel's exececution, otherwise it will return the current context via a
+    //cache.
     CONTEXTS.call_once(init_contexts).read()
 }
 
