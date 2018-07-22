@@ -46,8 +46,8 @@ pub mod time;
 /// Validate input
 pub mod validate;
 
-/// This function is composed of an inner function that returns a `Result<usize>`, then the syscall
-/// function calls [`Error::mux`] on it
+/// This function is the syscall handler of the kernel, it is composed of an inner function that returns a `Result<usize>`. After the inner function runs, the syscall
+/// function calls [`Error::mux`] on it.
 pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> usize {
     #[inline(always)]
     fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> Result<usize> {
