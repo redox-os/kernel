@@ -1,4 +1,6 @@
-//! Context management
+//! # Context management
+//! 
+//! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 use alloc::boxed::Box;
 use core::alloc::{Alloc, GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;
@@ -68,6 +70,8 @@ fn init_contexts() -> RwLock<ContextList> {
 
 /// Get the global schemes list, const
 pub fn contexts() -> RwLockReadGuard<'static, ContextList> {
+    //call once will init_contexts only once during the kernel's exececution, otherwise it will return the current context via a
+    //cache.
     CONTEXTS.call_once(init_contexts).read()
 }
 

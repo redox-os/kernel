@@ -16,7 +16,9 @@ pub fn clock_gettime(clock: usize, time: &mut TimeSpec) -> Result<usize> {
     Ok(0)
 }
 
+/// Nanosleep will sleep by switching the current context
 pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize> {
+    //start is a tuple of (seconds, nanoseconds)
     let start = time::monotonic();
     let sum = start.1 + req.tv_nsec as u64;
     let end = (start.0 + req.tv_sec as u64 + sum / 1_000_000_000, sum % 1_000_000_000);
