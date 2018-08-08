@@ -30,6 +30,7 @@ pub unsafe fn stack_trace() {
             }
         } else {
             println!("  {:>016X}: RBP OVERFLOW", rbp);
+            break;
         }
     }
 }
