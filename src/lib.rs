@@ -137,6 +137,7 @@ static mut INIT_ENV: &[u8] = &[];
 /// Initialize userspace by running the initfs:bin/init process
 /// This function will also set the CWD to initfs:bin and open debug: as stdio
 pub extern fn userspace_init() {
+    let path = b"/bin/init";
     let env = unsafe { INIT_ENV };
 
     assert_eq!(syscall::chdir(b"initfs:"), Ok(0));
@@ -145,17 +146,17 @@ pub extern fn userspace_init() {
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
 
-    let fd = syscall::open(b"/bin/init", syscall::flag::O_RDONLY).expect("failed to open init");
+    let fd = syscall::open(path, syscall::flag::O_RDONLY).expect("failed to open init");
 
-    let mut env_ptrs = Vec::new();
-    for line in env.split(|b| *b == b'\n') {
-        env_ptrs.push([
-            line.as_ptr() as usize,
-            line.len(),
-        ]);
+    let mut args = Vec::new();
+    args.push(path.to_vec().into_boxed_slice());
+
+    let mut vars = Vec::new();
+    for var in env.split(|b| *b == b'\n') {
+        vars.push(var.to_vec().into_boxed_slice());
     }
 
-    syscall::fexec(fd, &[], &env_ptrs).expect("failed to execute init");
+    syscall::fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice()).expect("failed to execute init");
 
     panic!("init returned");
 }
@@ -164,6 +165,7 @@ pub extern fn userspace_init() {
 pub fn kmain(cpus: usize, env: &'static [u8]) -> ! {
     CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
+    unsafe { INIT_ENV = env };
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
@@ -172,7 +174,6 @@ pub fn kmain(cpus: usize, env: &'static [u8]) -> ! {
     println!("BSP: {:?} {}", pid, cpus);
     println!("Env: {:?}", ::core::str::from_utf8(env));
 
-    unsafe { INIT_ENV = env };
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {
             let mut context = context_lock.write();

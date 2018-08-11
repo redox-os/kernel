@@ -527,7 +527,7 @@ impl Drop for ExecFile {
     }
 }
 
-fn exec_noreturn(
+fn fexec_noreturn(
     setuid: Option<u32>,
     setgid: Option<u32>,
     data: Box<[u8]>,
@@ -765,21 +765,7 @@ fn exec_noreturn(
     unsafe { usermode(entry, sp, 0); }
 }
 
-pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
-    let mut args = Vec::new();
-    for arg_ptr in arg_ptrs {
-        let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
-        // Argument must be moved into kernel space before exec unmaps all memory
-        args.push(arg.to_vec().into_boxed_slice());
-    }
-
-    let mut vars = Vec::new();
-    for var_ptr in var_ptrs {
-        let var = validate_slice(var_ptr[0] as *const u8, var_ptr[1])?;
-        // Argument must be moved into kernel space before exec unmaps all memory
-        vars.push(var.to_vec().into_boxed_slice());
-    }
-
+pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>) -> Result<usize> {
     let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -899,14 +885,30 @@ pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -
         }
     }
 
-    // Drop so that usage is not allowed after unmapping context
-    drop(arg_ptrs);
-    drop(var_ptrs);
-
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    exec_noreturn(setuid, setgid, data.into_boxed_slice(), args.into_boxed_slice(), vars.into_boxed_slice());
+    fexec_noreturn(setuid, setgid, data.into_boxed_slice(), args, vars);
+}
+
+pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
+    let mut args = Vec::new();
+    for arg_ptr in arg_ptrs {
+        let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
+        // Argument must be moved into kernel space before exec unmaps all memory
+        args.push(arg.to_vec().into_boxed_slice());
+    }
+    drop(arg_ptrs);
+
+    let mut vars = Vec::new();
+    for var_ptr in var_ptrs {
+        let var = validate_slice(var_ptr[0] as *const u8, var_ptr[1])?;
+        // Argument must be moved into kernel space before exec unmaps all memory
+        vars.push(var.to_vec().into_boxed_slice());
+    }
+    drop(var_ptrs);
+
+    fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice())
 }
 
 pub fn exit(status: usize) -> ! {
