@@ -143,7 +143,8 @@ pub extern fn userspace_init() {
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
 
-    syscall::exec(b"/bin/init", &[]).expect("failed to execute init");
+    let fd = syscall::open(b"/bin/init", syscall::flag::O_RDONLY).expect("failed to open init");
+    syscall::fexec(fd, &[], &[]).expect("failed to execute init");
 
     panic!("init returned");
 }

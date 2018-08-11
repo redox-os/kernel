@@ -191,23 +191,32 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "clone({})",
             b
         ),
+        SYS_EXIT => format!(
+            "exit({})",
+            b
+        ),
         //TODO: Cleanup, do not allocate
-        SYS_EXECVE => format!(
-            "execve({:?}, {:?})",
-            validate_slice(b as *const u8, c).map(ByteStr),
+        SYS_FEXEC => format!(
+            "fexec({}, {:?}, {:?})",
+            b,
             validate_slice(
-                d as *const [usize; 2],
-                e
+                c as *const [usize; 2],
+                d
+            ).map(|slice| {
+                slice.iter().map(|a|
+                    validate_slice(a[0] as *const u8, a[1]).ok()
+                    .and_then(|s| ::core::str::from_utf8(s).ok())
+                ).collect::<Vec<Option<&str>>>()
+            }),
+            validate_slice(
+                e as *const [usize; 2],
+                f
             ).map(|slice| {
                 slice.iter().map(|a|
                     validate_slice(a[0] as *const u8, a[1]).ok()
                     .and_then(|s| ::core::str::from_utf8(s).ok())
                 ).collect::<Vec<Option<&str>>>()
             })
-        ),
-        SYS_EXIT => format!(
-            "exit({})",
-            b
         ),
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",

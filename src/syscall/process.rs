@@ -2,7 +2,7 @@ use alloc::arc::Arc;
 use alloc::boxed::Box;
 use alloc::{BTreeMap, Vec};
 use core::alloc::{Alloc, GlobalAlloc, Layout};
-use core::{intrinsics, mem, str};
+use core::{intrinsics, mem};
 use core::ops::DerefMut;
 use spin::Mutex;
 
@@ -541,11 +541,11 @@ impl Drop for ExecFile {
 }
 
 fn exec_noreturn(
-    canonical: Box<[u8]>,
     setuid: Option<u32>,
     setgid: Option<u32>,
     data: Box<[u8]>,
-    args: Box<[Box<[u8]>]>
+    args: Box<[Box<[u8]>]>,
+    vars: Box<[Box<[u8]>]>
 ) -> ! {
     let entry;
     let mut sp = ::USER_STACK_OFFSET + ::USER_STACK_SIZE - 256;
@@ -557,7 +557,9 @@ fn exec_noreturn(
             let mut context = context_lock.write();
 
             // Set name
-            context.name = Arc::new(Mutex::new(canonical));
+            if let Some(name) = args.get(0) {
+                context.name = Arc::new(Mutex::new(name.clone()));
+            }
 
             empty(&mut context, false);
 
@@ -776,7 +778,7 @@ fn exec_noreturn(
     unsafe { usermode(entry, sp, 0); }
 }
 
-pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
+pub fn fexec(mut fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
     let mut args = Vec::new();
     for arg_ptr in arg_ptrs {
         let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
@@ -784,17 +786,25 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
         args.push(arg.to_vec().into_boxed_slice());
     }
 
-    let (uid, gid, mut canonical) = {
+    let mut vars = Vec::new();
+    for var_ptr in var_ptrs {
+        let var = validate_slice(var_ptr[0] as *const u8, var_ptr[1])?;
+        // Argument must be moved into kernel space before exec unmaps all memory
+        vars.push(var.to_vec().into_boxed_slice());
+    }
+
+    let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.euid, context.egid, context.canonicalize(path))
+        (context.euid, context.egid)
     };
 
     let mut stat: Stat;
     let mut data: Vec<u8>;
-    loop {
-        let file = ExecFile(syscall::open(&canonical, syscall::flag::O_RDONLY)?);
+    //loop
+    {
+        let file = ExecFile(fd);
 
         stat = Stat::default();
         syscall::file_op_mut_slice(syscall::number::SYS_FSTAT, file.0, &mut stat)?;
@@ -819,34 +829,37 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
         syscall::file_op_mut_slice(syscall::number::SYS_READ, file.0, &mut data)?;
         drop(file);
 
-        if data.starts_with(b"#!") {
-            if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
-                // Strip whitespace
-                let line = &line[line.iter().position(|&b| b != b' ')
-                                     .unwrap_or(0)..];
-                let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
-                let mut parts = line.split(|x| *x == b' ')
-                    .map(|x| x.iter().cloned().collect::<Vec<_>>().into_boxed_slice())
-                    .collect::<Vec<_>>();
-                if ! args.is_empty() {
-                    args.remove(0);
-                }
-                parts.push(path.to_vec().into_boxed_slice());
-                parts.extend(args.iter().cloned());
-                args = parts;
-                canonical = {
-                    let contexts = context::contexts();
-                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    let context = context_lock.read();
-                    context.canonicalize(executable)
-                };
-            } else {
-                println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
-                return Err(Error::new(ENOEXEC));
-            }
-        } else {
-            break;
-        }
+        // TODO: Move to userspace
+        // if data.starts_with(b"#!") {
+        //     if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
+        //         // Strip whitespace
+        //         let line = &line[line.iter().position(|&b| b != b' ')
+        //                              .unwrap_or(0)..];
+        //         let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
+        //         let mut parts = line.split(|x| *x == b' ')
+        //             .map(|x| x.iter().cloned().collect::<Vec<_>>().into_boxed_slice())
+        //             .collect::<Vec<_>>();
+        //         if ! args.is_empty() {
+        //             args.remove(0);
+        //         }
+        //         parts.push(path.to_vec().into_boxed_slice());
+        //         parts.extend(args.iter().cloned());
+        //         args = parts;
+        //         let canonical = {
+        //             let contexts = context::contexts();
+        //             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        //             let context = context_lock.read();
+        //             context.canonicalize(executable)
+        //         };
+        //
+        //         fd = syscall::open(&canonical, syscall::flag::O_RDONLY)?;
+        //     } else {
+        //         println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
+        //         return Err(Error::new(ENOEXEC));
+        //     }
+        // } else {
+        //     break;
+        // }
     }
 
     // Set UID and GID are determined after resolving any hashbangs
@@ -871,7 +884,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
     // argument pointer array and potential padding
     //
     // A limit of 4095 would mean a stack of (4095 + 1) * 8 * 2 = 65536, or 64KB
-    if args.len() > 4095 {
+    if (args.len() + vars.len()) > 4095 {
         return Err(Error::new(E2BIG));
     }
 
@@ -894,19 +907,19 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
             }
         },
         Err(err) => {
-            println!("exec: failed to execute {}: {}", unsafe { str::from_utf8_unchecked(path) }, err);
+            println!("fexec: failed to execute {}: {}", fd.into(), err);
             return Err(Error::new(ENOEXEC));
         }
     }
 
     // Drop so that usage is not allowed after unmapping context
-    drop(path);
     drop(arg_ptrs);
+    drop(var_ptrs);
 
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    exec_noreturn(canonical.into_boxed_slice(), setuid, setgid, data.into_boxed_slice(), args.into_boxed_slice());
+    exec_noreturn(setuid, setgid, data.into_boxed_slice(), args.into_boxed_slice(), vars.into_boxed_slice());
 }
 
 pub fn exit(status: usize) -> ! {
