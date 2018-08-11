@@ -24,10 +24,6 @@ impl EventQueue {
         }
     }
 
-    pub fn dup(&self, other: &EventQueue) {
-        panic!("EventQeuue::dup");
-    }
-
     pub fn read(&self, events: &mut [Event]) -> Result<usize> {
         Ok(self.queue.receive_into(events, true))
     }

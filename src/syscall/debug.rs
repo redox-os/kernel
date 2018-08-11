@@ -129,11 +129,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             d
         ),
-        SYS_FEVENT => format!(
-            "fevent({}, {:#X})",
-            b,
-            c
-        ),
         SYS_FMAP => format!(
             "fmap({}, {:#X}, {})",
             b,

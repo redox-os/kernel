@@ -16,27 +16,6 @@ impl Scheme for EventScheme {
         Ok(id.into())
     }
 
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        let id = EventQueueId::from(id);
-
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let old_queue = {
-            let handles = queues();
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-            handle.clone()
-        };
-
-        let new_id = next_queue_id();
-        let new_queue = Arc::new(EventQueue::new(new_id));
-        queues_mut().insert(new_id, new_queue.clone());
-        new_queue.dup(&old_queue);
-
-        Ok(new_id.into())
-    }
-
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let id = EventQueueId::from(id);
 

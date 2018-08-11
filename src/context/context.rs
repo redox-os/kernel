@@ -1,6 +1,6 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
-use alloc::{BTreeMap, Vec, VecDeque};
+use alloc::{Vec, VecDeque};
 use core::cmp::Ordering;
 use core::mem;
 use spin::Mutex;
@@ -150,8 +150,6 @@ pub struct Context {
     pub name: Arc<Mutex<Box<[u8]>>>,
     /// The current working directory
     pub cwd: Arc<Mutex<Vec<u8>>>,
-    /// The process environment
-    pub env: Arc<Mutex<BTreeMap<Box<[u8]>, Arc<Mutex<Vec<u8>>>>>>,
     /// The open files in the scheme
     pub files: Arc<Mutex<Vec<Option<FileDescriptor>>>>,
     /// Singal actions
@@ -191,7 +189,6 @@ impl Context {
             grants: Arc::new(Mutex::new(Vec::new())),
             name: Arc::new(Mutex::new(Vec::new().into_boxed_slice())),
             cwd: Arc::new(Mutex::new(Vec::new())),
-            env: Arc::new(Mutex::new(BTreeMap::new())),
             files: Arc::new(Mutex::new(Vec::new())),
             actions: Arc::new(Mutex::new(vec![(
                 SigAction {

@@ -63,7 +63,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                         SYS_DUP => dup(fd, validate_slice(c as *const u8, d)?).map(FileHandle::into),
                         SYS_DUP2 => dup2(fd, FileHandle::from(c), validate_slice(d as *const u8, e)?).map(FileHandle::into),
                         SYS_FCNTL => fcntl(fd, c, d),
-                        SYS_FEVENT => fevent(fd, c),
                         SYS_FEXEC => fexec(fd, validate_slice(c as *const [usize; 2], d)?, validate_slice(e as *const [usize; 2], f)?),
                         SYS_FRENAME => frename(fd, validate_slice(c as *const u8, d)?),
                         SYS_FUNMAP => funmap(b),

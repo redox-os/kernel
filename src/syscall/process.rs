@@ -1,7 +1,7 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
-use alloc::{BTreeMap, Vec};
-use core::alloc::{Alloc, GlobalAlloc, Layout};
+use alloc::vec::Vec;
+use core::alloc::{GlobalAlloc, Layout};
 use core::{intrinsics, mem};
 use core::ops::DerefMut;
 use spin::Mutex;
@@ -86,7 +86,6 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         let grants;
         let name;
         let cwd;
-        let env;
         let files;
         let actions;
 
@@ -263,16 +262,6 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 cwd = Arc::clone(&context.cwd);
             } else {
                 cwd = Arc::new(Mutex::new(context.cwd.lock().clone()));
-            }
-
-            if flags & CLONE_VM == CLONE_VM {
-                env = Arc::clone(&context.env);
-            } else {
-                let mut new_env = BTreeMap::new();
-                for item in context.env.lock().iter() {
-                    new_env.insert(item.0.clone(), Arc::new(Mutex::new(item.1.lock().clone())));
-                }
-                env = Arc::new(Mutex::new(new_env));
             }
 
             if flags & CLONE_FILES == CLONE_FILES {
@@ -481,8 +470,6 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             context.name = name;
 
             context.cwd = cwd;
-
-            context.env = env;
 
             context.files = files;
 
@@ -748,7 +735,7 @@ fn exec_noreturn(
             (vfork, context.ppid, files)
         };
 
-        for (fd, file_option) in files.lock().iter_mut().enumerate() {
+        for (_fd, file_option) in files.lock().iter_mut().enumerate() {
             let mut cloexec = false;
             if let Some(ref file) = *file_option {
                 if file.cloexec {
@@ -778,7 +765,7 @@ fn exec_noreturn(
     unsafe { usermode(entry, sp, 0); }
 }
 
-pub fn fexec(mut fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
+pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
     let mut args = Vec::new();
     for arg_ptr in arg_ptrs {
         let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
@@ -944,7 +931,7 @@ pub fn exit(status: usize) -> ! {
         };
 
         // Files must be closed while context is valid so that messages can be passed
-        for (fd, file_option) in close_files.drain(..).enumerate() {
+        for (_fd, file_option) in close_files.drain(..).enumerate() {
             if let Some(file) = file_option {
                 let _ = file.close();
             }
@@ -1063,7 +1050,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         (context.ruid, context.euid, context.pgid)
     };
 
-    if sig >= 0 && sig < 0x7F {
+    if sig < 0x7F {
         let mut found = 0;
         let mut sent = 0;
 

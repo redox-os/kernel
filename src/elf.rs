@@ -61,7 +61,6 @@ impl<'a> Elf<'a> {
         if let Some(symtab) = symtab_opt {
             Some(ElfSymbols {
                 data: self.data,
-                header: self.header,
                 symtab: symtab,
                 i: 0
             })
@@ -128,7 +127,6 @@ impl<'a> Iterator for ElfSegments<'a> {
 
 pub struct ElfSymbols<'a> {
     data: &'a [u8],
-    header: &'a header::Header,
     symtab: &'a section_header::SectionHeader,
     i: usize
 }
