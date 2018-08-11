@@ -688,9 +688,9 @@ fn exec_noreturn(
                 context.tls = Some(tls);
             }
 
-            // Push arguments
+            // Push arguments and variables
             let mut arg_size = 0;
-            for arg in args.iter().rev() {
+            for arg in vars.iter().rev().chain(args.iter().rev()) {
                 sp -= mem::size_of::<usize>();
                 unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
 
@@ -709,7 +709,7 @@ fn exec_noreturn(
                 );
 
                 let mut arg_offset = 0;
-                for arg in args.iter().rev() {
+                for arg in vars.iter().rev().chain(args.iter().rev()) {
                     unsafe {
                         intrinsics::copy(arg.as_ptr(),
                                (::USER_ARG_OFFSET + arg_offset) as *mut u8,
