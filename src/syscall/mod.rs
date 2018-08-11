@@ -1,4 +1,6 @@
-///! Syscall handlers
+//!
+//! This module provides syscall definitions and the necessary resources to parse incoming
+//! syscalls
 
 extern crate syscall;
 
@@ -44,9 +46,12 @@ pub mod time;
 /// Validate input
 pub mod validate;
 
+/// This function is the syscall handler of the kernel, it is composed of an inner function that returns a `Result<usize>`. After the inner function runs, the syscall
+/// function calls [`Error::mux`] on it.
 pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> usize {
     #[inline(always)]
     fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> Result<usize> {
+        //SYS_* is declared in kernel/syscall/src/number.rs
         match a & SYS_CLASS {
             SYS_CLASS_FILE => {
                 let fd = FileHandle::from(b);
@@ -165,6 +170,11 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
     }
     */
 
+    // The next lines set the current syscall in the context struct, then once the inner() function
+    // completes, we set the current syscall to none.
+    //
+    // When the code below falls out of scope it will release the lock
+    // see the spin crate for details
     {
         let contexts = ::context::contexts();
         if let Some(context_lock) = contexts.current() {
@@ -204,5 +214,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
     }
     */
 
+    // errormux turns Result<usize> into -errno
     Error::mux(result)
 }
