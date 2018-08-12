@@ -675,6 +675,10 @@ fn fexec_noreturn(
                 context.tls = Some(tls);
             }
 
+            // Push end of variables
+            sp -= mem::size_of::<usize>();
+            unsafe { *(sp as *mut usize) = 0; }
+
             // Push arguments and variables
             let mut arg_size = 0;
             for arg in vars.iter().rev().chain(args.iter().rev()) {
@@ -684,6 +688,7 @@ fn fexec_noreturn(
                 arg_size += arg.len() + 1;
             }
 
+            // Push arguments length
             sp -= mem::size_of::<usize>();
             unsafe { *(sp as *mut usize) = args.len(); }
 
