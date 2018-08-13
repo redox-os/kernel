@@ -675,17 +675,21 @@ fn fexec_noreturn(
                 context.tls = Some(tls);
             }
 
-            // Push end of variables
-            sp -= mem::size_of::<usize>();
-            unsafe { *(sp as *mut usize) = 0; }
+            let mut arg_size = 0;
 
             // Push arguments and variables
-            let mut arg_size = 0;
-            for arg in vars.iter().rev().chain(args.iter().rev()) {
+            for iter in &[&vars, &args] {
+                // Push null-terminator
                 sp -= mem::size_of::<usize>();
-                unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
+                unsafe { *(sp as *mut usize) = 0; }
 
-                arg_size += arg.len() + 1;
+                // Push content
+                for arg in iter.iter().rev() {
+                    sp -= mem::size_of::<usize>();
+                    unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
+
+                    arg_size += arg.len() + 1;
+                }
             }
 
             // Push arguments length
