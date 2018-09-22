@@ -22,7 +22,6 @@
 #![feature(const_max_value)]
 #![feature(const_size_of)]
 #![feature(core_intrinsics)]
-#![feature(global_allocator)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
 #![feature(naked_functions)]

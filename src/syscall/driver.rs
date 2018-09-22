@@ -30,24 +30,27 @@ pub fn iopl(level: usize, stack: &mut SyscallStack) -> Result<usize> {
     Ok(0)
 }
 
-pub fn physalloc(size: usize) -> Result<usize> {
-    enforce_root()?;
-
+pub fn inner_physalloc(size: usize) -> Result<usize> {
     allocate_frames((size + 4095)/4096).ok_or(Error::new(ENOMEM)).map(|frame| frame.start_address().get())
 }
-
-pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
+pub fn physalloc(size: usize) -> Result<usize> {
     enforce_root()?;
+    inner_physalloc(size)
+}
 
+pub fn inner_physfree(physical_address: usize, size: usize) -> Result<usize> {
     deallocate_frames(Frame::containing_address(PhysicalAddress::new(physical_address)), (size + 4095)/4096);
+
     //TODO: Check that no double free occured
     Ok(0)
 }
+pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
+    enforce_root()?;
+    inner_physfree(physical_address, size)
+}
 
 //TODO: verify exlusive access to physical memory
-pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usize> {
-    enforce_root()?;
-
+pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Result<usize> {
     if size == 0 {
         Ok(0)
     } else {
@@ -98,10 +101,12 @@ pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usi
         Ok(to_address + offset)
     }
 }
-
-pub fn physunmap(virtual_address: usize) -> Result<usize> {
+pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usize> {
     enforce_root()?;
+    inner_physmap(physical_address, size, flags)
+}
 
+pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
     if virtual_address == 0 {
         Ok(0)
     } else {
@@ -123,6 +128,10 @@ pub fn physunmap(virtual_address: usize) -> Result<usize> {
 
         Err(Error::new(EFAULT))
     }
+}
+pub fn physunmap(virtual_address: usize) -> Result<usize> {
+    enforce_root()?;
+    inner_physunmap(virtual_address)
 }
 
 pub fn virttophys(virtual_address: usize) -> Result<usize> {
