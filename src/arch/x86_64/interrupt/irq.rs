@@ -2,8 +2,9 @@ use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
 use context;
 use context::timeout;
-use device::{local_apic, pic};
+use device::pic;
 use device::serial::{COM1, COM2};
+use ipi::{ipi, IpiKind, IpiTarget};
 use time;
 
 //resets to 0 in context::switch()
@@ -40,9 +41,7 @@ pub unsafe fn acknowledge(irq: usize) {
 
 interrupt!(pit, {
     // Wake up other CPUs
-    if cfg!(feature = "multi_core") {
-        local_apic::LOCAL_APIC.set_icr(3 << 18 | 1 << 14 | 0x41);
-    }
+    ipi(IpiKind::Pit, IpiTarget::Other);
 
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 

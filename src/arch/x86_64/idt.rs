@@ -68,9 +68,10 @@ pub unsafe fn init_paging() {
     IDT[46].set_func(irq::ata1);
     IDT[47].set_func(irq::ata2);
 
-    // Set IPI handler (null)
-    IDT[0x40].set_func(ipi::ipi);
-    IDT[0x41].set_func(ipi::pit);
+    // Set IPI handlers
+    IDT[0x40].set_func(ipi::wakeup);
+    IDT[0x41].set_func(ipi::tlb);
+    IDT[0x42].set_func(ipi::pit);
 
     // Set syscall function
     IDT[0x80].set_func(syscall::syscall);

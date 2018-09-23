@@ -20,6 +20,9 @@ pub mod idt;
 /// Interrupt instructions
 pub mod interrupt;
 
+/// Inter-processor interrupts
+pub mod ipi;
+
 /// Paging
 pub mod paging;
 

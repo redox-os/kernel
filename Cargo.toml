@@ -27,7 +27,7 @@ version = "0.9.0"
 default-features = false
 
 [features]
-default = []
+default = ["acpi", "multi_core"]
 acpi = []
 doc = []
 graphical_debug = []

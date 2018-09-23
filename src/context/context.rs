@@ -8,7 +8,7 @@ use spin::Mutex;
 use context::arch;
 use context::file::FileDescriptor;
 use context::memory::{Grant, Memory, SharedMemory, Tls};
-use device;
+use ipi::{ipi, IpiKind, IpiTarget};
 use scheme::{SchemeNamespace, FileHandle};
 use syscall::data::SigAction;
 use syscall::flag::SIG_DFL;
@@ -284,15 +284,14 @@ impl Context {
     pub fn unblock(&mut self) -> bool {
         if self.status == Status::Blocked {
             self.status = Status::Runnable;
-            if cfg!(feature = "multi_core") {
-                if let Some(cpu_id) = self.cpu_id {
-                    if cpu_id != ::cpu_id() {
-                        // Send IPI if not on current CPU
-                        // TODO: Make this more architecture independent
-                        unsafe { device::local_apic::LOCAL_APIC.set_icr(3 << 18 | 1 << 14 | 0x40) };
-                    }
-                }
+
+            if let Some(cpu_id) = self.cpu_id {
+               if cpu_id != ::cpu_id() {
+                    // Send IPI if not on current CPU
+                    ipi(IpiKind::Wakeup, IpiTarget::Other);
+               }
             }
+
             true
         } else {
             false
