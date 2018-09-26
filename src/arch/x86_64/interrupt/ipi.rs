@@ -1,4 +1,5 @@
 use core::sync::atomic::Ordering;
+use x86::shared::tlb;
 
 use context;
 use device::local_apic::LOCAL_APIC;
@@ -10,7 +11,8 @@ interrupt!(wakeup, {
 
 interrupt!(tlb, {
     LOCAL_APIC.eoi();
-    //TODO
+
+    tlb::flush_all();
 });
 
 interrupt!(switch, {
