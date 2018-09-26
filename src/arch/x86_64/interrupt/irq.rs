@@ -40,9 +40,6 @@ pub unsafe fn acknowledge(irq: usize) {
 }
 
 interrupt!(pit, {
-    // Wake up other CPUs
-    ipi(IpiKind::Pit, IpiTarget::Other);
-
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
     const PIT_RATE: u64 = 2_250_286;
@@ -55,6 +52,9 @@ interrupt!(pit, {
     }
 
     pic::MASTER.ack();
+
+    // Wake up other CPUs
+    ipi(IpiKind::Pit, IpiTarget::Other);
 
     // Any better way of doing this?
     timeout::trigger();
