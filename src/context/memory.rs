@@ -3,6 +3,7 @@ use alloc::VecDeque;
 use core::intrinsics;
 use spin::Mutex;
 
+use ipi::{ipi, IpiKind, IpiTarget};
 use memory::Frame;
 use paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
 use paging::entry::EntryFlags;
@@ -64,6 +65,8 @@ impl Grant {
             }
         });
 
+        ipi(IpiKind::Tlb, IpiTarget::Other);
+
         Grant {
             start: to,
             size: size,
@@ -117,6 +120,8 @@ impl Grant {
                 unsafe { result.ignore(); }
             }
         });
+
+        ipi(IpiKind::Tlb, IpiTarget::Other);
 
         self.mapped = false;
     }

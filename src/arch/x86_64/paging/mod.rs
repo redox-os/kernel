@@ -5,7 +5,6 @@ use core::{mem, ptr};
 use core::ops::{Deref, DerefMut};
 use x86::shared::{control_regs, msr, tlb};
 
-use ipi::{ipi, IpiKind, IpiTarget};
 use memory::{allocate_frames, Frame};
 
 use self::entry::EntryFlags;
