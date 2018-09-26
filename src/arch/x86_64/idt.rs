@@ -3,6 +3,7 @@ use x86::current::irq::IdtEntry as X86IdtEntry;
 use x86::shared::dtables::{self, DescriptorTablePointer};
 
 use interrupt::*;
+use ipi::IpiKind;
 
 pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
     limit: 0,
@@ -69,9 +70,10 @@ pub unsafe fn init_paging() {
     IDT[47].set_func(irq::ata2);
 
     // Set IPI handlers
-    IDT[0x40].set_func(ipi::wakeup);
-    IDT[0x41].set_func(ipi::tlb);
-    IDT[0x42].set_func(ipi::pit);
+    IDT[IpiKind::Wakeup as usize].set_func(ipi::wakeup);
+    IDT[IpiKind::Switch as usize].set_func(ipi::switch);
+    IDT[IpiKind::Tlb as usize].set_func(ipi::tlb);
+    IDT[IpiKind::Pit as usize].set_func(ipi::pit);
 
     // Set syscall function
     IDT[0x80].set_func(syscall::syscall);

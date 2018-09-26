@@ -3,7 +3,8 @@
 pub enum IpiKind {
     Wakeup = 0x40,
     Tlb = 0x41,
-    Pit = 0x42,
+    Switch = 0x42,
+    Pit = 0x43,
 }
 
 #[derive(Clone, Copy, Debug)]

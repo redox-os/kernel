@@ -17,6 +17,7 @@ use context::{ContextId, WaitpidKey};
 use context::file::FileDescriptor;
 #[cfg(not(feature="doc"))]
 use elf::{self, program_header};
+use ipi::{ipi, IpiKind, IpiTarget};
 use scheme::FileHandle;
 use syscall;
 use syscall::data::{SigAction, Stat};
@@ -476,6 +477,9 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             context.actions = actions;
         }
     }
+
+    // Race to pick up the new process!
+    ipi(IpiKind::Switch, IpiTarget::Other);
 
     let _ = unsafe { context::switch() };
 
