@@ -17,7 +17,6 @@ use syscall::scheme::Scheme;
 
 use self::debug::DebugScheme;
 use self::event::EventScheme;
-use self::env::EnvScheme;
 use self::initfs::InitFsScheme;
 use self::irq::IrqScheme;
 use self::memory::MemoryScheme;
@@ -31,9 +30,6 @@ pub mod debug;
 
 /// `event:` - allows reading of `Event`s which are registered using `fevent`
 pub mod event;
-
-/// `env:` - access and modify environmental variables
-pub mod env;
 
 /// `initfs:` - a readonly filesystem used for initializing the system
 pub mod initfs;
@@ -119,7 +115,6 @@ impl SchemeList {
 
         self.insert(ns, Box::new(*b""), |scheme_id| Arc::new(Box::new(RootScheme::new(ns, scheme_id)))).unwrap();
         self.insert(ns, Box::new(*b"event"), |_| Arc::new(Box::new(EventScheme))).unwrap();
-        self.insert(ns, Box::new(*b"env"), |_| Arc::new(Box::new(EnvScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"memory"), |_| Arc::new(Box::new(MemoryScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"sys"), |_| Arc::new(Box::new(SysScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"time"), |scheme_id| Arc::new(Box::new(TimeScheme::new(scheme_id)))).unwrap();

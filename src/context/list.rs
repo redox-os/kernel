@@ -1,7 +1,7 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
 use alloc::BTreeMap;
-use core::alloc::{Alloc, GlobalAlloc, Layout};
+use core::alloc::{GlobalAlloc, Layout};
 use core::mem;
 use core::sync::atomic::Ordering;
 use paging;

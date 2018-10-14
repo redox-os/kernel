@@ -371,11 +371,6 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     }
 }
 
-/// Register events for file
-pub fn fevent(fd: FileHandle, flags: usize) -> Result<usize> {
-    Err(Error::new(ENOSYS))
-}
-
 pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {
     let file = {
         let contexts = context::contexts();

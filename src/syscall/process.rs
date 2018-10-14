@@ -1,8 +1,8 @@
 use alloc::arc::Arc;
 use alloc::boxed::Box;
-use alloc::{BTreeMap, Vec};
-use core::alloc::{Alloc, GlobalAlloc, Layout};
-use core::{intrinsics, mem, str};
+use alloc::vec::Vec;
+use core::alloc::{GlobalAlloc, Layout};
+use core::{intrinsics, mem};
 use core::ops::DerefMut;
 use spin::Mutex;
 
@@ -17,6 +17,7 @@ use context::{ContextId, WaitpidKey};
 use context::file::FileDescriptor;
 #[cfg(not(feature="doc"))]
 use elf::{self, program_header};
+use ipi::{ipi, IpiKind, IpiTarget};
 use scheme::FileHandle;
 use syscall;
 use syscall::data::{SigAction, Stat};
@@ -86,7 +87,6 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         let grants;
         let name;
         let cwd;
-        let env;
         let files;
         let actions;
 
@@ -263,16 +263,6 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 cwd = Arc::clone(&context.cwd);
             } else {
                 cwd = Arc::new(Mutex::new(context.cwd.lock().clone()));
-            }
-
-            if flags & CLONE_VM == CLONE_VM {
-                env = Arc::clone(&context.env);
-            } else {
-                let mut new_env = BTreeMap::new();
-                for item in context.env.lock().iter() {
-                    new_env.insert(item.0.clone(), Arc::new(Mutex::new(item.1.lock().clone())));
-                }
-                env = Arc::new(Mutex::new(new_env));
             }
 
             if flags & CLONE_FILES == CLONE_FILES {
@@ -482,13 +472,14 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             context.cwd = cwd;
 
-            context.env = env;
-
             context.files = files;
 
             context.actions = actions;
         }
     }
+
+    // Race to pick up the new process!
+    ipi(IpiKind::Switch, IpiTarget::Other);
 
     let _ = unsafe { context::switch() };
 
@@ -540,12 +531,12 @@ impl Drop for ExecFile {
     }
 }
 
-fn exec_noreturn(
-    canonical: Box<[u8]>,
+fn fexec_noreturn(
     setuid: Option<u32>,
     setgid: Option<u32>,
     data: Box<[u8]>,
-    args: Box<[Box<[u8]>]>
+    args: Box<[Box<[u8]>]>,
+    vars: Box<[Box<[u8]>]>
 ) -> ! {
     let entry;
     let mut sp = ::USER_STACK_OFFSET + ::USER_STACK_SIZE - 256;
@@ -557,7 +548,9 @@ fn exec_noreturn(
             let mut context = context_lock.write();
 
             // Set name
-            context.name = Arc::new(Mutex::new(canonical));
+            if let Some(name) = args.get(0) {
+                context.name = Arc::new(Mutex::new(name.clone()));
+            }
 
             empty(&mut context, false);
 
@@ -686,17 +679,24 @@ fn exec_noreturn(
                 context.tls = Some(tls);
             }
 
-            // Push arguments
             let mut arg_size = 0;
-            for arg in args.iter().rev() {
-                sp -= mem::size_of::<usize>();
-                unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
-                sp -= mem::size_of::<usize>();
-                unsafe { *(sp as *mut usize) = arg.len(); }
 
-                arg_size += arg.len();
+            // Push arguments and variables
+            for iter in &[&vars, &args] {
+                // Push null-terminator
+                sp -= mem::size_of::<usize>();
+                unsafe { *(sp as *mut usize) = 0; }
+
+                // Push content
+                for arg in iter.iter().rev() {
+                    sp -= mem::size_of::<usize>();
+                    unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
+
+                    arg_size += arg.len() + 1;
+                }
             }
 
+            // Push arguments length
             sp -= mem::size_of::<usize>();
             unsafe { *(sp as *mut usize) = args.len(); }
 
@@ -709,14 +709,18 @@ fn exec_noreturn(
                 );
 
                 let mut arg_offset = 0;
-                for arg in args.iter().rev() {
+                for arg in vars.iter().rev().chain(args.iter().rev()) {
                     unsafe {
                         intrinsics::copy(arg.as_ptr(),
                                (::USER_ARG_OFFSET + arg_offset) as *mut u8,
                                arg.len());
                     }
-
                     arg_offset += arg.len();
+
+                    unsafe {
+                        *((::USER_ARG_OFFSET + arg_offset) as *mut u8) = 0;
+                    }
+                    arg_offset += 1;
                 }
 
                 memory.remap(EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE);
@@ -744,7 +748,7 @@ fn exec_noreturn(
             (vfork, context.ppid, files)
         };
 
-        for (fd, file_option) in files.lock().iter_mut().enumerate() {
+        for (_fd, file_option) in files.lock().iter_mut().enumerate() {
             let mut cloexec = false;
             if let Some(ref file) = *file_option {
                 if file.cloexec {
@@ -774,25 +778,19 @@ fn exec_noreturn(
     unsafe { usermode(entry, sp, 0); }
 }
 
-pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
-    let mut args = Vec::new();
-    for arg_ptr in arg_ptrs {
-        let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
-        // Argument must be moved into kernel space before exec unmaps all memory
-        args.push(arg.to_vec().into_boxed_slice());
-    }
-
-    let (uid, gid, mut canonical) = {
+pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>) -> Result<usize> {
+    let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.euid, context.egid, context.canonicalize(path))
+        (context.euid, context.egid)
     };
 
     let mut stat: Stat;
     let mut data: Vec<u8>;
-    loop {
-        let file = ExecFile(syscall::open(&canonical, syscall::flag::O_RDONLY)?);
+    //loop
+    {
+        let file = ExecFile(fd);
 
         stat = Stat::default();
         syscall::file_op_mut_slice(syscall::number::SYS_FSTAT, file.0, &mut stat)?;
@@ -817,34 +815,37 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
         syscall::file_op_mut_slice(syscall::number::SYS_READ, file.0, &mut data)?;
         drop(file);
 
-        if data.starts_with(b"#!") {
-            if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
-                // Strip whitespace
-                let line = &line[line.iter().position(|&b| b != b' ')
-                                     .unwrap_or(0)..];
-                let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
-                let mut parts = line.split(|x| *x == b' ')
-                    .map(|x| x.iter().cloned().collect::<Vec<_>>().into_boxed_slice())
-                    .collect::<Vec<_>>();
-                if ! args.is_empty() {
-                    args.remove(0);
-                }
-                parts.push(path.to_vec().into_boxed_slice());
-                parts.extend(args.iter().cloned());
-                args = parts;
-                canonical = {
-                    let contexts = context::contexts();
-                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    let context = context_lock.read();
-                    context.canonicalize(executable)
-                };
-            } else {
-                println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
-                return Err(Error::new(ENOEXEC));
-            }
-        } else {
-            break;
-        }
+        // TODO: Move to userspace
+        // if data.starts_with(b"#!") {
+        //     if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
+        //         // Strip whitespace
+        //         let line = &line[line.iter().position(|&b| b != b' ')
+        //                              .unwrap_or(0)..];
+        //         let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
+        //         let mut parts = line.split(|x| *x == b' ')
+        //             .map(|x| x.iter().cloned().collect::<Vec<_>>().into_boxed_slice())
+        //             .collect::<Vec<_>>();
+        //         if ! args.is_empty() {
+        //             args.remove(0);
+        //         }
+        //         parts.push(path.to_vec().into_boxed_slice());
+        //         parts.extend(args.iter().cloned());
+        //         args = parts;
+        //         let canonical = {
+        //             let contexts = context::contexts();
+        //             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        //             let context = context_lock.read();
+        //             context.canonicalize(executable)
+        //         };
+        //
+        //         fd = syscall::open(&canonical, syscall::flag::O_RDONLY)?;
+        //     } else {
+        //         println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
+        //         return Err(Error::new(ENOEXEC));
+        //     }
+        // } else {
+        //     break;
+        // }
     }
 
     // Set UID and GID are determined after resolving any hashbangs
@@ -869,7 +870,7 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
     // argument pointer array and potential padding
     //
     // A limit of 4095 would mean a stack of (4095 + 1) * 8 * 2 = 65536, or 64KB
-    if args.len() > 4095 {
+    if (args.len() + vars.len()) > 4095 {
         return Err(Error::new(E2BIG));
     }
 
@@ -892,19 +893,35 @@ pub fn exec(path: &[u8], arg_ptrs: &[[usize; 2]]) -> Result<usize> {
             }
         },
         Err(err) => {
-            println!("exec: failed to execute {}: {}", unsafe { str::from_utf8_unchecked(path) }, err);
+            println!("fexec: failed to execute {}: {}", fd.into(), err);
             return Err(Error::new(ENOEXEC));
         }
     }
 
-    // Drop so that usage is not allowed after unmapping context
-    drop(path);
-    drop(arg_ptrs);
-
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    exec_noreturn(canonical.into_boxed_slice(), setuid, setgid, data.into_boxed_slice(), args.into_boxed_slice());
+    fexec_noreturn(setuid, setgid, data.into_boxed_slice(), args, vars);
+}
+
+pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
+    let mut args = Vec::new();
+    for arg_ptr in arg_ptrs {
+        let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
+        // Argument must be moved into kernel space before exec unmaps all memory
+        args.push(arg.to_vec().into_boxed_slice());
+    }
+    drop(arg_ptrs);
+
+    let mut vars = Vec::new();
+    for var_ptr in var_ptrs {
+        let var = validate_slice(var_ptr[0] as *const u8, var_ptr[1])?;
+        // Argument must be moved into kernel space before exec unmaps all memory
+        vars.push(var.to_vec().into_boxed_slice());
+    }
+    drop(var_ptrs);
+
+    fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice())
 }
 
 pub fn exit(status: usize) -> ! {
@@ -929,7 +946,7 @@ pub fn exit(status: usize) -> ! {
         };
 
         // Files must be closed while context is valid so that messages can be passed
-        for (fd, file_option) in close_files.drain(..).enumerate() {
+        for (_fd, file_option) in close_files.drain(..).enumerate() {
             if let Some(file) = file_option {
                 let _ = file.close();
             }
@@ -1048,7 +1065,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         (context.ruid, context.euid, context.pgid)
     };
 
-    if sig >= 0 && sig < 0x7F {
+    if sig < 0x7F {
         let mut found = 0;
         let mut sent = 0;
 

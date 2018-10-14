@@ -45,9 +45,8 @@ extern crate spin;
 #[cfg(feature = "slab")]
 extern crate slab_allocator;
 
-use alloc::arc::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
-use spin::Mutex;
 
 use scheme::{FileHandle, SchemeNamespace};
 
@@ -133,24 +132,40 @@ pub fn cpu_count() -> usize {
     CPU_COUNT.load(Ordering::Relaxed)
 }
 
+static mut INIT_ENV: &[u8] = &[];
+
 /// Initialize userspace by running the initfs:bin/init process
 /// This function will also set the CWD to initfs:bin and open debug: as stdio
 pub extern fn userspace_init() {
+    let path = b"/bin/init";
+    let env = unsafe { INIT_ENV };
+
     assert_eq!(syscall::chdir(b"initfs:"), Ok(0));
 
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_RDONLY).map(FileHandle::into), Ok(0));
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
 
-    syscall::exec(b"/bin/init", &[]).expect("failed to execute init");
+    let fd = syscall::open(path, syscall::flag::O_RDONLY).expect("failed to open init");
+
+    let mut args = Vec::new();
+    args.push(path.to_vec().into_boxed_slice());
+
+    let mut vars = Vec::new();
+    for var in env.split(|b| *b == b'\n') {
+        vars.push(var.to_vec().into_boxed_slice());
+    }
+
+    syscall::fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice()).expect("failed to execute init");
 
     panic!("init returned");
 }
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-pub fn kmain(cpus: usize, env: &[u8]) -> ! {
+pub fn kmain(cpus: usize, env: &'static [u8]) -> ! {
     CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
+    unsafe { INIT_ENV = env };
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
@@ -165,19 +180,6 @@ pub fn kmain(cpus: usize, env: &[u8]) -> ! {
             context.rns = SchemeNamespace::from(1);
             context.ens = SchemeNamespace::from(1);
             context.status = context::Status::Runnable;
-
-            let mut context_env = context.env.lock();
-            for line in env.split(|b| *b == b'\n') {
-                let mut parts = line.splitn(2, |b| *b == b'=');
-                if let Some(name) = parts.next() {
-                    if let Some(data) = parts.next() {
-                        context_env.insert(
-                            name.to_vec().into_boxed_slice(),
-                            Arc::new(Mutex::new(data.to_vec()))
-                        );
-                    }
-                }
-            }
         },
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);

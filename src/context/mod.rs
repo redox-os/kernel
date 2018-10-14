@@ -1,8 +1,8 @@
 //! # Context management
-//! 
+//!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 use alloc::boxed::Box;
-use core::alloc::{Alloc, GlobalAlloc, Layout};
+use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 

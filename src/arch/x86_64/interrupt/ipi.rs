@@ -1,11 +1,24 @@
 use core::sync::atomic::Ordering;
+use x86::shared::tlb;
 
 use context;
 use device::local_apic::LOCAL_APIC;
 use super::irq::PIT_TICKS;
 
-interrupt!(ipi, {
+interrupt!(wakeup, {
     LOCAL_APIC.eoi();
+});
+
+interrupt!(tlb, {
+    LOCAL_APIC.eoi();
+
+    tlb::flush_all();
+});
+
+interrupt!(switch, {
+    LOCAL_APIC.eoi();
+
+    let _ = context::switch();
 });
 
 interrupt!(pit, {
