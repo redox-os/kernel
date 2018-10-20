@@ -127,23 +127,6 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn dup(&self, file: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let mut handles = self.handles.write();
-        let inner = {
-            let inner = handles.get(&file).ok_or(Error::new(EBADF))?;
-            inner.clone()
-        };
-
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        handles.insert(id, inner);
-
-        Ok(id)
-    }
-
     fn read(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();

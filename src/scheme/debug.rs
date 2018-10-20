@@ -59,22 +59,6 @@ impl Scheme for DebugScheme {
         Ok(id)
     }
 
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let flags = {
-            let handles = handles();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let new_id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        handles_mut().insert(new_id, flags);
-
-        Ok(new_id)
-    }
-
     /// Read the file `number` into the `buffer`
     ///
     /// Returns the number of bytes read

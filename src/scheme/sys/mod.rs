@@ -96,28 +96,6 @@ impl Scheme for SysScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let (path, data, mode, seek) = {
-            let handles = self.handles.read();
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-            (handle.path, handle.data.clone(), handle.mode, handle.seek)
-        };
-
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Handle {
-            path: path,
-            data: data,
-            mode: mode,
-            seek: seek
-        });
-
-        Ok(id)
-    }
-
     fn read(&self, id: usize, buffer: &mut [u8]) -> Result<usize> {
         let mut handles = self.handles.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;

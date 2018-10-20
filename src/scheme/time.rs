@@ -45,21 +45,6 @@ impl Scheme for TimeScheme {
         Ok(id)
     }
 
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let new_id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(new_id, clock);
-        Ok(new_id)
-    }
-
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let clock = {
             let handles = self.handles.read();

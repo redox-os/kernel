@@ -53,38 +53,6 @@ impl PipeScheme {
 }
 
 impl Scheme for PipeScheme {
-    fn dup(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let mut pipes = pipes_mut();
-
-        let read_option = if let Some(pipe) = pipes.0.get(&id) {
-            Some(pipe.dup()?)
-        } else {
-            None
-        };
-        if let Some(pipe) = read_option {
-            let pipe_id = PIPE_NEXT_ID.fetch_add(1, Ordering::SeqCst);
-            pipes.0.insert(pipe_id, Arc::new(pipe));
-            return Ok(pipe_id);
-        }
-
-        let write_option = if let Some(pipe) = pipes.1.get(&id) {
-            Some(pipe.dup()?)
-        } else {
-            None
-        };
-        if let Some(pipe) = write_option {
-            let pipe_id = PIPE_NEXT_ID.fetch_add(1, Ordering::SeqCst);
-            pipes.1.insert(pipe_id, Arc::new(pipe));
-            return Ok(pipe_id);
-        }
-
-        Err(Error::new(EBADF))
-    }
-
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         // Clone to prevent deadlocks
         let pipe = {
@@ -186,16 +154,6 @@ impl PipeRead {
         }
     }
 
-    fn dup(&self) -> Result<Self> {
-        Ok(PipeRead {
-            scheme_id: self.scheme_id,
-            event_id: self.event_id,
-            flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
-            condition: self.condition.clone(),
-            vec: self.vec.clone()
-        })
-    }
-
     fn fcntl(&self, cmd: usize, arg: usize) -> Result<usize> {
         match cmd {
             F_GETFL => Ok(self.flags.load(Ordering::SeqCst)),
@@ -262,16 +220,6 @@ impl PipeWrite {
             condition: read.condition.clone(),
             vec: Some(Arc::downgrade(&read.vec)),
         }
-    }
-
-    fn dup(&self) -> Result<Self> {
-        Ok(PipeWrite {
-            scheme_id: self.scheme_id,
-            event_id: self.event_id,
-            flags: AtomicUsize::new(self.flags.load(Ordering::SeqCst)),
-            condition: self.condition.clone(),
-            vec: self.vec.clone()
-        })
     }
 
     fn fcntl(&self, cmd: usize, arg: usize) -> Result<usize> {

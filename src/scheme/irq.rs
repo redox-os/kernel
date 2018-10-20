@@ -48,14 +48,6 @@ impl Scheme for IrqScheme {
         }
     }
 
-    fn dup(&self, file: usize, buf: &[u8]) -> Result<usize> {
-        if ! buf.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        Ok(file)
-    }
-
     fn read(&self, file: usize, buffer: &mut [u8]) -> Result<usize> {
         // Ensures that the length of the buffer is larger than the size of a usize
         if buffer.len() >= mem::size_of::<usize>() {
