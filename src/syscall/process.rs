@@ -534,6 +534,7 @@ impl Drop for ExecFile {
 fn fexec_noreturn(
     setuid: Option<u32>,
     setgid: Option<u32>,
+    name: Box<[u8]>,
     data: Box<[u8]>,
     args: Box<[Box<[u8]>]>,
     vars: Box<[Box<[u8]>]>
@@ -547,10 +548,7 @@ fn fexec_noreturn(
             let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exec_noreturn pid not found");
             let mut context = context_lock.write();
 
-            // Set name
-            if let Some(name) = args.get(0) {
-                context.name = Arc::new(Mutex::new(name.clone()));
-            }
+            context.name = Arc::new(Mutex::new(name.clone()));
 
             empty(&mut context, false);
 
@@ -787,8 +785,8 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     };
 
     let mut stat: Stat;
+    let mut name: Vec<u8>;
     let mut data: Vec<u8>;
-    //loop
     {
         let file = ExecFile(fd);
 
@@ -810,42 +808,14 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
             return Err(Error::new(EACCES));
         }
 
+        name = vec![0; 4096];
+        let len = syscall::file_op_mut_slice(syscall::number::SYS_FPATH, file.0, &mut name)?;
+        name.truncate(len);
+
         //TODO: Only read elf header, not entire file. Then read required segments
         data = vec![0; stat.st_size as usize];
         syscall::file_op_mut_slice(syscall::number::SYS_READ, file.0, &mut data)?;
         drop(file);
-
-        // TODO: Move to userspace
-        // if data.starts_with(b"#!") {
-        //     if let Some(line) = data[2..].split(|&b| b == b'\n').next() {
-        //         // Strip whitespace
-        //         let line = &line[line.iter().position(|&b| b != b' ')
-        //                              .unwrap_or(0)..];
-        //         let executable = line.split(|x| *x == b' ').next().unwrap_or(b"");
-        //         let mut parts = line.split(|x| *x == b' ')
-        //             .map(|x| x.iter().cloned().collect::<Vec<_>>().into_boxed_slice())
-        //             .collect::<Vec<_>>();
-        //         if ! args.is_empty() {
-        //             args.remove(0);
-        //         }
-        //         parts.push(path.to_vec().into_boxed_slice());
-        //         parts.extend(args.iter().cloned());
-        //         args = parts;
-        //         let canonical = {
-        //             let contexts = context::contexts();
-        //             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        //             let context = context_lock.read();
-        //             context.canonicalize(executable)
-        //         };
-        //
-        //         fd = syscall::open(&canonical, syscall::flag::O_RDONLY)?;
-        //     } else {
-        //         println!("invalid script {}", unsafe { str::from_utf8_unchecked(path) });
-        //         return Err(Error::new(ENOEXEC));
-        //     }
-        // } else {
-        //     break;
-        // }
     }
 
     // Set UID and GID are determined after resolving any hashbangs
@@ -901,7 +871,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    fexec_noreturn(setuid, setgid, data.into_boxed_slice(), args, vars);
+    fexec_noreturn(setuid, setgid, name.into_boxed_slice(), data.into_boxed_slice(), args, vars);
 }
 
 pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
