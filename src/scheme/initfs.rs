@@ -1,4 +1,4 @@
-use alloc::BTreeMap;
+use alloc::collections::BTreeMap;
 use core::{cmp, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
@@ -10,7 +10,7 @@ use syscall::scheme::Scheme;
 
 #[cfg(test)]
 mod gen {
-    use alloc::BTreeMap;
+    use alloc::collections::BTreeMap;
     pub fn gen() -> BTreeMap<&'static [u8], (&'static [u8], bool)> { BTreeMap::new() }
 }
 

@@ -1,4 +1,4 @@
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};

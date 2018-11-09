@@ -1,5 +1,5 @@
-use alloc::arc::Arc;
-use alloc::Vec;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use spin::{Mutex, RwLock};
 
 use context::{self, Context};

@@ -1,6 +1,6 @@
 //! ELF executables
 
-use alloc::String;
+use alloc::string::String;
 
 use goblin::elf::section_header::SHT_SYMTAB;
 

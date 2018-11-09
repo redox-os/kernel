@@ -6,9 +6,9 @@
 //! The kernel validates paths and file descriptors before they are passed to schemes,
 //! also stripping the scheme identifier of paths if necessary.
 
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use alloc::boxed::Box;
-use alloc::BTreeMap;
+use alloc::collections::BTreeMap;
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -74,7 +74,7 @@ pub const ATOMIC_SCHEMEID_INIT: AtomicSchemeId = AtomicSchemeId::default();
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
 pub struct SchemeIter<'a> {
-    inner: Option<::alloc::btree_map::Iter<'a, Box<[u8]>, SchemeId>>
+    inner: Option<::alloc::collections::btree_map::Iter<'a, Box<[u8]>, SchemeId>>
 }
 
 impl<'a> Iterator for SchemeIter<'a> {
@@ -171,7 +171,7 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter(&self) -> ::alloc::btree_map::Iter<SchemeId, Arc<Box<Scheme + Send + Sync>>> {
+    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<Box<Scheme + Send + Sync>>> {
         self.map.iter()
     }
 

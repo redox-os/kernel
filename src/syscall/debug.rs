@@ -1,6 +1,7 @@
 use core::mem;
 use core::ops::Range;
-use alloc::{String, Vec};
+use alloc::string::String;
+use alloc::vec::Vec;
 
 use super::data::{Stat, TimeSpec};
 use super::flag::*;

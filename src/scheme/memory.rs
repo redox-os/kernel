@@ -1,4 +1,5 @@
-use alloc::{BTreeMap, Vec};
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use memory::{free_frames, used_frames};
 use spin::Mutex;

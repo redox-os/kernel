@@ -97,7 +97,7 @@ fn main() {
     // Write header
     f.write_all(b"
 mod gen {
-    use alloc::BTreeMap;
+    use alloc::collections::BTreeMap;
     pub fn gen() -> BTreeMap<&'static [u8], (&'static [u8], bool)> {
         let mut files: BTreeMap<&'static [u8], (&'static [u8], bool)> = BTreeMap::new();
 ").unwrap();

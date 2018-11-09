@@ -1,4 +1,4 @@
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use core::{mem, slice};
 
 use event::{EventQueue, EventQueueId, next_queue_id, queues, queues_mut};

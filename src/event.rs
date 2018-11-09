@@ -1,5 +1,5 @@
-use alloc::arc::Arc;
-use alloc::BTreeMap;
+use alloc::sync::Arc;
+use alloc::collections::BTreeMap;
 use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 

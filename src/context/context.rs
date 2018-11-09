@@ -1,6 +1,7 @@
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use alloc::boxed::Box;
-use alloc::{Vec, VecDeque};
+use alloc::vec::Vec;
+use alloc::collections::VecDeque;
 use core::cmp::Ordering;
 use core::mem;
 use spin::Mutex;

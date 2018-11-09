@@ -1,5 +1,6 @@
 //! Intrinsics for panic handling
 
+use core::alloc::Layout;
 use core::panic::PanicInfo;
 
 use interrupt;
@@ -9,7 +10,7 @@ use interrupt;
 pub extern "C" fn rust_eh_personality() {}
 
 /// Required to handle panics
-#[panic_implementation]
+#[panic_handler]
 #[no_mangle]
 pub extern "C" fn rust_begin_unwind(info: &PanicInfo) -> ! {
     println!("KERNEL PANIC: {}", info);
@@ -24,7 +25,7 @@ pub extern "C" fn rust_begin_unwind(info: &PanicInfo) -> ! {
 
 #[lang = "oom"]
 #[no_mangle]
-pub extern fn rust_oom() -> ! {
+pub extern fn rust_oom(_layout: Layout) -> ! {
     panic!("kernel memory allocation failed");
 }
 

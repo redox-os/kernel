@@ -1,5 +1,5 @@
-use alloc::arc::{Arc, Weak};
-use alloc::VecDeque;
+use alloc::sync::{Arc, Weak};
+use alloc::collections::VecDeque;
 use core::intrinsics;
 use spin::Mutex;
 

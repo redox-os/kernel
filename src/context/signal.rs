@@ -1,4 +1,4 @@
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use core::mem;
 
 use context::{contexts, switch, Status, WaitpidKey};

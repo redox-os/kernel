@@ -1,6 +1,6 @@
 //! Filesystem syscalls
 use core::sync::atomic::Ordering;
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use spin::RwLock;
 
 use context;

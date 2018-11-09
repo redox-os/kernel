@@ -1,6 +1,6 @@
 //! File structs
 
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use event;
 use spin::RwLock;
 use scheme::{self, SchemeId};

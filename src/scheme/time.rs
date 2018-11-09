@@ -1,4 +1,4 @@
-use alloc::BTreeMap;
+use alloc::collections::BTreeMap;
 use core::{mem, slice, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;

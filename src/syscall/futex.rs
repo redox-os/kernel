@@ -2,8 +2,8 @@
 //! Futex or Fast Userspace Mutex is "a method for waiting until a certain condition becomes true."
 //!
 //! For more information about futexes, please read [this](https://eli.thegreenplace.net/2018/basics-of-futexes/) blog post, and the [futex(2)](http://man7.org/linux/man-pages/man2/futex.2.html) man page
-use alloc::arc::Arc;
-use alloc::VecDeque;
+use alloc::sync::Arc;
+use alloc::collections::VecDeque;
 use core::intrinsics;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 

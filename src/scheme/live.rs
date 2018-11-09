@@ -1,7 +1,7 @@
 /// Disk scheme replacement when making live disk
 
-use alloc::arc::Arc;
-use alloc::BTreeMap;
+use alloc::sync::Arc;
+use alloc::collections::BTreeMap;
 use core::{cmp, slice};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;

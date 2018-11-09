@@ -1,6 +1,7 @@
-use alloc::arc::Arc;
+use alloc::sync::Arc;
 use alloc::boxed::Box;
-use alloc::{BTreeMap, Vec};
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};

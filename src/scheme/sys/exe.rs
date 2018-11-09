@@ -1,4 +1,4 @@
-use alloc::Vec;
+use alloc::vec::Vec;
 
 use context;
 use syscall::error::{Error, ESRCH, Result};
