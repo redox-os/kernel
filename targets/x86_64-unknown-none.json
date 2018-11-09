@@ -10,7 +10,9 @@
     "vendor": "unknown",
     "linker-flavor": "gcc",
     "target-family": "redox",
-    "pre-link-args": ["-m64", "-nostdlib", "-static"],
+    "pre-link-args": {
+        "gcc": ["-m64", "-nostdlib", "-static"]
+    },
     "features": "-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-3dnow,-3dnowa,-avx,-avx2,+soft-float",
     "dynamic-linking": false,
     "executables": false,
