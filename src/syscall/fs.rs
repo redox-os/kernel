@@ -85,12 +85,14 @@ pub fn getcwd(buf: &mut [u8]) -> Result<usize> {
 
 /// Open syscall
 pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
-    let (path_canon, uid, gid, scheme_ns) = {
+    let (path_canon, uid, gid, scheme_ns, umask) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.canonicalize(path), context.euid, context.egid, context.ens)
+        (context.canonicalize(path), context.euid, context.egid, context.ens, context.umask)
     };
+
+    let flags = (flags & (!0o777)) | (flags & 0o777) & (!(umask & 0o777));
 
     //println!("open {}", unsafe { ::core::str::from_utf8_unchecked(&path_canon) });
 

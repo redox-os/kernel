@@ -131,6 +131,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_PHYSFREE => physfree(b, c),
                 SYS_PHYSMAP => physmap(b, c, d),
                 SYS_PHYSUNMAP => physunmap(b),
+                SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
                 _ => Err(Error::new(ENOSYS))
             }

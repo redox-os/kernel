@@ -73,6 +73,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         let euid;
         let egid;
         let ens;
+        let umask;
         let mut cpu_id = None;
         let arch;
         let vfork;
@@ -104,6 +105,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             euid = context.euid;
             egid = context.egid;
             ens = context.ens;
+            umask = context.umask;
 
             if flags & CLONE_VM == CLONE_VM {
                 cpu_id = context.cpu_id;
@@ -323,6 +325,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             context.euid = euid;
             context.egid = egid;
             context.ens = ens;
+            context.umask = umask;
 
             context.cpu_id = cpu_id;
 
@@ -1185,6 +1188,19 @@ pub fn sigreturn() -> Result<usize> {
     let _ = unsafe { context::switch() };
 
     unreachable!();
+}
+
+pub fn umask(mask: usize) -> Result<usize> {
+    let previous;
+    {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let mut context = context_lock.write();
+        previous = context.umask;
+        context.umask = mask;
+    }
+
+    Ok(previous)
 }
 
 fn reap(pid: ContextId) -> Result<ContextId> {

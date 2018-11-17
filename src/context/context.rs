@@ -109,6 +109,8 @@ pub struct Context {
     pub egid: u32,
     /// The effective namespace id
     pub ens: SchemeNamespace,
+    /// Process umask
+    pub umask: usize,
     /// Status of context
     pub status: Status,
     /// Context running or not
@@ -169,6 +171,7 @@ impl Context {
             euid: 0,
             egid: 0,
             ens: SchemeNamespace::from(0),
+            umask: 0o022,
             status: Status::Blocked,
             running: false,
             cpu_id: None,
