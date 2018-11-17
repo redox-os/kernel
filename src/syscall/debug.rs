@@ -305,6 +305,10 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b,
             c
         ),
+        SYS_UMASK => format!(
+            "umask({:#o}",
+            b
+        ),
         SYS_WAITPID => format!(
             "waitpid({}, {:#X}, {})",
             b,
