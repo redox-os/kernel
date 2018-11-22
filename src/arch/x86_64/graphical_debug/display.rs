@@ -1,4 +1,4 @@
-use core::alloc::{Alloc, GlobalAlloc, Layout};
+use core::alloc::{GlobalAlloc, Layout};
 use core::{cmp, slice};
 
 use super::FONT;
@@ -15,7 +15,7 @@ pub struct Display {
 impl Display {
     pub fn new(width: usize, height: usize, onscreen: usize) -> Display {
         let size = width * height;
-        let offscreen = unsafe { ::ALLOCATOR.alloc(Layout::from_size_align_unchecked(size * 4, 4096)).unwrap() };
+        let offscreen = unsafe { ::ALLOCATOR.alloc(Layout::from_size_align_unchecked(size * 4, 4096)) };
         unsafe { fast_set64(offscreen as *mut u64, 0, size/2) };
         Display {
             width: width,

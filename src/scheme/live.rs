@@ -66,7 +66,7 @@ impl Scheme for DiskScheme {
 
     fn read(&self, id: usize, buffer: &mut [u8]) -> Result<usize> {
         let mut handles = self.handles.write();
-        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
         let data = handle.data.read();
 
         let mut i = 0;
@@ -81,7 +81,7 @@ impl Scheme for DiskScheme {
 
     fn write(&self, id: usize, buffer: &[u8]) -> Result<usize> {
         let mut handles = self.handles.write();
-        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
         let mut data = handle.data.write();
 
         let mut i = 0;
@@ -96,7 +96,7 @@ impl Scheme for DiskScheme {
 
     fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
         let mut handles = self.handles.write();
-        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
         let data = handle.data.read();
 
         handle.seek = match whence {
