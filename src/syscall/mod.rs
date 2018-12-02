@@ -146,7 +146,9 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
             let name_raw = context.name.lock();
             let name = unsafe { ::core::str::from_utf8_unchecked(&name_raw) };
             if name == "file:/bin/cargo" || name == "file:/bin/rustc" {
-                if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
+                if a == SYS_CLOCK_GETTIME {
+                    false
+                } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
                     false
                 } else {
                     true
