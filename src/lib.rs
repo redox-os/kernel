@@ -131,7 +131,7 @@ static mut INIT_ENV: &[u8] = &[];
 /// Initialize userspace by running the initfs:bin/init process
 /// This function will also set the CWD to initfs:bin and open debug: as stdio
 pub extern fn userspace_init() {
-    let path = b"/bin/init";
+    let path = b"initfs:/bin/init";
     let env = unsafe { INIT_ENV };
 
     assert_eq!(syscall::chdir(b"initfs:"), Ok(0));
