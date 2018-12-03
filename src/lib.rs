@@ -147,7 +147,9 @@ pub extern fn userspace_init() {
 
     let mut vars = Vec::new();
     for var in env.split(|b| *b == b'\n') {
-        vars.push(var.to_vec().into_boxed_slice());
+        if ! var.is_empty() {
+            vars.push(var.to_vec().into_boxed_slice());
+        }
     }
 
     syscall::fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice()).expect("failed to execute init");
