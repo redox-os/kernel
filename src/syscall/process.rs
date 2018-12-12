@@ -167,7 +167,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                         let mut new_heap = context::memory::Memory::new(
                             VirtualAddress::new(::USER_TMP_HEAP_OFFSET),
                             heap.size(),
-                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                            EntryFlags::PRESENT | /* TODO: Hack for mesa: EntryFlags::NO_EXECUTE | */ EntryFlags::WRITABLE,
                             false
                         );
 
@@ -639,7 +639,7 @@ fn fexec_noreturn(
             context.heap = Some(context::memory::Memory::new(
                 VirtualAddress::new(::USER_HEAP_OFFSET),
                 0,
-                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                /* TODO: Hack for mesa: EntryFlags::NO_EXECUTE | */ EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                 true
             ).to_shared());
 
@@ -1337,7 +1337,7 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<Contex
                 let context_lock = contexts.get(pid).ok_or(Error::new(ECHILD))?;
                 let mut context = context_lock.write();
                 if context.ppid != ppid {
-                    println!("Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
+                    println!("TODO: Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
                     context.ppid = ppid;
                     //return Err(Error::new(ECHILD));
                     Some(context.status)
