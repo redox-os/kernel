@@ -68,7 +68,9 @@ impl Scheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        Ok(INPUT.call_once(init_input).receive_into(buf, flags & O_NONBLOCK != O_NONBLOCK))
+        INPUT.call_once(init_input)
+            .receive_into(buf, flags & O_NONBLOCK != O_NONBLOCK)
+            .ok_or(Error::new(EINTR))
     }
 
     /// Write the `buffer` to the `file`

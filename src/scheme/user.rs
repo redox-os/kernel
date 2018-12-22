@@ -168,7 +168,10 @@ impl UserInner {
 
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
         let packet_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Packet, buf.len()/mem::size_of::<Packet>()) };
-        Ok(self.todo.receive_into(packet_buf, self.flags & O_NONBLOCK != O_NONBLOCK) * mem::size_of::<Packet>())
+        self.todo
+            .receive_into(packet_buf, self.flags & O_NONBLOCK != O_NONBLOCK)
+            .map(|count| count * mem::size_of::<Packet>())
+            .ok_or(Error::new(EINTR))
     }
 
     pub fn write(&self, buf: &[u8]) -> Result<usize> {

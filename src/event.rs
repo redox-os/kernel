@@ -7,7 +7,7 @@ use context;
 use scheme::{self, SchemeId};
 use sync::WaitQueue;
 use syscall::data::Event;
-use syscall::error::{Error, Result, EBADF, ESRCH};
+use syscall::error::{Error, Result, EBADF, EINTR, ESRCH};
 
 int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 
@@ -25,7 +25,7 @@ impl EventQueue {
     }
 
     pub fn read(&self, events: &mut [Event]) -> Result<usize> {
-        Ok(self.queue.receive_into(events, true))
+        self.queue.receive_into(events, true).ok_or(Error::new(EINTR))
     }
 
     pub fn write(&self, events: &[Event]) -> Result<usize> {

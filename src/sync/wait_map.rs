@@ -27,6 +27,7 @@ impl<K, V> WaitMap<K, V> where K: Clone + Ord {
             if let Some(value) = self.receive_nonblock(key) {
                 return value;
             }
+            //TODO: use false from wait condition to indicate EINTR
             let _ = self.condition.wait();
         }
     }

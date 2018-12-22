@@ -28,20 +28,22 @@ impl<T> WaitQueue<T> {
         self.inner.lock().is_empty()
     }
 
-    pub fn receive(&self) -> T {
+    pub fn receive(&self) -> Option<T> {
         loop {
             if let Some(value) = self.inner.lock().pop_front() {
-                return value;
+                return Some(value);
             }
-            let _ = self.condition.wait();
+            if ! self.condition.wait() {
+                return None;
+            }
         }
     }
 
-    pub fn receive_into(&self, buf: &mut [T], block: bool) -> usize {
+    pub fn receive_into(&self, buf: &mut [T], block: bool) -> Option<usize> {
         let mut i = 0;
 
         if i < buf.len() && block {
-            buf[i] = self.receive();
+            buf[i] = self.receive()?;
             i += 1;
         }
 
@@ -57,7 +59,7 @@ impl<T> WaitQueue<T> {
             }
         }
 
-        i
+        Some(i)
     }
 
     pub fn send(&self, value: T) -> usize {
