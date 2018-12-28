@@ -42,6 +42,28 @@ impl Grant {
         }
     }
 
+    pub fn map(to: VirtualAddress, size: usize, flags: EntryFlags) -> Grant {
+        let mut active_table = unsafe { ActivePageTable::new() };
+
+        let mut flush_all = MapperFlushAll::new();
+
+        let start_page = Page::containing_address(to);
+        let end_page = Page::containing_address(VirtualAddress::new(to.get() + size - 1));
+        for page in Page::range_inclusive(start_page, end_page) {
+            let result = active_table.map(page, flags);
+            flush_all.consume(result);
+        }
+
+        flush_all.flush(&mut active_table);
+
+        Grant {
+            start: to,
+            size: size,
+            flags: flags,
+            mapped: true
+        }
+    }
+
     pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 

@@ -3,7 +3,7 @@ use core::ops::Range;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::data::{Stat, TimeSpec};
+use super::data::{Map, Stat, TimeSpec};
 use super::flag::*;
 use super::number::*;
 use super::validate::*;
@@ -131,10 +131,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             d
         ),
         SYS_FMAP => format!(
-            "fmap({}, {:#X}, {})",
+            "fmap({}, {:?})",
             b,
-            c,
-            d
+            validate_slice(
+                c as *const Map,
+                d/mem::size_of::<Map>()
+            ),
         ),
         SYS_FUNMAP => format!(
             "funmap({:#X})",

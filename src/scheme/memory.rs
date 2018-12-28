@@ -1,36 +1,22 @@
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use context;
+use context::memory::Grant;
 use memory::{free_frames, used_frames};
-use spin::Mutex;
-
-use syscall::data::StatVfs;
+use paging::VirtualAddress;
+use paging::entry::EntryFlags;
+use syscall::data::{Map, StatVfs};
 use syscall::error::*;
+use syscall::flag::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use syscall::scheme::Scheme;
-use syscall;
 
-struct Address {
-    phys: usize,
-    len: usize,
-    virt: usize
-}
-pub struct MemoryScheme {
-    handles: Mutex<BTreeMap<usize, Vec<Address>>>,
-    next_id: AtomicUsize
-}
+pub struct MemoryScheme;
 
 impl MemoryScheme {
     pub fn new() -> Self {
-        Self {
-            handles: Mutex::new(BTreeMap::new()),
-            next_id: AtomicUsize::new(0)
-        }
+        MemoryScheme
     }
 }
 impl Scheme for MemoryScheme {
     fn open(&self, _path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.lock().insert(id, Vec::new());
         Ok(0)
     }
 
@@ -46,24 +32,52 @@ impl Scheme for MemoryScheme {
         Ok(0)
     }
 
-    fn fmap(&self, id: usize, _offset: usize, len: usize) -> Result<usize> {
-        let mut handles = self.handles.lock();
-        let handle = handles.get_mut(&id).ok_or(Error::new(ENOENT))?;
+    fn fmap(&self, _id: usize, map: &Map) -> Result<usize> {
+        //TODO: Abstract with other grant creation
+        if map.size == 0 {
+            Ok(0)
+        } else {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
 
-        // Warning: These functions are bypassing the root check.
-        let phys = syscall::inner_physalloc(len)?;
-        let virt = syscall::inner_physmap(phys, len, syscall::flag::MAP_WRITE).map_err(|err| {
-            syscall::inner_physfree(phys, len).expect("newly allocated region failed to free");
-            err
-        })?;
+            let mut grants = context.grants.lock();
 
-        handle.push(Address {
-            phys,
-            len,
-            virt
-        });
+            let full_size = ((map.size + 4095)/4096) * 4096;
+            let mut to_address = ::USER_GRANT_OFFSET;
 
-        Ok(virt)
+            let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
+            if map.flags & PROT_EXEC == 0 {
+                entry_flags |= EntryFlags::NO_EXECUTE;
+            }
+            if map.flags & PROT_READ > 0 {
+                //TODO: PROT_READ
+            }
+            if map.flags & PROT_WRITE > 0 {
+                entry_flags |= EntryFlags::WRITABLE;
+            }
+
+            let mut i = 0;
+            while i < grants.len() {
+                let start = grants[i].start_address().get();
+                if to_address + full_size < start {
+                    break;
+                }
+
+                let pages = (grants[i].size() + 4095) / 4096;
+                let end = start + pages * 4096;
+                to_address = end;
+                i += 1;
+            }
+
+            grants.insert(i, Grant::map(
+                VirtualAddress::new(to_address),
+                full_size,
+                entry_flags
+            ));
+
+            Ok(to_address)
+        }
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -80,23 +94,7 @@ impl Scheme for MemoryScheme {
         Ok(i)
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
-        let allocations = self.handles.lock()
-            .remove(&id)
-            .ok_or(Error::new(ENOENT))?;
-
-        for addr in allocations {
-            // physunmap fails if already unmapped
-            // physfree can't currently fail
-            //
-            // What if somebody with root already freed the physical address?
-            // (But left the mapping, which means we attempt to free it again)
-            // I'd rather not think about it.
-            // (Still, that requires root)
-            let _ = syscall::inner_physunmap(addr.virt)
-                .and_then(|_| syscall::inner_physfree(addr.phys, addr.len));
-        }
-
+    fn close(&self, _id: usize) -> Result<usize> {
         Ok(0)
     }
 }

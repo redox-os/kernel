@@ -13,9 +13,9 @@ use paging::entry::EntryFlags;
 use paging::temporary_page::TemporaryPage;
 use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use sync::{WaitQueue, WaitMap};
-use syscall::data::{Packet, Stat, StatVfs, TimeSpec};
+use syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use syscall::error::*;
-use syscall::flag::{EVENT_READ, O_NONBLOCK};
+use syscall::flag::{EVENT_READ, O_NONBLOCK, PROT_EXEC, PROT_READ, PROT_WRITE};
 use syscall::number::*;
 use syscall::scheme::Scheme;
 
@@ -28,7 +28,7 @@ pub struct UserInner {
     next_id: AtomicU64,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, usize)>>,
+    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, Map)>>,
     done: WaitMap<u64, usize>
 }
 
@@ -78,14 +78,15 @@ impl UserInner {
     }
 
     pub fn capture(&self, buf: &[u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, buf.as_ptr() as usize, buf.len(), false)
+        UserInner::capture_inner(&self.context, buf.as_ptr() as usize, buf.len(), PROT_READ)
     }
 
     pub fn capture_mut(&self, buf: &mut [u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), true)
+        UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE)
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, writable: bool) -> Result<usize> {
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: usize) -> Result<usize> {
+        //TODO: Abstract with other grant creation
         if size == 0 {
             Ok(0)
         } else {
@@ -102,36 +103,35 @@ impl UserInner {
             let full_size = ((offset + size + 4095)/4096) * 4096;
             let mut to_address = ::USER_GRANT_OFFSET;
 
-            let mut flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
-            if writable {
-                flags |= EntryFlags::WRITABLE;
+            let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
+            if flags & PROT_EXEC == 0 {
+                entry_flags |= EntryFlags::NO_EXECUTE;
+            }
+            if flags & PROT_READ > 0 {
+                //TODO: PROT_READ
+            }
+            if flags & PROT_WRITE > 0 {
+                entry_flags |= EntryFlags::WRITABLE;
             }
 
-            for i in 0 .. grants.len() {
+            let mut i = 0;
+            while i < grants.len() {
                 let start = grants[i].start_address().get();
                 if to_address + full_size < start {
-                    grants.insert(i, Grant::map_inactive(
-                        VirtualAddress::new(from_address),
-                        VirtualAddress::new(to_address),
-                        full_size,
-                        flags,
-                        &mut new_table,
-                        &mut temporary_page
-                    ));
-
-                    return Ok(to_address + offset);
-                } else {
-                    let pages = (grants[i].size() + 4095) / 4096;
-                    let end = start + pages * 4096;
-                    to_address = end;
+                    break;
                 }
+
+                let pages = (grants[i].size() + 4095) / 4096;
+                let end = start + pages * 4096;
+                to_address = end;
+                i += 1;
             }
 
-            grants.push(Grant::map_inactive(
+            grants.insert(i, Grant::map_inactive(
                 VirtualAddress::new(from_address),
                 VirtualAddress::new(to_address),
                 full_size,
-                flags,
+                entry_flags,
                 &mut new_table,
                 &mut temporary_page
             ));
@@ -186,9 +186,9 @@ impl UserInner {
                     _ => println!("Unknown scheme -> kernel message {}", packet.a)
                 }
             } else {
-                if let Some((context_weak, size)) = self.fmap.lock().remove(&packet.id) {
+                if let Some((context_weak, map)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
-                        packet.a = Error::mux(UserInner::capture_inner(&context_weak, address, size, true));
+                        packet.a = Error::mux(UserInner::capture_inner(&context_weak, address, map.size, map.flags));
                     }
                 }
 
@@ -304,8 +304,10 @@ impl Scheme for UserScheme {
         inner.call(SYS_FEVENT, file, flags, 0)
     }
 
-    fn fmap(&self, file: usize, offset: usize, size: usize) -> Result<usize> {
+    fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let address = inner.capture(map)?;
 
         let (pid, uid, gid, context_lock) = {
             let contexts = context::contexts();
@@ -316,18 +318,22 @@ impl Scheme for UserScheme {
 
         let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
 
-        inner.fmap.lock().insert(id, (context_lock, size));
+        inner.fmap.lock().insert(id, (context_lock, *map));
 
-        inner.call_inner(Packet {
+        let result = inner.call_inner(Packet {
             id: id,
             pid: pid.into(),
             uid: uid,
             gid: gid,
             a: SYS_FMAP,
             b: file,
-            c: offset,
-            d: size
-        })
+            c: address,
+            d: mem::size_of::<Map>()
+        });
+
+        let _ = inner.release(address);
+
+        result
     }
 
     fn fpath(&self, file: usize, buf: &mut [u8]) -> Result<usize> {

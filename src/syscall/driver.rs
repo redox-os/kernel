@@ -5,7 +5,7 @@ use paging::entry::EntryFlags;
 use context;
 use context::memory::Grant;
 use syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
-use syscall::flag::{MAP_WRITE, MAP_WRITE_COMBINE};
+use syscall::flag::{PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -51,6 +51,7 @@ pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
 
 //TODO: verify exlusive access to physical memory
 pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Result<usize> {
+    //TODO: Abstract with other grant creation
     if size == 0 {
         Ok(0)
     } else {
@@ -66,32 +67,27 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Resu
         let mut to_address = ::USER_GRANT_OFFSET;
 
         let mut entry_flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
-        if flags & MAP_WRITE == MAP_WRITE {
+        if flags & PHYSMAP_WRITE == PHYSMAP_WRITE {
             entry_flags |= EntryFlags::WRITABLE;
         }
-        if flags & MAP_WRITE_COMBINE == MAP_WRITE_COMBINE {
+        if flags & PHYSMAP_WRITE_COMBINE == PHYSMAP_WRITE_COMBINE {
             entry_flags |= EntryFlags::HUGE_PAGE;
         }
 
-        for i in 0 .. grants.len() {
+        let mut i = 0;
+        while i < grants.len() {
             let start = grants[i].start_address().get();
             if to_address + full_size < start {
-                grants.insert(i, Grant::physmap(
-                    PhysicalAddress::new(from_address),
-                    VirtualAddress::new(to_address),
-                    full_size,
-                    entry_flags
-                ));
-
-                return Ok(to_address + offset);
-            } else {
-                let pages = (grants[i].size() + 4095) / 4096;
-                let end = start + pages * 4096;
-                to_address = end;
+                break;
             }
+
+            let pages = (grants[i].size() + 4095) / 4096;
+            let end = start + pages * 4096;
+            to_address = end;
+            i += 1;
         }
 
-        grants.push(Grant::physmap(
+        grants.insert(i, Grant::physmap(
             PhysicalAddress::new(from_address),
             VirtualAddress::new(to_address),
             full_size,
