@@ -125,6 +125,19 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                     },
                     e
                 ),
+                SYS_SIGPROCMASK => sigprocmask(
+                    b,
+                    if c == 0 {
+                        None
+                    } else {
+                        Some(validate_slice(c as *const [u64; 2], 1).map(|s| &s[0])?)
+                    },
+                    if d == 0 {
+                        None
+                    } else {
+                        Some(validate_slice_mut(d as *mut [u64; 2], 1).map(|s| &mut s[0])?)
+                    }
+                ),
                 SYS_SIGRETURN => sigreturn(),
                 SYS_PIPE2 => pipe2(validate_slice_mut(b as *mut usize, 2)?, c),
                 SYS_PHYSALLOC => physalloc(b),

@@ -254,6 +254,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             d,
             e
         ),
+        SYS_SIGPROCMASK => format!(
+            "sigprocmask({}, {:?}, {:?})",
+            b,
+            validate_slice(c as *const [u64; 2], 1),
+            validate_slice(d as *const [u64; 2], 1)
+        ),
         SYS_MKNS => format!(
             "mkns({:?})",
             validate_slice(b as *const [usize; 2], c)

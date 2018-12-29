@@ -19,6 +19,7 @@ use self::debug::DebugScheme;
 use self::event::EventScheme;
 use self::initfs::InitFsScheme;
 use self::irq::IrqScheme;
+use self::itimer::ITimerScheme;
 use self::memory::MemoryScheme;
 use self::pipe::PipeScheme;
 use self::root::RootScheme;
@@ -36,6 +37,9 @@ pub mod initfs;
 
 /// `irq:` - allows userspace handling of IRQs
 pub mod irq;
+
+/// `itimer:` - support for getitimer and setitimer
+pub mod itimer;
 
 /// When compiled with "live" feature - `disk:` - embedded filesystem for live disk
 #[cfg(feature="live")]
@@ -115,6 +119,7 @@ impl SchemeList {
 
         self.insert(ns, Box::new(*b""), |scheme_id| Arc::new(Box::new(RootScheme::new(ns, scheme_id)))).unwrap();
         self.insert(ns, Box::new(*b"event"), |_| Arc::new(Box::new(EventScheme))).unwrap();
+        self.insert(ns, Box::new(*b"itimer"), |_| Arc::new(Box::new(ITimerScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"memory"), |_| Arc::new(Box::new(MemoryScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"sys"), |_| Arc::new(Box::new(SysScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"time"), |scheme_id| Arc::new(Box::new(TimeScheme::new(scheme_id)))).unwrap();

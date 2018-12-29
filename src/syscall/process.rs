@@ -1176,6 +1176,11 @@ pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mu
     }
 }
 
+pub fn sigprocmask(how: usize, mask_opt: Option<&[u64; 2]>, oldmask_opt: Option<&mut [u64; 2]>) -> Result<usize> {
+    println!("sigprocmask {}, {:?}, {:?}", how, mask_opt, oldmask_opt);
+    Ok(0)
+}
+
 pub fn sigreturn() -> Result<usize> {
     {
         let contexts = context::contexts();
