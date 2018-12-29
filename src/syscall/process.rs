@@ -167,7 +167,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                         let mut new_heap = context::memory::Memory::new(
                             VirtualAddress::new(::USER_TMP_HEAP_OFFSET),
                             heap.size(),
-                            EntryFlags::PRESENT | /* TODO: Hack for mesa: EntryFlags::NO_EXECUTE | */ EntryFlags::WRITABLE,
+                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             false
                         );
 
@@ -639,7 +639,7 @@ fn fexec_noreturn(
             context.heap = Some(context::memory::Memory::new(
                 VirtualAddress::new(::USER_HEAP_OFFSET),
                 0,
-                /* TODO: Hack for mesa: EntryFlags::NO_EXECUTE | */ EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                 true
             ).to_shared());
 
