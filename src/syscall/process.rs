@@ -9,6 +9,7 @@ use spin::Mutex;
 use memory::allocate_frames;
 use paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress};
 use paging::entry::EntryFlags;
+use paging::mapper::MapperFlushAll;
 use paging::temporary_page::TemporaryPage;
 use start::usermode;
 use interrupt;
@@ -22,7 +23,9 @@ use scheme::FileHandle;
 use syscall;
 use syscall::data::{SigAction, Stat};
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, SIG_DFL, SIGCONT, SIGTERM, WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND,
+                    PROT_EXEC, PROT_READ, PROT_WRITE, SIG_DFL, SIGCONT, SIGTERM,
+                    WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
@@ -1125,6 +1128,50 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     } else {
         Err(Error::new(EINVAL))
     }
+}
+
+pub fn mprotect(address: usize, size: usize, flags: usize) -> Result<usize> {
+    println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
+
+    let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
+    let end_address = address.checked_add(end_offset).ok_or(Error::new(EFAULT))?;
+
+    let mut active_table = unsafe { ActivePageTable::new() };
+
+    let mut flush_all = MapperFlushAll::new();
+
+    let start_page = Page::containing_address(VirtualAddress::new(address));
+    let end_page = Page::containing_address(VirtualAddress::new(end_address));
+    for page in Page::range_inclusive(start_page, end_page) {
+        if let Some(mut page_flags) = active_table.translate_page_flags(page) {
+            if flags & PROT_EXEC > 0 {
+                page_flags.remove(EntryFlags::NO_EXECUTE);
+            } else {
+                page_flags.insert(EntryFlags::NO_EXECUTE);
+            }
+
+            if flags & PROT_WRITE > 0 {
+                //TODO: Not allowing gain of write privileges
+            } else {
+                page_flags.remove(EntryFlags::WRITABLE);
+            }
+
+            if flags & PROT_READ > 0 {
+                //TODO: No flags for readable pages
+            } else {
+                //TODO: No flags for readable pages
+            }
+
+            let flush = active_table.remap(page, page_flags);
+            flush_all.consume(flush);
+        } else {
+            return Err(Error::new(EFAULT));
+        }
+    }
+
+    flush_all.flush(&mut active_table);
+
+    Ok(0)
 }
 
 pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
