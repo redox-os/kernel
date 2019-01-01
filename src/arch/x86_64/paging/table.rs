@@ -9,7 +9,7 @@ use memory::allocate_frames;
 use super::entry::{EntryFlags, Entry};
 use super::ENTRY_COUNT;
 
-pub const P4: *mut Table<Level4> = 0xffff_ffff_ffff_f000 as *mut _;
+pub const P4: *mut Table<Level4> = (::RECURSIVE_PAGE_OFFSET | 0x7ffffff000) as *mut _;
 
 pub trait TableLevel {}
 

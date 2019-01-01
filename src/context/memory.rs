@@ -3,6 +3,7 @@ use alloc::collections::VecDeque;
 use core::intrinsics;
 use spin::Mutex;
 
+use arch::paging::PAGE_SIZE;
 use ipi::{ipi, IpiKind, IpiTarget};
 use memory::Frame;
 use paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
@@ -67,7 +68,7 @@ impl Grant {
     pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
-        let mut frames = VecDeque::new();
+        let mut frames = VecDeque::with_capacity(size/PAGE_SIZE);
 
         let start_page = Page::containing_address(from);
         let end_page = Page::containing_address(VirtualAddress::new(from.get() + size - 1));
