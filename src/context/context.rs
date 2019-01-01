@@ -2,10 +2,12 @@ use alloc::sync::Arc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::collections::VecDeque;
+use core::alloc::{GlobalAlloc, Layout};
 use core::cmp::Ordering;
 use core::mem;
 use spin::Mutex;
 
+use arch::paging::PAGE_SIZE;
 use context::arch;
 use context::file::FileDescriptor;
 use context::memory::{Grant, Memory, SharedMemory, Tls};
@@ -119,6 +121,10 @@ pub struct Context {
     pub cpu_id: Option<usize>,
     /// Current system call
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
+    /// Head buffer to use when system call buffers are not page aligned
+    pub syscall_head: Box<[u8]>,
+    /// Tail buffer to use when system call buffers are not page aligned
+    pub syscall_tail: Box<[u8]>,
     /// Context is halting parent
     pub vfork: bool,
     /// Context is being waited on
@@ -161,6 +167,9 @@ pub struct Context {
 
 impl Context {
     pub fn new(id: ContextId) -> Context {
+        let syscall_head = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
+        let syscall_tail = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
+
         Context {
             id: id,
             pgid: id,
@@ -176,6 +185,8 @@ impl Context {
             running: false,
             cpu_id: None,
             syscall: None,
+            syscall_head: syscall_head,
+            syscall_tail: syscall_tail,
             vfork: false,
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),

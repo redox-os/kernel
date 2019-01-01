@@ -68,6 +68,7 @@ impl Grant {
     pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
+        //TODO: Do not allocate
         let mut frames = VecDeque::with_capacity(size/PAGE_SIZE);
 
         let start_page = Page::containing_address(from);
