@@ -90,6 +90,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Set up IDT
         idt::init_paging();
 
+        // Set up syscall instruction
+        interrupt::syscall::init();
+
         // Test tdata and tbss
         {
             assert_eq!(TBSS_TEST_ZERO, 0);
