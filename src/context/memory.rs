@@ -4,6 +4,7 @@ use core::intrinsics;
 use spin::Mutex;
 
 use arch::paging::PAGE_SIZE;
+use context::file::FileDescriptor;
 use ipi::{ipi, IpiKind, IpiTarget};
 use memory::Frame;
 use paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
@@ -16,7 +17,9 @@ pub struct Grant {
     start: VirtualAddress,
     size: usize,
     flags: EntryFlags,
-    mapped: bool
+    mapped: bool,
+    //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
+    desc_opt: Option<FileDescriptor>,
 }
 
 impl Grant {
@@ -37,9 +40,10 @@ impl Grant {
 
         Grant {
             start: to,
-            size: size,
-            flags: flags,
-            mapped: true
+            size,
+            flags,
+            mapped: true,
+            desc_opt: None,
         }
     }
 
@@ -59,13 +63,14 @@ impl Grant {
 
         Grant {
             start: to,
-            size: size,
-            flags: flags,
-            mapped: true
+            size,
+            flags,
+            mapped: true,
+            desc_opt: None,
         }
     }
 
-    pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
+    pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, desc_opt: Option<FileDescriptor>, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         //TODO: Do not allocate
@@ -93,9 +98,10 @@ impl Grant {
 
         Grant {
             start: to,
-            size: size,
-            flags: flags,
-            mapped: true
+            size,
+            flags,
+            mapped: true,
+            desc_opt,
         }
     }
 
@@ -146,6 +152,11 @@ impl Grant {
         });
 
         ipi(IpiKind::Tlb, IpiTarget::Other);
+
+        if let Some(desc) = self.desc_opt.take() {
+            //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
+            let _ = desc.close();
+        }
 
         self.mapped = false;
     }

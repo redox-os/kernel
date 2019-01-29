@@ -6,12 +6,13 @@ use core::{mem, slice, usize};
 use spin::{Mutex, RwLock};
 
 use context::{self, Context};
+use context::file::FileDescriptor;
 use context::memory::Grant;
 use event;
 use paging::{InactivePageTable, Page, VirtualAddress};
 use paging::entry::EntryFlags;
 use paging::temporary_page::TemporaryPage;
-use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
+use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId, FileHandle};
 use sync::{WaitQueue, WaitMap};
 use syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use syscall::error::*;
@@ -28,7 +29,7 @@ pub struct UserInner {
     next_id: AtomicU64,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, Map)>>,
+    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
     done: WaitMap<u64, usize>
 }
 
@@ -78,14 +79,14 @@ impl UserInner {
     }
 
     pub fn capture(&self, buf: &[u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, buf.as_ptr() as usize, buf.len(), PROT_READ)
+        UserInner::capture_inner(&self.context, buf.as_ptr() as usize, buf.len(), PROT_READ, None)
     }
 
     pub fn capture_mut(&self, buf: &mut [u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE)
+        UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None)
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: usize) -> Result<usize> {
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: usize, desc_opt: Option<FileDescriptor>) -> Result<usize> {
         //TODO: Abstract with other grant creation
         if size == 0 {
             Ok(0)
@@ -133,6 +134,7 @@ impl UserInner {
                 VirtualAddress::new(to_address),
                 full_size,
                 entry_flags,
+                desc_opt,
                 &mut new_table,
                 &mut temporary_page
             ));
@@ -187,9 +189,12 @@ impl UserInner {
                     _ => println!("Unknown scheme -> kernel message {}", packet.a)
                 }
             } else {
-                if let Some((context_weak, map)) = self.fmap.lock().remove(&packet.id) {
+                if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
-                        packet.a = Error::mux(UserInner::capture_inner(&context_weak, address, map.size, map.flags));
+                        //TODO: Protect against sharing addresses that are not page aligned
+                        packet.a = Error::mux(UserInner::capture_inner(&context_weak, address, map.size, map.flags, Some(desc)));
+                    } else {
+                        let _ = desc.close();
                     }
                 }
 
@@ -308,18 +313,21 @@ impl Scheme for UserScheme {
     fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let address = inner.capture(map)?;
-
-        let (pid, uid, gid, context_lock) = {
+        let (pid, uid, gid, context_lock, desc) = {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
-            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock))
+            let desc = context.get_file(FileHandle(file))
+                .ok_or(Error::new(EBADF))?
+                .clone();
+            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
         };
+
+        let address = inner.capture(map)?;
 
         let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
 
-        inner.fmap.lock().insert(id, (context_lock, *map));
+        inner.fmap.lock().insert(id, (context_lock, desc, *map));
 
         let result = inner.call_inner(Packet {
             id: id,
