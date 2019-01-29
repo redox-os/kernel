@@ -19,6 +19,7 @@ pub struct FileDescription {
 
 /// A file descriptor
 #[derive(Clone, Debug)]
+#[must_use = "File descriptors must be closed"]
 pub struct FileDescriptor {
     /// Corresponding file description
     pub description: Arc<RwLock<FileDescription>>,
