@@ -12,7 +12,7 @@ use event;
 use paging::{InactivePageTable, Page, VirtualAddress};
 use paging::entry::EntryFlags;
 use paging::temporary_page::TemporaryPage;
-use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId, FileHandle};
+use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use sync::{WaitQueue, WaitMap};
 use syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use syscall::error::*;
