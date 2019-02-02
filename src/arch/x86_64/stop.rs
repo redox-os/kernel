@@ -36,9 +36,17 @@ pub unsafe extern fn kstop() -> ! {
         Pio::<u8>::new(port).write(c);
     }
 
+    // Magic shutdown using qemu default ACPI method
+    {
+        let port = 0x604;
+        let data = 0x2000;
+        println!("Shutdown with outb(0x{:X}, 0x{:X})", port, data);
+        Pio::<u16>::new(port).write(data);
+    }
+
     // Magic code for VMWare. Also a hard lock.
     println!("Shutdown with cli hlt");
-    asm!("cli; hlt" : : : : "intel", "volatile");
-
-    unreachable!();
+    loop {
+        asm!("cli; hlt" : : : : "intel", "volatile");
+    }
 }
