@@ -317,9 +317,22 @@ impl Scheme for UserScheme {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
-            let desc = context.get_file(FileHandle(file))
-                .ok_or(Error::new(EBADF))?
-                .clone();
+            // TODO: Faster, cleaner mechanism to get descriptor
+            let scheme = inner.scheme_id.load(Ordering::SeqCst);
+            let mut desc_res = Err(Error::new(EBADF));
+            for context_file_opt in context.files.lock().iter() {
+                if let Some(context_file) = context_file_opt {
+                    let (context_scheme, context_number) = {
+                        let desc = context_file.description.read();
+                        (desc.scheme, desc.number)
+                    };
+                    if context_scheme == scheme && context_number == file {
+                        desc_res = Ok(context_file.clone());
+                        break;
+                    }
+                }
+            }
+            let desc = desc_res?;
             (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
         };
 
