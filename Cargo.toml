@@ -22,6 +22,10 @@ version = "0.0.15"
 default-features = false
 features = ["elf32", "elf64"]
 
+[dependencies.rustc-demangle]
+version = "0.1.13"
+default-features = false
+
 [dependencies.x86]
 version = "0.9.0"
 default-features = false

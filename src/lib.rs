@@ -35,6 +35,7 @@ extern crate alloc;
 extern crate bitflags;
 extern crate goblin;
 extern crate linked_list_allocator;
+extern crate rustc_demangle;
 extern crate spin;
 #[cfg(feature = "slab")]
 extern crate slab_allocator;
