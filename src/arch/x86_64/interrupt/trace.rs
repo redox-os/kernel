@@ -1,5 +1,6 @@
-use core::mem;
+use core::{mem, str};
 use goblin::elf::sym;
+use rustc_demangle::demangle;
 
 use paging::{ActivePageTable, VirtualAddress};
 
@@ -76,54 +77,10 @@ pub unsafe fn symbol_trace(addr: usize) {
                         }
 
                         if end > start {
-                            let sym_name = &elf.data[start .. end];
-
-                            print!("    ");
-
-                            if sym_name.starts_with(b"_ZN") {
-                                // Skip _ZN
-                                let mut i = 3;
-                                let mut first = true;
-                                while i < sym_name.len() {
-                                    // E is the end character
-                                    if sym_name[i] == b'E' {
-                                        break;
-                                    }
-
-                                    // Parse length string
-                                    let mut len = 0;
-                                    while i < sym_name.len() {
-                                        let b = sym_name[i];
-                                        if b >= b'0' && b <= b'9' {
-                                            i += 1;
-                                            len *= 10;
-                                            len += (b - b'0') as usize;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-
-                                    // Print namespace seperator, if required
-                                    if first {
-                                        first = false;
-                                    } else {
-                                        print!("::");
-                                    }
-
-                                    // Print name string
-                                    let end = i + len;
-                                    while i < sym_name.len() && i < end {
-                                        print!("{}", sym_name[i] as char);
-                                        i += 1;
-                                    }
-                                }
-                            } else {
-                                for &b in sym_name.iter() {
-                                    print!("{}", b as char);
-                                }
+                            let sym_slice = &elf.data[start .. end - 1];
+                            if let Ok(sym_name) = str::from_utf8(sym_slice) {
+                                println!("    {:#}", demangle(sym_name));
                             }
-
-                            println!("");
                         }
                     }
                 }
