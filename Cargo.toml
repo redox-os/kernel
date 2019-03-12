@@ -31,7 +31,7 @@ version = "0.9.0"
 default-features = false
 
 [features]
-default = ["qemu_debug"]
+default = ["serial_debug"]
 acpi = []
 doc = []
 graphical_debug = []
