@@ -5,6 +5,7 @@ use context::timeout;
 use device::pic;
 use device::serial::{COM1, COM2};
 use ipi::{ipi, IpiKind, IpiTarget};
+use scheme::debug::debug_input;
 use time;
 
 //resets to 0 in context::switch()
@@ -74,12 +75,16 @@ interrupt!(cascade, {
 });
 
 interrupt!(com2, {
-    COM2.lock().receive();
+    while let Some(c) = COM2.lock().receive() {
+        debug_input(c);
+    }
     pic::MASTER.ack();
 });
 
 interrupt!(com1, {
-    COM1.lock().receive();
+    while let Some(c) = COM1.lock().receive() {
+        debug_input(c);
+    }
     pic::MASTER.ack();
 });
 

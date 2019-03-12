@@ -1,6 +1,3 @@
-use core::fmt::{self, Write};
-
-use scheme::debug::debug_input;
 use syscall::io::{Io, Pio, Mmio, ReadOnly};
 
 bitflags! {
@@ -75,7 +72,7 @@ impl<T: Io<Value = u8>> SerialPort<T> {
         //TODO: Cleanup
         self.int_en.write(0x00);
         self.line_ctrl.write(0x80);
-        self.data.write(0x03);
+        self.data.write(0x01);
         self.int_en.write(0x00);
         self.line_ctrl.write(0x03);
         self.fifo_ctrl.write(0xC7);
@@ -87,37 +84,31 @@ impl<T: Io<Value = u8>> SerialPort<T> {
         LineStsFlags::from_bits_truncate(self.line_sts.read())
     }
 
-    pub fn receive(&mut self) {
-        while self.line_sts().contains(LineStsFlags::INPUT_FULL) {
-            let b = self.data.read();
-            debug_input(b);
+    pub fn receive(&mut self) -> Option<u8> {
+        if self.line_sts().contains(LineStsFlags::INPUT_FULL) {
+            Some(self.data.read())
+        } else {
+            None
         }
     }
 
     pub fn send(&mut self, data: u8) {
-        match data {
-            8 | 0x7F => {
-                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-                self.data.write(8);
-                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-                self.data.write(b' ');
-                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-                self.data.write(8);
-            },
-            _ => {
-                while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-                self.data.write(data);
+        while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
+        self.data.write(data);
+    }
+
+    pub fn write(&mut self, buf: &[u8]) {
+        for &b in buf {
+            match b {
+                8 | 0x7F => {
+                    self.send(8);
+                    self.send(b' ');
+                    self.send(8);
+                },
+                _ => {
+                    self.send(b);
+                }
             }
         }
-    }
-}
-
-impl<T: Io<Value = u8>> Write for SerialPort<T> {
-    fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
-        for byte in s.bytes() {
-            self.send(byte);
-        }
-
-        Ok(())
     }
 }

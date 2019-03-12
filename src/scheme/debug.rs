@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use device::serial::COM1;
+use arch::debug::Writer;
 use event;
 use scheme::*;
 use sync::WaitQueue;
@@ -76,18 +76,14 @@ impl Scheme for DebugScheme {
     /// Write the `buffer` to the `file`
     ///
     /// Returns the number of bytes written
-    fn write(&self, id: usize, buffer: &[u8]) -> Result<usize> {
+    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         let _flags = {
             let handles = handles();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        let mut com = COM1.lock();
-        for &byte in buffer.iter() {
-            com.send(byte);
-        }
-
-        Ok(buffer.len())
+        Writer::new().write(buf);
+        Ok(buf.len())
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {

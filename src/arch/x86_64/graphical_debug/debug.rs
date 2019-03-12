@@ -27,7 +27,7 @@ impl DebugDisplay {
         self.display
     }
 
-    pub fn write(&mut self, c: char) {
+    pub fn write_char(&mut self, c: char) {
         if self.x >= self.w || c == '\n' {
             self.x = 0;
             self.y += 1;
@@ -74,14 +74,10 @@ impl DebugDisplay {
             self.x += 1;
         }
     }
-}
 
-impl fmt::Write for DebugDisplay {
-    fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
-        for c in s.chars() {
-            self.write(c);
+    pub fn write(&mut self, buf: &[u8]) {
+        for &b in buf {
+            self.write_char(b as char);
         }
-
-        Ok(())
     }
 }
