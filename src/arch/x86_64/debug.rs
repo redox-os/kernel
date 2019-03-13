@@ -1,5 +1,7 @@
 use core::fmt;
-use spin::{Mutex, MutexGuard};
+#[cfg(feature = "qemu_debug")]
+use spin::Mutex;
+use spin::MutexGuard;
 
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
