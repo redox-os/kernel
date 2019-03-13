@@ -108,7 +108,7 @@ impl Scheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        Ok(id)
+        Ok(0)
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {

@@ -207,7 +207,7 @@ impl UserInner {
     }
 
     pub fn fevent(&self, _flags: usize) -> Result<usize> {
-        Ok(self.handle_id)
+        Ok(0)
     }
 
     pub fn fsync(&self) -> Result<usize> {

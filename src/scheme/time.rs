@@ -92,7 +92,7 @@ impl Scheme for TimeScheme {
 
     fn fevent(&self, id: usize, _flags: usize) ->  Result<usize> {
         let handles = self.handles.read();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(id))
+        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {

@@ -166,7 +166,7 @@ impl PipeRead {
     }
 
     fn fevent(&self, _flags: usize) -> Result<usize> {
-        Ok(self.event_id)
+        Ok(0)
     }
 
     fn read(&self, buf: &mut [u8]) -> Result<usize> {

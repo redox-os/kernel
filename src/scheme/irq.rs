@@ -88,7 +88,7 @@ impl Scheme for IrqScheme {
     }
 
     fn fevent(&self, file: usize, _flags: usize) -> Result<usize> {
-        Ok(file)
+        Ok(0)
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {

@@ -52,7 +52,10 @@ impl EventQueue {
                 event.flags
             );
 
-            send_flags(RegKey { scheme, number })?;
+            let flags = sync(RegKey { scheme, number })?;
+            if flags > 0 {
+                trigger(scheme, number, flags);
+            }
         }
 
         Ok(events.len())
@@ -133,7 +136,7 @@ pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: usize) {
     }
 }
 
-pub fn send_flags(reg_key: RegKey) -> Result<()> {
+pub fn sync(reg_key: RegKey) -> Result<usize> {
     let mut flags = 0;
 
     {
@@ -146,21 +149,13 @@ pub fn send_flags(reg_key: RegKey) -> Result<()> {
         }
     }
 
-    let event_id = {
-        let scheme = {
-            let schemes = scheme::schemes();
-            let scheme = schemes.get(reg_key.scheme).ok_or(Error::new(EBADF))?;
-            Arc::clone(&scheme)
-        };
-
-        scheme.fevent(reg_key.number, flags)?
+    let scheme = {
+        let schemes = scheme::schemes();
+        let scheme = schemes.get(reg_key.scheme).ok_or(Error::new(EBADF))?;
+        Arc::clone(&scheme)
     };
 
-    if event_id != reg_key.number {
-        println!("scheme {} returned event id {} instead of {}", reg_key.scheme.into(), event_id, reg_key.number);
-    }
-
-    Ok(())
+    scheme.fevent(reg_key.number, flags)
 }
 
 pub fn unregister_file(scheme: SchemeId, number: usize) {
