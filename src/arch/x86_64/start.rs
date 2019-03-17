@@ -16,6 +16,7 @@ use device;
 use gdt;
 use idt;
 use interrupt;
+use log;
 use memory;
 use paging;
 
@@ -110,6 +111,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Setup kernel heap
         allocator::init(&mut active_table);
+
+        // Activate memory logging
+        log::init();
 
         // Use graphical debug
         #[cfg(feature="graphical_debug")]

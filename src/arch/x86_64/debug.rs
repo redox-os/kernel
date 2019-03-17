@@ -3,6 +3,7 @@ use core::fmt;
 use spin::Mutex;
 use spin::MutexGuard;
 
+use log::{LOG, Log};
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
 use syscall::io::Pio;
@@ -18,6 +19,7 @@ use super::device::serial::COM1;
 pub static QEMU: Mutex<Pio<u8>> = Mutex::new(Pio::<u8>::new(0x402));
 
 pub struct Writer<'a> {
+    log: MutexGuard<'a, Option<Log>>,
     #[cfg(feature = "graphical_debug")]
     display: MutexGuard<'a, Option<DebugDisplay>>,
     #[cfg(feature = "qemu_debug")]
@@ -29,6 +31,7 @@ pub struct Writer<'a> {
 impl<'a> Writer<'a> {
     pub fn new() -> Writer<'a> {
         Writer {
+            log: LOG.lock(),
             #[cfg(feature = "graphical_debug")]
             display: DEBUG_DISPLAY.lock(),
             #[cfg(feature = "qemu_debug")]
@@ -39,6 +42,12 @@ impl<'a> Writer<'a> {
     }
 
     pub fn write(&mut self, buf: &[u8]) {
+        {
+            if let Some(ref mut log) = *self.log {
+                log.write(buf);
+            }
+        }
+
         #[cfg(feature = "graphical_debug")]
         {
             if let Some(ref mut display) = *self.display {

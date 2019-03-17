@@ -82,6 +82,9 @@ pub mod event;
 /// External functions
 pub mod externs;
 
+/// Logging
+pub mod log;
+
 /// Memory management
 pub mod memory;
 

@@ -14,6 +14,7 @@ mod context;
 mod cpu;
 mod exe;
 mod iostat;
+mod log;
 mod scheme;
 mod scheme_num;
 mod syscall;
@@ -43,6 +44,7 @@ impl SysScheme {
         files.insert(b"cpu", Box::new(move || cpu::resource()));
         files.insert(b"exe", Box::new(move || exe::resource()));
         files.insert(b"iostat", Box::new(move || iostat::resource()));
+        files.insert(b"log", Box::new(move || log::resource()));
         files.insert(b"scheme", Box::new(move || scheme::resource()));
         files.insert(b"scheme_num", Box::new(move || scheme_num::resource()));
         files.insert(b"syscall", Box::new(move || syscall::resource()));
