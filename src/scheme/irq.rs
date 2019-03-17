@@ -87,7 +87,7 @@ impl Scheme for IrqScheme {
         Ok(0)
     }
 
-    fn fevent(&self, file: usize, _flags: usize) -> Result<usize> {
+    fn fevent(&self, _id: usize, _flags: usize) -> Result<usize> {
         Ok(0)
     }
 
