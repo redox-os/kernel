@@ -88,6 +88,7 @@ fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), (Error)> {
 
 fn main() {
     println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
+    println!("cargo:rerun-if-env-changed=INITFS_FOLDER");
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("gen.rs");
@@ -103,7 +104,10 @@ mod gen {
 ").unwrap();
 
     match src {
-        Ok(v) => fill_from_location(&mut f, Path::new(&v)).unwrap(),
+        Ok(v) => {
+            println!("cargo:rerun-if-changed={}", v);
+            fill_from_location(&mut f, Path::new(&v)).unwrap()
+        },
         Err(e) => {
             f.write_all(
                 b"        files.clear();" // Silence mutability warning
