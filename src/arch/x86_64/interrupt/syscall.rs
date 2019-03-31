@@ -23,7 +23,7 @@ pub unsafe extern fn syscall_instruction() {
     }
 
     // Yes, this is magic. No, you don't need to understand
-    asm!("xchg bx, bx
+    asm!("
           swapgs                    // Set gs segment to TSS
           mov gs:[28], rsp          // Save userspace rsp
           mov rsp, gs:[4]           // Load kernel rsp
