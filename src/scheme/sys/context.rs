@@ -75,7 +75,9 @@ pub fn resource() -> Result<Vec<u8>> {
                 });
             }
             if let Some(ref stack) = context.stack {
-                memory += stack.size();
+                stack.with(|stack| {
+                    memory += stack.size();
+                });
             }
             if let Some(ref sigstack) = context.sigstack {
                 memory += sigstack.size();

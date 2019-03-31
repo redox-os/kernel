@@ -23,7 +23,7 @@ use scheme::FileHandle;
 use syscall;
 use syscall::data::{SigAction, Stat};
 use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND,
+use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
                     PROT_EXEC, PROT_READ, PROT_WRITE, SIG_DFL, SIGCONT, SIGTERM,
                     WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
 use syscall::validate::{validate_slice, validate_slice_mut};
@@ -186,22 +186,28 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 }
             }
 
-            if let Some(ref stack) = context.stack {
-                let mut new_stack = context::memory::Memory::new(
-                    VirtualAddress::new(::USER_TMP_STACK_OFFSET),
-                    stack.size(),
-                    EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
-                    false
-                );
+            if let Some(ref stack_shared) = context.stack {
+                if flags & CLONE_STACK == CLONE_STACK {
+                    stack_option = Some(stack_shared.clone());
+                } else {
+                    stack_shared.with(|stack| {
+                        let mut new_stack = context::memory::Memory::new(
+                            VirtualAddress::new(::USER_TMP_STACK_OFFSET),
+                            stack.size(),
+                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                            false
+                        );
 
-                unsafe {
-                    intrinsics::copy(stack.start_address().get() as *const u8,
-                                    new_stack.start_address().get() as *mut u8,
-                                    stack.size());
+                        unsafe {
+                            intrinsics::copy(stack.start_address().get() as *const u8,
+                                            new_stack.start_address().get() as *mut u8,
+                                            stack.size());
+                        }
+
+                        new_stack.remap(stack.flags());
+                        stack_option = Some(new_stack.to_shared());
+                    });
                 }
-
-                new_stack.remap(stack.flags());
-                stack_option = Some(new_stack);
             }
 
             if let Some(ref sigstack) = context.sigstack {
@@ -457,9 +463,19 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             }
 
             // Setup user stack
-            if let Some(mut stack) = stack_option {
-                stack.move_to(VirtualAddress::new(::USER_STACK_OFFSET), &mut new_table, &mut temporary_page);
-                context.stack = Some(stack);
+            if let Some(stack_shared) = stack_option {
+                if flags & CLONE_STACK == CLONE_STACK {
+                    let frame = active_table.p4()[::USER_STACK_PML4].pointed_frame().expect("user stack not mapped");
+                    let flags = active_table.p4()[::USER_STACK_PML4].flags();
+                    active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+                        mapper.p4_mut()[::USER_STACK_PML4].set(frame, flags);
+                    });
+                } else {
+                    stack_shared.with(|stack| {
+                        stack.move_to(VirtualAddress::new(::USER_STACK_OFFSET), &mut new_table, &mut temporary_page);
+                    });
+                }
+                context.stack = Some(stack_shared);
             }
 
             // Setup user sigstack
@@ -652,7 +668,7 @@ fn fexec_noreturn(
                 ::USER_STACK_SIZE,
                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                 true
-            ));
+            ).to_shared());
 
             // Map stack
             context.sigstack = Some(context::memory::Memory::new(

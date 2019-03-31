@@ -148,7 +148,7 @@ pub struct Context {
     /// User heap
     pub heap: Option<SharedMemory>,
     /// User stack
-    pub stack: Option<Memory>,
+    pub stack: Option<SharedMemory>,
     /// User signal stack
     pub sigstack: Option<Memory>,
     /// User Thread local storage

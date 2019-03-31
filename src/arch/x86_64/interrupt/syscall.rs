@@ -159,10 +159,16 @@ pub struct SyscallStack {
     pub rip: usize,
     pub cs: usize,
     pub rflags: usize,
+    // Will only be present if syscall is called from another ring
+    pub rsp: usize,
+    pub ss: usize,
 }
 
 #[naked]
 pub unsafe extern fn clone_ret() {
-    asm!("pop rbp" : : : : "intel", "volatile");
-    asm!("" : : "{rax}"(0) : : "intel", "volatile");
+    asm!("
+        pop rbp
+        xor rax, rax
+        "
+        : : : : "intel", "volatile");
 }

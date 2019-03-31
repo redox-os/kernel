@@ -93,7 +93,15 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_GETPID => getpid().map(ContextId::into),
                 SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
                 SYS_GETPPID => getppid().map(ContextId::into),
-                SYS_CLONE => clone(b, bp).map(ContextId::into),
+                SYS_CLONE => {
+                    let old_rsp = stack.rsp;
+                    if b & flag::CLONE_STACK == flag::CLONE_STACK {
+                        stack.rsp = c;
+                    }
+                    let ret = clone(b, bp).map(ContextId::into);
+                    stack.rsp = old_rsp;
+                    ret
+                },
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
                 SYS_WAITPID => waitpid(ContextId::from(b), c, d).map(ContextId::into),
