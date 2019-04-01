@@ -525,11 +525,8 @@ fn empty(context: &mut context::Context, reaping: bool) {
         drop(context.tls.take());
     }
 
-    // FIXME: Looks like a race condition.
-    // Is it possible for Arc::strong_count to return 1 to two contexts that exit at the
-    // same time, or return 2 to both, thus either double freeing or leaking the grants?
+    let mut grants = context.grants.lock();
     if Arc::strong_count(&context.grants) == 1 {
-        let mut grants = context.grants.lock();
         for grant in grants.drain(..) {
             if reaping {
                 println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, grant);
@@ -927,11 +924,11 @@ pub fn exit(status: usize) -> ! {
         let mut close_files = Vec::new();
         let pid = {
             let mut context = context_lock.write();
-            // FIXME: Looks like a race condition.
-            // Is it possible for Arc::strong_count to return 1 to two contexts that exit at the
-            // same time, or return 2 to both, thus either double closing or leaking the files?
-            if Arc::strong_count(&context.files) == 1 {
-                mem::swap(context.files.lock().deref_mut(), &mut close_files);
+            {
+                let mut lock = context.files.lock();
+                if Arc::strong_count(&context.files) == 1 {
+                    mem::swap(lock.deref_mut(), &mut close_files);
+                }
             }
             context.files = Arc::new(Mutex::new(Vec::new()));
             context.id
