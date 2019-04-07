@@ -41,7 +41,7 @@ extern crate spin;
 extern crate slab_allocator;
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use scheme::{FileHandle, SchemeNamespace};
 
@@ -113,7 +113,7 @@ static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// A unique number that identifies the current CPU - used for scheduling
 #[thread_local]
-static CPU_ID: AtomicUsize = ATOMIC_USIZE_INIT;
+static CPU_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Get the current CPU's scheduling ID
 #[inline(always)]
@@ -122,7 +122,7 @@ pub fn cpu_id() -> usize {
 }
 
 /// The count of all CPUs that can have work scheduled
-static CPU_COUNT : AtomicUsize = ATOMIC_USIZE_INIT;
+static CPU_COUNT : AtomicUsize = AtomicUsize::new(0);
 
 /// Get the number of CPUs currently active
 #[inline(always)]

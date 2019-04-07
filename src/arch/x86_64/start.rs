@@ -4,7 +4,7 @@
 /// defined in other files inside of the `arch` module
 
 use core::slice;
-use core::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use allocator;
 #[cfg(feature = "acpi")]
@@ -31,11 +31,11 @@ static mut TBSS_TEST_ZERO: usize = 0;
 #[thread_local]
 static mut TDATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
-pub static KERNEL_BASE: AtomicUsize = ATOMIC_USIZE_INIT;
-pub static KERNEL_SIZE: AtomicUsize = ATOMIC_USIZE_INIT;
-pub static CPU_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
-pub static AP_READY: AtomicBool = ATOMIC_BOOL_INIT;
-static BSP_READY: AtomicBool = ATOMIC_BOOL_INIT;
+pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
+pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
+pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static AP_READY: AtomicBool = AtomicBool::new(false);
+static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 #[repr(packed)]
 pub struct KernelArgs {

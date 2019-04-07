@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use context;
 use context::timeout;
@@ -9,7 +9,7 @@ use scheme::debug::debug_input;
 use time;
 
 //resets to 0 in context::switch()
-pub static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
+pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
 
 unsafe fn trigger(irq: u8) {
     extern {

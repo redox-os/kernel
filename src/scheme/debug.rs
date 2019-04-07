@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use arch::debug::Writer;
@@ -18,7 +18,7 @@ fn init_input() -> WaitQueue<u8> {
     WaitQueue::new()
 }
 
-static NEXT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
+static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 static HANDLES: Once<RwLock<BTreeMap<usize, usize>>> = Once::new();
 

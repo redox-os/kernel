@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 use alloc::collections::BTreeMap;
-use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use context;
@@ -65,7 +65,7 @@ impl EventQueue {
 pub type EventQueueList = BTreeMap<EventQueueId, Arc<EventQueue>>;
 
 // Next queue id
-static NEXT_QUEUE_ID: AtomicUsize = ATOMIC_USIZE_INIT;
+static NEXT_QUEUE_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Get next queue id
 pub fn next_queue_id() -> EventQueueId {
