@@ -413,22 +413,47 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
     if virtual_address == 0 {
         Ok(0)
     } else {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
+        let mut desc_opt = None;
 
-        let mut grants = context.grants.lock();
+        {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
 
-        for i in 0 .. grants.len() {
-            let start = grants[i].start_address().get();
-            let end = start + grants[i].size();
-            if virtual_address >= start && virtual_address < end {
-                grants.remove(i).unmap();
+            let mut grants = context.grants.lock();
 
-                return Ok(0);
+            for i in 0 .. grants.len() {
+                let start = grants[i].start_address().get();
+                let end = start + grants[i].size();
+                if virtual_address >= start && virtual_address < end {
+                    let mut grant = grants.remove(i);
+                    if grant.desc_opt.is_some() {
+                        desc_opt = grant.desc_opt.take();
+                        grant.unmap();
+                        break;
+                    }
+                }
             }
         }
 
-        Err(Error::new(EFAULT))
+        if let Some(desc) = desc_opt {
+            let scheme_id = {
+                let description = desc.description.read();
+                description.scheme
+            };
+
+            let scheme = {
+                let schemes = scheme::schemes();
+                let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
+                scheme.clone()
+            };
+            let res = scheme.funmap(virtual_address);
+
+            let _ = desc.close();
+
+            res
+        } else {
+            Err(Error::new(EFAULT))
+        }
     }
 }

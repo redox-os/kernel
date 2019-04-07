@@ -30,6 +30,7 @@ pub struct UserInner {
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
+    funmap: Mutex<BTreeMap<usize, usize>>,
     done: WaitMap<u64, usize>
 }
 
@@ -45,6 +46,7 @@ impl UserInner {
             context: context,
             todo: WaitQueue::new(),
             fmap: Mutex::new(BTreeMap::new()),
+            funmap: Mutex::new(BTreeMap::new()),
             done: WaitMap::new()
         }
     }
@@ -192,7 +194,11 @@ impl UserInner {
                 if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
                         //TODO: Protect against sharing addresses that are not page aligned
-                        packet.a = Error::mux(UserInner::capture_inner(&context_weak, address, map.size, map.flags, Some(desc)));
+                        let res = UserInner::capture_inner(&context_weak, address, map.size, map.flags, Some(desc));
+                        if let Ok(new_address) = res {
+                            self.funmap.lock().insert(new_address, address);
+                        }
+                        packet.a = Error::mux(res);
                     } else {
                         let _ = desc.close();
                     }
@@ -356,6 +362,19 @@ impl Scheme for UserScheme {
         let _ = inner.release(address);
 
         result
+    }
+
+    fn funmap(&self, new_address: usize) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let address_opt = {
+            let mut funmap = inner.funmap.lock();
+            funmap.remove(&new_address)
+        };
+        if let Some(address) = address_opt {
+            inner.call(SYS_FUNMAP, address, 0, 0)
+        } else {
+            Err(Error::new(EINVAL))
+        }
     }
 
     fn fpath(&self, file: usize, buf: &mut [u8]) -> Result<usize> {

@@ -19,7 +19,7 @@ pub struct Grant {
     flags: EntryFlags,
     mapped: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
-    desc_opt: Option<FileDescriptor>,
+    pub desc_opt: Option<FileDescriptor>,
 }
 
 impl Grant {
@@ -132,6 +132,11 @@ impl Grant {
         }
 
         flush_all.flush(&mut active_table);
+
+        if let Some(desc) = self.desc_opt.take() {
+            //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
+            let _ = desc.close();
+        }
 
         self.mapped = false;
     }
