@@ -5,7 +5,7 @@ use paging::entry::EntryFlags;
 use context;
 use context::memory::Grant;
 use syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
-use syscall::flag::{PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE};
+use syscall::flag::{PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -72,6 +72,9 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Resu
         }
         if flags & PHYSMAP_WRITE_COMBINE == PHYSMAP_WRITE_COMBINE {
             entry_flags |= EntryFlags::HUGE_PAGE;
+        }
+        if flags & PHYSMAP_NO_CACHE == PHYSMAP_NO_CACHE {
+            entry_flags |= EntryFlags::NO_CACHE;
         }
 
         let mut i = 0;
