@@ -567,7 +567,7 @@ fn fexec_noreturn(
             let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exec_noreturn pid not found");
             let mut context = context_lock.write();
 
-            context.name = Arc::new(Mutex::new(name.clone()));
+            context.name = Arc::new(Mutex::new(name));
 
             empty(&mut context, false);
 
