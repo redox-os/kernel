@@ -641,12 +641,17 @@ fn fexec_noreturn(
                             let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
                             unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
 
-                            tls_option = Some((
-                                VirtualAddress::new(segment.p_vaddr as usize),
-                                segment.p_filesz as usize,
-                                rounded_size as usize,
-                                rounded_offset as usize,
-                            ));
+                            tls_option = Some(context::memory::Tls {
+                                master: VirtualAddress::new(segment.p_vaddr as usize),
+                                file_size: segment.p_filesz as usize,
+                                mem: context::memory::Memory::new(
+                                    VirtualAddress::new(::USER_TLS_OFFSET),
+                                    rounded_size as usize,
+                                    EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                                    true
+                                ),
+                                offset: rounded_offset as usize,
+                            });
                         },
                         _ => (),
                     }
@@ -681,19 +686,7 @@ fn fexec_noreturn(
             ));
 
             // Map TLS
-            if let Some((master, file_size, size, offset)) = tls_option {
-                let mut tls = context::memory::Tls {
-                    master: master,
-                    file_size: file_size,
-                    mem: context::memory::Memory::new(
-                        VirtualAddress::new(::USER_TLS_OFFSET),
-                        size,
-                        EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-                        true
-                    ),
-                    offset: offset,
-                };
-
+            if let Some(mut tls) = tls_option {
                 unsafe {
                     tls.load();
                 }
