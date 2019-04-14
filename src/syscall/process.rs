@@ -584,66 +584,71 @@ fn fexec_noreturn(
             {
                 let elf = elf::Elf::from(&data).unwrap();
                 entry = elf.entry();
+
+                // Always map TCB
+                context.image.push(context::memory::Memory::new(
+                    VirtualAddress::new(::USER_TCB_OFFSET),
+                    4096,
+                    EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                    true
+                ).to_shared());
+
                 for segment in elf.segments() {
-                    if segment.p_type == program_header::PT_LOAD {
-                        let voff = segment.p_vaddr % 4096;
-                        let vaddr = segment.p_vaddr - voff;
+                    match segment.p_type {
+                        program_header::PT_LOAD => {
+                            let voff = segment.p_vaddr % 4096;
+                            let vaddr = segment.p_vaddr - voff;
 
-                        let mut memory = context::memory::Memory::new(
-                            VirtualAddress::new(vaddr as usize),
-                            segment.p_memsz as usize + voff as usize,
-                            EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
-                            true
-                        );
+                            let mut memory = context::memory::Memory::new(
+                                VirtualAddress::new(vaddr as usize),
+                                segment.p_memsz as usize + voff as usize,
+                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                                true
+                            );
 
-                        unsafe {
-                            // Copy file data
-                            intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
-                                            segment.p_vaddr as *mut u8,
-                                            segment.p_filesz as usize);
-                        }
+                            unsafe {
+                                // Copy file data
+                                intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
+                                                segment.p_vaddr as *mut u8,
+                                                segment.p_filesz as usize);
+                            }
 
-                        let mut flags = EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
+                            let mut flags = EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
 
-                        if segment.p_flags & program_header::PF_R == program_header::PF_R {
-                            flags.insert(EntryFlags::PRESENT);
-                        }
+                            if segment.p_flags & program_header::PF_R == program_header::PF_R {
+                                flags.insert(EntryFlags::PRESENT);
+                            }
 
-                        // W ^ X. If it is executable, do not allow it to be writable, even if requested
-                        if segment.p_flags & program_header::PF_X == program_header::PF_X {
-                            flags.remove(EntryFlags::NO_EXECUTE);
-                        } else if segment.p_flags & program_header::PF_W == program_header::PF_W {
-                            flags.insert(EntryFlags::WRITABLE);
-                        }
+                            // W ^ X. If it is executable, do not allow it to be writable, even if requested
+                            if segment.p_flags & program_header::PF_X == program_header::PF_X {
+                                flags.remove(EntryFlags::NO_EXECUTE);
+                            } else if segment.p_flags & program_header::PF_W == program_header::PF_W {
+                                flags.insert(EntryFlags::WRITABLE);
+                            }
 
-                        memory.remap(flags);
+                            memory.remap(flags);
 
-                        context.image.push(memory.to_shared());
-                    } else if segment.p_type == program_header::PT_TLS {
-                        let memory = context::memory::Memory::new(
-                            VirtualAddress::new(::USER_TCB_OFFSET),
-                            4096,
-                            EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-                            true
-                        );
-                        let aligned_size = if segment.p_align > 0 {
-                            ((segment.p_memsz + (segment.p_align - 1))/segment.p_align) * segment.p_align
-                        } else {
-                            segment.p_memsz
-                        };
-                        let rounded_size = ((aligned_size + 4095)/4096) * 4096;
-                        let rounded_offset = rounded_size - aligned_size;
-                        let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
-                        unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
+                            context.image.push(memory.to_shared());
+                        },
+                        program_header::PT_TLS => {
+                            let aligned_size = if segment.p_align > 0 {
+                                ((segment.p_memsz + (segment.p_align - 1))/segment.p_align) * segment.p_align
+                            } else {
+                                segment.p_memsz
+                            };
+                            let rounded_size = ((aligned_size + 4095)/4096) * 4096;
+                            let rounded_offset = rounded_size - aligned_size;
+                            let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
+                            unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
 
-                        context.image.push(memory.to_shared());
-
-                        tls_option = Some((
-                            VirtualAddress::new(segment.p_vaddr as usize),
-                            segment.p_filesz as usize,
-                            rounded_size as usize,
-                            rounded_offset as usize,
-                        ));
+                            tls_option = Some((
+                                VirtualAddress::new(segment.p_vaddr as usize),
+                                segment.p_filesz as usize,
+                                rounded_size as usize,
+                                rounded_offset as usize,
+                            ));
+                        },
+                        _ => (),
                     }
                 }
             }
