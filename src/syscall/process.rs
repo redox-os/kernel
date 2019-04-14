@@ -867,17 +867,49 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
         Ok(elf) => {
             // We check the validity of all loadable sections here
             for segment in elf.segments() {
-                if segment.p_type == program_header::PT_LOAD {
-                    let voff = segment.p_vaddr % 4096;
-                    let vaddr = segment.p_vaddr - voff;
+                match segment.p_type {
+                    program_header::PT_INTERP => {
+                        //TODO: length restraint, parse interp earlier
+                        let mut interp = vec![0; segment.p_memsz as usize];
+                        unsafe {
+                            intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
+                                            interp.as_mut_ptr(),
+                                            segment.p_filesz as usize);
+                        }
 
-                    // Due to the Userspace and kernel TLS bases being located right above 2GB,
-                    // limit any loadable sections to lower than that. Eventually we will need
-                    // to replace this with a more intelligent TLS address
-                    if vaddr >= 0x8000_0000 {
-                        println!("exec: invalid section address {:X}", segment.p_vaddr);
-                        return Err(Error::new(ENOEXEC));
-                    }
+                        let mut i = 0;
+                        while i < interp.len() {
+                            if interp[i] == 0 {
+                                break;
+                            }
+                            i += 1;
+                        }
+                        interp.truncate(i);
+
+                        println!("  interpreter: {:?}", ::core::str::from_utf8(&interp));
+
+                        let interp_fd = super::fs::open(&interp, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
+
+                        let mut args_vec = Vec::from(args);
+                        args_vec.insert(0, interp.into_boxed_slice());
+                        //TODO: pass file handle in auxv
+                        args_vec[1] = name.into_boxed_slice();
+
+                        return fexec_kernel(interp_fd, args_vec.into_boxed_slice(), vars);
+                    },
+                    program_header::PT_LOAD => {
+                        let voff = segment.p_vaddr % 4096;
+                        let vaddr = segment.p_vaddr - voff;
+
+                        // Due to the Userspace and kernel TLS bases being located right above 2GB,
+                        // limit any loadable sections to lower than that. Eventually we will need
+                        // to replace this with a more intelligent TLS address
+                        if vaddr >= 0x8000_0000 {
+                            println!("exec: invalid section address {:X}", segment.p_vaddr);
+                            return Err(Error::new(ENOEXEC));
+                        }
+                    },
+                    _ => (),
                 }
             }
         },
