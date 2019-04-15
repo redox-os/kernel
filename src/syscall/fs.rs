@@ -427,11 +427,9 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
                 let end = start + grants[i].size();
                 if virtual_address >= start && virtual_address < end {
                     let mut grant = grants.remove(i);
-                    if grant.desc_opt.is_some() {
-                        desc_opt = grant.desc_opt.take();
-                        grant.unmap();
-                        break;
-                    }
+                    desc_opt = grant.desc_opt.take();
+                    grant.unmap();
+                    break;
                 }
             }
         }
