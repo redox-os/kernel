@@ -486,7 +486,6 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Set up TCB
             let tcb_addr = ::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
-            println!("clone: Map TCB {:#x}", tcb_addr);
             let mut tcb_mem = context::memory::Memory::new(
                 VirtualAddress::new(tcb_addr),
                 PAGE_SIZE,
@@ -605,7 +604,6 @@ fn fexec_noreturn(
 
                 // Always map TCB
                 let tcb_addr = ::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
-                println!("exec: Map TCB {:#x}", tcb_addr);
                 let tcb_mem = context::memory::Memory::new(
                     VirtualAddress::new(tcb_addr),
                     PAGE_SIZE,
