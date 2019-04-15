@@ -7,7 +7,7 @@ use core::ops::DerefMut;
 use spin::Mutex;
 
 use memory::allocate_frames;
-use paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress};
+use paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
 use paging::entry::EntryFlags;
 use paging::mapper::MapperFlushAll;
 use paging::temporary_page::TemporaryPage;
@@ -386,7 +386,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // TODO: Clone ksig?
 
-            // Setup heap
+            // Setup image, heap, and grants
             if flags & CLONE_VM == CLONE_VM {
                 // Copy user image mapping, if found
                 if ! image.is_empty() {
@@ -484,11 +484,29 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 context.sigstack = Some(sigstack);
             }
 
+            // Set up TCB
+            let tcb_addr = ::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
+            println!("clone: Map TCB {:#x}", tcb_addr);
+            let mut tcb_mem = context::memory::Memory::new(
+                VirtualAddress::new(tcb_addr),
+                PAGE_SIZE,
+                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                true
+            );
+
             // Setup user TLS
             if let Some(mut tls) = tls_option {
+                unsafe {
+                    *(tcb_addr as *mut usize) = ::USER_TLS_OFFSET + tls.mem.size();
+                }
+
                 tls.mem.move_to(VirtualAddress::new(::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
                 context.tls = Some(tls);
             }
+
+
+            tcb_mem.move_to(VirtualAddress::new(tcb_addr), &mut new_table, &mut temporary_page);
+            context.image.push(tcb_mem.to_shared());
 
             context.name = name;
 
@@ -586,22 +604,24 @@ fn fexec_noreturn(
                 entry = elf.entry();
 
                 // Always map TCB
-                context.image.push(context::memory::Memory::new(
-                    VirtualAddress::new(::USER_TCB_OFFSET),
-                    4096,
+                let tcb_addr = ::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
+                println!("exec: Map TCB {:#x}", tcb_addr);
+                let tcb_mem = context::memory::Memory::new(
+                    VirtualAddress::new(tcb_addr),
+                    PAGE_SIZE,
                     EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                     true
-                ).to_shared());
+                );
 
                 for segment in elf.segments() {
                     match segment.p_type {
                         program_header::PT_LOAD => {
-                            let voff = segment.p_vaddr % 4096;
-                            let vaddr = segment.p_vaddr - voff;
+                            let voff = segment.p_vaddr as usize % PAGE_SIZE;
+                            let vaddr = segment.p_vaddr as usize - voff;
 
                             let mut memory = context::memory::Memory::new(
-                                VirtualAddress::new(vaddr as usize),
-                                segment.p_memsz as usize + voff as usize,
+                                VirtualAddress::new(vaddr),
+                                segment.p_memsz as usize + voff,
                                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                                 true
                             );
@@ -635,13 +655,11 @@ fn fexec_noreturn(
                                 ((segment.p_memsz + (segment.p_align - 1))/segment.p_align) * segment.p_align
                             } else {
                                 segment.p_memsz
-                            };
-                            let rounded_size = ((aligned_size + 4095)/4096) * 4096;
+                            } as usize;
+                            let rounded_size = ((aligned_size + PAGE_SIZE - 1)/PAGE_SIZE) * PAGE_SIZE;
                             let rounded_offset = rounded_size - aligned_size;
-                            let tcb_offset = ::USER_TLS_OFFSET + rounded_size as usize;
-                            unsafe { *(::USER_TCB_OFFSET as *mut usize) = tcb_offset; }
 
-                            tls_option = Some(context::memory::Tls {
+                            let tls = context::memory::Tls {
                                 master: VirtualAddress::new(segment.p_vaddr as usize),
                                 file_size: segment.p_filesz as usize,
                                 mem: context::memory::Memory::new(
@@ -651,11 +669,19 @@ fn fexec_noreturn(
                                     true
                                 ),
                                 offset: rounded_offset as usize,
-                            });
+                            };
+
+                            unsafe {
+                                *(tcb_addr as *mut usize) = ::USER_TLS_OFFSET + tls.mem.size();
+                            }
+
+                            tls_option = Some(tls);
                         },
                         _ => (),
                     }
                 }
+
+                context.image.push(tcb_mem.to_shared());
             }
 
             // Data no longer required, can deallocate
@@ -896,8 +922,8 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                         return fexec_kernel(interp_fd, args_vec.into_boxed_slice(), vars);
                     },
                     program_header::PT_LOAD => {
-                        let voff = segment.p_vaddr % 4096;
-                        let vaddr = segment.p_vaddr - voff;
+                        let voff = segment.p_vaddr as usize % PAGE_SIZE;
+                        let vaddr = segment.p_vaddr as usize - voff;
 
                         // Due to the Userspace and kernel TLS bases being located right above 2GB,
                         // limit any loadable sections to lower than that. Eventually we will need

@@ -8,6 +8,8 @@ use x86::shared::dtables::{self, DescriptorTablePointer};
 use x86::shared::segmentation::{self, SegmentDescriptor, SegmentSelector};
 use x86::shared::task;
 
+use paging::PAGE_SIZE;
+
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;
@@ -91,6 +93,10 @@ pub static mut TSS: TaskStateSegment = TaskStateSegment {
     iomap_base: 0xFFFF
 };
 
+pub unsafe fn set_tcb(pid: usize) {
+    GDT[GDT_USER_TLS].set_offset((::USER_TCB_OFFSET + pid * PAGE_SIZE) as u32);
+}
+
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
     use arch::x86_64::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
@@ -141,7 +147,7 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
     GDT[GDT_KERNEL_TLS].set_offset(tcb_offset as u32);
 
     // Set the User TLS segment to the offset of the user TCB
-    GDT[GDT_USER_TLS].set_offset(::USER_TCB_OFFSET as u32);
+    set_tcb(0);
 
     // We can now access our TSS, which is a thread local
     GDT[GDT_TSS].set_offset(&TSS as *const _ as u32);

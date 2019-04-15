@@ -130,6 +130,7 @@ pub unsafe fn switch() -> bool {
         if let Some(ref stack) = (*to_ptr).kstack {
             gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
         }
+        gdt::set_tcb((&mut *to_ptr).id.into());
         CONTEXT_ID.store((&mut *to_ptr).id, Ordering::SeqCst);
     }
 

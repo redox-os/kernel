@@ -32,6 +32,7 @@
     pub const USER_PML4: usize = (USER_OFFSET & PML4_MASK)/PML4_SIZE;
 
     /// Offset to user TCB
+    /// Each process has 4096 bytes, at an offset of 4096 * PID
     pub const USER_TCB_OFFSET: usize = 0xB000_0000;
 
     /// Offset to user arguments
