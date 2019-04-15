@@ -264,6 +264,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "mkns({:?})",
             validate_slice(b as *const [usize; 2], c)
         ),
+        SYS_MPROTECT => format!(
+            "mprotect({:#X}, {}, {:#X})",
+            b,
+            c,
+            d
+        ),
         SYS_NANOSLEEP => format!(
             "nanosleep({:?}, ({}, {}))",
             validate_slice(b as *const TimeSpec, 1),
