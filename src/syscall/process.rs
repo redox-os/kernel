@@ -261,7 +261,12 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             if flags & CLONE_VM == CLONE_VM {
                 grants = Arc::clone(&context.grants);
             } else {
-                grants = Arc::new(Mutex::new(Vec::new()));
+                let mut grants_vec = Vec::new();
+                for grant in context.grants.lock().iter() {
+                    let start = VirtualAddress::new(grant.start_address().get() + ::USER_TMP_GRANT_OFFSET - ::USER_GRANT_OFFSET);
+                    grants_vec.push(grant.secret_clone(start));
+                }
+                grants = Arc::new(Mutex::new(grants_vec));
             }
 
             if flags & CLONE_VM == CLONE_VM {
@@ -303,6 +308,24 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 };
 
                 *file_option = new_file_option;
+            }
+        }
+
+        // If not cloning virtual memory, use fmap to re-obtain every grant where possible
+        if flags & CLONE_VM == 0 {
+            let mut i = 0;
+            while i < grants.lock().len() {
+                let mut remove = false;
+                if let Some(grant) = grants.lock().get(i) {
+                    if let Some(ref _desc) = grant.desc_opt {
+                        println!("todo: clone grant {} using fmap: {:?}", i, grant);
+                    }
+                }
+                if remove {
+                    grants.lock().remove(i);
+                } else {
+                    i += 1;
+                }
             }
         }
 
@@ -460,6 +483,13 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                     });
                     context.heap = Some(heap_shared);
                 }
+
+                // Move grants
+                for grant in grants.lock().iter_mut() {
+                    let start = VirtualAddress::new(grant.start_address().get() + ::USER_GRANT_OFFSET - ::USER_TMP_GRANT_OFFSET);
+                    grant.move_to(start, &mut new_table, &mut temporary_page);
+                }
+                context.grants = grants;
             }
 
             // Setup user stack
