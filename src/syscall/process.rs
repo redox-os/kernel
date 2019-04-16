@@ -516,7 +516,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Set up TCB
             let tcb_addr = ::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
-            let mut tcb_mem = context::memory::Memory::new(
+            let mut tcb = context::memory::Memory::new(
                 VirtualAddress::new(tcb_addr),
                 PAGE_SIZE,
                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
@@ -525,17 +525,22 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Setup user TLS
             if let Some(mut tls) = tls_option {
-                unsafe {
-                    *(tcb_addr as *mut usize) = ::USER_TLS_OFFSET + tls.mem.size();
-                }
-
                 tls.mem.move_to(VirtualAddress::new(::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
+                unsafe {
+                    *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
+                }
                 context.tls = Some(tls);
+            } else {
+                let parent_tcb_addr = ::USER_TCB_OFFSET + ppid.into() * PAGE_SIZE;
+                unsafe {
+                    intrinsics::copy(parent_tcb_addr as *const u8,
+                                    tcb_addr as *mut u8,
+                                    tcb.size());
+                }
             }
 
-
-            tcb_mem.move_to(VirtualAddress::new(tcb_addr), &mut new_table, &mut temporary_page);
-            context.image.push(tcb_mem.to_shared());
+            tcb.move_to(VirtualAddress::new(tcb_addr), &mut new_table, &mut temporary_page);
+            context.image.push(tcb.to_shared());
 
             context.name = name;
 
