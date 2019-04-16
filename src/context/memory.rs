@@ -18,6 +18,7 @@ pub struct Grant {
     size: usize,
     flags: EntryFlags,
     mapped: bool,
+    owned: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
     pub desc_opt: Option<FileDescriptor>,
 }
@@ -43,6 +44,7 @@ impl Grant {
             size,
             flags,
             mapped: true,
+            owned: false,
             desc_opt: None,
         }
     }
@@ -66,6 +68,7 @@ impl Grant {
             size,
             flags,
             mapped: true,
+            owned: true,
             desc_opt: None,
         }
     }
@@ -101,8 +104,93 @@ impl Grant {
             size,
             flags,
             mapped: true,
+            owned: false,
             desc_opt,
         }
+    }
+
+    /// This function should only be used in clone!
+    pub fn secret_clone(&self, new_start: VirtualAddress) -> Grant {
+        assert!(self.mapped);
+
+        let mut active_table = unsafe { ActivePageTable::new() };
+
+        let mut flush_all = MapperFlushAll::new();
+
+        let start_page = Page::containing_address(self.start);
+        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        for page in Page::range_inclusive(start_page, end_page) {
+            //TODO: One function to do both?
+            let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
+            let frame = active_table.translate_page(page).expect("grant references unmapped memory");
+
+            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+            if self.owned {
+                let result = active_table.map(new_page, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+                flush_all.consume(result);
+            } else {
+                let result = active_table.map_to(new_page, frame, flags);
+                flush_all.consume(result);
+            }
+        }
+
+        flush_all.flush(&mut active_table);
+
+        if self.owned {
+            unsafe {
+                intrinsics::copy(self.start.get() as *const u8, new_start.get() as *mut u8, self.size);
+            }
+
+            let mut flush_all = MapperFlushAll::new();
+
+            for page in Page::range_inclusive(start_page, end_page) {
+                //TODO: One function to do both?
+                let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
+
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+                let result = active_table.remap(new_page, flags);
+                flush_all.consume(result);
+            }
+
+            flush_all.flush(&mut active_table);
+        }
+
+        Grant {
+            start: new_start,
+            size: self.size,
+            flags: self.flags,
+            mapped: true,
+            owned: self.owned,
+            desc_opt: self.desc_opt.clone()
+        }
+    }
+
+    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
+        assert!(self.mapped);
+
+        let mut active_table = unsafe { ActivePageTable::new() };
+
+        let mut flush_all = MapperFlushAll::new();
+
+        let start_page = Page::containing_address(self.start);
+        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        for page in Page::range_inclusive(start_page, end_page) {
+            //TODO: One function to do both?
+            let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
+            let (result, frame) = active_table.unmap_return(page, false);
+            flush_all.consume(result);
+
+            active_table.with(new_table, temporary_page, |mapper| {
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+                let result = mapper.map_to(new_page, frame, flags);
+                // Ignore result due to mapping on inactive table
+                unsafe { result.ignore(); }
+            });
+        }
+
+        flush_all.flush(&mut active_table);
+
+        self.start = new_start;
     }
 
     pub fn start_address(&self) -> VirtualAddress {
@@ -117,8 +205,16 @@ impl Grant {
         self.flags
     }
 
+    pub unsafe fn set_mapped(&mut self, mapped: bool) {
+        self.mapped = mapped;
+    }
+
     pub fn unmap(mut self) {
         assert!(self.mapped);
+
+        if self.owned {
+            println!("Grant::unmap: leaked {:?}", self);
+        }
 
         let mut active_table = unsafe { ActivePageTable::new() };
 
@@ -143,6 +239,10 @@ impl Grant {
 
     pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
         assert!(self.mapped);
+
+        if self.owned {
+            println!("Grant::unmap_inactive: leaked {:?}", self);
+        }
 
         let mut active_table = unsafe { ActivePageTable::new() };
 
