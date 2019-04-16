@@ -852,7 +852,7 @@ fn fexec_noreturn(
     unsafe { usermode(entry, sp, 0); }
 }
 
-pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>) -> Result<usize> {
+pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>) -> Result<usize> {
     let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -884,9 +884,13 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
             return Err(Error::new(EACCES));
         }
 
-        name = vec![0; 4096];
-        let len = syscall::file_op_mut_slice(syscall::number::SYS_FPATH, file.0, &mut name)?;
-        name.truncate(len);
+        if let Some(name_override) = name_override_opt {
+            name = Vec::from(name_override);
+        } else {
+            name = vec![0; 4096];
+            let len = syscall::file_op_mut_slice(syscall::number::SYS_FPATH, file.0, &mut name)?;
+            name.truncate(len);
+        }
 
         //TODO: Only read elf header, not entire file. Then read required segments
         data = vec![0; stat.st_size as usize];
@@ -950,9 +954,15 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                         let mut args_vec = Vec::from(args);
                         args_vec.insert(0, interp.into_boxed_slice());
                         //TODO: pass file handle in auxv
-                        args_vec[1] = name.into_boxed_slice();
+                        let name_override = name.into_boxed_slice();
+                        args_vec[1] = name_override.clone();
 
-                        return fexec_kernel(interp_fd, args_vec.into_boxed_slice(), vars);
+                        return fexec_kernel(
+                            interp_fd,
+                            args_vec.into_boxed_slice(),
+                            vars,
+                            Some(name_override),
+                        );
                     },
                     program_header::PT_LOAD => {
                         let voff = segment.p_vaddr as usize % PAGE_SIZE;
@@ -999,7 +1009,7 @@ pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -
     }
     drop(var_ptrs);
 
-    fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice())
+    fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None)
 }
 
 pub fn exit(status: usize) -> ! {
