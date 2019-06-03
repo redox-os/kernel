@@ -24,7 +24,8 @@ use syscall;
 use syscall::data::{SigAction, Stat};
 use syscall::error::*;
 use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
-                    PROT_EXEC, PROT_READ, PROT_WRITE, SIG_DFL, SIGCONT, SIGTERM,
+                    PROT_EXEC, PROT_READ, PROT_WRITE,
+                    SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
                     WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
 use syscall::validate::{validate_slice, validate_slice_mut};
 
@@ -77,6 +78,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         let egid;
         let ens;
         let umask;
+        let sigmask;
         let mut cpu_id = None;
         let arch;
         let vfork;
@@ -108,6 +110,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             euid = context.euid;
             egid = context.egid;
             ens = context.ens;
+            sigmask = context.sigmask;
             umask = context.umask;
 
             if flags & CLONE_VM == CLONE_VM {
@@ -357,6 +360,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             context.euid = euid;
             context.egid = egid;
             context.ens = ens;
+            context.sigmask = sigmask;
             context.umask = umask;
 
             context.cpu_id = cpu_id;
@@ -1168,6 +1172,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                     // If sig = 0, test that process exists and can be
                     // signalled, but don't send any signal.
                     if sig != 0 {
+                        //TODO: sigprocmask
                         context.pending.push_back(sig as u8);
                         // Convert stopped processes to blocked if sending SIGCONT
                         if sig == SIGCONT {
@@ -1336,7 +1341,35 @@ pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mu
 }
 
 pub fn sigprocmask(how: usize, mask_opt: Option<&[u64; 2]>, oldmask_opt: Option<&mut [u64; 2]>) -> Result<usize> {
-    println!("sigprocmask {}, {:?}, {:?}", how, mask_opt, oldmask_opt);
+    {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let mut context = context_lock.write();
+
+        if let Some(oldmask) = oldmask_opt {
+            *oldmask = context.sigmask;
+        }
+
+        if let Some(mask) = mask_opt {
+            match how {
+                SIG_BLOCK => {
+                    context.sigmask[0] |= mask[0];
+                    context.sigmask[1] |= mask[1];
+                },
+                SIG_UNBLOCK => {
+                    context.sigmask[0] &= !mask[0];
+                    context.sigmask[1] &= !mask[1];
+                },
+                SIG_SETMASK => {
+                    context.sigmask[0] = mask[0];
+                    context.sigmask[1] = mask[1];
+                },
+                _ => {
+                    return Err(Error::new(EINVAL));
+                }
+            }
+        }
+    }
     Ok(0)
 }
 

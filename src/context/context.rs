@@ -111,6 +111,8 @@ pub struct Context {
     pub egid: u32,
     /// The effective namespace id
     pub ens: SchemeNamespace,
+    /// Signal mask
+    pub sigmask: [u64; 2],
     /// Process umask
     pub umask: usize,
     /// Status of context
@@ -161,7 +163,7 @@ pub struct Context {
     pub cwd: Arc<Mutex<Vec<u8>>>,
     /// The open files in the scheme
     pub files: Arc<Mutex<Vec<Option<FileDescriptor>>>>,
-    /// Singal actions
+    /// Signal actions
     pub actions: Arc<Mutex<Vec<(SigAction, usize)>>>,
 }
 
@@ -180,6 +182,7 @@ impl Context {
             euid: 0,
             egid: 0,
             ens: SchemeNamespace::from(0),
+            sigmask: [0; 2],
             umask: 0o022,
             status: Status::Blocked,
             running: false,
