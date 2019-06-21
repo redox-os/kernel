@@ -3,13 +3,13 @@ use core::{mem, slice, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use context::timeout;
-use scheme::SchemeId;
-use syscall::data::TimeSpec;
-use syscall::error::*;
-use syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
-use syscall::scheme::Scheme;
-use time;
+use crate::context::timeout;
+use crate::scheme::SchemeId;
+use crate::syscall::data::TimeSpec;
+use crate::syscall::error::*;
+use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
+use crate::syscall::scheme::Scheme;
+use crate::time;
 
 pub struct TimeScheme {
     scheme_id: SchemeId,

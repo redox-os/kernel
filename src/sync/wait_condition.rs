@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::{Mutex, RwLock};
 
-use context::{self, Context};
+use crate::context::{self, Context};
 
 #[derive(Debug)]
 pub struct WaitCondition {

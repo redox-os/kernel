@@ -5,10 +5,10 @@ use core::{cmp, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use syscall::data::Stat;
-use syscall::error::{Error, EBADF, EINVAL, ENOENT, Result};
-use syscall::flag::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
-use syscall::scheme::Scheme;
+use crate::syscall::data::Stat;
+use crate::syscall::error::{Error, EBADF, EINVAL, ENOENT, Result};
+use crate::syscall::flag::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
+use crate::syscall::scheme::Scheme;
 
 mod context;
 mod cpu;

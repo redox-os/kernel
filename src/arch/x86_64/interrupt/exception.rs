@@ -1,5 +1,5 @@
-use interrupt::stack_trace;
-use syscall::flag::*;
+use crate::interrupt::stack_trace;
+use crate::syscall::flag::*;
 
 extern {
     fn ksignal(signal: usize);

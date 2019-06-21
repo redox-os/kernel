@@ -3,14 +3,14 @@ use alloc::collections::VecDeque;
 use core::intrinsics;
 use spin::Mutex;
 
-use arch::paging::PAGE_SIZE;
-use context::file::FileDescriptor;
-use ipi::{ipi, IpiKind, IpiTarget};
-use memory::Frame;
-use paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
-use paging::entry::EntryFlags;
-use paging::mapper::MapperFlushAll;
-use paging::temporary_page::TemporaryPage;
+use crate::arch::paging::PAGE_SIZE;
+use crate::context::file::FileDescriptor;
+use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::memory::Frame;
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
+use crate::paging::entry::EntryFlags;
+use crate::paging::mapper::MapperFlushAll;
+use crate::paging::temporary_page::TemporaryPage;
 
 #[derive(Debug)]
 pub struct Grant {

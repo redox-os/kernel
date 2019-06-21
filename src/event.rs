@@ -3,11 +3,11 @@ use alloc::collections::BTreeMap;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use context;
-use scheme::{self, SchemeId};
-use sync::WaitQueue;
-use syscall::data::Event;
-use syscall::error::{Error, Result, EBADF, EINTR, ESRCH};
+use crate::context;
+use crate::scheme::{self, SchemeId};
+use crate::sync::WaitQueue;
+use crate::syscall::data::Event;
+use crate::syscall::error::{Error, Result, EBADF, EINTR, ESRCH};
 
 int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 
@@ -34,7 +34,7 @@ impl EventQueue {
                 let contexts = context::contexts();
                 let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
                 let context = context_lock.read();
-                let mut files = context.files.lock();
+                let files = context.files.lock();
                 match files.get(event.id).ok_or(Error::new(EBADF))? {
                     Some(file) => file.clone(),
                     None => return Err(Error::new(EBADF))

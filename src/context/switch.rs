@@ -1,11 +1,11 @@
 use core::sync::atomic::Ordering;
 
-use context::{arch, contexts, Context, Status, CONTEXT_ID};
-use context::signal::signal_handler;
-use gdt;
-use interrupt;
-use interrupt::irq::PIT_TICKS;
-use time;
+use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
+use crate::context::signal::signal_handler;
+use crate::gdt;
+use crate::interrupt;
+use crate::interrupt::irq::PIT_TICKS;
+use crate::time;
 
 unsafe fn update(context: &mut Context, cpu_id: usize) {
     // Take ownership if not already owned
@@ -74,7 +74,7 @@ pub unsafe fn switch() -> bool {
         interrupt::pause();
     }
 
-    let cpu_id = ::cpu_id();
+    let cpu_id = crate::cpu_id();
 
     let from_ptr;
     let mut to_ptr = 0 as *mut Context;

@@ -18,9 +18,9 @@ use self::data::{SigAction, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
 use self::number::*;
 
-use context::ContextId;
-use interrupt::syscall::SyscallStack;
-use scheme::{FileHandle, SchemeNamespace};
+use crate::context::ContextId;
+use crate::interrupt::syscall::SyscallStack;
+use crate::scheme::{FileHandle, SchemeNamespace};
 
 /// Debug
 pub mod debug;
@@ -162,11 +162,11 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
 
     /*
     let debug = {
-        let contexts = ::context::contexts();
+        let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
             let name_raw = context.name.lock();
-            let name = unsafe { ::core::str::from_utf8_unchecked(&name_raw) };
+            let name = unsafe { core::str::from_utf8_unchecked(&name_raw) };
             if name == "file:/bin/cargo" || name == "file:/bin/rustc" {
                 if a == SYS_CLOCK_GETTIME {
                     false
@@ -184,10 +184,10 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
     };
 
     if debug {
-        let contexts = ::context::contexts();
+        let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
+            print!("{} ({}): ", unsafe { core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
         }
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
@@ -200,7 +200,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
     // When the code below falls out of scope it will release the lock
     // see the spin crate for details
     {
-        let contexts = ::context::contexts();
+        let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let mut context = context_lock.write();
             context.syscall = Some((a, b, c, d, e, f));
@@ -210,7 +210,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
     let result = inner(a, b, c, d, e, f, bp, stack);
 
     {
-        let contexts = ::context::contexts();
+        let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let mut context = context_lock.write();
             context.syscall = None;
@@ -219,10 +219,10 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
 
     /*
     if debug {
-        let contexts = ::context::contexts();
+        let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
+            print!("{} ({}): ", unsafe { core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
         }
 
         print!("{} = ", debug::format_call(a, b, c, d, e, f));

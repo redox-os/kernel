@@ -1,10 +1,10 @@
 use alloc::vec::Vec;
 
-use device::cpu::cpu_info;
-use syscall::error::{Error, EIO, Result};
+use crate::device::cpu::cpu_info;
+use crate::syscall::error::{Error, EIO, Result};
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = format!("CPUs: {}\n", ::cpu_count());
+    let mut string = format!("CPUs: {}\n", crate::cpu_count());
 
     match cpu_info(&mut string) {
         Ok(()) => Ok(string.into_bytes()),

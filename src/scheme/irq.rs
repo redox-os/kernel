@@ -2,12 +2,12 @@ use core::{mem, str};
 use core::sync::atomic::Ordering;
 use spin::Mutex;
 
-use event;
-use interrupt::irq::acknowledge;
-use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
-use syscall::error::*;
-use syscall::flag::EVENT_READ;
-use syscall::scheme::Scheme;
+use crate::event;
+use crate::interrupt::irq::acknowledge;
+use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
+use crate::syscall::error::*;
+use crate::syscall::flag::EVENT_READ;
+use crate::syscall::scheme::Scheme;
 
 pub static IRQ_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
 

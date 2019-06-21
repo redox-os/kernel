@@ -1,4 +1,4 @@
-use syscall::io::{Io, Pio, Mmio, ReadOnly};
+use crate::syscall::io::{Io, Pio, Mmio, ReadOnly};
 
 bitflags! {
     /// Interrupt enable flags

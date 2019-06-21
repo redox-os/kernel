@@ -2,7 +2,7 @@ use alloc::collections::BTreeMap;
 use core::mem;
 use spin::Mutex;
 
-use sync::WaitCondition;
+use crate::sync::WaitCondition;
 
 #[derive(Debug)]
 pub struct WaitMap<K, V> {

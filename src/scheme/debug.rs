@@ -1,12 +1,12 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use arch::debug::Writer;
-use event;
-use scheme::*;
-use sync::WaitQueue;
-use syscall::flag::{EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
-use syscall::scheme::Scheme;
+use crate::arch::debug::Writer;
+use crate::event;
+use crate::scheme::*;
+use crate::sync::WaitQueue;
+use crate::syscall::flag::{EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
+use crate::syscall::scheme::Scheme;
 
 pub static DEBUG_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
 

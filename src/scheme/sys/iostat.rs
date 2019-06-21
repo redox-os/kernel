@@ -3,9 +3,9 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 use core::str;
 
-use context;
-use scheme;
-use syscall::error::Result;
+use crate::context;
+use crate::scheme;
+use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut string = String::new();

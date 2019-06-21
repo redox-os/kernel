@@ -4,10 +4,10 @@ use alloc::collections::BTreeMap;
 use core::alloc::{GlobalAlloc, Layout};
 use core::mem;
 use core::sync::atomic::Ordering;
-use paging;
+use crate::paging;
 use spin::RwLock;
 
-use syscall::error::{Result, Error, EAGAIN};
+use crate::syscall::error::{Result, Error, EAGAIN};
 use super::context::{Context, ContextId};
 
 /// Context list type
@@ -66,7 +66,7 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let mut fx = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
+            let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
             for b in fx.iter_mut() {
                 *b = 0;
             }

@@ -1,7 +1,7 @@
 use alloc::collections::VecDeque;
 use spin::Mutex;
 
-use sync::WaitCondition;
+use crate::sync::WaitCondition;
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {

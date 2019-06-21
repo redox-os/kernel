@@ -2,8 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::str;
 
-use context;
-use syscall::error::Result;
+use crate::context;
+use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{}\n",

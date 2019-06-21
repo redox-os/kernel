@@ -1,5 +1,5 @@
-use arch::{gdt, pti};
-use syscall;
+use crate::arch::{gdt, pti};
+use crate::syscall;
 use x86::shared::msr;
 
 pub unsafe fn init() {

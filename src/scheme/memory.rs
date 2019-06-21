@@ -1,12 +1,12 @@
-use context;
-use context::memory::Grant;
-use memory::{free_frames, used_frames};
-use paging::VirtualAddress;
-use paging::entry::EntryFlags;
-use syscall::data::{Map, StatVfs};
-use syscall::error::*;
-use syscall::flag::{PROT_EXEC, PROT_READ, PROT_WRITE};
-use syscall::scheme::Scheme;
+use crate::context;
+use crate::context::memory::Grant;
+use crate::memory::{free_frames, used_frames};
+use crate::paging::VirtualAddress;
+use crate::paging::entry::EntryFlags;
+use crate::syscall::data::{Map, StatVfs};
+use crate::syscall::error::*;
+use crate::syscall::flag::{PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::syscall::scheme::Scheme;
 
 pub struct MemoryScheme;
 
@@ -44,7 +44,7 @@ impl Scheme for MemoryScheme {
             let mut grants = context.grants.lock();
 
             let full_size = ((map.size + 4095)/4096) * 4096;
-            let mut to_address = ::USER_GRANT_OFFSET;
+            let mut to_address = crate::USER_GRANT_OFFSET;
 
             let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
             if map.flags & PROT_EXEC == 0 {

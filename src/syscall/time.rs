@@ -1,8 +1,8 @@
-use time;
-use context;
-use syscall::data::TimeSpec;
-use syscall::error::*;
-use syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
+use crate::time;
+use crate::context;
+use crate::syscall::data::TimeSpec;
+use crate::syscall::error::*;
+use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
 
 pub fn clock_gettime(clock: usize, time: &mut TimeSpec) -> Result<usize> {
     let arch_time = match clock {

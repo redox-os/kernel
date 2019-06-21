@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
-use log::LOG;
-use syscall::error::Result;
+use crate::log::LOG;
+use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut vec = Vec::new();

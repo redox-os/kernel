@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use paging::PhysicalAddress;
+use crate::paging::PhysicalAddress;
 
 use super::{Frame, FrameAllocator};
 

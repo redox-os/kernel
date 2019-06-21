@@ -12,8 +12,8 @@ use alloc::collections::BTreeMap;
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use syscall::error::*;
-use syscall::scheme::Scheme;
+use crate::syscall::error::*;
+use crate::syscall::scheme::Scheme;
 
 use self::debug::DebugScheme;
 use self::event::EventScheme;
@@ -66,15 +66,15 @@ pub mod user;
 /// Limit on number of schemes
 pub const SCHEME_MAX_SCHEMES: usize = 65_536;
 
-/// Unique identifier for a scheme namespace.
+// Unique identifier for a scheme namespace.
 int_like!(SchemeNamespace, AtomicSchemeNamespace, usize, AtomicUsize);
 
-/// Unique identifier for a scheme.
+// Unique identifier for a scheme.
 int_like!(SchemeId, AtomicSchemeId, usize, AtomicUsize);
 
 pub const ATOMIC_SCHEMEID_INIT: AtomicSchemeId = AtomicSchemeId::default();
 
-/// Unique identifier for a file descriptor.
+// Unique identifier for a file descriptor.
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
 pub struct SchemeIter<'a> {

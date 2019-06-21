@@ -1,4 +1,4 @@
-use paging::ActivePageTable;
+use crate::paging::ActivePageTable;
 
 pub mod cpu;
 pub mod local_apic;
