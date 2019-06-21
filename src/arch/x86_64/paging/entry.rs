@@ -1,7 +1,7 @@
 //! # Page table entry
 //! Some code borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
-use memory::Frame;
+use crate::memory::Frame;
 
 use super::PhysicalAddress;
 

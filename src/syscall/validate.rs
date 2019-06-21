@@ -1,8 +1,8 @@
 use core::{mem, slice};
 
-use paging::{ActivePageTable, Page, VirtualAddress};
-use paging::entry::EntryFlags;
-use syscall::error::*;
+use crate::paging::{ActivePageTable, Page, VirtualAddress};
+use crate::paging::entry::EntryFlags;
+use crate::syscall::error::*;
 
 fn validate(address: usize, size: usize, flags: EntryFlags) -> Result<()> {
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;

@@ -5,20 +5,20 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::{mem, slice, usize};
 use spin::{Mutex, RwLock};
 
-use context::{self, Context};
-use context::file::FileDescriptor;
-use context::memory::Grant;
-use event;
-use paging::{InactivePageTable, Page, VirtualAddress};
-use paging::entry::EntryFlags;
-use paging::temporary_page::TemporaryPage;
-use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
-use sync::{WaitQueue, WaitMap};
-use syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
-use syscall::error::*;
-use syscall::flag::{EVENT_READ, O_NONBLOCK, PROT_EXEC, PROT_READ, PROT_WRITE};
-use syscall::number::*;
-use syscall::scheme::Scheme;
+use crate::context::{self, Context};
+use crate::context::file::FileDescriptor;
+use crate::context::memory::Grant;
+use crate::event;
+use crate::paging::{InactivePageTable, Page, VirtualAddress};
+use crate::paging::entry::EntryFlags;
+use crate::paging::temporary_page::TemporaryPage;
+use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
+use crate::sync::{WaitQueue, WaitMap};
+use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
+use crate::syscall::error::*;
+use crate::syscall::flag::{EVENT_READ, O_NONBLOCK, PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::syscall::number::*;
+use crate::syscall::scheme::Scheme;
 
 pub struct UserInner {
     root_id: SchemeId,
@@ -99,12 +99,12 @@ impl UserInner {
             let mut grants = context.grants.lock();
 
             let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
+            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
             let from_address = (address/4096) * 4096;
             let offset = address - from_address;
             let full_size = ((offset + size + 4095)/4096) * 4096;
-            let mut to_address = ::USER_GRANT_OFFSET;
+            let mut to_address = crate::USER_GRANT_OFFSET;
 
             let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
             if flags & PROT_EXEC == 0 {
@@ -155,7 +155,7 @@ impl UserInner {
             let mut grants = context.grants.lock();
 
             let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
+            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
             for i in 0 .. grants.len() {
                 let start = grants[i].start_address().get();

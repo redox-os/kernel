@@ -1,4 +1,4 @@
-use syscall::io::{Io, Pio};
+use crate::syscall::io::{Io, Pio};
 
 pub static mut CHAN0: Pio<u8> = Pio::new(0x40);
 pub static mut CHAN1: Pio<u8> = Pio::new(0x41);

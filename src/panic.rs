@@ -3,7 +3,7 @@
 use core::alloc::Layout;
 use core::panic::PanicInfo;
 
-use interrupt;
+use crate::interrupt;
 
 #[lang = "eh_personality"]
 #[no_mangle]

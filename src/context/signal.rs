@@ -1,10 +1,10 @@
 use alloc::sync::Arc;
 use core::mem;
 
-use context::{contexts, switch, Status, WaitpidKey};
-use start::usermode;
-use syscall;
-use syscall::flag::{SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
+use crate::context::{contexts, switch, Status, WaitpidKey};
+use crate::start::usermode;
+use crate::syscall;
+use crate::syscall::flag::{SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
 
 pub extern "C" fn signal_handler(sig: usize) {
     let (action, restorer) = {
@@ -36,7 +36,7 @@ pub extern "C" fn signal_handler(sig: usize) {
 
                     if let Some(parent_lock) = contexts.get(ppid) {
                         let waitpid = {
-                            let mut parent = parent_lock.write();
+                            let parent = parent_lock.write();
                             Arc::clone(&parent.waitpid)
                         };
 
@@ -64,7 +64,7 @@ pub extern "C" fn signal_handler(sig: usize) {
 
                     if let Some(parent_lock) = contexts.get(ppid) {
                         let waitpid = {
-                            let mut parent = parent_lock.write();
+                            let parent = parent_lock.write();
                             Arc::clone(&parent.waitpid)
                         };
 
@@ -90,7 +90,7 @@ pub extern "C" fn signal_handler(sig: usize) {
         // println!("Call {:X}", handler);
 
         unsafe {
-            let mut sp = ::USER_SIGSTACK_OFFSET + ::USER_SIGSTACK_SIZE - 256;
+            let mut sp = crate::USER_SIGSTACK_OFFSET + crate::USER_SIGSTACK_SIZE - 256;
 
             sp = (sp / 16) * 16;
 

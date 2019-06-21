@@ -1,10 +1,10 @@
 //! File structs
 
 use alloc::sync::Arc;
-use event;
+use crate::event;
 use spin::RwLock;
-use scheme::{self, SchemeId};
-use syscall::error::{Result, Error, EBADF};
+use crate::scheme::{self, SchemeId};
+use crate::syscall::error::{Result, Error, EBADF};
 
 /// A file description
 #[derive(Debug)]

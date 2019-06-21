@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
-use context;
-use syscall::error::{Error, ESRCH, Result};
+use crate::context;
+use crate::syscall::error::{Error, ESRCH, Result};
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut name = {

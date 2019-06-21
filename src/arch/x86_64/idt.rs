@@ -2,8 +2,8 @@ use core::mem;
 use x86::current::irq::IdtEntry as X86IdtEntry;
 use x86::shared::dtables::{self, DescriptorTablePointer};
 
-use interrupt::*;
-use ipi::IpiKind;
+use crate::interrupt::*;
+use crate::ipi::IpiKind;
 
 pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
     limit: 0,

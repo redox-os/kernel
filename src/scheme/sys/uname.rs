@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use syscall::error::Result;
+use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
     Ok(format!("Redox\n\n{}\n\n{}\n",

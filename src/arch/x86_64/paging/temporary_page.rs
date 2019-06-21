@@ -1,7 +1,7 @@
 //! Temporarily map a page
 //! From [Phil Opp's Blog](http://os.phil-opp.com/remap-the-kernel.html)
 
-use memory::Frame;
+use crate::memory::Frame;
 
 use super::{ActivePageTable, Page, VirtualAddress};
 use super::entry::EntryFlags;

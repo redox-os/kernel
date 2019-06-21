@@ -29,9 +29,11 @@ macro_rules! int_like {
         pub struct $new_type_name($backing_type);
 
         impl $new_type_name {
+            #[allow(dead_code)]
             pub const fn into(self) -> $backing_type {
                 self.0
             }
+            #[allow(dead_code)]
             pub const fn from(x: $backing_type) -> Self {
                 $new_type_name(x)
             }
@@ -48,17 +50,21 @@ macro_rules! int_like {
         }
 
         impl $new_atomic_type_name {
+            #[allow(dead_code)]
             pub const fn new(x: $new_type_name) -> Self {
                 $new_atomic_type_name {
                     container: $backing_atomic_type::new(x.into())
                 }
             }
+            #[allow(dead_code)]
             pub const fn default() -> Self {
                 Self::new($new_type_name::from(0))
             }
+            #[allow(dead_code)]
             pub fn load(&self, order: ::core::sync::atomic::Ordering) -> $new_type_name {
                 $new_type_name::from(self.container.load(order))
             }
+            #[allow(dead_code)]
             pub fn store(&self, val: $new_type_name, order: ::core::sync::atomic::Ordering) {
                 self.container.store(val.into(), order)
             }
@@ -88,14 +94,13 @@ macro_rules! int_like {
     }
 }
 
-#[cfg(test)]
+#[test]
 fn test() {
     use core::mem::size_of;
     use ::core::sync::atomic::AtomicUsize;
 
     // Generate type `usize_like`.
     int_like!(UsizeLike, usize);
-    const ZERO: UsizeLike = UsizeLike::from(0);
     assert_eq!(size_of::<UsizeLike>(), size_of::<usize>());
 
 

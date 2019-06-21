@@ -1,6 +1,6 @@
-use paging::{ActivePageTable, Page, VirtualAddress};
-use paging::entry::EntryFlags;
-use paging::mapper::MapperFlushAll;
+use crate::paging::{ActivePageTable, Page, VirtualAddress};
+use crate::paging::entry::EntryFlags;
+use crate::paging::mapper::MapperFlushAll;
 
 #[cfg(not(feature="slab"))]
 pub use self::linked_list::Allocator;
@@ -28,8 +28,8 @@ unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usiz
 }
 
 pub unsafe fn init(active_table: &mut ActivePageTable) {
-    let offset = ::KERNEL_HEAP_OFFSET;
-    let size = ::KERNEL_HEAP_SIZE;
+    let offset = crate::KERNEL_HEAP_OFFSET;
+    let size = crate::KERNEL_HEAP_SIZE;
 
     // Map heap pages
     map_heap(active_table, offset, size);

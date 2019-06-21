@@ -7,15 +7,15 @@ use core::cmp::Ordering;
 use core::mem;
 use spin::Mutex;
 
-use arch::paging::PAGE_SIZE;
-use context::arch;
-use context::file::FileDescriptor;
-use context::memory::{Grant, Memory, SharedMemory, Tls};
-use ipi::{ipi, IpiKind, IpiTarget};
-use scheme::{SchemeNamespace, FileHandle};
-use syscall::data::SigAction;
-use syscall::flag::SIG_DFL;
-use sync::WaitMap;
+use crate::arch::paging::PAGE_SIZE;
+use crate::context::arch;
+use crate::context::file::FileDescriptor;
+use crate::context::memory::{Grant, Memory, SharedMemory, Tls};
+use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::scheme::{SchemeNamespace, FileHandle};
+use crate::syscall::data::SigAction;
+use crate::syscall::flag::SIG_DFL;
+use crate::sync::WaitMap;
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
@@ -169,8 +169,8 @@ pub struct Context {
 
 impl Context {
     pub fn new(id: ContextId) -> Context {
-        let syscall_head = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
-        let syscall_tail = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
+        let syscall_head = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
+        let syscall_tail = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
 
         Context {
             id: id,
@@ -304,7 +304,7 @@ impl Context {
             self.status = Status::Runnable;
 
             if let Some(cpu_id) = self.cpu_id {
-               if cpu_id != ::cpu_id() {
+               if cpu_id != crate::cpu_id() {
                     // Send IPI if not on current CPU
                     ipi(IpiKind::Wakeup, IpiTarget::Other);
                }

@@ -2,7 +2,7 @@ use core::{mem, str};
 use goblin::elf::sym;
 use rustc_demangle::demangle;
 
-use paging::{ActivePageTable, VirtualAddress};
+use crate::paging::{ActivePageTable, VirtualAddress};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
@@ -43,10 +43,10 @@ pub unsafe fn symbol_trace(addr: usize) {
     use core::slice;
     use core::sync::atomic::Ordering;
 
-    use elf::Elf;
-    use start::{KERNEL_BASE, KERNEL_SIZE};
+    use crate::elf::Elf;
+    use crate::start::{KERNEL_BASE, KERNEL_SIZE};
 
-    let kernel_ptr = (KERNEL_BASE.load(Ordering::SeqCst) + ::KERNEL_OFFSET) as *const u8;
+    let kernel_ptr = (KERNEL_BASE.load(Ordering::SeqCst) + crate::KERNEL_OFFSET) as *const u8;
     let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
     if let Ok(elf) = Elf::from(kernel_slice) {
         let mut strtab_opt = None;

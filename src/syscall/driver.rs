@@ -1,11 +1,11 @@
-use interrupt::syscall::SyscallStack;
-use memory::{allocate_frames, deallocate_frames, Frame};
-use paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
-use paging::entry::EntryFlags;
-use context;
-use context::memory::Grant;
-use syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
-use syscall::flag::{PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
+use crate::interrupt::syscall::SyscallStack;
+use crate::memory::{allocate_frames, deallocate_frames, Frame};
+use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
+use crate::paging::entry::EntryFlags;
+use crate::context;
+use crate::context::memory::Grant;
+use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
+use crate::syscall::flag::{PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -64,7 +64,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Resu
         let from_address = (physical_address/4096) * 4096;
         let offset = physical_address - from_address;
         let full_size = ((offset + size + 4095)/4096) * 4096;
-        let mut to_address = ::USER_GRANT_OFFSET;
+        let mut to_address = crate::USER_GRANT_OFFSET;
 
         let mut entry_flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
         if flags & PHYSMAP_WRITE == PHYSMAP_WRITE {

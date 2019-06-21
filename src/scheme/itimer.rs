@@ -3,10 +3,10 @@ use core::{mem, slice, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use syscall::data::ITimerSpec;
-use syscall::error::*;
-use syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
-use syscall::scheme::Scheme;
+use crate::syscall::data::ITimerSpec;
+use crate::syscall::error::*;
+use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
+use crate::syscall::scheme::Scheme;
 
 pub struct ITimerScheme {
     next_id: AtomicUsize,
@@ -41,7 +41,7 @@ impl Scheme for ITimerScheme {
     }
 
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let clock = {
+        let _clock = {
             let handles = self.handles.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
@@ -58,7 +58,7 @@ impl Scheme for ITimerScheme {
     }
 
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        let clock = {
+        let _clock = {
             let handles = self.handles.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };

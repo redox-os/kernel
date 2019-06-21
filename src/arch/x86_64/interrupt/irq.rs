@@ -1,12 +1,12 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use context;
-use context::timeout;
-use device::pic;
-use device::serial::{COM1, COM2};
-use ipi::{ipi, IpiKind, IpiTarget};
-use scheme::debug::debug_input;
-use time;
+use crate::context;
+use crate::context::timeout;
+use crate::device::pic;
+use crate::device::serial::{COM1, COM2};
+use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::scheme::debug::debug_input;
+use crate::time;
 
 //resets to 0 in context::switch()
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);

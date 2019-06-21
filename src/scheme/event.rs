@@ -1,10 +1,10 @@
 use alloc::sync::Arc;
 use core::{mem, slice};
 
-use event::{EventQueue, EventQueueId, next_queue_id, queues, queues_mut};
-use syscall::data::Event;
-use syscall::error::*;
-use syscall::scheme::Scheme;
+use crate::event::{EventQueue, EventQueueId, next_queue_id, queues, queues_mut};
+use crate::syscall::data::Event;
+use crate::syscall::error::*;
+use crate::syscall::scheme::Scheme;
 
 pub struct EventScheme;
 

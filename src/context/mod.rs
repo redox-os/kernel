@@ -50,7 +50,7 @@ pub fn init() {
     let mut contexts = contexts_mut();
     let context_lock = contexts.new_context().expect("could not initialize first context");
     let mut context = context_lock.write();
-    let mut fx = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
+    let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
     for b in fx.iter_mut() {
         *b = 0;
     }
@@ -59,7 +59,7 @@ pub fn init() {
     context.kfx = Some(fx);
     context.status = Status::Runnable;
     context.running = true;
-    context.cpu_id = Some(::cpu_id());
+    context.cpu_id = Some(crate::cpu_id());
     CONTEXT_ID.store(context.id, Ordering::SeqCst);
 }
 

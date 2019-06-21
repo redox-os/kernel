@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::Unique;
 
-use memory::{allocate_frames, deallocate_frames, Frame};
+use crate::memory::{allocate_frames, deallocate_frames, Frame};
 
 use super::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
 use super::entry::EntryFlags;

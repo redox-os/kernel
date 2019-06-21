@@ -1,11 +1,11 @@
 use alloc::collections::VecDeque;
 use spin::{Once, Mutex, MutexGuard};
 
-use event;
-use scheme::SchemeId;
-use syscall::data::TimeSpec;
-use syscall::flag::{CLOCK_MONOTONIC, CLOCK_REALTIME, EVENT_READ};
-use time;
+use crate::event;
+use crate::scheme::SchemeId;
+use crate::syscall::data::TimeSpec;
+use crate::syscall::flag::{CLOCK_MONOTONIC, CLOCK_REALTIME, EVENT_READ};
+use crate::time;
 
 #[derive(Debug)]
 struct Timeout {

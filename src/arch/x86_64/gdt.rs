@@ -8,7 +8,7 @@ use x86::shared::dtables::{self, DescriptorTablePointer};
 use x86::shared::segmentation::{self, SegmentDescriptor, SegmentSelector};
 use x86::shared::task;
 
-use paging::PAGE_SIZE;
+use crate::paging::PAGE_SIZE;
 
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
@@ -94,7 +94,7 @@ pub static mut TSS: TaskStateSegment = TaskStateSegment {
 };
 
 pub unsafe fn set_tcb(pid: usize) {
-    GDT[GDT_USER_TLS].set_offset((::USER_TCB_OFFSET + pid * PAGE_SIZE) as u32);
+    GDT[GDT_USER_TLS].set_offset((crate::USER_TCB_OFFSET + pid * PAGE_SIZE) as u32);
 }
 
 #[cfg(feature = "pti")]

@@ -1,7 +1,7 @@
 //! # Bump frame allocator
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
-use paging::PhysicalAddress;
+use crate::paging::PhysicalAddress;
 
 use super::{Frame, FrameAllocator, MemoryArea, MemoryAreaIter};
 

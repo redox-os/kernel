@@ -5,7 +5,7 @@ use core::{mem, ptr};
 use core::ops::{Deref, DerefMut};
 use x86::shared::{control_regs, msr, tlb};
 
-use memory::{allocate_frames, Frame};
+use crate::memory::{allocate_frames, Frame};
 
 use self::entry::EntryFlags;
 use self::mapper::Mapper;
@@ -63,7 +63,7 @@ unsafe fn init_tcb(cpu_id: usize) -> usize {
         let size = & __tbss_end as *const _ as usize - & __tdata_start as *const _ as usize;
         let tbss_offset = & __tbss_start as *const _ as usize - & __tdata_start as *const _ as usize;
 
-        let start = ::KERNEL_PERCPU_OFFSET + ::KERNEL_PERCPU_SIZE * cpu_id;
+        let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
         let end = start + size;
         tcb_offset = end - mem::size_of::<usize>();
 
@@ -110,7 +110,7 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
 
     let mut active_table = ActivePageTable::new();
 
-    let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_MISC_OFFSET)));
+    let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET)));
 
     let mut new_table = {
         let frame = allocate_frames(1).expect("no more frames in paging::init new_table");
@@ -120,10 +120,10 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         // Remap stack writable, no execute
         {
-            let start_frame = Frame::containing_address(PhysicalAddress::new(stack_start - ::KERNEL_OFFSET));
-            let end_frame = Frame::containing_address(PhysicalAddress::new(stack_end - ::KERNEL_OFFSET - 1));
+            let start_frame = Frame::containing_address(PhysicalAddress::new(stack_start - crate::KERNEL_OFFSET));
+            let end_frame = Frame::containing_address(PhysicalAddress::new(stack_end - crate::KERNEL_OFFSET - 1));
             for frame in Frame::range_inclusive(start_frame, end_frame) {
-                let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + ::KERNEL_OFFSET));
+                let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + crate::KERNEL_OFFSET));
                 let result = mapper.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
                 // The flush can be ignored as this is not the active table. See later active_table.switch
                 /* unsafe */ { result.ignore(); }
@@ -136,7 +136,7 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
             let end_frame = Frame::containing_address(PhysicalAddress::new(kernel_end - 1));
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 let phys_addr = frame.start_address().get();
-                let virt_addr = phys_addr + ::KERNEL_OFFSET;
+                let virt_addr = phys_addr + crate::KERNEL_OFFSET;
 
                 macro_rules! in_section {
                     ($n: ident) => (
@@ -176,7 +176,7 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
         {
             let size = & __tbss_end as *const _ as usize - & __tdata_start as *const _ as usize;
 
-            let start = ::KERNEL_PERCPU_OFFSET + ::KERNEL_PERCPU_SIZE * cpu_id;
+            let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
             let end = start + size;
 
             let start_page = Page::containing_address(VirtualAddress::new(start));
@@ -214,14 +214,14 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
 
     let mut new_table = InactivePageTable::from_address(bsp_table);
 
-    let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_MISC_OFFSET)));
+    let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET)));
 
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         // Map tdata and tbss
         {
             let size = & __tbss_end as *const _ as usize - & __tdata_start as *const _ as usize;
 
-            let start = ::KERNEL_PERCPU_OFFSET + ::KERNEL_PERCPU_SIZE * cpu_id;
+            let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
             let end = start + size;
 
             let start_page = Page::containing_address(VirtualAddress::new(start));
@@ -238,7 +238,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
                 let start_frame = Frame::containing_address(PhysicalAddress::new(start));
                 let end_frame = Frame::containing_address(PhysicalAddress::new(end - 1));
                 for frame in Frame::range_inclusive(start_frame, end_frame) {
-                    let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + ::KERNEL_OFFSET));
+                    let page = Page::containing_address(VirtualAddress::new(frame.start_address().get() + crate::KERNEL_OFFSET));
                     let result = mapper.map_to(page, frame, flags);
                     // The flush can be ignored as this is not the active table. See later active_table.switch
                     result.ignore();
@@ -247,7 +247,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
         };
 
         // Remap stack writable, no execute
-        remap(stack_start - ::KERNEL_OFFSET, stack_end - ::KERNEL_OFFSET, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
+        remap(stack_start - crate::KERNEL_OFFSET, stack_end - crate::KERNEL_OFFSET, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
     });
 
     // This switches the active table, which is setup by the bootloader, to a correct table
@@ -312,14 +312,14 @@ impl ActivePageTable {
             let p4_table = temporary_page.map_table_frame(backup.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE, self);
 
             // overwrite recursive mapping
-            self.p4_mut()[::RECURSIVE_PAGE_PML4].set(table.p4_frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+            self.p4_mut()[crate::RECURSIVE_PAGE_PML4].set(table.p4_frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
             self.flush_all();
 
             // execute f in the new context
             f(self);
 
             // restore recursive mapping to original p4 table
-            p4_table[::RECURSIVE_PAGE_PML4].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+            p4_table[crate::RECURSIVE_PAGE_PML4].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
             self.flush_all();
         }
 
@@ -342,7 +342,7 @@ impl InactivePageTable {
             // now we are able to zero the table
             table.zero();
             // set up recursive mapping for the table
-            table[::RECURSIVE_PAGE_PML4].set(frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+            table[crate::RECURSIVE_PAGE_PML4].set(frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
         }
         temporary_page.unmap(active_table);
 

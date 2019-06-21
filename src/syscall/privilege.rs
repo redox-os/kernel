@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
 
-use context;
-use scheme::{self, SchemeNamespace};
-use syscall::error::*;
-use syscall::validate::validate_slice;
+use crate::context;
+use crate::scheme::{self, SchemeNamespace};
+use crate::syscall::error::*;
+use crate::syscall::validate::validate_slice;
 
 pub fn getegid() -> Result<usize> {
     let contexts = context::contexts();

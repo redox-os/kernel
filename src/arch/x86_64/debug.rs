@@ -3,12 +3,12 @@ use core::fmt;
 use spin::Mutex;
 use spin::MutexGuard;
 
-use log::{LOG, Log};
+use crate::log::{LOG, Log};
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
-use syscall::io::Pio;
+use crate::syscall::io::Pio;
 #[cfg(feature = "serial_debug")]
-use devices::uart_16550::SerialPort;
+use crate::devices::uart_16550::SerialPort;
 
 #[cfg(feature = "graphical_debug")]
 use super::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};

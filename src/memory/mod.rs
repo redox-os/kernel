@@ -1,7 +1,7 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
-pub use paging::{PAGE_SIZE, PhysicalAddress};
+pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 
 use self::bump::BumpAllocator;
 use self::recycle::RecycleAllocator;

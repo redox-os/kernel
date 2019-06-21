@@ -7,12 +7,12 @@ use alloc::collections::VecDeque;
 use core::intrinsics;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use context::{self, Context};
-use time;
-use syscall::data::TimeSpec;
-use syscall::error::{Error, Result, ESRCH, EAGAIN, EINVAL};
-use syscall::flag::{FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE};
-use syscall::validate::{validate_slice, validate_slice_mut};
+use crate::context::{self, Context};
+use crate::time;
+use crate::syscall::data::TimeSpec;
+use crate::syscall::error::{Error, Result, ESRCH, EAGAIN, EINVAL};
+use crate::syscall::flag::{FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE};
+use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
 type FutexList = VecDeque<(usize, Arc<RwLock<Context>>)>;
 

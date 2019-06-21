@@ -3,13 +3,13 @@ use core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 use spin::RwLock;
 
-use context;
-use scheme::{self, FileHandle};
-use syscall;
-use syscall::data::{Packet, Stat};
-use syscall::error::*;
-use syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_DIRECTORY, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
-use context::file::{FileDescriptor, FileDescription};
+use crate::context;
+use crate::scheme::{self, FileHandle};
+use crate::syscall;
+use crate::syscall::data::{Packet, Stat};
+use crate::syscall::error::*;
+use crate::syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_DIRECTORY, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use crate::context::file::{FileDescriptor, FileDescription};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let (file, pid, uid, gid) = {
@@ -126,8 +126,8 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
 
 pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
     if fds.len() >= 2 {
-        let scheme_id = ::scheme::pipe::PIPE_SCHEME_ID.load(Ordering::SeqCst);
-        let (read_id, write_id) = ::scheme::pipe::pipe(flags);
+        let scheme_id = crate::scheme::pipe::PIPE_SCHEME_ID.load(Ordering::SeqCst);
+        let (read_id, write_id) = crate::scheme::pipe::pipe(flags);
 
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;

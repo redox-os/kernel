@@ -3,10 +3,10 @@ use core::{cmp, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use syscall::data::Stat;
-use syscall::error::*;
-use syscall::flag::{MODE_DIR, MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
-use syscall::scheme::Scheme;
+use crate::syscall::data::Stat;
+use crate::syscall::error::*;
+use crate::syscall::flag::{MODE_DIR, MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
+use crate::syscall::scheme::Scheme;
 
 #[cfg(test)]
 mod gen {

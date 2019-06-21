@@ -6,28 +6,28 @@ use core::{intrinsics, mem};
 use core::ops::DerefMut;
 use spin::Mutex;
 
-use memory::allocate_frames;
-use paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
-use paging::entry::EntryFlags;
-use paging::mapper::MapperFlushAll;
-use paging::temporary_page::TemporaryPage;
-use start::usermode;
-use interrupt;
-use context;
-use context::{ContextId, WaitpidKey};
-use context::file::FileDescriptor;
+use crate::memory::allocate_frames;
+use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
+use crate::paging::entry::EntryFlags;
+use crate::paging::mapper::MapperFlushAll;
+use crate::paging::temporary_page::TemporaryPage;
+use crate::start::usermode;
+use crate::interrupt;
+use crate::context;
+use crate::context::{ContextId, WaitpidKey};
+use crate::context::file::FileDescriptor;
 #[cfg(not(feature="doc"))]
-use elf::{self, program_header};
-use ipi::{ipi, IpiKind, IpiTarget};
-use scheme::FileHandle;
-use syscall;
-use syscall::data::{SigAction, Stat};
-use syscall::error::*;
-use syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
+use crate::elf::{self, program_header};
+use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::scheme::FileHandle;
+use crate::syscall;
+use crate::syscall::data::{SigAction, Stat};
+use crate::syscall::error::*;
+use crate::syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
                     PROT_EXEC, PROT_READ, PROT_WRITE,
                     SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
                     WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
-use syscall::validate::{validate_slice, validate_slice_mut};
+use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
 pub fn brk(address: usize) -> Result<usize> {
     let contexts = context::contexts();
@@ -48,11 +48,11 @@ pub fn brk(address: usize) -> Result<usize> {
     if address == 0 {
         //println!("Brk query {:X}", current);
         Ok(current)
-    } else if address >= ::USER_HEAP_OFFSET {
+    } else if address >= crate::USER_HEAP_OFFSET {
         //TODO: out of memory errors
         if let Some(ref heap_shared) = context.heap {
             heap_shared.with(|heap| {
-                heap.resize(address - ::USER_HEAP_OFFSET, true);
+                heap.resize(address - crate::USER_HEAP_OFFSET, true);
             });
         } else {
             panic!("user heap not initialized");
@@ -120,7 +120,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             arch = context.arch.clone();
 
             if let Some(ref fx) = context.kfx {
-                let mut new_fx = unsafe { Box::from_raw(::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
+                let mut new_fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
                 for (new_b, b) in new_fx.iter_mut().zip(fx.iter()) {
                     *new_b = *b;
                 }
@@ -151,7 +151,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 for memory_shared in context.image.iter() {
                     memory_shared.with(|memory| {
                         let mut new_memory = context::memory::Memory::new(
-                            VirtualAddress::new(memory.start_address().get() + ::USER_TMP_OFFSET),
+                            VirtualAddress::new(memory.start_address().get() + crate::USER_TMP_OFFSET),
                             memory.size(),
                             EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             false
@@ -171,7 +171,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 if let Some(ref heap_shared) = context.heap {
                     heap_shared.with(|heap| {
                         let mut new_heap = context::memory::Memory::new(
-                            VirtualAddress::new(::USER_TMP_HEAP_OFFSET),
+                            VirtualAddress::new(crate::USER_TMP_HEAP_OFFSET),
                             heap.size(),
                             EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             false
@@ -195,7 +195,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 } else {
                     stack_shared.with(|stack| {
                         let mut new_stack = context::memory::Memory::new(
-                            VirtualAddress::new(::USER_TMP_STACK_OFFSET),
+                            VirtualAddress::new(crate::USER_TMP_STACK_OFFSET),
                             stack.size(),
                             EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             false
@@ -215,7 +215,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             if let Some(ref sigstack) = context.sigstack {
                 let mut new_sigstack = context::memory::Memory::new(
-                    VirtualAddress::new(::USER_TMP_SIGSTACK_OFFSET),
+                    VirtualAddress::new(crate::USER_TMP_SIGSTACK_OFFSET),
                     sigstack.size(),
                     EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                     false
@@ -236,7 +236,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                     master: tls.master,
                     file_size: tls.file_size,
                     mem: context::memory::Memory::new(
-                        VirtualAddress::new(::USER_TMP_TLS_OFFSET),
+                        VirtualAddress::new(crate::USER_TMP_TLS_OFFSET),
                         tls.mem.size(),
                         EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                         true
@@ -266,7 +266,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             } else {
                 let mut grants_vec = Vec::new();
                 for grant in context.grants.lock().iter() {
-                    let start = VirtualAddress::new(grant.start_address().get() + ::USER_TMP_GRANT_OFFSET - ::USER_GRANT_OFFSET);
+                    let start = VirtualAddress::new(grant.start_address().get() + crate::USER_TMP_GRANT_OFFSET - crate::USER_GRANT_OFFSET);
                     grants_vec.push(grant.secret_clone(start));
                 }
                 grants = Arc::new(Mutex::new(grants_vec));
@@ -318,7 +318,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         if flags & CLONE_VM == 0 {
             let mut i = 0;
             while i < grants.lock().len() {
-                let mut remove = false;
+                let remove = false;
                 if let Some(grant) = grants.lock().get(i) {
                     if let Some(ref _desc) = grant.desc_opt {
                         println!("todo: clone grant {} using fmap: {:?}", i, grant);
@@ -373,7 +373,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             let mut active_table = unsafe { ActivePageTable::new() };
 
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_MISC_OFFSET)));
+            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET)));
 
             let mut new_table = {
                 let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
@@ -384,19 +384,19 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Copy kernel image mapping
             {
-                let frame = active_table.p4()[::KERNEL_PML4].pointed_frame().expect("kernel image not mapped");
-                let flags = active_table.p4()[::KERNEL_PML4].flags();
+                let frame = active_table.p4()[crate::KERNEL_PML4].pointed_frame().expect("kernel image not mapped");
+                let flags = active_table.p4()[crate::KERNEL_PML4].flags();
                 active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                    mapper.p4_mut()[::KERNEL_PML4].set(frame, flags);
+                    mapper.p4_mut()[crate::KERNEL_PML4].set(frame, flags);
                 });
             }
 
             // Copy kernel heap mapping
             {
-                let frame = active_table.p4()[::KERNEL_HEAP_PML4].pointed_frame().expect("kernel heap not mapped");
-                let flags = active_table.p4()[::KERNEL_HEAP_PML4].flags();
+                let frame = active_table.p4()[crate::KERNEL_HEAP_PML4].pointed_frame().expect("kernel heap not mapped");
+                let flags = active_table.p4()[crate::KERNEL_HEAP_PML4].flags();
                 active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                    mapper.p4_mut()[::KERNEL_HEAP_PML4].set(frame, flags);
+                    mapper.p4_mut()[crate::KERNEL_HEAP_PML4].set(frame, flags);
                 });
             }
 
@@ -417,36 +417,36 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             if flags & CLONE_VM == CLONE_VM {
                 // Copy user image mapping, if found
                 if ! image.is_empty() {
-                    let frame = active_table.p4()[::USER_PML4].pointed_frame().expect("user image not mapped");
-                    let flags = active_table.p4()[::USER_PML4].flags();
+                    let frame = active_table.p4()[crate::USER_PML4].pointed_frame().expect("user image not mapped");
+                    let flags = active_table.p4()[crate::USER_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                        mapper.p4_mut()[::USER_PML4].set(frame, flags);
+                        mapper.p4_mut()[crate::USER_PML4].set(frame, flags);
                     });
                 }
                 context.image = image;
 
                 // Copy user heap mapping, if found
                 if let Some(heap_shared) = heap_option {
-                    let frame = active_table.p4()[::USER_HEAP_PML4].pointed_frame().expect("user heap not mapped");
-                    let flags = active_table.p4()[::USER_HEAP_PML4].flags();
+                    let frame = active_table.p4()[crate::USER_HEAP_PML4].pointed_frame().expect("user heap not mapped");
+                    let flags = active_table.p4()[crate::USER_HEAP_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                        mapper.p4_mut()[::USER_HEAP_PML4].set(frame, flags);
+                        mapper.p4_mut()[crate::USER_HEAP_PML4].set(frame, flags);
                     });
                     context.heap = Some(heap_shared);
                 }
 
                 // Copy grant mapping
                 if ! grants.lock().is_empty() {
-                    let frame = active_table.p4()[::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
-                    let flags = active_table.p4()[::USER_GRANT_PML4].flags();
+                    let frame = active_table.p4()[crate::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
+                    let flags = active_table.p4()[crate::USER_GRANT_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                        mapper.p4_mut()[::USER_GRANT_PML4].set(frame, flags);
+                        mapper.p4_mut()[crate::USER_GRANT_PML4].set(frame, flags);
                     });
                 }
                 context.grants = grants;
             } else {
                 // Copy percpu mapping
-                for cpu_id in 0..::cpu_count() {
+                for cpu_id in 0..crate::cpu_count() {
                     extern {
                         // The starting byte of the thread data segment
                         static mut __tdata_start: u8;
@@ -456,7 +456,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
                     let size = unsafe { & __tbss_end as *const _ as usize - & __tdata_start as *const _ as usize };
 
-                    let start = ::KERNEL_PERCPU_OFFSET + ::KERNEL_PERCPU_SIZE * cpu_id;
+                    let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
                     let end = start + size;
 
                     let start_page = Page::containing_address(VirtualAddress::new(start));
@@ -474,7 +474,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 // Move copy of image
                 for memory_shared in image.iter_mut() {
                     memory_shared.with(|memory| {
-                        let start = VirtualAddress::new(memory.start_address().get() - ::USER_TMP_OFFSET + ::USER_OFFSET);
+                        let start = VirtualAddress::new(memory.start_address().get() - crate::USER_TMP_OFFSET + crate::USER_OFFSET);
                         memory.move_to(start, &mut new_table, &mut temporary_page);
                     });
                 }
@@ -483,14 +483,14 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 // Move copy of heap
                 if let Some(heap_shared) = heap_option {
                     heap_shared.with(|heap| {
-                        heap.move_to(VirtualAddress::new(::USER_HEAP_OFFSET), &mut new_table, &mut temporary_page);
+                        heap.move_to(VirtualAddress::new(crate::USER_HEAP_OFFSET), &mut new_table, &mut temporary_page);
                     });
                     context.heap = Some(heap_shared);
                 }
 
                 // Move grants
                 for grant in grants.lock().iter_mut() {
-                    let start = VirtualAddress::new(grant.start_address().get() + ::USER_GRANT_OFFSET - ::USER_TMP_GRANT_OFFSET);
+                    let start = VirtualAddress::new(grant.start_address().get() + crate::USER_GRANT_OFFSET - crate::USER_TMP_GRANT_OFFSET);
                     grant.move_to(start, &mut new_table, &mut temporary_page);
                 }
                 context.grants = grants;
@@ -499,14 +499,14 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             // Setup user stack
             if let Some(stack_shared) = stack_option {
                 if flags & CLONE_STACK == CLONE_STACK {
-                    let frame = active_table.p4()[::USER_STACK_PML4].pointed_frame().expect("user stack not mapped");
-                    let flags = active_table.p4()[::USER_STACK_PML4].flags();
+                    let frame = active_table.p4()[crate::USER_STACK_PML4].pointed_frame().expect("user stack not mapped");
+                    let flags = active_table.p4()[crate::USER_STACK_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                        mapper.p4_mut()[::USER_STACK_PML4].set(frame, flags);
+                        mapper.p4_mut()[crate::USER_STACK_PML4].set(frame, flags);
                     });
                 } else {
                     stack_shared.with(|stack| {
-                        stack.move_to(VirtualAddress::new(::USER_STACK_OFFSET), &mut new_table, &mut temporary_page);
+                        stack.move_to(VirtualAddress::new(crate::USER_STACK_OFFSET), &mut new_table, &mut temporary_page);
                     });
                 }
                 context.stack = Some(stack_shared);
@@ -514,12 +514,12 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Setup user sigstack
             if let Some(mut sigstack) = sigstack_option {
-                sigstack.move_to(VirtualAddress::new(::USER_SIGSTACK_OFFSET), &mut new_table, &mut temporary_page);
+                sigstack.move_to(VirtualAddress::new(crate::USER_SIGSTACK_OFFSET), &mut new_table, &mut temporary_page);
                 context.sigstack = Some(sigstack);
             }
 
             // Set up TCB
-            let tcb_addr = ::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
+            let tcb_addr = crate::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
             let mut tcb = context::memory::Memory::new(
                 VirtualAddress::new(tcb_addr),
                 PAGE_SIZE,
@@ -529,13 +529,13 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Setup user TLS
             if let Some(mut tls) = tls_option {
-                tls.mem.move_to(VirtualAddress::new(::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
+                tls.mem.move_to(VirtualAddress::new(crate::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
                 unsafe {
                     *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
                 }
                 context.tls = Some(tls);
             } else {
-                let parent_tcb_addr = ::USER_TCB_OFFSET + ppid.into() * PAGE_SIZE;
+                let parent_tcb_addr = crate::USER_TCB_OFFSET + ppid.into() * PAGE_SIZE;
                 unsafe {
                     intrinsics::copy(parent_tcb_addr as *const u8,
                                     tcb_addr as *mut u8,
@@ -588,7 +588,7 @@ fn empty(context: &mut context::Context, reaping: bool) {
                 println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
-                let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(::USER_TMP_GRANT_OFFSET)));
+                let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
                 grant.unmap_inactive(&mut new_table, &mut temporary_page);
             } else {
@@ -615,7 +615,7 @@ fn fexec_noreturn(
     vars: Box<[Box<[u8]>]>
 ) -> ! {
     let entry;
-    let mut sp = ::USER_STACK_OFFSET + ::USER_STACK_SIZE - 256;
+    let mut sp = crate::USER_STACK_OFFSET + crate::USER_STACK_SIZE - 256;
 
     {
         let (vfork, ppid, files) = {
@@ -642,7 +642,7 @@ fn fexec_noreturn(
                 entry = elf.entry();
 
                 // Always map TCB
-                let tcb_addr = ::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
+                let tcb_addr = crate::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
                 let tcb_mem = context::memory::Memory::new(
                     VirtualAddress::new(tcb_addr),
                     PAGE_SIZE,
@@ -700,7 +700,7 @@ fn fexec_noreturn(
                                 master: VirtualAddress::new(segment.p_vaddr as usize),
                                 file_size: segment.p_filesz as usize,
                                 mem: context::memory::Memory::new(
-                                    VirtualAddress::new(::USER_TLS_OFFSET),
+                                    VirtualAddress::new(crate::USER_TLS_OFFSET),
                                     rounded_size as usize,
                                     EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                                     true
@@ -709,7 +709,7 @@ fn fexec_noreturn(
                             };
 
                             unsafe {
-                                *(tcb_addr as *mut usize) = ::USER_TLS_OFFSET + tls.mem.size();
+                                *(tcb_addr as *mut usize) = crate::USER_TLS_OFFSET + tls.mem.size();
                             }
 
                             tls_option = Some(tls);
@@ -726,7 +726,7 @@ fn fexec_noreturn(
 
             // Map heap
             context.heap = Some(context::memory::Memory::new(
-                VirtualAddress::new(::USER_HEAP_OFFSET),
+                VirtualAddress::new(crate::USER_HEAP_OFFSET),
                 0,
                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                 true
@@ -734,16 +734,16 @@ fn fexec_noreturn(
 
             // Map stack
             context.stack = Some(context::memory::Memory::new(
-                VirtualAddress::new(::USER_STACK_OFFSET),
-                ::USER_STACK_SIZE,
+                VirtualAddress::new(crate::USER_STACK_OFFSET),
+                crate::USER_STACK_SIZE,
                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                 true
             ).to_shared());
 
             // Map stack
             context.sigstack = Some(context::memory::Memory::new(
-                VirtualAddress::new(::USER_SIGSTACK_OFFSET),
-                ::USER_SIGSTACK_SIZE,
+                VirtualAddress::new(crate::USER_SIGSTACK_OFFSET),
+                crate::USER_SIGSTACK_SIZE,
                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                 true
             ));
@@ -768,7 +768,7 @@ fn fexec_noreturn(
                 // Push content
                 for arg in iter.iter().rev() {
                     sp -= mem::size_of::<usize>();
-                    unsafe { *(sp as *mut usize) = ::USER_ARG_OFFSET + arg_size; }
+                    unsafe { *(sp as *mut usize) = crate::USER_ARG_OFFSET + arg_size; }
 
                     arg_size += arg.len() + 1;
                 }
@@ -780,7 +780,7 @@ fn fexec_noreturn(
 
             if arg_size > 0 {
                 let mut memory = context::memory::Memory::new(
-                    VirtualAddress::new(::USER_ARG_OFFSET),
+                    VirtualAddress::new(crate::USER_ARG_OFFSET),
                     arg_size,
                     EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                     true
@@ -790,13 +790,13 @@ fn fexec_noreturn(
                 for arg in vars.iter().rev().chain(args.iter().rev()) {
                     unsafe {
                         intrinsics::copy(arg.as_ptr(),
-                               (::USER_ARG_OFFSET + arg_offset) as *mut u8,
+                               (crate::USER_ARG_OFFSET + arg_offset) as *mut u8,
                                arg.len());
                     }
                     arg_offset += arg.len();
 
                     unsafe {
-                        *((::USER_ARG_OFFSET + arg_offset) as *mut u8) = 0;
+                        *((crate::USER_ARG_OFFSET + arg_offset) as *mut u8) = 0;
                     }
                     arg_offset += 1;
                 }

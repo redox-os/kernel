@@ -6,13 +6,13 @@ use core::{cmp, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
 
-use context;
-use syscall::data::Stat;
-use syscall::error::*;
-use syscall::flag::{O_CREAT, MODE_FILE, MODE_DIR, SEEK_SET, SEEK_CUR, SEEK_END};
-use syscall::scheme::Scheme;
-use scheme::{self, SchemeNamespace, SchemeId};
-use scheme::user::{UserInner, UserScheme};
+use crate::context;
+use crate::syscall::data::Stat;
+use crate::syscall::error::*;
+use crate::syscall::flag::{O_CREAT, MODE_FILE, MODE_DIR, SEEK_SET, SEEK_CUR, SEEK_END};
+use crate::syscall::scheme::Scheme;
+use crate::scheme::{self, SchemeNamespace, SchemeId};
+use crate::scheme::user::{UserInner, UserScheme};
 
 struct FolderInner {
     data: Box<[u8]>,

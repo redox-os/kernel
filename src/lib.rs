@@ -44,9 +44,9 @@ extern crate slab_allocator;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use scheme::{FileHandle, SchemeNamespace};
+use crate::scheme::{FileHandle, SchemeNamespace};
 
-pub use consts::*;
+pub use crate::consts::*;
 
 #[macro_use]
 /// Shared data structures
@@ -55,7 +55,7 @@ pub mod common;
 /// Architecture-dependent stuff
 #[macro_use]
 pub mod arch;
-pub use arch::*;
+pub use crate::arch::*;
 
 /// Constants like memory locations
 pub mod consts;

@@ -3,13 +3,13 @@ use alloc::collections::{BTreeMap, VecDeque};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use event;
-use scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
-use sync::WaitCondition;
-use syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
-use syscall::flag::{EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
-use syscall::scheme::Scheme;
-use syscall::data::Stat;
+use crate::event;
+use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
+use crate::sync::WaitCondition;
+use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
+use crate::syscall::flag::{EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
+use crate::syscall::scheme::Scheme;
+use crate::syscall::data::Stat;
 
 /// Pipes list
 pub static PIPE_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
@@ -101,7 +101,7 @@ impl Scheme for PipeScheme {
             }
         }
 
-        if let Some(pipe) = pipes.1.get(&id) {
+        if let Some(_pipe) = pipes.1.get(&id) {
             if flags == EVENT_WRITE {
                 return Ok(EVENT_WRITE);
             }

@@ -1,8 +1,8 @@
 use core::sync::atomic::Ordering;
 use x86::shared::tlb;
 
-use context;
-use device::local_apic::LOCAL_APIC;
+use crate::context;
+use crate::device::local_apic::LOCAL_APIC;
 use super::irq::PIT_TICKS;
 
 interrupt!(wakeup, {

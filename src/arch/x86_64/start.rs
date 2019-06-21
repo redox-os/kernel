@@ -6,19 +6,19 @@
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use allocator;
+use crate::allocator;
 #[cfg(feature = "acpi")]
 use acpi;
 #[cfg(feature = "graphical_debug")]
 use arch::x86_64::graphical_debug;
-use arch::x86_64::pti;
-use device;
-use gdt;
-use idt;
-use interrupt;
-use log;
-use memory;
-use paging;
+use crate::arch::x86_64::pti;
+use crate::device;
+use crate::gdt;
+use crate::idt;
+use crate::interrupt;
+use crate::log;
+use crate::memory;
+use crate::paging;
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -141,7 +141,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         slice::from_raw_parts(env_base as *const u8, env_size)
     };
 
-    ::kmain(CPU_COUNT.load(Ordering::SeqCst), env);
+    crate::kmain(CPU_COUNT.load(Ordering::SeqCst), env);
 }
 
 #[repr(packed)]
@@ -204,7 +204,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         interrupt::pause();
     }
 
-    ::kmain_ap(cpu_id);
+    crate::kmain_ap(cpu_id);
 }
 
 #[naked]
