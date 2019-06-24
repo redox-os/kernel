@@ -61,6 +61,8 @@
     /// Offset to user TLS
     pub const USER_TLS_OFFSET: usize = USER_SIGSTACK_OFFSET + PML4_SIZE;
     pub const USER_TLS_PML4: usize = (USER_TLS_OFFSET & PML4_MASK)/PML4_SIZE;
+    // Maximum TLS allocated to each PID, should be approximately 8 MB
+    pub const USER_TLS_SIZE: usize = PML4_SIZE / 65536;
 
     /// Offset to user temporary image (used when cloning)
     pub const USER_TMP_OFFSET: usize = USER_TLS_OFFSET + PML4_SIZE;

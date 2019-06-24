@@ -529,12 +529,25 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Setup user TLS
             if let Some(mut tls) = tls_option {
-                tls.mem.move_to(VirtualAddress::new(crate::USER_TLS_OFFSET), &mut new_table, &mut temporary_page);
+                // Copy TLS mapping
+                {
+                    let frame = active_table.p4()[crate::USER_TLS_PML4].pointed_frame().expect("user tls not mapped");
+                    let flags = active_table.p4()[crate::USER_TLS_PML4].flags();
+                    active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+                        mapper.p4_mut()[crate::USER_TLS_PML4].set(frame, flags);
+                    });
+                }
+
+                // TODO: Make sure size is not greater than USER_TLS_SIZE
+                let tls_addr = crate::USER_TLS_OFFSET + context.id.into() * crate::USER_TLS_SIZE;
+                println!("{}: Copy TLS: address 0x{:x}, size 0x{:x}", context.id.into(), tls_addr, tls.mem.size());
+                tls.mem.move_to(VirtualAddress::new(tls_addr), &mut new_table, &mut temporary_page);
                 unsafe {
                     *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
                 }
                 context.tls = Some(tls);
             } else {
+                println!("{}: Copy TCB", context.id.into());
                 let parent_tcb_addr = crate::USER_TCB_OFFSET + ppid.into() * PAGE_SIZE;
                 unsafe {
                     intrinsics::copy(parent_tcb_addr as *const u8,
@@ -696,11 +709,13 @@ fn fexec_noreturn(
                             let rounded_size = ((aligned_size + PAGE_SIZE - 1)/PAGE_SIZE) * PAGE_SIZE;
                             let rounded_offset = rounded_size - aligned_size;
 
+                            // TODO: Make sure size is not greater than USER_TLS_SIZE
+                            let tls_addr = crate::USER_TLS_OFFSET + context.id.into() * crate::USER_TLS_SIZE;
                             let tls = context::memory::Tls {
                                 master: VirtualAddress::new(segment.p_vaddr as usize),
                                 file_size: segment.p_filesz as usize,
                                 mem: context::memory::Memory::new(
-                                    VirtualAddress::new(crate::USER_TLS_OFFSET),
+                                    VirtualAddress::new(tls_addr),
                                     rounded_size as usize,
                                     EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                                     true
@@ -709,7 +724,7 @@ fn fexec_noreturn(
                             };
 
                             unsafe {
-                                *(tcb_addr as *mut usize) = crate::USER_TLS_OFFSET + tls.mem.size();
+                                *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
                             }
 
                             tls_option = Some(tls);
