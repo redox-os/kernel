@@ -540,14 +540,14 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
                 // TODO: Make sure size is not greater than USER_TLS_SIZE
                 let tls_addr = crate::USER_TLS_OFFSET + context.id.into() * crate::USER_TLS_SIZE;
-                println!("{}: Copy TLS: address 0x{:x}, size 0x{:x}", context.id.into(), tls_addr, tls.mem.size());
+                //println!("{}: Copy TLS: address 0x{:x}, size 0x{:x}", context.id.into(), tls_addr, tls.mem.size());
                 tls.mem.move_to(VirtualAddress::new(tls_addr), &mut new_table, &mut temporary_page);
                 unsafe {
                     *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
                 }
                 context.tls = Some(tls);
             } else {
-                println!("{}: Copy TCB", context.id.into());
+                //println!("{}: Copy TCB", context.id.into());
                 let parent_tcb_addr = crate::USER_TCB_OFFSET + ppid.into() * PAGE_SIZE;
                 unsafe {
                     intrinsics::copy(parent_tcb_addr as *const u8,
