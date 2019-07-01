@@ -55,7 +55,7 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
 
 unsafe fn runnable(context: &Context, cpu_id: usize) -> bool {
     // Switch to context if it needs to run, is not currently running, and is owned by the current CPU
-    !context.running && context.status == Status::Runnable && context.cpu_id == Some(cpu_id)
+    !context.running && !context.ptrace_stop && context.status == Status::Runnable && context.cpu_id == Some(cpu_id)
 }
 
 /// Switch to the next context

@@ -22,6 +22,7 @@ use self::irq::IrqScheme;
 use self::itimer::ITimerScheme;
 use self::memory::MemoryScheme;
 use self::pipe::PipeScheme;
+use self::proc::ProcScheme;
 use self::root::RootScheme;
 use self::sys::SysScheme;
 use self::time::TimeScheme;
@@ -50,6 +51,9 @@ pub mod memory;
 
 /// `pipe:` - used internally by the kernel to implement `pipe`
 pub mod pipe;
+
+/// `proc:` - allows tracing processes and reading/writing their memory
+pub mod proc;
 
 /// `:` - allows the creation of userspace schemes, tightly dependent on `user`
 pub mod root;
@@ -128,29 +132,21 @@ impl SchemeList {
     }
 
     /// Initialize the root namespace
-    #[cfg(not(feature="live"))]
     fn new_root(&mut self) {
         // Do common namespace initialization
         let ns = self.new_ns();
 
-        // Debug, Initfs and IRQ are only available in the root namespace. Pipe is special
+        // These schemes should only be available on the root
         self.insert(ns, Box::new(*b"debug"), |scheme_id| Arc::new(Box::new(DebugScheme::new(scheme_id)))).unwrap();
         self.insert(ns, Box::new(*b"initfs"), |_| Arc::new(Box::new(InitFsScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"irq"), |scheme_id| Arc::new(Box::new(IrqScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"pipe"), |scheme_id| Arc::new(Box::new(PipeScheme::new(scheme_id)))).unwrap();
-    }
+        self.insert(ns, Box::new(*b"proc"), |_| Arc::new(Box::new(ProcScheme::new()))).unwrap();
 
-    /// Initialize the root namespace - with live disk
-    #[cfg(feature="live")]
-    fn new_root(&mut self) {
-        // Do common namespace initialization
-        let ns = self.new_ns();
+        #[cfg(feature = "live")] {
+            self.insert(ns, Box::new(*b"disk/live"), |_| Arc::new(Box::new(self::live::DiskScheme::new()))).unwrap();
+        }
 
-        // Debug, Disk, Initfs and IRQ are only available in the root namespace. Pipe is special
-        self.insert(ns, Box::new(*b"debug"), |scheme_id| Arc::new(Box::new(DebugScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"disk/live"), |_| Arc::new(Box::new(self::live::DiskScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"initfs"), |_| Arc::new(Box::new(InitFsScheme::new()))).unwrap();
-        self.insert(ns, Box::new(*b"irq"), |scheme_id| Arc::new(Box::new(IrqScheme::new(scheme_id)))).unwrap();
+        // Pipe is special and needs to be in the root namespace
         self.insert(ns, Box::new(*b"pipe"), |scheme_id| Arc::new(Box::new(PipeScheme::new(scheme_id)))).unwrap();
     }
 

@@ -1,5 +1,4 @@
-use core::mem;
-use core::ops::Range;
+use core::{ascii, mem};
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -8,47 +7,13 @@ use super::flag::*;
 use super::number::*;
 use super::validate::*;
 
-// Copied from std
-pub struct EscapeDefault {
-    range: Range<usize>,
-    data: [u8; 4],
-}
-
-pub fn escape_default(c: u8) -> EscapeDefault {
-    let (data, len) = match c {
-        b'\t' => ([b'\\', b't', 0, 0], 2),
-        b'\r' => ([b'\\', b'r', 0, 0], 2),
-        b'\n' => ([b'\\', b'n', 0, 0], 2),
-        b'\\' => ([b'\\', b'\\', 0, 0], 2),
-        b'\'' => ([b'\\', b'\'', 0, 0], 2),
-        b'"' => ([b'\\', b'"', 0, 0], 2),
-        b'\x20' ... b'\x7e' => ([c, 0, 0, 0], 1),
-        _ => ([b'\\', b'x', hexify(c >> 4), hexify(c & 0xf)], 4),
-    };
-
-    return EscapeDefault { range: (0.. len), data: data };
-
-    fn hexify(b: u8) -> u8 {
-        match b {
-            0 ... 9 => b'0' + b,
-            _ => b'a' + b - 10,
-        }
-    }
-}
-
-impl Iterator for EscapeDefault {
-    type Item = u8;
-    fn next(&mut self) -> Option<u8> { self.range.next().map(|i| self.data[i]) }
-    fn size_hint(&self) -> (usize, Option<usize>) { self.range.size_hint() }
-}
-
 struct ByteStr<'a>(&'a[u8]);
 
 impl<'a> ::core::fmt::Debug for ByteStr<'a> {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
         write!(f, "\"")?;
         for i in self.0 {
-            for ch in escape_default(*i) {
+            for ch in ascii::escape_default(*i) {
                 write!(f, "{}", ch as char)?;
             }
         }
