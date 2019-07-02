@@ -7,16 +7,15 @@ use core::cmp::Ordering;
 use core::mem;
 use spin::Mutex;
 
-use crate::arch::{macros::InterruptStack, paging::PAGE_SIZE};
-use crate::common::unique::Unique;
+use crate::arch::paging::PAGE_SIZE;
 use crate::context::arch;
 use crate::context::file::FileDescriptor;
 use crate::context::memory::{Grant, Memory, SharedMemory, Tls};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::{SchemeNamespace, FileHandle};
-use crate::sync::WaitMap;
 use crate::syscall::data::SigAction;
 use crate::syscall::flag::SIG_DFL;
+use crate::sync::WaitMap;
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
@@ -166,15 +165,6 @@ pub struct Context {
     pub files: Arc<Mutex<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
     pub actions: Arc<Mutex<Vec<(SigAction, usize)>>>,
-    /// The pointer to the user-space registers, saved after certain
-    /// interrupts. This pointer is somewhere inside kstack, and the
-    /// kstack address at the time of creation is the first element in
-    /// this tuple.
-    pub regs: Option<(usize, Unique<InterruptStack>)>,
-    /// A somewhat hacky way to initially stop a context when creating
-    /// a new instance of the proc: scheme, entirely separate from
-    /// signals or any other way to restart a process.
-    pub ptrace_stop: bool
 }
 
 impl Context {
@@ -226,8 +216,6 @@ impl Context {
                 },
                 0
             ); 128])),
-            regs: None,
-            ptrace_stop: false
         }
     }
 

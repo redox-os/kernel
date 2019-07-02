@@ -6,21 +6,21 @@ use core::{intrinsics, mem};
 use core::ops::DerefMut;
 use spin::Mutex;
 
-use crate::context::file::FileDescriptor;
-use crate::context::{ContextId, WaitpidKey};
-use crate::context;
-#[cfg(not(feature="doc"))]
-use crate::elf::{self, program_header};
-use crate::interrupt;
-use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::allocate_frames;
+use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
 use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::MapperFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
-use crate::ptrace;
-use crate::scheme::FileHandle;
 use crate::start::usermode;
+use crate::interrupt;
+use crate::context;
+use crate::context::{ContextId, WaitpidKey};
+use crate::context::file::FileDescriptor;
+#[cfg(not(feature="doc"))]
+use crate::elf::{self, program_header};
+use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::scheme::FileHandle;
+use crate::syscall;
 use crate::syscall::data::{SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
@@ -28,7 +28,6 @@ use crate::syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_S
                     SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
                     WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
-use crate::syscall;
 
 pub fn brk(address: usize) -> Result<usize> {
     let contexts = context::contexts();
@@ -129,25 +128,10 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             }
 
             if let Some(ref stack) = context.kstack {
-                // Get the relative offset to the return address of this function
-                // (base pointer - start of stack) - one
                 offset = stack_base - stack.as_ptr() as usize - mem::size_of::<usize>(); // Add clone ret
                 let mut new_stack = stack.clone();
 
                 unsafe {
-                    if let Some(regs) = ptrace::rebase_regs_ptr_mut(context.regs, Some(&mut new_stack)) {
-                        // We'll need to tell the clone that it should
-                        // return 0, but that's it. We don't actually
-                        // clone the registers, because it will then
-                        // become None and be exempt from all kinds of
-                        // ptracing until the current syscall has
-                        // completed.
-                        (*regs).scratch.rax = 0;
-                    }
-
-                    // Change the return address of the child
-                    // (previously syscall) to the arch-specific
-                    // clone_ret callback
                     let func_ptr = new_stack.as_mut_ptr().offset(offset as isize);
                     *(func_ptr as *mut usize) = interrupt::syscall::clone_ret as usize;
                 }
@@ -1067,8 +1051,6 @@ pub fn exit(status: usize) -> ! {
             context.files = Arc::new(Mutex::new(Vec::new()));
             context.id
         };
-
-        ptrace::close(pid);
 
         // Files must be closed while context is valid so that messages can be passed
         for (_fd, file_option) in close_files.drain(..).enumerate() {

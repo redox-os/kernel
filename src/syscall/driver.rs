@@ -25,8 +25,7 @@ pub fn iopl(level: usize, stack: &mut SyscallStack) -> Result<usize> {
         return Err(Error::new(EINVAL));
     }
 
-    let iret = &mut stack.interrupt_stack.iret;
-    iret.rflags = (iret.rflags & !(3 << 12)) | ((level & 3) << 12);
+    stack.rflags = (stack.rflags & !(3 << 12)) | ((level & 3) << 12);
 
     Ok(0)
 }
