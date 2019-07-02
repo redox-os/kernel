@@ -1,5 +1,10 @@
-use crate::interrupt::stack_trace;
-use crate::syscall::flag::*;
+use crate::{
+    common::unique::Unique,
+    context,
+    interrupt::stack_trace,
+    ptrace,
+    syscall::flag::*
+};
 
 extern {
     fn ksignal(signal: usize);
@@ -13,9 +18,41 @@ interrupt_stack_p!(divide_by_zero, stack, {
 });
 
 interrupt_stack!(debug, stack, {
-    println!("Debug trap");
-    stack.dump();
-    ksignal(SIGTRAP);
+    match ptrace::breakpoint_callback_dryrun(true) {
+        Some(_) => {
+            {
+                let contexts = context::contexts();
+                if let Some(context) = contexts.current() {
+                    let mut context = context.write();
+                    if let Some(ref mut kstack) = context.kstack {
+                        context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(stack)));
+                    }
+                }
+            }
+
+            let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
+            stack.set_singlestep(false);
+            if ptrace::breakpoint_callback(true).is_none() {
+                // There is no guarantee that this is Some(_) just
+                // because the dryrun is Some(_). So, if there wasn't
+                // *actually* any breakpoint, restore the trap flag.
+                stack.set_singlestep(had_singlestep);
+            }
+
+            {
+                let contexts = context::contexts();
+                if let Some(context) = contexts.current() {
+                    let mut context = context.write();
+                    context.regs = None;
+                }
+            }
+        },
+        None => {
+            println!("Debug trap");
+            stack.dump();
+            ksignal(SIGTRAP);
+        }
+    }
 });
 
 interrupt_stack!(non_maskable, stack, {

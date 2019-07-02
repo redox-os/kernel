@@ -1,5 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::common::unique::Unique;
 use crate::context;
 use crate::context::timeout;
 use crate::device::pic;
@@ -40,7 +41,7 @@ pub unsafe fn acknowledge(irq: usize) {
     }
 }
 
-interrupt!(pit, {
+interrupt_stack!(pit, stack, {
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
     const PIT_RATE: u64 = 2_250_286;
@@ -61,7 +62,25 @@ interrupt!(pit, {
     timeout::trigger();
 
     if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
+        {
+            let contexts = crate::context::contexts();
+            if let Some(context) = contexts.current() {
+                let mut context = context.write();
+                // Make all registers available to e.g. the proc:
+                // scheme
+                if let Some(ref mut kstack) = context.kstack {
+                    context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(stack)));
+                }
+            }
+        }
         let _ = context::switch();
+        {
+            let contexts = crate::context::contexts();
+            if let Some(context) = contexts.current() {
+                let mut context = context.write();
+                context.regs = None;
+            }
+        }
     }
 });
 

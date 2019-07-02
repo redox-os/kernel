@@ -1,3 +1,5 @@
+use syscall::data::IntRegisters;
+
 /// Print to console
 #[macro_export]
 macro_rules! print {
@@ -203,6 +205,50 @@ impl InterruptStack {
         self.iret.dump();
         self.scratch.dump();
         println!("FS:    {:>016X}", { self.fs });
+    }
+    /// Saves all registers to a struct used by the proc:
+    /// scheme to read/write registers.
+    pub fn save(&self, all: &mut IntRegisters) {
+        all.fs = self.fs;
+        all.r11 = self.scratch.r11;
+        all.r10 = self.scratch.r10;
+        all.r9 = self.scratch.r9;
+        all.r8 = self.scratch.r8;
+        all.rsi = self.scratch.rsi;
+        all.rdi = self.scratch.rdi;
+        all.rdx = self.scratch.rdx;
+        all.rcx = self.scratch.rcx;
+        all.rax = self.scratch.rax;
+        all.rip = self.iret.rip;
+        all.cs = self.iret.cs;
+        all.eflags = self.iret.rflags;
+    }
+    /// Loads all registers from a struct used by the proc:
+    /// scheme to read/write registers.
+    pub fn load(&mut self, all: &IntRegisters) {
+        self.fs = all.fs;
+        self.scratch.r11 = all.r11;
+        self.scratch.r10 = all.r10;
+        self.scratch.r9 = all.r9;
+        self.scratch.r8 = all.r8;
+        self.scratch.rsi = all.rsi;
+        self.scratch.rdi = all.rdi;
+        self.scratch.rdx = all.rdx;
+        self.scratch.rcx = all.rcx;
+        self.scratch.rax = all.rax;
+        self.iret.rip = all.rip;
+        self.iret.cs = all.cs;
+        self.iret.rflags = all.eflags;
+    }
+    /// Enables the "Trap Flag" in the FLAGS register, causing the CPU
+    /// to send a Debug exception after the next instruction. This is
+    /// used for singlestep in the proc: scheme.
+    pub fn set_singlestep(&mut self, enabled: bool) {
+        if enabled {
+            self.iret.rflags |= 1 << 8;
+        } else {
+            self.iret.rflags &= !(1 << 8);
+        }
     }
 }
 

@@ -93,6 +93,9 @@ pub mod memory;
 #[cfg(not(any(feature="doc", test)))]
 pub mod panic;
 
+/// Process tracing
+pub mod ptrace;
+
 /// Schemes, filesystem handlers
 pub mod scheme;
 
