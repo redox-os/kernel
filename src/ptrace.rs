@@ -1,5 +1,13 @@
 use crate::{
-    arch::macros::InterruptStack,
+    arch::{
+        macros::InterruptStack,
+        paging::{
+            entry::EntryFlags,
+            mapper::MapperFlushAll,
+            temporary_page::TemporaryPage,
+            ActivePageTable, InactivePageTable, Page, PAGE_SIZE, VirtualAddress
+        }
+    },
     common::unique::Unique,
     context::{self, Context, ContextId, Status},
     sync::WaitCondition
@@ -8,7 +16,8 @@ use crate::{
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
-    sync::Arc
+    sync::Arc,
+    vec::Vec
 };
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::error::*;
@@ -92,23 +101,6 @@ pub fn wait_breakpoint(pid: ContextId) -> Result<()> {
         return Err(Error::new(ESRCH));
     }
     Ok(())
-}
-
-/// Returns the same value as breakpoint_callback would do, but
-/// doesn't actually perform the action. You should not rely too
-/// heavily on this value, as the lock *is* released between this call
-/// and another.
-pub fn breakpoint_callback_dryrun(singlestep: bool) -> Option<bool> {
-    let contexts = context::contexts();
-    let context = contexts.current()?;
-    let context = context.read();
-
-    let breakpoints = breakpoints();
-    let breakpoint = breakpoints.get(&context.id)?;
-    if breakpoint.singlestep != singlestep {
-        return None;
-    }
-    Some(breakpoint.sysemu)
 }
 
 /// Notify the tracer and await green flag to continue.
@@ -205,4 +197,71 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
         Some((_, _, ref mut kstack)) => rebase_regs_ptr_mut(context.regs, kstack.as_mut())?,
         None => context.regs?.1.as_ptr()
     })
+}
+
+//  __  __
+// |  \/  | ___ _ __ ___   ___  _ __ _   _
+// | |\/| |/ _ \ '_ ` _ \ / _ \| '__| | | |
+// | |  | |  __/ | | | | | (_) | |  | |_| |
+// |_|  |_|\___|_| |_| |_|\___/|_|   \__, |
+//                                   |___/
+
+pub fn with_context_memory<F>(context: &Context, offset: VirtualAddress, len: usize, f: F) -> Result<()>
+    where F: FnOnce(*mut u8) -> Result<()>
+{
+    // TODO: Is using USER_TMP_MISC_OFFSET safe? I guess make sure
+    // it's not too large.
+    let start = Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET));
+
+    let mut active_page_table = unsafe { ActivePageTable::new() };
+    let mut target_page_table = unsafe {
+        InactivePageTable::from_address(context.arch.get_page_table())
+    };
+
+    // Find the physical frames for all pages
+    let mut frames = Vec::new();
+
+    let mut result = None;
+    active_page_table.with(&mut target_page_table, &mut TemporaryPage::new(start), |mapper| {
+        let mut inner = || -> Result<()> {
+            let start = Page::containing_address(offset);
+            let end = Page::containing_address(VirtualAddress::new(offset.get() + len - 1));
+            for page in Page::range_inclusive(start, end) {
+                frames.push((
+                    mapper.translate_page(page).ok_or(Error::new(EFAULT))?,
+                    mapper.translate_page_flags(page).ok_or(Error::new(EFAULT))?
+                ));
+            }
+            Ok(())
+        };
+        result = Some(inner());
+    });
+    result.expect("with(...) callback should always be called")?;
+
+    // Map all the physical frames into linear pages
+    let pages = frames.len();
+    let mut page = start;
+    let mut flusher = MapperFlushAll::new();
+    for (frame, mut flags) in frames {
+        flags |= EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE;
+        flusher.consume(active_page_table.map_to(page, frame, flags));
+
+        page = page.next();
+    }
+
+    flusher.flush(&mut active_page_table);
+
+    let res = f((start.start_address().get() + offset.get() % PAGE_SIZE) as *mut u8);
+
+    // Unmap all the pages (but allow no deallocation!)
+    let mut page = start;
+    let mut flusher = MapperFlushAll::new();
+    for _ in 0..pages {
+        flusher.consume(active_page_table.unmap_return(page, true).0);
+        page = page.next();
+    }
+
+    flusher.flush(&mut active_page_table);
+
+    res
 }

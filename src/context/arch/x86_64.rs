@@ -1,11 +1,14 @@
 use core::mem;
 use core::sync::atomic::AtomicBool;
+use syscall::data::FloatRegisters;
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
 /// The `Context::switch_to` function will set it back to false, allowing other CPU's to switch
 /// This must be done, as no locks can be held on the stack during switch
 pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
+
+const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
 #[derive(Clone, Debug)]
 pub struct Context {
@@ -54,6 +57,44 @@ impl Context {
         self.cr3
     }
 
+    pub fn get_fx_regs(&self) -> Option<FloatRegisters> {
+        if !self.loadable {
+            return None;
+        }
+        let mut regs = unsafe { *(self.fx as *const FloatRegisters) };
+        regs._reserved = 0;
+        let mut new_st = regs.st_space;
+        for st in &mut new_st {
+            // Only allow access to the 80 lowest bits
+            *st &= !ST_RESERVED;
+        }
+        regs.st_space = new_st;
+        Some(regs)
+    }
+
+    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) -> bool {
+        if !self.loadable {
+            return false;
+        }
+        let old = unsafe { &*(self.fx as *const FloatRegisters) };
+        new._reserved = old._reserved;
+        let old_st = new.st_space;
+        let mut new_st = new.st_space;
+        for (new_st, old_st) in new_st.iter_mut().zip(&old_st) {
+            *new_st &= !ST_RESERVED;
+            *new_st |= old_st & ST_RESERVED;
+        }
+        new.st_space = new_st;
+
+        // Make sure we don't use `old` from now on
+        drop(old);
+
+        unsafe {
+            *(self.fx as *mut FloatRegisters) = new;
+        }
+        true
+    }
+
     pub fn set_fx(&mut self, address: usize) {
         self.fx = address;
     }
@@ -88,10 +129,10 @@ impl Context {
     #[inline(never)]
     #[naked]
     pub unsafe fn switch_to(&mut self, next: &mut Context) {
-        asm!("fxsave [$0]" : : "r"(self.fx) : "memory" : "intel", "volatile");
+        asm!("fxsave64 [$0]" : : "r"(self.fx) : "memory" : "intel", "volatile");
         self.loadable = true;
         if next.loadable {
-            asm!("fxrstor [$0]" : : "r"(next.fx) : "memory" : "intel", "volatile");
+            asm!("fxrstor64 [$0]" : : "r"(next.fx) : "memory" : "intel", "volatile");
         }else{
             asm!("fninit" : : : "memory" : "intel", "volatile");
         }

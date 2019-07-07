@@ -18,19 +18,15 @@ pub unsafe fn init() {
 // from clone() (via clone_ret()). Not sure what the problem is.
 macro_rules! with_interrupt_stack {
     (unsafe fn $wrapped:ident($stack:ident) -> usize $code:block) => {
-        /// Because of how clones work, we need a function that returns a
-        /// usize. Here, `inner` will be this function. The child process in a
-        /// clone will terminate this function with a 0 return value, and it
-        /// might also have updated the interrupt_stack pointer.
         #[inline(never)]
-        unsafe fn $wrapped(stack: *mut SyscallStack) {
+        unsafe fn $wrapped(stack: *mut InterruptStack) {
             let stack = &mut *stack;
             {
                 let contexts = context::contexts();
                 if let Some(context) = contexts.current() {
                     let mut context = context.write();
                     if let Some(ref mut kstack) = context.kstack {
-                        context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(&mut stack.interrupt_stack)));
+                        context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(&mut *stack)));
                     }
                 }
             }
@@ -39,7 +35,7 @@ macro_rules! with_interrupt_stack {
             if !is_sysemu.unwrap_or(false) {
                 // If not on a sysemu breakpoint
                 let $stack = &mut *stack;
-                $stack.interrupt_stack.scratch.rax = $code;
+                $stack.scratch.rax = $code;
 
                 if is_sysemu.is_some() {
                     // Only callback if there was a pre-syscall
@@ -66,7 +62,7 @@ pub unsafe extern fn syscall_instruction() {
             let rbp;
             asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
-            let scratch = &stack.interrupt_stack.scratch;
+            let scratch = &stack.scratch;
             syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
         }
     }
@@ -91,10 +87,10 @@ pub unsafe extern fn syscall_instruction() {
 
     // Push scratch registers
     scratch_push!();
+    preserved_push!();
     asm!("push fs
          mov r11, 0x18
-         mov fs, r11
-         push rbx"
+         mov fs, r11"
          : : : : "intel", "volatile");
 
     // Get reference to stack variables
@@ -104,15 +100,14 @@ pub unsafe extern fn syscall_instruction() {
     // Map kernel
     pti::map();
 
-    inner(rsp as *mut SyscallStack);
+    inner(rsp as *mut InterruptStack);
 
     // Unmap kernel
     pti::unmap();
 
     // Interrupt return
-    asm!("pop rbx
-         pop fs"
-         : : : : "intel", "volatile");
+    asm!("pop fs" : : : : "intel", "volatile");
+    preserved_pop!();
     scratch_pop!();
     asm!("iretq" : : : : "intel", "volatile");
 }
@@ -124,17 +119,17 @@ pub unsafe extern fn syscall() {
             let rbp;
             asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
-            let scratch = &stack.interrupt_stack.scratch;
-            syscall::syscall(scratch.rax, stack.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
+            let scratch = &stack.scratch;
+            syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
         }
     }
 
     // Push scratch registers
     scratch_push!();
+    preserved_push!();
     asm!("push fs
          mov r11, 0x18
-         mov fs, r11
-         push rbx"
+         mov fs, r11"
          : : : : "intel", "volatile");
 
     // Get reference to stack variables
@@ -144,28 +139,16 @@ pub unsafe extern fn syscall() {
     // Map kernel
     pti::map();
 
-    inner(rsp as *mut SyscallStack);
+    inner(rsp as *mut InterruptStack);
 
     // Unmap kernel
     pti::unmap();
 
     // Interrupt return
-    asm!("pop rbx
-         pop fs"
-         : : : : "intel", "volatile");
+    asm!("pop fs" : : : : "intel", "volatile");
+    preserved_pop!();
     scratch_pop!();
     asm!("iretq" : : : : "intel", "volatile");
-}
-
-#[allow(dead_code)]
-#[repr(packed)]
-pub struct SyscallStack {
-    pub rbx: usize,
-    pub interrupt_stack: InterruptStack,
-
-    // Will only be present if syscall is called from another ring
-    pub rsp: usize,
-    pub ss: usize,
 }
 
 #[naked]

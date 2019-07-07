@@ -425,6 +425,10 @@ impl Page {
             end: end,
         }
     }
+
+    pub fn next(self) -> Page {
+        Self { number: self.number + 1 }
+    }
 }
 
 pub struct PageIter {
@@ -438,7 +442,7 @@ impl Iterator for PageIter {
     fn next(&mut self) -> Option<Page> {
         if self.start <= self.end {
             let page = self.start;
-            self.start.number += 1;
+            self.start = self.start.next();
             Some(page)
         } else {
             None
