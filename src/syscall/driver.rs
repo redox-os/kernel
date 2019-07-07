@@ -1,4 +1,4 @@
-use crate::interrupt::syscall::SyscallStack;
+use crate::macros::InterruptStack;
 use crate::memory::{allocate_frames, deallocate_frames, Frame};
 use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
@@ -18,15 +18,14 @@ fn enforce_root() -> Result<()> {
     }
 }
 
-pub fn iopl(level: usize, stack: &mut SyscallStack) -> Result<usize> {
+pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
     enforce_root()?;
 
     if level > 3 {
         return Err(Error::new(EINVAL));
     }
 
-    let iret = &mut stack.interrupt_stack.iret;
-    iret.rflags = (iret.rflags & !(3 << 12)) | ((level & 3) << 12);
+    stack.iret.rflags = (stack.iret.rflags & !(3 << 12)) | ((level & 3) << 12);
 
     Ok(0)
 }

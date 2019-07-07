@@ -10,7 +10,7 @@ extern {
     fn ksignal(signal: usize);
 }
 
-interrupt_stack_p!(divide_by_zero, stack, {
+interrupt_stack!(divide_by_zero, stack, {
     println!("Divide by zero");
     stack.dump();
     stack_trace();
@@ -18,40 +18,43 @@ interrupt_stack_p!(divide_by_zero, stack, {
 });
 
 interrupt_stack!(debug, stack, {
-    match ptrace::breakpoint_callback_dryrun(true) {
-        Some(_) => {
-            {
-                let contexts = context::contexts();
-                if let Some(context) = contexts.current() {
-                    let mut context = context.write();
-                    if let Some(ref mut kstack) = context.kstack {
-                        context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(stack)));
-                    }
-                }
-            }
+    let mut handled = false;
 
-            let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
-            stack.set_singlestep(false);
-            if ptrace::breakpoint_callback(true).is_none() {
-                // There is no guarantee that this is Some(_) just
-                // because the dryrun is Some(_). So, if there wasn't
-                // *actually* any breakpoint, restore the trap flag.
-                stack.set_singlestep(had_singlestep);
+    {
+        let contexts = context::contexts();
+        if let Some(context) = contexts.current() {
+            let mut context = context.write();
+            if let Some(ref mut kstack) = context.kstack {
+                context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(stack)));
             }
-
-            {
-                let contexts = context::contexts();
-                if let Some(context) = contexts.current() {
-                    let mut context = context.write();
-                    context.regs = None;
-                }
-            }
-        },
-        None => {
-            println!("Debug trap");
-            stack.dump();
-            ksignal(SIGTRAP);
         }
+    }
+
+    // Disable singlestep before their is a breakpoint, since the
+    // breakpoint handler might end up setting it again but unless it
+    // does we want the default to be false.
+    let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
+    stack.set_singlestep(false);
+
+    if ptrace::breakpoint_callback(true).is_some() {
+        handled = true;
+    } else {
+        // There was no breakpoint, restore original value
+        stack.set_singlestep(had_singlestep);
+    }
+
+    {
+        let contexts = context::contexts();
+        if let Some(context) = contexts.current() {
+            let mut context = context.write();
+            context.regs = None;
+        }
+    }
+
+    if !handled {
+        println!("Debug trap");
+        stack.dump();
+        ksignal(SIGTRAP);
     }
 });
 
@@ -66,70 +69,70 @@ interrupt_stack!(breakpoint, stack, {
     ksignal(SIGTRAP);
 });
 
-interrupt_stack_p!(overflow, stack, {
+interrupt_stack!(overflow, stack, {
     println!("Overflow trap");
     stack.dump();
     stack_trace();
     ksignal(SIGFPE);
 });
 
-interrupt_stack_p!(bound_range, stack, {
+interrupt_stack!(bound_range, stack, {
     println!("Bound range exceeded fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_stack_p!(invalid_opcode, stack, {
+interrupt_stack!(invalid_opcode, stack, {
     println!("Invalid opcode fault");
     stack.dump();
     stack_trace();
     ksignal(SIGILL);
 });
 
-interrupt_stack_p!(device_not_available, stack, {
+interrupt_stack!(device_not_available, stack, {
     println!("Device not available fault");
     stack.dump();
     stack_trace();
     ksignal(SIGILL);
 });
 
-interrupt_error_p!(double_fault, stack, {
+interrupt_error!(double_fault, stack, {
     println!("Double fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error_p!(invalid_tss, stack, {
+interrupt_error!(invalid_tss, stack, {
     println!("Invalid TSS fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error_p!(segment_not_present, stack, {
+interrupt_error!(segment_not_present, stack, {
     println!("Segment not present fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error_p!(stack_segment, stack, {
+interrupt_error!(stack_segment, stack, {
     println!("Stack segment fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error_p!(protection, stack, {
+interrupt_error!(protection, stack, {
     println!("Protection fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error_p!(page, stack, {
+interrupt_error!(page, stack, {
     let cr2: usize;
     asm!("mov rax, cr2" : "={rax}"(cr2) : : : "intel", "volatile");
     println!("Page fault: {:>016X}", cr2);
@@ -138,42 +141,42 @@ interrupt_error_p!(page, stack, {
     ksignal(SIGSEGV);
 });
 
-interrupt_stack_p!(fpu, stack, {
+interrupt_stack!(fpu, stack, {
     println!("FPU floating point fault");
     stack.dump();
     stack_trace();
     ksignal(SIGFPE);
 });
 
-interrupt_error_p!(alignment_check, stack, {
+interrupt_error!(alignment_check, stack, {
     println!("Alignment check fault");
     stack.dump();
     stack_trace();
     ksignal(SIGBUS);
 });
 
-interrupt_stack_p!(machine_check, stack, {
+interrupt_stack!(machine_check, stack, {
     println!("Machine check fault");
     stack.dump();
     stack_trace();
     ksignal(SIGBUS);
 });
 
-interrupt_stack_p!(simd, stack, {
+interrupt_stack!(simd, stack, {
     println!("SIMD floating point fault");
     stack.dump();
     stack_trace();
     ksignal(SIGFPE);
 });
 
-interrupt_stack_p!(virtualization, stack, {
+interrupt_stack!(virtualization, stack, {
     println!("Virtualization fault");
     stack.dump();
     stack_trace();
     ksignal(SIGBUS);
 });
 
-interrupt_error_p!(security, stack, {
+interrupt_error!(security, stack, {
     println!("Security exception");
     stack.dump();
     stack_trace();

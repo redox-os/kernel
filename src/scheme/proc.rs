@@ -1,9 +1,14 @@
 use crate::{
+    arch::paging::VirtualAddress,
     context::{self, ContextId, Status},
+    syscall::validate,
     ptrace
 };
 
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc
+};
 use core::{
     cmp,
     mem,
@@ -25,7 +30,7 @@ enum RegsKind {
 }
 #[derive(Clone, Copy)]
 enum Operation {
-    Memory,
+    Memory(VirtualAddress),
     Regs(RegsKind),
     Trace
 }
@@ -39,7 +44,7 @@ struct Handle {
 
 pub struct ProcScheme {
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Handle>>,
+    handles: RwLock<BTreeMap<usize, Arc<Mutex<Handle>>>>,
     traced: Mutex<BTreeSet<ContextId>>
 }
 
@@ -62,7 +67,7 @@ impl Scheme for ProcScheme {
             .map(ContextId::from)
             .ok_or(Error::new(EINVAL))?;
         let operation = match parts.next() {
-            Some("mem") => Operation::Memory,
+            Some("mem") => Operation::Memory(VirtualAddress::new(0)),
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
             Some("trace") => Operation::Trace,
@@ -95,11 +100,11 @@ impl Scheme for ProcScheme {
         }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Handle {
+        self.handles.write().insert(id, Arc::new(Mutex::new(Handle {
             flags,
             pid,
             operation
-        });
+        })));
         Ok(id)
     }
 
@@ -113,8 +118,11 @@ impl Scheme for ProcScheme {
     fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
-            *handles.get(&old_id).ok_or(Error::new(EBADF))?
+            let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
+            let handle = handle.lock();
+            *handle
         };
+
         let mut path = format!("{}/", handle.pid.into()).into_bytes();
         path.extend_from_slice(buf);
 
@@ -128,29 +136,52 @@ impl Scheme for ProcScheme {
         self.open(&path, handle.flags, uid, gid)
     }
 
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        // Can't hold locks during the context switch later when
-        // waiting for a process to stop running.
-        let handle = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+    fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let mut handle = handle.lock();
 
         match handle.operation {
-            Operation::Memory => {
-                // let contexts = context::contexts();
-                // let context = contexts.get(handle.pid).ok_or(Error::new(ESRCH))?;
-                // let context = context.read();
+            Operation::Memory(ref mut offset) => Ok({
+                *offset = VirtualAddress::new(match whence {
+                    SEEK_SET => pos,
+                    SEEK_CUR => cmp::max(0, offset.get() as isize + pos as isize) as usize,
+                    SEEK_END => cmp::max(0, isize::max_value() + pos as isize) as usize,
+                    _ => return Err(Error::new(EBADF))
+                });
+                offset.get()
+            }),
+            _ => Err(Error::new(EBADF))
+        }
+    }
 
-                // for grant in &*context.grants.lock() {
-                //     println!("Grant: {} -> {}", grant.start.get(), grant.size);
-                // }
-                // unimplemented!();
-                return Err(Error::new(EBADF));
+    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        // Don't hold a global lock during the context switch later on
+        let handle = {
+            let handles = self.handles.read();
+            Arc::clone(handles.get(&id).ok_or(Error::new(EBADF))?)
+        };
+        // TODO: Make sure handle can't deadlock
+        let mut handle = handle.lock();
+        let pid = handle.pid;
+
+        match handle.operation {
+            Operation::Memory(ref mut offset) => {
+                let contexts = context::contexts();
+                let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+                let context = context.read();
+
+                ptrace::with_context_memory(&context, *offset, buf.len(), |ptr| {
+                    buf.copy_from_slice(validate::validate_slice(ptr, buf.len())?);
+                    Ok(())
+                })?;
+
+                *offset = VirtualAddress::new(offset.get() + buf.len());
+                Ok(buf.len())
             },
             Operation::Regs(kind) => {
                 union Output {
-                    _float: FloatRegisters,
+                    float: FloatRegisters,
                     int: IntRegisters
                 }
                 let mut first = true;
@@ -167,9 +198,13 @@ impl Scheme for ProcScheme {
 
                     break match kind {
                         RegsKind::Float => {
-                            // TODO!!
-                            // (Output { float: FloatRegisters::default() }, mem::size_of::<FloatRegisters>())
-                            return Err(Error::new(EBADF));
+                            // NOTE: The kernel will never touch floats
+
+                            // In the rare case of not having floating
+                            // point registers uninitiated, return
+                            // empty everything.
+                            let fx = context.arch.get_fx_regs().unwrap_or_default();
+                            (Output { float: fx }, mem::size_of::<FloatRegisters>())
                         },
                         RegsKind::Int => match unsafe { ptrace::regs_for(&context) } {
                             None => {
@@ -200,18 +235,28 @@ impl Scheme for ProcScheme {
     }
 
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        // Can't hold locks during the context switch later when
-        // waiting for a process to stop running.
+        // Don't hold a global lock during the context switch later on
         let handle = {
             let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
+            Arc::clone(handles.get(&id).ok_or(Error::new(EBADF))?)
         };
+        let mut handle = handle.lock();
+        let pid = handle.pid;
 
         let mut first = true;
         match handle.operation {
-            Operation::Memory => {
-                // unimplemented!()
-                return Err(Error::new(EBADF));
+            Operation::Memory(ref mut offset) => {
+                let contexts = context::contexts();
+                let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+                let context = context.read();
+
+                ptrace::with_context_memory(&context, *offset, buf.len(), |ptr| {
+                    validate::validate_slice_mut(ptr, buf.len())?.copy_from_slice(buf);
+                    Ok(())
+                })?;
+
+                *offset = VirtualAddress::new(offset.get() + buf.len());
+                Ok(buf.len())
             },
             Operation::Regs(kind) => loop {
                 if !first {
@@ -226,8 +271,20 @@ impl Scheme for ProcScheme {
 
                 break match kind {
                     RegsKind::Float => {
-                        // TODO!!
-                        unimplemented!();
+                        if buf.len() < mem::size_of::<FloatRegisters>() {
+                            return Ok(0);
+                        }
+                        let regs = unsafe {
+                            *(buf as *const _ as *const FloatRegisters)
+                        };
+
+                        // NOTE: The kernel will never touch floats
+
+                        // Ignore the rare case of floating point
+                        // registers being uninitiated
+                        let _ = context.arch.set_fx_regs(regs);
+
+                        Ok(mem::size_of::<FloatRegisters>())
                     },
                     RegsKind::Int => match unsafe { ptrace::regs_for_mut(&mut context) } {
                         None => {
@@ -310,8 +367,9 @@ impl Scheme for ProcScheme {
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        let mut handles = self.handles.write();
-        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let mut handle = handle.lock();
 
         match cmd {
             F_SETFL => { handle.flags = arg; Ok(0) },
@@ -323,9 +381,10 @@ impl Scheme for ProcScheme {
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handle.lock();
 
         let path = format!("proc:{}/{}", handle.pid.into(), match handle.operation {
-            Operation::Memory => "mem",
+            Operation::Memory(_) => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
             Operation::Trace => "trace"
@@ -339,7 +398,12 @@ impl Scheme for ProcScheme {
 
     fn close(&self, id: usize) -> Result<usize> {
         let handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
-        ptrace::cont(handle.pid);
+        let handle = handle.lock();
+
+        if let Operation::Trace = handle.operation {
+            ptrace::cont(handle.pid);
+            self.traced.lock().remove(&handle.pid);
+        }
 
         let contexts = context::contexts();
         if let Some(context) = contexts.get(handle.pid) {
