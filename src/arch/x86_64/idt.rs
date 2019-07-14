@@ -30,6 +30,7 @@ pub unsafe fn init_paging() {
     IDT[1].set_func(exception::debug);
     IDT[2].set_func(exception::non_maskable);
     IDT[3].set_func(exception::breakpoint);
+    IDT[3].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
     IDT[4].set_func(exception::overflow);
     IDT[5].set_func(exception::bound_range);
     IDT[6].set_func(exception::invalid_opcode);

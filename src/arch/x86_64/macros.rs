@@ -1,3 +1,4 @@
+use core::mem;
 use syscall::data::IntRegisters;
 
 /// Print to console
@@ -143,6 +144,10 @@ pub struct IretRegisters {
     pub rip: usize,
     pub cs: usize,
     pub rflags: usize,
+    // Will only be present if interrupt is raised from another
+    // privilege ring
+    pub rsp: usize,
+    pub ss: usize
 }
 
 impl IretRegisters {
@@ -196,6 +201,7 @@ macro_rules! interrupt {
 #[repr(packed)]
 pub struct InterruptStack {
     pub fs: usize,
+    pub preserved: PreservedRegisters,
     pub scratch: ScratchRegisters,
     pub iret: IretRegisters,
 }
@@ -204,12 +210,20 @@ impl InterruptStack {
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
+        self.preserved.dump();
         println!("FS:    {:>016X}", { self.fs });
     }
     /// Saves all registers to a struct used by the proc:
     /// scheme to read/write registers.
     pub fn save(&self, all: &mut IntRegisters) {
         all.fs = self.fs;
+
+        all.r15 = self.preserved.r15;
+        all.r14 = self.preserved.r14;
+        all.r13 = self.preserved.r13;
+        all.r12 = self.preserved.r12;
+        all.rbp = self.preserved.rbp;
+        all.rbx = self.preserved.rbx;
         all.r11 = self.scratch.r11;
         all.r10 = self.scratch.r10;
         all.r9 = self.scratch.r9;
@@ -221,12 +235,42 @@ impl InterruptStack {
         all.rax = self.scratch.rax;
         all.rip = self.iret.rip;
         all.cs = self.iret.cs;
-        all.eflags = self.iret.rflags;
+        all.rflags = self.iret.rflags;
+
+        // Set rsp and ss:
+
+        const CPL_MASK: usize = 0b11;
+
+        let cs: usize;
+        unsafe {
+            asm!("mov $0, cs" : "=r"(cs) ::: "intel");
+        }
+
+        if self.iret.cs & CPL_MASK == cs & CPL_MASK {
+            // Privilege ring didn't change, so neither did the stack
+            all.rsp = self as *const Self as usize // rsp after Self was pushed to the stack
+                + mem::size_of::<Self>() // disregard Self
+                - mem::size_of::<usize>() * 2; // well, almost: rsp and ss need to be excluded as they aren't present
+            unsafe {
+                asm!("mov $0, ss" : "=r"(all.ss) ::: "intel");
+            }
+        } else {
+            all.rsp = self.iret.rsp;
+            all.ss = self.iret.ss;
+        }
     }
     /// Loads all registers from a struct used by the proc:
     /// scheme to read/write registers.
     pub fn load(&mut self, all: &IntRegisters) {
-        self.fs = all.fs;
+        // TODO: Which of these should be allowed to change?
+
+        // self.fs = all.fs;
+        self.preserved.r15 = all.r15;
+        self.preserved.r14 = all.r14;
+        self.preserved.r13 = all.r13;
+        self.preserved.r12 = all.r12;
+        self.preserved.rbp = all.rbp;
+        self.preserved.rbx = all.rbx;
         self.scratch.r11 = all.r11;
         self.scratch.r10 = all.r10;
         self.scratch.r9 = all.r9;
@@ -236,9 +280,9 @@ impl InterruptStack {
         self.scratch.rdx = all.rdx;
         self.scratch.rcx = all.rcx;
         self.scratch.rax = all.rax;
-        self.iret.rip = all.rip;
-        self.iret.cs = all.cs;
-        self.iret.rflags = all.eflags;
+        // self.iret.rip = all.rip;
+        // self.iret.cs = all.cs;
+        // self.iret.rflags = all.eflags;
     }
     /// Enables the "Trap Flag" in the FLAGS register, causing the CPU
     /// to send a Debug exception after the next instruction. This is
@@ -264,6 +308,7 @@ macro_rules! interrupt_stack {
 
             // Push scratch registers
             scratch_push!();
+            preserved_push!();
             fs_push!();
 
             // Get reference to stack variables
@@ -281,6 +326,7 @@ macro_rules! interrupt_stack {
 
             // Pop scratch registers and return
             fs_pop!();
+            preserved_pop!();
             scratch_pop!();
             iret!();
         }
@@ -291,6 +337,7 @@ macro_rules! interrupt_stack {
 #[repr(packed)]
 pub struct InterruptErrorStack {
     pub fs: usize,
+    pub preserved: PreservedRegisters,
     pub scratch: ScratchRegisters,
     pub code: usize,
     pub iret: IretRegisters,
@@ -301,6 +348,7 @@ impl InterruptErrorStack {
         self.iret.dump();
         println!("CODE:  {:>016X}", { self.code });
         self.scratch.dump();
+        self.preserved.dump();
         println!("FS:    {:>016X}", { self.fs });
     }
 }
@@ -317,6 +365,7 @@ macro_rules! interrupt_error {
 
             // Push scratch registers
             scratch_push!();
+            preserved_push!();
             fs_push!();
 
             // Get reference to stack variables
@@ -328,118 +377,6 @@ macro_rules! interrupt_error {
 
             // Call inner rust function
             inner(&*(rsp as *const $crate::arch::x86_64::macros::InterruptErrorStack));
-
-            // Unmap kernel
-            $crate::arch::x86_64::pti::unmap();
-
-            // Pop scratch registers, error code, and return
-            fs_pop!();
-            scratch_pop!();
-            asm!("add rsp, 8" : : : : "intel", "volatile");
-            iret!();
-        }
-    };
-}
-
-#[allow(dead_code)]
-#[repr(packed)]
-pub struct InterruptStackP {
-    pub fs: usize,
-    pub preserved: PreservedRegisters,
-    pub scratch: ScratchRegisters,
-    pub iret: IretRegisters,
-}
-
-impl InterruptStackP {
-    pub fn dump(&self) {
-        self.iret.dump();
-        self.scratch.dump();
-        self.preserved.dump();
-        println!("FS:    {:>016X}", { self.fs });
-    }
-}
-
-#[macro_export]
-macro_rules! interrupt_stack_p {
-    ($name:ident, $stack: ident, $func:block) => {
-        #[naked]
-        pub unsafe extern fn $name () {
-            #[inline(never)]
-            unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStackP) {
-                $func
-            }
-
-            // Push scratch registers
-            scratch_push!();
-            preserved_push!();
-            fs_push!();
-
-            // Get reference to stack variables
-            let rsp: usize;
-            asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
-
-            // Map kernel
-            $crate::arch::x86_64::pti::map();
-
-            // Call inner rust function
-            inner(&mut *(rsp as *mut $crate::arch::x86_64::macros::InterruptStackP));
-
-            // Unmap kernel
-            $crate::arch::x86_64::pti::unmap();
-
-            // Pop scratch registers and return
-            fs_pop!();
-            preserved_pop!();
-            scratch_pop!();
-            iret!();
-        }
-    };
-}
-
-#[allow(dead_code)]
-#[repr(packed)]
-pub struct InterruptErrorStackP {
-    pub fs: usize,
-    pub preserved: PreservedRegisters,
-    pub scratch: ScratchRegisters,
-    pub code: usize,
-    pub iret: IretRegisters,
-}
-
-impl InterruptErrorStackP {
-    pub fn dump(&self) {
-        self.iret.dump();
-        println!("CODE:  {:>016X}", { self.code });
-        self.scratch.dump();
-        self.preserved.dump();
-        println!("FS:    {:>016X}", { self.fs });
-    }
-}
-
-#[macro_export]
-macro_rules! interrupt_error_p {
-    ($name:ident, $stack:ident, $func:block) => {
-        #[naked]
-        pub unsafe extern fn $name () {
-            #[inline(never)]
-            unsafe fn inner($stack: &$crate::arch::x86_64::macros::InterruptErrorStackP) {
-                $func
-            }
-
-            // Push scratch registers
-            scratch_push!();
-            preserved_push!();
-            fs_push!();
-
-            // Get reference to stack variables
-            let rsp: usize;
-            asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
-
-            // Map kernel
-            $crate::arch::x86_64::pti::map();
-
-            // Call inner rust function
-            inner(&*(rsp as *const $crate::arch::x86_64::macros::InterruptErrorStackP));
 
             // Unmap kernel
             $crate::arch::x86_64::pti::unmap();

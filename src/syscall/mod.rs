@@ -19,7 +19,7 @@ use self::error::{Error, Result, ENOSYS};
 use self::number::*;
 
 use crate::context::ContextId;
-use crate::interrupt::syscall::SyscallStack;
+use crate::macros::InterruptStack;
 use crate::scheme::{FileHandle, SchemeNamespace};
 
 /// Debug
@@ -48,9 +48,9 @@ pub mod validate;
 
 /// This function is the syscall handler of the kernel, it is composed of an inner function that returns a `Result<usize>`. After the inner function runs, the syscall
 /// function calls [`Error::mux`] on it.
-pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> usize {
+pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut InterruptStack) -> usize {
     #[inline(always)]
-    fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut SyscallStack) -> Result<usize> {
+    fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut InterruptStack) -> Result<usize> {
         //SYS_* is declared in kernel/syscall/src/number.rs
         match a & SYS_CLASS {
             SYS_CLASS_FILE => {
@@ -94,12 +94,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
                 SYS_GETPPID => getppid().map(ContextId::into),
                 SYS_CLONE => {
-                    let old_rsp = stack.rsp;
+                    let old_rsp = stack.iret.rsp;
                     if b & flag::CLONE_STACK == flag::CLONE_STACK {
-                        stack.rsp = c;
+                        stack.iret.rsp = c;
                     }
                     let ret = clone(b, bp).map(ContextId::into);
-                    stack.rsp = old_rsp;
+                    stack.iret.rsp = old_rsp;
                     ret
                 },
                 SYS_EXIT => exit((b & 0xFF) << 8),
