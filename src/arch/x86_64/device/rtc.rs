@@ -14,6 +14,7 @@ fn cvt_bcd(value: usize) -> usize {
 pub struct Rtc {
     addr: Pio<u8>,
     data: Pio<u8>,
+    nmi: bool,
 }
 
 impl Rtc {
@@ -22,54 +23,59 @@ impl Rtc {
         Rtc {
             addr: Pio::<u8>::new(0x70),
             data: Pio::<u8>::new(0x71),
+            nmi: false,
         }
     }
 
     /// Read
     unsafe fn read(&mut self, reg: u8) -> u8 {
-        self.addr.write(reg);
+        if self.nmi {
+            self.addr.write(reg & 0x7F);
+        } else {
+            self.addr.write(reg | 0x80);
+        }
         self.data.read()
     }
 
-    /// Wait
-    unsafe fn wait(&mut self) {
-        while self.read(0xA) & 0x80 != 0x80 {}
+    /// Write
+    unsafe fn write(&mut self, reg: u8, value: u8) {
+        if self.nmi {
+            self.addr.write(reg & 0x7F);
+        } else {
+            self.addr.write(reg | 0x80);
+        }
+        self.data.write(value);
+    }
+
+    /// Wait for an update, can take one second if full is specified!
+    unsafe fn wait(&mut self, full: bool) {
+        if full {
+            while self.read(0xA) & 0x80 != 0x80 {}
+        }
         while self.read(0xA) & 0x80 == 0x80 {}
     }
 
-    /// Get time
-    pub fn time(&mut self) -> u64 {
-        let mut second;
-        let mut minute;
-        let mut hour;
-        let mut day;
-        let mut month;
-        let mut year;
-        let mut century;
-        let register_b;
-
+    /// Get time without waiting
+    pub unsafe fn time_no_wait(&mut self) -> u64 {
         /*let century_register = if let Some(ref fadt) = acpi::ACPI_TABLE.lock().fadt {
             Some(fadt.century)
         } else {
             None
         };*/
 
-        unsafe {
-            self.wait();
-            second = self.read(0) as usize;
-            minute = self.read(2) as usize;
-            hour = self.read(4) as usize;
-            day = self.read(7) as usize;
-            month = self.read(8) as usize;
-            year = self.read(9) as usize;
-            century = /* TODO: Fix invalid value from VirtualBox
-            if let Some(century_reg) = century_register {
-                self.read(century_reg) as usize
-            } else */ {
-                20
-            };
-            register_b = self.read(0xB);
-        }
+        let mut second = self.read(0) as usize;
+        let mut minute = self.read(2) as usize;
+        let mut hour = self.read(4) as usize;
+        let mut day = self.read(7) as usize;
+        let mut month = self.read(8) as usize;
+        let mut year = self.read(9) as usize;
+        let mut century = /* TODO: Fix invalid value from VirtualBox
+        if let Some(century_reg) = century_register {
+            self.read(century_reg) as usize
+        } else */ {
+            20
+        };
+        let register_b = self.read(0xB);
 
         if register_b & 4 != 4 {
             second = cvt_bcd(second);
@@ -122,5 +128,20 @@ impl Rtc {
         secs += second as u64;
 
         secs
+    }
+
+    /// Get time
+    pub fn time(&mut self) -> u64 {
+        loop {
+            unsafe {
+                self.wait(false);
+                let time = self.time_no_wait();
+                self.wait(false);
+                let next_time = self.time_no_wait();
+                if time == next_time {
+                    return time;
+                }
+            }
+        }
     }
 }
