@@ -1068,8 +1068,6 @@ pub fn exit(status: usize) -> ! {
             context.id
         };
 
-        ptrace::close(pid);
-
         // Files must be closed while context is valid so that messages can be passed
         for (_fd, file_option) in close_files.drain(..).enumerate() {
             if let Some(file) = file_option {
@@ -1109,6 +1107,9 @@ pub fn exit(status: usize) -> ! {
 
             (vfork, children)
         };
+
+        // Alert any tracers waiting for process (important: AFTER sending waitpid event)
+        ptrace::close(pid);
 
         {
             let contexts = context::contexts();
