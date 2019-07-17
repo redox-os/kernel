@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use core::alloc::{GlobalAlloc, Layout};
-use core::mem;
+use core::{iter, mem};
 use core::sync::atomic::Ordering;
 use crate::paging;
 use spin::RwLock;
@@ -28,6 +28,15 @@ impl ContextList {
     /// Get the nth context.
     pub fn get(&self, id: ContextId) -> Option<&Arc<RwLock<Context>>> {
         self.map.get(&id)
+    }
+
+    /// Get an iterator of all parents
+    pub fn anchestors(&'_ self, id: ContextId) -> impl Iterator<Item = (ContextId, &Arc<RwLock<Context>>)> + '_ {
+        iter::successors(self.get(id).map(|context| (id, context)), move |(_id, context)| {
+            let context = context.read();
+            let id = context.ppid;
+            self.get(id).map(|context| (id, context))
+        })
     }
 
     /// Get the current context.

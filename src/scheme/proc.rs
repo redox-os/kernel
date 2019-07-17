@@ -75,15 +75,29 @@ impl Scheme for ProcScheme {
         };
 
         let contexts = context::contexts();
-        let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+        let target = contexts.get(pid).ok_or(Error::new(ESRCH))?;
 
-        {
-            // TODO: Put better security here?
+        // Unless root, check security
+        if uid != 0 && gid != 0 {
+            let current = contexts.current().ok_or(Error::new(ESRCH))?;
+            let current = current.read();
+            let target = target.read();
 
-            let context = context.read();
-            if uid != 0 && gid != 0
-            && uid != context.euid && gid != context.egid {
+            // Do we own the process?
+            if uid != target.euid && gid != target.egid {
                 return Err(Error::new(EPERM));
+            }
+
+            // Is it a subprocess of us? In the future, a capability
+            // could bypass this check.
+            match contexts.anchestors(target.ppid).find(|&(id, _context)| id == current.id) {
+                Some((id, context)) => {
+                    // Paranoid sanity check, as ptrace security holes
+                    // wouldn't be fun
+                    assert_eq!(id, current.id);
+                    assert_eq!(id, context.read().id);
+                },
+                None => return Err(Error::new(EPERM))
             }
         }
 
@@ -95,8 +109,8 @@ impl Scheme for ProcScheme {
             }
             traced.insert(pid);
 
-            let mut context = context.write();
-            context.ptrace_stop = true;
+            let mut target = target.write();
+            target.ptrace_stop = true;
         }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
