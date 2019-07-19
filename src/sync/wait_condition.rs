@@ -16,6 +16,7 @@ impl WaitCondition {
         }
     }
 
+    // Notify all waiters
     pub fn notify(&self) -> usize {
         let mut contexts = self.contexts.lock();
         let len = contexts.len();
@@ -25,6 +26,17 @@ impl WaitCondition {
         len
     }
 
+    // Notify as though a signal woke the waiters
+    pub unsafe fn notify_signal(&self) -> usize {
+        let contexts = self.contexts.lock();
+        let len = contexts.len();
+        for context_lock in contexts.iter() {
+            context_lock.write().unblock();
+        }
+        len
+    }
+
+    // Wait until notified. Returns false if resumed by a signal or the notify_signal function
     pub fn wait(&self) -> bool {
         let id;
         {
@@ -73,6 +85,6 @@ impl WaitCondition {
 
 impl Drop for WaitCondition {
     fn drop(&mut self){
-        self.notify();
+        unsafe { self.notify_signal() };
     }
 }
