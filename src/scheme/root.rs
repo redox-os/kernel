@@ -309,7 +309,15 @@ impl Scheme for RootScheme {
     }
 
     fn close(&self, file: usize) -> Result<usize> {
-        self.handles.write().remove(&file);
+        let handle = self.handles.write().remove(&file).ok_or(Error::new(EBADF))?;
+        match handle {
+            Handle::Scheme(inner) => {
+                let scheme_id = inner.scheme_id.load(Ordering::SeqCst);
+                let mut schemes = scheme::schemes_mut();
+                schemes.remove(scheme_id);
+            },
+            _ => ()
+        }
         Ok(0)
     }
 }
