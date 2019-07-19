@@ -6,8 +6,8 @@ use crate::sync::WaitCondition;
 
 #[derive(Debug)]
 pub struct WaitMap<K, V> {
-    inner: Mutex<BTreeMap<K, V>>,
-    condition: WaitCondition
+    pub inner: Mutex<BTreeMap<K, V>>,
+    pub condition: WaitCondition
 }
 
 impl<K, V> WaitMap<K, V> where K: Clone + Ord {
