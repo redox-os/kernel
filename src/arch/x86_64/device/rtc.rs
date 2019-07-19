@@ -38,6 +38,7 @@ impl Rtc {
     }
 
     /// Write
+    #[allow(dead_code)]
     unsafe fn write(&mut self, reg: u8, value: u8) {
         if self.nmi {
             self.addr.write(reg & 0x7F);
