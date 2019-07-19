@@ -140,6 +140,32 @@ impl Scheme for RootScheme {
         }
     }
 
+    fn unlink(&self, path: &[u8], uid: u32, _gid: u32) -> Result<usize> {
+        let path_utf8 = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
+        let path_trimmed = path_utf8.trim_matches('/');
+
+        if uid == 0 {
+            let inner = {
+                let handles = self.handles.read();
+                handles.iter().find_map(|(_id, handle)| {
+                    match handle {
+                        Handle::Scheme(inner) => {
+                            if path_trimmed.as_bytes() == inner.name.as_ref() {
+                                return Some(inner.clone());
+                            }
+                        },
+                        _ => (),
+                    }
+                    None
+                }).ok_or(Error::new(ENOENT))?
+            };
+
+            inner.unmount()
+        } else {
+            Err(Error::new(EACCES))
+        }
+    }
+
     fn read(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();

@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::{mem, slice, usize};
 use spin::{Mutex, RwLock};
 
@@ -31,7 +31,8 @@ pub struct UserInner {
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
     funmap: Mutex<BTreeMap<usize, usize>>,
-    done: WaitMap<u64, usize>
+    done: WaitMap<u64, usize>,
+    unmounting: AtomicBool,
 }
 
 impl UserInner {
@@ -47,8 +48,23 @@ impl UserInner {
             todo: WaitQueue::new(),
             fmap: Mutex::new(BTreeMap::new()),
             funmap: Mutex::new(BTreeMap::new()),
-            done: WaitMap::new()
+            done: WaitMap::new(),
+            unmounting: AtomicBool::new(false),
         }
+    }
+
+    pub fn unmount(&self) -> Result<usize> {
+        // First, block new requests and prepare to return EOF
+        self.unmounting.store(true, Ordering::SeqCst);
+
+        // Wake up any blocked scheme handler
+        unsafe { self.todo.condition.notify_signal() };
+
+        // Tell the scheme handler to read
+        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+
+        //TODO: wait for all todo and done to be processed?
+        Ok(0)
     }
 
     pub fn call(&self, a: usize, b: usize, c: usize, d: usize) -> Result<usize> {
@@ -72,6 +88,10 @@ impl UserInner {
     }
 
     fn call_inner(&self, packet: Packet) -> Result<usize> {
+        if self.unmounting.load(Ordering::SeqCst) {
+            return Err(Error::new(ENODEV));
+        }
+
         let id = packet.id;
 
         self.todo.send(packet);
@@ -172,11 +192,36 @@ impl UserInner {
     }
 
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        let packet_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut Packet, buf.len()/mem::size_of::<Packet>()) };
-        self.todo
-            .receive_into(packet_buf, self.flags & O_NONBLOCK != O_NONBLOCK)
-            .map(|count| count * mem::size_of::<Packet>())
-            .ok_or(Error::new(EINTR))
+        let packet_buf = unsafe { slice::from_raw_parts_mut(
+            buf.as_mut_ptr() as *mut Packet,
+            buf.len()/mem::size_of::<Packet>())
+        };
+
+        // If O_NONBLOCK is used, do not block
+        let nonblock = self.flags & O_NONBLOCK == O_NONBLOCK;
+        // If unmounting, do not block so that EOF can be returned immediately
+        let unmounting = self.unmounting.load(Ordering::SeqCst);
+        let block = !(nonblock || unmounting);
+        if let Some(count) = self.todo.receive_into(packet_buf, block) {
+            if count > 0 {
+                // If we received requests, return them to the scheme handler
+                Ok(count * mem::size_of::<Packet>())
+            } else if unmounting {
+                // If there were no requests and we were unmounting, return EOF
+                Ok(0)
+            } else {
+                // If there were no requests and O_NONBLOCK was used, return EAGAIN
+                Err(Error::new(EAGAIN))
+            }
+        } else if self.unmounting.load(Ordering::SeqCst) {
+            // If we are unmounting and there are no pending requests, return EOF
+            //   Unmounting is read again because the previous value
+            //   may have changed since we first blocked for packets
+            Ok(0)
+        } else {
+            // A signal was received, return EINTR
+            Err(Error::new(EINTR))
+        }
     }
 
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
