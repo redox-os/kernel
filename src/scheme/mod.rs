@@ -96,7 +96,7 @@ impl<'a> Iterator for SchemeIter<'a> {
 
 /// Scheme list type
 pub struct SchemeList {
-    map: BTreeMap<SchemeId, Arc<Box<Scheme + Send + Sync>>>,
+    map: BTreeMap<SchemeId, Arc<Box<dyn Scheme + Send + Sync>>>,
     names: BTreeMap<SchemeNamespace, BTreeMap<Box<[u8]>, SchemeId>>,
     next_ns: usize,
     next_id: usize
@@ -141,7 +141,7 @@ impl SchemeList {
         self.insert(ns, Box::new(*b"debug"), |scheme_id| Arc::new(Box::new(DebugScheme::new(scheme_id)))).unwrap();
         self.insert(ns, Box::new(*b"initfs"), |_| Arc::new(Box::new(InitFsScheme::new()))).unwrap();
         self.insert(ns, Box::new(*b"irq"), |scheme_id| Arc::new(Box::new(IrqScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, Box::new(*b"proc"), |_| Arc::new(Box::new(ProcScheme::new()))).unwrap();
+        self.insert(ns, Box::new(*b"proc"), |scheme_id| Arc::new(Box::new(ProcScheme::new(scheme_id)))).unwrap();
 
         #[cfg(feature = "live")] {
             self.insert(ns, Box::new(*b"disk/live"), |_| Arc::new(Box::new(self::live::DiskScheme::new()))).unwrap();
@@ -184,7 +184,7 @@ impl SchemeList {
     }
 
     /// Get the nth scheme.
-    pub fn get(&self, id: SchemeId) -> Option<&Arc<Box<Scheme + Send + Sync>>> {
+    pub fn get(&self, id: SchemeId) -> Option<&Arc<Box<dyn Scheme + Send + Sync>>> {
         self.map.get(&id)
     }
 

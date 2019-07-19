@@ -10,17 +10,150 @@ use crate::{
     },
     common::unique::Unique,
     context::{self, Context, ContextId, Status},
+    event,
+    scheme::proc,
     sync::WaitCondition
 };
 
 use alloc::{
     boxed::Box,
-    collections::BTreeMap,
+    collections::{
+        BTreeMap,
+        VecDeque,
+        btree_map::Entry
+    },
     sync::Arc,
     vec::Vec
 };
+use core::{
+    cmp,
+    sync::atomic::Ordering
+};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::error::*;
+use syscall::{
+    data::PtraceEvent,
+    error::*,
+    flag::{EVENT_READ, EVENT_WRITE}
+};
+
+//  ____                _
+// / ___|  ___  ___ ___(_) ___  _ __  ___
+// \___ \ / _ \/ __/ __| |/ _ \| '_ \/ __|
+//  ___) |  __/\__ \__ \ | (_) | | | \__ \
+// |____/ \___||___/___/_|\___/|_| |_|___/
+
+#[derive(Debug)]
+struct Session {
+    file_id: usize,
+    events: VecDeque<PtraceEvent>,
+    breakpoint: Option<Breakpoint>,
+    tracer: Arc<WaitCondition>
+}
+
+type SessionMap = BTreeMap<ContextId, Session>;
+
+static SESSIONS: Once<RwLock<SessionMap>> = Once::new();
+
+fn init_sessions() -> RwLock<SessionMap> {
+    RwLock::new(BTreeMap::new())
+}
+fn sessions() -> RwLockReadGuard<'static, SessionMap> {
+    SESSIONS.call_once(init_sessions).read()
+}
+fn sessions_mut() -> RwLockWriteGuard<'static, SessionMap> {
+    SESSIONS.call_once(init_sessions).write()
+}
+
+/// Try to create a new session, but fail if one already exists for
+/// this process
+pub fn try_new_session(pid: ContextId, file_id: usize) -> bool {
+    let mut sessions = sessions_mut();
+
+    match sessions.entry(pid) {
+        Entry::Occupied(_) => false,
+        Entry::Vacant(vacant) => {
+            vacant.insert(Session {
+                file_id,
+                events: VecDeque::new(),
+                breakpoint: None,
+                tracer: Arc::new(WaitCondition::new())
+            });
+            true
+        }
+    }
+}
+
+/// Returns true if a session is attached to this process
+pub fn is_traced(pid: ContextId) -> bool {
+    sessions().contains_key(&pid)
+}
+
+/// Used for getting the flags in fevent
+pub fn session_fevent_flags(pid: ContextId) -> Option<usize> {
+    let sessions = sessions();
+    let session = sessions.get(&pid)?;
+    let mut flags = 0;
+    if !session.events.is_empty() {
+        flags |= EVENT_READ;
+    }
+    if session.breakpoint.as_ref().map(|b| b.reached).unwrap_or(true) {
+        flags |= EVENT_WRITE;
+    }
+    Some(flags)
+}
+
+/// Remove the session from the list of open sessions and notify any
+/// waiting processes
+pub fn close_session(pid: ContextId) {
+    if let Some(session) = sessions_mut().remove(&pid) {
+        session.tracer.notify();
+        if let Some(breakpoint) = session.breakpoint {
+            breakpoint.tracee.notify();
+        }
+    }
+}
+
+/// Trigger a notification to the event: scheme
+pub fn proc_trigger_event(file_id: usize, flags: usize) {
+    event::trigger(proc::PROC_SCHEME_ID.load(Ordering::SeqCst), file_id, flags);
+}
+
+/// Dispatch an event to any tracer tracing `self`. This will cause
+/// the tracer to wake up and poll for events. Returns Some(()) if an
+/// event was sent.
+pub fn send_event(event: PtraceEvent) -> Option<()> {
+    let contexts = context::contexts();
+    let context = contexts.current()?;
+    let context = context.read();
+
+    let mut sessions = sessions_mut();
+    let session = sessions.get_mut(&context.id)?;
+
+    session.events.push_back(event);
+
+    // Notify nonblocking tracers
+    if session.events.len() == 1 {
+        // If the list of events was previously empty, alert now
+        proc_trigger_event(session.file_id, EVENT_READ);
+    }
+
+    // Alert blocking tracers
+    session.tracer.notify();
+
+    Some(())
+}
+
+/// Poll events, return the amount read
+pub fn recv_events(pid: ContextId, out: &mut [PtraceEvent]) -> Option<usize> {
+    let mut sessions = sessions_mut();
+    let session = sessions.get_mut(&pid)?;
+
+    let len = cmp::min(out.len(), session.events.len());
+    for (dst, src) in out.iter_mut().zip(session.events.drain(..len)) {
+        *dst = src;
+    }
+    Some(len)
+}
 
 //  ____                 _                _       _
 // | __ ) _ __ ___  __ _| | ___ __   ___ (_)_ __ | |_ ___
@@ -29,33 +162,25 @@ use syscall::error::*;
 // |____/|_|  \___|\__,_|_|\_\ .__/ \___/|_|_| |_|\__|___/
 //                           |_|
 
-struct Handle {
+#[derive(Debug)]
+struct Breakpoint {
     tracee: Arc<WaitCondition>,
-    tracer: Arc<WaitCondition>,
     reached: bool,
 
     sysemu: bool,
     singlestep: bool
 }
 
-static BREAKPOINTS: Once<RwLock<BTreeMap<ContextId, Handle>>> = Once::new();
-
-fn init_breakpoints() -> RwLock<BTreeMap<ContextId, Handle>> {
-    RwLock::new(BTreeMap::new())
-}
-fn breakpoints() -> RwLockReadGuard<'static, BTreeMap<ContextId, Handle>> {
-    BREAKPOINTS.call_once(init_breakpoints).read()
-}
-fn breakpoints_mut() -> RwLockWriteGuard<'static, BTreeMap<ContextId, Handle>> {
-    BREAKPOINTS.call_once(init_breakpoints).write()
-}
-
-fn inner_cont(pid: ContextId) -> Option<Handle> {
+fn inner_cont(pid: ContextId) -> Option<Breakpoint> {
     // Remove the breakpoint to both save space and also make sure any
     // yet unreached but obsolete breakpoints don't stop the program.
-    let handle = breakpoints_mut().remove(&pid)?;
-    handle.tracee.notify();
-    Some(handle)
+    let mut sessions = sessions_mut();
+    let session = sessions.get_mut(&pid)?;
+    let breakpoint = session.breakpoint.take()?;
+
+    breakpoint.tracee.notify();
+
+    Some(breakpoint)
 }
 
 /// Continue the process with the specified ID
@@ -63,36 +188,52 @@ pub fn cont(pid: ContextId) {
     inner_cont(pid);
 }
 
-/// Create a new breakpoint for the specified tracee, optionally with a sysemu flag
+/// Create a new breakpoint for the specified tracee, optionally with
+/// a sysemu flag. Panics if the session is invalid.
 pub fn set_breakpoint(pid: ContextId, sysemu: bool, singlestep: bool) {
-    let (tracee, tracer) = match inner_cont(pid) {
-        Some(breakpoint) => (breakpoint.tracee, breakpoint.tracer),
-        None => (
-            Arc::new(WaitCondition::new()),
-            Arc::new(WaitCondition::new())
-        )
-    };
+    let tracee = inner_cont(pid)
+        .map(|b| b.tracee)
+        .unwrap_or_else(|| Arc::new(WaitCondition::new()));
 
-    breakpoints_mut().insert(pid, Handle {
+    let mut sessions = sessions_mut();
+    let session = sessions.get_mut(&pid).expect("proc (set_breakpoint): invalid session");
+    session.breakpoint = Some(Breakpoint {
         tracee,
-        tracer,
         reached: false,
         sysemu,
         singlestep
     });
 }
 
-/// Wait for the tracee to stop.
-/// Note: Don't call while holding any locks, this will switch contexts
-pub fn wait_breakpoint(pid: ContextId) -> Result<()> {
-    let tracer = {
-        let breakpoints = breakpoints();
-        match breakpoints.get(&pid) {
-            Some(breakpoint) if !breakpoint.reached => Arc::clone(&breakpoint.tracer),
-            _ => return Ok(())
+/// Wait for the tracee to stop. If an event occurs, it returns a copy
+/// of that. It will still be available for read using recv_event.
+///
+/// Note: Don't call while holding any locks, this will switch
+/// contexts
+pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
+    let tracer: Arc<WaitCondition> = {
+        let sessions = sessions();
+        match sessions.get(&pid) {
+            Some(session) if session.breakpoint.as_ref().map(|b| !b.reached).unwrap_or(true) => {
+                if let Some(event) = session.events.front() {
+                    return Ok(Some(event.clone()));
+                }
+                Arc::clone(&session.tracer)
+            },
+            _ => return Ok(None)
         }
     };
+
     while !tracer.wait() {}
+
+    {
+        let sessions = sessions();
+        if let Some(session) = sessions.get(&pid) {
+            if let Some(event) = session.events.front() {
+                return Ok(Some(event.clone()));
+            }
+        }
+    }
 
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -100,7 +241,8 @@ pub fn wait_breakpoint(pid: ContextId) -> Result<()> {
     if let Status::Exited(_) = context.status {
         return Err(Error::new(ESRCH));
     }
-    Ok(())
+
+    Ok(None)
 }
 
 /// Notify the tracer and await green flag to continue.
@@ -112,8 +254,9 @@ pub fn breakpoint_callback(singlestep: bool) -> Option<bool> {
         let context = contexts.current()?;
         let context = context.read();
 
-        let mut breakpoints = breakpoints_mut();
-        let breakpoint = breakpoints.get_mut(&context.id)?;
+        let mut sessions = sessions_mut();
+        let session = sessions.get_mut(&context.id)?;
+        let breakpoint = session.breakpoint.as_mut()?;
 
         // TODO: How should singlesteps interact with syscalls? How
         // does Linux handle this?
@@ -123,10 +266,12 @@ pub fn breakpoint_callback(singlestep: bool) -> Option<bool> {
             return None;
         }
 
-        breakpoint.tracer.notify();
         // In case no tracer is waiting, make sure the next one gets
         // the memo
         breakpoint.reached = true;
+
+        session.tracer.notify();
+        proc_trigger_event(session.file_id, EVENT_WRITE);
 
         (
             Arc::clone(&breakpoint.tracee),
@@ -140,15 +285,13 @@ pub fn breakpoint_callback(singlestep: bool) -> Option<bool> {
 }
 
 /// Call when a context is closed to alert any tracers
-pub fn close(pid: ContextId) {
-    {
-        let breakpoints = breakpoints();
-        if let Some(breakpoint) = breakpoints.get(&pid) {
-            breakpoint.tracer.notify();
-        }
-    }
+pub fn close_tracee(pid: ContextId) -> Option<()> {
+    let mut sessions = sessions_mut();
+    let session = sessions.get_mut(&pid)?;
 
-    breakpoints_mut().remove(&pid);
+    session.breakpoint = None;
+    session.tracer.notify();
+    Some(())
 }
 
 //  ____            _     _

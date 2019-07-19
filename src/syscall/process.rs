@@ -21,12 +21,12 @@ use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PA
 use crate::ptrace;
 use crate::scheme::FileHandle;
 use crate::start::usermode;
-use crate::syscall::data::{SigAction, Stat};
+use crate::syscall::data::{PtraceEvent, PtraceEventContent, SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
-                    PROT_EXEC, PROT_READ, PROT_WRITE,
-                    SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
-                    WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
+                           PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
+                           SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
+                           WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
 use crate::syscall;
 
@@ -585,6 +585,22 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         }
     }
 
+    let ptrace_event = PtraceEvent {
+        tag: PTRACE_EVENT_CLONE,
+        data: PtraceEventContent {
+            clone: pid.into()
+        }
+    };
+
+    if ptrace::send_event(ptrace_event).is_some() {
+        // Freeze the clone, allow ptrace to put breakpoints
+        // to it before it starts
+        let contexts = context::contexts();
+        let context = contexts.get(pid).expect("Newly created context doesn't exist??");
+        let mut context = context.write();
+        context.ptrace_stop = true;
+    }
+
     // Race to pick up the new process!
     ipi(IpiKind::Switch, IpiTarget::Other);
 
@@ -1109,7 +1125,7 @@ pub fn exit(status: usize) -> ! {
         };
 
         // Alert any tracers waiting for process (important: AFTER sending waitpid event)
-        ptrace::close(pid);
+        ptrace::close_tracee(pid);
 
         {
             let contexts = context::contexts();
