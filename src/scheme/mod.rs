@@ -9,6 +9,7 @@
 use alloc::sync::Arc;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -233,6 +234,22 @@ impl SchemeList {
             return Err(Error::new(ENODEV));
         }
         Ok(id)
+    }
+
+    /// Remove a scheme
+    pub fn remove(&mut self, id: SchemeId) {
+        assert!(self.map.remove(&id).is_some());
+        for (_ns, names) in self.names.iter_mut() {
+            let mut remove = Vec::with_capacity(1);
+            for (name, name_id) in names.iter() {
+                if name_id == &id {
+                    remove.push(name.clone());
+                }
+            }
+            for name in remove {
+                assert!(names.remove(&name).is_some());
+            }
+        }
     }
 }
 
