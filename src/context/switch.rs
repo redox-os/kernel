@@ -151,7 +151,7 @@ pub unsafe fn switch() -> bool {
             let arch = (&mut *to_ptr).arch.clone();
             let kfx = (&mut *to_ptr).kfx.clone();
             let kstack = (&mut *to_ptr).kstack.clone();
-            (&mut *to_ptr).ksig = Some((arch, kfx, kstack));
+            (&mut *to_ptr).ksig = Some((arch, kfx, kstack, sig));
             (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
         }
 

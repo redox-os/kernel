@@ -9,7 +9,7 @@ use crate::{
         }
     },
     common::unique::Unique,
-    context::{self, Context, ContextId, Status},
+    context::{self, signal, Context, ContextId, Status},
     event,
     scheme::proc,
     sync::WaitCondition
@@ -328,18 +328,44 @@ pub unsafe fn rebase_regs_ptr_mut(
 /// restored and otherwise undo all your changes. See `update(...)` in
 /// context/switch.rs.
 pub unsafe fn regs_for(context: &Context) -> Option<&InterruptStack> {
-    Some(&*match context.ksig {
-        Some((_, _, ref kstack)) => rebase_regs_ptr(context.regs, kstack.as_ref())?,
-        None => context.regs?.1.as_ptr()
-    })
+    let signal_backup_regs = match context.ksig {
+        None => None,
+        Some((_, _, ref kstack, signum)) => {
+            let is_user_handled = {
+                let actions = context.actions.lock();
+                signal::is_user_handled(actions[signum as usize].0.sa_handler)
+            };
+            if is_user_handled {
+                None
+            } else {
+                Some(rebase_regs_ptr(context.regs, kstack.as_ref())?)
+            }
+        }
+    };
+    signal_backup_regs
+        .or_else(|| context.regs.map(|regs| regs.1.as_ptr() as *const _))
+        .map(|ptr| &*ptr)
 }
 
 /// Mutable version of `regs_for`
 pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack> {
-    Some(&mut *match context.ksig {
-        Some((_, _, ref mut kstack)) => rebase_regs_ptr_mut(context.regs, kstack.as_mut())?,
-        None => context.regs?.1.as_ptr()
-    })
+    let signal_backup_regs = match context.ksig {
+        None => None,
+        Some((_, _, ref mut kstack, signum)) => {
+            let is_user_handled = {
+                let actions = context.actions.lock();
+                signal::is_user_handled(actions[signum as usize].0.sa_handler)
+            };
+            if is_user_handled {
+                None
+            } else {
+                Some(rebase_regs_ptr_mut(context.regs, kstack.as_mut())?)
+            }
+        }
+    };
+    signal_backup_regs
+        .or_else(|| context.regs.map(|regs| regs.1.as_ptr()))
+        .map(|ptr| &mut *ptr)
 }
 
 //  __  __
