@@ -15,7 +15,7 @@ pub extern "C" fn signal_handler(sig: usize) {
         actions[sig]
     };
 
-    let handler = action.sa_handler as usize;
+    let handler = action.sa_handler.map(|ptr| ptr as usize).unwrap_or(0);
     if handler == SIG_DFL {
         match sig {
             SIGCHLD => {
