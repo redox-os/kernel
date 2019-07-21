@@ -17,7 +17,7 @@ unsafe impl<T> Sync for Unique<T> {}
 
 impl<T> Unique<T> {
     pub fn new(ptr: *mut T) -> Self {
-        Self(NonNull::new(ptr).unwrap())
+        Self(NonNull::new(ptr).expect("Did not expect pointer to be null"))
     }
     pub unsafe fn new_unchecked(ptr: *mut T) -> Self {
         Self(NonNull::new_unchecked(ptr))

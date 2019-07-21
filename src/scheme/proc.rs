@@ -130,7 +130,7 @@ impl Scheme for ProcScheme {
                 }
             }
         }
-        
+
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         if let Operation::Trace { .. } = operation {
@@ -368,7 +368,6 @@ impl Scheme for ProcScheme {
                     return Ok(0);
                 }
                 let op = buf[0];
-                let sysemu = op & PTRACE_SYSEMU == PTRACE_SYSEMU;
 
                 let mut blocking = flags & O_NONBLOCK != O_NONBLOCK;
                 let mut singlestep = false;
@@ -377,7 +376,7 @@ impl Scheme for ProcScheme {
                     PTRACE_CONT => { ptrace::cont(pid); },
                     PTRACE_SYSCALL | PTRACE_SINGLESTEP => { // <- not a bitwise OR
                         singlestep = op & PTRACE_OPERATIONMASK == PTRACE_SINGLESTEP;
-                        ptrace::set_breakpoint(pid, sysemu, singlestep);
+                        ptrace::set_breakpoint(pid, op);
                     },
                     PTRACE_WAIT => blocking = true,
                     _ => return Err(Error::new(EINVAL))
