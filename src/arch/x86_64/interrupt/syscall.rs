@@ -21,7 +21,8 @@ macro_rules! with_interrupt_stack {
         unsafe fn $wrapped(stack: *mut InterruptStack) {
             let _guard = ptrace::set_process_regs(stack);
 
-            let is_sysemu = ptrace::breakpoint_callback(::syscall::PTRACE_SYSCALL);
+            let is_sysemu = ptrace::breakpoint_callback(syscall::flag::PTRACE_SYSCALL)
+                .map(|fl| fl & syscall::flag::PTRACE_SYSEMU == syscall::flag::PTRACE_SYSEMU);
             if !is_sysemu.unwrap_or(false) {
                 // If not on a sysemu breakpoint
                 let $stack = &mut *stack;

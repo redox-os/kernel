@@ -114,7 +114,7 @@ pub fn close_session(pid: ContextId) {
 }
 
 /// Trigger a notification to the event: scheme
-pub fn proc_trigger_event(file_id: usize, flags: usize) {
+fn proc_trigger_event(file_id: usize, flags: usize) {
     event::trigger(proc::PROC_SCHEME_ID.load(Ordering::SeqCst), file_id, flags);
 }
 
@@ -244,9 +244,9 @@ pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
 
 /// Notify the tracer and await green flag to continue.
 /// Note: Don't call while holding any locks, this will switch contexts
-pub fn breakpoint_callback(flags: u8) -> Option<bool> {
+pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
     // Can't hold any locks when executing wait()
-    let (tracee, sysemu) = {
+    let (tracee, flags) = {
         let contexts = context::contexts();
         let context = contexts.current()?;
         let context = context.read();
@@ -258,7 +258,7 @@ pub fn breakpoint_callback(flags: u8) -> Option<bool> {
         // TODO: How should singlesteps interact with syscalls? How
         // does Linux handle this?
 
-        if breakpoint.flags & PTRACE_OPERATIONMASK != flags & PTRACE_OPERATIONMASK {
+        if breakpoint.flags & PTRACE_OPERATIONMASK != match_flags & PTRACE_OPERATIONMASK {
             return None;
         }
 
@@ -271,13 +271,13 @@ pub fn breakpoint_callback(flags: u8) -> Option<bool> {
 
         (
             Arc::clone(&breakpoint.tracee),
-            breakpoint.flags & PTRACE_SYSEMU == PTRACE_SYSEMU
+            breakpoint.flags
         )
     };
 
     while !tracee.wait() {}
 
-    Some(sysemu)
+    Some(flags)
 }
 
 /// Call when a context is closed to alert any tracers

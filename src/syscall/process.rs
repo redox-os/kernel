@@ -21,7 +21,7 @@ use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PA
 use crate::ptrace;
 use crate::scheme::FileHandle;
 use crate::start::usermode;
-use crate::syscall::data::{PtraceEvent, PtraceEventContent, SigAction, Stat};
+use crate::syscall::data::{PtraceEvent, PtraceEventData, SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
                            PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
@@ -587,7 +587,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
     let ptrace_event = PtraceEvent {
         tag: PTRACE_EVENT_CLONE,
-        data: PtraceEventContent {
+        data: PtraceEventData {
             clone: pid.into()
         }
     };
@@ -1124,9 +1124,6 @@ pub fn exit(status: usize) -> ! {
             (vfork, children)
         };
 
-        // Alert any tracers waiting for process (important: AFTER sending waitpid event)
-        ptrace::close_tracee(pid);
-
         {
             let contexts = context::contexts();
             if let Some(parent_lock) = contexts.get(ppid) {
@@ -1152,6 +1149,9 @@ pub fn exit(status: usize) -> ! {
                 println!("{}: {} not found for exit vfork unblock", pid.into(), ppid.into());
             }
         }
+
+        // Alert any tracers waiting for process (important: AFTER sending waitpid event)
+        ptrace::close_tracee(pid);
 
         if pid == ContextId::from(1) {
             println!("Main kernel thread exited with status {:X}", status);

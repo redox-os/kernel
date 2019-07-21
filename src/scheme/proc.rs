@@ -374,7 +374,7 @@ impl Scheme for ProcScheme {
 
                 match op & PTRACE_OPERATIONMASK {
                     PTRACE_CONT => { ptrace::cont(pid); },
-                    PTRACE_SYSCALL | PTRACE_SINGLESTEP => { // <- not a bitwise OR
+                    PTRACE_SYSCALL | PTRACE_SINGLESTEP | PTRACE_SIGNAL => { // <- not a bitwise OR
                         singlestep = op & PTRACE_OPERATIONMASK == PTRACE_SINGLESTEP;
                         ptrace::set_breakpoint(pid, op);
                     },
