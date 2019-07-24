@@ -8,7 +8,7 @@ use crate::scheme::{self, FileHandle};
 use crate::syscall;
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_DIRECTORY, O_RDONLY, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use crate::syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_DIRECTORY, O_RDONLY, O_SYMLINK, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
 use crate::context::file::{FileDescriptor, FileDescription};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
@@ -85,7 +85,7 @@ pub fn getcwd(buf: &mut [u8]) -> Result<usize> {
 
 /// Open syscall
 pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
-    let (path_canon, uid, gid, scheme_ns, umask) = {
+    let (mut path_canon, uid, gid, scheme_ns, umask) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
@@ -96,32 +96,60 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
 
     //println!("open {}", unsafe { ::core::str::from_utf8_unchecked(&path_canon) });
 
-    let mut parts = path_canon.splitn(2, |&b| b == b':');
-    let scheme_name_opt = parts.next();
-    let reference_opt = parts.next();
+    for _level in 0..32 { // XXX What should the limit be?
+        //println!("  level {} = {:?}", _level, ::core::str::from_utf8(&path_canon));
 
-    let (scheme_id, file_id) = {
-        let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
-        let (scheme_id, scheme) = {
-            let schemes = scheme::schemes();
-            let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-            (scheme_id, Arc::clone(&scheme))
+        let mut parts = path_canon.splitn(2, |&b| b == b':');
+        let scheme_name_opt = parts.next();
+        let reference_opt = parts.next();
+
+        let (scheme_id, file_id) = {
+            let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
+            let (scheme_id, scheme) = {
+                let schemes = scheme::schemes();
+                let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+                (scheme_id, Arc::clone(&scheme))
+            };
+            let reference = reference_opt.unwrap_or(b"");
+            let file_id = match scheme.open(reference, flags, uid, gid) {
+                Ok(ok) => ok,
+                Err(err) => if err.errno == EXDEV {
+                    let resolve_flags = O_CLOEXEC | O_SYMLINK | O_RDONLY;
+                    let resolve_id = scheme.open(reference, resolve_flags, uid, gid)?;
+
+                    let mut buf = [0; 4096];
+                    let res = scheme.read(resolve_id, &mut buf);
+
+                    let _ = scheme.close(resolve_id);
+
+                    let count = res?;
+
+                    let contexts = context::contexts();
+                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+                    let context = context_lock.read();
+                    path_canon = context.canonicalize(&buf[..count]);
+
+                    continue;
+                } else {
+                    return Err(err);
+                }
+            };
+            (scheme_id, file_id)
         };
-        let file_id = scheme.open(reference_opt.unwrap_or(b""), flags, uid, gid)?;
-        (scheme_id, file_id)
-    };
 
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    context.add_file(FileDescriptor {
-        description: Arc::new(RwLock::new(FileDescription {
-            scheme: scheme_id,
-            number: file_id,
-            flags: flags & !O_CLOEXEC,
-        })),
-        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-    }).ok_or(Error::new(EMFILE))
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        return context.add_file(FileDescriptor {
+            description: Arc::new(RwLock::new(FileDescription {
+                scheme: scheme_id,
+                number: file_id,
+                flags: flags & !O_CLOEXEC,
+            })),
+            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
+        }).ok_or(Error::new(EMFILE));
+    }
+    Err(Error::new(ELOOP))
 }
 
 pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
