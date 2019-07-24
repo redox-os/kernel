@@ -1,9 +1,16 @@
 use crate::{
     arch::paging::VirtualAddress,
-    context::{self, ContextId, Status},
+    context::{self, Context, ContextId, Status},
     ptrace,
     scheme::{ATOMIC_SCHEMEID_INIT, AtomicSchemeId, SchemeId},
-    syscall::validate
+    syscall::{
+        data::{FloatRegisters, IntRegisters, PtraceEvent},
+        error::*,
+        flag::*,
+        scheme::Scheme,
+        self,
+        validate,
+    },
 };
 
 use alloc::{
@@ -17,12 +24,6 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering}
 };
 use spin::{Mutex, RwLock};
-use syscall::{
-    data::{FloatRegisters, IntRegisters, PtraceEvent},
-    error::*,
-    flag::*,
-    scheme::Scheme
-};
 
 #[derive(Clone, Copy)]
 enum RegsKind {
@@ -35,6 +36,67 @@ enum Operation {
     Regs(RegsKind),
     Trace {
         new_child: Option<ContextId>
+    }
+}
+
+fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
+    where F: FnOnce(&Context) -> Result<T>
+{
+    let contexts = context::contexts();
+    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+    let context = context.read();
+    if let Status::Exited(_) = context.status {
+        return Err(Error::new(ESRCH));
+    }
+    callback(&context)
+}
+fn with_context_mut<F, T>(pid: ContextId, callback: F) -> Result<T>
+    where F: FnOnce(&mut Context) -> Result<T>
+{
+    let contexts = context::contexts();
+    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+    let mut context = context.write();
+    if let Status::Exited(_) = context.status {
+        return Err(Error::new(ESRCH));
+    }
+    callback(&mut context)
+}
+fn try_stop_context<F, T>(pid: ContextId, restart_after: bool, mut callback: F) -> Result<T>
+    where F: FnMut(&mut Context) -> Result<T>
+{
+    let mut first = true;
+    let mut was_stopped = false; // will never be read
+
+    loop {
+        if !first {
+            // We've tried this before, so lets wait before retrying
+            unsafe { context::switch(); }
+        }
+        first = false;
+
+        let contexts = context::contexts();
+        let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+        let mut context = context.write();
+        if let Status::Exited(_) = context.status {
+            return Err(Error::new(ESRCH));
+        }
+
+        // Stop the process until we've done our thing
+        if first {
+            was_stopped = context.ptrace_stop;
+        }
+        context.ptrace_stop = true;
+
+        if context.running {
+            // Process still running, wait until it has stopped
+            continue;
+        }
+
+        let ret = callback(&mut context);
+
+        context.ptrace_stop = restart_after && was_stopped;
+
+        break ret;
     }
 }
 
@@ -140,8 +202,10 @@ impl Scheme for ProcScheme {
                 return Err(Error::new(EBUSY));
             }
 
-            let mut target = target.write();
-            target.ptrace_stop = true;
+            if flags & O_TRUNC == O_TRUNC {
+                let mut target = target.write();
+                target.ptrace_stop = true;
+            }
         }
 
         self.handles.write().insert(id, Arc::new(Mutex::new(Handle {
@@ -228,42 +292,28 @@ impl Scheme for ProcScheme {
                     float: FloatRegisters,
                     int: IntRegisters
                 }
-                let mut first = true;
-                let (output, size) = loop {
-                    if !first {
-                        // We've tried this before, so lets wait before retrying
-                        unsafe { context::switch(); }
-                    }
-                    first = false;
 
-                    let contexts = context::contexts();
-                    let context = contexts.get(handle.pid).ok_or(Error::new(ESRCH))?;
-                    let context = context.read();
+                let (output, size) = match kind {
+                    RegsKind::Float => with_context(handle.pid, |context| {
+                        // NOTE: The kernel will never touch floats
 
-                    break match kind {
-                        RegsKind::Float => {
-                            // NOTE: The kernel will never touch floats
-
-                            // In the rare case of not having floating
-                            // point registers uninitiated, return
-                            // empty everything.
-                            let fx = context.arch.get_fx_regs().unwrap_or_default();
-                            (Output { float: fx }, mem::size_of::<FloatRegisters>())
+                        // In the rare case of not having floating
+                        // point registers uninitiated, return
+                        // empty everything.
+                        let fx = context.arch.get_fx_regs().unwrap_or_default();
+                        Ok((Output { float: fx }, mem::size_of::<FloatRegisters>()))
+                    })?,
+                    RegsKind::Int => try_stop_context(handle.pid, true, |context| match unsafe { ptrace::regs_for(&context) } {
+                        None => {
+                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            Err(Error::new(ENOTRECOVERABLE))
                         },
-                        RegsKind::Int => match unsafe { ptrace::regs_for(&context) } {
-                            None => {
-                                // Another CPU is running this process, wait until it's stopped.
-                                continue;
-                            },
-                            Some(stack) => {
-                                let mut regs = IntRegisters::default();
-
-                                stack.save(&mut regs);
-
-                                (Output { int: regs }, mem::size_of::<IntRegisters>())
-                            }
+                        Some(stack) => {
+                            let mut regs = IntRegisters::default();
+                            stack.save(&mut regs);
+                            Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
                         }
-                    };
+                    })?
                 };
 
                 let bytes = unsafe {
@@ -300,7 +350,6 @@ impl Scheme for ProcScheme {
         let pid = handle.pid;
         let flags = handle.flags;
 
-        let mut first = true;
         match handle.operation {
             Operation::Memory(ref mut offset) => {
                 let contexts = context::contexts();
@@ -315,26 +364,16 @@ impl Scheme for ProcScheme {
                 *offset = VirtualAddress::new(offset.get() + buf.len());
                 Ok(buf.len())
             },
-            Operation::Regs(kind) => loop {
-                if !first {
-                    // We've tried this before, so lets wait before retrying
-                    unsafe { context::switch(); }
-                }
-                first = false;
+            Operation::Regs(kind) => match kind {
+                RegsKind::Float => {
+                    if buf.len() < mem::size_of::<FloatRegisters>() {
+                        return Ok(0);
+                    }
+                    let regs = unsafe {
+                        *(buf as *const _ as *const FloatRegisters)
+                    };
 
-                let contexts = context::contexts();
-                let context = contexts.get(handle.pid).ok_or(Error::new(ESRCH))?;
-                let mut context = context.write();
-
-                break match kind {
-                    RegsKind::Float => {
-                        if buf.len() < mem::size_of::<FloatRegisters>() {
-                            return Ok(0);
-                        }
-                        let regs = unsafe {
-                            *(buf as *const _ as *const FloatRegisters)
-                        };
-
+                    with_context_mut(pid, |context| {
                         // NOTE: The kernel will never touch floats
 
                         // Ignore the rare case of floating point
@@ -342,82 +381,73 @@ impl Scheme for ProcScheme {
                         let _ = context.arch.set_fx_regs(regs);
 
                         Ok(mem::size_of::<FloatRegisters>())
-                    },
-                    RegsKind::Int => match unsafe { ptrace::regs_for_mut(&mut context) } {
+                    })
+                },
+                RegsKind::Int => {
+                    if buf.len() < mem::size_of::<IntRegisters>() {
+                        return Ok(0);
+                    }
+                    let regs = unsafe {
+                        *(buf as *const _ as *const IntRegisters)
+                    };
+
+                    try_stop_context(handle.pid, true, |context| match unsafe { ptrace::regs_for_mut(context) } {
                         None => {
-                            // Another CPU is running this process, wait until it's stopped.
-                            continue;
+                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            Err(Error::new(ENOTRECOVERABLE))
                         },
                         Some(stack) => {
-                            if buf.len() < mem::size_of::<IntRegisters>() {
-                                return Ok(0);
-                            }
-                            let regs = unsafe {
-                                *(buf as *const _ as *const IntRegisters)
-                            };
-
                             stack.load(&regs);
 
                             Ok(mem::size_of::<IntRegisters>())
                         }
-                    }
-                };
+                    })
+                }
             },
             Operation::Trace { ref mut new_child } => {
-                if buf.len() < 1 {
+                if buf.len() < mem::size_of::<u64>() {
                     return Ok(0);
                 }
-                let op = buf[0];
 
-                let mut blocking = flags & O_NONBLOCK != O_NONBLOCK;
-                let mut singlestep = false;
+                let mut bytes = [0; mem::size_of::<u64>()];
+                let len = bytes.len();
+                bytes.copy_from_slice(&buf[0..len]);
+                let op = u64::from_ne_bytes(bytes);
 
-                match op & PTRACE_OPERATIONMASK {
-                    PTRACE_CONT => { ptrace::cont(pid); },
-                    PTRACE_SYSCALL | PTRACE_SINGLESTEP | PTRACE_SIGNAL => { // <- not a bitwise OR
-                        singlestep = op & PTRACE_OPERATIONMASK == PTRACE_SINGLESTEP;
-                        ptrace::set_breakpoint(pid, op);
-                    },
-                    PTRACE_WAIT => blocking = true,
-                    _ => return Err(Error::new(EINVAL))
+                if op & PTRACE_FLAG_WAIT != PTRACE_FLAG_WAIT || op & PTRACE_STOP_MASK != 0 {
+                    ptrace::cont(pid);
+                }
+                if op & PTRACE_STOP_MASK != 0 {
+                    ptrace::set_breakpoint(pid, op);
                 }
 
-                let mut first = true;
-                loop {
-                    if !first {
-                        // We've tried this before, so lets wait before retrying
-                        unsafe { context::switch(); }
-                    }
-                    first = false;
-
-                    let contexts = context::contexts();
-                    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
-                    let mut context = context.write();
-                    if let Status::Exited(_) = context.status {
-                        return Err(Error::new(ESRCH));
-                    }
-
-                    if singlestep {
-                        match unsafe { ptrace::regs_for_mut(&mut context) } {
-                            None => continue,
-                            Some(stack) => stack.set_singlestep(true)
+                if op & PTRACE_STOP_SINGLESTEP == PTRACE_STOP_SINGLESTEP {
+                    try_stop_context(pid, false, |context| {
+                        match unsafe { ptrace::regs_for_mut(context) } {
+                            // If another CPU is running this process,
+                            // await for it to be stopped and in such
+                            // a way the registers can be read!
+                            None => {
+                                println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                                Err(Error::new(ENOTRECOVERABLE))
+                            },
+                            Some(stack) => {
+                                stack.set_singlestep(true);
+                                Ok(())
+                            }
                         }
-                    }
-
-                    context.ptrace_stop = false;
-                    break;
+                    })?;
                 }
 
-                if blocking {
+                if op & PTRACE_FLAG_WAIT == PTRACE_FLAG_WAIT || flags & O_NONBLOCK != O_NONBLOCK {
                     if let Some(event) = ptrace::wait(pid)? {
-                        if event.tag == PTRACE_EVENT_CLONE {
-                            *new_child = Some(ContextId::from(unsafe { event.data.clone }));
+                        if event.cause == PTRACE_EVENT_CLONE {
+                            *new_child = Some(ContextId::from(event.a));
                         }
-                        return Ok(0);
                     }
                 }
 
-                Ok(1)
+                Ok(mem::size_of::<u64>())
             }
         }
     }
@@ -467,12 +497,16 @@ impl Scheme for ProcScheme {
 
         if let Operation::Trace { .. } = handle.operation {
             ptrace::close_session(handle.pid);
-        }
 
-        let contexts = context::contexts();
-        if let Some(context) = contexts.get(handle.pid) {
-            let mut context = context.write();
-            context.ptrace_stop = false;
+            if handle.flags & O_EXCL == O_EXCL {
+                syscall::kill(handle.pid, SIGKILL)?;
+            } else {
+                let contexts = context::contexts();
+                if let Some(context) = contexts.get(handle.pid) {
+                    let mut context = context.write();
+                    context.ptrace_stop = false;
+                }
+            }
         }
         Ok(0)
     }

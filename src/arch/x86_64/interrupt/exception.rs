@@ -26,7 +26,7 @@ interrupt_stack!(debug, stack, {
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
-    if ptrace::breakpoint_callback(syscall::PTRACE_SINGLESTEP).is_some() {
+    if ptrace::breakpoint_callback(PTRACE_STOP_SINGLESTEP, None).is_some() {
         handled = true;
     } else {
         // There was no breakpoint, restore original value

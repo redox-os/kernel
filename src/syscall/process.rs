@@ -18,17 +18,17 @@ use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::MapperFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
 use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
-use crate::ptrace;
+use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
-use crate::syscall::data::{PtraceEvent, PtraceEventData, SigAction, Stat};
+use crate::syscall::data::{PtraceEvent, SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
                            PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
                            SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
                            WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
+use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
-use crate::syscall;
 
 pub fn brk(address: usize) -> Result<usize> {
     let contexts = context::contexts();
@@ -585,14 +585,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         }
     }
 
-    let ptrace_event = PtraceEvent {
-        tag: PTRACE_EVENT_CLONE,
-        data: PtraceEventData {
-            clone: pid.into()
-        }
-    };
-
-    if ptrace::send_event(ptrace_event).is_some() {
+    if ptrace::send_event(ptrace_event!(PTRACE_EVENT_CLONE, pid.into())).is_some() {
         // Freeze the clone, allow ptrace to put breakpoints
         // to it before it starts
         let contexts = context::contexts();

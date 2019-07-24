@@ -1,3 +1,7 @@
+//! The backend of the "proc:" scheme. Most internal breakpoint
+//! handling should go here, unless they closely depend on the design
+//! of the scheme.
+
 use crate::{
     arch::{
         macros::InterruptStack,
@@ -33,7 +37,8 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::{
     data::PtraceEvent,
     error::*,
-    flag::*
+    flag::*,
+    ptrace_event
 };
 
 //  ____                _
@@ -44,10 +49,11 @@ use syscall::{
 
 #[derive(Debug)]
 struct Session {
-    file_id: usize,
-    events: VecDeque<PtraceEvent>,
     breakpoint: Option<Breakpoint>,
-    tracer: Arc<WaitCondition>
+    events: VecDeque<PtraceEvent>,
+    file_id: usize,
+    tracee: Arc<WaitCondition>,
+    tracer: Arc<WaitCondition>,
 }
 
 type SessionMap = BTreeMap<ContextId, Session>;
@@ -73,10 +79,11 @@ pub fn try_new_session(pid: ContextId, file_id: usize) -> bool {
         Entry::Occupied(_) => false,
         Entry::Vacant(vacant) => {
             vacant.insert(Session {
-                file_id,
-                events: VecDeque::new(),
                 breakpoint: None,
-                tracer: Arc::new(WaitCondition::new())
+                events: VecDeque::new(),
+                file_id,
+                tracee: Arc::new(WaitCondition::new()),
+                tracer: Arc::new(WaitCondition::new()),
             });
             true
         }
@@ -107,9 +114,7 @@ pub fn session_fevent_flags(pid: ContextId) -> Option<usize> {
 pub fn close_session(pid: ContextId) {
     if let Some(session) = sessions_mut().remove(&pid) {
         session.tracer.notify();
-        if let Some(breakpoint) = session.breakpoint {
-            breakpoint.tracee.notify();
-        }
+        session.tracee.notify();
     }
 }
 
@@ -164,39 +169,31 @@ pub fn recv_events(pid: ContextId, out: &mut [PtraceEvent]) -> Option<usize> {
 
 #[derive(Debug)]
 struct Breakpoint {
-    tracee: Arc<WaitCondition>,
     reached: bool,
-    flags: u8
-}
-
-fn inner_cont(pid: ContextId) -> Option<Breakpoint> {
-    // Remove the breakpoint to both save space and also make sure any
-    // yet unreached but obsolete breakpoints don't stop the program.
-    let mut sessions = sessions_mut();
-    let session = sessions.get_mut(&pid)?;
-    let breakpoint = session.breakpoint.take()?;
-
-    breakpoint.tracee.notify();
-
-    Some(breakpoint)
+    flags: u64
 }
 
 /// Continue the process with the specified ID
 pub fn cont(pid: ContextId) {
-    inner_cont(pid);
+    let mut sessions = sessions_mut();
+    let session = match sessions.get_mut(&pid) {
+        Some(session) => session,
+        None => return
+    };
+
+    // Remove the breakpoint to make sure any yet unreached but
+    // obsolete breakpoints don't stop the program.
+    session.breakpoint = None;
+
+    session.tracee.notify();
 }
 
 /// Create a new breakpoint for the specified tracee, optionally with
 /// a sysemu flag. Panics if the session is invalid.
-pub fn set_breakpoint(pid: ContextId, flags: u8) {
-    let tracee = inner_cont(pid)
-        .map(|b| b.tracee)
-        .unwrap_or_else(|| Arc::new(WaitCondition::new()));
-
+pub fn set_breakpoint(pid: ContextId, flags: u64) {
     let mut sessions = sessions_mut();
     let session = sessions.get_mut(&pid).expect("proc (set_breakpoint): invalid session");
     session.breakpoint = Some(Breakpoint {
-        tracee,
         reached: false,
         flags
     });
@@ -244,7 +241,7 @@ pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
 
 /// Notify the tracer and await green flag to continue.
 /// Note: Don't call while holding any locks, this will switch contexts
-pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
+pub fn breakpoint_callback(match_flags: u64, event: Option<PtraceEvent>) -> Option<u64> {
     // Can't hold any locks when executing wait()
     let (tracee, flags) = {
         let contexts = context::contexts();
@@ -258,9 +255,11 @@ pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
         // TODO: How should singlesteps interact with syscalls? How
         // does Linux handle this?
 
-        if breakpoint.flags & PTRACE_OPERATIONMASK != match_flags & PTRACE_OPERATIONMASK {
+        if breakpoint.flags & match_flags != match_flags {
             return None;
         }
+
+        session.events.push_back(event.unwrap_or(ptrace_event!(match_flags)));
 
         // In case no tracer is waiting, make sure the next one gets
         // the memo
@@ -270,7 +269,7 @@ pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
         proc_trigger_event(session.file_id, EVENT_WRITE);
 
         (
-            Arc::clone(&breakpoint.tracee),
+            Arc::clone(&session.tracee),
             breakpoint.flags
         )
     };
@@ -278,6 +277,21 @@ pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
     while !tracee.wait() {}
 
     Some(flags)
+}
+
+/// Obtain the next breakpoint flags for the current process. This is
+/// used for detecting whether or not the tracer decided to use sysemu
+/// mode.
+pub fn next_breakpoint() -> Option<u64> {
+    let contexts = context::contexts();
+    let context = contexts.current()?;
+    let context = context.read();
+
+    let sessions = sessions();
+    let session = sessions.get(&context.id)?;
+    let breakpoint = session.breakpoint.as_ref()?;
+
+    Some(breakpoint.flags)
 }
 
 /// Call when a context is closed to alert any tracers
