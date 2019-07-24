@@ -1,12 +1,13 @@
 use crate::{
     arch::paging::VirtualAddress,
     context::{self, ContextId, Status},
-    syscall::validate,
-    ptrace
+    ptrace,
+    scheme::{ATOMIC_SCHEMEID_INIT, AtomicSchemeId, SchemeId},
+    syscall::validate
 };
 
 use alloc::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::Arc
 };
 use core::{
@@ -17,7 +18,7 @@ use core::{
 };
 use spin::{Mutex, RwLock};
 use syscall::{
-    data::{IntRegisters, FloatRegisters},
+    data::{FloatRegisters, IntRegisters, PtraceEvent},
     error::*,
     flag::*,
     scheme::Scheme
@@ -32,7 +33,9 @@ enum RegsKind {
 enum Operation {
     Memory(VirtualAddress),
     Regs(RegsKind),
-    Trace
+    Trace {
+        new_child: Option<ContextId>
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -41,19 +44,37 @@ struct Handle {
     pid: ContextId,
     operation: Operation
 }
+impl Handle {
+    fn continue_ignored_child(&mut self) -> Option<()> {
+        let pid = match self.operation {
+            Operation::Trace { ref mut new_child } => new_child.take()?,
+            _ => return None
+        };
+        if ptrace::is_traced(pid) {
+            return None;
+        }
+        let contexts = context::contexts();
+        let context = contexts.get(pid)?;
+        let mut context = context.write();
+        context.ptrace_stop = false;
+        Some(())
+    }
+}
+
+pub static PROC_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
 
 pub struct ProcScheme {
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Arc<Mutex<Handle>>>>,
-    traced: Mutex<BTreeSet<ContextId>>
+    handles: RwLock<BTreeMap<usize, Arc<Mutex<Handle>>>>
 }
 
 impl ProcScheme {
-    pub fn new() -> Self {
+    pub fn new(scheme_id: SchemeId) -> Self {
+        PROC_SCHEME_ID.store(scheme_id, Ordering::SeqCst);
+
         Self {
             next_id: AtomicUsize::new(0),
             handles: RwLock::new(BTreeMap::new()),
-            traced: Mutex::new(BTreeSet::new())
         }
     }
 }
@@ -70,36 +91,59 @@ impl Scheme for ProcScheme {
             Some("mem") => Operation::Memory(VirtualAddress::new(0)),
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
-            Some("trace") => Operation::Trace,
+            Some("trace") => Operation::Trace {
+                new_child: None
+            },
             _ => return Err(Error::new(EINVAL))
         };
 
         let contexts = context::contexts();
-        let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+        let target = contexts.get(pid).ok_or(Error::new(ESRCH))?;
 
         {
-            // TODO: Put better security here?
+            let target = target.read();
 
-            let context = context.read();
-            if uid != 0 && gid != 0
-            && uid != context.euid && gid != context.egid {
-                return Err(Error::new(EPERM));
+            if let Status::Exited(_) = target.status {
+                return Err(Error::new(ESRCH));
             }
-        }
 
-        if let Operation::Trace = operation {
-            let mut traced = self.traced.lock();
+            // Unless root, check security
+            if uid != 0 && gid != 0 {
+                let current = contexts.current().ok_or(Error::new(ESRCH))?;
+                let current = current.read();
 
-            if traced.contains(&pid) {
-                return Err(Error::new(EBUSY));
+                // Do we own the process?
+                if uid != target.euid && gid != target.egid {
+                    return Err(Error::new(EPERM));
+                }
+
+                // Is it a subprocess of us? In the future, a capability
+                // could bypass this check.
+                match contexts.anchestors(target.ppid).find(|&(id, _context)| id == current.id) {
+                    Some((id, context)) => {
+                        // Paranoid sanity check, as ptrace security holes
+                        // wouldn't be fun
+                        assert_eq!(id, current.id);
+                        assert_eq!(id, context.read().id);
+                    },
+                    None => return Err(Error::new(EPERM))
+                }
             }
-            traced.insert(pid);
-
-            let mut context = context.write();
-            context.ptrace_stop = true;
         }
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+
+        if let Operation::Trace { .. } = operation {
+            if !ptrace::try_new_session(pid, id) {
+                // There is no good way to handle id being occupied
+                // for nothing here, is there?
+                return Err(Error::new(EBUSY));
+            }
+
+            let mut target = target.write();
+            target.ptrace_stop = true;
+        }
+
         self.handles.write().insert(id, Arc::new(Mutex::new(Handle {
             flags,
             pid,
@@ -230,7 +274,16 @@ impl Scheme for ProcScheme {
 
                 Ok(len)
             },
-            Operation::Trace => Err(Error::new(EBADF))
+            Operation::Trace { .. } => {
+                let read = ptrace::recv_events(handle.pid, unsafe {
+                    slice::from_raw_parts_mut(
+                        buf.as_mut_ptr() as *mut PtraceEvent,
+                        buf.len() / mem::size_of::<PtraceEvent>()
+                    )
+                }).unwrap_or(0);
+
+                Ok(read * mem::size_of::<PtraceEvent>())
+            }
         }
     }
 
@@ -241,7 +294,11 @@ impl Scheme for ProcScheme {
             Arc::clone(handles.get(&id).ok_or(Error::new(EBADF))?)
         };
         let mut handle = handle.lock();
+        handle.continue_ignored_child();
+
+        // Some operations borrow Operation:: mutably
         let pid = handle.pid;
+        let flags = handle.flags;
 
         let mut first = true;
         match handle.operation {
@@ -306,28 +363,22 @@ impl Scheme for ProcScheme {
                     }
                 };
             },
-            Operation::Trace => {
+            Operation::Trace { ref mut new_child } => {
                 if buf.len() < 1 {
                     return Ok(0);
                 }
                 let op = buf[0];
-                let sysemu = op & PTRACE_SYSEMU == PTRACE_SYSEMU;
 
-                let mut blocking = handle.flags & O_NONBLOCK != O_NONBLOCK;
-                let mut wait_breakpoint = false;
+                let mut blocking = flags & O_NONBLOCK != O_NONBLOCK;
                 let mut singlestep = false;
 
                 match op & PTRACE_OPERATIONMASK {
-                    PTRACE_CONT => { ptrace::cont(handle.pid); },
-                    PTRACE_SYSCALL | PTRACE_SINGLESTEP => { // <- not a bitwise OR
+                    PTRACE_CONT => { ptrace::cont(pid); },
+                    PTRACE_SYSCALL | PTRACE_SINGLESTEP | PTRACE_SIGNAL => { // <- not a bitwise OR
                         singlestep = op & PTRACE_OPERATIONMASK == PTRACE_SINGLESTEP;
-                        ptrace::set_breakpoint(handle.pid, sysemu, singlestep);
-                        wait_breakpoint = true;
+                        ptrace::set_breakpoint(pid, op);
                     },
-                    PTRACE_WAIT => {
-                        wait_breakpoint = true;
-                        blocking = true;
-                    },
+                    PTRACE_WAIT => blocking = true,
                     _ => return Err(Error::new(EINVAL))
                 }
 
@@ -340,7 +391,7 @@ impl Scheme for ProcScheme {
                     first = false;
 
                     let contexts = context::contexts();
-                    let context = contexts.get(handle.pid).ok_or(Error::new(ESRCH))?;
+                    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
                     let mut context = context.write();
                     if let Status::Exited(_) = context.status {
                         return Err(Error::new(ESRCH));
@@ -357,8 +408,13 @@ impl Scheme for ProcScheme {
                     break;
                 }
 
-                if wait_breakpoint && blocking {
-                    ptrace::wait_breakpoint(handle.pid)?;
+                if blocking {
+                    if let Some(event) = ptrace::wait(pid)? {
+                        if event.tag == PTRACE_EVENT_CLONE {
+                            *new_child = Some(ContextId::from(unsafe { event.data.clone }));
+                        }
+                        return Ok(0);
+                    }
                 }
 
                 Ok(1)
@@ -378,6 +434,14 @@ impl Scheme for ProcScheme {
         }
     }
 
+    fn fevent(&self, id: usize, _flags: usize) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handle.lock();
+
+        Ok(ptrace::session_fevent_flags(handle.pid).expect("proc (fevent): invalid session"))
+    }
+
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -387,7 +451,7 @@ impl Scheme for ProcScheme {
             Operation::Memory(_) => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
-            Operation::Trace => "trace"
+            Operation::Trace { .. } => "trace"
         });
 
         let len = cmp::min(path.len(), buf.len());
@@ -398,11 +462,11 @@ impl Scheme for ProcScheme {
 
     fn close(&self, id: usize) -> Result<usize> {
         let handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
-        let handle = handle.lock();
+        let mut handle = handle.lock();
+        handle.continue_ignored_child();
 
-        if let Operation::Trace = handle.operation {
-            ptrace::cont(handle.pid);
-            self.traced.lock().remove(&handle.pid);
+        if let Operation::Trace { .. } = handle.operation {
+            ptrace::close_session(handle.pid);
         }
 
         let contexts = context::contexts();

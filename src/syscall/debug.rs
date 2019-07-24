@@ -81,6 +81,17 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             },
             d
         ),
+        SYS_FCHMOD => format!(
+            "fchmod({}, {:#o})",
+            b,
+            c
+        ),
+        SYS_FCHOWN => format!(
+            "fchown({}, {}, {})",
+            b,
+            c,
+            d
+        ),
         SYS_FCNTL => format!(
             "fcntl({}, {} ({}), {:#X})",
             b,
@@ -113,6 +124,11 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             d
         ),
+        SYS_FRENAME => format!(
+            "frename({}, {:?})",
+            b,
+            validate_slice(c as *const u8, d).map(ByteStr),
+        ),
         SYS_FSTAT => format!(
             "fstat({}, {:?})",
             b,
@@ -135,6 +151,14 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "ftruncate({}, {})",
             b,
             c
+        ),
+        SYS_FUTIMENS => format!(
+            "futimens({}, {:?})",
+            b,
+            validate_slice(
+                c as *const TimeSpec,
+                d/mem::size_of::<TimeSpec>()
+            ),
         ),
 
         SYS_BRK => format!(
@@ -200,7 +224,9 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_GETEUID => format!("geteuid()"),
         SYS_GETGID => format!("getgid()"),
         SYS_GETNS => format!("getns()"),
+        SYS_GETPGID => format!("getpgid()"),
         SYS_GETPID => format!("getpid()"),
+        SYS_GETPPID => format!("getppid()"),
         SYS_GETUID => format!("getuid()"),
         SYS_IOPL => format!(
             "iopl({})",

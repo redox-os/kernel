@@ -3,8 +3,14 @@ use core::mem;
 
 use crate::context::{contexts, switch, Status, WaitpidKey};
 use crate::start::usermode;
-use crate::syscall;
-use crate::syscall::flag::{SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
+use crate::{ptrace, syscall};
+use crate::syscall::flag::{PTRACE_EVENT_SIGNAL, PTRACE_SIGNAL, SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
+use crate::syscall::data::{PtraceEvent, PtraceEventData};
+
+pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
+    let handler = handler.map(|ptr| ptr as usize).unwrap_or(0);
+    handler != SIG_DFL && handler != SIG_IGN
+}
 
 pub extern "C" fn signal_handler(sig: usize) {
     let (action, restorer) = {
@@ -15,7 +21,12 @@ pub extern "C" fn signal_handler(sig: usize) {
         actions[sig]
     };
 
-    let handler = action.sa_handler as usize;
+    ptrace::send_event(PtraceEvent {
+        tag: PTRACE_EVENT_SIGNAL,
+        data: PtraceEventData { signal: sig }
+    });
+
+    let handler = action.sa_handler.map(|ptr| ptr as usize).unwrap_or(0);
     if handler == SIG_DFL {
         match sig {
             SIGCHLD => {
@@ -88,6 +99,8 @@ pub extern "C" fn signal_handler(sig: usize) {
         // println!("Ignore");
     } else {
         // println!("Call {:X}", handler);
+
+        ptrace::breakpoint_callback(PTRACE_SIGNAL);
 
         unsafe {
             let mut sp = crate::USER_SIGSTACK_OFFSET + crate::USER_SIGSTACK_SIZE - 256;

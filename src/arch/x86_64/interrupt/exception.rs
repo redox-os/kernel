@@ -1,6 +1,4 @@
 use crate::{
-    common::unique::Unique,
-    context,
     interrupt::stack_trace,
     ptrace,
     syscall::flag::*
@@ -20,15 +18,7 @@ interrupt_stack!(divide_by_zero, stack, {
 interrupt_stack!(debug, stack, {
     let mut handled = false;
 
-    {
-        let contexts = context::contexts();
-        if let Some(context) = contexts.current() {
-            let mut context = context.write();
-            if let Some(ref mut kstack) = context.kstack {
-                context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(stack)));
-            }
-        }
-    }
+    let guard = ptrace::set_process_regs(stack);
 
     // Disable singlestep before their is a breakpoint, since the
     // breakpoint handler might end up setting it again but unless it
@@ -36,20 +26,14 @@ interrupt_stack!(debug, stack, {
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
-    if ptrace::breakpoint_callback(true).is_some() {
+    if ptrace::breakpoint_callback(syscall::PTRACE_SINGLESTEP).is_some() {
         handled = true;
     } else {
         // There was no breakpoint, restore original value
         stack.set_singlestep(had_singlestep);
     }
 
-    {
-        let contexts = context::contexts();
-        if let Some(context) = contexts.current() {
-            let mut context = context.write();
-            context.regs = None;
-        }
-    }
+    drop(guard);
 
     if !handled {
         println!("Debug trap");

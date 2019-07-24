@@ -1,7 +1,6 @@
 use crate::arch::macros::InterruptStack;
 use crate::arch::{gdt, pti};
-use crate::common::unique::Unique;
-use crate::{context, ptrace, syscall};
+use crate::{ptrace, syscall};
 use x86::shared::msr;
 
 pub unsafe fn init() {
@@ -20,18 +19,10 @@ macro_rules! with_interrupt_stack {
     (unsafe fn $wrapped:ident($stack:ident) -> usize $code:block) => {
         #[inline(never)]
         unsafe fn $wrapped(stack: *mut InterruptStack) {
-            let stack = &mut *stack;
-            {
-                let contexts = context::contexts();
-                if let Some(context) = contexts.current() {
-                    let mut context = context.write();
-                    if let Some(ref mut kstack) = context.kstack {
-                        context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(&mut *stack)));
-                    }
-                }
-            }
+            let _guard = ptrace::set_process_regs(stack);
 
-            let is_sysemu = ptrace::breakpoint_callback(false);
+            let is_sysemu = ptrace::breakpoint_callback(syscall::flag::PTRACE_SYSCALL)
+                .map(|fl| fl & syscall::flag::PTRACE_SYSEMU == syscall::flag::PTRACE_SYSEMU);
             if !is_sysemu.unwrap_or(false) {
                 // If not on a sysemu breakpoint
                 let $stack = &mut *stack;
@@ -40,15 +31,7 @@ macro_rules! with_interrupt_stack {
                 if is_sysemu.is_some() {
                     // Only callback if there was a pre-syscall
                     // callback too.
-                    ptrace::breakpoint_callback(false);
-                }
-            }
-
-            {
-                let contexts = context::contexts();
-                if let Some(context) = contexts.current() {
-                    let mut context = context.write();
-                    context.regs = None;
+                    ptrace::breakpoint_callback(::syscall::PTRACE_SYSCALL);
                 }
             }
         }

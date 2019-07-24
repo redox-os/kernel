@@ -1,13 +1,11 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::common::unique::Unique;
-use crate::context;
 use crate::context::timeout;
 use crate::device::pic;
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::debug_input;
-use crate::time;
+use crate::{context, ptrace, time};
 
 //resets to 0 in context::switch()
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
@@ -62,25 +60,8 @@ interrupt_stack!(pit, stack, {
     timeout::trigger();
 
     if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
-        {
-            let contexts = crate::context::contexts();
-            if let Some(context) = contexts.current() {
-                let mut context = context.write();
-                // Make all registers available to e.g. the proc:
-                // scheme
-                if let Some(ref mut kstack) = context.kstack {
-                    context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new_unchecked(stack)));
-                }
-            }
-        }
+        let _guard = ptrace::set_process_regs(stack);
         let _ = context::switch();
-        {
-            let contexts = crate::context::contexts();
-            if let Some(context) = contexts.current() {
-                let mut context = context.write();
-                context.regs = None;
-            }
-        }
     }
 });
 
