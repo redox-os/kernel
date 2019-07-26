@@ -15,13 +15,14 @@ use crate::{
 
 use alloc::{
     collections::BTreeMap,
-    sync::Arc
+    sync::Arc,
+    vec::Vec
 };
 use core::{
     cmp,
     mem,
     slice,
-    sync::atomic::{AtomicUsize, Ordering}
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use spin::{Mutex, RwLock};
 
@@ -30,12 +31,12 @@ enum RegsKind {
     Float,
     Int
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Operation {
     Memory(VirtualAddress),
     Regs(RegsKind),
     Trace {
-        new_child: Option<ContextId>
+        clones: Vec<ContextId>
     }
 }
 
@@ -101,24 +102,30 @@ fn try_stop_context<F, T>(pid: ContextId, restart_after: bool, mut callback: F) 
 }
 
 #[derive(Clone, Copy)]
-struct Handle {
-    flags: usize,
+struct Info {
     pid: ContextId,
+    flags: usize,
+}
+struct Handle {
+    info: Info,
     operation: Operation
 }
 impl Handle {
-    fn continue_ignored_child(&mut self) -> Option<()> {
-        let pid = match self.operation {
-            Operation::Trace { ref mut new_child } => new_child.take()?,
+    fn continue_ignored_children(&mut self) -> Option<()> {
+        let clones = match self.operation {
+            Operation::Trace { ref mut clones } => clones,
             _ => return None
         };
-        if ptrace::is_traced(pid) {
-            return None;
-        }
         let contexts = context::contexts();
-        let context = contexts.get(pid)?;
-        let mut context = context.write();
-        context.ptrace_stop = false;
+        for pid in clones.drain(..) {
+            if ptrace::is_traced(pid) {
+                return None;
+            }
+            if let Some(context) = contexts.get(pid) {
+                let mut context = context.write();
+                context.ptrace_stop = false;
+            }
+        }
         Some(())
     }
 }
@@ -154,7 +161,7 @@ impl Scheme for ProcScheme {
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
             Some("trace") => Operation::Trace {
-                new_child: None
+                clones: Vec::new()
             },
             _ => return Err(Error::new(EINVAL))
         };
@@ -209,9 +216,11 @@ impl Scheme for ProcScheme {
         }
 
         self.handles.write().insert(id, Arc::new(Mutex::new(Handle {
-            flags,
-            pid,
-            operation
+            info: Info {
+                flags,
+                pid,
+            },
+            operation,
         })));
         Ok(id)
     }
@@ -224,14 +233,14 @@ impl Scheme for ProcScheme {
     /// let regs = syscall::dup(trace, "regs/int")?;
     /// ```
     fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
-        let handle = {
+        let info = {
             let handles = self.handles.read();
             let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
             let handle = handle.lock();
-            *handle
+            handle.info
         };
 
-        let mut path = format!("{}/", handle.pid.into()).into_bytes();
+        let mut path = format!("{}/", info.pid.into()).into_bytes();
         path.extend_from_slice(buf);
 
         let (uid, gid) = {
@@ -241,7 +250,7 @@ impl Scheme for ProcScheme {
             (context.euid, context.egid)
         };
 
-        self.open(&path, handle.flags, uid, gid)
+        self.open(&path, info.flags, uid, gid)
     }
 
     fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
@@ -269,14 +278,13 @@ impl Scheme for ProcScheme {
             let handles = self.handles.read();
             Arc::clone(handles.get(&id).ok_or(Error::new(EBADF))?)
         };
-        // TODO: Make sure handle can't deadlock
         let mut handle = handle.lock();
-        let pid = handle.pid;
+        let info = handle.info;
 
         match handle.operation {
             Operation::Memory(ref mut offset) => {
                 let contexts = context::contexts();
-                let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+                let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
                 let context = context.read();
 
                 ptrace::with_context_memory(&context, *offset, buf.len(), |ptr| {
@@ -294,7 +302,7 @@ impl Scheme for ProcScheme {
                 }
 
                 let (output, size) = match kind {
-                    RegsKind::Float => with_context(handle.pid, |context| {
+                    RegsKind::Float => with_context(info.pid, |context| {
                         // NOTE: The kernel will never touch floats
 
                         // In the rare case of not having floating
@@ -303,7 +311,7 @@ impl Scheme for ProcScheme {
                         let fx = context.arch.get_fx_regs().unwrap_or_default();
                         Ok((Output { float: fx }, mem::size_of::<FloatRegisters>()))
                     })?,
-                    RegsKind::Int => try_stop_context(handle.pid, true, |context| match unsafe { ptrace::regs_for(&context) } {
+                    RegsKind::Int => try_stop_context(info.pid, true, |context| match unsafe { ptrace::regs_for(&context) } {
                         None => {
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                             Err(Error::new(ENOTRECOVERABLE))
@@ -325,7 +333,7 @@ impl Scheme for ProcScheme {
                 Ok(len)
             },
             Operation::Trace { .. } => {
-                let read = ptrace::recv_events(handle.pid, unsafe {
+                let read = ptrace::recv_events(info.pid, unsafe {
                     slice::from_raw_parts_mut(
                         buf.as_mut_ptr() as *mut PtraceEvent,
                         buf.len() / mem::size_of::<PtraceEvent>()
@@ -344,16 +352,13 @@ impl Scheme for ProcScheme {
             Arc::clone(handles.get(&id).ok_or(Error::new(EBADF))?)
         };
         let mut handle = handle.lock();
-        handle.continue_ignored_child();
-
-        // Some operations borrow Operation:: mutably
-        let pid = handle.pid;
-        let flags = handle.flags;
+        let info = handle.info;
+        handle.continue_ignored_children();
 
         match handle.operation {
             Operation::Memory(ref mut offset) => {
                 let contexts = context::contexts();
-                let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
+                let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
                 let context = context.read();
 
                 ptrace::with_context_memory(&context, *offset, buf.len(), |ptr| {
@@ -373,7 +378,7 @@ impl Scheme for ProcScheme {
                         *(buf as *const _ as *const FloatRegisters)
                     };
 
-                    with_context_mut(pid, |context| {
+                    with_context_mut(info.pid, |context| {
                         // NOTE: The kernel will never touch floats
 
                         // Ignore the rare case of floating point
@@ -391,7 +396,7 @@ impl Scheme for ProcScheme {
                         *(buf as *const _ as *const IntRegisters)
                     };
 
-                    try_stop_context(handle.pid, true, |context| match unsafe { ptrace::regs_for_mut(context) } {
+                    try_stop_context(info.pid, true, |context| match unsafe { ptrace::regs_for_mut(context) } {
                         None => {
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                             Err(Error::new(ENOTRECOVERABLE))
@@ -404,7 +409,7 @@ impl Scheme for ProcScheme {
                     })
                 }
             },
-            Operation::Trace { ref mut new_child } => {
+            Operation::Trace { ref mut clones } => {
                 if buf.len() < mem::size_of::<u64>() {
                     return Ok(0);
                 }
@@ -415,14 +420,16 @@ impl Scheme for ProcScheme {
                 let op = u64::from_ne_bytes(bytes);
 
                 if op & PTRACE_FLAG_WAIT != PTRACE_FLAG_WAIT || op & PTRACE_STOP_MASK != 0 {
-                    ptrace::cont(pid);
+                    ptrace::cont(info.pid);
                 }
                 if op & PTRACE_STOP_MASK != 0 {
-                    ptrace::set_breakpoint(pid, op);
+                    ptrace::set_breakpoint(info.pid, op);
                 }
 
                 if op & PTRACE_STOP_SINGLESTEP == PTRACE_STOP_SINGLESTEP {
-                    try_stop_context(pid, false, |context| {
+                    // try_stop_context with `false` will
+                    // automatically disable ptrace_stop
+                    try_stop_context(info.pid, false, |context| {
                         match unsafe { ptrace::regs_for_mut(context) } {
                             // If another CPU is running this process,
                             // await for it to be stopped and in such
@@ -437,12 +444,18 @@ impl Scheme for ProcScheme {
                             }
                         }
                     })?;
+                } else {
+                    // disable ptrace stop
+                    with_context_mut(info.pid, |context| {
+                        context.ptrace_stop = false;
+                        Ok(())
+                    })?;
                 }
 
-                if op & PTRACE_FLAG_WAIT == PTRACE_FLAG_WAIT || flags & O_NONBLOCK != O_NONBLOCK {
-                    if let Some(event) = ptrace::wait(pid)? {
+                if op & PTRACE_FLAG_WAIT == PTRACE_FLAG_WAIT || info.flags & O_NONBLOCK != O_NONBLOCK {
+                    if let Some(event) = ptrace::wait(info.pid)? {
                         if event.cause == PTRACE_EVENT_CLONE {
-                            *new_child = Some(ContextId::from(event.a));
+                            clones.push(ContextId::from(event.a));
                         }
                     }
                 }
@@ -458,8 +471,8 @@ impl Scheme for ProcScheme {
         let mut handle = handle.lock();
 
         match cmd {
-            F_SETFL => { handle.flags = arg; Ok(0) },
-            F_GETFL => return Ok(handle.flags),
+            F_SETFL => { handle.info.flags = arg; Ok(0) },
+            F_GETFL => return Ok(handle.info.flags),
             _ => return Err(Error::new(EINVAL))
         }
     }
@@ -469,7 +482,7 @@ impl Scheme for ProcScheme {
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         let handle = handle.lock();
 
-        Ok(ptrace::session_fevent_flags(handle.pid).expect("proc (fevent): invalid session"))
+        Ok(ptrace::session_fevent_flags(handle.info.pid).expect("proc (fevent): invalid session"))
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -477,7 +490,7 @@ impl Scheme for ProcScheme {
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         let handle = handle.lock();
 
-        let path = format!("proc:{}/{}", handle.pid.into(), match handle.operation {
+        let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.operation {
             Operation::Memory(_) => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
@@ -493,16 +506,16 @@ impl Scheme for ProcScheme {
     fn close(&self, id: usize) -> Result<usize> {
         let handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
         let mut handle = handle.lock();
-        handle.continue_ignored_child();
+        handle.continue_ignored_children();
 
         if let Operation::Trace { .. } = handle.operation {
-            ptrace::close_session(handle.pid);
+            ptrace::close_session(handle.info.pid);
 
-            if handle.flags & O_EXCL == O_EXCL {
-                syscall::kill(handle.pid, SIGKILL)?;
+            if handle.info.flags & O_EXCL == O_EXCL {
+                syscall::kill(handle.info.pid, SIGKILL)?;
             } else {
                 let contexts = context::contexts();
-                if let Some(context) = contexts.get(handle.pid) {
+                if let Some(context) = contexts.get(handle.info.pid) {
                     let mut context = context.write();
                     context.ptrace_stop = false;
                 }

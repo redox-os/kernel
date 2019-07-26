@@ -22,15 +22,16 @@ macro_rules! with_interrupt_stack {
         unsafe fn $wrapped(stack: *mut InterruptStack) {
             let _guard = ptrace::set_process_regs(stack);
 
-            ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None);
-            let not_sysemu = ptrace::next_breakpoint().map(|b| b & PTRACE_FLAG_SYSEMU != PTRACE_FLAG_SYSEMU);
+            let not_sysemu = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
+                .and_then(|_| ptrace::next_breakpoint().map(|b| b & PTRACE_FLAG_SYSEMU != PTRACE_FLAG_SYSEMU));
+
             if not_sysemu.unwrap_or(true) {
                 // If not on a sysemu breakpoint
                 let $stack = &mut *stack;
                 $stack.scratch.rax = $code;
-
-                ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
             }
+
+            ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
         }
     }
 }

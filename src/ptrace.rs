@@ -133,6 +133,11 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
 
     let mut sessions = sessions_mut();
     let session = sessions.get_mut(&context.id)?;
+    let breakpoint = session.breakpoint.as_ref()?;
+
+    if event.cause & breakpoint.flags != event.cause {
+        return None;
+    }
 
     session.events.push_back(event);
 
@@ -209,8 +214,8 @@ pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
         let sessions = sessions();
         match sessions.get(&pid) {
             Some(session) if session.breakpoint.as_ref().map(|b| !b.reached).unwrap_or(true) => {
-                if let Some(event) = session.events.front() {
-                    return Ok(Some(event.clone()));
+                if !session.events.is_empty() {
+                    return Ok(None);
                 }
                 Arc::clone(&session.tracer)
             },
@@ -252,21 +257,23 @@ pub fn breakpoint_callback(match_flags: u64, event: Option<PtraceEvent>) -> Opti
         let session = sessions.get_mut(&context.id)?;
         let breakpoint = session.breakpoint.as_mut()?;
 
-        // TODO: How should singlesteps interact with syscalls? How
-        // does Linux handle this?
-
         if breakpoint.flags & match_flags != match_flags {
             return None;
         }
 
         session.events.push_back(event.unwrap_or(ptrace_event!(match_flags)));
 
+        // Notify nonblocking tracers
+        if session.events.len() == 1 {
+            // If the list of events was previously empty, alert now
+            proc_trigger_event(session.file_id, EVENT_READ);
+        }
+
         // In case no tracer is waiting, make sure the next one gets
         // the memo
         breakpoint.reached = true;
 
         session.tracer.notify();
-        proc_trigger_event(session.file_id, EVENT_WRITE);
 
         (
             Arc::clone(&session.tracee),
