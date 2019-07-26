@@ -5,7 +5,7 @@ use spin::RwLock;
 
 use crate::syscall::data::ITimerSpec;
 use crate::syscall::error::*;
-use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
+use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
 use crate::syscall::scheme::Scheme;
 
 pub struct ITimerScheme {
@@ -79,9 +79,9 @@ impl Scheme for ITimerScheme {
         Ok(0)
     }
 
-    fn fevent(&self, id: usize, _flags: usize) ->  Result<usize> {
+    fn fevent(&self, id: usize, _flags: EventFlags) ->  Result<EventFlags> {
         let handles = self.handles.read();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {

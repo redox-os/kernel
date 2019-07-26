@@ -16,7 +16,7 @@ use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use crate::syscall::error::*;
-use crate::syscall::flag::{EVENT_READ, O_NONBLOCK, PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, ProtFlags, PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
 
@@ -108,7 +108,7 @@ impl UserInner {
         UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None)
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: usize, desc_opt: Option<FileDescriptor>) -> Result<usize> {
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: ProtFlags, desc_opt: Option<FileDescriptor>) -> Result<usize> {
         //TODO: Abstract with other grant creation
         if size == 0 {
             Ok(0)
@@ -127,13 +127,13 @@ impl UserInner {
             let mut to_address = crate::USER_GRANT_OFFSET;
 
             let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
-            if flags & PROT_EXEC == 0 {
+            if !flags.contains(PROT_EXEC) {
                 entry_flags |= EntryFlags::NO_EXECUTE;
             }
-            if flags & PROT_READ > 0 {
+            if flags.contains(PROT_READ) {
                 //TODO: PROT_READ
             }
-            if flags & PROT_WRITE > 0 {
+            if flags.contains(PROT_WRITE) {
                 entry_flags |= EntryFlags::WRITABLE;
             }
 
@@ -232,7 +232,7 @@ impl UserInner {
             let mut packet = unsafe { *(buf.as_ptr() as *const Packet).offset(i as isize) };
             if packet.id == 0 {
                 match packet.a {
-                    SYS_FEVENT => event::trigger(self.scheme_id.load(Ordering::SeqCst), packet.b, packet.c),
+                    SYS_FEVENT => event::trigger(self.scheme_id.load(Ordering::SeqCst), packet.b, EventFlags::from_bits_truncate(packet.c)),
                     _ => println!("Unknown scheme -> kernel message {}", packet.a)
                 }
             } else {
@@ -257,8 +257,8 @@ impl UserInner {
         Ok(i * packet_size)
     }
 
-    pub fn fevent(&self, _flags: usize) -> Result<usize> {
-        Ok(0)
+    pub fn fevent(&self, _flags: EventFlags) -> Result<EventFlags> {
+        Ok(EventFlags::empty())
     }
 
     pub fn fsync(&self) -> Result<usize> {
@@ -356,9 +356,9 @@ impl Scheme for UserScheme {
         inner.call(SYS_FCNTL, file, cmd, arg)
     }
 
-    fn fevent(&self, file: usize, flags: usize) -> Result<usize> {
+    fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FEVENT, file, flags, 0)
+        inner.call(SYS_FEVENT, file, flags.bits(), 0).map(EventFlags::from_bits_truncate)
     }
 
     fn fmap(&self, file: usize, map: &Map) -> Result<usize> {

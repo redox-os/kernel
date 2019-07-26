@@ -5,7 +5,7 @@ use crate::arch::debug::Writer;
 use crate::event;
 use crate::scheme::*;
 use crate::sync::WaitQueue;
-use crate::syscall::flag::{EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
+use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
 use crate::syscall::scheme::Scheme;
 
 pub static DEBUG_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
@@ -102,13 +102,13 @@ impl Scheme for DebugScheme {
         }
     }
 
-    fn fevent(&self, id: usize, _flags: usize) -> Result<usize> {
+    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let _flags = {
             let handles = handles();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        Ok(0)
+        Ok(EventFlags::empty())
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {

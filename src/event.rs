@@ -8,6 +8,7 @@ use crate::scheme::{self, SchemeId};
 use crate::sync::WaitQueue;
 use crate::syscall::data::Event;
 use crate::syscall::error::{Error, Result, EBADF, EINTR, ESRCH};
+use crate::syscall::flag::EventFlags;
 
 int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 
@@ -53,7 +54,7 @@ impl EventQueue {
             );
 
             let flags = sync(RegKey { scheme, number })?;
-            if flags > 0 {
+            if !flags.is_empty() {
                 trigger(scheme, number, flags);
             }
         }
@@ -100,10 +101,10 @@ pub struct RegKey {
 pub struct QueueKey {
     pub queue: EventQueueId,
     pub id: usize,
-    pub data: usize
+    pub data: usize,
 }
 
-type Registry = BTreeMap<RegKey, BTreeMap<QueueKey, usize>>;
+type Registry = BTreeMap<RegKey, BTreeMap<QueueKey, EventFlags>>;
 
 static REGISTRY: Once<RwLock<Registry>> = Once::new();
 
@@ -122,28 +123,28 @@ pub fn registry_mut() -> RwLockWriteGuard<'static, Registry> {
     REGISTRY.call_once(init_registry).write()
 }
 
-pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: usize) {
+pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: EventFlags) {
     let mut registry = registry_mut();
 
     let entry = registry.entry(reg_key).or_insert_with(|| {
         BTreeMap::new()
     });
 
-    if flags == 0 {
+    if flags.is_empty() {
         entry.remove(&queue_key);
     } else {
         entry.insert(queue_key, flags);
     }
 }
 
-pub fn sync(reg_key: RegKey) -> Result<usize> {
-    let mut flags = 0;
+pub fn sync(reg_key: RegKey) -> Result<EventFlags> {
+    let mut flags = EventFlags::empty();
 
     {
         let registry = registry();
 
         if let Some(queue_list) = registry.get(&reg_key) {
-            for (_queue_key, queue_flags) in queue_list.iter() {
+            for (_queue_key, &queue_flags) in queue_list.iter() {
                 flags |= queue_flags;
             }
         }
@@ -169,13 +170,13 @@ pub fn unregister_file(scheme: SchemeId, number: usize) {
 //
 // }
 
-pub fn trigger(scheme: SchemeId, number: usize, flags: usize) {
+pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
     let registry = registry();
 
     if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
-        for (queue_key, queue_flags) in queue_list.iter() {
+        for (queue_key, &queue_flags) in queue_list.iter() {
             let common_flags = flags & queue_flags;
-            if common_flags != 0 {
+            if !common_flags.is_empty() {
                 let queues = queues();
                 if let Some(queue) = queues.get(&queue_key.queue) {
                     queue.queue.send(Event {

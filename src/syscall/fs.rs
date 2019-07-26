@@ -8,7 +8,7 @@ use crate::scheme::{self, FileHandle};
 use crate::syscall;
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD, O_ACCMODE, O_DIRECTORY, O_RDONLY, O_SYMLINK, O_WRONLY, MODE_DIR, MODE_FILE, O_CLOEXEC};
+use crate::syscall::flag::*;
 use crate::context::file::{FileDescriptor, FileDescription};
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
@@ -92,7 +92,7 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
         (context.canonicalize(path), context.euid, context.egid, context.ens, context.umask)
     };
 
-    let flags = (flags & (!0o777)) | (flags & 0o777) & (!(umask & 0o777));
+    let flags = (flags & (!0o777)) | ((flags & 0o777) & (!(umask & 0o777)));
 
     //println!("open {}", unsafe { ::core::str::from_utf8_unchecked(&path_canon) });
 

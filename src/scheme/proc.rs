@@ -418,15 +418,16 @@ impl Scheme for ProcScheme {
                 let len = bytes.len();
                 bytes.copy_from_slice(&buf[0..len]);
                 let op = u64::from_ne_bytes(bytes);
+                let op = PtraceFlags::from_bits(op).ok_or(Error::new(EINVAL))?;
 
-                if op & PTRACE_FLAG_WAIT != PTRACE_FLAG_WAIT || op & PTRACE_STOP_MASK != 0 {
+                if !op.contains(PTRACE_FLAG_WAIT) || op.intersects(PTRACE_STOP_MASK) {
                     ptrace::cont(info.pid);
                 }
-                if op & PTRACE_STOP_MASK != 0 {
+                if op.intersects(PTRACE_STOP_MASK) {
                     ptrace::set_breakpoint(info.pid, op);
                 }
 
-                if op & PTRACE_STOP_SINGLESTEP == PTRACE_STOP_SINGLESTEP {
+                if op.contains(PTRACE_STOP_SINGLESTEP) {
                     // try_stop_context with `false` will
                     // automatically disable ptrace_stop
                     try_stop_context(info.pid, false, |context| {
@@ -452,7 +453,7 @@ impl Scheme for ProcScheme {
                     })?;
                 }
 
-                if op & PTRACE_FLAG_WAIT == PTRACE_FLAG_WAIT || info.flags & O_NONBLOCK != O_NONBLOCK {
+                if op.contains(PTRACE_FLAG_WAIT) || info.flags & O_NONBLOCK != O_NONBLOCK {
                     if let Some(event) = ptrace::wait(info.pid)? {
                         if event.cause == PTRACE_EVENT_CLONE {
                             clones.push(ContextId::from(event.a));
@@ -477,7 +478,7 @@ impl Scheme for ProcScheme {
         }
     }
 
-    fn fevent(&self, id: usize, _flags: usize) -> Result<usize> {
+    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         let handle = handle.lock();

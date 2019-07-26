@@ -16,7 +16,13 @@ use crate::{
     context::{self, signal, Context, ContextId, Status},
     event,
     scheme::proc,
-    sync::WaitCondition
+    sync::WaitCondition,
+    syscall::{
+        data::PtraceEvent,
+        error::*,
+        flag::*,
+        ptrace_event
+    },
 };
 
 use alloc::{
@@ -34,12 +40,6 @@ use core::{
     sync::atomic::Ordering
 };
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::{
-    data::PtraceEvent,
-    error::*,
-    flag::*,
-    ptrace_event
-};
 
 //  ____                _
 // / ___|  ___  ___ ___(_) ___  _ __  ___
@@ -96,10 +96,10 @@ pub fn is_traced(pid: ContextId) -> bool {
 }
 
 /// Used for getting the flags in fevent
-pub fn session_fevent_flags(pid: ContextId) -> Option<usize> {
+pub fn session_fevent_flags(pid: ContextId) -> Option<EventFlags> {
     let sessions = sessions();
     let session = sessions.get(&pid)?;
-    let mut flags = 0;
+    let mut flags = EventFlags::empty();
     if !session.events.is_empty() {
         flags |= EVENT_READ;
     }
@@ -119,7 +119,7 @@ pub fn close_session(pid: ContextId) {
 }
 
 /// Trigger a notification to the event: scheme
-fn proc_trigger_event(file_id: usize, flags: usize) {
+fn proc_trigger_event(file_id: usize, flags: EventFlags) {
     event::trigger(proc::PROC_SCHEME_ID.load(Ordering::SeqCst), file_id, flags);
 }
 
@@ -175,7 +175,7 @@ pub fn recv_events(pid: ContextId, out: &mut [PtraceEvent]) -> Option<usize> {
 #[derive(Debug)]
 struct Breakpoint {
     reached: bool,
-    flags: u64
+    flags: PtraceFlags
 }
 
 /// Continue the process with the specified ID
@@ -195,7 +195,7 @@ pub fn cont(pid: ContextId) {
 
 /// Create a new breakpoint for the specified tracee, optionally with
 /// a sysemu flag. Panics if the session is invalid.
-pub fn set_breakpoint(pid: ContextId, flags: u64) {
+pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags) {
     let mut sessions = sessions_mut();
     let session = sessions.get_mut(&pid).expect("proc (set_breakpoint): invalid session");
     session.breakpoint = Some(Breakpoint {
@@ -246,7 +246,7 @@ pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
 
 /// Notify the tracer and await green flag to continue.
 /// Note: Don't call while holding any locks, this will switch contexts
-pub fn breakpoint_callback(match_flags: u64, event: Option<PtraceEvent>) -> Option<u64> {
+pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>) -> Option<PtraceFlags> {
     // Can't hold any locks when executing wait()
     let (tracee, flags) = {
         let contexts = context::contexts();
@@ -289,7 +289,7 @@ pub fn breakpoint_callback(match_flags: u64, event: Option<PtraceEvent>) -> Opti
 /// Obtain the next breakpoint flags for the current process. This is
 /// used for detecting whether or not the tracer decided to use sysemu
 /// mode.
-pub fn next_breakpoint() -> Option<u64> {
+pub fn next_breakpoint() -> Option<PtraceFlags> {
     let contexts = context::contexts();
     let context = contexts.current()?;
     let context = context.read();

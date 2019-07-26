@@ -9,7 +9,7 @@ use spin::{Mutex, RwLock};
 use crate::context;
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
-use crate::syscall::flag::{O_CREAT, MODE_FILE, MODE_DIR, SEEK_SET, SEEK_CUR, SEEK_END};
+use crate::syscall::flag::{EventFlags, O_CREAT, MODE_FILE, MODE_DIR, SEEK_SET, SEEK_CUR, SEEK_END};
 use crate::syscall::scheme::Scheme;
 use crate::scheme::{self, SchemeNamespace, SchemeId};
 use crate::scheme::user::{UserInner, UserScheme};
@@ -226,7 +226,7 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn fevent(&self, file: usize, flags: usize) -> Result<usize> {
+    fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;

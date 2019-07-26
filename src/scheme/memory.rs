@@ -5,7 +5,7 @@ use crate::paging::VirtualAddress;
 use crate::paging::entry::EntryFlags;
 use crate::syscall::data::{Map, StatVfs};
 use crate::syscall::error::*;
-use crate::syscall::flag::{PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::syscall::flag::{ProtFlags, PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::syscall::scheme::Scheme;
 
 pub struct MemoryScheme;
@@ -47,13 +47,13 @@ impl Scheme for MemoryScheme {
             let mut to_address = crate::USER_GRANT_OFFSET;
 
             let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
-            if map.flags & PROT_EXEC == 0 {
+            if map.flags & PROT_EXEC == ProtFlags::empty() {
                 entry_flags |= EntryFlags::NO_EXECUTE;
             }
-            if map.flags & PROT_READ > 0 {
+            if map.flags & PROT_READ != ProtFlags::empty() {
                 //TODO: PROT_READ
             }
-            if map.flags & PROT_WRITE > 0 {
+            if map.flags & PROT_WRITE != ProtFlags::empty() {
                 entry_flags |= EntryFlags::WRITABLE;
             }
 

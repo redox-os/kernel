@@ -5,7 +5,7 @@ use crate::paging::entry::EntryFlags;
 use crate::context;
 use crate::context::memory::Grant;
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
-use crate::syscall::flag::{PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
+use crate::syscall::flag::{PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -50,7 +50,7 @@ pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
 }
 
 //TODO: verify exlusive access to physical memory
-pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Result<usize> {
+pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     //TODO: Abstract with other grant creation
     if size == 0 {
         Ok(0)
@@ -67,13 +67,13 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Resu
         let mut to_address = crate::USER_GRANT_OFFSET;
 
         let mut entry_flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
-        if flags & PHYSMAP_WRITE == PHYSMAP_WRITE {
+        if flags.contains(PHYSMAP_WRITE) {
             entry_flags |= EntryFlags::WRITABLE;
         }
-        if flags & PHYSMAP_WRITE_COMBINE == PHYSMAP_WRITE_COMBINE {
+        if flags.contains(PHYSMAP_WRITE_COMBINE) {
             entry_flags |= EntryFlags::HUGE_PAGE;
         }
-        if flags & PHYSMAP_NO_CACHE == PHYSMAP_NO_CACHE {
+        if flags.contains(PHYSMAP_NO_CACHE) {
             entry_flags |= EntryFlags::NO_CACHE;
         }
 
@@ -100,7 +100,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: usize) -> Resu
         Ok(to_address + offset)
     }
 }
-pub fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usize> {
+pub fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     enforce_root()?;
     inner_physmap(physical_address, size, flags)
 }
