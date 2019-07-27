@@ -119,7 +119,7 @@ impl Handle {
         let contexts = context::contexts();
         for pid in clones.drain(..) {
             if ptrace::is_traced(pid) {
-                return None;
+                continue;
             }
             if let Some(context) = contexts.get(pid) {
                 let mut context = context.write();
@@ -332,13 +332,20 @@ impl Scheme for ProcScheme {
 
                 Ok(len)
             },
-            Operation::Trace { .. } => {
-                let read = ptrace::recv_events(info.pid, unsafe {
+            Operation::Trace { ref mut clones } => {
+                let slice = unsafe {
                     slice::from_raw_parts_mut(
                         buf.as_mut_ptr() as *mut PtraceEvent,
                         buf.len() / mem::size_of::<PtraceEvent>()
                     )
-                }).unwrap_or(0);
+                };
+                let read = ptrace::recv_events(info.pid, slice).unwrap_or(0);
+
+                for event in &slice[..read] {
+                    if event.cause == PTRACE_EVENT_CLONE {
+                        clones.push(ContextId::from(event.a));
+                    }
+                }
 
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
@@ -409,7 +416,7 @@ impl Scheme for ProcScheme {
                     })
                 }
             },
-            Operation::Trace { ref mut clones } => {
+            Operation::Trace { .. } => {
                 if buf.len() < mem::size_of::<u64>() {
                     return Ok(0);
                 }
@@ -454,11 +461,7 @@ impl Scheme for ProcScheme {
                 }
 
                 if op.contains(PTRACE_FLAG_WAIT) || info.flags & O_NONBLOCK != O_NONBLOCK {
-                    if let Some(event) = ptrace::wait(info.pid)? {
-                        if event.cause == PTRACE_EVENT_CLONE {
-                            clones.push(ContextId::from(event.a));
-                        }
-                    }
+                    ptrace::wait(info.pid)?;
                 }
 
                 Ok(mem::size_of::<u64>())

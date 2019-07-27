@@ -55,6 +55,20 @@ struct Session {
     tracee: Arc<WaitCondition>,
     tracer: Arc<WaitCondition>,
 }
+impl Session {
+    fn send_event(&mut self, event: PtraceEvent) {
+        self.events.push_back(event);
+
+        // Notify nonblocking tracers
+        if self.events.len() == 1 {
+            // If the list of events was previously empty, alert now
+            proc_trigger_event(self.file_id, EVENT_READ);
+        }
+
+        // Alert blocking tracers
+        self.tracer.notify();
+    }
+}
 
 type SessionMap = BTreeMap<ContextId, Session>;
 
@@ -103,9 +117,6 @@ pub fn session_fevent_flags(pid: ContextId) -> Option<EventFlags> {
     if !session.events.is_empty() {
         flags |= EVENT_READ;
     }
-    if session.breakpoint.as_ref().map(|b| b.reached).unwrap_or(true) {
-        flags |= EVENT_WRITE;
-    }
     Some(flags)
 }
 
@@ -139,16 +150,7 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
         return None;
     }
 
-    session.events.push_back(event);
-
-    // Notify nonblocking tracers
-    if session.events.len() == 1 {
-        // If the list of events was previously empty, alert now
-        proc_trigger_event(session.file_id, EVENT_READ);
-    }
-
-    // Alert blocking tracers
-    session.tracer.notify();
+    session.send_event(event);
 
     Some(())
 }
@@ -209,30 +211,21 @@ pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags) {
 ///
 /// Note: Don't call while holding any locks, this will switch
 /// contexts
-pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
+pub fn wait(pid: ContextId) -> Result<()> {
     let tracer: Arc<WaitCondition> = {
         let sessions = sessions();
         match sessions.get(&pid) {
             Some(session) if session.breakpoint.as_ref().map(|b| !b.reached).unwrap_or(true) => {
                 if !session.events.is_empty() {
-                    return Ok(None);
+                    return Ok(());
                 }
                 Arc::clone(&session.tracer)
             },
-            _ => return Ok(None)
+            _ => return Ok(())
         }
     };
 
     while !tracer.wait() {}
-
-    {
-        let sessions = sessions();
-        if let Some(session) = sessions.get(&pid) {
-            if let Some(event) = session.events.front() {
-                return Ok(Some(event.clone()));
-            }
-        }
-    }
 
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -241,7 +234,7 @@ pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
         return Err(Error::new(ESRCH));
     }
 
-    Ok(None)
+    Ok(())
 }
 
 /// Notify the tracer and await green flag to continue.
@@ -261,23 +254,16 @@ pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>)
             return None;
         }
 
-        session.events.push_back(event.unwrap_or(ptrace_event!(match_flags)));
-
-        // Notify nonblocking tracers
-        if session.events.len() == 1 {
-            // If the list of events was previously empty, alert now
-            proc_trigger_event(session.file_id, EVENT_READ);
-        }
-
         // In case no tracer is waiting, make sure the next one gets
         // the memo
         breakpoint.reached = true;
 
-        session.tracer.notify();
+        let flags = breakpoint.flags;
+        session.send_event(event.unwrap_or(ptrace_event!(match_flags)));
 
         (
             Arc::clone(&session.tracee),
-            breakpoint.flags
+            flags
         )
     };
 
@@ -306,8 +292,12 @@ pub fn close_tracee(pid: ContextId) -> Option<()> {
     let mut sessions = sessions_mut();
     let session = sessions.get_mut(&pid)?;
 
+    // Cause tracers to wake up. Any action will cause ESRCH which can
+    // be used to detect exit.
     session.breakpoint = None;
     session.tracer.notify();
+    proc_trigger_event(session.file_id, EVENT_READ);
+
     Some(())
 }
 
