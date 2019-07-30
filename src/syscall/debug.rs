@@ -259,7 +259,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "mprotect({:#X}, {}, {:?})",
             b,
             c,
-            ProtFlags::from_bits(d)
+            MapFlags::from_bits(d)
         ),
         SYS_NANOSLEEP => format!(
             "nanosleep({:?}, ({}, {}))",

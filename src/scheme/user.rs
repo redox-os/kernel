@@ -16,7 +16,7 @@ use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use crate::syscall::error::*;
-use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, ProtFlags, PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
 
@@ -108,7 +108,7 @@ impl UserInner {
         UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None)
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: ProtFlags, desc_opt: Option<FileDescriptor>) -> Result<usize> {
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>) -> Result<usize> {
         //TODO: Abstract with other grant creation
         if size == 0 {
             Ok(0)

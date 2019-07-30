@@ -24,7 +24,7 @@ use crate::start::usermode;
 use crate::syscall::data::{PtraceEvent, SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{CloneFlags, CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND,
-                           CLONE_STACK, ProtFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
+                           CLONE_STACK, MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
                            SigActionFlags, SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
                            WaitFlags, WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
 use crate::syscall::ptrace_event;
@@ -1290,7 +1290,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     }
 }
 
-pub fn mprotect(address: usize, size: usize, flags: ProtFlags) -> Result<usize> {
+pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;

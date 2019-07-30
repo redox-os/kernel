@@ -16,7 +16,7 @@ pub use self::validate::*;
 
 use self::data::{SigAction, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
-use self::flag::{CloneFlags, PhysmapFlags, ProtFlags, WaitFlags};
+use self::flag::{CloneFlags, MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
 
 use crate::context::ContextId;
@@ -116,7 +116,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_GETGID => getgid(),
                 SYS_GETNS => getns(),
                 SYS_GETUID => getuid(),
-                SYS_MPROTECT => mprotect(b, c, ProtFlags::from_bits_truncate(d)),
+                SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)),
                 SYS_MKNS => mkns(validate_slice(b as *const [usize; 2], c)?),
                 SYS_SETPGID => setpgid(ContextId::from(b), ContextId::from(c)),
                 SYS_SETREUID => setreuid(b as u32, c as u32),
