@@ -1,6 +1,6 @@
 use crate::arch::macros::InterruptStack;
 use crate::arch::{gdt, pti};
-use crate::syscall::flag::{PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL, PTRACE_FLAG_SYSEMU};
+use crate::syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL};
 use crate::{ptrace, syscall};
 use x86::shared::msr;
 
@@ -22,11 +22,11 @@ macro_rules! with_interrupt_stack {
         unsafe fn $wrapped(stack: *mut InterruptStack) {
             let _guard = ptrace::set_process_regs(stack);
 
-            let not_sysemu = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
-                .and_then(|_| ptrace::next_breakpoint().map(|b| b & PTRACE_FLAG_SYSEMU != PTRACE_FLAG_SYSEMU));
+            let thumbs_up = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
+                .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
 
-            if not_sysemu.unwrap_or(true) {
-                // If not on a sysemu breakpoint
+            if thumbs_up.unwrap_or(true) {
+                // If syscall not ignored
                 let $stack = &mut *stack;
                 $stack.scratch.rax = $code;
             }

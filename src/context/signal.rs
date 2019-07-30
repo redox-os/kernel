@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 use core::mem;
 use syscall::data::PtraceEvent;
-use syscall::flag::{PTRACE_STOP_SIGNAL, SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
+use syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
 use syscall::ptrace_event;
 
 use crate::context::{contexts, switch, Status, WaitpidKey};
@@ -24,7 +24,14 @@ pub extern "C" fn signal_handler(sig: usize) {
 
     let handler = action.sa_handler.map(|ptr| ptr as usize).unwrap_or(0);
 
-    ptrace::breakpoint_callback(PTRACE_STOP_SIGNAL, Some(ptrace_event!(PTRACE_STOP_SIGNAL, sig, handler)));
+    let thumbs_down = ptrace::breakpoint_callback(PTRACE_STOP_SIGNAL, Some(ptrace_event!(PTRACE_STOP_SIGNAL, sig, handler)))
+        .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));
+
+    if sig != SIGKILL && thumbs_down.unwrap_or(false) {
+        // If signal can be and was ignored
+        crate::syscall::sigreturn().unwrap();
+        unreachable!();
+    }
 
     if handler == SIG_DFL {
         match sig {
