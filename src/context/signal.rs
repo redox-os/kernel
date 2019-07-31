@@ -1,11 +1,12 @@
 use alloc::sync::Arc;
 use core::mem;
+use syscall::data::PtraceEvent;
+use syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
+use syscall::ptrace_event;
 
 use crate::context::{contexts, switch, Status, WaitpidKey};
 use crate::start::usermode;
-use crate::{ptrace, syscall};
-use crate::syscall::flag::{PTRACE_EVENT_SIGNAL, PTRACE_SIGNAL, SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
-use crate::syscall::data::{PtraceEvent, PtraceEventData};
+use crate::ptrace;
 
 pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
     let handler = handler.map(|ptr| ptr as usize).unwrap_or(0);
@@ -21,12 +22,17 @@ pub extern "C" fn signal_handler(sig: usize) {
         actions[sig]
     };
 
-    ptrace::send_event(PtraceEvent {
-        tag: PTRACE_EVENT_SIGNAL,
-        data: PtraceEventData { signal: sig }
-    });
-
     let handler = action.sa_handler.map(|ptr| ptr as usize).unwrap_or(0);
+
+    let thumbs_down = ptrace::breakpoint_callback(PTRACE_STOP_SIGNAL, Some(ptrace_event!(PTRACE_STOP_SIGNAL, sig, handler)))
+        .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));
+
+    if sig != SIGKILL && thumbs_down.unwrap_or(false) {
+        // If signal can be and was ignored
+        crate::syscall::sigreturn().unwrap();
+        unreachable!();
+    }
+
     if handler == SIG_DFL {
         match sig {
             SIGCHLD => {
@@ -92,15 +98,13 @@ pub extern "C" fn signal_handler(sig: usize) {
             },
             _ => {
                 // println!("Exit {}", sig);
-                syscall::exit(sig);
+                crate::syscall::exit(sig);
             }
         }
     } else if handler == SIG_IGN {
         // println!("Ignore");
     } else {
         // println!("Call {:X}", handler);
-
-        ptrace::breakpoint_callback(PTRACE_SIGNAL);
 
         unsafe {
             let mut sp = crate::USER_SIGSTACK_OFFSET + crate::USER_SIGSTACK_SIZE - 256;
@@ -114,5 +118,5 @@ pub extern "C" fn signal_handler(sig: usize) {
         }
     }
 
-    syscall::sigreturn().unwrap();
+    crate::syscall::sigreturn().unwrap();
 }

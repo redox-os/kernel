@@ -175,8 +175,8 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             validate_slice_mut(c as *mut TimeSpec, 1)
         ),
         SYS_CLONE => format!(
-            "clone({})",
-            b
+            "clone({:?})",
+            CloneFlags::from_bits(b)
         ),
         SYS_EXIT => format!(
             "exit({})",
@@ -256,10 +256,10 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             validate_slice(b as *const [usize; 2], c)
         ),
         SYS_MPROTECT => format!(
-            "mprotect({:#X}, {}, {:#X})",
+            "mprotect({:#X}, {}, {:?})",
             b,
             c,
-            d
+            MapFlags::from_bits(d)
         ),
         SYS_NANOSLEEP => format!(
             "nanosleep({:?}, ({}, {}))",
@@ -277,10 +277,10 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c
         ),
         SYS_PHYSMAP => format!(
-            "physmap({:#X}, {}, {:#X})",
+            "physmap({:#X}, {}, {:?})",
             b,
             c,
-            d
+            PhysmapFlags::from_bits(d)
         ),
         SYS_PHYSUNMAP => format!(
             "physunmap({:#X})",
@@ -315,10 +315,10 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b
         ),
         SYS_WAITPID => format!(
-            "waitpid({}, {:#X}, {})",
+            "waitpid({}, {:#X}, {:?})",
             b,
             c,
-            d
+            WaitFlags::from_bits(d)
         ),
         SYS_YIELD => format!("yield()"),
         _ => format!(

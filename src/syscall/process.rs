@@ -18,17 +18,17 @@ use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::MapperFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
 use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
-use crate::ptrace;
+use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
-use crate::syscall::data::{PtraceEvent, PtraceEventData, SigAction, Stat};
+use crate::syscall::data::{PtraceEvent, SigAction, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND, CLONE_STACK,
-                           PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
-                           SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
-                           WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
+use crate::syscall::flag::{CloneFlags, CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND,
+                           CLONE_STACK, MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
+                           SigActionFlags, SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
+                           WaitFlags, WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
+use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
-use crate::syscall;
 
 pub fn brk(address: usize) -> Result<usize> {
     let contexts = context::contexts();
@@ -67,7 +67,7 @@ pub fn brk(address: usize) -> Result<usize> {
     }
 }
 
-pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
+pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
     let ppid;
     let pid;
     {
@@ -114,7 +114,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             sigmask = context.sigmask;
             umask = context.umask;
 
-            if flags & CLONE_VM == CLONE_VM {
+            if flags.contains(CLONE_VM) {
                 cpu_id = context.cpu_id;
             }
 
@@ -155,7 +155,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 kstack_option = Some(new_stack);
             }
 
-            if flags & CLONE_VM == CLONE_VM {
+            if flags.contains(CLONE_VM) {
                 for memory_shared in context.image.iter() {
                     image.push(memory_shared.clone());
                 }
@@ -206,7 +206,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             }
 
             if let Some(ref stack_shared) = context.stack {
-                if flags & CLONE_STACK == CLONE_STACK {
+                if flags.contains(CLONE_STACK) {
                     stack_option = Some(stack_shared.clone());
                 } else {
                     stack_shared.with(|stack| {
@@ -261,7 +261,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 };
 
 
-                if flags & CLONE_VM == CLONE_VM {
+                if flags.contains(CLONE_VM) {
                     unsafe {
                         new_tls.load();
                     }
@@ -277,7 +277,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 tls_option = Some(new_tls);
             }
 
-            if flags & CLONE_VM == CLONE_VM {
+            if flags.contains(CLONE_VM) {
                 grants = Arc::clone(&context.grants);
             } else {
                 let mut grants_vec = Vec::new();
@@ -288,25 +288,25 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
                 grants = Arc::new(Mutex::new(grants_vec));
             }
 
-            if flags & CLONE_VM == CLONE_VM {
+            if flags.contains(CLONE_VM) {
                 name = Arc::clone(&context.name);
             } else {
                 name = Arc::new(Mutex::new(context.name.lock().clone()));
             }
 
-            if flags & CLONE_FS == CLONE_FS {
+            if flags.contains(CLONE_FS) {
                 cwd = Arc::clone(&context.cwd);
             } else {
                 cwd = Arc::new(Mutex::new(context.cwd.lock().clone()));
             }
 
-            if flags & CLONE_FILES == CLONE_FILES {
+            if flags.contains(CLONE_FILES) {
                 files = Arc::clone(&context.files);
             } else {
                 files = Arc::new(Mutex::new(context.files.lock().clone()));
             }
 
-            if flags & CLONE_SIGHAND == CLONE_SIGHAND {
+            if flags.contains(CLONE_SIGHAND) {
                 actions = Arc::clone(&context.actions);
             } else {
                 actions = Arc::new(Mutex::new(context.actions.lock().clone()));
@@ -315,7 +315,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
         // If not cloning files, dup to get a new number from scheme
         // This has to be done outside the context lock to prevent deadlocks
-        if flags & CLONE_FILES == 0 {
+        if !flags.contains(CLONE_FILES) {
             for (_fd, file_option) in files.lock().iter_mut().enumerate() {
                 let new_file_option = if let Some(ref file) = *file_option {
                     Some(FileDescriptor {
@@ -331,7 +331,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         }
 
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
-        if flags & CLONE_VM == 0 {
+        if !flags.contains(CLONE_VM) {
             let mut i = 0;
             while i < grants.lock().len() {
                 let remove = false;
@@ -350,7 +350,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
         // If vfork, block the current process
         // This has to be done after the operations that may require context switches
-        if flags & CLONE_VFORK == CLONE_VFORK {
+        if flags.contains(CLONE_VFORK) {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let mut context = context_lock.write();
@@ -430,7 +430,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
             // TODO: Clone ksig?
 
             // Setup image, heap, and grants
-            if flags & CLONE_VM == CLONE_VM {
+            if flags.contains(CLONE_VM) {
                 // Copy user image mapping, if found
                 if ! image.is_empty() {
                     let frame = active_table.p4()[crate::USER_PML4].pointed_frame().expect("user image not mapped");
@@ -514,7 +514,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
 
             // Setup user stack
             if let Some(stack_shared) = stack_option {
-                if flags & CLONE_STACK == CLONE_STACK {
+                if flags.contains(CLONE_STACK) {
                     let frame = active_table.p4()[crate::USER_STACK_PML4].pointed_frame().expect("user stack not mapped");
                     let flags = active_table.p4()[crate::USER_STACK_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
@@ -585,14 +585,7 @@ pub fn clone(flags: usize, stack_base: usize) -> Result<ContextId> {
         }
     }
 
-    let ptrace_event = PtraceEvent {
-        tag: PTRACE_EVENT_CLONE,
-        data: PtraceEventData {
-            clone: pid.into()
-        }
-    };
-
-    if ptrace::send_event(ptrace_event).is_some() {
+    if ptrace::send_event(ptrace_event!(PTRACE_EVENT_CLONE, pid.into())).is_some() {
         // Freeze the clone, allow ptrace to put breakpoints
         // to it before it starts
         let contexts = context::contexts();
@@ -860,7 +853,7 @@ fn fexec_noreturn(
                 SigAction {
                     sa_handler: unsafe { mem::transmute(SIG_DFL) },
                     sa_mask: [0; 2],
-                    sa_flags: 0,
+                    sa_flags: SigActionFlags::empty(),
                 },
                 0
             ); 128]));
@@ -1297,7 +1290,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     }
 }
 
-pub fn mprotect(address: usize, size: usize, flags: usize) -> Result<usize> {
+pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
@@ -1311,19 +1304,19 @@ pub fn mprotect(address: usize, size: usize, flags: usize) -> Result<usize> {
     let end_page = Page::containing_address(VirtualAddress::new(end_address));
     for page in Page::range_inclusive(start_page, end_page) {
         if let Some(mut page_flags) = active_table.translate_page_flags(page) {
-            if flags & PROT_EXEC > 0 {
+            if flags.contains(PROT_EXEC) {
                 page_flags.remove(EntryFlags::NO_EXECUTE);
             } else {
                 page_flags.insert(EntryFlags::NO_EXECUTE);
             }
 
-            if flags & PROT_WRITE > 0 {
+            if flags.contains(PROT_WRITE) {
                 //TODO: Not allowing gain of write privileges
             } else {
                 page_flags.remove(EntryFlags::WRITABLE);
             }
 
-            if flags & PROT_READ > 0 {
+            if flags.contains(PROT_READ) {
                 //TODO: No flags for readable pages
             } else {
                 //TODO: No flags for readable pages
@@ -1475,7 +1468,7 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     Ok(pid)
 }
 
-pub fn waitpid(pid: ContextId, status_ptr: usize, flags: usize) -> Result<ContextId> {
+pub fn waitpid(pid: ContextId, status_ptr: usize, flags: WaitFlags) -> Result<ContextId> {
     let (ppid, waitpid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;

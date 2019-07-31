@@ -6,7 +6,7 @@ use crate::event;
 use crate::interrupt::irq::acknowledge;
 use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use crate::syscall::error::*;
-use crate::syscall::flag::EVENT_READ;
+use crate::syscall::flag::{EventFlags, EVENT_READ};
 use crate::syscall::scheme::Scheme;
 
 pub static IRQ_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
@@ -87,8 +87,8 @@ impl Scheme for IrqScheme {
         Ok(0)
     }
 
-    fn fevent(&self, _id: usize, _flags: usize) -> Result<usize> {
-        Ok(0)
+    fn fevent(&self, _id: usize, _flags: EventFlags) -> Result<EventFlags> {
+        Ok(EventFlags::empty())
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {

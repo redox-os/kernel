@@ -26,7 +26,7 @@ interrupt_stack!(debug, stack, {
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
-    if ptrace::breakpoint_callback(syscall::PTRACE_SINGLESTEP).is_some() {
+    if ptrace::breakpoint_callback(PTRACE_STOP_SINGLESTEP, None).is_some() {
         handled = true;
     } else {
         // There was no breakpoint, restore original value
@@ -49,8 +49,15 @@ interrupt_stack!(non_maskable, stack, {
 
 interrupt_stack!(breakpoint, stack, {
     println!("Breakpoint trap");
-    stack.dump();
-    ksignal(SIGTRAP);
+
+    let guard = ptrace::set_process_regs(stack);
+
+    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
+        drop(guard);
+
+        stack.dump();
+        ksignal(SIGTRAP);
+    }
 });
 
 interrupt_stack!(overflow, stack, {

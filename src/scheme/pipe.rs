@@ -7,7 +7,7 @@ use crate::event;
 use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
 use crate::sync::WaitCondition;
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
-use crate::syscall::flag::{EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
+use crate::syscall::flag::{EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
 use crate::syscall::scheme::Scheme;
 use crate::syscall::data::Stat;
 
@@ -87,14 +87,14 @@ impl Scheme for PipeScheme {
         Err(Error::new(EBADF))
     }
 
-    fn fevent(&self, id: usize, flags: usize) -> Result<usize> {
+    fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
         let pipes = pipes();
 
         if let Some(pipe) = pipes.0.get(&id) {
             if flags == EVENT_READ {
                 // TODO: Return correct flags
                 if pipe.vec.lock().is_empty() {
-                    return Ok(0);
+                    return Ok(EventFlags::empty());
                 } else {
                     return Ok(EVENT_READ);
                 }

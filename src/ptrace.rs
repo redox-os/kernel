@@ -1,3 +1,7 @@
+//! The backend of the "proc:" scheme. Most internal breakpoint
+//! handling should go here, unless they closely depend on the design
+//! of the scheme.
+
 use crate::{
     arch::{
         macros::InterruptStack,
@@ -12,7 +16,13 @@ use crate::{
     context::{self, signal, Context, ContextId, Status},
     event,
     scheme::proc,
-    sync::WaitCondition
+    sync::WaitCondition,
+    syscall::{
+        data::PtraceEvent,
+        error::*,
+        flag::*,
+        ptrace_event
+    },
 };
 
 use alloc::{
@@ -30,11 +40,6 @@ use core::{
     sync::atomic::Ordering
 };
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::{
-    data::PtraceEvent,
-    error::*,
-    flag::*
-};
 
 //  ____                _
 // / ___|  ___  ___ ___(_) ___  _ __  ___
@@ -44,10 +49,25 @@ use syscall::{
 
 #[derive(Debug)]
 struct Session {
-    file_id: usize,
-    events: VecDeque<PtraceEvent>,
     breakpoint: Option<Breakpoint>,
-    tracer: Arc<WaitCondition>
+    events: VecDeque<PtraceEvent>,
+    file_id: usize,
+    tracee: Arc<WaitCondition>,
+    tracer: Arc<WaitCondition>,
+}
+impl Session {
+    fn send_event(&mut self, event: PtraceEvent) {
+        self.events.push_back(event);
+
+        // Notify nonblocking tracers
+        if self.events.len() == 1 {
+            // If the list of events was previously empty, alert now
+            proc_trigger_event(self.file_id, EVENT_READ);
+        }
+
+        // Alert blocking tracers
+        self.tracer.notify();
+    }
 }
 
 type SessionMap = BTreeMap<ContextId, Session>;
@@ -73,10 +93,11 @@ pub fn try_new_session(pid: ContextId, file_id: usize) -> bool {
         Entry::Occupied(_) => false,
         Entry::Vacant(vacant) => {
             vacant.insert(Session {
-                file_id,
-                events: VecDeque::new(),
                 breakpoint: None,
-                tracer: Arc::new(WaitCondition::new())
+                events: VecDeque::new(),
+                file_id,
+                tracee: Arc::new(WaitCondition::new()),
+                tracer: Arc::new(WaitCondition::new()),
             });
             true
         }
@@ -89,15 +110,12 @@ pub fn is_traced(pid: ContextId) -> bool {
 }
 
 /// Used for getting the flags in fevent
-pub fn session_fevent_flags(pid: ContextId) -> Option<usize> {
+pub fn session_fevent_flags(pid: ContextId) -> Option<EventFlags> {
     let sessions = sessions();
     let session = sessions.get(&pid)?;
-    let mut flags = 0;
+    let mut flags = EventFlags::empty();
     if !session.events.is_empty() {
         flags |= EVENT_READ;
-    }
-    if session.breakpoint.as_ref().map(|b| b.reached).unwrap_or(true) {
-        flags |= EVENT_WRITE;
     }
     Some(flags)
 }
@@ -107,14 +125,12 @@ pub fn session_fevent_flags(pid: ContextId) -> Option<usize> {
 pub fn close_session(pid: ContextId) {
     if let Some(session) = sessions_mut().remove(&pid) {
         session.tracer.notify();
-        if let Some(breakpoint) = session.breakpoint {
-            breakpoint.tracee.notify();
-        }
+        session.tracee.notify();
     }
 }
 
 /// Trigger a notification to the event: scheme
-fn proc_trigger_event(file_id: usize, flags: usize) {
+fn proc_trigger_event(file_id: usize, flags: EventFlags) {
     event::trigger(proc::PROC_SCHEME_ID.load(Ordering::SeqCst), file_id, flags);
 }
 
@@ -128,17 +144,13 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
 
     let mut sessions = sessions_mut();
     let session = sessions.get_mut(&context.id)?;
+    let breakpoint = session.breakpoint.as_ref()?;
 
-    session.events.push_back(event);
-
-    // Notify nonblocking tracers
-    if session.events.len() == 1 {
-        // If the list of events was previously empty, alert now
-        proc_trigger_event(session.file_id, EVENT_READ);
+    if event.cause & breakpoint.flags != event.cause {
+        return None;
     }
 
-    // Alert blocking tracers
-    session.tracer.notify();
+    session.send_event(event);
 
     Some(())
 }
@@ -164,39 +176,31 @@ pub fn recv_events(pid: ContextId, out: &mut [PtraceEvent]) -> Option<usize> {
 
 #[derive(Debug)]
 struct Breakpoint {
-    tracee: Arc<WaitCondition>,
     reached: bool,
-    flags: u8
-}
-
-fn inner_cont(pid: ContextId) -> Option<Breakpoint> {
-    // Remove the breakpoint to both save space and also make sure any
-    // yet unreached but obsolete breakpoints don't stop the program.
-    let mut sessions = sessions_mut();
-    let session = sessions.get_mut(&pid)?;
-    let breakpoint = session.breakpoint.take()?;
-
-    breakpoint.tracee.notify();
-
-    Some(breakpoint)
+    flags: PtraceFlags
 }
 
 /// Continue the process with the specified ID
 pub fn cont(pid: ContextId) {
-    inner_cont(pid);
+    let mut sessions = sessions_mut();
+    let session = match sessions.get_mut(&pid) {
+        Some(session) => session,
+        None => return
+    };
+
+    // Remove the breakpoint to make sure any yet unreached but
+    // obsolete breakpoints don't stop the program.
+    session.breakpoint = None;
+
+    session.tracee.notify();
 }
 
 /// Create a new breakpoint for the specified tracee, optionally with
 /// a sysemu flag. Panics if the session is invalid.
-pub fn set_breakpoint(pid: ContextId, flags: u8) {
-    let tracee = inner_cont(pid)
-        .map(|b| b.tracee)
-        .unwrap_or_else(|| Arc::new(WaitCondition::new()));
-
+pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags) {
     let mut sessions = sessions_mut();
     let session = sessions.get_mut(&pid).expect("proc (set_breakpoint): invalid session");
     session.breakpoint = Some(Breakpoint {
-        tracee,
         reached: false,
         flags
     });
@@ -207,30 +211,21 @@ pub fn set_breakpoint(pid: ContextId, flags: u8) {
 ///
 /// Note: Don't call while holding any locks, this will switch
 /// contexts
-pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
+pub fn wait(pid: ContextId) -> Result<()> {
     let tracer: Arc<WaitCondition> = {
         let sessions = sessions();
         match sessions.get(&pid) {
             Some(session) if session.breakpoint.as_ref().map(|b| !b.reached).unwrap_or(true) => {
-                if let Some(event) = session.events.front() {
-                    return Ok(Some(event.clone()));
+                if !session.events.is_empty() {
+                    return Ok(());
                 }
                 Arc::clone(&session.tracer)
             },
-            _ => return Ok(None)
+            _ => return Ok(())
         }
     };
 
     while !tracer.wait() {}
-
-    {
-        let sessions = sessions();
-        if let Some(session) = sessions.get(&pid) {
-            if let Some(event) = session.events.front() {
-                return Ok(Some(event.clone()));
-            }
-        }
-    }
 
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -239,12 +234,12 @@ pub fn wait(pid: ContextId) -> Result<Option<PtraceEvent>> {
         return Err(Error::new(ESRCH));
     }
 
-    Ok(None)
+    Ok(())
 }
 
 /// Notify the tracer and await green flag to continue.
 /// Note: Don't call while holding any locks, this will switch contexts
-pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
+pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>) -> Option<PtraceFlags> {
     // Can't hold any locks when executing wait()
     let (tracee, flags) = {
         let contexts = context::contexts();
@@ -255,10 +250,7 @@ pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
         let session = sessions.get_mut(&context.id)?;
         let breakpoint = session.breakpoint.as_mut()?;
 
-        // TODO: How should singlesteps interact with syscalls? How
-        // does Linux handle this?
-
-        if breakpoint.flags & PTRACE_OPERATIONMASK != match_flags & PTRACE_OPERATIONMASK {
+        if breakpoint.flags & match_flags != match_flags {
             return None;
         }
 
@@ -266,12 +258,12 @@ pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
         // the memo
         breakpoint.reached = true;
 
-        session.tracer.notify();
-        proc_trigger_event(session.file_id, EVENT_WRITE);
+        let flags = breakpoint.flags;
+        session.send_event(event.unwrap_or(ptrace_event!(match_flags)));
 
         (
-            Arc::clone(&breakpoint.tracee),
-            breakpoint.flags
+            Arc::clone(&session.tracee),
+            flags
         )
     };
 
@@ -280,13 +272,32 @@ pub fn breakpoint_callback(match_flags: u8) -> Option<u8> {
     Some(flags)
 }
 
+/// Obtain the next breakpoint flags for the current process. This is
+/// used for detecting whether or not the tracer decided to use sysemu
+/// mode.
+pub fn next_breakpoint() -> Option<PtraceFlags> {
+    let contexts = context::contexts();
+    let context = contexts.current()?;
+    let context = context.read();
+
+    let sessions = sessions();
+    let session = sessions.get(&context.id)?;
+    let breakpoint = session.breakpoint.as_ref()?;
+
+    Some(breakpoint.flags)
+}
+
 /// Call when a context is closed to alert any tracers
 pub fn close_tracee(pid: ContextId) -> Option<()> {
     let mut sessions = sessions_mut();
     let session = sessions.get_mut(&pid)?;
 
+    // Cause tracers to wake up. Any action will cause ESRCH which can
+    // be used to detect exit.
     session.breakpoint = None;
     session.tracer.notify();
+    proc_trigger_event(session.file_id, EVENT_READ);
+
     Some(())
 }
 

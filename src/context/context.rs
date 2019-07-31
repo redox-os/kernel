@@ -16,7 +16,7 @@ use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 use crate::syscall::data::SigAction;
-use crate::syscall::flag::SIG_DFL;
+use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
@@ -222,7 +222,7 @@ impl Context {
                 SigAction {
                     sa_handler: unsafe { mem::transmute(SIG_DFL) },
                     sa_mask: [0; 2],
-                    sa_flags: 0,
+                    sa_flags: SigActionFlags::empty(),
                 },
                 0
             ); 128])),

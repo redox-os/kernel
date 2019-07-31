@@ -47,13 +47,13 @@ impl Scheme for MemoryScheme {
             let mut to_address = crate::USER_GRANT_OFFSET;
 
             let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
-            if map.flags & PROT_EXEC == 0 {
+            if !map.flags.contains(PROT_EXEC) {
                 entry_flags |= EntryFlags::NO_EXECUTE;
             }
-            if map.flags & PROT_READ > 0 {
+            if map.flags.contains(PROT_READ) {
                 //TODO: PROT_READ
             }
-            if map.flags & PROT_WRITE > 0 {
+            if map.flags.contains(PROT_WRITE) {
                 entry_flags |= EntryFlags::WRITABLE;
             }
 
