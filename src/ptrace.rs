@@ -422,8 +422,12 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
 pub fn with_context_memory<F>(context: &Context, offset: VirtualAddress, len: usize, f: F) -> Result<()>
     where F: FnOnce(*mut u8) -> Result<()>
 {
-    // TODO: Is using USER_TMP_MISC_OFFSET safe? I guess make sure
-    // it's not too large.
+    // As far as I understand, mapping any regions following
+    // USER_TMP_MISC_OFFSET is safe because no other memory location
+    // is used after it. In the future it might be necessary to define
+    // a maximum amount of pages that can be mapped in one batch,
+    // which could be used to either internally retry `read`/`write`
+    // in `proc:<pid>/mem`, or return a partial read/write.
     let start = Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET));
 
     let mut active_page_table = unsafe { ActivePageTable::new() };
