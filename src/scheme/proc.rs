@@ -26,20 +26,6 @@ use core::{
 };
 use spin::{Mutex, RwLock};
 
-#[derive(Clone, Copy)]
-enum RegsKind {
-    Float,
-    Int
-}
-#[derive(Clone)]
-enum Operation {
-    Memory(VirtualAddress),
-    Regs(RegsKind),
-    Trace {
-        clones: Vec<ContextId>
-    }
-}
-
 fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
     where F: FnOnce(&Context) -> Result<T>
 {
@@ -98,6 +84,20 @@ fn try_stop_context<F, T>(pid: ContextId, restart_after: bool, mut callback: F) 
         context.ptrace_stop = restart_after && was_stopped;
 
         break ret;
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RegsKind {
+    Float,
+    Int
+}
+#[derive(Clone)]
+enum Operation {
+    Memory(VirtualAddress),
+    Regs(RegsKind),
+    Trace {
+        clones: Vec<ContextId>
     }
 }
 

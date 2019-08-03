@@ -281,7 +281,9 @@ impl InterruptStack {
         self.scratch.rcx = all.rcx;
         self.scratch.rax = all.rax;
         self.iret.rip = all.rip;
-        self.iret.cs = all.cs;
+
+        // These should probably be restricted
+        // self.iret.cs = all.cs;
         // self.iret.rflags = all.eflags;
     }
     /// Enables the "Trap Flag" in the FLAGS register, causing the CPU
