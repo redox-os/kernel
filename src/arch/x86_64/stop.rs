@@ -1,5 +1,5 @@
 #[cfg(feature = "acpi")]
-use acpi;
+use crate::acpi;
 use crate::syscall::io::{Io, Pio};
 
 #[no_mangle]

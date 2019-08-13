@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 
-use paging::ActivePageTable;
+use crate::paging::ActivePageTable;
 
 use super::sdt::Sdt;
 use super::get_sdt;

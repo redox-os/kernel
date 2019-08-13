@@ -1,8 +1,8 @@
 use core::mem;
 
-use memory::{allocate_frames, Frame};
-use paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
-use paging::entry::EntryFlags;
+use crate::memory::{allocate_frames, Frame};
+use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use crate::paging::entry::EntryFlags;
 
 use super::sdt::Sdt;
 use super::{AP_STARTUP, TRAMPOLINE, find_sdt, load_table, get_sdt_signature};
@@ -10,9 +10,9 @@ use super::{AP_STARTUP, TRAMPOLINE, find_sdt, load_table, get_sdt_signature};
 use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
 
-use device::local_apic::LOCAL_APIC;
-use interrupt;
-use start::{kstart_ap, CPU_COUNT, AP_READY};
+use crate::device::local_apic::LOCAL_APIC;
+use crate::interrupt;
+use crate::start::{kstart_ap, CPU_COUNT, AP_READY};
 
 /// The Multiple APIC Descriptor Table
 #[derive(Debug)]
@@ -64,7 +64,7 @@ impl Madt {
                                 CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 
                                 // Allocate a stack
-                                let stack_start = allocate_frames(64).expect("no more frames in acpi stack_start").start_address().get() + ::KERNEL_OFFSET;
+                                let stack_start = allocate_frames(64).expect("no more frames in acpi stack_start").start_address().get() + crate::KERNEL_OFFSET;
                                 let stack_end = stack_start + 64 * 4096;
 
                                 let ap_ready = TRAMPOLINE as *mut u64;

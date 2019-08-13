@@ -1,4 +1,4 @@
-use acpi::hpet::Hpet;
+use crate::acpi::hpet::Hpet;
 
 static LEG_RT_CNF: u64 = 2;
 static ENABLE_CNF: u64 = 1;

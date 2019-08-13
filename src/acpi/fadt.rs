@@ -3,7 +3,7 @@ use core::{mem, ptr};
 use super::sdt::Sdt;
 use super::{ACPI_TABLE, SDT_POINTERS, get_sdt, find_sdt, get_sdt_signature, load_table};
 
-use paging::ActivePageTable;
+use crate::paging::ActivePageTable;
 
 #[repr(packed)]
 #[derive(Debug)]

@@ -2,9 +2,9 @@ use core::mem;
 
 use super::sdt::Sdt;
 use self::drhd::Drhd;
-use memory::Frame;
-use paging::{ActivePageTable, PhysicalAddress};
-use paging::entry::EntryFlags;
+use crate::memory::Frame;
+use crate::paging::{ActivePageTable, PhysicalAddress};
+use crate::paging::entry::EntryFlags;
 
 use super::{find_sdt, load_table, get_sdt_signature};
 

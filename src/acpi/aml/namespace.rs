@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use alloc::btree_map::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use core::fmt::{Debug, Formatter, Error};
 use core::str::FromStr;
@@ -12,7 +12,7 @@ use super::namedobj::{ RegionSpace, FieldFlags };
 use super::parser::{AmlExecutionContext, ExecutionState};
 use super::AmlError;
 
-use acpi::{SdtSignature, get_signature_from_index, get_index_from_signature};
+use crate::acpi::{SdtSignature, get_signature_from_index, get_index_from_signature};
 
 #[derive(Clone)]
 pub enum FieldSelector {

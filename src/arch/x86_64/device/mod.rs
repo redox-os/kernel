@@ -16,7 +16,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable){
 
 #[cfg(feature = "acpi")]
 unsafe fn init_hpet() -> bool {
-    use acpi::ACPI_TABLE;
+    use crate::acpi::ACPI_TABLE;
     if let Some(ref mut hpet) = *ACPI_TABLE.hpet.write() {
         hpet::init(hpet)
     } else {

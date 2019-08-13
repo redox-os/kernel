@@ -5,9 +5,9 @@ use super::pkglength::parse_pkg_length;
 use super::termlist::{parse_term_arg, parse_term_list};
 use super::namestring::{parse_name_string, parse_super_name};
 
-use time::monotonic;
+use crate::time::monotonic;
 
-use acpi::{Sdt, load_table, get_sdt_signature};
+use crate::acpi::{Sdt, load_table, get_sdt_signature};
 use super::{parse_aml_table, is_aml_table};
 
 pub fn parse_type1_opcode(data: &[u8],

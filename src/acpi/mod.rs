@@ -1,7 +1,7 @@
 //! # ACPI
 //! Code to parse the ACPI tables
 
-use alloc::btree_map::BTreeMap;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
@@ -10,11 +10,11 @@ use syscall::io::{Io, Pio};
 
 use spin::RwLock;
 
-use stop::kstop;
+use crate::stop::kstop;
 
-use memory::Frame;
-use paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
-use paging::entry::EntryFlags;
+use crate::memory::Frame;
+use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use crate::paging::entry::EntryFlags;
 
 use self::dmar::Dmar;
 use self::fadt::Fadt;

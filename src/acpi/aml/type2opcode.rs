@@ -10,8 +10,8 @@ use super::termlist::{parse_term_arg, parse_method_invocation};
 use super::namestring::{parse_super_name, parse_target, parse_name_string, parse_simple_name};
 use super::dataobj::parse_data_ref_obj;
 
-use time::monotonic;
-use acpi::SDT_POINTERS;
+use crate::time::monotonic;
+use crate::acpi::SDT_POINTERS;
 
 #[derive(Debug, Clone)]
 pub enum MatchOpcode {

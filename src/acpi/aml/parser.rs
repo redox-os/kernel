@@ -1,5 +1,5 @@
 use alloc::string::String;
-use alloc::btree_map::BTreeMap;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 
@@ -8,7 +8,7 @@ use spin::RwLockWriteGuard;
 use super::namespace::{ AmlValue, ObjectReference };
 use super::AmlError;
 
-use acpi::ACPI_TABLE;
+use crate::acpi::ACPI_TABLE;
 
 pub type ParseResult = Result<AmlParseType, AmlError>;
 pub type AmlParseType = AmlParseTypeGeneric<AmlValue>;
