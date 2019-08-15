@@ -15,7 +15,6 @@ use crate::{
 
 use alloc::{
     collections::BTreeMap,
-    sync::Arc,
     vec::Vec
 };
 use core::{
@@ -24,7 +23,7 @@ use core::{
     slice,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 
 fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
     where F: FnOnce(&Context) -> Result<T>
@@ -87,17 +86,53 @@ fn try_stop_context<F, T>(pid: ContextId, restart_after: bool, mut callback: F) 
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum RegsKind {
     Float,
     Int
 }
-#[derive(Clone)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Operation {
-    Memory(VirtualAddress),
+    Memory,
     Regs(RegsKind),
-    Trace {
-        clones: Vec<ContextId>
+    Trace,
+}
+struct MemData {
+    offset: VirtualAddress,
+}
+impl Default for MemData {
+    fn default() -> Self {
+        Self { offset: VirtualAddress::new(0) }
+    }
+}
+#[derive(Default)]
+struct TraceData {
+    clones: Vec<ContextId>,
+}
+enum OperationData {
+    Memory(MemData),
+    Trace(TraceData),
+    Other,
+}
+impl OperationData {
+    fn default_for(op: Operation) -> OperationData {
+        match op {
+            Operation::Memory => OperationData::Memory(MemData::default()),
+            Operation::Trace => OperationData::Trace(TraceData::default()),
+            _ => OperationData::Other,
+        }
+    }
+    fn trace_data(&mut self) -> Option<&mut TraceData> {
+        match self {
+            OperationData::Trace(data) => Some(data),
+            _ => None,
+        }
+    }
+    fn mem_data(&mut self) -> Option<&mut MemData> {
+        match self {
+            OperationData::Memory(data) => Some(data),
+            _ => None,
+        }
     }
 }
 
@@ -105,19 +140,21 @@ enum Operation {
 struct Info {
     pid: ContextId,
     flags: usize,
+
+    // Important: Operation must never change. Search for:
+    //
+    // "operations can't change" to see usages.
+    operation: Operation,
 }
 struct Handle {
     info: Info,
-    operation: Operation
+    data: OperationData,
 }
 impl Handle {
     fn continue_ignored_children(&mut self) -> Option<()> {
-        let clones = match self.operation {
-            Operation::Trace { ref mut clones } => clones,
-            _ => return None
-        };
+        let data = self.data.trace_data()?;
         let contexts = context::contexts();
-        for pid in clones.drain(..) {
+        for pid in data.clones.drain(..) {
             if ptrace::is_traced(pid) {
                 continue;
             }
@@ -134,7 +171,7 @@ pub static PROC_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
 
 pub struct ProcScheme {
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Arc<Mutex<Handle>>>>
+    handles: RwLock<BTreeMap<usize, Handle>>,
 }
 
 impl ProcScheme {
@@ -156,13 +193,12 @@ impl Scheme for ProcScheme {
             .and_then(|s| s.parse().ok())
             .map(ContextId::from)
             .ok_or(Error::new(EINVAL))?;
+
         let operation = match parts.next() {
-            Some("mem") => Operation::Memory(VirtualAddress::new(0)),
+            Some("mem") => Operation::Memory,
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
-            Some("trace") => Operation::Trace {
-                clones: Vec::new()
-            },
+            Some("trace") => Operation::Trace,
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -215,13 +251,14 @@ impl Scheme for ProcScheme {
             }
         }
 
-        self.handles.write().insert(id, Arc::new(Mutex::new(Handle {
+        self.handles.write().insert(id, Handle {
             info: Info {
                 flags,
                 pid,
+                operation,
             },
-            operation,
-        })));
+            data: OperationData::default_for(operation),
+        });
         Ok(id)
     }
 
@@ -236,7 +273,6 @@ impl Scheme for ProcScheme {
         let info = {
             let handles = self.handles.read();
             let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
-            let handle = handle.lock();
             handle.info
         };
 
@@ -254,45 +290,45 @@ impl Scheme for ProcScheme {
     }
 
     fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-        let mut handle = handle.lock();
+        let mut handles = self.handles.write();
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let mut memory = handle.data.mem_data().ok_or(Error::new(EBADF))?;
 
-        match handle.operation {
-            Operation::Memory(ref mut offset) => Ok({
-                *offset = VirtualAddress::new(match whence {
-                    SEEK_SET => pos,
-                    SEEK_CUR => cmp::max(0, offset.get() as isize + pos as isize) as usize,
-                    SEEK_END => cmp::max(0, isize::max_value() + pos as isize) as usize,
-                    _ => return Err(Error::new(EBADF))
-                });
-                offset.get()
-            }),
-            _ => Err(Error::new(EBADF))
-        }
+        let value = match whence {
+            SEEK_SET => pos,
+            SEEK_CUR => cmp::max(0, memory.offset.get() as isize + pos as isize) as usize,
+            SEEK_END => cmp::max(0, isize::max_value() + pos as isize) as usize,
+            _ => return Err(Error::new(EBADF))
+        };
+        memory.offset = VirtualAddress::new(value);
+        Ok(value)
     }
 
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
-        let handle = {
+        let info = {
             let handles = self.handles.read();
-            Arc::clone(handles.get(&id).ok_or(Error::new(EBADF))?)
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.info
         };
-        let mut handle = handle.lock();
-        let info = handle.info;
 
-        match handle.operation {
-            Operation::Memory(ref mut offset) => {
+        match info.operation {
+            Operation::Memory => {
+                // Won't context switch, don't worry about the locks
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.mem_data().expect("operations can't change");
+
                 let contexts = context::contexts();
                 let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
                 let context = context.read();
 
-                ptrace::with_context_memory(&context, *offset, buf.len(), |ptr| {
+                ptrace::with_context_memory(&context, data.offset, buf.len(), |ptr| {
                     buf.copy_from_slice(validate::validate_slice(ptr, buf.len())?);
                     Ok(())
                 })?;
 
-                *offset = VirtualAddress::new(offset.get() + buf.len());
+                data.offset = VirtualAddress::new(data.offset.get() + buf.len());
                 Ok(buf.len())
             },
             Operation::Regs(kind) => {
@@ -332,7 +368,7 @@ impl Scheme for ProcScheme {
 
                 Ok(len)
             },
-            Operation::Trace { ref mut clones } => {
+            Operation::Trace => {
                 let slice = unsafe {
                     slice::from_raw_parts_mut(
                         buf.as_mut_ptr() as *mut PtraceEvent,
@@ -341,9 +377,14 @@ impl Scheme for ProcScheme {
                 };
                 let read = ptrace::recv_events(info.pid, slice).unwrap_or(0);
 
+                // Won't context switch, don't worry about the locks
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.trace_data().expect("operations can't change");
+
                 for event in &slice[..read] {
                     if event.cause == PTRACE_EVENT_CLONE {
-                        clones.push(ContextId::from(event.a));
+                        data.clones.push(ContextId::from(event.a));
                     }
                 }
 
@@ -354,26 +395,30 @@ impl Scheme for ProcScheme {
 
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
-        let handle = {
-            let handles = self.handles.read();
-            Arc::clone(handles.get(&id).ok_or(Error::new(EBADF))?)
+        let info = {
+            let mut handles = self.handles.write();
+            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+            handle.continue_ignored_children();
+            handle.info
         };
-        let mut handle = handle.lock();
-        let info = handle.info;
-        handle.continue_ignored_children();
 
-        match handle.operation {
-            Operation::Memory(ref mut offset) => {
+        match info.operation {
+            Operation::Memory => {
+                // Won't context switch, don't worry about the locks
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.mem_data().expect("operations can't change");
+
                 let contexts = context::contexts();
                 let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
                 let context = context.read();
 
-                ptrace::with_context_memory(&context, *offset, buf.len(), |ptr| {
+                ptrace::with_context_memory(&context, data.offset, buf.len(), |ptr| {
                     validate::validate_slice_mut(ptr, buf.len())?.copy_from_slice(buf);
                     Ok(())
                 })?;
 
-                *offset = VirtualAddress::new(offset.get() + buf.len());
+                data.offset = VirtualAddress::new(data.offset.get() + buf.len());
                 Ok(buf.len())
             },
             Operation::Regs(kind) => match kind {
@@ -416,7 +461,7 @@ impl Scheme for ProcScheme {
                     })
                 }
             },
-            Operation::Trace { .. } => {
+            Operation::Trace => {
                 if buf.len() < mem::size_of::<u64>() {
                     return Ok(0);
                 }
@@ -470,9 +515,8 @@ impl Scheme for ProcScheme {
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-        let mut handle = handle.lock();
+        let mut handles = self.handles.write();
+        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         match cmd {
             F_SETFL => { handle.info.flags = arg; Ok(0) },
@@ -484,7 +528,6 @@ impl Scheme for ProcScheme {
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-        let handle = handle.lock();
 
         Ok(ptrace::session_fevent_flags(handle.info.pid).expect("proc (fevent): invalid session"))
     }
@@ -492,13 +535,12 @@ impl Scheme for ProcScheme {
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-        let handle = handle.lock();
 
-        let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.operation {
-            Operation::Memory(_) => "mem",
+        let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.info.operation {
+            Operation::Memory => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
-            Operation::Trace { .. } => "trace"
+            Operation::Trace => "trace"
         });
 
         let len = cmp::min(path.len(), buf.len());
@@ -508,11 +550,10 @@ impl Scheme for ProcScheme {
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        let handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
-        let mut handle = handle.lock();
+        let mut handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
         handle.continue_ignored_children();
 
-        if let Operation::Trace { .. } = handle.operation {
+        if let Operation::Trace = handle.info.operation {
             ptrace::close_session(handle.info.pid);
 
             if handle.info.flags & O_EXCL == O_EXCL {
