@@ -209,8 +209,8 @@ pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags) {
 /// Wait for the tracee to stop. If an event occurs, it returns a copy
 /// of that. It will still be available for read using recv_event.
 ///
-/// Note: Don't call while holding any locks, this will switch
-/// contexts
+/// Note: Don't call while holding any locks or allocated data, this
+/// will switch contexts and may in fact just never terminate.
 pub fn wait(pid: ContextId) -> Result<()> {
     let tracer: Arc<WaitCondition> = {
         let sessions = sessions();
@@ -238,7 +238,9 @@ pub fn wait(pid: ContextId) -> Result<()> {
 }
 
 /// Notify the tracer and await green flag to continue.
-/// Note: Don't call while holding any locks, this will switch contexts
+///
+/// Note: Don't call while holding any locks or allocated data, this
+/// will switch contexts and may in fact just never terminate.
 pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>) -> Option<PtraceFlags> {
     // Can't hold any locks when executing wait()
     let (tracee, flags) = {

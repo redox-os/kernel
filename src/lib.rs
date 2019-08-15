@@ -13,7 +13,6 @@
 #![cfg_attr(feature = "clippy", allow(or_fun_call))]
 #![cfg_attr(feature = "clippy", allow(too_many_arguments))]
 #![deny(unreachable_patterns)]
-#![feature(alloc)]
 #![feature(allocator_api)]
 #![feature(asm)]
 #![feature(concat_idents)]
