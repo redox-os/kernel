@@ -27,7 +27,7 @@ struct Handle {
     seek: usize
 }
 
-type SysFn = Fn() -> Result<Vec<u8>> + Send + Sync;
+type SysFn = dyn Fn() -> Result<Vec<u8>> + Send + Sync;
 
 /// System information scheme
 pub struct SysScheme {

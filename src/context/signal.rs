@@ -1,6 +1,5 @@
 use alloc::sync::Arc;
 use core::mem;
-use syscall::data::PtraceEvent;
 use syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
 use syscall::ptrace_event;
 

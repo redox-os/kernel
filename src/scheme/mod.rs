@@ -173,7 +173,7 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<Box<Scheme + Send + Sync>>> {
+    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<Box<dyn Scheme + Send + Sync>>> {
         self.map.iter()
     }
 
@@ -188,7 +188,7 @@ impl SchemeList {
         self.map.get(&id)
     }
 
-    pub fn get_name(&self, ns: SchemeNamespace, name: &[u8]) -> Option<(SchemeId, &Arc<Box<Scheme + Send + Sync>>)> {
+    pub fn get_name(&self, ns: SchemeNamespace, name: &[u8]) -> Option<(SchemeId, &Arc<Box<dyn Scheme + Send + Sync>>)> {
         if let Some(names) = self.names.get(&ns) {
             if let Some(&id) = names.get(name) {
                 return self.get(id).map(|scheme| (id, scheme));
@@ -199,7 +199,7 @@ impl SchemeList {
 
     /// Create a new scheme.
     pub fn insert<F>(&mut self, ns: SchemeNamespace, name: Box<[u8]>, scheme_fn: F) -> Result<SchemeId>
-        where F: Fn(SchemeId) -> Arc<Box<Scheme + Send + Sync>>
+        where F: Fn(SchemeId) -> Arc<Box<dyn Scheme + Send + Sync>>
     {
         if let Some(names) = self.names.get(&ns) {
             if names.contains_key(&name) {

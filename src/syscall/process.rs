@@ -21,12 +21,13 @@ use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PA
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
-use crate::syscall::data::{PtraceEvent, SigAction, Stat};
+use crate::syscall::data::{SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{CloneFlags, CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND,
                            CLONE_STACK, MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
-                           SigActionFlags, SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK, SIGCONT, SIGTERM,
-                           WaitFlags, WCONTINUED, WNOHANG, WUNTRACED, wifcontinued, wifstopped};
+                           PTRACE_STOP_EXIT, SigActionFlags, SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK,
+                           SIGCONT, SIGTERM, WaitFlags, WCONTINUED, WNOHANG, WUNTRACED, wifcontinued,
+                           wifstopped};
 use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
@@ -1063,6 +1064,8 @@ pub fn exit(status: usize) -> ! {
             let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exit failed to find context");
             Arc::clone(&context_lock)
         };
+
+        ptrace::breakpoint_callback(PTRACE_STOP_EXIT, Some(ptrace_event!(PTRACE_STOP_EXIT, status)));
 
         let mut close_files = Vec::new();
         let pid = {
