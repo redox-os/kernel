@@ -393,23 +393,23 @@ pub struct Page {
 }
 
 impl Page {
-    pub fn start_address(&self) -> VirtualAddress {
+    pub fn start_address(self) -> VirtualAddress {
         VirtualAddress::new(self.number * PAGE_SIZE)
     }
 
-    pub fn p4_index(&self) -> usize {
+    pub fn p4_index(self) -> usize {
         (self.number >> 27) & 0o777
     }
 
-    pub fn p3_index(&self) -> usize {
+    pub fn p3_index(self) -> usize {
         (self.number >> 18) & 0o777
     }
 
-    pub fn p2_index(&self) -> usize {
+    pub fn p2_index(self) -> usize {
         (self.number >> 9) & 0o777
     }
 
-    pub fn p1_index(&self) -> usize {
+    pub fn p1_index(self) -> usize {
         self.number & 0o777
     }
 
@@ -420,10 +420,7 @@ impl Page {
     }
 
     pub fn range_inclusive(start: Page, end: Page) -> PageIter {
-        PageIter {
-            start: start,
-            end: end,
-        }
+        PageIter { start, end }
     }
 
     pub fn next(self) -> Page {

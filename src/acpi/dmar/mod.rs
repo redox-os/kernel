@@ -172,8 +172,8 @@ impl Iterator for DmarIter {
     type Item = DmarEntry;
     fn next(&mut self) -> Option<Self::Item> {
         if self.i + 4 <= self.sdt.data_len() {
-            let entry_type = unsafe { *((self.sdt.data_address() as *const u8).offset(self.i as isize) as *const u16) };
-            let entry_len = unsafe { *((self.sdt.data_address() as *const u8).offset(self.i as isize + 2) as *const u16) } as usize;
+            let entry_type = unsafe { *((self.sdt.data_address() as *const u8).add(self.i) as *const u16) };
+            let entry_len = unsafe { *((self.sdt.data_address() as *const u8).add(self.i + 2) as *const u16) } as usize;
 
             if self.i + entry_len <= self.sdt.data_len() {
                 let item = match entry_type {

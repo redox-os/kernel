@@ -1,5 +1,5 @@
 use core::alloc::{AllocErr, GlobalAlloc, Layout};
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use linked_list_allocator::Heap;
 use spin::Mutex;
 
@@ -40,7 +40,7 @@ unsafe impl GlobalAlloc for Allocator {
                         panic!("__rust_allocate: heap not initialized");
                     }
                 },
-                other => return other.ok().map_or(0 as *mut u8, |allocation| allocation.as_ptr()),
+                other => return other.ok().map_or(ptr::null_mut(), |allocation| allocation.as_ptr()),
             }
         }
     }

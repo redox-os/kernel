@@ -13,9 +13,7 @@ pub struct TemporaryPage {
 
 impl TemporaryPage {
     pub fn new(page: Page) -> TemporaryPage {
-        TemporaryPage {
-            page: page,
-        }
+        TemporaryPage { page }
     }
 
     pub fn start_address (&self) -> VirtualAddress {

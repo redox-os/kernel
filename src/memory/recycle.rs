@@ -16,7 +16,7 @@ pub struct RecycleAllocator<T: FrameAllocator> {
 impl<T: FrameAllocator> RecycleAllocator<T> {
     pub fn new(inner: T) -> Self {
         Self {
-            inner: inner,
+            inner,
             noncore: false,
             free: Vec::new(),
         }

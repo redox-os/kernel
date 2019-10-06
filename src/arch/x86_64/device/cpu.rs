@@ -8,19 +8,19 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     let cpuid = CpuId::new();
 
     if let Some(info) = cpuid.get_vendor_info() {
-        write!(w, "Vendor: {}\n", info.as_string())?;
+        writeln!(w, "Vendor: {}", info.as_string())?;
     }
 
     if let Some(info) = cpuid.get_extended_function_info() {
         if let Some(brand) = info.processor_brand_string() {
-            write!(w, "Model: {}\n", brand)?;
+            writeln!(w, "Model: {}", brand)?;
         }
     }
 
     if let Some(info) = cpuid.get_processor_frequency_info() {
-        write!(w, "CPU Base MHz: {}\n", info.processor_base_frequency())?;
-        write!(w, "CPU Max MHz: {}\n", info.processor_max_frequency())?;
-        write!(w, "Bus MHz: {}\n", info.bus_frequency())?;
+        writeln!(w, "CPU Base MHz: {}", info.processor_base_frequency())?;
+        writeln!(w, "CPU Max MHz: {}", info.processor_max_frequency())?;
+        writeln!(w, "Bus MHz: {}", info.bus_frequency())?;
     }
 
     write!(w, "Features:")?;
@@ -120,7 +120,7 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
         if info.has_mpx() { write!(w, " mpx")? };
     }
 
-    write!(w, "\n")?;
+    writeln!(w)?;
 
     Ok(())
 }

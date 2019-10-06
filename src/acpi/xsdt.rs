@@ -35,7 +35,7 @@ impl Iterator for XsdtIter {
     type Item = usize;
     fn next(&mut self) -> Option<Self::Item> {
         if self.i < self.sdt.data_len()/mem::size_of::<u64>() {
-            let item = unsafe { *(self.sdt.data_address() as *const u64).offset(self.i as isize) };
+            let item = unsafe { *(self.sdt.data_address() as *const u64).add(self.i) };
             self.i += 1;
             Some(item as usize)
         } else {

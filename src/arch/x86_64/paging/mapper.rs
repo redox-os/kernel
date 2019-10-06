@@ -134,7 +134,7 @@ impl Mapper {
         self.map_to(page, frame, flags)
     }
 
-    fn unmap_inner(&mut self, page: &Page, keep_parents: bool) -> Frame {
+    fn unmap_inner(&mut self, page: Page, keep_parents: bool) -> Frame {
         let frame;
 
         let p4 = self.p4_mut();
@@ -203,14 +203,14 @@ impl Mapper {
 
     /// Unmap a page
     pub fn unmap(&mut self, page: Page) -> MapperFlush {
-        let frame = self.unmap_inner(&page, false);
+        let frame = self.unmap_inner(page, false);
         deallocate_frames(frame, 1);
         MapperFlush::new(page)
     }
 
     /// Unmap a page, return frame without free
     pub fn unmap_return(&mut self, page: Page, keep_parents: bool) -> (MapperFlush, Frame) {
-        let frame = self.unmap_inner(&page, keep_parents);
+        let frame = self.unmap_inner(page, keep_parents);
         (MapperFlush::new(page), frame)
     }
 

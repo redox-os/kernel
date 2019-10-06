@@ -149,7 +149,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     // Change the return address of the child
                     // (previously syscall) to the arch-specific
                     // clone_ret callback
-                    let func_ptr = new_stack.as_mut_ptr().offset(offset as isize);
+                    let func_ptr = new_stack.as_mut_ptr().add(offset);
                     *(func_ptr as *mut usize) = interrupt::syscall::clone_ret as usize;
                 }
 
@@ -1044,7 +1044,6 @@ pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -
         // Argument must be moved into kernel space before exec unmaps all memory
         args.push(arg.to_vec().into_boxed_slice());
     }
-    drop(arg_ptrs);
 
     let mut vars = Vec::new();
     for var_ptr in var_ptrs {
@@ -1052,7 +1051,9 @@ pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -
         // Argument must be moved into kernel space before exec unmaps all memory
         vars.push(var.to_vec().into_boxed_slice());
     }
-    drop(var_ptrs);
+
+    // Neither arg_ptrs nor var_ptrs should be used after this point, the kernel
+    // now has owned copies in args and vars
 
     fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None)
 }
@@ -1125,10 +1126,8 @@ pub fn exit(status: usize) -> ! {
             if let Some(parent_lock) = contexts.get(ppid) {
                 let waitpid = {
                     let mut parent = parent_lock.write();
-                    if vfork {
-                        if ! parent.unblock() {
-                            println!("{}: {} not blocked for exit vfork unblock", pid.into(), ppid.into());
-                        }
+                    if vfork && ! parent.unblock() {
+                        println!("{}: {} not blocked for exit vfork unblock", pid.into(), ppid.into());
                     }
                     Arc::clone(&parent.waitpid)
                 };

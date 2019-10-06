@@ -188,7 +188,7 @@ impl GdtEntry {
             limitl: limit as u16,
             offsetl: offset as u16,
             offsetm: (offset >> 16) as u8,
-            access: access,
+            access,
             flags_limith: flags & 0xF0 | ((limit >> 16) as u8) & 0x0F,
             offseth: (offset >> 24) as u8
         }

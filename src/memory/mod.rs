@@ -46,7 +46,7 @@ pub struct MemoryAreaIter {
 impl MemoryAreaIter {
     fn new(_type: u32) -> Self {
         MemoryAreaIter {
-            _type: _type,
+            _type,
             i: 0
         }
     }
@@ -73,7 +73,7 @@ static ALLOCATOR: Mutex<Option<RecycleAllocator<BumpAllocator>>> = Mutex::new(No
 pub unsafe fn init(kernel_start: usize, kernel_end: usize) {
     // Copy memory map from bootloader location
     for (i, entry) in MEMORY_MAP.iter_mut().enumerate() {
-        *entry = *(0x500 as *const MemoryArea).offset(i as isize);
+        *entry = *(0x500 as *const MemoryArea).add(i);
         if entry._type != MEMORY_AREA_NULL {
             println!("{:?}", entry);
         }
@@ -157,10 +157,7 @@ impl Frame {
 
     //TODO: Set private
     pub fn range_inclusive(start: Frame, end: Frame) -> FrameIter {
-        FrameIter {
-            start: start,
-            end: end,
-        }
+        FrameIter { start, end }
     }
 }
 

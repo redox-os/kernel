@@ -312,9 +312,9 @@ pub struct Memory {
 impl Memory {
     pub fn new(start: VirtualAddress, size: usize, flags: EntryFlags, clear: bool) -> Self {
         let mut memory = Memory {
-            start: start,
-            size: size,
-            flags: flags
+            start,
+            size,
+            flags,
         };
 
         memory.map(clear);

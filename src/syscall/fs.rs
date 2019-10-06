@@ -29,12 +29,12 @@ pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let mut packet = Packet {
         id: 0,
         pid: pid.into(),
-        uid: uid,
-        gid: gid,
-        a: a,
+        uid,
+        gid,
+        a,
         b: file.description.read().number,
-        c: c,
-        d: d
+        c,
+        d
     };
 
     scheme.handle(&mut packet);
@@ -406,8 +406,7 @@ pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        let file = context.get_file(fd).ok_or(Error::new(EBADF))?;
-        file
+        context.get_file(fd).ok_or(Error::new(EBADF))?
     };
 
     let (path_canon, uid, gid, scheme_ns) = {

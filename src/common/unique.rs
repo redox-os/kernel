@@ -22,7 +22,7 @@ impl<T> Unique<T> {
     pub unsafe fn new_unchecked(ptr: *mut T) -> Self {
         Self(NonNull::new_unchecked(ptr))
     }
-    pub fn as_ptr(&self) -> *mut T {
+    pub fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
     }
 }

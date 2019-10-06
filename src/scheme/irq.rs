@@ -4,12 +4,12 @@ use spin::Mutex;
 
 use crate::event;
 use crate::interrupt::irq::acknowledge;
-use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
+use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ};
 use crate::syscall::scheme::Scheme;
 
-pub static IRQ_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
+pub static IRQ_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 
 /// IRQ queues
 static ACKS: Mutex<[usize; 16]> = Mutex::new([0; 16]);

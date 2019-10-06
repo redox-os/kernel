@@ -40,19 +40,19 @@ impl SysScheme {
     pub fn new() -> SysScheme {
         let mut files: BTreeMap<&'static [u8], Box<SysFn>> = BTreeMap::new();
 
-        files.insert(b"context", Box::new(move || context::resource()));
-        files.insert(b"cpu", Box::new(move || cpu::resource()));
-        files.insert(b"exe", Box::new(move || exe::resource()));
-        files.insert(b"iostat", Box::new(move || iostat::resource()));
-        files.insert(b"log", Box::new(move || log::resource()));
-        files.insert(b"scheme", Box::new(move || scheme::resource()));
-        files.insert(b"scheme_num", Box::new(move || scheme_num::resource()));
-        files.insert(b"syscall", Box::new(move || syscall::resource()));
-        files.insert(b"uname", Box::new(move || uname::resource()));
+        files.insert(b"context", Box::new(context::resource));
+        files.insert(b"cpu", Box::new(cpu::resource));
+        files.insert(b"exe", Box::new(exe::resource));
+        files.insert(b"iostat", Box::new(iostat::resource));
+        files.insert(b"log", Box::new(log::resource));
+        files.insert(b"scheme", Box::new(scheme::resource));
+        files.insert(b"scheme_num", Box::new(scheme_num::resource));
+        files.insert(b"syscall", Box::new(syscall::resource));
+        files.insert(b"uname", Box::new(uname::resource));
 
         SysScheme {
             next_id: AtomicUsize::new(0),
-            files: files,
+            files,
             handles: RwLock::new(BTreeMap::new())
         }
     }
@@ -75,7 +75,7 @@ impl Scheme for SysScheme {
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
             self.handles.write().insert(id, Handle {
                 path: b"",
-                data: data,
+                data,
                 mode: MODE_DIR | 0o444,
                 seek: 0
             });

@@ -76,18 +76,20 @@ impl Context {
         if !self.loadable {
             return false;
         }
-        let old = unsafe { &*(self.fx as *const FloatRegisters) };
-        new._reserved = old._reserved;
-        let old_st = new.st_space;
-        let mut new_st = new.st_space;
-        for (new_st, old_st) in new_st.iter_mut().zip(&old_st) {
-            *new_st &= !ST_RESERVED;
-            *new_st |= old_st & ST_RESERVED;
-        }
-        new.st_space = new_st;
 
-        // Make sure we don't use `old` from now on
-        drop(old);
+        {
+            let old = unsafe { &*(self.fx as *const FloatRegisters) };
+            new._reserved = old._reserved;
+            let old_st = new.st_space;
+            let mut new_st = new.st_space;
+            for (new_st, old_st) in new_st.iter_mut().zip(&old_st) {
+                *new_st &= !ST_RESERVED;
+                *new_st |= old_st & ST_RESERVED;
+            }
+            new.st_space = new_st;
+
+            // Make sure we don't use `old` from now on
+        }
 
         unsafe {
             *(self.fx as *mut FloatRegisters) = new;

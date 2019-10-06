@@ -32,9 +32,9 @@ fn registry() -> MutexGuard<'static, Registry> {
 pub fn register(scheme_id: SchemeId, event_id: usize, clock: usize, time: TimeSpec) {
     let mut registry = registry();
     registry.push_back(Timeout {
-        scheme_id:  scheme_id,
-        event_id: event_id,
-        clock: clock,
+        scheme_id,
+        event_id,
+        clock,
         time: (time.tv_sec as u64, time.tv_nsec as u64)
     });
 }

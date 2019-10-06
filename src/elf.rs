@@ -27,7 +27,7 @@ impl<'a> Elf<'a> {
             Err(format!("Elf: Invalid architecture: {:?} != {:?}", data.get(header::EI_CLASS), header::ELFCLASS))
         } else {
             Ok(Elf {
-                data: data,
+                data,
                 header: unsafe { &*(data.as_ptr() as usize as *const header::Header) }
             })
         }
@@ -61,7 +61,7 @@ impl<'a> Elf<'a> {
         if let Some(symtab) = symtab_opt {
             Some(ElfSymbols {
                 data: self.data,
-                symtab: symtab,
+                symtab,
                 i: 0
             })
         } else {

@@ -20,7 +20,7 @@ pub struct TimeScheme {
 impl TimeScheme {
     pub fn new(scheme_id: SchemeId) -> TimeScheme {
         TimeScheme {
-            scheme_id: scheme_id,
+            scheme_id,
             next_id: AtomicUsize::new(0),
             handles: RwLock::new(BTreeMap::new())
         }

@@ -12,7 +12,7 @@ use crate::event;
 use crate::paging::{InactivePageTable, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::paging::temporary_page::TemporaryPage;
-use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
+use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use crate::syscall::error::*;
@@ -38,13 +38,13 @@ pub struct UserInner {
 impl UserInner {
     pub fn new(root_id: SchemeId, handle_id: usize, name: Box<[u8]>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
         UserInner {
-            root_id: root_id,
-            handle_id: handle_id,
-            name: name,
-            flags: flags,
-            scheme_id: ATOMIC_SCHEMEID_INIT,
+            root_id,
+            handle_id,
+            name,
+            flags,
+            scheme_id: AtomicSchemeId::default(),
             next_id: AtomicU64::new(1),
-            context: context,
+            context,
             todo: WaitQueue::new(),
             fmap: Mutex::new(BTreeMap::new()),
             funmap: Mutex::new(BTreeMap::new()),
@@ -78,12 +78,12 @@ impl UserInner {
         self.call_inner(Packet {
             id: self.next_id.fetch_add(1, Ordering::SeqCst),
             pid: pid.into(),
-            uid: uid,
-            gid: gid,
-            a: a,
-            b: b,
-            c: c,
-            d: d
+            uid,
+            gid,
+            a,
+            b,
+            c,
+            d
         })
     }
 
@@ -229,7 +229,7 @@ impl UserInner {
         let len = buf.len()/packet_size;
         let mut i = 0;
         while i < len {
-            let mut packet = unsafe { *(buf.as_ptr() as *const Packet).offset(i as isize) };
+            let mut packet = unsafe { *(buf.as_ptr() as *const Packet).add(i) };
             if packet.id == 0 {
                 match packet.a {
                     SYS_FEVENT => event::trigger(self.scheme_id.load(Ordering::SeqCst), packet.b, EventFlags::from_bits_truncate(packet.c)),
@@ -273,9 +273,7 @@ pub struct UserScheme {
 
 impl UserScheme {
     pub fn new(inner: Weak<UserInner>) -> UserScheme {
-        UserScheme {
-            inner: inner
-        }
+        UserScheme { inner }
     }
 }
 
@@ -394,10 +392,10 @@ impl Scheme for UserScheme {
         inner.fmap.lock().insert(id, (context_lock, desc, *map));
 
         let result = inner.call_inner(Packet {
-            id: id,
+            id,
             pid: pid.into(),
-            uid: uid,
-            gid: gid,
+            uid,
+            gid,
             a: SYS_FMAP,
             b: file,
             c: address,

@@ -226,8 +226,8 @@ impl Iterator for MadtIter {
     type Item = MadtEntry;
     fn next(&mut self) -> Option<Self::Item> {
         if self.i + 1 < self.sdt.data_len() {
-            let entry_type = unsafe { *(self.sdt.data_address() as *const u8).offset(self.i as isize) };
-            let entry_len = unsafe { *(self.sdt.data_address() as *const u8).offset(self.i as isize + 1) } as usize;
+            let entry_type = unsafe { *(self.sdt.data_address() as *const u8).add(self.i) };
+            let entry_len = unsafe { *(self.sdt.data_address() as *const u8).add(self.i + 1) } as usize;
 
             if self.i + entry_len <= self.sdt.data_len() {
                 let item = match entry_type {

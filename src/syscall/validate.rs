@@ -28,6 +28,7 @@ fn validate(address: usize, size: usize, flags: EntryFlags) -> Result<()> {
 }
 
 /// Convert a pointer and length to slice, if valid
+//TODO: Mark unsafe
 pub fn validate_slice<T>(ptr: *const T, len: usize) -> Result<&'static [T]> {
     if len == 0 {
         Ok(&[])
@@ -38,6 +39,7 @@ pub fn validate_slice<T>(ptr: *const T, len: usize) -> Result<&'static [T]> {
 }
 
 /// Convert a pointer and length to slice, if valid
+//TODO: Mark unsafe
 pub fn validate_slice_mut<T>(ptr: *mut T, len: usize) -> Result<&'static mut [T]> {
     if len == 0 {
         Ok(&mut [])

@@ -3,16 +3,30 @@
 //! The Redox OS Kernel is a microkernel that supports `x86_64` systems and
 //! provides Unix-like syscalls for primarily Rust applications
 
-//#![deny(warnings)]
-#![cfg_attr(feature = "clippy", allow(if_same_then_else))]
-#![cfg_attr(feature = "clippy", allow(inline_always))]
-#![cfg_attr(feature = "clippy", allow(many_single_char_names))]
-#![cfg_attr(feature = "clippy", allow(module_inception))]
-#![cfg_attr(feature = "clippy", allow(new_without_default))]
-#![cfg_attr(feature = "clippy", allow(not_unsafe_ptr_arg_deref))]
-#![cfg_attr(feature = "clippy", allow(or_fun_call))]
-#![cfg_attr(feature = "clippy", allow(too_many_arguments))]
+// Useful for adding comments about different branches
+#![allow(clippy::if_same_then_else)]
+// Useful in the syscall function
+#![allow(clippy::many_single_char_names)]
+// Used for context::context
+#![allow(clippy::module_inception)]
+// Not implementing default is sometimes useful in the case something has significant cost
+// to allocate. If you implement default, it can be allocated without evidence using the
+// ..Default::default() syntax. Not fun in kernel space
+#![allow(clippy::new_without_default)]
+// Used to make it nicer to return errors, for example, .ok_or(Error::new(ESRCH))
+#![allow(clippy::or_fun_call)]
+// This is needed in some cases, like for syscall
+#![allow(clippy::too_many_arguments)]
+// There is no harm in this being done
+#![allow(clippy::useless_format)]
+// TODO: address ocurrances and then deny
+#![warn(clippy::not_unsafe_ptr_arg_deref)]
+// TODO: address ocurrances and then deny
+#![warn(clippy::cast_ptr_alignment)]
+// This is usually a serious issue - a missing import of a define where it is interpreted
+// as a catch-all variable in a match, for example
 #![deny(unreachable_patterns)]
+
 #![feature(allocator_api)]
 #![feature(asm)]
 #![feature(concat_idents)]

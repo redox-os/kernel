@@ -8,7 +8,7 @@ use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
 use crate::syscall::scheme::Scheme;
 
-pub static DEBUG_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
+pub static DEBUG_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 
 /// Input queue
 static INPUT: Once<WaitQueue<u8>> = Once::new();

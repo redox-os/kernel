@@ -16,7 +16,7 @@ impl Log {
     pub fn new(size: usize) -> Log {
         Log {
             data: VecDeque::with_capacity(size),
-            size: size
+            size
         }
     }
 

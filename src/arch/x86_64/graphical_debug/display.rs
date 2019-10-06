@@ -108,7 +108,7 @@ impl Display {
         let size = self.offscreen.len() - offset;
         unsafe {
             let to = self.offscreen.as_mut_ptr();
-            let from = to.offset(offset as isize);
+            let from = to.add(offset);
             fast_copy(to as *mut u8, from as *const u8, size * 4);
         }
     }

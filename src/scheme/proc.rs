@@ -2,7 +2,7 @@ use crate::{
     arch::paging::VirtualAddress,
     context::{self, Context, ContextId, Status},
     ptrace,
-    scheme::{ATOMIC_SCHEMEID_INIT, AtomicSchemeId, SchemeId},
+    scheme::{AtomicSchemeId, SchemeId},
     syscall::{
         data::{FloatRegisters, IntRegisters, PtraceEvent},
         error::*,
@@ -167,7 +167,7 @@ impl Handle {
     }
 }
 
-pub static PROC_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
+pub static PROC_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 
 pub struct ProcScheme {
     next_id: AtomicUsize,
@@ -520,8 +520,8 @@ impl Scheme for ProcScheme {
 
         match cmd {
             F_SETFL => { handle.info.flags = arg; Ok(0) },
-            F_GETFL => return Ok(handle.info.flags),
-            _ => return Err(Error::new(EINVAL))
+            F_GETFL => Ok(handle.info.flags),
+            _ => Err(Error::new(EINVAL))
         }
     }
 

@@ -20,7 +20,7 @@ pub struct EventQueue {
 impl EventQueue {
     pub fn new(id: EventQueueId) -> EventQueue {
         EventQueue {
-            id: id,
+            id,
             queue: WaitQueue::new()
         }
     }

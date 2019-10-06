@@ -83,7 +83,7 @@ impl ContextList {
             let offset = stack.len() - mem::size_of::<usize>();
             unsafe {
                 let offset = stack.len() - mem::size_of::<usize>();
-                let func_ptr = stack.as_mut_ptr().offset(offset as isize);
+                let func_ptr = stack.as_mut_ptr().add(offset);
                 *(func_ptr as *mut usize) = func as usize;
             }
             context.arch.set_page_table(unsafe { paging::ActivePageTable::new().address() });

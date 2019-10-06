@@ -99,7 +99,7 @@ pub unsafe fn switch() -> bool {
                 let mut context = context_lock.write();
                 if runnable(&mut context, cpu_id) {
                     to_ptr = context.deref_mut() as *mut Context;
-                    if (&mut *to_ptr).ksig.is_none() {
+                    if (*to_ptr).ksig.is_none() {
                         to_sig = context.pending.pop_front();
                     }
                     break;
@@ -113,7 +113,7 @@ pub unsafe fn switch() -> bool {
                     let mut context = context_lock.write();
                     if runnable(&mut context, cpu_id) {
                         to_ptr = context.deref_mut() as *mut Context;
-                        if (&mut *to_ptr).ksig.is_none() {
+                        if (*to_ptr).ksig.is_none() {
                             to_sig = context.pending.pop_front();
                         }
                         break;
@@ -125,13 +125,13 @@ pub unsafe fn switch() -> bool {
 
     // Switch process states, TSS stack pointer, and store new context ID
     if to_ptr as usize != 0 {
-        (&mut *from_ptr).running = false;
-        (&mut *to_ptr).running = true;
+        (*from_ptr).running = false;
+        (*to_ptr).running = true;
         if let Some(ref stack) = (*to_ptr).kstack {
             gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
         }
-        gdt::set_tcb((&mut *to_ptr).id.into());
-        CONTEXT_ID.store((&mut *to_ptr).id, Ordering::SeqCst);
+        gdt::set_tcb((*to_ptr).id.into());
+        CONTEXT_ID.store((*to_ptr).id, Ordering::SeqCst);
     }
 
     // Unset global lock before switch, as arch is only usable by the current CPU at this time
@@ -146,16 +146,16 @@ pub unsafe fn switch() -> bool {
             // Signal was found, run signal handler
 
             //TODO: Allow nested signals
-            assert!((&mut *to_ptr).ksig.is_none());
+            assert!((*to_ptr).ksig.is_none());
 
-            let arch = (&mut *to_ptr).arch.clone();
-            let kfx = (&mut *to_ptr).kfx.clone();
-            let kstack = (&mut *to_ptr).kstack.clone();
-            (&mut *to_ptr).ksig = Some((arch, kfx, kstack, sig));
-            (&mut *to_ptr).arch.signal_stack(signal_handler, sig);
+            let arch = (*to_ptr).arch.clone();
+            let kfx = (*to_ptr).kfx.clone();
+            let kstack = (*to_ptr).kstack.clone();
+            (*to_ptr).ksig = Some((arch, kfx, kstack, sig));
+            (*to_ptr).arch.signal_stack(signal_handler, sig);
         }
 
-        (&mut *from_ptr).arch.switch_to(&mut (&mut *to_ptr).arch);
+        (*from_ptr).arch.switch_to(&mut (*to_ptr).arch);
 
         true
     }

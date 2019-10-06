@@ -63,8 +63,8 @@ pub struct RootScheme {
 impl RootScheme {
     pub fn new(scheme_ns: SchemeNamespace, scheme_id: SchemeId) -> RootScheme {
         RootScheme {
-            scheme_ns: scheme_ns,
-            scheme_id: scheme_id,
+            scheme_ns,
+            scheme_id,
             next_id: AtomicUsize::new(0),
             handles: RwLock::new(BTreeMap::new()),
         }

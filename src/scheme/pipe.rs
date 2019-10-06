@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::event;
-use crate::scheme::{AtomicSchemeId, ATOMIC_SCHEMEID_INIT, SchemeId};
+use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::WaitCondition;
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
 use crate::syscall::flag::{EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
@@ -12,7 +12,7 @@ use crate::syscall::scheme::Scheme;
 use crate::syscall::data::Stat;
 
 /// Pipes list
-pub static PIPE_SCHEME_ID: AtomicSchemeId = ATOMIC_SCHEMEID_INIT;
+pub static PIPE_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 static PIPES: Once<RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)>> = Once::new();
 
@@ -204,10 +204,8 @@ impl PipeRead {
                 return Ok(0);
             } else if self.flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
                 return Err(Error::new(EAGAIN));
-            } else {
-                if ! self.condition.wait() {
-                    return Err(Error::new(EINTR));
-                }
+            } else if ! self.condition.wait() {
+                return Err(Error::new(EINTR));
             }
         }
     }

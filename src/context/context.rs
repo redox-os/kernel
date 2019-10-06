@@ -183,7 +183,7 @@ impl Context {
         let syscall_tail = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
 
         Context {
-            id: id,
+            id,
             pgid: id,
             ppid: ContextId::from(0),
             ruid: 0,
@@ -198,8 +198,8 @@ impl Context {
             running: false,
             cpu_id: None,
             syscall: None,
-            syscall_head: syscall_head,
-            syscall_tail: syscall_tail,
+            syscall_head,
+            syscall_tail,
             vfork: false,
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),
