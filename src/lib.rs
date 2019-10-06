@@ -19,10 +19,23 @@
 #![allow(clippy::too_many_arguments)]
 // There is no harm in this being done
 #![allow(clippy::useless_format)]
+
 // TODO: address ocurrances and then deny
 #![warn(clippy::not_unsafe_ptr_arg_deref)]
 // TODO: address ocurrances and then deny
 #![warn(clippy::cast_ptr_alignment)]
+// Indexing a slice can cause panics and that is something we always want to avoid
+// in kernel code. Use .get and return an error instead
+// TODO: address ocurrances and then deny
+#![warn(clippy::indexing_slicing)]
+// Overflows are very, very bad in kernel code as it may provide an attack vector for
+// userspace applications, and it is only checked in debug builds
+// TODO: address ocurrances and then deny
+#![warn(clippy::integer_arithmetic)]
+// Avoid panicking in the kernel without information about the panic. Use expect
+// TODO: address ocurrances and then deny
+#![warn(clippy::result_unwrap_used)]
+
 // This is usually a serious issue - a missing import of a define where it is interpreted
 // as a catch-all variable in a match, for example
 #![deny(unreachable_patterns)]
