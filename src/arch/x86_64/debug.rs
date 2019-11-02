@@ -6,6 +6,7 @@ use spin::MutexGuard;
 use crate::log::{LOG, Log};
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
+#[cfg(any(feature = "qemu_debug", feature = "serial_debug"))]
 use crate::syscall::io::Pio;
 #[cfg(feature = "serial_debug")]
 use crate::devices::uart_16550::SerialPort;
