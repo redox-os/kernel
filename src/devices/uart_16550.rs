@@ -1,3 +1,5 @@
+use core::convert::TryInto;
+
 use crate::syscall::io::{Io, Pio, Mmio, ReadOnly};
 
 bitflags! {
@@ -22,7 +24,8 @@ bitflags! {
 }
 
 #[allow(dead_code)]
-pub struct SerialPort<T: Io<Value = u8>> {
+#[repr(packed)]
+pub struct SerialPort<T: Io> {
     /// Data register, read to receive, write to send
     data: T,
     /// Interrupt enable
@@ -53,40 +56,38 @@ impl SerialPort<Pio<u8>> {
     }
 }
 
-impl SerialPort<Mmio<u8>> {
-    pub fn new(_base: usize) -> SerialPort<Mmio<u8>> {
-        SerialPort {
-            data: Mmio::new(),
-            int_en: Mmio::new(),
-            fifo_ctrl: Mmio::new(),
-            line_ctrl: Mmio::new(),
-            modem_ctrl: Mmio::new(),
-            line_sts: ReadOnly::new(Mmio::new()),
-            modem_sts: ReadOnly::new(Mmio::new())
-        }
+impl SerialPort<Mmio<u32>> {
+    pub unsafe fn new(base: usize) -> &'static mut SerialPort<Mmio<u32>> {
+        &mut *(base as *mut Self)
     }
 }
 
-impl<T: Io<Value = u8>> SerialPort<T> {
+impl<T: Io> SerialPort<T>
+    where T::Value: From<u8> + TryInto<u8>
+{
     pub fn init(&mut self) {
         //TODO: Cleanup
-        self.int_en.write(0x00);
-        self.line_ctrl.write(0x80);
-        self.data.write(0x01);
-        self.int_en.write(0x00);
-        self.line_ctrl.write(0x03);
-        self.fifo_ctrl.write(0xC7);
-        self.modem_ctrl.write(0x0B);
-        self.int_en.write(0x01);
+        self.int_en.write(0x00.into());
+        self.line_ctrl.write(0x80.into());
+        self.data.write(0x01.into());
+        self.int_en.write(0x00.into());
+        self.line_ctrl.write(0x03.into());
+        self.fifo_ctrl.write(0xC7.into());
+        self.modem_ctrl.write(0x0B.into());
+        self.int_en.write(0x01.into());
     }
 
     fn line_sts(&self) -> LineStsFlags {
-        LineStsFlags::from_bits_truncate(self.line_sts.read())
+        LineStsFlags::from_bits_truncate(
+            (self.line_sts.read() & 0xFF.into()).try_into().unwrap_or(0)
+        )
     }
 
     pub fn receive(&mut self) -> Option<u8> {
         if self.line_sts().contains(LineStsFlags::INPUT_FULL) {
-            Some(self.data.read())
+            Some(
+                (self.data.read() & 0xFF.into()).try_into().unwrap_or(0)
+            )
         } else {
             None
         }
@@ -94,7 +95,7 @@ impl<T: Io<Value = u8>> SerialPort<T> {
 
     pub fn send(&mut self, data: u8) {
         while ! self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-        self.data.write(data);
+        self.data.write(data.into());
     }
 
     pub fn write(&mut self, buf: &[u8]) {
@@ -104,6 +105,10 @@ impl<T: Io<Value = u8>> SerialPort<T> {
                     self.send(8);
                     self.send(b' ');
                     self.send(8);
+                },
+                b'\n' => {
+                    self.send(b'\r');
+                    self.send(b'\n');
                 },
                 _ => {
                     self.send(b);
