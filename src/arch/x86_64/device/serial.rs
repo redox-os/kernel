@@ -13,8 +13,6 @@ pub static LPSS: Mutex<Option<&'static mut SerialPort<Mmio<u32>>>> = Mutex::new(
 pub unsafe fn init() {
     COM1.lock().init();
     COM2.lock().init();
-    COM3.lock().init();
-    COM4.lock().init();
 
     #[cfg(feature = "lpss_debug")]
     {

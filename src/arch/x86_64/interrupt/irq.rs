@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::context::timeout;
 use crate::device::pic;
-use crate::device::serial::{COM1, COM2, COM3, COM4};
+use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::debug_input;
 use crate::{context, ptrace, time};
@@ -78,17 +78,11 @@ interrupt!(com2, {
     while let Some(c) = COM2.lock().receive() {
         debug_input(c);
     }
-    while let Some(c) = COM4.lock().receive() {
-        debug_input(c);
-    }
     pic::MASTER.ack();
 });
 
 interrupt!(com1, {
     while let Some(c) = COM1.lock().receive() {
-        debug_input(c);
-    }
-    while let Some(c) = COM3.lock().receive() {
         debug_input(c);
     }
     pic::MASTER.ack();
