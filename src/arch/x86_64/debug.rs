@@ -8,11 +8,15 @@ use crate::log::{LOG, Log};
 use syscall::io::Io;
 #[cfg(any(feature = "qemu_debug", feature = "serial_debug"))]
 use crate::syscall::io::Pio;
-#[cfg(feature = "serial_debug")]
+#[cfg(feature = "lpss_debug")]
+use crate::syscall::io::Mmio;
+#[cfg(any(feature = "lpss_debug", feature = "serial_debug"))]
 use crate::devices::uart_16550::SerialPort;
 
 #[cfg(feature = "graphical_debug")]
 use super::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};
+#[cfg(feature = "lpss_debug")]
+use super::device::serial::LPSS;
 #[cfg(feature = "serial_debug")]
 use super::device::serial::COM1;
 
@@ -23,6 +27,8 @@ pub struct Writer<'a> {
     log: MutexGuard<'a, Option<Log>>,
     #[cfg(feature = "graphical_debug")]
     display: MutexGuard<'a, Option<DebugDisplay>>,
+    #[cfg(feature = "lpss_debug")]
+    lpss: MutexGuard<'a, Option<&'static mut SerialPort<Mmio<u32>>>>,
     #[cfg(feature = "qemu_debug")]
     qemu: MutexGuard<'a, Pio<u8>>,
     #[cfg(feature = "serial_debug")]
@@ -35,6 +41,8 @@ impl<'a> Writer<'a> {
             log: LOG.lock(),
             #[cfg(feature = "graphical_debug")]
             display: DEBUG_DISPLAY.lock(),
+            #[cfg(feature = "lpss_debug")]
+            lpss: LPSS.lock(),
             #[cfg(feature = "qemu_debug")]
             qemu: QEMU.lock(),
             #[cfg(feature = "serial_debug")]
@@ -53,6 +61,13 @@ impl<'a> Writer<'a> {
         {
             if let Some(ref mut display) = *self.display {
                 let _ = display.write(buf);
+            }
+        }
+
+        #[cfg(feature = "lpss_debug")]
+        {
+            if let Some(ref mut lpss) = *self.lpss {
+                lpss.write(buf);
             }
         }
 
