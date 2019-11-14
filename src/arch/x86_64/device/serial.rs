@@ -1,5 +1,7 @@
 use crate::devices::uart_16550::SerialPort;
-use crate::syscall::io::{Mmio, Pio};
+#[cfg(feature = "lpss_debug")]
+use crate::syscall::io::Mmio;
+use crate::syscall::io::Pio;
 use spin::Mutex;
 
 pub static COM1: Mutex<SerialPort<Pio<u8>>> = Mutex::new(SerialPort::<Pio<u8>>::new(0x3F8));
