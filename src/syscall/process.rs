@@ -1293,7 +1293,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 }
 
 pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
-    println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
+    // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
     let end_address = address.checked_add(end_offset).ok_or(Error::new(EFAULT))?;
