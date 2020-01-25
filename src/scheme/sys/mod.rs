@@ -85,9 +85,10 @@ impl Scheme for SysScheme {
             for entry in self.files.iter() {
                 if entry.0 == &path_trimmed.as_bytes() {
                     let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                    let data = entry.1()?;
                     self.handles.write().insert(id, Handle {
                         path: entry.0,
-                        data: entry.1()?,
+                        data: data,
                         mode: MODE_FILE | 0o444,
                         seek: 0
                     });
