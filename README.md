@@ -12,7 +12,7 @@ Running [qemu] with the `-s` flag will set up [qemu] to listen on port 1234 for
 a [gdb] client to connect to it. To debug the redox kernel run.
 
 ```
-make qemu debug=yes
+make qemu gdb=yes
 ```
 
 This will start a VM with and listen on port 1234 for a [gdb] or [lldb] client.
