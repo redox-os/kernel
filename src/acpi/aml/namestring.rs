@@ -62,22 +62,22 @@ fn parse_null_name(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
 
 pub fn parse_name_seg(data: &[u8]) -> Result<(Vec<u8>, usize), AmlError> {
     match data[0] {
-        0x41 ... 0x5A | 0x5F => (),
+        0x41 ..= 0x5A | 0x5F => (),
         _ => return Err(AmlError::AmlInvalidOpCode)
     }
 
     match data[1] {
-        0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
+        0x30 ..= 0x39 | 0x41 ..= 0x5A | 0x5F => (),
         _ => return Err(AmlError::AmlInvalidOpCode)
     }
 
     match data[2] {
-        0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
+        0x30 ..= 0x39 | 0x41 ..= 0x5A | 0x5F => (),
         _ => return Err(AmlError::AmlInvalidOpCode)
     }
 
     match data[3] {
-        0x30 ... 0x39 | 0x41 ... 0x5A | 0x5F => (),
+        0x30 ..= 0x39 | 0x41 ..= 0x5A | 0x5F => (),
         _ => return Err(AmlError::AmlInvalidOpCode)
     }
 

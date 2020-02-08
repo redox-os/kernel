@@ -68,7 +68,7 @@ pub fn parse_arg_obj(data: &[u8],
     }
 
     match data[0] {
-        0x68 ... 0x6E => Ok(AmlParseType {
+        0x68 ..= 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::ArgObj(data[0] - 0x68)),
             len: 1 as usize
         }),
@@ -87,7 +87,7 @@ pub fn parse_local_obj(data: &[u8],
     }
 
     match data[0] {
-        0x68 ... 0x6E => Ok(AmlParseType {
+        0x68 ..= 0x6E => Ok(AmlParseType {
             val: AmlValue::ObjectReference(ObjectReference::LocalObj(data[0] - 0x60)),
             len: 1 as usize
         }),

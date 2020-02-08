@@ -498,7 +498,7 @@ fn parse_def_op_region(data: &[u8], ctx: &mut AmlExecutionContext) -> ParseResul
         0x07 => RegionSpace::IPMI,
         0x08 => RegionSpace::GeneralPurposeIO,
         0x09 => RegionSpace::GenericSerialBus,
-        0x80 ... 0xFF => RegionSpace::UserDefined(data[2 + name.len]),
+        0x80 ..= 0xFF => RegionSpace::UserDefined(data[2 + name.len]),
         _ => return Err(AmlError::AmlParseError("OpRegion - invalid region"))
     };
 
