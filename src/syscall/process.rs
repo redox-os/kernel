@@ -380,7 +380,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             context.sigmask = sigmask;
             context.umask = umask;
 
-            context.cpu_id = cpu_id;
+            context.cpu_id = cpu_id_opt;
 
             context.status = context::Status::Runnable;
 
