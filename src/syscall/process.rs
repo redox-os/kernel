@@ -81,17 +81,17 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let ens;
         let umask;
         let sigmask;
-        let mut cpu_id = None;
+        let mut cpu_id_opt = None;
         let arch;
         let vfork;
-        let mut kfx_option = None;
-        let mut kstack_option = None;
+        let mut kfx_opt = None;
+        let mut kstack_opt = None;
         let mut offset = 0;
         let mut image = vec![];
-        let mut heap_option = None;
-        let mut stack_option = None;
-        let mut sigstack_option = None;
-        let mut tls_option = None;
+        let mut heap_opt = None;
+        let mut stack_opt = None;
+        let mut sigstack_opt = None;
+        let mut tls_opt = None;
         let grants;
         let name;
         let cwd;
@@ -116,7 +116,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             umask = context.umask;
 
             if flags.contains(CLONE_VM) {
-                cpu_id = context.cpu_id;
+                cpu_id_opt = context.cpu_id;
             }
 
             arch = context.arch.clone();
@@ -126,7 +126,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 for (new_b, b) in new_fx.iter_mut().zip(fx.iter()) {
                     *new_b = *b;
                 }
-                kfx_option = Some(new_fx);
+                kfx_opt = Some(new_fx);
             }
 
             if let Some(ref stack) = context.kstack {
@@ -153,7 +153,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     *(func_ptr as *mut usize) = interrupt::syscall::clone_ret as usize;
                 }
 
-                kstack_option = Some(new_stack);
+                kstack_opt = Some(new_stack);
             }
 
             if flags.contains(CLONE_VM) {
@@ -162,7 +162,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
 
                 if let Some(ref heap_shared) = context.heap {
-                    heap_option = Some(heap_shared.clone());
+                    heap_opt = Some(heap_shared.clone());
                 }
             } else {
                 for memory_shared in context.image.iter() {
@@ -201,14 +201,14 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                         }
 
                         new_heap.remap(heap.flags());
-                        heap_option = Some(new_heap.to_shared());
+                        heap_opt = Some(new_heap.to_shared());
                     });
                 }
             }
 
             if let Some(ref stack_shared) = context.stack {
                 if flags.contains(CLONE_STACK) {
-                    stack_option = Some(stack_shared.clone());
+                    stack_opt = Some(stack_shared.clone());
                 } else {
                     stack_shared.with(|stack| {
                         let mut new_stack = context::memory::Memory::new(
@@ -225,7 +225,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                         }
 
                         new_stack.remap(stack.flags());
-                        stack_option = Some(new_stack.to_shared());
+                        stack_opt = Some(new_stack.to_shared());
                     });
                 }
             }
@@ -245,7 +245,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
 
                 new_sigstack.remap(sigstack.flags());
-                sigstack_option = Some(new_sigstack);
+                sigstack_opt = Some(new_sigstack);
             }
 
             if let Some(ref tls) = context.tls {
@@ -275,7 +275,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
 
                 new_tls.mem.remap(tls.mem.flags());
-                tls_option = Some(new_tls);
+                tls_opt = Some(new_tls);
             }
 
             if flags.contains(CLONE_VM) {
@@ -317,8 +317,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         // If not cloning files, dup to get a new number from scheme
         // This has to be done outside the context lock to prevent deadlocks
         if !flags.contains(CLONE_FILES) {
-            for (_fd, file_option) in files.lock().iter_mut().enumerate() {
-                let new_file_option = if let Some(ref file) = *file_option {
+            for (_fd, file_opt) in files.lock().iter_mut().enumerate() {
+                let new_file_opt = if let Some(ref file) = *file_opt {
                     Some(FileDescriptor {
                         description: Arc::clone(&file.description),
                         cloexec: file.cloexec,
@@ -327,7 +327,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     None
                 };
 
-                *file_option = new_file_option;
+                *file_opt = new_file_opt;
             }
         }
 
@@ -417,13 +417,13 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 });
             }
 
-            if let Some(fx) = kfx_option.take() {
+            if let Some(fx) = kfx_opt.take() {
                 context.arch.set_fx(fx.as_ptr() as usize);
                 context.kfx = Some(fx);
             }
 
             // Set kernel stack
-            if let Some(stack) = kstack_option.take() {
+            if let Some(stack) = kstack_opt.take() {
                 context.arch.set_stack(stack.as_ptr() as usize + offset);
                 context.kstack = Some(stack);
             }
@@ -443,7 +443,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 context.image = image;
 
                 // Copy user heap mapping, if found
-                if let Some(heap_shared) = heap_option {
+                if let Some(heap_shared) = heap_opt {
                     let frame = active_table.p4()[crate::USER_HEAP_PML4].pointed_frame().expect("user heap not mapped");
                     let flags = active_table.p4()[crate::USER_HEAP_PML4].flags();
                     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
@@ -498,7 +498,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 context.image = image;
 
                 // Move copy of heap
-                if let Some(heap_shared) = heap_option {
+                if let Some(heap_shared) = heap_opt {
                     heap_shared.with(|heap| {
                         heap.move_to(VirtualAddress::new(crate::USER_HEAP_OFFSET), &mut new_table, &mut temporary_page);
                     });
@@ -514,7 +514,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             }
 
             // Setup user stack
-            if let Some(stack_shared) = stack_option {
+            if let Some(stack_shared) = stack_opt {
                 if flags.contains(CLONE_STACK) {
                     let frame = active_table.p4()[crate::USER_STACK_PML4].pointed_frame().expect("user stack not mapped");
                     let flags = active_table.p4()[crate::USER_STACK_PML4].flags();
@@ -530,7 +530,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             }
 
             // Setup user sigstack
-            if let Some(mut sigstack) = sigstack_option {
+            if let Some(mut sigstack) = sigstack_opt {
                 sigstack.move_to(VirtualAddress::new(crate::USER_SIGSTACK_OFFSET), &mut new_table, &mut temporary_page);
                 context.sigstack = Some(sigstack);
             }
@@ -545,7 +545,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             );
 
             // Setup user TLS
-            if let Some(mut tls) = tls_option {
+            if let Some(mut tls) = tls_opt {
                 // Copy TLS mapping
                 {
                     let frame = active_table.p4()[crate::USER_TLS_PML4].pointed_frame().expect("user tls not mapped");
@@ -675,7 +675,7 @@ fn fexec_noreturn(
             }
 
             // Map and copy new segments
-            let mut tls_option = None;
+            let mut tls_opt = None;
             {
                 let elf = elf::Elf::from(&data).unwrap();
                 entry = elf.entry();
@@ -753,7 +753,7 @@ fn fexec_noreturn(
                                 *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
                             }
 
-                            tls_option = Some(tls);
+                            tls_opt = Some(tls);
                         },
                         _ => (),
                     }
@@ -790,7 +790,7 @@ fn fexec_noreturn(
             ));
 
             // Map TLS
-            if let Some(mut tls) = tls_option {
+            if let Some(mut tls) = tls_opt {
                 unsafe {
                     tls.load();
                 }
@@ -867,16 +867,16 @@ fn fexec_noreturn(
             (vfork, context.ppid, files)
         };
 
-        for (_fd, file_option) in files.lock().iter_mut().enumerate() {
+        for (_fd, file_opt) in files.lock().iter_mut().enumerate() {
             let mut cloexec = false;
-            if let Some(ref file) = *file_option {
+            if let Some(ref file) = *file_opt {
                 if file.cloexec {
                     cloexec = true;
                 }
             }
 
             if cloexec {
-                let _ = file_option.take().unwrap().close();
+                let _ = file_opt.take().unwrap().close();
             }
         }
 
@@ -1082,8 +1082,8 @@ pub fn exit(status: usize) -> ! {
         };
 
         // Files must be closed while context is valid so that messages can be passed
-        for (_fd, file_option) in close_files.drain(..).enumerate() {
-            if let Some(file) = file_option {
+        for (_fd, file_opt) in close_files.drain(..).enumerate() {
+            if let Some(file) = file_opt {
                 let _ = file.close();
             }
         }
