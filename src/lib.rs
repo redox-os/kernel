@@ -48,7 +48,6 @@
 #![feature(integer_atomics)]
 #![feature(lang_items)]
 #![feature(naked_functions)]
-#![feature(never_type)]
 #![feature(ptr_internals)]
 #![feature(thread_local)]
 #![no_std]
