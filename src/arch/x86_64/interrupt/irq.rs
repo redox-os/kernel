@@ -8,6 +8,7 @@ use crate::scheme::debug::debug_input;
 use crate::{context, ptrace, time};
 
 //resets to 0 in context::switch()
+#[thread_local]
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
 
 unsafe fn trigger(irq: u8) {
