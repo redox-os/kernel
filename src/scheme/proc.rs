@@ -321,9 +321,9 @@ impl Scheme for ProcScheme {
 
                 let contexts = context::contexts();
                 let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
-                let context = context.read();
+                let mut context = context.write();
 
-                ptrace::with_context_memory(&context, data.offset, buf.len(), |ptr| {
+                ptrace::with_context_memory(&mut context, data.offset, buf.len(), |ptr| {
                     buf.copy_from_slice(validate::validate_slice(ptr, buf.len())?);
                     Ok(())
                 })?;
@@ -411,9 +411,9 @@ impl Scheme for ProcScheme {
 
                 let contexts = context::contexts();
                 let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
-                let context = context.read();
+                let mut context = context.write();
 
-                ptrace::with_context_memory(&context, data.offset, buf.len(), |ptr| {
+                ptrace::with_context_memory(&mut context, data.offset, buf.len(), |ptr| {
                     validate::validate_slice_mut(ptr, buf.len())?.copy_from_slice(buf);
                     Ok(())
                 })?;

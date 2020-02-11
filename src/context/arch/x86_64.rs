@@ -53,7 +53,7 @@ impl Context {
         }
     }
 
-    pub fn get_page_table(&self) -> usize {
+    pub fn get_page_table(&mut self) -> usize {
         self.cr3
     }
 

@@ -421,7 +421,7 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
 // |_|  |_|\___|_| |_| |_|\___/|_|   \__, |
 //                                   |___/
 
-pub fn with_context_memory<F>(context: &Context, offset: VirtualAddress, len: usize, f: F) -> Result<()>
+pub fn with_context_memory<F>(context: &mut Context, offset: VirtualAddress, len: usize, f: F) -> Result<()>
     where F: FnOnce(*mut u8) -> Result<()>
 {
     // As far as I understand, mapping any regions following

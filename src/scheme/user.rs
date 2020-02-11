@@ -114,12 +114,12 @@ impl UserInner {
             Ok(0)
         } else {
             let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            let mut grants = context.grants.lock();
+            let mut context = context_lock.write();
 
             let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
+
+            let mut grants = context.grants.lock();
 
             let from_address = (address/4096) * 4096;
             let offset = address - from_address;
@@ -170,12 +170,12 @@ impl UserInner {
             Ok(())
         } else {
             let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            let mut grants = context.grants.lock();
+            let mut context = context_lock.write();
 
             let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
+
+            let mut grants = context.grants.lock();
 
             for i in 0 .. grants.len() {
                 let start = grants[i].start_address().get();
