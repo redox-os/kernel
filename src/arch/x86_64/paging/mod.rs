@@ -3,6 +3,7 @@
 
 use core::{mem, ptr};
 use core::ops::{Deref, DerefMut};
+use spin::Mutex;
 use x86::shared::{control_regs, msr, tlb};
 
 use crate::memory::{allocate_frames, Frame};
@@ -21,6 +22,39 @@ pub const ENTRY_COUNT: usize = 512;
 
 /// Size of pages
 pub const PAGE_SIZE: usize = 4096;
+
+//TODO: This is a rudimentary recursive mutex used to naively fix multi_core issues, replace it!
+pub struct PageTableLock {
+    cpu_id: usize,
+    count: usize,
+}
+
+pub static PAGE_TABLE_LOCK: Mutex<PageTableLock> = Mutex::new(PageTableLock {
+    cpu_id: 0,
+    count: 0,
+});
+
+fn page_table_lock() {
+    let cpu_id = crate::cpu_id();
+    loop {
+        {
+            let mut lock = PAGE_TABLE_LOCK.lock();
+            if lock.count == 0 || lock.cpu_id == cpu_id {
+                lock.cpu_id = cpu_id;
+                lock.count += 1;
+                return;
+            }
+        }
+        unsafe {
+            crate::arch::interrupt::pause();
+        }
+    }
+}
+
+fn page_table_unlock() {
+    let mut lock = PAGE_TABLE_LOCK.lock();
+    lock.count -= 1;
+}
 
 /// Setup page attribute table
 unsafe fn init_pat() {
@@ -108,7 +142,7 @@ pub unsafe fn init(cpu_id: usize, kernel_start: usize, kernel_end: usize, stack_
 
     init_pat();
 
-    let mut active_table = ActivePageTable::new();
+    let mut active_table = ActivePageTable::new_unlocked();
 
     let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET)));
 
@@ -210,7 +244,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
 
     init_pat();
 
-    let mut active_table = ActivePageTable::new();
+    let mut active_table = ActivePageTable::new_unlocked();
 
     let mut new_table = InactivePageTable::from_address(bsp_table);
 
@@ -259,6 +293,7 @@ pub unsafe fn init_ap(cpu_id: usize, bsp_table: usize, stack_start: usize, stack
 
 pub struct ActivePageTable {
     mapper: Mapper,
+    locked: bool,
 }
 
 impl Deref for ActivePageTable {
@@ -277,8 +312,17 @@ impl DerefMut for ActivePageTable {
 
 impl ActivePageTable {
     pub unsafe fn new() -> ActivePageTable {
+        page_table_lock();
         ActivePageTable {
             mapper: Mapper::new(),
+            locked: true,
+        }
+    }
+
+    pub unsafe fn new_unlocked() -> ActivePageTable {
+        ActivePageTable {
+            mapper: Mapper::new(),
+            locked: false,
         }
     }
 
@@ -328,6 +372,15 @@ impl ActivePageTable {
 
     pub unsafe fn address(&self) -> usize {
         control_regs::cr3() as usize
+    }
+}
+
+impl Drop for ActivePageTable {
+    fn drop(&mut self) {
+        if self.locked {
+            page_table_unlock();
+            self.locked = false;
+        }
     }
 }
 

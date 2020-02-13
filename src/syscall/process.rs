@@ -380,7 +380,12 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             context.sigmask = sigmask;
             context.umask = umask;
 
-            context.cpu_id = cpu_id_opt;
+            //TODO: Better CPU balancing
+            if let Some(cpu_id) = cpu_id_opt {
+                context.cpu_id = Some(cpu_id);
+            } else {
+                context.cpu_id = Some(pid.into() % crate::cpu_count());
+            }
 
             context.status = context::Status::Runnable;
 
