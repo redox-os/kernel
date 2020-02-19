@@ -122,6 +122,8 @@ pub struct Context {
     pub running: bool,
     /// CPU ID, if locked
     pub cpu_id: Option<usize>,
+    /// Number of timer ticks executed
+    pub ticks: u64,
     /// Current system call
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
@@ -197,6 +199,7 @@ impl Context {
             status: Status::Blocked,
             running: false,
             cpu_id: None,
+            ticks: 0,
             syscall: None,
             syscall_head,
             syscall_tail,

@@ -6,7 +6,7 @@ use crate::context;
 use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{}\n",
+    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<8}{}\n",
                              "PID",
                              "PGID",
                              "PPID",
@@ -18,6 +18,7 @@ pub fn resource() -> Result<Vec<u8>> {
                              "ENS",
                              "STAT",
                              "CPU",
+                             "TICKS",
                              "MEM",
                              "NAME");
     {
@@ -55,6 +56,19 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{}", cpu_id)
             } else {
                 format!("?")
+            };
+
+            let ticks = context.ticks;
+            let ticks_string = if ticks >= 1000 * 1000 * 1000 * 1000 {
+                format!("{} T", ticks / 1000 / 1000 / 1000 / 1000)
+            } else if ticks >= 1000 * 1000 * 1000 {
+                format!("{} G", ticks / 1000 / 1000 / 1000)
+            } else if ticks >= 1000 * 1000 {
+                format!("{} M", ticks / 1000 / 1000)
+            } else if ticks >= 1000 {
+                format!("{} K", ticks / 1000)
+            } else {
+                format!("{}", ticks)
             };
 
             let mut memory = 0;
@@ -96,7 +110,7 @@ pub fn resource() -> Result<Vec<u8>> {
             let name_bytes = context.name.lock();
             let name = str::from_utf8(&name_bytes).unwrap_or("");
 
-            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{}\n",
+            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<8}{}\n",
                                context.id.into(),
                                context.pgid.into(),
                                context.ppid.into(),
@@ -108,6 +122,7 @@ pub fn resource() -> Result<Vec<u8>> {
                                context.ens.into(),
                                stat_string,
                                cpu_string,
+                               ticks_string,
                                memory_string,
                                name));
         }
