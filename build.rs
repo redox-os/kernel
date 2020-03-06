@@ -1,9 +1,8 @@
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{Error, Write};
 use std::path::Path;
-use std::collections::HashMap;
-
 
 // View loc folder with subfolders, get listings
 // Returns touple (folder_map, file_list)
@@ -36,7 +35,9 @@ fn scan_folder(loc: &Path) -> (HashMap<String, Vec<String>>, Vec<String>) {
         }
 
         current.sort();
-        folders.entry(String::from(loc.to_str().unwrap()).replace("\\", "/")).or_insert(current);
+        folders
+            .entry(String::from(loc.to_str().unwrap()).replace("\\", "/"))
+            .or_insert(current);
     } else {
         panic!("{:?} is not a folder!", loc);
     }
@@ -45,9 +46,9 @@ fn scan_folder(loc: &Path) -> (HashMap<String, Vec<String>>, Vec<String>) {
 }
 
 // Write folder/file information to output file
-fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), Error> {
+fn fill_from_location(f: &mut fs::File, loc: &Path) -> Result<(), Error> {
     let (folders, mut files) = scan_folder(loc);
-    let mut folder_it:Vec<_> = folders.keys().collect();
+    let mut folder_it: Vec<_> = folders.keys().collect();
 
     let loc_str = loc.to_str().unwrap();
     let mut idx = loc_str.len();
@@ -80,7 +81,11 @@ fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), Error> {
 
     for name in files.iter() {
         let (_, strip) = name.split_at(idx);
-        write!(f, "        files.insert(b\"{}\", (include_bytes!(\"{}\"), false));\n", strip, name)?;
+        write!(
+            f,
+            "        files.insert(b\"{}\", (include_bytes!(\"{}\"), false));\n",
+            strip, name
+        )?;
     }
 
     Ok(())
@@ -96,29 +101,39 @@ fn main() {
     let src = env::var("INITFS_FOLDER");
 
     // Write header
-    f.write_all(b"
+    f.write_all(
+        b"
 mod gen {
     use alloc::collections::BTreeMap;
     pub fn gen() -> BTreeMap<&'static [u8], (&'static [u8], bool)> {
         let mut files: BTreeMap<&'static [u8], (&'static [u8], bool)> = BTreeMap::new();
-").unwrap();
+",
+    )
+    .unwrap();
 
     match src {
         Ok(v) => {
             println!("cargo:rerun-if-changed={}", v);
             fill_from_location(&mut f, Path::new(&v)).unwrap()
-        },
+        }
         Err(e) => {
             f.write_all(
-                b"        files.clear();" // Silence mutability warning
-            ).unwrap();
-            println!("cargo:warning=location not found: {}, please set proper INITFS_FOLDER.", e);
+                b"        files.clear();", // Silence mutability warning
+            )
+            .unwrap();
+            println!(
+                "cargo:warning=location not found: {}, please set proper INITFS_FOLDER.",
+                e
+            );
         }
     }
 
-    f.write_all(b"
+    f.write_all(
+        b"
         files
     }
 }
-").unwrap();
+",
+    )
+    .unwrap();
 }
