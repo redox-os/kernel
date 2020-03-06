@@ -45,7 +45,7 @@ fn scan_folder(loc: &Path) -> (HashMap<String, Vec<String>>, Vec<String>) {
 }
 
 // Write folder/file information to output file
-fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), (Error)> {
+fn fill_from_location(f: &mut fs::File, loc: &Path ) -> Result<(), Error> {
     let (folders, mut files) = scan_folder(loc);
     let mut folder_it:Vec<_> = folders.keys().collect();
 

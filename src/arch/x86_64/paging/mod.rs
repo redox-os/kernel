@@ -45,9 +45,7 @@ fn page_table_lock() {
                 return;
             }
         }
-        unsafe {
             crate::arch::interrupt::pause();
-        }
     }
 }
 
