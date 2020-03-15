@@ -1,5 +1,5 @@
 use core::sync::atomic::Ordering;
-use x86::shared::tlb;
+use x86::tlb;
 
 use crate::context;
 use crate::device::local_apic::LOCAL_APIC;

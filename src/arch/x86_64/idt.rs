@@ -1,6 +1,6 @@
 use core::mem;
-use x86::current::irq::IdtEntry as X86IdtEntry;
-use x86::shared::dtables::{self, DescriptorTablePointer};
+use x86::segmentation::Descriptor as X86IdtEntry;
+use x86::dtables::{self, DescriptorTablePointer};
 
 use crate::interrupt::*;
 use crate::ipi::IpiKind;
