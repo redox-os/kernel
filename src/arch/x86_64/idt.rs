@@ -69,6 +69,8 @@ pub unsafe fn init_paging() {
     IDT[45].set_func(irq::fpu);
     IDT[46].set_func(irq::ata1);
     IDT[47].set_func(irq::ata2);
+    IDT[48].set_func(irq::lapic_timer);
+    IDT[49].set_func(irq::lapic_error);
 
     // Set IPI handlers
     IDT[IpiKind::Wakeup as usize].set_func(ipi::wakeup);

@@ -47,6 +47,8 @@ impl LocalApic {
         } else {
             self.write(0xF0, 0x100);
         }
+        self.setup_error_int();
+        self.setup_timer();
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
@@ -113,4 +115,101 @@ impl LocalApic {
             self.write(0xB0, 0);
         }
     }
+    /// Reads the Error Status Register.
+    pub unsafe fn esr(&mut self) -> u32 {
+        if self.x2 {
+            // update the ESR to the current state of the local apic.
+            wrmsr(IA32_X2APIC_ESR, 0);
+            // read the updated value
+            rdmsr(IA32_X2APIC_ESR) as u32
+        } else {
+            self.write(0x280, 0);
+            self.read(0x280)
+        }
+    }
+    pub unsafe fn lvt_timer(&mut self) -> u32 {
+        if self.x2 {
+            rdmsr(IA32_X2APIC_LVT_TIMER) as u32
+        } else {
+            self.read(0x320)
+        }
+    }
+    pub unsafe fn set_lvt_timer(&mut self, value: u32) {
+        if self.x2 {
+            wrmsr(IA32_X2APIC_LVT_TIMER, u64::from(value));
+        } else {
+            self.write(0x320, value);
+        }
+    }
+    pub unsafe fn init_count(&mut self) -> u32 {
+        if self.x2 {
+            rdmsr(IA32_X2APIC_INIT_COUNT) as u32
+        } else {
+            self.read(0x380)
+        }
+    }
+    pub unsafe fn set_init_count(&mut self, initial_count: u32) {
+        if self.x2 {
+            wrmsr(IA32_X2APIC_INIT_COUNT, u64::from(initial_count));
+        } else {
+            self.write(0x380, initial_count);
+        }
+    }
+    pub unsafe fn cur_count(&mut self) -> u32 {
+        if self.x2 {
+            rdmsr(IA32_X2APIC_CUR_COUNT) as u32
+        } else {
+            self.read(0x390)
+        }
+    }
+    pub unsafe fn div_conf(&mut self) -> u32 {
+        if self.x2 {
+            rdmsr(IA32_X2APIC_DIV_CONF) as u32
+        } else {
+            self.read(0x3E0)
+        }
+    }
+    pub unsafe fn set_div_conf(&mut self, div_conf: u32) {
+        if self.x2 {
+            wrmsr(IA32_X2APIC_DIV_CONF, u64::from(div_conf));
+        } else {
+            self.write(0x3E0, div_conf);
+        }
+    }
+    pub unsafe fn lvt_error(&mut self) -> u32 {
+        if self.x2 {
+            rdmsr(IA32_X2APIC_LVT_ERROR) as u32
+        } else {
+            self.read(0x370)
+        }
+    }
+    pub unsafe fn set_lvt_error(&mut self, lvt_error: u32) {
+        if self.x2 {
+            wrmsr(IA32_X2APIC_LVT_ERROR, u64::from(lvt_error));
+        } else {
+            self.write(0x370, lvt_error);
+        }
+    }
+    unsafe fn setup_error_int(&mut self) {
+        let vector = 49u32;
+        self.set_lvt_error(vector);
+    }
+    unsafe fn setup_timer(&mut self) {
+        let div_conf_value = 0b1010; // divide by 128
+        self.set_div_conf(div_conf_value);
+
+        let init_count_value = 1_000_000;
+        self.set_init_count(init_count_value);
+
+        let lvt_timer_value = ((LvtTimerMode::Periodic as u32) << 17) | 48u32;
+        self.set_lvt_timer(lvt_timer_value);
+
+        // TODO: Get the correct frequency, use the local apic timer instead of the PIT.
+    }
+}
+#[repr(u8)]
+pub enum LvtTimerMode {
+    OneShot = 0b00,
+    Periodic = 0b01,
+    TscDeadline = 0b10,
 }

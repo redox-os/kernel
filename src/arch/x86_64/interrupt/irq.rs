@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::context::timeout;
-use crate::device::pic;
+use crate::device::{local_apic, pic};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::debug_input;
@@ -28,6 +28,9 @@ unsafe fn trigger(irq: u8) {
     }
 
     irq_trigger(irq);
+}
+unsafe fn lapic_eoi() {
+    local_apic::LOCAL_APIC.eoi()
 }
 
 pub unsafe fn acknowledge(irq: usize) {
@@ -131,4 +134,12 @@ interrupt!(ata1, {
 
 interrupt!(ata2, {
     trigger(15);
+});
+interrupt!(lapic_timer, {
+    println!("Local apic timer interrupt");
+    lapic_eoi();
+});
+interrupt!(lapic_error, {
+    println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());
+    lapic_eoi();
 });
