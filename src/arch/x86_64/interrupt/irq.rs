@@ -143,3 +143,36 @@ interrupt!(lapic_error, {
     println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());
     lapic_eoi();
 });
+interrupt!(msi_vector, {
+    println!("MSI interrupt");
+    lapic_eoi();
+});
+interrupt!(calib_pit, {
+    const PIT_RATE: u64 = 2_250_286;
+
+    {
+        let mut offset = time::OFFSET.lock();
+        let sum = offset.1 + PIT_RATE;
+        offset.1 = sum % 1_000_000_000;
+        offset.0 += sum / 1_000_000_000;
+    }
+
+    pic::MASTER.ack();
+});
+// XXX: This would look way prettier using const generics.
+
+macro_rules! allocatable_irq(
+    ( $number:literal, $name:ident ) => {
+        interrupt!($name, {
+            allocatable_irq_generic($number);
+        });
+    }
+);
+
+pub unsafe fn allocatable_irq_generic(number: u8) {
+    println!("generic irq: {}", number);
+    trigger(number - 32);
+    lapic_eoi(); // not sure if needed
+}
+
+define_default_irqs!();

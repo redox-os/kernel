@@ -8,6 +8,9 @@ pub mod trace;
 
 pub use self::trace::stack_trace;
 
+pub use super::idt::{available_irqs_iter, is_reserved, set_reserved};
+pub use super::device::local_apic::bsp_apic_id;
+
 /// Clear interrupts
 #[inline(always)]
 pub unsafe fn disable() {
