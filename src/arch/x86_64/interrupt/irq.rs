@@ -11,10 +11,11 @@ use crate::{context, ptrace, time};
 #[thread_local]
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
 
+extern {
+    fn irq_trigger(irq: u8);
+}
+
 unsafe fn trigger(irq: u8) {
-    extern {
-        fn irq_trigger(irq: u8);
-    }
 
     if irq < 16 {
         if irq >= 8 {
@@ -143,10 +144,6 @@ interrupt!(lapic_error, {
     println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());
     lapic_eoi();
 });
-interrupt!(msi_vector, {
-    println!("MSI interrupt");
-    lapic_eoi();
-});
 interrupt!(calib_pit, {
     const PIT_RATE: u64 = 2_250_286;
 
@@ -171,8 +168,8 @@ macro_rules! allocatable_irq(
 
 pub unsafe fn allocatable_irq_generic(number: u8) {
     println!("generic irq: {}", number);
-    trigger(number - 32);
-    lapic_eoi(); // not sure if needed
+    irq_trigger(number - 32);
+    lapic_eoi();
 }
 
 define_default_irqs!();
