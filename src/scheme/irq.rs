@@ -43,7 +43,7 @@ pub extern fn irq_trigger(irq: u8) {
 
     let guard = HANDLES.read();
     if let Some(handles) = guard.as_ref() {
-        for (fd, (_, handle_irq)) in handles.iter().filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?))).filter(|&(_, (_, handle_irq))| handle_irq == irq) {
+        for (fd, _) in handles.iter().filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?))).filter(|&(_, (_, handle_irq))| handle_irq == irq) {
             event::trigger(IRQ_SCHEME_ID.load(Ordering::SeqCst), *fd, EVENT_READ);
         }
     } else {

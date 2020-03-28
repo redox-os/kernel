@@ -6,7 +6,6 @@ use x86::msr::*;
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, PhysicalAddress, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
-use crate::{interrupt, time};
 
 pub static mut LOCAL_APIC: LocalApic = LocalApic {
     address: 0,
@@ -212,89 +211,6 @@ impl LocalApic {
         let vector = 49u32;
         self.set_lvt_error(vector);
     }
-    unsafe fn setup_timer(&mut self) -> Result<(), NoFreqInfo> {
-        // TODO: Get the correct frequency, use the local apic timer instead of the PIT.
-        let cpuid = CpuId::new();
-        let hardcoded_frequency_in_hz = cpuid.get_tsc_info().map(|tsc| {
-            if tsc.numerator() != 0 {
-                // The core crystal clock frequency, in hertz.
-                Some(tsc.tsc_frequency())
-            } else { None }
-        }).or_else(|| {
-            cpuid.get_processor_frequency_info().map(|freq| {
-                let bus_freq = freq.bus_frequency();
-                if bus_freq != 0 {
-                    Some(u64::from(bus_freq) * 1_000_000)
-                } else { None }
-            })
-        }).flatten();
-
-        let frequency_in_hz = hardcoded_frequency_in_hz.unwrap_or_else(|| {
-            let (numer, denom) = self.determine_freq();
-            let quotient = numer / denom;
-            quotient as u64
-        });
-
-        let most_suitable_divider = most_suitable_divider(frequency_in_hz);
-
-        println!("FREQUENCY: {}", frequency_in_hz);
-        println!("MOST_SUIT_DIV: {}", most_suitable_divider);
-
-        let div_conf_value = most_suitable_divider; // divide by 128
-        self.set_div_conf(div_conf_value.into());
-
-        let init_count_value = 1_000_000;
-        self.set_init_count(init_count_value);
-
-        let lvt_timer_value = ((LvtTimerMode::Periodic as u32) << 17) | 48u32;
-        self.set_lvt_timer(lvt_timer_value);
-
-        Ok(())
-    }
-
-    /// Determine the APIC timer frequency, if the info wasn't already retrieved directly from the
-    /// CPU.
-    unsafe fn determine_freq(&mut self) -> (u128, u128) {
-        let old_time = time::monotonic();
-        let (old_time_s, old_time_ns) = old_time;
-
-        super::super::idt::IDT[32].set_func(super::super::interrupt::irq::calib_pit);
-
-        self.set_div_conf(0b1011); // divide by 1
-        self.set_lvt_timer((LvtTimerMode::OneShot as u32) << 17 | 48);
-
-        // enable both the apic timer and the pit timer simultaneously
-        interrupt::enable_and_nop();
-
-        self.set_init_count(0xFFFF_FFFF);
-
-        let mut time;
-
-        'halt: loop {
-            time = time::monotonic();
-            if time.0 > old_time_s || time.1 - old_time_ns > 10_000_000 {
-                break 'halt;
-            }
-            x86::halt();
-        }
-
-        let (time_s, time_ns) = time;
-
-        let lvt_timer = self.lvt_timer();
-        self.set_lvt_timer(lvt_timer | 1 << 16);
-
-        let current_count = self.cur_count();
-
-        let lvt_timer_difference = 0xFFFF_FFFF - current_count;
-        let (s_difference, ns_difference) = (time_s - old_time_s, time_ns - old_time_ns);
-
-        let freq_numer = u128::from(lvt_timer_difference) * 1_000_000_000; // multiply with a billion since we're dividing by nanoseconds.
-        let freq_denom_in_s = u128::from(s_difference) * 1_000_000_000 + u128::from(ns_difference);
-
-        super::super::idt::IDT[32].set_func(super::super::interrupt::irq::pit);
-
-        (freq_numer, freq_denom_in_s)
-    }
 }
 
 #[repr(u8)]
@@ -302,31 +218,4 @@ pub enum LvtTimerMode {
     OneShot = 0b00,
     Periodic = 0b01,
     TscDeadline = 0b10,
-}
-
-/// Find the most suitable divider configuration value, which is useful if the reported frequency
-/// is way too high to actually be useful.
-fn most_suitable_divider(freq: u64) -> u8 {
-    // the current scheduler switches process about every 40 µs, with 4 µs per tick.
-    let quotient = (freq * 1000) / 2_000_000_000;
-    if quotient == 0 {
-        // the frequency is way to low, so the pit should be used
-        println!("Suboptimal APIC timer frequency");
-        0b1011 // divide by 1
-    } else if quotient == 1 {
-        // the frequency closely matches the requested frequency, so use divider 1
-        0b1011
-    } else if quotient < 4 {
-        0b0000 // divider 2
-    } else if quotient < 8 {
-        0b0001 // divider 4
-    } else if quotient < 16 {
-        0b0010 // divider 8
-    } else if quotient < 32 {
-        0b0011 // divider 16
-    } else if quotient < 64 {
-        0b1001 // divider 64
-    } else {
-        0b1010 // divider 128
-    }
 }
