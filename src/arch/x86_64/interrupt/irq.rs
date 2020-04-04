@@ -167,7 +167,6 @@ macro_rules! allocatable_irq(
 );
 
 pub unsafe fn allocatable_irq_generic(number: u8) {
-    println!("generic irq: {}", number);
     irq_trigger(number - 32);
     lapic_eoi();
 }

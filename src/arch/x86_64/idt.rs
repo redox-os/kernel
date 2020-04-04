@@ -43,7 +43,7 @@ pub fn set_reserved(index: u8, reserved: bool) {
 }
 
 pub fn allocate_interrupt() -> Option<NonZeroU8> {
-    for number in 50..=255 {
+    for number in 50..=254 {
         if ! is_reserved(number) {
             set_reserved(number, true);
             return Some(unsafe { NonZeroU8::new_unchecked(number) });
@@ -53,20 +53,7 @@ pub fn allocate_interrupt() -> Option<NonZeroU8> {
 }
 
 pub fn available_irqs_iter() -> impl Iterator<Item = u8> + 'static {
-    AvailableIrqsIter { index: Some(50) }.filter(|&index| !is_reserved(index))
-}
-
-struct AvailableIrqsIter {
-    index: Option<u8>,
-}
-impl Iterator for AvailableIrqsIter {
-    type Item = u8;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index = self.index?;
-        self.index = index.checked_add(1);
-        Some(index)
-    }
+    (50..=254).filter(|&index| !is_reserved(index))
 }
 
 macro_rules! use_irq(
