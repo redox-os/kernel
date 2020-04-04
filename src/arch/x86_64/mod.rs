@@ -14,11 +14,12 @@ pub mod gdt;
 #[cfg(feature = "graphical_debug")]
 mod graphical_debug;
 
+/// Interrupt instructions
+#[macro_use]
+pub mod interrupt;
+
 /// Interrupt descriptor table
 pub mod idt;
-
-/// Interrupt instructions
-pub mod interrupt;
 
 /// Inter-processor interrupts
 pub mod ipi;

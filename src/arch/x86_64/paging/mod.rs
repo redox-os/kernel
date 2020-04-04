@@ -4,7 +4,7 @@
 use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
 use spin::Mutex;
-use x86::shared::{control_regs, msr, tlb};
+use x86::{controlregs, msr, tlb};
 
 use crate::memory::{allocate_frames, Frame};
 
@@ -396,11 +396,11 @@ impl ActivePageTable {
     pub fn switch(&mut self, new_table: InactivePageTable) -> InactivePageTable {
         let old_table = InactivePageTable {
             p4_frame: Frame::containing_address(PhysicalAddress::new(
-                unsafe { control_regs::cr3() } as usize,
+                unsafe { controlregs::cr3() } as usize,
             )),
         };
         unsafe {
-            control_regs::cr3_write(new_table.p4_frame.start_address().get() as u64);
+            controlregs::cr3_write(new_table.p4_frame.start_address().get() as u64);
         }
         old_table
     }
@@ -427,7 +427,7 @@ impl ActivePageTable {
     {
         {
             let backup = Frame::containing_address(PhysicalAddress::new(unsafe {
-                control_regs::cr3() as usize
+                controlregs::cr3() as usize
             }));
 
             // map temporary_page to current p4 table
@@ -459,7 +459,7 @@ impl ActivePageTable {
     }
 
     pub unsafe fn address(&self) -> usize {
-        control_regs::cr3() as usize
+        controlregs::cr3() as usize
     }
 }
 

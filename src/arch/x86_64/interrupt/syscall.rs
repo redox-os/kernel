@@ -2,13 +2,13 @@ use crate::arch::macros::InterruptStack;
 use crate::arch::{gdt, pti};
 use crate::syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL};
 use crate::{ptrace, syscall};
-use x86::shared::msr;
+use x86::msr;
 
 pub unsafe fn init() {
     msr::wrmsr(msr::IA32_STAR, ((gdt::GDT_KERNEL_CODE as u64) << 3) << 32);
     msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
     msr::wrmsr(msr::IA32_FMASK, 0x0300); // Clear trap flag and interrupt enable
-    msr::wrmsr(msr::IA32_KERNEL_GS_BASE, &gdt::TSS as *const _ as u64);
+    msr::wrmsr(msr::IA32_KERNEL_GSBASE, &gdt::TSS as *const _ as u64);
 
     let efer = msr::rdmsr(msr::IA32_EFER);
     msr::wrmsr(msr::IA32_EFER, efer | 1);

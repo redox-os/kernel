@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::context::timeout;
-use crate::device::pic;
+use crate::device::{local_apic, pic};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::debug_input;
@@ -11,10 +11,11 @@ use crate::{context, ptrace, time};
 #[thread_local]
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
 
+extern {
+    fn irq_trigger(irq: u8);
+}
+
 unsafe fn trigger(irq: u8) {
-    extern {
-        fn irq_trigger(irq: u8);
-    }
 
     if irq < 16 {
         if irq >= 8 {
@@ -28,6 +29,9 @@ unsafe fn trigger(irq: u8) {
     }
 
     irq_trigger(irq);
+}
+unsafe fn lapic_eoi() {
+    local_apic::LOCAL_APIC.eoi()
 }
 
 pub unsafe fn acknowledge(irq: usize) {
@@ -132,3 +136,39 @@ interrupt!(ata1, {
 interrupt!(ata2, {
     trigger(15);
 });
+interrupt!(lapic_timer, {
+    println!("Local apic timer interrupt");
+    lapic_eoi();
+});
+interrupt!(lapic_error, {
+    println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());
+    lapic_eoi();
+});
+interrupt!(calib_pit, {
+    const PIT_RATE: u64 = 2_250_286;
+
+    {
+        let mut offset = time::OFFSET.lock();
+        let sum = offset.1 + PIT_RATE;
+        offset.1 = sum % 1_000_000_000;
+        offset.0 += sum / 1_000_000_000;
+    }
+
+    pic::MASTER.ack();
+});
+// XXX: This would look way prettier using const generics.
+
+macro_rules! allocatable_irq(
+    ( $number:literal, $name:ident ) => {
+        interrupt!($name, {
+            allocatable_irq_generic($number);
+        });
+    }
+);
+
+pub unsafe fn allocatable_irq_generic(number: u8) {
+    irq_trigger(number - 32);
+    lapic_eoi();
+}
+
+define_default_irqs!();

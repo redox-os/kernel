@@ -1,12 +1,12 @@
 //! Global descriptor table
 
 use core::mem;
-use x86::current::segmentation::set_cs;
-use x86::current::task::TaskStateSegment;
-use x86::shared::PrivilegeLevel;
-use x86::shared::dtables::{self, DescriptorTablePointer};
-use x86::shared::segmentation::{self, SegmentDescriptor, SegmentSelector};
-use x86::shared::task;
+use x86::segmentation::load_cs;
+use x86::bits64::task::TaskStateSegment;
+use x86::Ring;
+use x86::dtables::{self, DescriptorTablePointer};
+use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
+use x86::task;
 
 use crate::paging::PAGE_SIZE;
 
@@ -120,12 +120,12 @@ pub unsafe fn init() {
     dtables::lgdt(&INIT_GDTR);
 
     // Load the segment descriptors
-    set_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, PrivilegeLevel::Ring0));
-    segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
-    segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
-    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
-    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
-    segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
+    load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+    segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 }
 
 /// Initialize GDT with TLS
@@ -137,7 +137,7 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
     dtables::lgdt(&INIT_GDTR);
 
     // Load the segment descriptors
-    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16, PrivilegeLevel::Ring0));
+    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16, Ring::Ring0));
 
     // Now that we have access to thread locals, setup the AP's individual GDT
     GDTR.limit = (GDT.len() * mem::size_of::<GdtEntry>() - 1) as u16;
@@ -160,15 +160,15 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
     dtables::lgdt(&GDTR);
 
     // Reload the segment descriptors
-    set_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, PrivilegeLevel::Ring0));
-    segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
-    segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
-    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16, PrivilegeLevel::Ring0));
-    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
-    segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, PrivilegeLevel::Ring0));
+    load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+    segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16, Ring::Ring0));
+    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
     // Load the task register
-    task::load_tr(SegmentSelector::new(GDT_TSS as u16, PrivilegeLevel::Ring0));
+    task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
 }
 
 #[derive(Copy, Clone, Debug)]

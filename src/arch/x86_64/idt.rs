@@ -1,9 +1,13 @@
 use core::mem;
-use x86::current::irq::IdtEntry as X86IdtEntry;
-use x86::shared::dtables::{self, DescriptorTablePointer};
+use core::num::NonZeroU8;
+
+use x86::segmentation::Descriptor as X86IdtEntry;
+use x86::dtables::{self, DescriptorTablePointer};
 
 use crate::interrupt::*;
 use crate::ipi::IpiKind;
+
+use spin::Mutex;
 
 pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
     limit: 0,
@@ -15,7 +19,55 @@ pub static mut IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointe
     base: 0 as *const X86IdtEntry
 };
 
+// TODO: It's probably a good idea to use a separate IDT (and IDT_RESERVATIONS) for each CPU.
+// Currently 202 interrupts are freely allocatable, for the IDT, but if different CPUs received
+// different IDTs, the number would go up to e.g. 1616 IRQs on a processor with 8 logical CPUs.
+
 pub static mut IDT: [IdtEntry; 256] = [IdtEntry::new(); 256];
+pub static IDT_RESERVATIONS: Mutex<[u64; 256 / 64]> = Mutex::new([0u64; 256 / 64]);
+
+#[inline]
+pub fn is_reserved(index: u8) -> bool {
+    let byte_index = index / 64;
+    let bit = index % 64;
+
+    IDT_RESERVATIONS.lock()[usize::from(byte_index)] & (1 << bit) != 0
+}
+
+#[inline]
+pub fn set_reserved(index: u8, reserved: bool) {
+    let byte_index = index / 64;
+    let bit = index % 64;
+
+    IDT_RESERVATIONS.lock()[usize::from(byte_index)] |= u64::from(reserved) << bit;
+}
+
+pub fn allocate_interrupt() -> Option<NonZeroU8> {
+    for number in 50..=254 {
+        if ! is_reserved(number) {
+            set_reserved(number, true);
+            return Some(unsafe { NonZeroU8::new_unchecked(number) });
+        }
+    }
+    None
+}
+
+pub fn available_irqs_iter() -> impl Iterator<Item = u8> + 'static {
+    (50..=254).filter(|&index| !is_reserved(index))
+}
+
+macro_rules! use_irq(
+    ( $number:literal, $func:ident ) => {
+        IDT[$number].set_func($func);
+    }
+);
+
+macro_rules! use_default_irqs(
+    () => {{
+        use crate::interrupt::irq::*;
+        default_irqs!(use_irq);
+    }}
+);
 
 pub unsafe fn init() {
     dtables::lidt(&INIT_IDTR);
@@ -52,6 +104,9 @@ pub unsafe fn init_paging() {
     IDT[30].set_func(exception::security);
     // 31 reserved
 
+    // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
+    IDT_RESERVATIONS.lock()[0] |= 0x0000_0000_FFFF_FFFF;
+
     // Set up IRQs
     IDT[32].set_func(irq::pit);
     IDT[33].set_func(irq::keyboard);
@@ -69,16 +124,28 @@ pub unsafe fn init_paging() {
     IDT[45].set_func(irq::fpu);
     IDT[46].set_func(irq::ata1);
     IDT[47].set_func(irq::ata2);
+    IDT[48].set_func(irq::lapic_timer);
+    IDT[49].set_func(irq::lapic_error);
+
+    use_default_irqs!();
+
+    // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
+    IDT_RESERVATIONS.lock()[0] |= 0x0003_FFFF_0000_0000;
 
     // Set IPI handlers
     IDT[IpiKind::Wakeup as usize].set_func(ipi::wakeup);
     IDT[IpiKind::Switch as usize].set_func(ipi::switch);
     IDT[IpiKind::Tlb as usize].set_func(ipi::tlb);
     IDT[IpiKind::Pit as usize].set_func(ipi::pit);
+    set_reserved(IpiKind::Wakeup as u8, true);
+    set_reserved(IpiKind::Switch as u8, true);
+    set_reserved(IpiKind::Tlb as u8, true);
+    set_reserved(IpiKind::Pit as u8, true);
 
     // Set syscall function
     IDT[0x80].set_func(syscall::syscall);
     IDT[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
+    set_reserved(0x80, true);
 
     dtables::lidt(&IDTR);
 }
