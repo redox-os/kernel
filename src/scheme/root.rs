@@ -93,7 +93,7 @@ impl Scheme for RootScheme {
                     let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
                     schemes.insert(self.scheme_ns, path_box, |scheme_id| {
                         inner.scheme_id.store(scheme_id, Ordering::SeqCst);
-                        Arc::new(Box::new(UserScheme::new(Arc::downgrade(&inner))))
+                        Arc::new(UserScheme::new(Arc::downgrade(&inner)))
                     })?;
                     inner
                 };
