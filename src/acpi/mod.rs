@@ -33,7 +33,7 @@ mod dmar;
 mod fadt;
 pub mod madt;
 mod rsdt;
-mod sdt;
+pub mod sdt;
 mod xsdt;
 pub mod aml;
 mod rxsdt;
@@ -42,7 +42,7 @@ mod rsdp;
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
 
-fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
+pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
     {
         let page = Page::containing_address(VirtualAddress::new(sdt_address));
         if active_table.translate_page(page).is_none() {
@@ -193,7 +193,7 @@ pub fn set_global_s_state(state: u8) {
     }
 }
 
-type SdtSignature = (String, [u8; 6], [u8; 8]);
+pub type SdtSignature = (String, [u8; 6], [u8; 8]);
 pub static SDT_POINTERS: RwLock<Option<BTreeMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
 pub static SDT_ORDER: RwLock<Option<Vec<SdtSignature>>> = RwLock::new(None);
 
