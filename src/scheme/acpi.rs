@@ -1,22 +1,22 @@
 use core::convert::{TryFrom, TryInto};
-use core::sync::atomic::{self, AtomicUsize};
 use core::fmt::Write;
 use core::str;
+use core::sync::atomic::{self, AtomicUsize};
 
-use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
-use syscall::scheme::Scheme;
 use syscall::data::Stat;
-use syscall::flag::{O_DIRECTORY, O_STAT, O_ACCMODE, O_WRONLY, O_RDWR};
-use syscall::error::{EACCES, EBADF, EBADFD, EISDIR, EINVAL, EIO, ENOENT, ENOTDIR};
-use syscall::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
+use syscall::error::{EACCES, EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR};
+use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDWR, O_STAT, O_WRONLY};
+use syscall::scheme::Scheme;
 use syscall::{Error, Result};
+use syscall::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
 
 use spin::{Mutex, RwLock};
 
-use crate::acpi::SdtSignature;
 use crate::acpi::sdt::Sdt;
+use crate::acpi::SdtSignature;
 use crate::paging::ActivePageTable;
 
 #[derive(Clone, Copy)]
@@ -56,20 +56,18 @@ struct Take<'a> {
 
 impl Take<'_> {
     pub fn write_to_buf<'a>(buf: &'a mut [u8]) -> Take<'a> {
-        Take {
-            offset: 0,
-            buf,
-        }
+        Take { offset: 0, buf }
     }
     pub fn bytes_currently_written(&self) -> usize {
         self.offset
     }
 }
 
-impl<'a> core::fmt::Write for Take<'a>
-{
+impl<'a> core::fmt::Write for Take<'a> {
     fn write_str(&mut self, string: &str) -> core::fmt::Result {
-        if self.offset > self.buf.len() { return Ok(()) }
+        if self.offset > self.buf.len() {
+            return Ok(());
+        }
 
         let string_bytes = string.as_bytes();
         let max = core::cmp::min(string_bytes.len() + self.offset, self.buf.len()) - self.offset;
@@ -80,8 +78,8 @@ impl<'a> core::fmt::Write for Take<'a>
 }
 
 enum Handle {
-    TopLevel(usize),    // seek offset
-    Tables(usize),      // seek offset
+    TopLevel(usize), // seek offset
+    Tables(usize),   // seek offset
 
     Table {
         name: [u8; 4],
@@ -104,15 +102,24 @@ impl AcpiScheme {
             // it appears that the SDTs are identity mapped, in which case we can just call get_sdt
             // whenever we need to and use the slice as if it was physical.
 
-            let table_name_str = str::from_utf8(allowed_tbl_name).expect("ACPI table name wasn't correct UTF-8");
+            let table_name_str =
+                str::from_utf8(allowed_tbl_name).expect("ACPI table name wasn't correct UTF-8");
 
             for sdt in find_sdt(table_name_str) {
-                let virt = get_sdt(sdt as *const Sdt as usize, &mut active_table) as *const Sdt as usize;
+                let virt =
+                    get_sdt(sdt as *const Sdt as usize, &mut active_table) as *const Sdt as usize;
                 let signature = get_sdt_signature(sdt);
                 let sdt_pointer = sdt as *const Sdt as usize;
                 let len = sdt.length as usize;
                 assert_eq!(virt, sdt_pointer);
-                tables.push((signature, PhysSlice { phys_ptr: sdt_pointer, len, virt }));
+                tables.push((
+                    signature,
+                    PhysSlice {
+                        phys_ptr: sdt_pointer,
+                        len,
+                        virt,
+                    },
+                ));
             }
         }
         tables
@@ -124,10 +131,26 @@ impl AcpiScheme {
             next_fd: AtomicUsize::new(0),
         }
     }
-    fn lookup_signature_index(&self, name: [u8; 4], oem_id: [u8; 6], oem_table_id: [u8; 8]) -> Option<usize> {
-        self.tables.iter().position(|((sig_name, sig_oem_id, sig_oem_table_id), _)| sig_name.as_bytes() == &name && sig_oem_id == &oem_id && sig_oem_table_id == &oem_table_id)
+    fn lookup_signature_index(
+        &self,
+        name: [u8; 4],
+        oem_id: [u8; 6],
+        oem_table_id: [u8; 8],
+    ) -> Option<usize> {
+        self.tables
+            .iter()
+            .position(|((sig_name, sig_oem_id, sig_oem_table_id), _)| {
+                sig_name.as_bytes() == &name
+                    && sig_oem_id == &oem_id
+                    && sig_oem_table_id == &oem_table_id
+            })
     }
-    fn lookup_signature(&self, name: [u8; 4], oem_id: [u8; 6], oem_table_id: [u8; 8]) -> Option<PhysSlice> {
+    fn lookup_signature(
+        &self,
+        name: [u8; 4],
+        oem_id: [u8; 6],
+        oem_table_id: [u8; 8],
+    ) -> Option<PhysSlice> {
         Some(self.tables[self.lookup_signature_index(name, oem_id, oem_table_id)?].1)
     }
 }
@@ -138,14 +161,20 @@ fn parse_table_filename(filename: &[u8]) -> Option<([u8; 4], [u8; 6], [u8; 8])> 
     // 2. a dash followed by 12 hexadecimal digits (6 bytes when decoded) composing the OEM ID.
     // 3. another dash followed by 16 hex digits (8 bytes), composing the OEM Table ID.
     // hence, the table is 4 + 1 + 12 + 1 + 16 = 34 bytes long.
-    if filename.len() != 34 { return None }
+    if filename.len() != 34 {
+        return None;
+    }
     let mut table_identifier = [0u8; 34];
     table_identifier.copy_from_slice(filename);
 
     let table_name = &table_identifier[..4];
-    if table_identifier[4] != b'-' { return None }
+    if table_identifier[4] != b'-' {
+        return None;
+    }
     let oem_id_hex = &table_identifier[5..17];
-    if table_identifier[17] != b'-' { return None }
+    if table_identifier[17] != b'-' {
+        return None;
+    }
     let oem_table_id_hex = &table_identifier[18..34];
 
     let oem_id_hex_str = str::from_utf8(oem_id_hex).ok()?;
@@ -160,14 +189,23 @@ fn parse_table_filename(filename: &[u8]) -> Option<([u8; 4], [u8; 6], [u8; 8])> 
     let mut oem_table_id = [0u8; 8];
 
     for index in 0..oem_table_id.len() {
-        oem_table_id[index] = u8::from_str_radix(&oem_table_id_hex_str[index * 2..(index + 1) * 2], 16).ok()?;
+        oem_table_id[index] =
+            u8::from_str_radix(&oem_table_id_hex_str[index * 2..(index + 1) * 2], 16).ok()?;
     }
 
     Some((table_name.try_into().unwrap(), oem_id, oem_table_id))
 }
-fn serialize_table_filename(buffer: &mut [u8], (table_name, oem_id, oem_table_id): ([u8; 4], [u8; 6], [u8; 8])) -> usize {
+fn serialize_table_filename(
+    buffer: &mut [u8],
+    (table_name, oem_id, oem_table_id): ([u8; 4], [u8; 6], [u8; 8]),
+) -> usize {
     let mut wrapper = Take::write_to_buf(buffer);
-    write!(wrapper, "{}-", str::from_utf8(&table_name).expect("Acpi table id wasn't valid UTF-8")).unwrap();
+    write!(
+        wrapper,
+        "{}-",
+        str::from_utf8(&table_name).expect("Acpi table id wasn't valid UTF-8")
+    )
+    .unwrap();
     for b in &oem_id {
         write!(wrapper, "{:2x}", b).unwrap();
     }
@@ -180,7 +218,9 @@ fn serialize_table_filename(buffer: &mut [u8], (table_name, oem_id, oem_table_id
 
 impl Scheme for AcpiScheme {
     fn open(&self, path: &[u8], flags: usize, opener_uid: u32, _opener_gid: u32) -> Result<usize> {
-        if opener_uid != 0 { return Err(Error::new(EACCES)) }
+        if opener_uid != 0 {
+            return Err(Error::new(EACCES));
+        }
 
         let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
         let path_str = path_str.trim_start_matches('/');
@@ -192,7 +232,9 @@ impl Scheme for AcpiScheme {
 
             if subpath.is_empty() {
                 // List of ACPI tables
-                if (flags & O_DIRECTORY == 0 && flags & O_STAT == 0) || (flags & O_ACCMODE == O_WRONLY || flags & O_ACCMODE == O_RDWR) {
+                if (flags & O_DIRECTORY == 0 && flags & O_STAT == 0)
+                    || (flags & O_ACCMODE == O_WRONLY || flags & O_ACCMODE == O_RDWR)
+                {
                     return Err(Error::new(EISDIR));
                 }
                 Handle::Tables(0)
@@ -203,9 +245,13 @@ impl Scheme for AcpiScheme {
                 if flags & O_ACCMODE == O_WRONLY || flags & O_ACCMODE == O_RDWR {
                     return Err(Error::new(EINVAL));
                 }
-                let (name, oem_id, oem_table_id) = parse_table_filename(subpath.as_bytes()).ok_or(Error::new(ENOENT))?;
+                let (name, oem_id, oem_table_id) =
+                    parse_table_filename(subpath.as_bytes()).ok_or(Error::new(ENOENT))?;
 
-                if self.lookup_signature_index(name, oem_id, oem_table_id).is_none() {
+                if self
+                    .lookup_signature_index(name, oem_id, oem_table_id)
+                    .is_none()
+                {
                     return Err(Error::new(ENOENT));
                 }
                 Handle::Table {
@@ -217,7 +263,9 @@ impl Scheme for AcpiScheme {
             }
         } else if path.is_empty() {
             // Top-level
-            if (flags & O_DIRECTORY == 0 && flags & O_STAT == 0) || (flags & O_ACCMODE == O_WRONLY || flags & O_ACCMODE == O_RDWR) {
+            if (flags & O_DIRECTORY == 0 && flags & O_STAT == 0)
+                || (flags & O_ACCMODE == O_WRONLY || flags & O_ACCMODE == O_RDWR)
+            {
                 return Err(Error::new(EISDIR));
             }
             Handle::TopLevel(0)
@@ -245,7 +293,12 @@ impl Scheme for AcpiScheme {
                 buf[..max].copy_from_slice(&path[..]);
                 max
             }
-            &Handle::Table { name, oem_id, oem_table_id, .. } => {
+            &Handle::Table {
+                name,
+                oem_id,
+                oem_table_id,
+                ..
+            } => {
                 let base_path = b"acpi:tables/";
                 let base_max = core::cmp::min(buf.len(), base_path.len());
                 buf[..base_max].copy_from_slice(&base_path[..]);
@@ -266,8 +319,16 @@ impl Scheme for AcpiScheme {
                 stat.st_mode = MODE_DIR;
                 stat.st_size = (self.tables.len() * 35) as u64; // fixed size of 34 bytes for the file names, plus a newline
             }
-            &Handle::Table { name, oem_id, oem_table_id, .. } => {
-                let len = self.lookup_signature(name, oem_id, oem_table_id).ok_or(Error::new(EBADFD))?.len;
+            &Handle::Table {
+                name,
+                oem_id,
+                oem_table_id,
+                ..
+            } => {
+                let len = self
+                    .lookup_signature(name, oem_id, oem_table_id)
+                    .ok_or(Error::new(EBADFD))?
+                    .len;
 
                 stat.st_mode = MODE_FILE;
                 stat.st_size = len as u64;
@@ -282,7 +343,17 @@ impl Scheme for AcpiScheme {
         let (cur_offset, length) = match &*handle {
             &Handle::TopLevel(offset) => (offset, TOPLEVEL_DIR_CONTENTS.len()),
             &Handle::Tables(offset) => (offset, self.tables.len() * 35),
-            &Handle::Table { name, oem_id, oem_table_id, offset } => (offset, self.lookup_signature(name, oem_id, oem_table_id).ok_or(Error::new(EBADFD))?.len),
+            &Handle::Table {
+                name,
+                oem_id,
+                oem_table_id,
+                offset,
+            } => (
+                offset,
+                self.lookup_signature(name, oem_id, oem_table_id)
+                    .ok_or(Error::new(EBADFD))?
+                    .len,
+            ),
         };
         let new_offset = match whence {
             SEEK_CUR => core::cmp::min(cur_offset + pos, length),
@@ -291,7 +362,9 @@ impl Scheme for AcpiScheme {
             _ => return Err(Error::new(EINVAL)),
         };
         match &mut *handle {
-            &mut Handle::Table { ref mut offset, .. } | &mut Handle::Tables(ref mut offset) | &mut Handle::TopLevel(ref mut offset) => *offset = new_offset,
+            &mut Handle::Table { ref mut offset, .. }
+            | &mut Handle::Tables(ref mut offset)
+            | &mut Handle::TopLevel(ref mut offset) => *offset = new_offset,
         }
         Ok(new_offset)
     }
@@ -303,7 +376,8 @@ impl Scheme for AcpiScheme {
             &mut Handle::TopLevel(ref mut offset) => {
                 let max_bytes_to_read = core::cmp::min(buf.len(), TOPLEVEL_DIR_CONTENTS.len());
                 let bytes_to_read = core::cmp::max(max_bytes_to_read, *offset) - *offset;
-                buf[..bytes_to_read].copy_from_slice(&TOPLEVEL_DIR_CONTENTS[*offset..*offset + bytes_to_read]);
+                buf[..bytes_to_read]
+                    .copy_from_slice(&TOPLEVEL_DIR_CONTENTS[*offset..*offset + bytes_to_read]);
                 *offset += bytes_to_read;
                 Ok(bytes_to_read)
             }
@@ -319,14 +393,19 @@ impl Scheme for AcpiScheme {
 
                 for index in base_table_index..self.tables.len() {
                     let &(ref name_string, oem_id, oem_table_id) = &self.tables[index].0;
-                    let signature = (name_string.as_bytes().try_into().or(Err(Error::new(EIO)))?, oem_id, oem_table_id);
+                    let signature = (
+                        name_string.as_bytes().try_into().or(Err(Error::new(EIO)))?,
+                        oem_id,
+                        oem_table_id,
+                    );
 
                     let mut src_buf = [0u8; 35];
                     serialize_table_filename(&mut src_buf[..34], signature);
                     src_buf[34] = b'\n';
 
                     let max_bytes_to_read = core::cmp::min(buf.len(), src_buf.len());
-                    let bytes_to_read = core::cmp::max(max_bytes_to_read, bytes_to_skip) - bytes_to_skip;
+                    let bytes_to_read =
+                        core::cmp::max(max_bytes_to_read, bytes_to_skip) - bytes_to_skip;
                     buf[..bytes_to_read].copy_from_slice(&src_buf[..bytes_to_read]);
                     bytes_read += bytes_to_read;
                     bytes_to_skip = 0;
@@ -341,16 +420,29 @@ impl Scheme for AcpiScheme {
                 oem_table_id,
                 ref mut offset,
             } => {
-                let index = self.lookup_signature_index(name, oem_id, oem_table_id).ok_or(Error::new(EBADFD))?;
-                let (_, PhysSlice { phys_ptr, len, virt: old_virt }) = self.tables[index];
+                let index = self
+                    .lookup_signature_index(name, oem_id, oem_table_id)
+                    .ok_or(Error::new(EBADFD))?;
+                let (
+                    _,
+                    PhysSlice {
+                        phys_ptr,
+                        len,
+                        virt: old_virt,
+                    },
+                ) = self.tables[index];
                 assert_eq!(phys_ptr, old_virt);
-                let new_virt = crate::acpi::get_sdt(phys_ptr, unsafe { &mut ActivePageTable::new() }) as *const Sdt as usize;
+                let new_virt =
+                    crate::acpi::get_sdt(phys_ptr, unsafe { &mut ActivePageTable::new() })
+                        as *const Sdt as usize;
 
-                let table_contents = unsafe { core::slice::from_raw_parts(new_virt as *const u8, len) };
+                let table_contents =
+                    unsafe { core::slice::from_raw_parts(new_virt as *const u8, len) };
 
                 let max_bytes_to_read = core::cmp::min(buf.len(), table_contents.len());
                 let bytes_to_read = core::cmp::max(max_bytes_to_read, *offset) - *offset;
-                buf[..bytes_to_read].copy_from_slice(&table_contents[*offset..*offset + bytes_to_read]);
+                buf[..bytes_to_read]
+                    .copy_from_slice(&table_contents[*offset..*offset + bytes_to_read]);
                 *offset += bytes_to_read;
                 Ok(bytes_to_read)
             }
