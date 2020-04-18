@@ -45,37 +45,17 @@ pub struct KernelArgs {
     stack_size: u64,
     env_base: u64,
     env_size: u64,
-}
 
-/// Extended kernel args.
-///
-/// While the base kernel args are sufficient for basic initialization of most things, information
-/// like the memory map and the ACPI RSDPS (on UEFI), might have to be passed som other way.
-///
-/// If the envs begin with b"\x7f=V2", the pointer to `KernelArgs` can be assumed to also point to a
-/// complete `KernelArgsExt`.
-#[repr(packed)]
-pub struct KernelArgsExt {
-    /// The base compatible kernel args.
-    base: KernelArgs,
-    /// The revision of the KernelArgsExt struct. Only 0 at the moment.
-    proto_rev: u16,
-    /// The total length of the kernel args struct.
-    length: u16,
-    /// Some flags. All flags are currently reserved and shall be 0.
-    flags: u32,
     /// The base 64-bit pointer to an array of saved RSDPs. It's up to the kernel (and possibly
     /// userspace), to decide which RSDP to use. The buffer will be a linked list containing a
     /// 32-bit relative (to this field) next, and the actual struct afterwards.
     ///
     /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
     /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
-    /// memory instead. On UEFI systems, this is not guaranteed to actually work.
+    /// memory instead. On UEFI systems, searching is not guaranteed to actually work though.
     acpi_rsdps_base: u64,
     /// The size of the RSDPs region.
     acpi_rsdps_size: u64,
-    // TODO: Include things like memory map
-    // TODO: Generalized tag structure, like with GRUB.
 }
 
 /// The entry to Rust, all things must be initialized
@@ -103,24 +83,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
         println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
         println!("Env: {:X}:{:X}", env_base, env_base + env_size);
+        println!("RSDPs: {:X}:{:X}", args.acpi_rsdps_base, args.acpi_rsdps_base + args.acpi_rsdps_size);
 
-        let mut env = slice::from_raw_parts(env_base as *const u8, env_size);
-
-        // This is kind of a hack, only used for an extended KernelArgs struct.
-        let extended_kargs = if &env[..4] == b"\x7f=V2" {
-            println!("Using EXT kernel args.");
-            env = &env[4..];
-            let ext_kargs = &*(args_ptr as *const KernelArgsExt);
-
-            if (ext_kargs.length as usize) < mem::size_of::<KernelArgsExt>() {
-                None
-            } else {
-                Some(ext_kargs)
-            }
-        } else { None };
-
-        let ext_mem_ranges = if let Some(ref xargs) = extended_kargs {
-            Some([(xargs.acpi_rsdps_base as usize, xargs.acpi_rsdps_size as usize)])
+        let ext_mem_ranges = if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
+            Some([(args.acpi_rsdps_base as usize, args.acpi_rsdps_size as usize)])
         } else {
             None
         };
@@ -177,7 +143,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
         {
-            acpi::init(&mut active_table, extended_kargs.as_ref().map(|kargs| (kargs.acpi_rsdps_base, kargs.acpi_rsdps_size)));
+            acpi::init(&mut active_table, if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 { Some((args.acpi_rsdps_base, args.acpi_rsdps_size)) } else { None });
             device::init_after_acpi(&mut active_table);
         }
 
@@ -193,7 +159,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         BSP_READY.store(true, Ordering::SeqCst);
 
-        env
+        slice::from_raw_parts(env_base as *const u8, env_size)
     };
 
     crate::kmain(CPU_COUNT.load(Ordering::SeqCst), env);
