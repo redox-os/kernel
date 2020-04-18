@@ -115,9 +115,10 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             sigmask = context.sigmask;
             umask = context.umask;
 
-            if flags.contains(CLONE_VM) {
-                cpu_id_opt = context.cpu_id;
-            }
+            // Uncomment to disable threads on different CPUs
+            // if flags.contains(CLONE_VM) {
+            //     cpu_id_opt = context.cpu_id;
+            // }
 
             arch = context.arch.clone();
 
