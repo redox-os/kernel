@@ -39,7 +39,7 @@ use core::{
     cmp,
     sync::atomic::Ordering
 };
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 //  ____                _
 // / ___|  ___  ___ ___(_) ___  _ __  ___
@@ -225,7 +225,9 @@ pub fn wait(pid: ContextId) -> Result<()> {
         }
     };
 
-    while !tracer.wait() {}
+    //TODO: proper wait_condition mutex
+    let m = Mutex::new(());
+    while !tracer.wait(m.lock(), "ptrace::wait") {}
 
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -269,7 +271,9 @@ pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>)
         )
     };
 
-    while !tracee.wait() {}
+    //TODO: proper wait_condition mutex
+    let m = Mutex::new(());
+    while !tracee.wait(m.lock(), "ptrace::breakpoint_callback") {}
 
     Some(flags)
 }

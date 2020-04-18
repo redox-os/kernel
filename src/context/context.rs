@@ -118,6 +118,7 @@ pub struct Context {
     pub umask: usize,
     /// Status of context
     pub status: Status,
+    pub status_reason: &'static str,
     /// Context running or not
     pub running: bool,
     /// CPU ID, if locked
@@ -197,6 +198,7 @@ impl Context {
             sigmask: [0; 2],
             umask: 0o022,
             status: Status::Blocked,
+            status_reason: "",
             running: false,
             cpu_id: None,
             ticks: 0,
@@ -304,9 +306,10 @@ impl Context {
     }
 
     /// Block the context, and return true if it was runnable before being blocked
-    pub fn block(&mut self) -> bool {
+    pub fn block(&mut self, reason: &'static str) -> bool {
         if self.status == Status::Runnable {
             self.status = Status::Blocked;
+            self.status_reason = reason;
             true
         } else {
             false
@@ -317,6 +320,7 @@ impl Context {
     pub fn unblock(&mut self) -> bool {
         if self.status == Status::Blocked {
             self.status = Status::Runnable;
+            self.status_reason = "";
 
             if let Some(cpu_id) = self.cpu_id {
                if cpu_id != crate::cpu_id() {

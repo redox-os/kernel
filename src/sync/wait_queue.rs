@@ -28,22 +28,23 @@ impl<T> WaitQueue<T> {
         self.inner.lock().is_empty()
     }
 
-    pub fn receive(&self) -> Option<T> {
+    pub fn receive(&self, reason: &'static str) -> Option<T> {
         loop {
-            if let Some(value) = self.inner.lock().pop_front() {
+            let mut inner = self.inner.lock();
+            if let Some(value) = inner.pop_front() {
                 return Some(value);
             }
-            if ! self.condition.wait() {
+            if ! self.condition.wait(inner, reason) {
                 return None;
             }
         }
     }
 
-    pub fn receive_into(&self, buf: &mut [T], block: bool) -> Option<usize> {
+    pub fn receive_into(&self, buf: &mut [T], block: bool, reason: &'static str) -> Option<usize> {
         let mut i = 0;
 
         if i < buf.len() && block {
-            buf[i] = self.receive()?;
+            buf[i] = self.receive(reason)?;
             i += 1;
         }
 

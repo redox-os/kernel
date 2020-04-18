@@ -22,13 +22,14 @@ impl<K, V> WaitMap<K, V> where K: Clone + Ord {
         self.inner.lock().remove(key)
     }
 
-    pub fn receive(&self, key: &K) -> V {
+    pub fn receive(&self, key: &K, reason: &'static str) -> V {
         loop {
-            if let Some(value) = self.receive_nonblock(key) {
+            let mut inner = self.inner.lock();
+            if let Some(value) = inner.remove(key) {
                 return value;
             }
             //TODO: use false from wait condition to indicate EINTR
-            let _ = self.condition.wait();
+            let _ = self.condition.wait(inner, reason);
         }
     }
 
@@ -41,12 +42,15 @@ impl<K, V> WaitMap<K, V> where K: Clone + Ord {
         }
     }
 
-    pub fn receive_any(&self) -> (K, V) {
+    pub fn receive_any(&self, reason: &'static str) -> (K, V) {
         loop {
-            if let Some(entry) = self.receive_any_nonblock() {
-                return entry;
+            let mut inner = self.inner.lock();
+            if let Some(key) = inner.keys().next().cloned() {
+                if let Some(entry) = inner.remove(&key).map(|value| (key, value)) {
+                    return entry;
+                }
             }
-            let _ = self.condition.wait();
+            let _ = self.condition.wait(inner, reason);
         }
     }
 

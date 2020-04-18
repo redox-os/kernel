@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use spin::{Mutex, RwLock};
+use spin::{Mutex, MutexGuard, RwLock};
 
 use crate::context::{self, Context};
 
@@ -36,8 +36,8 @@ impl WaitCondition {
         len
     }
 
-    // Wait until notified. Returns false if resumed by a signal or the notify_signal function
-    pub fn wait(&self) -> bool {
+    // Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function
+    pub fn wait<T>(&self, guard: MutexGuard<T>, reason: &'static str) -> bool {
         let id;
         {
             let context_lock = {
@@ -49,10 +49,12 @@ impl WaitCondition {
             {
                 let mut context = context_lock.write();
                 id = context.id;
-                context.block();
+                context.block(reason);
             }
 
             self.contexts.lock().push(context_lock);
+
+            drop(guard);
         }
 
         unsafe { context::switch(); }

@@ -29,7 +29,7 @@ pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize
         let mut context = context_lock.write();
 
         context.wake = Some(end);
-        context.block();
+        context.block("nanosleep");
     }
 
     unsafe { context::switch(); }
