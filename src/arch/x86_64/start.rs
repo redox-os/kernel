@@ -3,7 +3,7 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 
-use core::slice;
+use core::{mem, slice};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::allocator;
@@ -47,6 +47,37 @@ pub struct KernelArgs {
     env_size: u64,
 }
 
+/// Extended kernel args.
+///
+/// While the base kernel args are sufficient for basic initialization of most things, information
+/// like the memory map and the ACPI RSDPS (on UEFI), might have to be passed som other way.
+///
+/// If the envs begin with b"\x7f=V2", the pointer to `KernelArgs` can be assumed to also point to a
+/// complete `KernelArgsExt`.
+#[repr(packed)]
+pub struct KernelArgsExt {
+    /// The base compatible kernel args.
+    base: KernelArgs,
+    /// The revision of the KernelArgsExt struct. Only 0 at the moment.
+    proto_rev: u16,
+    /// The total length of the kernel args struct.
+    length: u16,
+    /// Some flags. All flags are currently reserved and shall be 0.
+    flags: u32,
+    /// The base 64-bit pointer to an array of saved RSDPs. It's up to the kernel (and possibly
+    /// userspace), to decide which RSDP to use. The buffer will be a linked list containing a
+    /// 32-bit relative (to this field) next, and the actual struct afterwards.
+    ///
+    /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
+    /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
+    /// memory instead. On UEFI systems, this is not guaranteed to actually work.
+    acpi_rsdps_base: u64,
+    /// The size of the RSDPs region.
+    acpi_rsdps_size: u64,
+    // TODO: Include things like memory map
+    // TODO: Generalized tag structure, like with GRUB.
+}
+
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
 pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
@@ -73,6 +104,27 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
         println!("Env: {:X}:{:X}", env_base, env_base + env_size);
 
+        let mut env = slice::from_raw_parts(env_base as *const u8, env_size);
+
+        // This is kind of a hack, only used for an extended KernelArgs struct.
+        let extended_kargs = if &env[..4] == b"\x7f=V2" {
+            println!("Using EXT kernel args.");
+            env = &env[4..];
+            let ext_kargs = &*(args_ptr as *const KernelArgsExt);
+
+            if (ext_kargs.length as usize) < mem::size_of::<KernelArgsExt>() {
+                None
+            } else {
+                Some(ext_kargs)
+            }
+        } else { None };
+
+        let ext_mem_ranges = if let Some(ref xargs) = extended_kargs {
+            Some([(xargs.acpi_rsdps_base as usize, xargs.acpi_rsdps_size as usize)])
+        } else {
+            None
+        };
+
         // Set up GDT before paging
         gdt::init();
 
@@ -83,7 +135,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         memory::init(0, kernel_base + ((kernel_size + 4095)/4096) * 4096);
 
         // Initialize paging
-        let (mut active_table, tcb_offset) = paging::init(0, kernel_base, kernel_base + kernel_size, stack_base, stack_base + stack_size);
+        let (mut active_table, tcb_offset) = paging::init(0, kernel_base, kernel_base + kernel_size, stack_base, stack_base + stack_size, ext_mem_ranges.as_ref().map(|arr| &arr[..]).unwrap_or(&[]));
 
         // Set up GDT after paging with TLS
         gdt::init_paging(tcb_offset, stack_base + stack_size);
@@ -124,7 +176,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
-        acpi::init(&mut active_table);
+        acpi::init(&mut active_table, extended_kargs.as_ref().map(|kargs| (kargs.acpi_rsdps_base, kargs.acpi_rsdps_size)));
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
@@ -138,7 +190,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         BSP_READY.store(true, Ordering::SeqCst);
 
-        slice::from_raw_parts(env_base as *const u8, env_size)
+        env
     };
 
     crate::kmain(CPU_COUNT.load(Ordering::SeqCst), env);

@@ -114,7 +114,7 @@ fn init_namespace() {
 }
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(active_table: &mut ActivePageTable) {
+pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: Option<(u64, u64)>) {
     {
         let mut sdt_ptrs = SDT_POINTERS.write();
         *sdt_ptrs = Some(BTreeMap::new());
@@ -126,7 +126,8 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     }
 
     // Search for RSDP
-    if let Some(rsdp) = RSDP::get_rsdp(active_table) {
+    if let Some(rsdp) = RSDP::get_rsdp(active_table, already_supplied_rsdps) {
+        println!("RSDP: {:?}", rsdp);
         let rxsdt = get_sdt(rsdp.sdt_address(), active_table);
 
         for &c in rxsdt.signature.iter() {
