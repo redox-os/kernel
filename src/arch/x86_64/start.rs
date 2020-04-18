@@ -176,7 +176,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
-        acpi::init(&mut active_table, extended_kargs.as_ref().map(|kargs| (kargs.acpi_rsdps_base, kargs.acpi_rsdps_size)));
+        {
+            acpi::init(&mut active_table, extended_kargs.as_ref().map(|kargs| (kargs.acpi_rsdps_base, kargs.acpi_rsdps_size)));
+            device::init_after_acpi(&mut active_table);
+        }
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();

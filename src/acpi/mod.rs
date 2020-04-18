@@ -31,7 +31,7 @@ use self::aml::{parse_aml_table, AmlError, AmlValue};
 pub mod hpet;
 mod dmar;
 mod fadt;
-mod madt;
+pub mod madt;
 mod rsdt;
 mod sdt;
 mod xsdt;

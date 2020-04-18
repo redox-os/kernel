@@ -1,4 +1,5 @@
 use core::convert::TryFrom;
+use core::mem;
 
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
@@ -36,10 +37,17 @@ impl RSDP {
             type Item = &'a [u8];
 
             fn next(&mut self) -> Option<Self::Item> {
-                let length = <[u8; 4]>::try_from(&self.buf[..4]).ok()?;
+                if self.buf.len() < 4 { return None }
+
+                let length_bytes = <[u8; 4]>::try_from(&self.buf[..4]).ok()?;
+                let length = u32::from_ne_bytes(length_bytes) as usize;
+
                 if (4 + length as usize) > self.buf.len() { return None }
-                self.buf = self.buf[4 + length..];
-                Ok(length)
+
+                let buf = &self.buf[4..4 + length];
+                self.buf = &self.buf[4 + length..];
+
+                Some(buf)
             }
         }
         fn slice_to_rsdp(slice: &[u8]) -> Option<&RSDP> {
@@ -52,20 +60,22 @@ impl RSDP {
             } else { None }
         }
 
-        // first, find an RDSP for ACPI 2.0
-        if let Some(rdsp_2_0) = Iter { buf: area }.filter_map(slice_to_rsdp).filter(|rsdp| rsdp.is_acpi_2_0()) {
-            return Some(rsdp_2_0);
+        // first, find an RSDP for ACPI 2.0
+        if let Some(rsdp_2_0) = (Iter { buf: area }.filter_map(slice_to_rsdp).find(|rsdp| rsdp.is_acpi_2_0())) {
+            return Some(*rsdp_2_0);
         }
 
-        // secondly, find an RDSP for ACPI 1.0
-        if let Some(rdsp_1_0) = Iter { buf: area }.filter_map(slice_to_rsdp).filter(|rsdp| rsdp.is_acpi_1_0()) {
-            return Some(rsdp_1_0);
+        // secondly, find an RSDP for ACPI 1.0
+        if let Some(rsdp_1_0) = (Iter { buf: area }.filter_map(slice_to_rsdp).find(|rsdp| rsdp.is_acpi_1_0())) {
+            return Some(*rsdp_1_0);
         }
+
+        None
     }
     pub fn get_rsdp(active_table: &mut ActivePageTable, already_supplied_rsdps: Option<(u64, u64)>) -> Option<RSDP> {
         if let Some((base, size)) = already_supplied_rsdps {
-            let area = core::slice::from_raw_parts(base as usize as *const u8, size as usize);
-            Self::get_already_supplied_rsdps(area)
+            let area = unsafe { core::slice::from_raw_parts(base as usize as *const u8, size as usize) };
+            Self::get_already_supplied_rsdps(area).or_else(|| Self::get_rsdp_by_searching(active_table))
         } else {
             Self::get_rsdp_by_searching(active_table)
         }

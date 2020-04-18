@@ -1,4 +1,5 @@
 use crate::syscall::io::{Io, Pio};
+use crate::arch::interrupt::irq;
 
 pub static mut MASTER: Pic = Pic::new(0x20);
 pub static mut SLAVE: Pic = Pic::new(0xA0);
@@ -27,6 +28,14 @@ pub unsafe fn init() {
     // Ack remaining interrupts
     MASTER.ack();
     SLAVE.ack();
+
+    // probably already set to PIC, but double-check
+    irq::set_irq_method(irq::IrqMethod::Pic);
+}
+
+pub unsafe fn disable() {
+    MASTER.data.write(0xFF);
+    SLAVE.data.write(0xFF);
 }
 
 pub struct Pic {
