@@ -306,11 +306,12 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
                 _ => (),
             }
         }
-
+/*
         let namespace_guard = crate::acpi::ACPI_TABLE.namespace.read();
         for (k, v) in namespace_guard.as_ref().unwrap().iter() {
             println!("{} = {:?}", k, v);
         }
+*/
     }
     println!("I/O APICs: {:?}, overrides: {:?}", ioapics(), src_overrides());
 
@@ -358,6 +359,22 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     }
     println!("I/O APICs: {:?}, overrides: {:?}", ioapics(), src_overrides());
     irq::set_irq_method(irq::IrqMethod::Apic);
+
+    // tell the firmware that we're using APIC rather than the default 8259 PIC.
+    #[cfg(feature = "acpi")]
+    {
+        let method = {
+            let namespace_guard = crate::acpi::ACPI_TABLE.namespace.read();
+            if let Some(value) = namespace_guard.as_ref().unwrap().get("\\_PIC") {
+                value.get_as_method().ok()
+            } else {
+                None
+            }
+        };
+        if let Some(m) = method {
+            m.execute("\\_PIC".into(), vec!(crate::acpi::aml::AmlValue::Integer(1)));
+        }
+    }
 }
 fn get_override(irq: u8) -> Option<&'static Override> {
     src_overrides().iter().find(|over| over.bus_irq == irq) 

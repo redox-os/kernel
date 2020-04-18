@@ -35,7 +35,7 @@ pub mod madt;
 mod rsdt;
 mod sdt;
 mod xsdt;
-mod aml;
+pub mod aml;
 mod rxsdt;
 mod rsdp;
 
