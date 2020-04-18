@@ -70,6 +70,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         let stack_size = args.stack_size as usize;
         let env_base = args.env_base as usize;
         let env_size = args.env_size as usize;
+        let acpi_rsdps_base = args.acpi_rsdps_base;
+        let acpi_rsdps_size = args.acpi_rsdps_size;
 
         // BSS should already be zero
         {
@@ -83,10 +85,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
         println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
         println!("Env: {:X}:{:X}", env_base, env_base + env_size);
-        println!("RSDPs: {:X}:{:X}", args.acpi_rsdps_base, args.acpi_rsdps_base + args.acpi_rsdps_size);
+        println!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
 
         let ext_mem_ranges = if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
-            Some([(args.acpi_rsdps_base as usize, args.acpi_rsdps_size as usize)])
+            Some([(acpi_rsdps_base as usize, acpi_rsdps_size as usize)])
         } else {
             None
         };
@@ -143,7 +145,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
         {
-            acpi::init(&mut active_table, if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 { Some((args.acpi_rsdps_base, args.acpi_rsdps_size)) } else { None });
+            acpi::init(&mut active_table, if acpi_rsdps_base != 0 && acpi_rsdps_size > 0 { Some((acpi_rsdps_base, acpi_rsdps_size)) } else { None });
             device::init_after_acpi(&mut active_table);
         }
 
