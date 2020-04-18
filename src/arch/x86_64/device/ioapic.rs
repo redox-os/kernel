@@ -306,15 +306,6 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
                 _ => (),
             }
         }
-<<<<<<< HEAD
-/*
-        let namespace_guard = crate::acpi::ACPI_TABLE.namespace.read();
-        for (k, v) in namespace_guard.as_ref().unwrap().iter() {
-            println!("{} = {:?}", k, v);
-        }
-*/
-=======
->>>>>>> c723256... Use the I/O APIC when applicable.
     }
     println!("I/O APICs: {:?}, overrides: {:?}", ioapics(), src_overrides());
 
