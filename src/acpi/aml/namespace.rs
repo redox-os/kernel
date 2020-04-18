@@ -14,7 +14,7 @@ use super::AmlError;
 
 use crate::acpi::{SdtSignature, get_signature_from_index, get_index_from_signature};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum FieldSelector {
     Region(String),
     Bank {
@@ -28,7 +28,7 @@ pub enum FieldSelector {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ObjectReference {
     ArgObj(u8),
     LocalObj(u8),
@@ -36,7 +36,7 @@ pub enum ObjectReference {
     Index(Box<AmlValue>, Box<AmlValue>)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Method {
     pub arg_count: u8,
     pub serialized: bool,
@@ -44,14 +44,14 @@ pub struct Method {
     pub term_list: Vec<u8>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BufferField {
     pub source_buf: Box<AmlValue>,
     pub index: Box<AmlValue>,
     pub length: Box<AmlValue>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FieldUnit {
     pub selector: FieldSelector,
     pub connection: Box<AmlValue>,
@@ -60,19 +60,19 @@ pub struct FieldUnit {
     pub length: usize
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Device {
     pub obj_list: Vec<String>,
     pub notify_methods: BTreeMap<u8, Vec<fn()>>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ThermalZone {
     pub obj_list: Vec<String>,
     pub notify_methods: BTreeMap<u8, Vec<fn()>>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Processor {
     pub proc_id: u8,
     pub p_blk: Option<u32>,
@@ -80,7 +80,7 @@ pub struct Processor {
     pub notify_methods: BTreeMap<u8, Vec<fn()>>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OperationRegion {
     pub region: RegionSpace,
     pub offset: Box<AmlValue>,
@@ -89,13 +89,14 @@ pub struct OperationRegion {
     pub accessed_by: Option<u64>
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PowerResource {
     pub system_level: u8,
     pub resource_order: u16,
     pub obj_list: Vec<String>
 }
 
+#[derive(Debug)]
 pub struct Accessor {
     pub read: fn(usize) -> u64,
     pub write: fn(usize, u64)
@@ -110,7 +111,7 @@ impl Clone for Accessor {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum AmlValue {
     None,
     Uninitialized,
@@ -134,10 +135,6 @@ pub enum AmlValue {
     Processor(Processor),
     RawDataBuffer(Vec<u8>),
     ThermalZone(ThermalZone)
-}
-
-impl Debug for AmlValue {
-    fn fmt(&self, _f: &mut Formatter) -> Result<(), Error> { Ok(()) }
 }
 
 impl AmlValue {
