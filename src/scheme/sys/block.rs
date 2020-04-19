@@ -4,7 +4,6 @@ use core::fmt::Write;
 use core::str;
 
 use crate::context;
-use crate::syscall;
 use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
