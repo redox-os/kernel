@@ -43,7 +43,7 @@ pub struct AcpiScheme {
 }
 
 const TOPLEVEL_DIR_CONTENTS: &[u8] = b"tables\n";
-const ALLOWED_TABLES: &[[u8; 4]] = &[*b"MCFG"];
+const ALLOWED_TABLES: &[[u8; 4]] = &[*b"MCFG", *b"APIC"];
 
 // XXX: Why can't core also have something like std::io::Take? It's not even real I/O!
 /// An internal wrapper struct that limits the number of bytes that can be fmt-written, in order to
@@ -409,7 +409,7 @@ impl Scheme for AcpiScheme {
                     buf[..bytes_to_read].copy_from_slice(&src_buf[..bytes_to_read]);
                     bytes_read += bytes_to_read;
                     bytes_to_skip = 0;
-                    buf = &mut buf[..bytes_to_read];
+                    buf = &mut buf[bytes_to_read..];
                 }
                 *offset += bytes_read;
                 Ok(bytes_read)
