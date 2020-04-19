@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::context::timeout;
-use crate::device::{local_apic, pic};
+use crate::device::{local_apic, ioapic, pic};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::debug_input;
@@ -11,37 +11,98 @@ use crate::{context, ptrace, time};
 #[thread_local]
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
 
+#[repr(u8)]
+pub enum IrqMethod {
+    Pic = 0,
+    Apic = 1,
+}
+
+static IRQ_METHOD: AtomicUsize = AtomicUsize::new(IrqMethod::Pic as usize);
+
+pub fn set_irq_method(method: IrqMethod) {
+    IRQ_METHOD.store(method as usize, core::sync::atomic::Ordering::Release);
+}
+
+fn irq_method() -> IrqMethod {
+    let raw = IRQ_METHOD.load(core::sync::atomic::Ordering::Acquire);
+    
+    match raw {
+        0 => IrqMethod::Pic,
+        1 => IrqMethod::Apic,
+        _ => unreachable!(),
+    }
+}
+
 extern {
+    // triggers irq scheme
     fn irq_trigger(irq: u8);
 }
 
+/// Notify the IRQ scheme that an IRQ has been registered. This should mask the IRQ until the
+/// scheme user unmasks it ("acknowledges" it).
 unsafe fn trigger(irq: u8) {
-
-    if irq < 16 {
-        if irq >= 8 {
-            pic::SLAVE.mask_set(irq - 8);
-            pic::MASTER.ack();
-            pic::SLAVE.ack();
-        } else {
-            pic::MASTER.mask_set(irq);
-            pic::MASTER.ack();
-        }
+    match irq_method() {
+        IrqMethod::Pic => if irq < 16 { pic_mask(irq) },
+        IrqMethod::Apic => ioapic_mask(irq),
     }
-
     irq_trigger(irq);
+}
+/// Unmask the IRQ. This is called from the IRQ scheme, which does this when a user process has
+/// processed the IRQ.
+pub unsafe fn acknowledge(irq: usize) {
+    match irq_method() {
+        IrqMethod::Pic => if irq < 16 { pic_unmask(irq) },
+        IrqMethod::Apic => ioapic_unmask(irq),
+    }
+}
+/// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
+pub unsafe fn eoi(irq: u8) {
+    match irq_method() {
+        IrqMethod::Pic => if irq < 16 { pic_eoi(irq) },
+        IrqMethod::Apic => lapic_eoi(),
+    }
+}
+
+unsafe fn pic_mask(irq: u8) {
+    debug_assert!(irq < 16);
+
+    if irq >= 8 {
+        pic::SLAVE.mask_set(irq - 8);
+    } else {
+        pic::MASTER.mask_set(irq);
+    }
+}
+
+unsafe fn ioapic_mask(irq: u8) {
+    ioapic::mask(irq);
+}
+
+
+unsafe fn pic_eoi(irq: u8) {
+    debug_assert!(irq < 16);
+
+    if irq >= 8 {
+        pic::MASTER.ack();
+        pic::SLAVE.ack();
+    } else {
+        pic::MASTER.ack();
+    }
 }
 unsafe fn lapic_eoi() {
     local_apic::LOCAL_APIC.eoi()
 }
 
-pub unsafe fn acknowledge(irq: usize) {
-    if irq < 16 {
-        if irq >= 8 {
-            pic::SLAVE.mask_clear(irq as u8 - 8);
-        } else {
-            pic::MASTER.mask_clear(irq as u8);
-        }
+unsafe fn pic_unmask(irq: usize) {
+    debug_assert!(irq < 16);
+
+    if irq >= 8 {
+        pic::SLAVE.mask_clear(irq as u8 - 8);
+    } else {
+        pic::MASTER.mask_clear(irq as u8);
     }
+}
+unsafe fn ioapic_unmask(irq: usize) {
+    ioapic::unmask(irq as u8);
 }
 
 interrupt_stack!(pit, stack, {
@@ -56,7 +117,7 @@ interrupt_stack!(pit, stack, {
         offset.0 += sum / 1_000_000_000;
     }
 
-    pic::MASTER.ack();
+    eoi(0);
 
     // Wake up other CPUs
     ipi(IpiKind::Pit, IpiTarget::Other);
@@ -72,68 +133,80 @@ interrupt_stack!(pit, stack, {
 
 interrupt!(keyboard, {
     trigger(1);
+    eoi(1);
 });
 
 interrupt!(cascade, {
     // No need to do any operations on cascade
-    pic::MASTER.ack();
+    eoi(2);
 });
 
 interrupt!(com2, {
     while let Some(c) = COM2.lock().receive() {
         debug_input(c);
     }
-    pic::MASTER.ack();
+    eoi(3);
 });
 
 interrupt!(com1, {
     while let Some(c) = COM1.lock().receive() {
         debug_input(c);
     }
-    pic::MASTER.ack();
+    eoi(4);
 });
 
 interrupt!(lpt2, {
+    eoi(5);
     trigger(5);
 });
 
 interrupt!(floppy, {
+    eoi(6);
     trigger(6);
 });
 
 interrupt!(lpt1, {
+    eoi(7);
     trigger(7);
 });
 
 interrupt!(rtc, {
+    eoi(8);
     trigger(8);
 });
 
 interrupt!(pci1, {
+    eoi(9);
     trigger(9);
 });
 
 interrupt!(pci2, {
+    eoi(10);
     trigger(10);
 });
 
 interrupt!(pci3, {
+    eoi(11);
     trigger(11);
 });
 
 interrupt!(mouse, {
+    eoi(12);
     trigger(12);
 });
 
 interrupt!(fpu, {
+    eoi(13);
     trigger(13);
 });
 
 interrupt!(ata1, {
+    eoi(14);
     trigger(14);
 });
 
 interrupt!(ata2, {
+    eoi(15);
     trigger(15);
 });
 interrupt!(lapic_timer, {
@@ -154,7 +227,7 @@ interrupt!(calib_pit, {
         offset.0 += sum / 1_000_000_000;
     }
 
-    pic::MASTER.ack();
+    eoi(0);
 });
 // XXX: This would look way prettier using const generics.
 

@@ -3,7 +3,7 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 
-use core::slice;
+use core::{mem, slice};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::allocator;
@@ -45,6 +45,17 @@ pub struct KernelArgs {
     stack_size: u64,
     env_base: u64,
     env_size: u64,
+
+    /// The base 64-bit pointer to an array of saved RSDPs. It's up to the kernel (and possibly
+    /// userspace), to decide which RSDP to use. The buffer will be a linked list containing a
+    /// 32-bit relative (to this field) next, and the actual struct afterwards.
+    ///
+    /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
+    /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
+    /// memory instead. On UEFI systems, searching is not guaranteed to actually work though.
+    acpi_rsdps_base: u64,
+    /// The size of the RSDPs region.
+    acpi_rsdps_size: u64,
 }
 
 /// The entry to Rust, all things must be initialized
@@ -59,6 +70,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         let stack_size = args.stack_size as usize;
         let env_base = args.env_base as usize;
         let env_size = args.env_size as usize;
+        let acpi_rsdps_base = args.acpi_rsdps_base;
+        let acpi_rsdps_size = args.acpi_rsdps_size;
 
         // BSS should already be zero
         {
@@ -72,6 +85,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
         println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
         println!("Env: {:X}:{:X}", env_base, env_base + env_size);
+        println!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
+
+        let ext_mem_ranges = if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
+            Some([(acpi_rsdps_base as usize, acpi_rsdps_size as usize)])
+        } else {
+            None
+        };
 
         // Set up GDT before paging
         gdt::init();
@@ -83,7 +103,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         memory::init(0, kernel_base + ((kernel_size + 4095)/4096) * 4096);
 
         // Initialize paging
-        let (mut active_table, tcb_offset) = paging::init(0, kernel_base, kernel_base + kernel_size, stack_base, stack_base + stack_size);
+        let (mut active_table, tcb_offset) = paging::init(0, kernel_base, kernel_base + kernel_size, stack_base, stack_base + stack_size, ext_mem_ranges.as_ref().map(|arr| &arr[..]).unwrap_or(&[]));
 
         // Set up GDT after paging with TLS
         gdt::init_paging(tcb_offset, stack_base + stack_size);
@@ -124,7 +144,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
-        acpi::init(&mut active_table);
+        {
+            acpi::init(&mut active_table, if acpi_rsdps_base != 0 && acpi_rsdps_size > 0 { Some((acpi_rsdps_base, acpi_rsdps_size)) } else { None });
+            device::init_after_acpi(&mut active_table);
+        }
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();

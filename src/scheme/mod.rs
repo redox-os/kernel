@@ -16,6 +16,9 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
 
+#[cfg(feature = "acpi")]
+use self::acpi::AcpiScheme;
+
 use self::debug::DebugScheme;
 use self::event::EventScheme;
 use self::initfs::InitFsScheme;
@@ -27,6 +30,10 @@ use self::proc::ProcScheme;
 use self::root::RootScheme;
 use self::sys::SysScheme;
 use self::time::TimeScheme;
+
+/// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
+#[cfg(feature = "acpi")]
+pub mod acpi;
 
 /// `debug:` - provides access to serial console
 pub mod debug;
@@ -136,6 +143,9 @@ impl SchemeList {
         let ns = self.new_ns();
 
         // These schemes should only be available on the root
+        #[cfg(feature = "acpi")] {
+            self.insert(ns, Box::new(*b"acpi"), |_| Arc::new(AcpiScheme::new())).unwrap();
+        }
         self.insert(ns, Box::new(*b"debug"), |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();
         self.insert(ns, Box::new(*b"initfs"), |_| Arc::new(InitFsScheme::new())).unwrap();
         self.insert(ns, Box::new(*b"irq"), |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();

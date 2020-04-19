@@ -1,6 +1,7 @@
 use crate::paging::ActivePageTable;
 
 pub mod cpu;
+pub mod ioapic;
 pub mod local_apic;
 pub mod pic;
 pub mod pit;
@@ -9,9 +10,13 @@ pub mod serial;
 #[cfg(feature = "acpi")]
 pub mod hpet;
 
-pub unsafe fn init(active_table: &mut ActivePageTable){
+pub unsafe fn init(active_table: &mut ActivePageTable) {
     pic::init();
     local_apic::init(active_table);
+}
+pub unsafe fn init_after_acpi(active_table: &mut ActivePageTable)  {
+    // this will disable the IOAPIC if needed.
+    //ioapic::init(active_table);
 }
 
 #[cfg(feature = "acpi")]

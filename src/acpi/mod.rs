@@ -31,18 +31,18 @@ use self::aml::{parse_aml_table, AmlError, AmlValue};
 pub mod hpet;
 mod dmar;
 mod fadt;
-mod madt;
+pub mod madt;
 mod rsdt;
-mod sdt;
+pub mod sdt;
 mod xsdt;
-mod aml;
+pub mod aml;
 mod rxsdt;
 mod rsdp;
 
 const TRAMPOLINE: usize = 0x7E00;
 const AP_STARTUP: usize = TRAMPOLINE + 512;
 
-fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
+pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
     {
         let page = Page::containing_address(VirtualAddress::new(sdt_address));
         if active_table.translate_page(page).is_none() {
@@ -114,7 +114,7 @@ fn init_namespace() {
 }
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(active_table: &mut ActivePageTable) {
+pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: Option<(u64, u64)>) {
     {
         let mut sdt_ptrs = SDT_POINTERS.write();
         *sdt_ptrs = Some(BTreeMap::new());
@@ -126,7 +126,8 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     }
 
     // Search for RSDP
-    if let Some(rsdp) = RSDP::get_rsdp(active_table) {
+    if let Some(rsdp) = RSDP::get_rsdp(active_table, already_supplied_rsdps) {
+        println!("RSDP: {:?}", rsdp);
         let rxsdt = get_sdt(rsdp.sdt_address(), active_table);
 
         for &c in rxsdt.signature.iter() {
@@ -192,7 +193,7 @@ pub fn set_global_s_state(state: u8) {
     }
 }
 
-type SdtSignature = (String, [u8; 6], [u8; 8]);
+pub type SdtSignature = (String, [u8; 6], [u8; 8]);
 pub static SDT_POINTERS: RwLock<Option<BTreeMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
 pub static SDT_ORDER: RwLock<Option<Vec<SdtSignature>>> = RwLock::new(None);
 

@@ -15,12 +15,15 @@ use crate::interrupt;
 use crate::start::{kstart_ap, CPU_COUNT, AP_READY};
 
 /// The Multiple APIC Descriptor Table
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Madt {
     sdt: &'static Sdt,
     pub local_address: u32,
     pub flags: u32
 }
+
+pub static mut MADT: Option<Madt> = None;
+pub const FLAG_PCAT: u32 = 1;
 
 impl Madt {
     pub fn init(active_table: &mut ActivePageTable) {
@@ -34,6 +37,9 @@ impl Madt {
         };
 
         if let Some(madt) = madt {
+            // safe because no APs have been started yet.
+            unsafe { MADT = Some(madt) };
+
             println!("  APIC: {:>08X}: {}", madt.local_address, madt.flags);
 
             let local_apic = unsafe { &mut LOCAL_APIC };

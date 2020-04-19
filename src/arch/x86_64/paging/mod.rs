@@ -125,6 +125,7 @@ pub unsafe fn init(
     kernel_end: usize,
     stack_start: usize,
     stack_end: usize,
+    other_ro_ranges: &[(usize, usize)], // base + length
 ) -> (ActivePageTable, usize) {
     extern "C" {
         /// The starting byte of the text (code) data segment.
@@ -264,6 +265,21 @@ pub unsafe fn init(
                 );
                 // The flush can be ignored as this is not the active table. See later active_table.switch
                 result.ignore();
+            }
+        }
+        // Map all other necessary address ranges coming from the bootloader.
+        // The address ranges may overlap, but this is not a problem since they have the same
+        // flags.
+        {
+            for (range_start, range_size) in other_ro_ranges {
+                let start_phys_addr = Frame::containing_address(PhysicalAddress::new((range_start / 4096) * 4096 - crate::KERNEL_OFFSET));
+                let end_phys_addr = Frame::containing_address(PhysicalAddress::new(((range_start + range_size + 4095) / 4096) * 4096 - crate::KERNEL_OFFSET));
+
+                for frame in Frame::range_inclusive(start_phys_addr, end_phys_addr) {
+                    let page = Page::containing_address(VirtualAddress::new(crate::KERNEL_OFFSET + frame.start_address().get()));
+                    let result = mapper.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE);
+                    result.ignore();
+                }
             }
         }
     });
