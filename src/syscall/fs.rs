@@ -142,6 +142,7 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
         let context = context_lock.read();
         return context.add_file(FileDescriptor {
             description: Arc::new(RwLock::new(FileDescription {
+                namespace: scheme_ns,
                 scheme: scheme_id,
                 number: file_id,
                 flags: flags & !O_CLOEXEC,
@@ -163,6 +164,7 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
 
         let read_fd = context.add_file(FileDescriptor {
             description: Arc::new(RwLock::new(FileDescription {
+                namespace: context.ens,
                 scheme: scheme_id,
                 number: read_id,
                 flags: O_RDONLY | flags & !O_ACCMODE & !O_CLOEXEC,
@@ -172,6 +174,7 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
 
         let write_fd = context.add_file(FileDescriptor {
             description: Arc::new(RwLock::new(FileDescription {
+                namespace: context.ens,
                 scheme: scheme_id,
                 number: write_id,
                 flags: O_WRONLY | flags & !O_ACCMODE & !O_CLOEXEC,
@@ -293,6 +296,7 @@ fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
 
         Ok(FileDescriptor {
             description: Arc::new(RwLock::new(FileDescription {
+                namespace: description.namespace,
                 scheme: description.scheme,
                 number: new_id,
                 flags: description.flags,

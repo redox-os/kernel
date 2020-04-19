@@ -10,6 +10,7 @@ use crate::syscall::error::{Error, EBADF, EINVAL, ENOENT, Result};
 use crate::syscall::flag::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
 use crate::syscall::scheme::Scheme;
 
+mod block;
 mod context;
 mod cpu;
 mod exe;
@@ -40,6 +41,7 @@ impl SysScheme {
     pub fn new() -> SysScheme {
         let mut files: BTreeMap<&'static [u8], Box<SysFn>> = BTreeMap::new();
 
+        files.insert(b"block", Box::new(block::resource));
         files.insert(b"context", Box::new(context::resource));
         files.insert(b"cpu", Box::new(cpu::resource));
         files.insert(b"exe", Box::new(exe::resource));

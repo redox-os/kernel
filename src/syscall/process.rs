@@ -115,9 +115,10 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             sigmask = context.sigmask;
             umask = context.umask;
 
-            if flags.contains(CLONE_VM) {
-                cpu_id_opt = context.cpu_id;
-            }
+            // Uncomment to disable threads on different CPUs
+            // if flags.contains(CLONE_VM) {
+            //     cpu_id_opt = context.cpu_id;
+            // }
 
             arch = context.arch.clone();
 
@@ -355,7 +356,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let mut context = context_lock.write();
-            context.block();
+            context.block("vfork");
             vfork = true;
         } else {
             vfork = false;
@@ -1429,7 +1430,7 @@ pub fn sigreturn() -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
         context.ksig_restore = true;
-        context.block();
+        context.block("sigreturn");
     }
 
     let _ = unsafe { context::switch() };
@@ -1538,7 +1539,7 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: WaitFlags) -> Result<Co
                     Some(Ok(ContextId::from(0)))
                 }
             } else {
-                let (_wid, (w_pid, status)) = waitpid.receive_any();
+                let (_wid, (w_pid, status)) = waitpid.receive_any("waitpid any");
                 grim_reaper(w_pid, status)
             }
         } else if (pid.into() as isize) < 0 {
@@ -1575,7 +1576,7 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: WaitFlags) -> Result<Co
                 let (w_pid, status) = waitpid.receive(&WaitpidKey {
                     pid: None,
                     pgid: Some(pgid)
-                });
+                }, "waitpid pgid");
                 grim_reaper(w_pid, status)
             }
         } else {
@@ -1612,7 +1613,7 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: WaitFlags) -> Result<Co
                 let (w_pid, status) = waitpid.receive(&WaitpidKey {
                     pid: Some(pid),
                     pgid: None
-                });
+                }, "waitpid pid");
                 grim_reaper(w_pid, status)
             }
         };

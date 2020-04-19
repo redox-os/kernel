@@ -53,7 +53,7 @@ impl RSDP {
         fn slice_to_rsdp(slice: &[u8]) -> Option<&RSDP> {
             let ptr = slice.as_ptr() as usize;
 
-            if slice.len() >= mem::size_of::<RSDP>() && ptr & (!0x7) == ptr {
+            if slice.len() >= mem::size_of::<RSDP>() && ptr & (!0x3) == ptr {
                 let rsdp = unsafe { &*(slice.as_ptr() as *const RSDP) };
                 // TODO: Validate
                 Some(rsdp)

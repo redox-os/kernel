@@ -97,7 +97,7 @@ impl UserInner {
         self.todo.send(packet);
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
-        Error::demux(self.done.receive(&id))
+        Error::demux(self.done.receive(&id, "UserInner::call_inner"))
     }
 
     pub fn capture(&self, buf: &[u8]) -> Result<usize> {
@@ -202,7 +202,7 @@ impl UserInner {
         // If unmounting, do not block so that EOF can be returned immediately
         let unmounting = self.unmounting.load(Ordering::SeqCst);
         let block = !(nonblock || unmounting);
-        if let Some(count) = self.todo.receive_into(packet_buf, block) {
+        if let Some(count) = self.todo.receive_into(packet_buf, block, "UserInner::read") {
             if count > 0 {
                 // If we received requests, return them to the scheme handler
                 Ok(count * mem::size_of::<Packet>())

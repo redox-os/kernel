@@ -69,7 +69,7 @@ impl Scheme for DebugScheme {
         };
 
         INPUT.call_once(init_input)
-            .receive_into(buf, flags & O_NONBLOCK != O_NONBLOCK)
+            .receive_into(buf, flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
             .ok_or(Error::new(EINTR))
     }
 

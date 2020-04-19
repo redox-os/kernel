@@ -180,31 +180,29 @@ impl PipeRead {
 
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
         loop {
-            {
-                let mut vec = self.vec.lock();
+            let mut vec = self.vec.lock();
 
-                let mut i = 0;
-                while i < buf.len() {
-                    if let Some(b) = vec.pop_front() {
-                        buf[i] = b;
-                        i += 1;
-                    } else {
-                        break;
-                    }
+            let mut i = 0;
+            while i < buf.len() {
+                if let Some(b) = vec.pop_front() {
+                    buf[i] = b;
+                    i += 1;
+                } else {
+                    break;
                 }
+            }
 
-                if i > 0 {
-                    event::trigger(self.scheme_id, self.write_id, EVENT_WRITE);
+            if i > 0 {
+                event::trigger(self.scheme_id, self.write_id, EVENT_WRITE);
 
-                    return Ok(i);
-                }
+                return Ok(i);
             }
 
             if Arc::weak_count(&self.vec) == 0 {
                 return Ok(0);
             } else if self.flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
                 return Err(Error::new(EAGAIN));
-            } else if ! self.condition.wait() {
+            } else if ! self.condition.wait(vec, "PipeRead::read") {
                 return Err(Error::new(EINTR));
             }
         }

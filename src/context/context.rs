@@ -10,7 +10,7 @@ use spin::Mutex;
 use crate::arch::{macros::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
 use crate::context::arch;
-use crate::context::file::FileDescriptor;
+use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::{Grant, Memory, SharedMemory, Tls};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::{SchemeNamespace, FileHandle};
@@ -91,6 +91,76 @@ impl PartialEq for WaitpidKey {
 
 impl Eq for WaitpidKey {}
 
+pub struct ContextSnapshot {
+    // Copy fields
+    pub id: ContextId,
+    pub pgid: ContextId,
+    pub ppid: ContextId,
+    pub ruid: u32,
+    pub rgid: u32,
+    pub rns: SchemeNamespace,
+    pub euid: u32,
+    pub egid: u32,
+    pub ens: SchemeNamespace,
+    pub sigmask: [u64; 2],
+    pub umask: usize,
+    pub status: Status,
+    pub status_reason: &'static str,
+    pub running: bool,
+    pub cpu_id: Option<usize>,
+    pub ticks: u64,
+    pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
+    // Clone fields
+    //TODO: is there a faster way than allocation?
+    pub name: Box<[u8]>,
+    pub files: Vec<Option<FileDescription>>,
+    // pub cwd: Box<[u8]>,
+}
+
+impl ContextSnapshot {
+    //TODO: Should this accept &mut Context to ensure name/files will not change?
+    pub fn new(context: &Context) -> Self {
+        let name = context.name.lock().clone();
+        let mut files = Vec::new();
+        for descriptor_opt in context.files.lock().iter() {
+            let description = if let Some(descriptor) = descriptor_opt {
+                let description = descriptor.description.read();
+                Some(FileDescription {
+                    namespace: description.namespace,
+                    scheme: description.scheme,
+                    number: description.number,
+                    flags: description.flags,
+                })
+            } else {
+                None
+            };
+            files.push(description);
+        }
+
+        Self {
+            id: context.id,
+            pgid: context.pgid,
+            ppid: context.ppid,
+            ruid: context.ruid,
+            rgid: context.rgid,
+            rns: context.rns,
+            euid: context.euid,
+            egid: context.egid,
+            ens: context.ens,
+            sigmask: context.sigmask,
+            umask: context.umask,
+            status: context.status,
+            status_reason: context.status_reason,
+            running: context.running,
+            cpu_id: context.cpu_id,
+            ticks: context.ticks,
+            syscall: context.syscall,
+            name,
+            files,
+        }
+    }
+}
+
 /// A context, which identifies either a process or a thread
 #[derive(Debug)]
 pub struct Context {
@@ -118,6 +188,7 @@ pub struct Context {
     pub umask: usize,
     /// Status of context
     pub status: Status,
+    pub status_reason: &'static str,
     /// Context running or not
     pub running: bool,
     /// CPU ID, if locked
@@ -197,6 +268,7 @@ impl Context {
             sigmask: [0; 2],
             umask: 0o022,
             status: Status::Blocked,
+            status_reason: "",
             running: false,
             cpu_id: None,
             ticks: 0,
@@ -304,9 +376,10 @@ impl Context {
     }
 
     /// Block the context, and return true if it was runnable before being blocked
-    pub fn block(&mut self) -> bool {
+    pub fn block(&mut self, reason: &'static str) -> bool {
         if self.status == Status::Runnable {
             self.status = Status::Blocked;
+            self.status_reason = reason;
             true
         } else {
             false
@@ -317,6 +390,7 @@ impl Context {
     pub fn unblock(&mut self) -> bool {
         if self.status == Status::Blocked {
             self.status = Status::Runnable;
+            self.status_reason = "";
 
             if let Some(cpu_id) = self.cpu_id {
                if cpu_id != crate::cpu_id() {

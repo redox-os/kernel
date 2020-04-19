@@ -3,12 +3,14 @@
 use alloc::sync::Arc;
 use crate::event;
 use spin::RwLock;
-use crate::scheme::{self, SchemeId};
+use crate::scheme::{self, SchemeNamespace, SchemeId};
 use crate::syscall::error::{Result, Error, EBADF};
 
 /// A file description
 #[derive(Debug)]
 pub struct FileDescription {
+    /// The namespace the file was opened from (used for debugging)
+    pub namespace: SchemeNamespace,
     /// The scheme that this file refers to
     pub scheme: SchemeId,
     /// The number the scheme uses to refer to this file

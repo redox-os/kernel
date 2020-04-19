@@ -66,7 +66,7 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                         context.wake = Some(end);
                     }
 
-                    context.block();
+                    context.block("futex");
                 }
 
                 futexes.push_back((addr as *mut i32 as usize, context_lock));

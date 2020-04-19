@@ -26,7 +26,7 @@ impl EventQueue {
     }
 
     pub fn read(&self, events: &mut [Event]) -> Result<usize> {
-        self.queue.receive_into(events, true).ok_or(Error::new(EINTR))
+        self.queue.receive_into(events, true, "EventQueue::read").ok_or(Error::new(EINTR))
     }
 
     pub fn write(&self, events: &[Event]) -> Result<usize> {
