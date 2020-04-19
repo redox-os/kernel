@@ -47,6 +47,7 @@ unsafe fn trigger(irq: u8) {
     }
     irq_trigger(irq);
 }
+
 /// Unmask the IRQ. This is called from the IRQ scheme, which does this when a user process has
 /// processed the IRQ.
 pub unsafe fn acknowledge(irq: usize) {
@@ -55,6 +56,7 @@ pub unsafe fn acknowledge(irq: usize) {
         IrqMethod::Apic => ioapic_unmask(irq),
     }
 }
+
 /// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
 pub unsafe fn eoi(irq: u8) {
     match irq_method() {
@@ -77,17 +79,25 @@ unsafe fn ioapic_mask(irq: u8) {
     ioapic::mask(irq);
 }
 
-
 unsafe fn pic_eoi(irq: u8) {
     debug_assert!(irq < 16);
 
     if irq >= 8 {
         pic::MASTER.ack();
+        if irq == 15 {
+            //TODO: check spurious
+            return;
+        }
         pic::SLAVE.ack();
     } else {
+        if irq == 7 {
+            //TODO: check spurious
+            return;
+        }
         pic::MASTER.ack();
     }
 }
+
 unsafe fn lapic_eoi() {
     local_apic::LOCAL_APIC.eoi()
 }
@@ -101,6 +111,7 @@ unsafe fn pic_unmask(irq: usize) {
         pic::MASTER.mask_clear(irq as u8);
     }
 }
+
 unsafe fn ioapic_unmask(irq: usize) {
     ioapic::unmask(irq as u8);
 }
@@ -156,67 +167,70 @@ interrupt!(com1, {
 });
 
 interrupt!(lpt2, {
-    eoi(5);
     trigger(5);
+    eoi(5);
 });
 
 interrupt!(floppy, {
-    eoi(6);
     trigger(6);
+    eoi(6);
 });
 
 interrupt!(lpt1, {
-    eoi(7);
     trigger(7);
+    eoi(7);
 });
 
 interrupt!(rtc, {
-    eoi(8);
     trigger(8);
+    eoi(8);
 });
 
 interrupt!(pci1, {
-    eoi(9);
     trigger(9);
+    eoi(9);
 });
 
 interrupt!(pci2, {
-    eoi(10);
     trigger(10);
+    eoi(10);
 });
 
 interrupt!(pci3, {
-    eoi(11);
     trigger(11);
+    eoi(11);
 });
 
 interrupt!(mouse, {
-    eoi(12);
     trigger(12);
+    eoi(12);
 });
 
 interrupt!(fpu, {
-    eoi(13);
     trigger(13);
+    eoi(13);
 });
 
 interrupt!(ata1, {
-    eoi(14);
     trigger(14);
+    eoi(14);
 });
 
 interrupt!(ata2, {
-    eoi(15);
     trigger(15);
+    eoi(15);
 });
+
 interrupt!(lapic_timer, {
     println!("Local apic timer interrupt");
     lapic_eoi();
 });
+
 interrupt!(lapic_error, {
     println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());
     lapic_eoi();
 });
+
 interrupt!(calib_pit, {
     const PIT_RATE: u64 = 2_250_286;
 
