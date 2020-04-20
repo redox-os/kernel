@@ -28,6 +28,7 @@ use self::memory::MemoryScheme;
 use self::pipe::PipeScheme;
 use self::proc::ProcScheme;
 use self::root::RootScheme;
+use self::serio::SerioScheme;
 use self::sys::SysScheme;
 use self::time::TimeScheme;
 
@@ -65,6 +66,9 @@ pub mod proc;
 
 /// `:` - allows the creation of userspace schemes, tightly dependent on `user`
 pub mod root;
+
+/// `serio:` - provides access to ps/2 devices
+pub mod serio;
 
 /// `sys:` - system information, such as the context list and scheme list
 pub mod sys;
@@ -150,6 +154,7 @@ impl SchemeList {
         self.insert(ns, Box::new(*b"initfs"), |_| Arc::new(InitFsScheme::new())).unwrap();
         self.insert(ns, Box::new(*b"irq"), |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();
         self.insert(ns, Box::new(*b"proc"), |scheme_id| Arc::new(ProcScheme::new(scheme_id))).unwrap();
+        self.insert(ns, Box::new(*b"serio"), |scheme_id| Arc::new(SerioScheme::new(scheme_id))).unwrap();
 
         #[cfg(feature = "live")] {
             self.insert(ns, Box::new(*b"disk/live"), |_| Arc::new(self::live::DiskScheme::new())).unwrap();
