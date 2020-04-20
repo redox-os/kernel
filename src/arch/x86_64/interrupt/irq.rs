@@ -11,6 +11,42 @@ use crate::{context, ptrace, time};
 #[thread_local]
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
 
+// The only way to read PS2 data without race conditions is to allow a keyboard interrupt to happen
+// and then read data while reading mouse data, since keyboard data overrides mouse data and
+// reading the status register is not done atomically with reading the data. This is not possible
+// from userspace, so we do this minimal part of the PS2 driver in the kernel.
+#[inline(always)]
+unsafe fn ps2_interrupt(index: usize) {
+    use crate::scheme::serio::serio_input;
+
+    let data: u8;
+    let status: u8;
+    asm!("
+        sti
+        nop
+        cli
+        in al, 0x64
+        mov ah, al
+        in al, 0x60
+        "
+        : "={al}"(data), "={ah}"(status)
+        :
+        : "memory"
+        : "intel", "volatile"
+    );
+
+    if status & 1 != 0 {
+        let status_index = if status & (1 << 5) == 0 {
+            // Keyboard, according to status
+            0
+        } else {
+            // Mouse, according to status
+            1
+        };
+        serio_input(status_index, data);
+    }
+}
+
 #[repr(u8)]
 pub enum IrqMethod {
     Pic = 0,
@@ -25,7 +61,7 @@ pub fn set_irq_method(method: IrqMethod) {
 
 fn irq_method() -> IrqMethod {
     let raw = IRQ_METHOD.load(core::sync::atomic::Ordering::Acquire);
-    
+
     match raw {
         0 => IrqMethod::Pic,
         1 => IrqMethod::Apic,
@@ -143,7 +179,7 @@ interrupt_stack!(pit, stack, {
 });
 
 interrupt!(keyboard, {
-    trigger(1);
+    ps2_interrupt(0);
     eoi(1);
 });
 
@@ -202,7 +238,7 @@ interrupt!(pci3, {
 });
 
 interrupt!(mouse, {
-    trigger(12);
+    ps2_interrupt(1);
     eoi(12);
 });
 
