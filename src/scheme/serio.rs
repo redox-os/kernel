@@ -4,7 +4,6 @@ use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::arch::debug::Writer;
 use crate::event;
 use crate::scheme::*;
 use crate::sync::WaitQueue;
