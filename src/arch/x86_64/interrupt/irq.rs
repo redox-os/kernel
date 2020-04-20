@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use alloc::vec::Vec;
+
 use crate::context::timeout;
 use crate::device::{local_apic, ioapic, pic};
 use crate::device::serial::{COM1, COM2};
@@ -51,6 +53,27 @@ unsafe fn ps2_interrupt(index: usize) {
 pub enum IrqMethod {
     Pic = 0,
     Apic = 1,
+}
+
+static SPURIOUS_COUNT_IRQ7: AtomicUsize = AtomicUsize::new(0);
+static SPURIOUS_COUNT_IRQ15: AtomicUsize = AtomicUsize::new(0);
+
+pub fn spurious_count_irq7() -> usize {
+    SPURIOUS_COUNT_IRQ7.load(Ordering::Relaxed)
+}
+pub fn spurious_count_irq15() -> usize {
+    SPURIOUS_COUNT_IRQ15.load(Ordering::Relaxed)
+}
+pub fn spurious_count() -> usize {
+    spurious_count_irq7() + spurious_count_irq15()
+}
+pub fn spurious_irq_resource() -> syscall::Result<Vec<u8>> {
+    match irq_method() {
+        IrqMethod::Apic => Ok(Vec::from(&b"(not implemented for APIC yet)"[..])),
+        IrqMethod::Pic => {
+            Ok(format!("{}\tIRQ7\n{}\tIRQ15\n{}\ttotal\n", spurious_count_irq7(), spurious_count_irq15(), spurious_count()).into_bytes())
+        }
+    }
 }
 
 static IRQ_METHOD: AtomicUsize = AtomicUsize::new(IrqMethod::Pic as usize);
@@ -120,16 +143,8 @@ unsafe fn pic_eoi(irq: u8) {
 
     if irq >= 8 {
         pic::MASTER.ack();
-        if irq == 15 {
-            //TODO: check spurious
-            return;
-        }
         pic::SLAVE.ack();
     } else {
-        if irq == 7 {
-            //TODO: check spurious
-            return;
-        }
         pic::MASTER.ack();
     }
 }
@@ -213,6 +228,11 @@ interrupt!(floppy, {
 });
 
 interrupt!(lpt1, {
+    if pic::MASTER.isr() & (1 << 7) == 0 {
+        // the IRQ was spurious, ignore it but increment a counter.
+        SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     trigger(7);
     eoi(7);
 });
@@ -253,6 +273,11 @@ interrupt!(ata1, {
 });
 
 interrupt!(ata2, {
+    if pic::SLAVE.isr() & (1 << 7) == 0 {
+        SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
+        pic::MASTER.ack();
+        return
+    }
     trigger(15);
     eoi(15);
 });

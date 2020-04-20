@@ -70,4 +70,9 @@ impl Pic {
         mask &= !(1 << irq);
         self.data.write(mask);
     }
+    /// A bitmap of all currently servicing IRQs. Spurious IRQs will not have this bit set
+    pub fn isr(&mut self) -> u8 {
+        self.cmd.write(0x0A);
+        self.cmd.read() // note that cmd is read, rather than data
+    }
 }
