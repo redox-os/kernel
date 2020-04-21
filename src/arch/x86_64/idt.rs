@@ -129,21 +129,26 @@ const fn new_idt_reservations() -> [AtomicU64; 4] {
     [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)]
 }
 
+/// Initialize the IDT for a
 pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: usize) {
     let mut idts_guard = IDTS.write();
     let idts_btree = idts_guard.get_or_insert_with(|| BTreeMap::new());
-    let idt = idts_btree.entry(cpu_id).or_insert_with(|| Box::leak(Box::new(Idt::new())));
 
     if is_bsp {
-        *idt = &mut INIT_BSP_IDT;
+        idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);
     } else {
-        init_generic(is_bsp, idt)
+        let idt = idts_btree.entry(cpu_id).or_insert_with(|| Box::leak(Box::new(Idt::new())));
+        init_generic(is_bsp, idt);
     }
 }
-pub unsafe fn init_paging() {
+
+/// Initializes a fully functional IDT for use before it be moved into the map. This is ONLY called
+/// on the BSP, since the kernel heap is ready for the APs.
+pub unsafe fn init_paging_bsp() {
     init_generic(true, &mut INIT_BSP_IDT);
 }
 
+/// Initializes an IDT for any type of processor.
 pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
 
