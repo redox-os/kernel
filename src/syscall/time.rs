@@ -32,7 +32,19 @@ pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize
         context.block("nanosleep");
     }
 
-    unsafe { context::switch(); }
+    //TODO: Find out wake reason
+    loop {
+        unsafe { context::switch(); }
+
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let mut context = context_lock.write();
+        if context.wake.is_some() {
+            context.block("nanosleep spurious");
+        } else {
+            break;
+        }
+    }
 
     if let Some(rem) = rem_opt {
         let current = time::monotonic();
