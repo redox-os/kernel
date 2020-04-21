@@ -1,10 +1,12 @@
 use core::{mem, str};
+use core::str::FromStr;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::{Mutex, RwLock};
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::string::String;
+
+use spin::{Mutex, RwLock};
 
 use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved};
 
@@ -33,8 +35,9 @@ const BASE_IRQ_COUNT: u8 = 16;
 /// are only freed when the file descriptor is closed.
 const TOTAL_IRQ_COUNT: u8 = 224;
 
+const INO_TOPLEVEL: u64 = 0x8002_0000_0000_0000;
 const INO_AVAIL: u64 = 0x8000_0000_0000_0000;
-const INO_BSP: u64 = 0x8000_0000_0000_0001;
+const INO_BSP: u64 = 0x8001_0000_0000_0000;
 
 /// Add to the input queue
 #[no_mangle]
@@ -56,7 +59,8 @@ enum Handle {
         ack: AtomicUsize,
         irq: u8,
     },
-    Avail(Vec<u8>, AtomicUsize),
+    Avail(u8, Vec<u8>, AtomicUsize),    // CPU id, data, offset
+    TopLevel(Vec<u8>, AtomicUsize),     // data, offset
     Bsp,
 }
 impl Handle {
@@ -70,6 +74,7 @@ impl Handle {
 
 pub struct IrqScheme {
     next_fd: AtomicUsize,
+    cpus: Vec<u8>,
 }
 
 impl IrqScheme {
@@ -78,9 +83,50 @@ impl IrqScheme {
 
         *HANDLES.write() = Some(BTreeMap::new());
 
+        let cpus = if cfg!(feature = "acpi") {
+            use crate::acpi::madt::*;
+
+            let madt: &Madt = unsafe { MADT.as_ref().unwrap() };
+
+            madt.iter().filter_map(|entry| match entry {
+                MadtEntry::LocalApic(apic) => Some(apic.id),
+                _ => None,
+            }).collect::<Vec<_>>()
+        } else {
+            vec!(0)
+        };
+
         IrqScheme {
             next_fd: AtomicUsize::new(0),
+            cpus,
         }
+    }
+    fn open_ext_irq(flags: usize, cpu_id: u8, path_str: &str) -> Result<Handle> {
+        let irq_number = u8::from_str(path_str).or(Err(Error::new(ENOENT)))?;
+
+        Ok(if irq_number < BASE_IRQ_COUNT && Some(u32::from(cpu_id)) == bsp_apic_id() {
+            // Give legacy IRQs only to `irq:{0..15}` and `irq:cpu-<BSP>/{0..15}` (same handles).
+            //
+            // The only CPUs don't have the legacy IRQs in their IDTs.
+
+            Handle::Irq {
+                ack: AtomicUsize::new(0),
+                irq: irq_number,
+            }
+        } else if irq_number < TOTAL_IRQ_COUNT {
+            if flags & O_CREAT == 0 && flags & O_STAT == 0 {
+                return Err(Error::new(EINVAL));
+            }
+            if flags & O_STAT == 0 {
+                if is_reserved(usize::from(cpu_id), irq_to_vector(irq_number)) {
+                    return Err(Error::new(EEXIST));
+                }
+                set_reserved(usize::from(cpu_id), irq_to_vector(irq_number), true);
+            }
+            Handle::Irq { ack: AtomicUsize::new(0), irq: irq_number }
+        } else {
+            return Err(Error::new(ENOENT));
+        })
     }
 }
 
@@ -98,42 +144,60 @@ impl Scheme for IrqScheme {
         let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
         let path_str = path_str.trim_start_matches('/');
 
-        let handle = if (flags & O_DIRECTORY != 0 || flags & O_STAT != 0) && path_str.is_empty() {
-            // list all of the allocatable IRQs
+        let handle: Handle = if path_str.is_empty() {
+            if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 { return Err(Error::new(EISDIR)) }
+
+            // list every logical CPU in the format of e.g. `cpu-1b`
 
             let mut bytes = String::new();
 
             use core::fmt::Write;
 
-            for avail in available_irqs_iter() {
-                write!(bytes, "{}\n", vector_to_irq(avail)).unwrap();
-            }
-            if bsp_apic_id().is_some() {
-                write!(bytes, "bsp\n").unwrap();
+            for cpu_id in &self.cpus {
+                writeln!(bytes, "cpu-{:02x}", cpu_id);
             }
 
-            Handle::Avail(bytes.into_bytes(), AtomicUsize::new(0))
+            if bsp_apic_id().is_some() {
+                writeln!(bytes, "bsp").unwrap();
+            }
+
+            // TODO: When signals are used for IRQs, there will probably also be a file
+            // `irq:signal` that maps IRQ numbers and their source APIC IDs to signal numbers.
+
+            Handle::TopLevel(bytes.into_bytes(), AtomicUsize::new(0))
         } else {
             if path_str == "bsp" {
                 if bsp_apic_id().is_none() {
                     return Err(Error::new(ENOENT));
                 }
                 Handle::Bsp
-            } else if let Ok(id) = path_str.parse::<u8>() {
-                if id < BASE_IRQ_COUNT {
-                    Handle::Irq { ack: AtomicUsize::new(0), irq: id }
-                } else if id < TOTAL_IRQ_COUNT {
-                    if flags & O_CREAT == 0 && flags & O_STAT == 0 {
-                        return Err(Error::new(EINVAL));
-                    }
-                    if flags & O_STAT == 0 {
-                        // FIXME
-                        if is_reserved(0, irq_to_vector(id)) {
-                            return Err(Error::new(EEXIST));
+            } else if path_str.starts_with("cpu-") {
+                let path_str = &path_str[4..];
+                let cpu_id = u8::from_str_radix(&path_str[..2], 16).or(Err(Error::new(ENOENT)))?;
+                let path_str = path_str[2..].trim_end_matches('/');
+
+                if path_str.is_empty() {
+                    let mut data = String::new();
+                    use core::fmt::Write;
+
+                    for vector in available_irqs_iter(cpu_id.into()) {
+                        let irq = vector_to_irq(vector);
+                        if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
+                            continue;
                         }
-                        set_reserved(0, irq_to_vector(id), true);
+                        writeln!(data, "{}", irq);
                     }
-                    Handle::Irq { ack: AtomicUsize::new(0), irq: id }
+
+                    Handle::Avail(cpu_id, data.into_bytes(), AtomicUsize::new(0))
+                } else if path_str.chars().next() == Some('/') {
+                    let path_str = &path_str[1..];
+                    Self::open_ext_irq(flags, cpu_id, path_str)?
+                } else {
+                    return Err(Error::new(ENOENT));
+                }
+            } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
+                if plain_irq_number < BASE_IRQ_COUNT {
+                    Handle::Irq { ack: AtomicUsize::new(0), irq: plain_irq_number }
                 } else {
                     return Err(Error::new(ENOENT));
                 }
@@ -176,7 +240,7 @@ impl Scheme for IrqScheme {
                     return Err(Error::new(EBADFD));
                 }
             }
-            &Handle::Avail(ref buf, ref offset) => {
+            &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
                 let cur_offset = offset.load(Ordering::SeqCst);
                 let max_bytes_to_read = core::cmp::min(buf.len(), buffer.len());
                 let bytes_to_read = core::cmp::max(max_bytes_to_read, cur_offset) - cur_offset;
@@ -192,7 +256,7 @@ impl Scheme for IrqScheme {
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
-            &Handle::Avail(ref buf, ref offset) => {
+            &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
                 let cur_offset = offset.load(Ordering::SeqCst);
                 let new_offset = match whence {
                     SEEK_CUR => core::cmp::min(cur_offset + pos, buf.len()),
@@ -245,7 +309,7 @@ impl Scheme for IrqScheme {
                 stat.st_ino = handle_irq.into();
                 stat.st_nlink = 1;
             }
-            Handle::Bsp => {
+            &Handle::Bsp => {
                 stat.st_mode = MODE_CHR | 0o400;
                 stat.st_size = mem::size_of::<usize>() as u64;
                 stat.st_blocks = 1;
@@ -253,11 +317,17 @@ impl Scheme for IrqScheme {
                 stat.st_ino = INO_BSP;
                 stat.st_nlink = 1;
             }
-            Handle::Avail(ref buf, _) => {
+            &Handle::Avail(cpu_id, ref buf, _) => {
+                stat.st_mode = MODE_DIR | 0o700;
+                stat.st_size = buf.len() as u64;
+                stat.st_ino = INO_AVAIL | u64::from(cpu_id) << 32;
+                stat.st_nlink = 2;
+            }
+            &Handle::TopLevel(ref buf, _) => {
                 stat.st_mode = MODE_DIR | 0o500;
                 stat.st_size = buf.len() as u64;
-                stat.st_ino = INO_AVAIL;
-                stat.st_nlink = 2;
+                stat.st_ino = INO_TOPLEVEL;
+                stat.st_nlink = 1;
             }
         }
         Ok(0)
@@ -278,8 +348,10 @@ impl Scheme for IrqScheme {
         let scheme_path = match handle {
             &Handle::Irq { irq, .. } => format!("irq:{}", irq),
             &Handle::Bsp => format!("irq:bsp"),
-            &Handle::Avail(_, _) => format!("irq:"),
+            &Handle::Avail(cpu_id, _, _) => format!("irq:cpu-{:2x}", cpu_id),
+            &Handle::TopLevel(_, _) => format!("irq:"),
         }.into_bytes();
+
         let mut i = 0;
         while i < buf.len() && i < scheme_path.len() {
             buf[i] = scheme_path[i];

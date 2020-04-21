@@ -103,9 +103,8 @@ pub fn allocate_interrupt() -> Option<NonZeroU8> {
     None
 }
 
-pub fn available_irqs_iter() -> impl Iterator<Item = u8> + 'static {
-    let cpu_id = crate::cpu_id();
-    (50..=254).filter(move |&index| !is_reserved(cpu_id, index))
+pub fn available_irqs_iter(cpu_id: usize) -> impl Iterator<Item = u8> + 'static {
+    (32..=254).filter(move |&index| !is_reserved(cpu_id, index))
 }
 
 macro_rules! use_irq(
