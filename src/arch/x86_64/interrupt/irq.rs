@@ -50,6 +50,7 @@ unsafe fn ps2_interrupt(index: usize) {
 }
 
 #[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrqMethod {
     Pic = 0,
     Apic = 1,
@@ -228,7 +229,7 @@ interrupt!(floppy, {
 });
 
 interrupt!(lpt1, {
-    if pic::MASTER.isr() & (1 << 7) == 0 {
+    if irq_method() == IrqMethod::Pic && pic::MASTER.isr() & (1 << 7) == 0 {
         // the IRQ was spurious, ignore it but increment a counter.
         SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
         return;
@@ -273,7 +274,7 @@ interrupt!(ata1, {
 });
 
 interrupt!(ata2, {
-    if pic::SLAVE.isr() & (1 << 7) == 0 {
+    if irq_method() == IrqMethod::Pic && pic::SLAVE.isr() & (1 << 7) == 0 {
         SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
         pic::MASTER.ack();
         return
