@@ -127,11 +127,11 @@ impl Scheme for IrqScheme {
                         return Err(Error::new(EINVAL));
                     }
                     if flags & O_STAT == 0 {
-
-                        if is_reserved(irq_to_vector(id)) {
+                        // FIXME
+                        if is_reserved(0, irq_to_vector(id)) {
                             return Err(Error::new(EEXIST));
                         }
-                        set_reserved(irq_to_vector(id), true);
+                        set_reserved(0, irq_to_vector(id), true);
                     }
                     Handle::Irq { ack: AtomicUsize::new(0), irq: id }
                 } else {
@@ -298,7 +298,7 @@ impl Scheme for IrqScheme {
 
         if let &Handle::Irq { irq: handle_irq, .. } = handle {
             if handle_irq > BASE_IRQ_COUNT {
-                set_reserved(irq_to_vector(handle_irq), false);
+                set_reserved(0, irq_to_vector(handle_irq), false);
             }
         }
         Ok(0)

@@ -308,7 +308,7 @@ interrupt!(calib_pit, {
 // XXX: This would look way prettier using const generics.
 
 macro_rules! allocatable_irq(
-    ( $number:literal, $name:ident ) => {
+    ( $idt:expr, $number:literal, $name:ident ) => {
         interrupt!($name, {
             allocatable_irq_generic($number);
         });
