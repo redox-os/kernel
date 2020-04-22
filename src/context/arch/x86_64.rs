@@ -1,5 +1,5 @@
 use core::mem;
-use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicBool, Ordering};
 use syscall::data::FloatRegisters;
 
 /// This must be used by the kernel to ensure that context switches are done atomically
@@ -127,6 +127,7 @@ impl Context {
     }
 
     /// Switch to the next context by restoring its stack and registers
+    /// Check disassembly!
     #[cold]
     #[inline(never)]
     #[naked]
@@ -167,6 +168,9 @@ impl Context {
 
         asm!("mov $0, rbp" : "=r"(self.rbp) : : "memory" : "intel", "volatile");
         asm!("mov rbp, $0" : : "r"(next.rbp) : "memory" : "intel", "volatile");
+
+        // Unset global lock after loading registers but before switch
+        CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
     }
 }
 

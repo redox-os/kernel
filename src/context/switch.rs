@@ -156,9 +156,6 @@ pub unsafe fn switch() -> bool {
 
         (*from_ptr).arch.switch_to(&mut (*to_ptr).arch);
 
-        // Unset global lock after switch
-        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-
         true
     }
 }
