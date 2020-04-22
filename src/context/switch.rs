@@ -135,11 +135,9 @@ pub unsafe fn switch() -> bool {
         CONTEXT_ID.store((*to_ptr).id, Ordering::SeqCst);
     }
 
-    // Unset global lock before switch, as arch is only usable by the current CPU at this time
-    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-
     if to_ptr as usize == 0 {
-        // No target was found, return
+        // No target was found, unset global lock and return
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
         false
     } else {
@@ -157,6 +155,9 @@ pub unsafe fn switch() -> bool {
         }
 
         (*from_ptr).arch.switch_to(&mut (*to_ptr).arch);
+
+        // Unset global lock after switch
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
         true
     }
