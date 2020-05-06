@@ -9,6 +9,7 @@ use crate::syscall::data::Stat;
 use crate::syscall::error::{Error, EBADF, EINVAL, ENOENT, Result};
 use crate::syscall::flag::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
 use crate::syscall::scheme::Scheme;
+use crate::arch::interrupt::irq;
 
 mod block;
 mod context;
@@ -51,6 +52,7 @@ impl SysScheme {
         files.insert(b"scheme_num", Box::new(scheme_num::resource));
         files.insert(b"syscall", Box::new(syscall::resource));
         files.insert(b"uname", Box::new(uname::resource));
+        files.insert(b"spurious_irq", Box::new(irq::spurious_irq_resource));
 
         SysScheme {
             next_id: AtomicUsize::new(0),

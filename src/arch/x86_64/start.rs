@@ -109,7 +109,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         gdt::init_paging(tcb_offset, stack_base + stack_size);
 
         // Set up IDT
-        idt::init_paging();
+        idt::init_paging_bsp();
 
         // Set up syscall instruction
         interrupt::syscall::init();
@@ -131,6 +131,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Setup kernel heap
         allocator::init(&mut active_table);
+
+        idt::init_paging_post_heap(true, 0);
 
         // Activate memory logging
         log::init();
@@ -200,7 +202,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         gdt::init_paging(tcb_offset, stack_end);
 
         // Set up IDT for AP
-        idt::init_paging();
+        idt::init_paging_post_heap(false, cpu_id);
 
         // Set up syscall instruction
         interrupt::syscall::init();

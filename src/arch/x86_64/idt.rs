@@ -1,5 +1,9 @@
-use core::mem;
 use core::num::NonZeroU8;
+use core::sync::atomic::{AtomicU64, Ordering};
+use core::mem;
+
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 
 use x86::segmentation::Descriptor as X86IdtEntry;
 use x86::dtables::{self, DescriptorTablePointer};
@@ -7,65 +11,112 @@ use x86::dtables::{self, DescriptorTablePointer};
 use crate::interrupt::*;
 use crate::ipi::IpiKind;
 
-use spin::Mutex;
+use spin::RwLock;
 
 pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
     limit: 0,
     base: 0 as *const X86IdtEntry
 };
 
+#[thread_local]
 pub static mut IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
     limit: 0,
     base: 0 as *const X86IdtEntry
 };
 
-// TODO: It's probably a good idea to use a separate IDT (and IDT_RESERVATIONS) for each CPU.
-// Currently 202 interrupts are freely allocatable, for the IDT, but if different CPUs received
-// different IDTs, the number would go up to e.g. 1616 IRQs on a processor with 8 logical CPUs.
+pub type IdtEntries = [IdtEntry; 256];
+pub type IdtReservations = [AtomicU64; 4];
 
-pub static mut IDT: [IdtEntry; 256] = [IdtEntry::new(); 256];
-pub static IDT_RESERVATIONS: Mutex<[u64; 256 / 64]> = Mutex::new([0u64; 256 / 64]);
+#[repr(packed)]
+pub struct Idt {
+    entries: IdtEntries,
+    reservations: IdtReservations,
+}
+impl Idt {
+    pub const fn new() -> Self {
+        Self {
+            entries: [IdtEntry::new(); 256],
+            reservations: new_idt_reservations(),
+        }
+    }
+    #[inline]
+    pub fn is_reserved(&self, index: u8) -> bool {
+        let byte_index = index / 64;
+        let bit = index % 64;
+
+        unsafe { &self.reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
+    }
+
+    #[inline]
+    pub fn set_reserved(&self, index: u8, reserved: bool) {
+        let byte_index = index / 64;
+        let bit = index % 64;
+
+        unsafe { &self.reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
+    }
+    #[inline]
+    pub fn is_reserved_mut(&mut self, index: u8) -> bool {
+        let byte_index = index / 64;
+        let bit = index % 64;
+
+        *unsafe { &mut self.reservations[usize::from(byte_index)] }.get_mut() & (1 << bit) != 0
+    }
+
+    #[inline]
+    pub fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
+        let byte_index = index / 64;
+        let bit = index % 64;
+
+        *unsafe { &mut self.reservations[usize::from(byte_index)] }.get_mut() |= u64::from(reserved) << bit;
+    }
+}
+
+static mut INIT_BSP_IDT: Idt = Idt::new();
+
+// TODO: VecMap?
+pub static IDTS: RwLock<Option<BTreeMap<usize, &'static mut Idt>>> = RwLock::new(None);
 
 #[inline]
-pub fn is_reserved(index: u8) -> bool {
+pub fn is_reserved(cpu_id: usize, index: u8) -> bool {
     let byte_index = index / 64;
     let bit = index % 64;
 
-    IDT_RESERVATIONS.lock()[usize::from(byte_index)] & (1 << bit) != 0
+    unsafe { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
 }
 
 #[inline]
-pub fn set_reserved(index: u8, reserved: bool) {
+pub fn set_reserved(cpu_id: usize, index: u8, reserved: bool) {
     let byte_index = index / 64;
     let bit = index % 64;
 
-    IDT_RESERVATIONS.lock()[usize::from(byte_index)] |= u64::from(reserved) << bit;
+    unsafe { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
 }
 
 pub fn allocate_interrupt() -> Option<NonZeroU8> {
+    let cpu_id = crate::cpu_id();
     for number in 50..=254 {
-        if ! is_reserved(number) {
-            set_reserved(number, true);
+        if ! is_reserved(cpu_id, number) {
+            set_reserved(cpu_id, number, true);
             return Some(unsafe { NonZeroU8::new_unchecked(number) });
         }
     }
     None
 }
 
-pub fn available_irqs_iter() -> impl Iterator<Item = u8> + 'static {
-    (50..=254).filter(|&index| !is_reserved(index))
+pub fn available_irqs_iter(cpu_id: usize) -> impl Iterator<Item = u8> + 'static {
+    (32..=254).filter(move |&index| !is_reserved(cpu_id, index))
 }
 
 macro_rules! use_irq(
-    ( $number:literal, $func:ident ) => {
-        IDT[$number].set_func($func);
-    }
+    ( $idt: expr, $number:literal, $func:ident ) => {{
+        $idt[$number].set_func($func);
+    }}
 );
 
 macro_rules! use_default_irqs(
-    () => {{
+    ($idt:expr) => {{
         use crate::interrupt::irq::*;
-        default_irqs!(use_irq);
+        default_irqs!($idt, use_irq);
     }}
 );
 
@@ -73,79 +124,111 @@ pub unsafe fn init() {
     dtables::lidt(&INIT_IDTR);
 }
 
-pub unsafe fn init_paging() {
-    IDTR.limit = (IDT.len() * mem::size_of::<IdtEntry>() - 1) as u16;
-    IDTR.base = IDT.as_ptr() as *const X86IdtEntry;
+const fn new_idt_reservations() -> [AtomicU64; 4] {
+    [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)]
+}
+
+/// Initialize the IDT for a
+pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: usize) {
+    let mut idts_guard = IDTS.write();
+    let idts_btree = idts_guard.get_or_insert_with(|| BTreeMap::new());
+
+    if is_bsp {
+        idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);
+    } else {
+        let idt = idts_btree.entry(cpu_id).or_insert_with(|| Box::leak(Box::new(Idt::new())));
+        init_generic(is_bsp, idt);
+    }
+}
+
+/// Initializes a fully functional IDT for use before it be moved into the map. This is ONLY called
+/// on the BSP, since the kernel heap is ready for the APs.
+pub unsafe fn init_paging_bsp() {
+    init_generic(true, &mut INIT_BSP_IDT);
+}
+
+/// Initializes an IDT for any type of processor.
+pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
+    let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
+
+    IDTR.limit = (current_idt.len() * mem::size_of::<IdtEntry>() - 1) as u16;
+    IDTR.base = current_idt.as_ptr() as *const X86IdtEntry;
 
     // Set up exceptions
-    IDT[0].set_func(exception::divide_by_zero);
-    IDT[1].set_func(exception::debug);
-    IDT[2].set_func(exception::non_maskable);
-    IDT[3].set_func(exception::breakpoint);
-    IDT[3].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
-    IDT[4].set_func(exception::overflow);
-    IDT[5].set_func(exception::bound_range);
-    IDT[6].set_func(exception::invalid_opcode);
-    IDT[7].set_func(exception::device_not_available);
-    IDT[8].set_func(exception::double_fault);
+    current_idt[0].set_func(exception::divide_by_zero);
+    current_idt[1].set_func(exception::debug);
+    current_idt[2].set_func(exception::non_maskable);
+    current_idt[3].set_func(exception::breakpoint);
+    current_idt[3].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
+    current_idt[4].set_func(exception::overflow);
+    current_idt[5].set_func(exception::bound_range);
+    current_idt[6].set_func(exception::invalid_opcode);
+    current_idt[7].set_func(exception::device_not_available);
+    current_idt[8].set_func(exception::double_fault);
     // 9 no longer available
-    IDT[10].set_func(exception::invalid_tss);
-    IDT[11].set_func(exception::segment_not_present);
-    IDT[12].set_func(exception::stack_segment);
-    IDT[13].set_func(exception::protection);
-    IDT[14].set_func(exception::page);
+    current_idt[10].set_func(exception::invalid_tss);
+    current_idt[11].set_func(exception::segment_not_present);
+    current_idt[12].set_func(exception::stack_segment);
+    current_idt[13].set_func(exception::protection);
+    current_idt[14].set_func(exception::page);
     // 15 reserved
-    IDT[16].set_func(exception::fpu);
-    IDT[17].set_func(exception::alignment_check);
-    IDT[18].set_func(exception::machine_check);
-    IDT[19].set_func(exception::simd);
-    IDT[20].set_func(exception::virtualization);
+    current_idt[16].set_func(exception::fpu);
+    current_idt[17].set_func(exception::alignment_check);
+    current_idt[18].set_func(exception::machine_check);
+    current_idt[19].set_func(exception::simd);
+    current_idt[20].set_func(exception::virtualization);
     // 21 through 29 reserved
-    IDT[30].set_func(exception::security);
+    current_idt[30].set_func(exception::security);
     // 31 reserved
 
     // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
-    IDT_RESERVATIONS.lock()[0] |= 0x0000_0000_FFFF_FFFF;
+    *current_reservations[0].get_mut() |= 0x0000_0000_FFFF_FFFF;
 
-    // Set up IRQs
-    IDT[32].set_func(irq::pit);
-    IDT[33].set_func(irq::keyboard);
-    IDT[34].set_func(irq::cascade);
-    IDT[35].set_func(irq::com2);
-    IDT[36].set_func(irq::com1);
-    IDT[37].set_func(irq::lpt2);
-    IDT[38].set_func(irq::floppy);
-    IDT[39].set_func(irq::lpt1);
-    IDT[40].set_func(irq::rtc);
-    IDT[41].set_func(irq::pci1);
-    IDT[42].set_func(irq::pci2);
-    IDT[43].set_func(irq::pci3);
-    IDT[44].set_func(irq::mouse);
-    IDT[45].set_func(irq::fpu);
-    IDT[46].set_func(irq::ata1);
-    IDT[47].set_func(irq::ata2);
-    IDT[48].set_func(irq::lapic_timer);
-    IDT[49].set_func(irq::lapic_error);
+    if is_bsp {
+        // Set up IRQs
+        current_idt[32].set_func(irq::pit);
+        current_idt[33].set_func(irq::keyboard);
+        current_idt[34].set_func(irq::cascade);
+        current_idt[35].set_func(irq::com2);
+        current_idt[36].set_func(irq::com1);
+        current_idt[37].set_func(irq::lpt2);
+        current_idt[38].set_func(irq::floppy);
+        current_idt[39].set_func(irq::lpt1);
+        current_idt[40].set_func(irq::rtc);
+        current_idt[41].set_func(irq::pci1);
+        current_idt[42].set_func(irq::pci2);
+        current_idt[43].set_func(irq::pci3);
+        current_idt[44].set_func(irq::mouse);
+        current_idt[45].set_func(irq::fpu);
+        current_idt[46].set_func(irq::ata1);
+        current_idt[47].set_func(irq::ata2);
+        current_idt[48].set_func(irq::lapic_timer);
+        current_idt[49].set_func(irq::lapic_error);
 
-    use_default_irqs!();
 
-    // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
-    IDT_RESERVATIONS.lock()[0] |= 0x0003_FFFF_0000_0000;
+        // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
+        *current_reservations[0].get_mut() |= 0x0003_FFFF_0000_0000;
+    } else {
+        // TODO: use_default_irqs! but also the legacy IRQs that are only needed on one CPU
+    }
+
+    use_default_irqs!(current_idt);
 
     // Set IPI handlers
-    IDT[IpiKind::Wakeup as usize].set_func(ipi::wakeup);
-    IDT[IpiKind::Switch as usize].set_func(ipi::switch);
-    IDT[IpiKind::Tlb as usize].set_func(ipi::tlb);
-    IDT[IpiKind::Pit as usize].set_func(ipi::pit);
-    set_reserved(IpiKind::Wakeup as u8, true);
-    set_reserved(IpiKind::Switch as u8, true);
-    set_reserved(IpiKind::Tlb as u8, true);
-    set_reserved(IpiKind::Pit as u8, true);
+    current_idt[IpiKind::Wakeup as usize].set_func(ipi::wakeup);
+    current_idt[IpiKind::Switch as usize].set_func(ipi::switch);
+    current_idt[IpiKind::Tlb as usize].set_func(ipi::tlb);
+    current_idt[IpiKind::Pit as usize].set_func(ipi::pit);
+    idt.set_reserved_mut(IpiKind::Wakeup as u8, true);
+    idt.set_reserved_mut(IpiKind::Switch as u8, true);
+    idt.set_reserved_mut(IpiKind::Tlb as u8, true);
+    idt.set_reserved_mut(IpiKind::Pit as u8, true);
+    let current_idt = &mut idt.entries;
 
     // Set syscall function
-    IDT[0x80].set_func(syscall::syscall);
-    IDT[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
-    set_reserved(0x80, true);
+    current_idt[0x80].set_func(syscall::syscall);
+    current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
+    idt.set_reserved_mut(0x80, true);
 
     dtables::lidt(&IDTR);
 }
@@ -163,7 +246,7 @@ bitflags! {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 #[repr(packed)]
 pub struct IdtEntry {
     offsetl: u16,
