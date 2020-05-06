@@ -10,20 +10,20 @@ path = "src/lib.rs"
 crate-type = ["staticlib"]
 
 [dependencies]
-bitflags = "1.0.3"
-linked_list_allocator = "0.6.2"
+bitflags = "1.2.1"
+linked_list_allocator = "0.8.4"
 raw-cpuid = "8.0.0"
 redox_syscall = { path = "syscall" }
 slab_allocator = { path = "slab_allocator", optional = true }
-spin = "0.4.8"
+spin = "0.5.2"
 
 [dependencies.goblin]
-version = "0.0.21"
+version = "0.2.1"
 default-features = false
 features = ["elf32", "elf64"]
 
 [dependencies.rustc-demangle]
-version = "0.1.13"
+version = "0.1.16"
 default-features = false
 
 [dependencies.x86]

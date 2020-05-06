@@ -1,4 +1,4 @@
-use core::alloc::{AllocErr, GlobalAlloc, Layout};
+use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::{self, NonNull};
 use linked_list_allocator::Heap;
 use spin::Mutex;
@@ -25,7 +25,7 @@ unsafe impl GlobalAlloc for Allocator {
             };
 
             match res {
-                Err(AllocErr) => {
+                Err(()) => {
                     let size = if let Some(ref heap) = *HEAP.lock() {
                         heap.size()
                     } else {
