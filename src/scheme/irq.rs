@@ -83,7 +83,8 @@ impl IrqScheme {
 
         *HANDLES.write() = Some(BTreeMap::new());
 
-        let cpus = if cfg!(feature = "acpi") {
+        #[cfg(feature = "acpi")]
+        let cpus = {
             use crate::acpi::madt::*;
 
             let madt: &Madt = unsafe { MADT.as_ref().unwrap() };
@@ -92,9 +93,9 @@ impl IrqScheme {
                 MadtEntry::LocalApic(apic) => Some(apic.id),
                 _ => None,
             }).collect::<Vec<_>>()
-        } else {
-            vec!(0)
         };
+        #[cfg(not(feature = "acpi"))]
+        let cpus = vec!(0);
 
         IrqScheme {
             next_fd: AtomicUsize::new(0),
