@@ -11,13 +11,14 @@ use syscall::error::{EACCES, EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR
 use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDWR, O_STAT, O_WRONLY};
 use syscall::scheme::Scheme;
 use syscall::{Error, Result};
-use syscall::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
+use syscall::{MODE_DIR, MODE_FILE};
 
 use spin::{Mutex, RwLock};
 
 use crate::acpi::sdt::Sdt;
 use crate::acpi::SdtSignature;
 use crate::paging::ActivePageTable;
+use crate::scheme::calc_seek_offset_usize;
 
 #[derive(Clone, Copy)]
 struct PhysSlice {
@@ -336,13 +337,13 @@ impl Scheme for AcpiScheme {
         }
         Ok(0)
     }
-    fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let handles_guard = self.handles.read();
         let mut handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?.lock();
 
         let (cur_offset, length) = match &*handle {
             &Handle::TopLevel(offset) => (offset, TOPLEVEL_DIR_CONTENTS.len()),
-            &Handle::Tables(offset) => (offset, self.tables.len() * 35),
+            &Handle::Tables(offset) => (offset, (self.tables.len() * 35)),
             &Handle::Table {
                 name,
                 oem_id,
@@ -355,16 +356,11 @@ impl Scheme for AcpiScheme {
                     .len,
             ),
         };
-        let new_offset = match whence {
-            SEEK_CUR => core::cmp::min(cur_offset + pos, length),
-            SEEK_END => core::cmp::min(length + pos, length),
-            SEEK_SET => core::cmp::min(length, pos),
-            _ => return Err(Error::new(EINVAL)),
-        };
+        let new_offset = calc_seek_offset_usize(cur_offset, pos, whence, length)?;
         match &mut *handle {
             &mut Handle::Table { ref mut offset, .. }
             | &mut Handle::Tables(ref mut offset)
-            | &mut Handle::TopLevel(ref mut offset) => *offset = new_offset,
+            | &mut Handle::TopLevel(ref mut offset) => *offset = new_offset as usize,
         }
         Ok(new_offset)
     }

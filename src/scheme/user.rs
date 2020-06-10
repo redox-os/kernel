@@ -3,6 +3,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use core::{mem, slice, usize};
+use core::convert::TryFrom;
 use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
@@ -334,9 +335,10 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn seek(&self, file: usize, position: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, file: usize, position: isize, whence: usize) -> Result<isize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_LSEEK, file, position, whence)
+        let new_offset = inner.call(SYS_LSEEK, file, position as usize, whence)?;
+        isize::try_from(new_offset).or_else(|_| Err(Error::new(EOVERFLOW)))
     }
 
     fn fchmod(&self, file: usize, mode: u16) -> Result<usize> {

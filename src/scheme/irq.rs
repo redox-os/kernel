@@ -12,9 +12,9 @@ use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_
 
 use crate::event;
 use crate::interrupt::irq::acknowledge;
-use crate::scheme::{AtomicSchemeId, SchemeId};
+use crate::scheme::{AtomicSchemeId, SchemeId, calc_seek_offset_usize};
 use crate::syscall::error::*;
-use crate::syscall::flag::{EventFlags, EVENT_READ, O_DIRECTORY, O_CREAT, O_STAT, MODE_CHR, MODE_DIR, SEEK_CUR, SEEK_END, SEEK_SET};
+use crate::syscall::flag::{EventFlags, EVENT_READ, O_DIRECTORY, O_CREAT, O_STAT, MODE_CHR, MODE_DIR};
 use crate::syscall::scheme::Scheme;
 
 pub static IRQ_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
@@ -252,20 +252,15 @@ impl Scheme for IrqScheme {
         }
     }
 
-    fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
             &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
                 let cur_offset = offset.load(Ordering::SeqCst);
-                let new_offset = match whence {
-                    SEEK_CUR => core::cmp::min(cur_offset + pos, buf.len()),
-                    SEEK_END => core::cmp::min(buf.len() + pos, buf.len()),
-                    SEEK_SET => core::cmp::min(buf.len(), pos),
-                    _ => return Err(Error::new(EINVAL)),
-                };
-                offset.store(new_offset, Ordering::SeqCst);
+                let new_offset = calc_seek_offset_usize(cur_offset, pos, whence, buf.len())?;
+                offset.store(new_offset as usize, Ordering::SeqCst);
                 Ok(new_offset)
             }
             _ => return Err(Error::new(ESPIPE)),

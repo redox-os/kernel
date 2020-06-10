@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::{cmp, str};
+use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
 
@@ -11,7 +11,7 @@ use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, O_CREAT, MODE_FILE, MODE_DIR, SEEK_SET, SEEK_CUR, SEEK_END};
 use crate::syscall::scheme::Scheme;
-use crate::scheme::{self, SchemeNamespace, SchemeId};
+use crate::scheme::{self, SchemeNamespace, SchemeId, calc_seek_offset_usize};
 use crate::scheme::user::{UserInner, UserScheme};
 
 struct FolderInner {
@@ -33,16 +33,11 @@ impl FolderInner {
         Ok(i)
     }
 
-    fn seek(&self, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, pos: isize, whence: usize) -> Result<isize> {
         let mut seek = self.pos.lock();
-        *seek = match whence {
-            SEEK_SET => cmp::min(self.data.len(), pos),
-            SEEK_CUR => cmp::max(0, cmp::min(self.data.len() as isize, *seek as isize + pos as isize)) as usize,
-            SEEK_END => cmp::max(0, cmp::min(self.data.len() as isize, self.data.len() as isize + pos as isize)) as usize,
-            _ => return Err(Error::new(EINVAL))
-        };
-
-        Ok(*seek)
+        let new_offset = calc_seek_offset_usize(*seek, pos, whence, self.data.len())?;
+        *seek = new_offset as usize;
+        Ok(new_offset)
     }
 }
 
@@ -206,7 +201,7 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn seek(&self, file: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<isize> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
