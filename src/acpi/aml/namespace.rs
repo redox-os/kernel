@@ -4,7 +4,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 use alloc::collections::BTreeMap;
 
-use core::fmt::{Debug, Formatter, Error};
+use core::fmt::Debug;
 use core::str::FromStr;
 
 use super::termlist::parse_term_list;

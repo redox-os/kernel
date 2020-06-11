@@ -66,9 +66,9 @@ impl Scheme for SerioScheme {
         }
 
         let index = str::from_utf8(path)
-            .map_err(|err| Error::new(ENOENT))?
+            .or(Err(Error::new(ENOENT)))?
             .parse::<usize>()
-            .map_err(|err| Error::new(ENOENT))?;
+            .or(Err(Error::new(ENOENT)))?;
         if index >= INPUT.len() {
             return Err(Error::new(ENOENT));
         }

@@ -18,7 +18,7 @@ pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
 // reading the status register is not done atomically with reading the data. This is not possible
 // from userspace, so we do this minimal part of the PS2 driver in the kernel.
 #[inline(always)]
-unsafe fn ps2_interrupt(index: usize) {
+unsafe fn ps2_interrupt(_index: usize) {
     use crate::scheme::serio::serio_input;
 
     let data: u8;

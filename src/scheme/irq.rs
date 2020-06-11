@@ -155,7 +155,7 @@ impl Scheme for IrqScheme {
             use core::fmt::Write;
 
             for cpu_id in &self.cpus {
-                writeln!(bytes, "cpu-{:02x}", cpu_id);
+                writeln!(bytes, "cpu-{:02x}", cpu_id).unwrap();
             }
 
             if bsp_apic_id().is_some() {
@@ -186,7 +186,7 @@ impl Scheme for IrqScheme {
                         if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
                             continue;
                         }
-                        writeln!(data, "{}", irq);
+                        writeln!(data, "{}", irq).unwrap();
                     }
 
                     Handle::Avail(cpu_id, data.into_bytes(), AtomicUsize::new(0))

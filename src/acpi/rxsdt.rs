@@ -6,7 +6,7 @@ use super::sdt::Sdt;
 use super::get_sdt;
 
 pub trait Rxsdt {
-    fn iter(&self) -> Box<Iterator<Item = usize>>;
+    fn iter(&self) -> Box<dyn Iterator<Item = usize>>;
 
     fn map_all(&self, active_table: &mut ActivePageTable) {
         for sdt in self.iter() {

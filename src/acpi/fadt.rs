@@ -6,7 +6,7 @@ use super::{ACPI_TABLE, SDT_POINTERS, get_sdt, find_sdt, get_sdt_signature, load
 use crate::paging::ActivePageTable;
 
 #[repr(packed)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Fadt {
     pub header: Sdt,
     pub firmware_ctrl: u32,
@@ -108,7 +108,7 @@ impl Fadt {
         };
 
         if let Some(fadt) = fadt {
-            println!("  FACP: {:X}", fadt.dsdt);
+            println!("  FACP: {:X}", {fadt.dsdt});
 
             let dsdt_sdt = get_sdt(fadt.dsdt as usize, active_table);
 

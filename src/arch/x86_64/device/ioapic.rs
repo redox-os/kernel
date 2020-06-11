@@ -9,7 +9,6 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIoApic, MadtIntSrcOverride};
 use crate::arch::interrupt::irq;
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, entry::EntryFlags, Page, PhysicalAddress, VirtualAddress};
-use crate::syscall::io::Mmio;
 
 use super::pic;
 
@@ -243,7 +242,7 @@ pub unsafe fn handle_ioapic(active_table: &mut ActivePageTable, madt_ioapic: &'s
     result.flush(active_table);
 
     let ioapic_registers = page.start_address().get() as *const u32;
-    let mut ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
+    let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
 
     assert_eq!(ioapic.regs.lock().id(), madt_ioapic.id, "mismatched ACPI MADT I/O APIC ID, and the ID reported by the I/O APIC");
 
@@ -283,7 +282,7 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
 }
 
 pub unsafe fn init(active_table: &mut ActivePageTable) {
-    let mut bsp_apic_id = x86::cpuid::CpuId::new().get_feature_info().unwrap().initial_local_apic_id(); // TODO
+    let bsp_apic_id = x86::cpuid::CpuId::new().get_feature_info().unwrap().initial_local_apic_id(); // TODO
 
     // search the madt for all IOAPICs.
     #[cfg(feature = "acpi")]

@@ -39,12 +39,12 @@ impl Dmar {
                     DmarEntry::Drhd(dmar_drhd) => {
                         let drhd = dmar_drhd.get(active_table);
 
-                        println!("VER: {:X}", drhd.version);
-                        println!("CAP: {:X}", drhd.cap);
-                        println!("EXT_CAP: {:X}", drhd.ext_cap);
-                        println!("GCMD: {:X}", drhd.gl_cmd);
-                        println!("GSTS: {:X}", drhd.gl_sts);
-                        println!("RT: {:X}", drhd.root_table);
+                        println!("VER: {:X}", {drhd.version});
+                        println!("CAP: {:X}", {drhd.cap});
+                        println!("EXT_CAP: {:X}", {drhd.ext_cap});
+                        println!("GCMD: {:X}", {drhd.gl_cmd});
+                        println!("GSTS: {:X}", {drhd.gl_sts});
+                        println!("RT: {:X}", {drhd.root_table});
                     },
                     _ => ()
                 }
@@ -77,11 +77,9 @@ impl Dmar {
     }
 }
 
-///
-
 /// DMAR DMA Remapping Hardware Unit Definition
 // TODO: Implement iterator on DmarDrhd scope
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(packed)]
 pub struct DmarDrhd {
     kind: u16,
@@ -102,7 +100,7 @@ impl DmarDrhd {
 
 /// DMAR Reserved Memory Region Reporting
 // TODO: Implement iterator on DmarRmrr scope
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(packed)]
 pub struct DmarRmrr {
     kind: u16,
@@ -115,7 +113,7 @@ pub struct DmarRmrr {
 
 /// DMAR Root Port ATS Capability Reporting
 // TODO: Implement iterator on DmarAtsr scope
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(packed)]
 pub struct DmarAtsr {
     kind: u16,
@@ -126,7 +124,7 @@ pub struct DmarAtsr {
 }
 
 /// DMAR Remapping Hardware Static Affinity
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(packed)]
 pub struct DmarRhsa {
     kind: u16,
@@ -138,7 +136,7 @@ pub struct DmarRhsa {
 
 /// DMAR ACPI Name-space Device Declaration
 // TODO: Implement iterator on DmarAndd object name
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(packed)]
 pub struct DmarAndd {
     kind: u16,
