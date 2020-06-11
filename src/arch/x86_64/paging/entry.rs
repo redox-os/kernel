@@ -6,6 +6,7 @@ use crate::memory::Frame;
 use super::PhysicalAddress;
 
 /// A page table entry
+#[repr(packed(8))]
 pub struct Entry(u64);
 
 bitflags! {

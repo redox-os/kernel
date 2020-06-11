@@ -39,6 +39,7 @@ impl HierarchicalLevel for Level2 {
     type NextLevel = Level1;
 }
 
+#[repr(packed(4096))]
 pub struct Table<L: TableLevel> {
     entries: [Entry; ENTRY_COUNT],
     level: PhantomData<L>,
