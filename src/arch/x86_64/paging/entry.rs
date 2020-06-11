@@ -77,3 +77,11 @@ impl Entry {
         self.0 = (self.0 & !COUNTER_MASK) | (count << 52);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn entry_has_required_arch_alignment() {
+        assert_eq!(core::mem::align_of::<Entry>(), core::mem::align_of::<u64>());
+    }
+}

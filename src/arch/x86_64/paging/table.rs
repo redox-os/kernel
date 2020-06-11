@@ -55,7 +55,7 @@ impl<L> Table<L> where L: TableLevel {
     }
 
     pub fn zero(&mut self) {
-        for entry in self.entries.iter_mut() {
+        for entry in unsafe { &mut self.entries }.iter_mut() {
             entry.set_zero();
         }
     }
@@ -63,12 +63,12 @@ impl<L> Table<L> where L: TableLevel {
     /// Set number of entries in first table entry
     fn set_entry_count(&mut self, count: u64) {
         debug_assert!(count <= ENTRY_COUNT as u64, "count can't be greater than ENTRY_COUNT");
-        self.entries[0].set_counter_bits(count);
+        unsafe { &mut self.entries[0] }.set_counter_bits(count)
     }
 
     /// Get number of entries in first table entry
     fn entry_count(&self) -> u64 {
-        self.entries[0].counter_bits()
+        unsafe { &self.entries[0] }.counter_bits()
     }
 
     pub fn increment_entry_count(&mut self) {
@@ -118,12 +118,12 @@ impl<L> Index<usize> for Table<L> where L: TableLevel {
     type Output = Entry;
 
     fn index(&self, index: usize) -> &Entry {
-        &self.entries[index]
+        unsafe { &self.entries[index] }
     }
 }
 
 impl<L> IndexMut<usize> for Table<L> where L: TableLevel {
     fn index_mut(&mut self, index: usize) -> &mut Entry {
-        &mut self.entries[index]
+        unsafe { &mut self.entries[index] }
     }
 }
