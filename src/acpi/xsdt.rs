@@ -18,7 +18,7 @@ impl Xsdt {
 }
 
 impl Rxsdt for Xsdt {
-    fn iter(&self) -> Box<Iterator<Item = usize>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = usize>> {
         Box::new(XsdtIter {
             sdt: self.0,
             i: 0

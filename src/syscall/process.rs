@@ -81,7 +81,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let ens;
         let umask;
         let sigmask;
-        let mut cpu_id_opt = None;
+        let cpu_id_opt = None;
         let arch;
         let vfork;
         let mut kfx_opt = None;

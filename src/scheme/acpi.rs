@@ -1,4 +1,4 @@
-use core::convert::{TryFrom, TryInto};
+use core::convert::TryInto;
 use core::fmt::Write;
 use core::str;
 use core::sync::atomic::{self, AtomicUsize};
@@ -239,7 +239,7 @@ impl Scheme for AcpiScheme {
                 }
                 Handle::Tables(0)
             } else {
-                if (flags & O_DIRECTORY != 0 && flags & O_STAT == 0) {
+                if flags & O_DIRECTORY != 0 && flags & O_STAT == 0 {
                     return Err(Error::new(ENOTDIR));
                 }
                 if flags & O_ACCMODE == O_WRONLY || flags & O_ACCMODE == O_RDWR {
@@ -448,7 +448,7 @@ impl Scheme for AcpiScheme {
             }
         }
     }
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
+    fn write(&self, _id: usize, _buf: &[u8]) -> Result<usize> {
         Err(Error::new(EBADF))
     }
 }

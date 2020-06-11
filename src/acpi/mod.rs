@@ -135,7 +135,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
         }
         println!(":");
 
-        let rxsdt: Box<Rxsdt + Send + Sync> = if let Some(rsdt) = Rsdt::new(rxsdt) {
+        let rxsdt: Box<dyn Rxsdt + Send + Sync> = if let Some(rsdt) = Rsdt::new(rxsdt) {
             Box::new(rsdt)
         } else if let Some(xsdt) = Xsdt::new(rxsdt) {
             Box::new(xsdt)

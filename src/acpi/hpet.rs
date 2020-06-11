@@ -20,7 +20,7 @@ pub struct GenericAddressStructure {
 }
 
 #[repr(packed)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Hpet {
     pub header: Sdt,
 

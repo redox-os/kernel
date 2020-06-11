@@ -14,7 +14,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     pic::init();
     local_apic::init(active_table);
 }
-pub unsafe fn init_after_acpi(active_table: &mut ActivePageTable)  {
+pub unsafe fn init_after_acpi(_active_table: &mut ActivePageTable)  {
     // this will disable the IOAPIC if needed.
     //ioapic::init(active_table);
 }
