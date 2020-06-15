@@ -71,15 +71,6 @@ struct Session {
     tracee: WaitCondition,
     tracer: WaitCondition,
 }
-impl Session {
-    fn send_event(&self, event: PtraceEvent) {
-        // Add event to queue
-        self.data.lock().add_event(event);
-
-        // Alert blocking tracers
-        self.tracer.notify();
-    }
-}
 
 type SessionMap = BTreeMap<ContextId, Arc<Session>>;
 
@@ -95,8 +86,8 @@ fn sessions_mut() -> RwLockWriteGuard<'static, SessionMap> {
     SESSIONS.call_once(init_sessions).write()
 }
 
-/// Try to create a new session, but fail if one already exists for
-/// this process
+/// Try to create a new session, but fail if one already exists for this
+/// process
 pub fn try_new_session(pid: ContextId, file_id: usize) -> bool {
     let mut sessions = sessions_mut();
 
@@ -159,14 +150,17 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
 
     let sessions = sessions();
     let session = sessions.get(&context.id)?;
-    let data = session.data.lock();
+    let mut data = session.data.lock();
     let breakpoint = data.breakpoint.as_ref()?;
 
     if event.cause & breakpoint.flags != event.cause {
         return None;
     }
 
-    session.send_event(event);
+    // Add event to queue
+    data.add_event(event);
+    // Notify tracer
+    session.tracer.notify();
 
     Some(())
 }
@@ -215,14 +209,19 @@ pub fn cont(pid: ContextId) {
 
 /// Create a new breakpoint for the specified tracee, optionally with
 /// a sysemu flag. Panics if the session is invalid.
-pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags) {
+pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags, should_continue: bool) {
     let sessions = sessions_mut();
     let session = sessions.get(&pid).expect("proc (set_breakpoint): invalid session");
     let mut data = session.data.lock();
+
     data.breakpoint = Some(Breakpoint {
         reached: false,
         flags
     });
+
+    if should_continue {
+        session.tracee.notify();
+    }
 }
 
 /// Wait for the tracee to stop. If an event occurs, it returns a copy

@@ -20,9 +20,9 @@ interrupt_stack!(debug, stack, {
 
     let guard = ptrace::set_process_regs(stack);
 
-    // Disable singlestep before their is a breakpoint, since the
-    // breakpoint handler might end up setting it again but unless it
-    // does we want the default to be false.
+    // Disable singlestep before there is a breakpoint, since the breakpoint
+    // handler might end up setting it again but unless it does we want the
+    // default to be false.
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
