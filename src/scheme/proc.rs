@@ -47,8 +47,9 @@ fn with_context_mut<F, T>(pid: ContextId, callback: F) -> Result<T>
     }
     callback(&mut context)
 }
-fn try_stop_context<F, T>(pid: ContextId, restart_after: bool, mut callback: F) -> Result<T>
-    where F: FnMut(&mut Context) -> Result<T>
+fn try_stop_context<F, T>(pid: ContextId, mut callback: F) -> Result<T>
+where
+    F: FnMut(&mut Context) -> Result<T>,
 {
     // Stop process
     let (was_stopped, mut running) = with_context_mut(pid, |context| {
@@ -72,9 +73,7 @@ fn try_stop_context<F, T>(pid: ContextId, restart_after: bool, mut callback: F) 
 
         let ret = callback(context);
 
-        if !was_stopped || restart_after {
-            context.ptrace_stop = false;
-        }
+        context.ptrace_stop = was_stopped;
 
         ret
     })
@@ -342,7 +341,7 @@ impl Scheme for ProcScheme {
                         let fx = context.arch.get_fx_regs().unwrap_or_default();
                         Ok((Output { float: fx }, mem::size_of::<FloatRegisters>()))
                     })?,
-                    RegsKind::Int => try_stop_context(info.pid, false, |context| match unsafe { ptrace::regs_for(&context) } {
+                    RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(&context) } {
                         None => {
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                             Err(Error::new(ENOTRECOVERABLE))
@@ -443,7 +442,7 @@ impl Scheme for ProcScheme {
                         *(buf as *const _ as *const IntRegisters)
                     };
 
-                    try_stop_context(info.pid, false, |context| match unsafe { ptrace::regs_for_mut(context) } {
+                    try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for_mut(context) } {
                         None => {
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                             Err(Error::new(ENOTRECOVERABLE))
@@ -470,9 +469,7 @@ impl Scheme for ProcScheme {
                 let should_continue = !op.contains(PTRACE_FLAG_WAIT) || op.intersects(PTRACE_STOP_MASK);
 
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
-                    // `true` to `try_stop_context` means we restart after, no
-                    // matter if it was or wasn't stopped before
-                    try_stop_context(info.pid, true, |context| {
+                    try_stop_context(info.pid, |context| {
                         match unsafe { ptrace::regs_for_mut(context) } {
                             None => {
                                 println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
@@ -484,17 +481,24 @@ impl Scheme for ProcScheme {
                             }
                         }
                     })?;
-                } else {
-                    // disable ptrace stop
-                    with_context_mut(info.pid, |context| {
-                        context.ptrace_stop = false;
-                        Ok(())
-                    })?;
                 }
 
                 // Set next breakpoint, and potentially restart tracee
                 if op.intersects(PTRACE_STOP_MASK) {
                     ptrace::set_breakpoint(info.pid, op, should_continue);
+                } else if should_continue {
+                    ptrace::clear_breakpoint(info.pid);
+                }
+
+                if should_continue {
+                    // disable the ptrace_stop flag, which is used in some cases
+                    with_context_mut(info.pid, |context| {
+                        context.ptrace_stop = false;
+                        Ok(())
+                    })?;
+
+                    // and notify the tracee's WaitCondition, which is used in other cases
+                    ptrace::notify(info.pid);
                 }
 
                 // And await the tracee, if requested to

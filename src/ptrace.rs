@@ -191,8 +191,8 @@ struct Breakpoint {
     flags: PtraceFlags
 }
 
-/// Continue the process with the specified ID
-pub fn cont(pid: ContextId) {
+/// Clear any breakpoints for the process with the specified ID
+pub fn clear_breakpoint(pid: ContextId) {
     let sessions = sessions();
     let session = match sessions.get(&pid) {
         Some(session) => session,
@@ -203,6 +203,15 @@ pub fn cont(pid: ContextId) {
     // Remove the breakpoint to make sure any yet unreached but
     // obsolete breakpoints don't stop the program.
     data.breakpoint = None;
+}
+
+// TODO: All these small functions should be moved to be on the session instance
+pub fn notify(pid: ContextId) {
+    let sessions = sessions();
+    let session = match sessions.get(&pid) {
+        Some(session) => session,
+        None => return
+    };
 
     session.tracee.notify();
 }
@@ -218,10 +227,6 @@ pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags, should_continue: bool)
         reached: false,
         flags
     });
-
-    if should_continue {
-        session.tracee.notify();
-    }
 }
 
 /// Wait for the tracee to stop. If an event occurs, it returns a copy
