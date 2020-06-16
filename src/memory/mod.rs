@@ -7,6 +7,7 @@ use self::bump::BumpAllocator;
 use self::recycle::RecycleAllocator;
 
 use spin::Mutex;
+use syscall::{PartialAllocStrategy, PhysallocFlags};
 
 pub mod bump;
 pub mod recycle;
@@ -118,6 +119,13 @@ pub fn allocate_frames(count: usize) -> Option<Frame> {
         panic!("frame allocator not initialized");
     }
 }
+pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Option<PartialAllocStrategy>, min: usize) -> Option<(Frame, usize)> {
+    if let Some(ref mut allocator) = *ALLOCATOR.lock() {
+        allocator.allocate_frames3(count, flags, strategy, min)
+    } else {
+        panic!("frame allocator not initialized");
+    }
+}
 
 /// Deallocate a range of frames frame
 pub fn deallocate_frames(frame: Frame, count: usize) {
@@ -184,6 +192,12 @@ pub trait FrameAllocator {
     fn set_noncore(&mut self, noncore: bool);
     fn free_frames(&self) -> usize;
     fn used_frames(&self) -> usize;
-    fn allocate_frames(&mut self, size: usize) -> Option<Frame>;
+    fn allocate_frames(&mut self, size: usize) -> Option<Frame> {
+        self.allocate_frames2(size, PhysallocFlags::SPACE_64)
+    }
+    fn allocate_frames2(&mut self, size: usize, flags: PhysallocFlags) -> Option<Frame> {
+        self.allocate_frames3(size, flags, None, size).map(|(s, _)| s)
+    }
+    fn allocate_frames3(&mut self, size: usize, flags: PhysallocFlags, strategy: Option<PartialAllocStrategy>, min: usize) -> Option<(Frame, usize)>;
     fn deallocate_frames(&mut self, frame: Frame, size: usize);
 }

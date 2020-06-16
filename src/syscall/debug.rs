@@ -271,6 +271,10 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "physalloc({})",
             b
         ),
+        SYS_PHYSALLOC3 => format!(
+            "physalloc3({}, {}, {})",
+            b, c, d,
+        ),
         SYS_PHYSFREE => format!(
             "physfree({:#X}, {})",
             b,

@@ -1,11 +1,11 @@
 use crate::macros::InterruptStack;
-use crate::memory::{allocate_frames, deallocate_frames, Frame};
+use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
 use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::context;
 use crate::context::memory::Grant;
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
-use crate::syscall::flag::{PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
+use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -30,12 +30,28 @@ pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
     Ok(0)
 }
 
-pub fn inner_physalloc(size: usize) -> Result<usize> {
-    allocate_frames((size + 4095)/4096).ok_or(Error::new(ENOMEM)).map(|frame| frame.start_address().get())
+pub fn inner_physalloc(size: usize, flags: PhysallocFlags, strategy: Option<PartialAllocStrategy>, min: usize) -> Result<(usize, usize)> {
+    if flags.contains(PhysallocFlags::SPACE_32 | PhysallocFlags::SPACE_64) {
+        return Err(Error::new(EINVAL));
+    }
+    let space32 = flags.contains(PhysallocFlags::SPACE_32);
+    allocate_frames_complex((size + 4095) / 4096, flags, strategy, (min + 4095) / 4096).ok_or(Error::new(ENOMEM)).map(|(frame, count)| (frame.start_address().get(), count * 4096))
 }
 pub fn physalloc(size: usize) -> Result<usize> {
     enforce_root()?;
-    inner_physalloc(size)
+    inner_physalloc(size, PhysallocFlags::SPACE_64, None, size).map(|(base, _)| base)
+}
+pub fn physalloc3(size: usize, flags_raw: usize, min: &mut usize) -> Result<usize> {
+    enforce_root()?;
+    let flags = PhysallocFlags::from_bits(flags_raw & !syscall::PARTIAL_ALLOC_STRATEGY_MASK).ok_or(Error::new(EINVAL))?;
+    let strategy = if flags.contains(PhysallocFlags::PARTIAL_ALLOC) {
+        Some(PartialAllocStrategy::from_raw(flags_raw & syscall::PARTIAL_ALLOC_STRATEGY_MASK).ok_or(Error::new(EINVAL))?)
+    } else {
+        None
+    };
+    let (base, count) = inner_physalloc(size, flags, strategy, *min)?;
+    *min = count;
+    Ok(base)
 }
 
 pub fn inner_physfree(physical_address: usize, size: usize) -> Result<usize> {
