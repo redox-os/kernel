@@ -374,6 +374,9 @@ impl Scheme for ProcScheme {
                     ptrace::wait(handle.info.pid)?;
                 }
 
+                // Check if context exists
+                with_context(handle.info.pid, |_| Ok(()))?;
+
                 // Read events
                 let slice = unsafe {
                     slice::from_raw_parts_mut(

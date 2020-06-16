@@ -112,7 +112,11 @@ impl Session {
         F: FnOnce(&Session) -> Result<T>,
     {
         let sessions = sessions();
-        let session = sessions.get(&pid).ok_or(Error::new(ENODEV))?;
+        let session = sessions.get(&pid).ok_or_else(|| {
+            println!("session doesn't exist - returning ENODEV.");
+            println!("can this ever happen?");
+            Error::new(ENODEV)
+        })?;
 
         callback(session)
     }
@@ -160,6 +164,18 @@ pub fn close_session(pid: ContextId) {
     if let Some(session) = sessions_mut().remove(&pid) {
         session.tracer.notify();
         session.tracee.notify();
+    }
+}
+
+/// Wake up the tracer to make sure it catches on that the tracee is dead. This
+/// is different from `close_session` in that it doesn't actually close the
+/// session, and instead waits for the file handle to be closed, where the
+/// session will *actually* be closed. This is partly to ensure ENOSRCH is
+/// returned rather than ENODEV (which occurs when there's no session - should
+/// never really happen).
+pub fn close_tracee(pid: ContextId) {
+    if let Some(session) = sessions().get(&pid) {
+        session.tracer.notify();
 
         let data = session.data.lock();
         proc_trigger_event(data.file_id, EVENT_READ);
@@ -248,13 +264,6 @@ pub fn wait(pid: ContextId) -> Result<()> {
             // We successfully waited, wake up!
             break;
         }
-    }
-
-    let contexts = context::contexts();
-    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
-    let context = context.read();
-    if let Status::Exited(_) = context.status {
-        return Err(Error::new(ESRCH));
     }
 
     Ok(())
