@@ -205,8 +205,8 @@ pub fn clear_breakpoint(pid: ContextId) {
     data.breakpoint = None;
 }
 
-// TODO: All these small functions should be moved to be on the session instance
-pub fn notify(pid: ContextId) {
+/// Notify the tracee of the current session. Returns None if session does not exist
+pub fn notify_tracee(pid: ContextId) {
     let sessions = sessions();
     let session = match sessions.get(&pid) {
         Some(session) => session,
@@ -218,7 +218,7 @@ pub fn notify(pid: ContextId) {
 
 /// Create a new breakpoint for the specified tracee, optionally with
 /// a sysemu flag. Panics if the session is invalid.
-pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags, should_continue: bool) {
+pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags) {
     let sessions = sessions_mut();
     let session = sessions.get(&pid).expect("proc (set_breakpoint): invalid session");
     let mut data = session.data.lock();

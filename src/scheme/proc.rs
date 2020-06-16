@@ -468,6 +468,13 @@ impl Scheme for ProcScheme {
 
                 let should_continue = !op.contains(PTRACE_FLAG_WAIT) || op.intersects(PTRACE_STOP_MASK);
 
+                // Set next breakpoint, or clear it if no stop condition was set and we should continue
+                if op.intersects(PTRACE_STOP_MASK) {
+                    ptrace::set_breakpoint(info.pid, op);
+                } else if should_continue {
+                    ptrace::clear_breakpoint(info.pid);
+                }
+
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
                     try_stop_context(info.pid, |context| {
                         match unsafe { ptrace::regs_for_mut(context) } {
@@ -483,13 +490,6 @@ impl Scheme for ProcScheme {
                     })?;
                 }
 
-                // Set next breakpoint, and potentially restart tracee
-                if op.intersects(PTRACE_STOP_MASK) {
-                    ptrace::set_breakpoint(info.pid, op, should_continue);
-                } else if should_continue {
-                    ptrace::clear_breakpoint(info.pid);
-                }
-
                 if should_continue {
                     // disable the ptrace_stop flag, which is used in some cases
                     with_context_mut(info.pid, |context| {
@@ -498,7 +498,7 @@ impl Scheme for ProcScheme {
                     })?;
 
                     // and notify the tracee's WaitCondition, which is used in other cases
-                    ptrace::notify(info.pid);
+                    ptrace::notify_tracee(info.pid);
                 }
 
                 // And await the tracee, if requested to
