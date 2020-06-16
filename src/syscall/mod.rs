@@ -152,6 +152,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_SIGRETURN => sigreturn(),
                 SYS_PIPE2 => pipe2(validate_slice_mut(b as *mut usize, 2)?, c),
                 SYS_PHYSALLOC => physalloc(b),
+                SYS_PHYSALLOC3 => physalloc3(b, c, &mut validate_slice_mut(d as *mut usize, 1)?[0]),
                 SYS_PHYSFREE => physfree(b, c),
                 SYS_PHYSMAP => physmap(b, c, PhysmapFlags::from_bits_truncate(d)),
                 SYS_PHYSUNMAP => physunmap(b),
