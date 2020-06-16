@@ -13,7 +13,7 @@ use crate::{
         }
     },
     common::unique::Unique,
-    context::{self, signal, Context, ContextId, Status},
+    context::{self, signal, Context, ContextId},
     event,
     scheme::proc,
     sync::WaitCondition,
@@ -73,6 +73,12 @@ impl SessionData {
         });
     }
 
+    /// Returns true if the breakpoint is reached, or if there isn't a
+    /// breakpoint
+    pub fn is_reached(&self) -> bool {
+        self.breakpoint.as_ref().map(|b| b.reached).unwrap_or(false)
+    }
+
     /// Used for getting the flags in fevent
     pub fn session_fevent_flags(&self) -> EventFlags {
         let mut flags = EventFlags::empty();
@@ -106,7 +112,11 @@ impl Session {
         F: FnOnce(&Session) -> Result<T>,
     {
         let sessions = sessions();
-        let session = sessions.get(&pid).ok_or(Error::new(ENODEV))?;
+        let session = sessions.get(&pid).ok_or_else(|| {
+            println!("session doesn't exist - returning ENODEV.");
+            println!("can this ever happen?");
+            Error::new(ENODEV)
+        })?;
 
         callback(session)
     }
@@ -154,6 +164,18 @@ pub fn close_session(pid: ContextId) {
     if let Some(session) = sessions_mut().remove(&pid) {
         session.tracer.notify();
         session.tracee.notify();
+    }
+}
+
+/// Wake up the tracer to make sure it catches on that the tracee is dead. This
+/// is different from `close_session` in that it doesn't actually close the
+/// session, and instead waits for the file handle to be closed, where the
+/// session will *actually* be closed. This is partly to ensure ENOSRCH is
+/// returned rather than ENODEV (which occurs when there's no session - should
+/// never really happen).
+pub fn close_tracee(pid: ContextId) {
+    if let Some(session) = sessions().get(&pid) {
+        session.tracer.notify();
 
         let data = session.data.lock();
         proc_trigger_event(data.file_id, EVENT_READ);
@@ -242,13 +264,6 @@ pub fn wait(pid: ContextId) -> Result<()> {
             // We successfully waited, wake up!
             break;
         }
-    }
-
-    let contexts = context::contexts();
-    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
-    let context = context.read();
-    if let Status::Exited(_) = context.status {
-        return Err(Error::new(ESRCH));
     }
 
     Ok(())
