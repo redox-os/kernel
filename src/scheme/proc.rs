@@ -26,7 +26,8 @@ use core::{
 use spin::RwLock;
 
 fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
-    where F: FnOnce(&Context) -> Result<T>
+where
+    F: FnOnce(&Context) -> Result<T>,
 {
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -37,7 +38,8 @@ fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
     callback(&context)
 }
 fn with_context_mut<F, T>(pid: ContextId, callback: F) -> Result<T>
-    where F: FnOnce(&mut Context) -> Result<T>
+where
+    F: FnOnce(&mut Context) -> Result<T>,
 {
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -47,43 +49,36 @@ fn with_context_mut<F, T>(pid: ContextId, callback: F) -> Result<T>
     }
     callback(&mut context)
 }
-fn try_stop_context<F, T>(pid: ContextId, restart_after: bool, mut callback: F) -> Result<T>
-    where F: FnMut(&mut Context) -> Result<T>
+fn try_stop_context<F, T>(pid: ContextId, mut callback: F) -> Result<T>
+where
+    F: FnMut(&mut Context) -> Result<T>,
 {
-    let mut first = true;
-    let mut was_stopped = false; // will never be read
-
-    loop {
-        if !first {
-            // We've tried this before, so lets wait before retrying
-            unsafe { context::switch(); }
-        }
-        first = false;
-
-        let contexts = context::contexts();
-        let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
-        let mut context = context.write();
-        if let Status::Exited(_) = context.status {
-            return Err(Error::new(ESRCH));
-        }
-
-        // Stop the process until we've done our thing
-        if first {
-            was_stopped = context.ptrace_stop;
-        }
+    // Stop process
+    let (was_stopped, mut running) = with_context_mut(pid, |context| {
+        let was_stopped = context.ptrace_stop;
         context.ptrace_stop = true;
 
-        if context.running {
-            // Process still running, wait until it has stopped
-            continue;
-        }
+        Ok((was_stopped, context.running))
+    })?;
 
-        let ret = callback(&mut context);
+    // Wait until stopped
+    while running {
+        unsafe { context::switch(); }
 
-        context.ptrace_stop = restart_after && was_stopped;
-
-        break ret;
+        running = with_context(pid, |context| {
+            Ok(context.running)
+        })?;
     }
+
+    with_context_mut(pid, |context| {
+        assert!(!context.running, "process can't have been restarted, we stopped it!");
+
+        let ret = callback(context);
+
+        context.ptrace_stop = was_stopped;
+
+        ret
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -154,6 +149,7 @@ impl Handle {
     fn continue_ignored_children(&mut self) -> Option<()> {
         let data = self.data.trace_data()?;
         let contexts = context::contexts();
+
         for pid in data.clones.drain(..) {
             if ptrace::is_traced(pid) {
                 continue;
@@ -222,8 +218,8 @@ impl Scheme for ProcScheme {
                     return Err(Error::new(EPERM));
                 }
 
-                // Is it a subprocess of us? In the future, a capability
-                // could bypass this check.
+                // Is it a subprocess of us? In the future, a capability could
+                // bypass this check.
                 match contexts.anchestors(target.ppid).find(|&(id, _context)| id == current.id) {
                     Some((id, context)) => {
                         // Paranoid sanity check, as ptrace security holes
@@ -240,8 +236,8 @@ impl Scheme for ProcScheme {
 
         if let Operation::Trace { .. } = operation {
             if !ptrace::try_new_session(pid, id) {
-                // There is no good way to handle id being occupied
-                // for nothing here, is there?
+                // There is no good way to handle id being occupied for nothing
+                // here, is there?
                 return Err(Error::new(EBUSY));
             }
 
@@ -347,7 +343,7 @@ impl Scheme for ProcScheme {
                         let fx = context.arch.get_fx_regs().unwrap_or_default();
                         Ok((Output { float: fx }, mem::size_of::<FloatRegisters>()))
                     })?,
-                    RegsKind::Int => try_stop_context(info.pid, true, |context| match unsafe { ptrace::regs_for(&context) } {
+                    RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(&context) } {
                         None => {
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                             Err(Error::new(ENOTRECOVERABLE))
@@ -375,7 +371,9 @@ impl Scheme for ProcScheme {
                         buf.len() / mem::size_of::<PtraceEvent>()
                     )
                 };
-                let read = ptrace::recv_events(info.pid, slice).unwrap_or(0);
+                let read = ptrace::Session::with_session(info.pid, |session| {
+                    Ok(session.data.lock().recv_events(slice))
+                })?;
 
                 // Won't context switch, don't worry about the locks
                 let mut handles = self.handles.write();
@@ -448,7 +446,7 @@ impl Scheme for ProcScheme {
                         *(buf as *const _ as *const IntRegisters)
                     };
 
-                    try_stop_context(info.pid, true, |context| match unsafe { ptrace::regs_for_mut(context) } {
+                    try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for_mut(context) } {
                         None => {
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                             Err(Error::new(ENOTRECOVERABLE))
@@ -472,21 +470,21 @@ impl Scheme for ProcScheme {
                 let op = u64::from_ne_bytes(bytes);
                 let op = PtraceFlags::from_bits(op).ok_or(Error::new(EINVAL))?;
 
-                if !op.contains(PTRACE_FLAG_WAIT) || op.intersects(PTRACE_STOP_MASK) {
-                    ptrace::cont(info.pid);
-                }
-                if op.intersects(PTRACE_STOP_MASK) {
-                    ptrace::set_breakpoint(info.pid, op);
-                }
+                let should_continue = !op.contains(PTRACE_FLAG_WAIT) || op.intersects(PTRACE_STOP_MASK);
+
+                // Set next breakpoint
+                ptrace::Session::with_session(info.pid, |session| {
+                    if op.intersects(PTRACE_STOP_MASK) {
+                        session.data.lock().set_breakpoint(Some(op));
+                    } else if should_continue {
+                        session.data.lock().set_breakpoint(None);
+                    }
+                    Ok(())
+                })?;
 
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
-                    // try_stop_context with `false` will
-                    // automatically disable ptrace_stop
-                    try_stop_context(info.pid, false, |context| {
+                    try_stop_context(info.pid, |context| {
                         match unsafe { ptrace::regs_for_mut(context) } {
-                            // If another CPU is running this process,
-                            // await for it to be stopped and in such
-                            // a way the registers can be read!
                             None => {
                                 println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                                 Err(Error::new(ENOTRECOVERABLE))
@@ -497,14 +495,24 @@ impl Scheme for ProcScheme {
                             }
                         }
                     })?;
-                } else {
-                    // disable ptrace stop
+                }
+
+                // Continue execution, if requested
+                if should_continue {
+                    // disable the ptrace_stop flag, which is used in some cases
                     with_context_mut(info.pid, |context| {
                         context.ptrace_stop = false;
                         Ok(())
                     })?;
+
+                    // and notify the tracee's WaitCondition, which is used in other cases
+                    ptrace::Session::with_session(info.pid, |session| {
+                        session.tracee.notify();
+                        Ok(())
+                    })?;
                 }
 
+                // And await the tracee, if requested
                 if op.contains(PTRACE_FLAG_WAIT) || info.flags & O_NONBLOCK != O_NONBLOCK {
                     ptrace::wait(info.pid)?;
                 }
@@ -529,7 +537,9 @@ impl Scheme for ProcScheme {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        Ok(ptrace::session_fevent_flags(handle.info.pid).expect("proc (fevent): invalid session"))
+        ptrace::Session::with_session(handle.info.pid, |session| {
+            Ok(session.data.lock().session_fevent_flags())
+        })
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -558,12 +568,12 @@ impl Scheme for ProcScheme {
 
             if handle.info.flags & O_EXCL == O_EXCL {
                 syscall::kill(handle.info.pid, SIGKILL)?;
-            } else {
-                let contexts = context::contexts();
-                if let Some(context) = contexts.get(handle.info.pid) {
-                    let mut context = context.write();
-                    context.ptrace_stop = false;
-                }
+            }
+
+            let contexts = context::contexts();
+            if let Some(context) = contexts.get(handle.info.pid) {
+                let mut context = context.write();
+                context.ptrace_stop = false;
             }
         }
         Ok(0)

@@ -22,10 +22,10 @@ macro_rules! with_interrupt_stack {
         unsafe fn $wrapped(stack: *mut InterruptStack) {
             let _guard = ptrace::set_process_regs(stack);
 
-            let thumbs_up = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
+            let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
                 .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
 
-            if thumbs_up.unwrap_or(true) {
+            if allowed.unwrap_or(true) {
                 // If syscall not ignored
                 let $stack = &mut *stack;
                 $stack.scratch.rax = $code;

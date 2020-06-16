@@ -1151,8 +1151,8 @@ pub fn exit(status: usize) -> ! {
             }
         }
 
-        // Alert any tracers waiting for process (important: AFTER sending waitpid event)
-        ptrace::close_tracee(pid);
+        // Alert any tracers waiting of this process
+        ptrace::close_session(pid);
 
         if pid == ContextId::from(1) {
             println!("Main kernel thread exited with status {:X}", status);

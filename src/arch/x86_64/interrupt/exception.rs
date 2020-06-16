@@ -20,9 +20,9 @@ interrupt_stack!(debug, stack, {
 
     let guard = ptrace::set_process_regs(stack);
 
-    // Disable singlestep before their is a breakpoint, since the
-    // breakpoint handler might end up setting it again but unless it
-    // does we want the default to be false.
+    // Disable singlestep before there is a breakpoint, since the breakpoint
+    // handler might end up setting it again but unless it does we want the
+    // default to be false.
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
@@ -48,13 +48,12 @@ interrupt_stack!(non_maskable, stack, {
 });
 
 interrupt_stack!(breakpoint, stack, {
-    println!("Breakpoint trap");
-
     let guard = ptrace::set_process_regs(stack);
 
     if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
         drop(guard);
 
+        println!("Breakpoint trap");
         stack.dump();
         ksignal(SIGTRAP);
     }
