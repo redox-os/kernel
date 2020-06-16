@@ -26,7 +26,8 @@ use core::{
 use spin::RwLock;
 
 fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
-    where F: FnOnce(&Context) -> Result<T>
+where
+    F: FnOnce(&Context) -> Result<T>,
 {
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -37,7 +38,8 @@ fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
     callback(&context)
 }
 fn with_context_mut<F, T>(pid: ContextId, callback: F) -> Result<T>
-    where F: FnOnce(&mut Context) -> Result<T>
+where
+    F: FnOnce(&mut Context) -> Result<T>,
 {
     let contexts = context::contexts();
     let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -369,7 +371,9 @@ impl Scheme for ProcScheme {
                         buf.len() / mem::size_of::<PtraceEvent>()
                     )
                 };
-                let read = ptrace::recv_events(info.pid, slice).unwrap_or(0);
+                let read = ptrace::Session::with_session(info.pid, |session| {
+                    Ok(session.data.lock().recv_events(slice))
+                })?;
 
                 // Won't context switch, don't worry about the locks
                 let mut handles = self.handles.write();
@@ -468,12 +472,15 @@ impl Scheme for ProcScheme {
 
                 let should_continue = !op.contains(PTRACE_FLAG_WAIT) || op.intersects(PTRACE_STOP_MASK);
 
-                // Set next breakpoint, or clear it if no stop condition was set and we should continue
-                if op.intersects(PTRACE_STOP_MASK) {
-                    ptrace::set_breakpoint(info.pid, op);
-                } else if should_continue {
-                    ptrace::clear_breakpoint(info.pid);
-                }
+                // Set next breakpoint
+                ptrace::Session::with_session(info.pid, |session| {
+                    if op.intersects(PTRACE_STOP_MASK) {
+                        session.data.lock().set_breakpoint(Some(op));
+                    } else if should_continue {
+                        session.data.lock().set_breakpoint(None);
+                    }
+                    Ok(())
+                })?;
 
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
                     try_stop_context(info.pid, |context| {
@@ -490,6 +497,7 @@ impl Scheme for ProcScheme {
                     })?;
                 }
 
+                // Continue execution, if requested
                 if should_continue {
                     // disable the ptrace_stop flag, which is used in some cases
                     with_context_mut(info.pid, |context| {
@@ -498,10 +506,13 @@ impl Scheme for ProcScheme {
                     })?;
 
                     // and notify the tracee's WaitCondition, which is used in other cases
-                    ptrace::notify_tracee(info.pid);
+                    ptrace::Session::with_session(info.pid, |session| {
+                        session.tracee.notify();
+                        Ok(())
+                    })?;
                 }
 
-                // And await the tracee, if requested to
+                // And await the tracee, if requested
                 if op.contains(PTRACE_FLAG_WAIT) || info.flags & O_NONBLOCK != O_NONBLOCK {
                     ptrace::wait(info.pid)?;
                 }
@@ -526,7 +537,9 @@ impl Scheme for ProcScheme {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        Ok(ptrace::session_fevent_flags(handle.info.pid).expect("proc (fevent): invalid session"))
+        ptrace::Session::with_session(handle.info.pid, |session| {
+            Ok(session.data.lock().session_fevent_flags())
+        })
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -555,12 +568,12 @@ impl Scheme for ProcScheme {
 
             if handle.info.flags & O_EXCL == O_EXCL {
                 syscall::kill(handle.info.pid, SIGKILL)?;
-            } else {
-                let contexts = context::contexts();
-                if let Some(context) = contexts.get(handle.info.pid) {
-                    let mut context = context.write();
-                    context.ptrace_stop = false;
-                }
+            }
+
+            let contexts = context::contexts();
+            if let Some(context) = contexts.get(handle.info.pid) {
+                let mut context = context.write();
+                context.ptrace_stop = false;
             }
         }
         Ok(0)

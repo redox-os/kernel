@@ -48,7 +48,7 @@ use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 // |____/ \___||___/___/_|\___/|_| |_|___/
 
 #[derive(Debug)]
-struct SessionData {
+pub struct SessionData {
     breakpoint: Option<Breakpoint>,
     events: VecDeque<PtraceEvent>,
     file_id: usize,
@@ -63,13 +63,53 @@ impl SessionData {
             proc_trigger_event(self.file_id, EVENT_READ);
         }
     }
+
+    /// Override the breakpoint for the specified tracee. Pass `None` to clear
+    /// breakpoint.
+    pub fn set_breakpoint(&mut self, flags: Option<PtraceFlags>) {
+        self.breakpoint = flags.map(|flags| Breakpoint {
+            reached: false,
+            flags
+        });
+    }
+
+    /// Used for getting the flags in fevent
+    pub fn session_fevent_flags(&self) -> EventFlags {
+        let mut flags = EventFlags::empty();
+
+        if !self.events.is_empty() {
+            flags |= EVENT_READ;
+        }
+
+        flags
+    }
+
+    /// Poll events, return the amount read. This drains events from the queue.
+    pub fn recv_events(&mut self, out: &mut [PtraceEvent]) -> usize {
+        let len = cmp::min(out.len(), self.events.len());
+        for (dst, src) in out.iter_mut().zip(self.events.drain(..len)) {
+            *dst = src;
+        }
+        len
+    }
 }
 
 #[derive(Debug)]
-struct Session {
-    data: Mutex<SessionData>,
-    tracee: WaitCondition,
-    tracer: WaitCondition,
+pub struct Session {
+    pub data: Mutex<SessionData>,
+    pub tracee: WaitCondition,
+    pub tracer: WaitCondition,
+}
+impl Session {
+    pub fn with_session<F, T>(pid: ContextId, callback: F) -> Result<T>
+    where
+        F: FnOnce(&Session) -> Result<T>,
+    {
+        let sessions = sessions();
+        let session = sessions.get(&pid).ok_or(Error::new(ENODEV))?;
+
+        callback(session)
+    }
 }
 
 type SessionMap = BTreeMap<ContextId, Arc<Session>>;
@@ -108,31 +148,21 @@ pub fn try_new_session(pid: ContextId, file_id: usize) -> bool {
     }
 }
 
-/// Returns true if a session is attached to this process
-pub fn is_traced(pid: ContextId) -> bool {
-    sessions().contains_key(&pid)
-}
-
-/// Used for getting the flags in fevent
-pub fn session_fevent_flags(pid: ContextId) -> Option<EventFlags> {
-    let sessions = sessions();
-    let session = sessions.get(&pid)?;
-    let data = session.data.lock();
-
-    let mut flags = EventFlags::empty();
-    if !data.events.is_empty() {
-        flags |= EVENT_READ;
-    }
-    Some(flags)
-}
-
 /// Remove the session from the list of open sessions and notify any
 /// waiting processes
 pub fn close_session(pid: ContextId) {
     if let Some(session) = sessions_mut().remove(&pid) {
         session.tracer.notify();
         session.tracee.notify();
+
+        let data = session.data.lock();
+        proc_trigger_event(data.file_id, EVENT_READ);
     }
+}
+
+/// Returns true if a session is attached to this process
+pub fn is_traced(pid: ContextId) -> bool {
+    sessions().contains_key(&pid)
 }
 
 /// Trigger a notification to the event: scheme
@@ -144,12 +174,15 @@ fn proc_trigger_event(file_id: usize, flags: EventFlags) {
 /// the tracer to wake up and poll for events. Returns Some(()) if an
 /// event was sent.
 pub fn send_event(event: PtraceEvent) -> Option<()> {
-    let contexts = context::contexts();
-    let context = contexts.current()?;
-    let context = context.read();
+    let id = {
+        let contexts = context::contexts();
+        let context = contexts.current()?;
+        let context = context.read();
+        context.id
+    };
 
     let sessions = sessions();
-    let session = sessions.get(&context.id)?;
+    let session = sessions.get(&id)?;
     let mut data = session.data.lock();
     let breakpoint = data.breakpoint.as_ref()?;
 
@@ -165,19 +198,6 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
     Some(())
 }
 
-/// Poll events, return the amount read
-pub fn recv_events(pid: ContextId, out: &mut [PtraceEvent]) -> Option<usize> {
-    let mut sessions = sessions_mut();
-    let session = sessions.get_mut(&pid)?;
-    let mut data = session.data.lock();
-
-    let len = cmp::min(out.len(), data.events.len());
-    for (dst, src) in out.iter_mut().zip(data.events.drain(..len)) {
-        *dst = src;
-    }
-    Some(len)
-}
-
 //  ____                 _                _       _
 // | __ ) _ __ ___  __ _| | ___ __   ___ (_)_ __ | |_ ___
 // |  _ \| '__/ _ \/ _` | |/ / '_ \ / _ \| | '_ \| __/ __|
@@ -191,49 +211,11 @@ struct Breakpoint {
     flags: PtraceFlags
 }
 
-/// Clear any breakpoints for the process with the specified ID
-pub fn clear_breakpoint(pid: ContextId) {
-    let sessions = sessions();
-    let session = match sessions.get(&pid) {
-        Some(session) => session,
-        None => return
-    };
-    let mut data = session.data.lock();
-
-    // Remove the breakpoint to make sure any yet unreached but
-    // obsolete breakpoints don't stop the program.
-    data.breakpoint = None;
-}
-
-/// Notify the tracee of the current session. Returns None if session does not exist
-pub fn notify_tracee(pid: ContextId) {
-    let sessions = sessions();
-    let session = match sessions.get(&pid) {
-        Some(session) => session,
-        None => return
-    };
-
-    session.tracee.notify();
-}
-
-/// Create a new breakpoint for the specified tracee, optionally with
-/// a sysemu flag. Panics if the session is invalid.
-pub fn set_breakpoint(pid: ContextId, flags: PtraceFlags) {
-    let sessions = sessions_mut();
-    let session = sessions.get(&pid).expect("proc (set_breakpoint): invalid session");
-    let mut data = session.data.lock();
-
-    data.breakpoint = Some(Breakpoint {
-        reached: false,
-        flags
-    });
-}
-
-/// Wait for the tracee to stop. If an event occurs, it returns a copy
-/// of that. It will still be available for read using recv_event.
+/// Wait for the tracee to stop, or return immediately if there's an unread
+/// event.
 ///
-/// Note: Don't call while holding any locks or allocated data, this
-/// will switch contexts and may in fact just never terminate.
+/// Note: Don't call while holding any locks or allocated data, this will
+/// switch contexts and may in fact just never terminate.
 pub fn wait(pid: ContextId) -> Result<()> {
     loop {
         let session = {
@@ -272,7 +254,9 @@ pub fn wait(pid: ContextId) -> Result<()> {
     Ok(())
 }
 
-/// Notify the tracer and await green flag to continue.
+/// Notify the tracer and await green flag to continue. If the breakpoint was
+/// set and reached, return the flags which the user waited for. Otherwise,
+/// None.
 ///
 /// Note: Don't call while holding any locks or allocated data, this
 /// will switch contexts and may in fact just never terminate.
@@ -317,8 +301,6 @@ pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>)
 
 /// Obtain the next breakpoint flags for the current process. This is used for
 /// detecting whether or not the tracer decided to use sysemu mode.
-// TODO: Check if this is actually safe from race conditions, maybe it
-// shouldn't just drop the locks like this...
 pub fn next_breakpoint() -> Option<PtraceFlags> {
     let contexts = context::contexts();
     let context = contexts.current()?;
@@ -330,21 +312,6 @@ pub fn next_breakpoint() -> Option<PtraceFlags> {
     let breakpoint = data.breakpoint?;
 
     Some(breakpoint.flags)
-}
-
-/// Call when a context is closed to alert any tracers
-pub fn close_tracee(pid: ContextId) -> Option<()> {
-    let sessions = sessions();
-    let session = sessions.get(&pid)?;
-    let mut data = session.data.lock();
-
-    // Cause tracers to wake up. Any following action from the tracer will
-    // return ESRCH which can be used to detect exit.
-    data.breakpoint = None;
-    proc_trigger_event(data.file_id, EVENT_READ);
-    session.tracer.notify();
-
-    Some(())
 }
 
 //  ____            _     _
