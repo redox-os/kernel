@@ -13,7 +13,7 @@ use crate::{
         }
     },
     common::unique::Unique,
-    context::{self, signal, Context, ContextId, Status},
+    context::{self, signal, Context, ContextId},
     event,
     scheme::proc,
     sync::WaitCondition,

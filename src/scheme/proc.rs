@@ -345,6 +345,7 @@ impl Scheme for ProcScheme {
                     })?,
                     RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(&context) } {
                         None => {
+                            assert!(!context.running, "try_stop_context is broken, clearly");
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
                             Err(Error::new(ENOTRECOVERABLE))
                         },
