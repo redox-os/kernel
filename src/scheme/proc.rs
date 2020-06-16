@@ -365,27 +365,42 @@ impl Scheme for ProcScheme {
                 Ok(len)
             },
             Operation::Trace => {
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.trace_data().expect("operations can't change");
+
+                // Wait for event
+                if handle.info.flags & O_NONBLOCK != O_NONBLOCK {
+                    ptrace::wait(handle.info.pid)?;
+                }
+
+                // Read events
                 let slice = unsafe {
                     slice::from_raw_parts_mut(
                         buf.as_mut_ptr() as *mut PtraceEvent,
                         buf.len() / mem::size_of::<PtraceEvent>()
                     )
                 };
-                let read = ptrace::Session::with_session(info.pid, |session| {
-                    Ok(session.data.lock().recv_events(slice))
+                let (read, reached) = ptrace::Session::with_session(info.pid, |session| {
+                    let mut data = session.data.lock();
+                    Ok((data.recv_events(slice), data.is_reached()))
                 })?;
 
-                // Won't context switch, don't worry about the locks
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.trace_data().expect("operations can't change");
-
+                // Save child processes in a list of processes to restart
                 for event in &slice[..read] {
                     if event.cause == PTRACE_EVENT_CLONE {
                         data.clones.push(ContextId::from(event.a));
                     }
                 }
 
+                // If there are no events, and breakpoint isn't reached, we
+                // must not have waited.
+                if read == 0 && !reached {
+                    assert!(handle.info.flags & O_NONBLOCK == O_NONBLOCK, "wait woke up spuriously??");
+                    return Err(Error::new(EAGAIN));
+                }
+
+                // Return read events
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
         }
@@ -470,15 +485,12 @@ impl Scheme for ProcScheme {
                 let op = u64::from_ne_bytes(bytes);
                 let op = PtraceFlags::from_bits(op).ok_or(Error::new(EINVAL))?;
 
-                let should_continue = !op.contains(PTRACE_FLAG_WAIT) || op.intersects(PTRACE_STOP_MASK);
-
                 // Set next breakpoint
                 ptrace::Session::with_session(info.pid, |session| {
-                    if op.intersects(PTRACE_STOP_MASK) {
-                        session.data.lock().set_breakpoint(Some(op));
-                    } else if should_continue {
-                        session.data.lock().set_breakpoint(None);
-                    }
+                    session.data.lock().set_breakpoint(
+                        Some(op)
+                            .filter(|op| op.intersects(PTRACE_STOP_MASK | PTRACE_EVENT_MASK))
+                    );
                     Ok(())
                 })?;
 
@@ -497,25 +509,17 @@ impl Scheme for ProcScheme {
                     })?;
                 }
 
-                // Continue execution, if requested
-                if should_continue {
-                    // disable the ptrace_stop flag, which is used in some cases
-                    with_context_mut(info.pid, |context| {
-                        context.ptrace_stop = false;
-                        Ok(())
-                    })?;
+                // disable the ptrace_stop flag, which is used in some cases
+                with_context_mut(info.pid, |context| {
+                    context.ptrace_stop = false;
+                    Ok(())
+                })?;
 
-                    // and notify the tracee's WaitCondition, which is used in other cases
-                    ptrace::Session::with_session(info.pid, |session| {
-                        session.tracee.notify();
-                        Ok(())
-                    })?;
-                }
-
-                // And await the tracee, if requested
-                if op.contains(PTRACE_FLAG_WAIT) || info.flags & O_NONBLOCK != O_NONBLOCK {
-                    ptrace::wait(info.pid)?;
-                }
+                // and notify the tracee's WaitCondition, which is used in other cases
+                ptrace::Session::with_session(info.pid, |session| {
+                    session.tracee.notify();
+                    Ok(())
+                })?;
 
                 Ok(mem::size_of::<u64>())
             }

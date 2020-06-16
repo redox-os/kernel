@@ -73,6 +73,12 @@ impl SessionData {
         });
     }
 
+    /// Returns true if the breakpoint is reached, or if there isn't a
+    /// breakpoint
+    pub fn is_reached(&self) -> bool {
+        self.breakpoint.as_ref().map(|b| b.reached).unwrap_or(false)
+    }
+
     /// Used for getting the flags in fevent
     pub fn session_fevent_flags(&self) -> EventFlags {
         let mut flags = EventFlags::empty();
