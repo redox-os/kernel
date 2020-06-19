@@ -9,9 +9,9 @@ use spin::{Mutex, RwLock};
 use crate::context;
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
-use crate::syscall::flag::{EventFlags, O_CREAT, MODE_FILE, MODE_DIR, SEEK_SET, SEEK_CUR, SEEK_END};
-use crate::syscall::scheme::Scheme;
-use crate::scheme::{self, SchemeNamespace, SchemeId, calc_seek_offset_usize};
+use crate::syscall::flag::{EventFlags, O_CREAT, MODE_FILE, MODE_DIR};
+use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
+use crate::scheme::{self, SchemeNamespace, SchemeId};
 use crate::scheme::user::{UserInner, UserScheme};
 
 struct FolderInner {

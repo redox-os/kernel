@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use syscall::data::Stat;
 use syscall::error::{EACCES, EBADF, EBADFD, EINVAL, EIO, EISDIR, ENOENT, ENOTDIR};
 use syscall::flag::{O_ACCMODE, O_DIRECTORY, O_RDWR, O_STAT, O_WRONLY};
-use syscall::scheme::Scheme;
+use syscall::scheme::{calc_seek_offset_usize, Scheme};
 use syscall::{Error, Result};
 use syscall::{MODE_DIR, MODE_FILE};
 
@@ -18,7 +18,6 @@ use spin::{Mutex, RwLock};
 use crate::acpi::sdt::Sdt;
 use crate::acpi::SdtSignature;
 use crate::paging::ActivePageTable;
-use crate::scheme::calc_seek_offset_usize;
 
 #[derive(Clone, Copy)]
 struct PhysSlice {

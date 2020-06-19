@@ -5,11 +5,10 @@ use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use crate::scheme::calc_seek_offset_usize;
 use crate::syscall::data::Stat;
 use crate::syscall::error::{Error, EBADF, ENOENT, Result};
 use crate::syscall::flag::{MODE_DIR, MODE_FILE};
-use crate::syscall::scheme::Scheme;
+use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::arch::interrupt::irq;
 
 mod block;

@@ -12,10 +12,10 @@ use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_
 
 use crate::event;
 use crate::interrupt::irq::acknowledge;
-use crate::scheme::{AtomicSchemeId, SchemeId, calc_seek_offset_usize};
+use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_DIRECTORY, O_CREAT, O_STAT, MODE_CHR, MODE_DIR};
-use crate::syscall::scheme::Scheme;
+use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 
 pub static IRQ_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 

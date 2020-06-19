@@ -3,11 +3,10 @@ use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use crate::scheme::calc_seek_offset_usize;
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::{MODE_DIR, MODE_FILE};
-use crate::syscall::scheme::Scheme;
+use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 
 #[cfg(test)]
 mod gen {
