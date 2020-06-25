@@ -67,12 +67,7 @@ pub unsafe extern fn syscall_instruction() {
           : "intel", "volatile");
 
     // Push scratch registers
-    scratch_push!();
-    preserved_push!();
-    asm!("push fs
-         mov r11, 0x18
-         mov fs, r11"
-         : : : : "intel", "volatile");
+    interrupt_push!();
 
     // Get reference to stack variables
     let rsp: usize;
@@ -87,10 +82,8 @@ pub unsafe extern fn syscall_instruction() {
     pti::unmap();
 
     // Interrupt return
-    asm!("pop fs" : : : : "intel", "volatile");
-    preserved_pop!();
-    scratch_pop!();
-    asm!("iretq" : : : : "intel", "volatile");
+    interrupt_pop!();
+    iret!()
 }
 
 #[naked]
@@ -106,12 +99,7 @@ pub unsafe extern fn syscall() {
     }
 
     // Push scratch registers
-    scratch_push!();
-    preserved_push!();
-    asm!("push fs
-         mov r11, 0x18
-         mov fs, r11"
-         : : : : "intel", "volatile");
+    interrupt_push!();
 
     // Get reference to stack variables
     let rsp: usize;
@@ -126,10 +114,8 @@ pub unsafe extern fn syscall() {
     pti::unmap();
 
     // Interrupt return
-    asm!("pop fs" : : : : "intel", "volatile");
-    preserved_pop!();
-    scratch_pop!();
-    asm!("iretq" : : : : "intel", "volatile");
+    interrupt_pop!();
+    iret!();
 }
 
 #[naked]

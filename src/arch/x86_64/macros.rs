@@ -1,5 +1,6 @@
 use core::mem;
 use syscall::data::IntRegisters;
+use super::gdt;
 
 /// Print to console
 #[macro_export]
@@ -19,6 +20,7 @@ macro_rules! println {
 }
 
 #[allow(dead_code)]
+#[derive(Default)]
 #[repr(packed)]
 pub struct ScratchRegisters {
     pub r11: usize,
@@ -77,6 +79,7 @@ macro_rules! scratch_pop {
 }
 
 #[allow(dead_code)]
+#[derive(Default)]
 #[repr(packed)]
 pub struct PreservedRegisters {
     pub r15: usize,
@@ -124,9 +127,13 @@ macro_rules! preserved_pop {
 
 macro_rules! fs_push {
     () => (asm!(
-        "push fs
+        "
+        push fs
+
+        // Load kernel tls
         mov rax, 0x18
-        mov fs, ax"
+        mov fs, ax // can't load value directly into `fs`
+        "
         : : : : "intel", "volatile"
     ));
 }
@@ -139,6 +146,7 @@ macro_rules! fs_pop {
 }
 
 #[allow(dead_code)]
+#[derive(Default)]
 #[repr(packed)]
 pub struct IretRegisters {
     pub rip: usize,
@@ -198,6 +206,7 @@ macro_rules! interrupt {
 }
 
 #[allow(dead_code)]
+#[derive(Default)]
 #[repr(packed)]
 pub struct InterruptStack {
     pub fs: usize,
@@ -207,6 +216,24 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
+    pub fn new_usermode(ip: usize, sp: usize, arg: usize) -> Self {
+        // See which registers are set in start.rs, function `usermode`
+        Self {
+            fs: gdt::GDT_USER_TLS << 3 | 3,
+            preserved: PreservedRegisters::default(),
+            scratch: ScratchRegisters {
+                rdi: arg,
+                ..ScratchRegisters::default()
+            },
+            iret: IretRegisters {
+                rip: ip,
+                cs: gdt::GDT_USER_CODE << 3 | 3,
+                rflags: 1 << 9,
+                rsp: sp,
+                ss: gdt::GDT_USER_DATA << 3 | 3,
+            },
+        }
+    }
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
@@ -298,9 +325,24 @@ impl InterruptStack {
     }
 }
 
+macro_rules! interrupt_push {
+    () => {
+        scratch_push!();
+        preserved_push!();
+        fs_push!();
+    };
+}
+macro_rules! interrupt_pop {
+    () => {
+        fs_pop!();
+        preserved_pop!();
+        scratch_pop!();
+    };
+}
+
 #[macro_export]
 macro_rules! interrupt_stack {
-    ($name:ident, $stack: ident, $func:block) => {
+    ($name:ident, $stack:ident, $func:block) => {
         #[naked]
         pub unsafe extern fn $name () {
             #[inline(never)]
@@ -309,9 +351,7 @@ macro_rules! interrupt_stack {
             }
 
             // Push scratch registers
-            scratch_push!();
-            preserved_push!();
-            fs_push!();
+            interrupt_push!();
 
             // Get reference to stack variables
             let rsp: usize;
@@ -327,15 +367,14 @@ macro_rules! interrupt_stack {
             $crate::arch::x86_64::pti::unmap();
 
             // Pop scratch registers and return
-            fs_pop!();
-            preserved_pop!();
-            scratch_pop!();
+            interrupt_pop!();
             iret!();
         }
     };
 }
 
 #[allow(dead_code)]
+#[derive(Default)]
 #[repr(packed)]
 pub struct InterruptErrorStack {
     pub fs: usize,
@@ -366,9 +405,7 @@ macro_rules! interrupt_error {
             }
 
             // Push scratch registers
-            scratch_push!();
-            preserved_push!();
-            fs_push!();
+            interrupt_push!();
 
             // Get reference to stack variables
             let rsp: usize;
@@ -384,10 +421,8 @@ macro_rules! interrupt_error {
             $crate::arch::x86_64::pti::unmap();
 
             // Pop scratch registers, error code, and return
-            fs_pop!();
-            preserved_pop!();
-            scratch_pop!();
-            asm!("add rsp, 8" : : : : "intel", "volatile");
+            interrupt_pop!();
+            asm!("add rsp, 8" : : : : "intel", "volatile"); // pop error code
             iret!();
         }
     };

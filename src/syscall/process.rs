@@ -6,6 +6,7 @@ use core::{intrinsics, mem};
 use core::ops::DerefMut;
 use spin::Mutex;
 
+use crate::arch::macros::InterruptStack;
 use crate::context::file::FileDescriptor;
 use crate::context::{ContextId, WaitpidKey};
 use crate::context;
@@ -20,14 +21,14 @@ use crate::paging::temporary_page::TemporaryPage;
 use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
-use crate::start::usermode;
+use crate::start::{usermode, usermode_interrupt_stack};
 use crate::syscall::data::{SigAction, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{CloneFlags, CLONE_VFORK, CLONE_VM, CLONE_FS, CLONE_FILES, CLONE_SIGHAND,
-                           CLONE_STACK, MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
-                           PTRACE_STOP_EXIT, SigActionFlags, SIG_DFL, SIG_BLOCK, SIG_UNBLOCK, SIG_SETMASK,
-                           SIGCONT, SIGTERM, WaitFlags, WCONTINUED, WNOHANG, WUNTRACED, wifcontinued,
-                           wifstopped};
+use crate::syscall::flag::{CloneFlags, CLONE_FILES, CLONE_FS, CLONE_SIGHAND,
+                           CLONE_STACK, CLONE_VFORK, CLONE_VM, MapFlags, PtraceFlags, PROT_EXEC,
+                           PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE, PTRACE_STOP_EXIT, SigActionFlags,
+                           SIG_BLOCK, SIG_DFL, SIG_SETMASK, SIG_UNBLOCK, SIGCONT, SIGTERM, WaitFlags,
+                           WCONTINUED, WNOHANG,WUNTRACED, wifcontinued, wifstopped};
 use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
@@ -899,8 +900,22 @@ fn fexec_noreturn(
         }
     }
 
-    // Go to usermode
-    unsafe { usermode(entry, sp, 0); }
+    // Create dummy stack for ptrace to read from
+    let mut regs = InterruptStack::new_usermode(entry, sp, 0);
+
+    // ptrace breakpoint
+    let was_traced = {
+        let _guard = ptrace::set_process_regs(&mut regs);
+        ptrace::breakpoint_callback(PtraceFlags::PTRACE_STOP_EXEC, None).is_some()
+    };
+
+    if !was_traced {
+        // Go to usermode, fast route
+        unsafe { usermode(entry, sp, 0) }
+    } else {
+        // Go to usermode, take ptrace-modified stack into account
+        unsafe { usermode_interrupt_stack(regs) }
+    }
 }
 
 pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>) -> Result<usize> {
