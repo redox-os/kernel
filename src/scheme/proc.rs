@@ -7,7 +7,7 @@ use crate::{
         data::{FloatRegisters, IntRegisters, PtraceEvent, Stat},
         error::*,
         flag::*,
-        scheme::Scheme,
+        scheme::{calc_seek_offset_usize, Scheme},
         self,
         validate,
     },
@@ -319,18 +319,13 @@ impl Scheme for ProcScheme {
         self.open(&path, info.flags, uid, gid)
     }
 
-    fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut handles = self.handles.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
         let mut memory = handle.data.mem_data().ok_or(Error::new(EBADF))?;
 
-        let value = match whence {
-            SEEK_SET => pos,
-            SEEK_CUR => cmp::max(0, memory.offset.get() as isize + pos as isize) as usize,
-            SEEK_END => cmp::max(0, isize::max_value() + pos as isize) as usize,
-            _ => return Err(Error::new(EBADF))
-        };
-        memory.offset = VirtualAddress::new(value);
+        let value = calc_seek_offset_usize(memory.offset.get(), pos, whence, isize::max_value() as usize)?;
+        memory.offset = VirtualAddress::new(value as usize);
         Ok(value)
     }
 

@@ -142,7 +142,7 @@ impl Scheme for PipeScheme {
         Ok(0)
     }
 
-    fn seek(&self, _id: usize, _pos: usize, _whence: usize) -> Result<usize> {
+    fn seek(&self, _id: usize, _pos: isize, _whence: usize) -> Result<isize> {
         Err(Error::new(ESPIPE))
     }
 }

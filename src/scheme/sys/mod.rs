@@ -1,14 +1,14 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::{cmp, str};
+use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
 use crate::syscall::data::Stat;
-use crate::syscall::error::{Error, EBADF, EINVAL, ENOENT, Result};
-use crate::syscall::flag::{MODE_DIR, MODE_FILE, SEEK_CUR, SEEK_END, SEEK_SET};
-use crate::syscall::scheme::Scheme;
+use crate::syscall::error::{Error, EBADF, ENOENT, Result};
+use crate::syscall::flag::{MODE_DIR, MODE_FILE};
+use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::arch::interrupt::irq;
 
 mod block;
@@ -118,18 +118,13 @@ impl Scheme for SysScheme {
         Ok(i)
     }
 
-    fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut handles = self.handles.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        handle.seek = match whence {
-            SEEK_SET => cmp::min(handle.data.len(), pos),
-            SEEK_CUR => cmp::max(0, cmp::min(handle.data.len() as isize, handle.seek as isize + pos as isize)) as usize,
-            SEEK_END => cmp::max(0, cmp::min(handle.data.len() as isize, handle.data.len() as isize + pos as isize)) as usize,
-            _ => return Err(Error::new(EINVAL))
-        };
-
-        Ok(handle.seek)
+        let new_offset = calc_seek_offset_usize(handle.seek, pos, whence, handle.data.len())?;
+        handle.seek = new_offset as usize;
+        Ok(new_offset)
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
