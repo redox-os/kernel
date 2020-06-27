@@ -48,6 +48,19 @@ interrupt_stack!(non_maskable, stack, {
 });
 
 interrupt_stack!(breakpoint, stack, {
+    // The processor lets RIP point to the instruction *after* int3, so
+    // unhandled breakpoint interrupt don't go in an infinite loop. But we
+    // throw SIGTRAP anyway, so that's not a problem.
+    //
+    // We have the following code to prevent
+    // - RIP from going out of sync with instructions
+    // - The user having to do 2 syscalls to replace the instruction at RIP
+    // - Having more compatibility glue for GDB than necessary
+    //
+    // Let's just follow Linux convention and let RIP be RIP-1, point to the
+    // int3 instruction. After all, it's the sanest thing to do.
+    stack.iret.rip -= 1;
+
     let guard = ptrace::set_process_regs(stack);
 
     if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {

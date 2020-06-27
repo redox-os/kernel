@@ -4,7 +4,7 @@ use crate::{
     ptrace,
     scheme::{AtomicSchemeId, SchemeId},
     syscall::{
-        data::{FloatRegisters, IntRegisters, PtraceEvent},
+        data::{FloatRegisters, IntRegisters, PtraceEvent, Stat},
         error::*,
         flag::*,
         scheme::{calc_seek_offset_usize, Scheme},
@@ -14,8 +14,9 @@ use crate::{
 };
 
 use alloc::{
+    boxed::Box,
     collections::BTreeMap,
-    vec::Vec
+    vec::Vec,
 };
 use core::{
     cmp,
@@ -91,6 +92,17 @@ enum Operation {
     Memory,
     Regs(RegsKind),
     Trace,
+    Static(&'static str),
+}
+impl Operation {
+    fn needs_child_process(self) -> bool {
+        match self {
+            Self::Memory => true,
+            Self::Regs(_) => true,
+            Self::Trace => true,
+            Self::Static(_) => false,
+        }
+    }
 }
 struct MemData {
     offset: VirtualAddress,
@@ -104,19 +116,25 @@ impl Default for MemData {
 struct TraceData {
     clones: Vec<ContextId>,
 }
+struct StaticData {
+    buf: Box<[u8]>,
+    offset: usize,
+}
+impl StaticData {
+    fn new(buf: Box<[u8]>) -> Self {
+        Self {
+            buf,
+            offset: 0,
+        }
+    }
+}
 enum OperationData {
     Memory(MemData),
     Trace(TraceData),
+    Static(StaticData),
     Other,
 }
 impl OperationData {
-    fn default_for(op: Operation) -> OperationData {
-        match op {
-            Operation::Memory => OperationData::Memory(MemData::default()),
-            Operation::Trace => OperationData::Trace(TraceData::default()),
-            _ => OperationData::Other,
-        }
-    }
     fn trace_data(&mut self) -> Option<&mut TraceData> {
         match self {
             OperationData::Trace(data) => Some(data),
@@ -126,6 +144,12 @@ impl OperationData {
     fn mem_data(&mut self) -> Option<&mut MemData> {
         match self {
             OperationData::Memory(data) => Some(data),
+            _ => None,
+        }
+    }
+    fn static_data(&mut self) -> Option<&mut StaticData> {
+        match self {
+            OperationData::Static(data) => Some(data),
             _ => None,
         }
     }
@@ -195,21 +219,31 @@ impl Scheme for ProcScheme {
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
             Some("trace") => Operation::Trace,
+            Some("exe") => Operation::Static("exe"),
             _ => return Err(Error::new(EINVAL))
         };
 
         let contexts = context::contexts();
         let target = contexts.get(pid).ok_or(Error::new(ESRCH))?;
 
+        let data;
+
         {
             let target = target.read();
+
+            data = match operation {
+                Operation::Memory => OperationData::Memory(MemData::default()),
+                Operation::Trace => OperationData::Trace(TraceData::default()),
+                Operation::Static(_) => OperationData::Static(StaticData::new(target.name.lock().clone())),
+                _ => OperationData::Other,
+            };
 
             if let Status::Exited(_) = target.status {
                 return Err(Error::new(ESRCH));
             }
 
             // Unless root, check security
-            if uid != 0 && gid != 0 {
+            if operation.needs_child_process() && uid != 0 && gid != 0 {
                 let current = contexts.current().ok_or(Error::new(ESRCH))?;
                 let current = current.read();
 
@@ -227,10 +261,10 @@ impl Scheme for ProcScheme {
                         assert_eq!(id, current.id);
                         assert_eq!(id, context.read().id);
                     },
-                    None => return Err(Error::new(EPERM))
+                    None => return Err(Error::new(EPERM)),
                 }
             }
-        }
+        };
 
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
@@ -253,7 +287,7 @@ impl Scheme for ProcScheme {
                 pid,
                 operation,
             },
-            data: OperationData::default_for(operation),
+            data,
         });
         Ok(id)
     }
@@ -304,6 +338,16 @@ impl Scheme for ProcScheme {
         };
 
         match info.operation {
+            Operation::Static(_) => {
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.static_data().expect("operations can't change");
+
+                let len = cmp::min(data.buf.len() - data.offset, buf.len());
+                buf[..len].copy_from_slice(&data.buf[data.offset .. data.offset + len]);
+                data.offset += len;
+                Ok(len)
+            },
             Operation::Memory => {
                 // Won't context switch, don't worry about the locks
                 let mut handles = self.handles.write();
@@ -415,6 +459,7 @@ impl Scheme for ProcScheme {
         };
 
         match info.operation {
+            Operation::Static(_) => Err(Error::new(EBADF)),
             Operation::Memory => {
                 // Won't context switch, don't worry about the locks
                 let mut handles = self.handles.write();
@@ -521,7 +566,7 @@ impl Scheme for ProcScheme {
                 })?;
 
                 Ok(mem::size_of::<u64>())
-            }
+            },
         }
     }
 
@@ -540,9 +585,12 @@ impl Scheme for ProcScheme {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        ptrace::Session::with_session(handle.info.pid, |session| {
-            Ok(session.data.lock().session_fevent_flags())
-        })
+        match handle.info.operation {
+            Operation::Trace => ptrace::Session::with_session(handle.info.pid, |session| {
+                Ok(session.data.lock().session_fevent_flags())
+            }),
+            _ => Ok(EventFlags::empty()),
+        }
     }
 
     fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
@@ -553,13 +601,35 @@ impl Scheme for ProcScheme {
             Operation::Memory => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
-            Operation::Trace => "trace"
+            Operation::Trace => "trace",
+            Operation::Static(path) => path,
         });
 
         let len = cmp::min(path.len(), buf.len());
         buf[..len].copy_from_slice(&path.as_bytes()[..len]);
 
         Ok(len)
+    }
+
+    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        stat.st_size = match handle.data {
+            OperationData::Static(ref data) => (data.buf.len() - data.offset) as u64,
+            _ => 0,
+        };
+        *stat = Stat {
+            st_mode: MODE_FILE | 0o666,
+            st_size: match handle.data {
+                OperationData::Static(ref data) => (data.buf.len() - data.offset) as u64,
+                _ => 0,
+            },
+
+            ..Stat::default()
+        };
+
+        Ok(0)
     }
 
     fn close(&self, id: usize) -> Result<usize> {

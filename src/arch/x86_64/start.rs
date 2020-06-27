@@ -3,7 +3,7 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 
-use core::slice;
+use core::{slice, mem, ptr};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::allocator;
@@ -17,6 +17,7 @@ use crate::gdt;
 use crate::idt;
 use crate::interrupt;
 use crate::log;
+use crate::macros::InterruptStack;
 use crate::memory;
 use crate::paging;
 
@@ -281,5 +282,33 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize) -> ! {
              "{r15}"(gdt::GDT_USER_TLS << 3 | 3) // TLS segment
          : // No clobbers because it never returns
          : "intel", "volatile");
+    unreachable!();
+}
+
+#[naked]
+pub unsafe fn usermode_interrupt_stack(stack: InterruptStack) -> ! {
+    // Push fake stack to the actual stack
+    let rsp: usize;
+    asm!("sub rsp, $1" : "={rsp}"(rsp) : "r"(mem::size_of::<InterruptStack>()) : : "intel", "volatile");
+    ptr::write(rsp as *mut InterruptStack, stack);
+
+    // Unmap kernel
+    pti::unmap();
+
+    // Set up floating point and TLS
+    asm!("mov ds, r14d
+         mov es, r14d
+         mov fs, r15d
+         mov gs, r14d
+         fninit"
+         : // No output because it never returns
+         :   "{r14}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
+             "{r15}"(gdt::GDT_USER_TLS << 3 | 3) // TLS segment
+         : "ds", "es", "fs", "gs"
+         : "intel", "volatile");
+
+    // Go to usermode
+    interrupt_pop!();
+    iret!();
     unreachable!();
 }
