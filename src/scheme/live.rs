@@ -9,7 +9,7 @@ use spin::RwLock;
 use syscall::data::Stat;
 use syscall::error::*;
 use syscall::flag::{MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
-use syscall::scheme::Scheme;
+use syscall::scheme::{calc_seek_offset_usize, Scheme};
 
 struct Handle {
     path: &'static [u8],
@@ -94,19 +94,13 @@ impl Scheme for DiskScheme {
         Ok(i)
     }
 
-    fn seek(&self, id: usize, pos: usize, whence: usize) -> Result<usize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut handles = self.handles.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
         let data = handle.data.read();
-
-        handle.seek = match whence {
-            SEEK_SET => cmp::min(data.len(), pos),
-            SEEK_CUR => cmp::max(0, cmp::min(data.len() as isize, handle.seek as isize + pos as isize)) as usize,
-            SEEK_END => cmp::max(0, cmp::min(data.len() as isize, data.len() as isize + pos as isize)) as usize,
-            _ => return Err(Error::new(EINVAL))
-        };
-
-        Ok(handle.seek)
+        let new_offset = calc_seek_offset_usize(handle.seek, pos, whence, data.len())?;
+        handle.seek = new_offset as usize;
+        Ok(new_offset)
     }
 
     fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
