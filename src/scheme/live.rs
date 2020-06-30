@@ -2,13 +2,13 @@
 
 use alloc::sync::Arc;
 use alloc::collections::BTreeMap;
-use core::{cmp, slice};
+use core::slice;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
 use syscall::data::Stat;
 use syscall::error::*;
-use syscall::flag::{MODE_FILE, SEEK_SET, SEEK_CUR, SEEK_END};
+use syscall::flag::MODE_FILE;
 use syscall::scheme::{calc_seek_offset_usize, Scheme};
 
 struct Handle {
