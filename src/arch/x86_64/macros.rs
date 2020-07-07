@@ -323,6 +323,10 @@ impl InterruptStack {
             self.iret.rflags &= !(1 << 8);
         }
     }
+    /// Checks if the trap flag is enabled, see `set_singlestep`
+    pub fn is_singlestep(&self) -> bool {
+        self.iret.rflags & 1 << 8 == 1 << 8
+    }
 }
 
 macro_rules! interrupt_push {
