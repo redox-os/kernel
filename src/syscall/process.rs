@@ -6,7 +6,6 @@ use core::{intrinsics, mem};
 use core::ops::DerefMut;
 use spin::Mutex;
 
-use crate::arch::macros::InterruptStack;
 use crate::context::file::FileDescriptor;
 use crate::context::{ContextId, WaitpidKey};
 use crate::context;
@@ -21,14 +20,14 @@ use crate::paging::temporary_page::TemporaryPage;
 use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
-use crate::start::{usermode, usermode_interrupt_stack};
+use crate::start::usermode;
 use crate::syscall::data::{SigAction, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{CloneFlags, CLONE_FILES, CLONE_FS, CLONE_SIGHAND,
-                           CLONE_STACK, CLONE_VFORK, CLONE_VM, MapFlags, PtraceFlags, PROT_EXEC,
-                           PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE, PTRACE_STOP_EXIT, SigActionFlags,
-                           SIG_BLOCK, SIG_DFL, SIG_SETMASK, SIG_UNBLOCK, SIGCONT, SIGTERM, WaitFlags,
-                           WCONTINUED, WNOHANG,WUNTRACED, wifcontinued, wifstopped};
+use crate::syscall::flag::{wifcontinued, wifstopped, CloneFlags, CLONE_FILES,
+                           CLONE_FS, CLONE_SIGHAND, CLONE_STACK, CLONE_VFORK, CLONE_VM, MapFlags,
+                           PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE, PTRACE_STOP_EXIT,
+                           SigActionFlags, SIG_BLOCK, SIG_DFL, SIG_SETMASK, SIG_UNBLOCK, SIGCONT, SIGTERM,
+                           WaitFlags, WCONTINUED, WNOHANG,WUNTRACED};
 use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
@@ -661,6 +660,7 @@ fn fexec_noreturn(
     vars: Box<[Box<[u8]>]>
 ) -> ! {
     let entry;
+    let singlestep;
     let mut sp = crate::USER_STACK_OFFSET + crate::USER_STACK_SIZE - 256;
 
     {
@@ -668,6 +668,10 @@ fn fexec_noreturn(
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exec_noreturn pid not found");
             let mut context = context_lock.write();
+
+            singlestep = unsafe {
+                ptrace::regs_for(&context).map(|s| s.is_singlestep()).unwrap_or(false)
+            };
 
             context.name = Arc::new(Mutex::new(name));
 
@@ -712,8 +716,8 @@ fn fexec_noreturn(
                             unsafe {
                                 // Copy file data
                                 intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
-                                                segment.p_vaddr as *mut u8,
-                                                segment.p_filesz as usize);
+                                                 segment.p_vaddr as *mut u8,
+                                                 segment.p_filesz as usize);
                             }
 
                             let mut flags = EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
@@ -900,22 +904,8 @@ fn fexec_noreturn(
         }
     }
 
-    // Create dummy stack for ptrace to read from
-    let mut regs = InterruptStack::new_usermode(entry, sp, 0);
-
-    // ptrace breakpoint
-    let was_traced = {
-        let _guard = ptrace::set_process_regs(&mut regs);
-        ptrace::breakpoint_callback(PtraceFlags::PTRACE_STOP_EXEC, None).is_some()
-    };
-
-    if !was_traced {
-        // Go to usermode, fast route
-        unsafe { usermode(entry, sp, 0) }
-    } else {
-        // Go to usermode, take ptrace-modified stack into account
-        unsafe { usermode_interrupt_stack(regs) }
-    }
+    // Go to usermode
+    unsafe { usermode(entry, sp, 0, singlestep) }
 }
 
 pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>) -> Result<usize> {

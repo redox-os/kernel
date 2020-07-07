@@ -105,6 +105,15 @@ pub extern "C" fn signal_handler(sig: usize) {
     } else {
         // println!("Call {:X}", handler);
 
+        let singlestep = {
+            let contexts = contexts();
+            let context = contexts.current().expect("context::signal_handler userspace not inside of context");
+            let context = context.read();
+            unsafe {
+                ptrace::regs_for(&context).map(|s| s.is_singlestep()).unwrap_or(false)
+            }
+        };
+
         unsafe {
             let mut sp = crate::USER_SIGSTACK_OFFSET + crate::USER_SIGSTACK_SIZE - 256;
 
@@ -113,7 +122,7 @@ pub extern "C" fn signal_handler(sig: usize) {
             sp -= mem::size_of::<usize>();
             *(sp as *mut usize) = restorer;
 
-            usermode(handler, sp, sig);
+            usermode(handler, sp, sig, singlestep);
         }
     }
 

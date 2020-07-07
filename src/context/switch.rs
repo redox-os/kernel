@@ -1,10 +1,11 @@
 use core::sync::atomic::Ordering;
 
-use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
 use crate::context::signal::signal_handler;
+use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
 use crate::gdt;
-use crate::interrupt;
 use crate::interrupt::irq::PIT_TICKS;
+use crate::interrupt;
+use crate::ptrace;
 use crate::time;
 
 unsafe fn update(context: &mut Context, cpu_id: usize) {
@@ -16,6 +17,8 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
 
     // Restore from signal, must only be done from another context to avoid overwriting the stack!
     if context.ksig_restore && ! context.running {
+        let was_singlestep = ptrace::regs_for(context).map(|s| s.is_singlestep()).unwrap_or(false);
+
         let ksig = context.ksig.take().expect("context::switch: ksig not set with ksig_restore");
         context.arch = ksig.0;
 
@@ -32,6 +35,11 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
         }
 
         context.ksig_restore = false;
+
+        // Keep singlestep flag across jumps
+        if let Some(regs) = ptrace::regs_for_mut(context) {
+            regs.set_singlestep(was_singlestep);
+        }
 
         context.unblock();
     }

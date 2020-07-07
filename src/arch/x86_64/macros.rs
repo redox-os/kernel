@@ -1,6 +1,5 @@
 use core::mem;
 use syscall::data::IntRegisters;
-use super::gdt;
 
 /// Print to console
 #[macro_export]
@@ -216,24 +215,6 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
-    pub fn new_usermode(ip: usize, sp: usize, arg: usize) -> Self {
-        // See which registers are set in start.rs, function `usermode`
-        Self {
-            fs: gdt::GDT_USER_TLS << 3 | 3,
-            preserved: PreservedRegisters::default(),
-            scratch: ScratchRegisters {
-                rdi: arg,
-                ..ScratchRegisters::default()
-            },
-            iret: IretRegisters {
-                rip: ip,
-                cs: gdt::GDT_USER_CODE << 3 | 3,
-                rflags: 1 << 9,
-                rsp: sp,
-                ss: gdt::GDT_USER_DATA << 3 | 3,
-            },
-        }
-    }
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
@@ -322,6 +303,10 @@ impl InterruptStack {
         } else {
             self.iret.rflags &= !(1 << 8);
         }
+    }
+    /// Checks if the trap flag is enabled, see `set_singlestep`
+    pub fn is_singlestep(&self) -> bool {
+        self.iret.rflags & 1 << 8 == 1 << 8
     }
 }
 
