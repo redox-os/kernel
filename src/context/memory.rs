@@ -196,9 +196,15 @@ impl Grant {
     pub fn start_address(&self) -> VirtualAddress {
         self.start
     }
+    pub unsafe fn set_start_address(&mut self, start: VirtualAddress) {
+        self.start = start;
+    }
 
     pub fn size(&self) -> usize {
         self.size
+    }
+    pub unsafe fn set_size(&mut self, size: usize) {
+        self.size = size;
     }
 
     pub fn flags(&self) -> EntryFlags {
