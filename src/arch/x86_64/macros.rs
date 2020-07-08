@@ -335,6 +335,7 @@ macro_rules! interrupt_stack {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStack) {
+                let _guard = ptrace::set_process_regs($stack);
                 $func
             }
 

@@ -189,7 +189,6 @@ interrupt_stack!(pit, stack, {
     timeout::trigger();
 
     if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
-        let _guard = ptrace::set_process_regs(stack);
         let _ = context::switch();
     }
 });
