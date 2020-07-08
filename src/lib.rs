@@ -274,5 +274,11 @@ pub extern fn ksignal(signal: usize) {
             println!("NAME {}", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) });
         }
     }
-    syscall::exit(signal & 0x7F);
+
+    // Try running kill(getpid(), signal), but fallback to exiting
+    syscall::getpid()
+        .and_then(|pid| syscall::kill(pid, signal).map(|_| ()))
+        .unwrap_or_else(|_| {
+            syscall::exit(signal & 0x7F);
+        });
 }
