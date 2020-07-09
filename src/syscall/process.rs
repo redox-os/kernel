@@ -1316,30 +1316,39 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     let start_page = Page::containing_address(VirtualAddress::new(address));
     let end_page = Page::containing_address(VirtualAddress::new(end_address));
     for page in Page::range_inclusive(start_page, end_page) {
-        if let Some(mut page_flags) = active_table.translate_page_flags(page) {
-            if flags.contains(PROT_EXEC) {
-                page_flags.remove(EntryFlags::NO_EXECUTE);
-            } else {
-                page_flags.insert(EntryFlags::NO_EXECUTE);
-            }
-
-            if flags.contains(PROT_WRITE) {
-                //TODO: Not allowing gain of write privileges
-            } else {
-                page_flags.remove(EntryFlags::WRITABLE);
-            }
-
-            if flags.contains(PROT_READ) {
-                //TODO: No flags for readable pages
-            } else {
-                //TODO: No flags for readable pages
-            }
-
-            let flush = active_table.remap(page, page_flags);
-            flush_all.consume(flush);
+        // Check if the page is actually mapped before trying to change the flags.
+        // FIXME can other processes change if a page is mapped beneath our feet?
+        let mut page_flags = if let Some(page_flags) = active_table.translate_page_flags(page) {
+            page_flags
         } else {
+            flush_all.flush(&mut active_table);
+            return Err(Error::new(EFAULT));
+        };
+        if !page_flags.contains(EntryFlags::PRESENT) {
+            flush_all.flush(&mut active_table);
             return Err(Error::new(EFAULT));
         }
+
+        if flags.contains(PROT_EXEC) {
+            page_flags.remove(EntryFlags::NO_EXECUTE);
+        } else {
+            page_flags.insert(EntryFlags::NO_EXECUTE);
+        }
+
+        if flags.contains(PROT_WRITE) {
+            //TODO: Not allowing gain of write privileges
+        } else {
+            page_flags.remove(EntryFlags::WRITABLE);
+        }
+
+        if flags.contains(PROT_READ) {
+            //TODO: No flags for readable pages
+        } else {
+            //TODO: No flags for readable pages
+        }
+
+        let flush = active_table.remap(page, page_flags);
+        flush_all.consume(flush);
     }
 
     flush_all.flush(&mut active_table);
