@@ -23,11 +23,11 @@ use crate::scheme::FileHandle;
 use crate::start::usermode;
 use crate::syscall::data::{SigAction, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{wifcontinued, wifstopped, CloneFlags, CLONE_FILES,
-                           CLONE_FS, CLONE_SIGHAND, CLONE_STACK, CLONE_VFORK, CLONE_VM, MapFlags,
-                           PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE, PTRACE_STOP_EXIT,
-                           SigActionFlags, SIG_BLOCK, SIG_DFL, SIG_SETMASK, SIG_UNBLOCK, SIGCONT, SIGTERM,
-                           WaitFlags, WCONTINUED, WNOHANG,WUNTRACED};
+use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, CloneFlags,
+                           CLONE_FILES, CLONE_FS, CLONE_SIGHAND, CLONE_STACK, CLONE_VFORK, CLONE_VM,
+                           MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
+                           PTRACE_STOP_EXIT, SigActionFlags, SIG_BLOCK, SIG_DFL, SIG_SETMASK, SIG_UNBLOCK,
+                           SIGCONT, SIGTERM, WaitFlags, WCONTINUED, WNOHANG, WUNTRACED};
 use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
@@ -657,7 +657,8 @@ fn fexec_noreturn(
     name: Box<[u8]>,
     data: Box<[u8]>,
     args: Box<[Box<[u8]>]>,
-    vars: Box<[Box<[u8]>]>
+    vars: Box<[Box<[u8]>]>,
+    auxv: Box<[usize]>,
 ) -> ! {
     let entry;
     let singlestep;
@@ -809,27 +810,40 @@ fn fexec_noreturn(
                 context.tls = Some(tls);
             }
 
+            let mut push = |arg| {
+                sp -= mem::size_of::<usize>();
+                unsafe { *(sp as *mut usize) = arg; }
+            };
+
+            // Push auxiliery vector
+            push(AT_NULL);
+            for &arg in auxv.iter().rev() {
+                push(arg);
+            }
+
+            // drop(auxv); // no longer required
+
             let mut arg_size = 0;
 
-            // Push arguments and variables
+            // Push environment variables and arguments
             for iter in &[&vars, &args] {
                 // Push null-terminator
-                sp -= mem::size_of::<usize>();
-                unsafe { *(sp as *mut usize) = 0; }
+                push(0);
 
-                // Push content
+                // Push pointer to content
                 for arg in iter.iter().rev() {
-                    sp -= mem::size_of::<usize>();
-                    unsafe { *(sp as *mut usize) = crate::USER_ARG_OFFSET + arg_size; }
-
+                    push(crate::USER_ARG_OFFSET + arg_size);
                     arg_size += arg.len() + 1;
                 }
             }
 
-            // Push arguments length
-            sp -= mem::size_of::<usize>();
-            unsafe { *(sp as *mut usize) = args.len(); }
+            // For some reason, Linux pushes the argument count here (in
+            // addition to being null-terminated), but not the environment
+            // variable count.
+            // TODO: Push more counts? Less? Stop having null-termination?
+            push(args.len());
 
+            // Write environment and argument pointers to USER_ARG_OFFSET
             if arg_size > 0 {
                 let mut memory = context::memory::Memory::new(
                     VirtualAddress::new(crate::USER_ARG_OFFSET),
@@ -858,8 +872,9 @@ fn fexec_noreturn(
                 context.image.push(memory.to_shared());
             }
 
-            // Args no longer required, can deallocate
+            // Args and vars no longer required, can deallocate
             drop(args);
+            drop(vars);
 
             context.actions = Arc::new(Mutex::new(vec![(
                 SigAction {
@@ -908,7 +923,7 @@ fn fexec_noreturn(
     unsafe { usermode(entry, sp, 0, singlestep) }
 }
 
-pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>) -> Result<usize> {
+pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>, auxv: Option<Box<[usize]>>) -> Result<usize> {
     let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -980,72 +995,90 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
         return Err(Error::new(E2BIG));
     }
 
-    match elf::Elf::from(&data) {
-        Ok(elf) => {
-            // We check the validity of all loadable sections here
-            for segment in elf.segments() {
-                match segment.p_type {
-                    program_header::PT_INTERP => {
-                        //TODO: length restraint, parse interp earlier
-                        let mut interp = vec![0; segment.p_memsz as usize];
-                        unsafe {
-                            intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
-                                            interp.as_mut_ptr(),
-                                            segment.p_filesz as usize);
-                        }
-
-                        let mut i = 0;
-                        while i < interp.len() {
-                            if interp[i] == 0 {
-                                break;
-                            }
-                            i += 1;
-                        }
-                        interp.truncate(i);
-
-                        println!("  interpreter: {:?}", ::core::str::from_utf8(&interp));
-
-                        let interp_fd = super::fs::open(&interp, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
-
-                        let mut args_vec = Vec::from(args);
-                        args_vec.insert(0, interp.into_boxed_slice());
-                        //TODO: pass file handle in auxv
-                        let name_override = name.into_boxed_slice();
-                        args_vec[1] = name_override.clone();
-
-                        return fexec_kernel(
-                            interp_fd,
-                            args_vec.into_boxed_slice(),
-                            vars,
-                            Some(name_override),
-                        );
-                    },
-                    program_header::PT_LOAD => {
-                        let voff = segment.p_vaddr as usize % PAGE_SIZE;
-                        let vaddr = segment.p_vaddr as usize - voff;
-
-                        // Due to the Userspace and kernel TLS bases being located right above 2GB,
-                        // limit any loadable sections to lower than that. Eventually we will need
-                        // to replace this with a more intelligent TLS address
-                        if vaddr >= 0x8000_0000 {
-                            println!("exec: invalid section address {:X}", segment.p_vaddr);
-                            return Err(Error::new(ENOEXEC));
-                        }
-                    },
-                    _ => (),
-                }
-            }
-        },
+    let elf = match elf::Elf::from(&data) {
+        Ok(elf) => elf,
         Err(err) => {
             println!("fexec: failed to execute {}: {}", fd.into(), err);
             return Err(Error::new(ENOEXEC));
+        }
+    };
+
+    // `fexec_kernel` can recurse if an interpreter is found. We get the
+    // auxiliery vector from the first invocation, which is passed via an
+    // argument, or if this is the first one we create it.
+    let auxv = if let Some(auxv) = auxv {
+        auxv
+    } else {
+        let mut auxv = Vec::with_capacity(3);
+
+        auxv.push(AT_ENTRY);
+        auxv.push(elf.entry());
+
+        auxv.into_boxed_slice()
+    };
+
+    // We check the validity of all loadable sections here
+    for segment in elf.segments() {
+        match segment.p_type {
+            program_header::PT_INTERP => {
+                //TODO: length restraint, parse interp earlier
+                let mut interp = vec![0; segment.p_memsz as usize];
+                unsafe {
+                    intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
+                                     interp.as_mut_ptr(),
+                                     segment.p_filesz as usize);
+                }
+
+                let mut i = 0;
+                while i < interp.len() {
+                    if interp[i] == 0 {
+                        break;
+                    }
+                    i += 1;
+                }
+                interp.truncate(i);
+
+                println!("  interpreter: {:?}", ::core::str::from_utf8(&interp));
+
+                let interp_fd = super::fs::open(&interp, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
+
+                let mut args_vec = Vec::from(args);
+                args_vec.insert(0, interp.into_boxed_slice());
+                //TODO: pass file handle in auxv
+                let name_override = name.into_boxed_slice();
+                args_vec[1] = name_override.clone();
+
+                // Drop variables, since fexec_kernel probably won't return
+                drop(elf);
+
+                return fexec_kernel(
+                    interp_fd,
+                    args_vec.into_boxed_slice(),
+                    vars,
+                    Some(name_override),
+                    Some(auxv),
+                );
+            },
+            program_header::PT_LOAD => {
+                let voff = segment.p_vaddr as usize % PAGE_SIZE;
+                let vaddr = segment.p_vaddr as usize - voff;
+
+                // Due to the Userspace and kernel TLS bases being located right above 2GB,
+                // limit any loadable sections to lower than that. Eventually we will need
+                // to replace this with a more intelligent TLS address
+                if vaddr >= 0x8000_0000 {
+                    println!("exec: invalid section address {:X}", segment.p_vaddr);
+                    return Err(Error::new(ENOEXEC));
+                }
+            },
+            _ => (),
         }
     }
 
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    fexec_noreturn(setuid, setgid, name.into_boxed_slice(), data.into_boxed_slice(), args, vars);
+    fexec_noreturn(setuid, setgid, name.into_boxed_slice(), data.into_boxed_slice(), args, vars, auxv);
 }
 
 pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
@@ -1066,7 +1099,7 @@ pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -
     // Neither arg_ptrs nor var_ptrs should be used after this point, the kernel
     // now has owned copies in args and vars
 
-    fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None)
+    fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None, None)
 }
 
 pub fn exit(status: usize) -> ! {
