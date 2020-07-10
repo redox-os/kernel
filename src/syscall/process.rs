@@ -23,7 +23,7 @@ use crate::scheme::FileHandle;
 use crate::start::usermode;
 use crate::syscall::data::{SigAction, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, CloneFlags,
+use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, AT_PHDR, CloneFlags,
                            CLONE_FILES, CLONE_FS, CLONE_SIGHAND, CLONE_STACK, CLONE_VFORK, CLONE_VM,
                            MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
                            PTRACE_STOP_EXIT, SigActionFlags, SIG_BLOCK, SIG_DFL, SIG_SETMASK, SIG_UNBLOCK,
@@ -821,7 +821,7 @@ fn fexec_noreturn(
                 push(arg);
             }
 
-            // drop(auxv); // no longer required
+            drop(auxv); // no longer required
 
             let mut arg_size = 0;
 
@@ -923,7 +923,7 @@ fn fexec_noreturn(
     unsafe { usermode(entry, sp, 0, singlestep) }
 }
 
-pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>, auxv: Option<Box<[usize]>>) -> Result<usize> {
+pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>, auxv: Option<Vec<usize>>) -> Result<usize> {
     let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -1013,8 +1013,10 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
 
         auxv.push(AT_ENTRY);
         auxv.push(elf.entry());
+        auxv.push(AT_PHDR);
+        auxv.push(elf.program_headers());
 
-        auxv.into_boxed_slice()
+        auxv
     };
 
     // We check the validity of all loadable sections here
@@ -1078,7 +1080,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    fexec_noreturn(setuid, setgid, name.into_boxed_slice(), data.into_boxed_slice(), args, vars, auxv);
+    fexec_noreturn(setuid, setgid, name.into_boxed_slice(), data.into_boxed_slice(), args, vars, auxv.into_boxed_slice());
 }
 
 pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {

@@ -73,6 +73,11 @@ impl<'a> Elf<'a> {
     pub fn entry(&self) -> usize {
         self.header.e_entry as usize
     }
+
+    /// Get the program header offset
+    pub fn program_headers(&self) -> usize {
+        self.header.e_phoff as usize
+    }
 }
 
 pub struct ElfSections<'a> {
