@@ -20,7 +20,7 @@ use self::flag::{CloneFlags, MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
 
 use crate::context::ContextId;
-use crate::macros::InterruptStack;
+use crate::interrupt::InterruptStack;
 use crate::scheme::{FileHandle, SchemeNamespace};
 
 /// Debug

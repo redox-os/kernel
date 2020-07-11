@@ -45,10 +45,11 @@
 #![feature(concat_idents)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
+#![feature(global_asm)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
-#![feature(naked_functions)]
 #![feature(matches_macro)] // stable in current Rust
+#![feature(naked_functions)]
 #![feature(ptr_internals)]
 #![feature(thread_local)]
 #![no_std]

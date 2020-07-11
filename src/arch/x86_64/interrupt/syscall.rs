@@ -1,4 +1,4 @@
-use crate::arch::macros::InterruptStack;
+use crate::arch::interrupt::InterruptStack;
 use crate::arch::{gdt, pti};
 use crate::syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL};
 use crate::{ptrace, syscall};
@@ -36,8 +36,8 @@ macro_rules! with_interrupt_stack {
     }
 }
 
-#[naked]
-pub unsafe extern fn syscall_instruction() {
+#[no_mangle]
+pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
     with_interrupt_stack! {
         unsafe fn inner(stack) -> usize {
             let rbp;
@@ -48,46 +48,50 @@ pub unsafe extern fn syscall_instruction() {
         }
     }
 
-    // Yes, this is magic. No, you don't need to understand
-    asm!("
-          swapgs                    // Set gs segment to TSS
-          mov gs:[28], rsp          // Save userspace rsp
-          mov rsp, gs:[4]           // Load kernel rsp
-          push 5 * 8 + 3            // Push userspace data segment
-          push qword ptr gs:[28]    // Push userspace rsp
-          mov qword ptr gs:[28], 0  // Clear userspace rsp
-          push r11                  // Push rflags
-          push 4 * 8 + 3            // Push userspace code segment
-          push rcx                  // Push userspace return pointer
-          swapgs                    // Restore gs
-          "
-          :
-          :
-          :
-          : "intel", "volatile");
-
-    // Push scratch registers
-    interrupt_push!();
-
-    // Get reference to stack variables
-    let rsp: usize;
-    asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
-
-    // Map kernel
     pti::map();
-
-    inner(rsp as *mut InterruptStack);
-
-    // Unmap kernel
+    inner(stack);
     pti::unmap();
-
-    // Interrupt return
-    interrupt_pop!();
-    iret!()
 }
 
-#[naked]
-pub unsafe extern fn syscall() {
+function!("syscall_instruction" => {
+    // Yes, this is magic. No, you don't need to understand
+    "
+        swapgs                    // Set gs segment to TSS
+        mov gs:[28], rsp          // Save userspace rsp
+        mov rsp, gs:[4]           // Load kernel rsp
+        push 5 * 8 + 3            // Push userspace data segment
+        push qword ptr gs:[28]    // Push userspace rsp
+        mov qword ptr gs:[28], 0  // Clear userspace rsp
+        push r11                  // Push rflags
+        push 4 * 8 + 3            // Push userspace code segment
+        push rcx                  // Push userspace return pointer
+        swapgs                    // Restore gs
+    ",
+
+    // Push context registers
+    "push rax\n",
+    push_scratch!(),
+    push_preserved!(),
+    push_fs!(),
+
+    // Call inner funtion
+    "mov rdi, rsp\n",
+    "call __inner_syscall_instruction\n",
+
+    // Pop context registers
+    pop_fs!(),
+    pop_preserved!(),
+    pop_scratch!(),
+
+    // Return
+    "iretq\n",
+});
+
+extern "C" {
+    pub fn syscall_instruction();
+}
+
+interrupt_stack!(syscall, |stack| {
     with_interrupt_stack! {
         unsafe fn inner(stack) -> usize {
             let rbp;
@@ -97,26 +101,8 @@ pub unsafe extern fn syscall() {
             syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
         }
     }
-
-    // Push scratch registers
-    interrupt_push!();
-
-    // Get reference to stack variables
-    let rsp: usize;
-    asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
-
-    // Map kernel
-    pti::map();
-
-    inner(rsp as *mut InterruptStack);
-
-    // Unmap kernel
-    pti::unmap();
-
-    // Interrupt return
-    interrupt_pop!();
-    iret!();
-}
+    inner(stack);
+});
 
 #[naked]
 pub unsafe extern "C" fn clone_ret() {

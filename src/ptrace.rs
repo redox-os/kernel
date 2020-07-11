@@ -4,7 +4,7 @@
 
 use crate::{
     arch::{
-        macros::InterruptStack,
+        interrupt::InterruptStack,
         paging::{
             entry::EntryFlags,
             mapper::MapperFlushAll,

@@ -1,4 +1,4 @@
-use crate::macros::InterruptStack;
+use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
 use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
