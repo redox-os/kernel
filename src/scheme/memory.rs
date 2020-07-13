@@ -49,8 +49,9 @@ impl Scheme for MemoryScheme {
             let full_size = ((map.size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
 
             let mut to_address = if map.address == 0 { crate::USER_GRANT_OFFSET } else {
-                if map.address < crate::USER_GRANT_OFFSET || map.address + map.size > crate::USER_GRANT_OFFSET + crate::PML4_SIZE || map.address % PAGE_SIZE != 0 {
-                    return Err(Error::new(EINVAL));
+                if // map.address < crate::USER_GRANT_OFFSET || map.address + map.size > crate::USER_GRANT_OFFSET + crate::PML4_SIZE ||
+                    map.address % PAGE_SIZE != 0 {
+                        return Err(Error::new(EINVAL));
                 }
                 map.address
             };
@@ -123,6 +124,7 @@ impl Scheme for MemoryScheme {
                     continue;
                 }
 
+                i += 1;
             }
 
             grants.insert(i, Grant::map(
