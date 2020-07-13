@@ -266,6 +266,7 @@ macro_rules! pop_scratch {
         pop rdi
         pop rdx
         pop rcx
+        pop rax
     " };
 }
 #[macro_export]
@@ -294,8 +295,7 @@ macro_rules! interrupt_stack {
         paste::item! {
             #[no_mangle]
             unsafe extern "C" fn [<__interrupt_ $name>]($stack: *mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                #[no_mangle]
-                unsafe extern "C" fn [<__interrupt_inner_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
+                unsafe fn [<__interrupt_inner_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
                     $code
                 }
 
@@ -336,8 +336,7 @@ macro_rules! interrupt {
         paste::item! {
             #[no_mangle]
             unsafe extern "C" fn [<__interrupt_ $name>]() {
-                #[no_mangle]
-                unsafe extern "C" fn [<__interrupt_inner_ $name>]() {
+                unsafe fn [<__interrupt_inner_ $name>]() {
                     $code
                 }
 
@@ -375,8 +374,7 @@ macro_rules! interrupt_error {
         paste::item! {
             #[no_mangle]
             unsafe extern "C" fn [<__interrupt_ $name>]($stack: *mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
-                #[no_mangle]
-                unsafe extern "C" fn [<__interrupt_inner_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+                unsafe fn [<__interrupt_inner_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
                     $code
                 }
 
