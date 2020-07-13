@@ -2,11 +2,11 @@
 use core::ptr;
 
 #[cfg(feature = "pti")]
-use memory::Frame;
+use crate::memory::Frame;
 #[cfg(feature = "pti")]
-use paging::ActivePageTable;
+use crate::paging::ActivePageTable;
 #[cfg(feature = "pti")]
-use paging::entry::EntryFlags;
+use crate::paging::entry::EntryFlags;
 
 #[cfg(feature = "pti")]
 #[thread_local]
