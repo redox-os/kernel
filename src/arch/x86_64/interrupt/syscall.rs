@@ -1,5 +1,5 @@
 use crate::arch::interrupt::InterruptStack;
-use crate::arch::{gdt, pti};
+use crate::arch::gdt;
 use crate::syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL};
 use crate::{ptrace, syscall};
 use x86::msr;
@@ -14,46 +14,53 @@ pub unsafe fn init() {
     msr::wrmsr(msr::IA32_EFER, efer | 1);
 }
 
-// Not a function pointer because it somehow messes up the returning
-// from clone() (via clone_ret()). Not sure what the problem is.
 macro_rules! with_interrupt_stack {
-    (unsafe fn $wrapped:ident($stack:ident) -> usize $code:block) => {
-        #[inline(never)]
-        unsafe fn $wrapped(stack: *mut InterruptStack) {
-            let _guard = ptrace::set_process_regs(stack);
+    ($name:ident |$stack:ident| $code:block) => {{
+        let _guard = ptrace::set_process_regs($stack);
 
-            let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
-                .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
+        let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
+            .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
 
-            if allowed.unwrap_or(true) {
-                // If syscall not ignored
-                let $stack = &mut *stack;
-                $stack.scratch.rax = $code;
+        if allowed.unwrap_or(true) {
+            paste::expr! {
+                #[no_mangle]
+                unsafe extern "C" fn [<__inner_stack_ $name>]($stack: &mut InterruptStack) -> usize {
+                    $code
+                }
+
+                // A normal function call like inner(stack) is sadly not guaranteed
+                // to map to a `call` instruction - it can also be a `jmp`. We want
+                // this to definitely be its own call stack, to make `clone_ret`
+                // work as expected.
+                let ret;
+                asm!(
+                    concat!("call __inner_stack_", stringify!($name))
+                        : "={rax}"(ret)
+                        : "{rdi}"(&mut *$stack)
+                        : /* no clobbers */
+                        : "volatile", "intel"
+                );
+
+                (*$stack).scratch.rax = ret;
             }
-
-            ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
         }
-    }
+
+        ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
+    }}
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
-    with_interrupt_stack! {
-        unsafe fn inner(stack) -> usize {
-            let rbp;
-            asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
+    with_interrupt_stack!(syscall_instruction |stack| {
+        let rbp;
+        asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
-            let scratch = &stack.scratch;
-            syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
-        }
-    }
-
-    pti::map();
-    inner(stack);
-    pti::unmap();
+        let scratch = &stack.scratch;
+        syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
+    });
 }
 
-function!("syscall_instruction" => {
+function!(syscall_instruction => {
     // Yes, this is magic. No, you don't need to understand
     "
         swapgs                    // Set gs segment to TSS
@@ -74,9 +81,15 @@ function!("syscall_instruction" => {
     push_preserved!(),
     push_fs!(),
 
+    // TODO: Map PTI
+    // $crate::arch::x86_64::pti::map();
+
     // Call inner funtion
     "mov rdi, rsp\n",
     "call __inner_syscall_instruction\n",
+
+    // TODO: Unmap PTI
+    // $crate::arch::x86_64::pti::unmap();
 
     // Pop context registers
     pop_fs!(),
@@ -87,34 +100,27 @@ function!("syscall_instruction" => {
     "iretq\n",
 });
 
-extern "C" {
-    pub fn syscall_instruction();
-}
-
 interrupt_stack!(syscall, |stack| {
-    with_interrupt_stack! {
-        unsafe fn inner(stack) -> usize {
-            let rbp;
-            asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
+    with_interrupt_stack!(syscall |stack| {
+        let rbp;
+        asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
-            let scratch = &stack.scratch;
-            syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
-        }
-    }
-    inner(stack);
+        let scratch = &stack.scratch;
+        syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
+    })
 });
 
-#[naked]
-pub unsafe extern "C" fn clone_ret() {
-    // The C x86_64 ABI specifies that rbp is pushed to save the old
-    // call frame. Popping rbp means we're using the parent's call
-    // frame and thus will not only return from this function but also
-    // from the function above this one.
-    // When this is called, the stack should have been
-    // interrupt->inner->syscall->clone
-    // then changed to
-    // interrupt->inner->clone_ret->clone
-    // so this will return from "inner".
+function!(clone_ret => {
+    // The C x86_64 ABI specifies that rbp is pushed to save the old call frame.
+    // Popping rbp means we're using the parent's call frame and thus will not
+    // only return from this function but also from the function above this one.
 
-    asm!("pop rbp" : : : : "intel", "volatile");
-}
+    // When this is called, the stack should have been
+    // interrupt->inner->syscall->clone->clone_ret
+    // then popped to
+    // interrupt->inner->syscall
+    // so this will return from "syscall".
+    "pop rbx\n",
+    "xor rax, rax\n",
+    "ret\n",
+});

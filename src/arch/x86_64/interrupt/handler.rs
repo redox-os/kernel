@@ -207,13 +207,16 @@ macro_rules! intel_asm {
 }
 #[macro_export]
 macro_rules! function {
-    ($name:expr => { $($body:expr,)+ }) => {
+    ($name:ident => { $($body:expr,)+ }) => {
         intel_asm!(
-            ".global ", $name, "\n",
-            $name, ":\n",
+            ".global ", stringify!($name), "\n",
+            stringify!($name), ":\n",
             $($body,)+
         );
-    }
+        extern "C" {
+            pub fn $name();
+        }
+    };
 }
 
 #[macro_export]
@@ -249,8 +252,11 @@ macro_rules! push_fs {
         push fs
 
         // Load kernel tls
-        mov rax, 0x18
-        mov fs, ax // can't load value directly into `fs`
+        // We can't load the value directly into `fs`. We also can't use `rax`
+        // as the temporary value, as during errors that's already used for the
+        // error code.
+        mov rbx, 0x18
+        mov fs, bx
     " };
 }
 
@@ -294,15 +300,11 @@ macro_rules! interrupt_stack {
     ($name:ident, |$stack:ident| $code:block) => {
         paste::item! {
             #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>]($stack: *mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                unsafe fn [<__interrupt_inner_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                    $code
-                }
-
-                [<__interrupt_inner_ $name>](&mut *$stack);
+            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
+                $code
             }
 
-            function!(stringify!($name) => {
+            function!($name => {
                 // Backup all userspace registers to stack
                 "push rax\n",
                 push_scratch!(),
@@ -326,10 +328,6 @@ macro_rules! interrupt_stack {
 
                 "iretq\n",
             });
-
-            extern "C" {
-                pub fn $name();
-            }
         }
     };
 }
@@ -340,14 +338,10 @@ macro_rules! interrupt {
         paste::item! {
             #[no_mangle]
             unsafe extern "C" fn [<__interrupt_ $name>]() {
-                unsafe fn [<__interrupt_inner_ $name>]() {
-                    $code
-                }
-
-                [<__interrupt_inner_ $name>]();
+                $code
             }
 
-            function!(stringify!($name) => {
+            function!($name => {
                 // Backup all userspace registers to stack
                 "push rax\n",
                 push_scratch!(),
@@ -368,10 +362,6 @@ macro_rules! interrupt {
 
                 "iretq\n",
             });
-
-            extern "C" {
-                pub fn $name();
-            }
         }
     };
 }
@@ -381,15 +371,11 @@ macro_rules! interrupt_error {
     ($name:ident, |$stack:ident| $code:block) => {
         paste::item! {
             #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>]($stack: *mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
-                unsafe fn [<__interrupt_inner_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
-                    $code
-                }
-
-                [<__interrupt_inner_ $name>](&mut *$stack);
+            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+                $code
             }
 
-            function!(stringify!($name) => {
+            function!($name => {
                 // Move rax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
                 "xchg [rsp], rax\n",
@@ -422,10 +408,6 @@ macro_rules! interrupt_error {
 
                 "iretq\n",
             });
-
-            extern "C" {
-                pub fn $name();
-            }
         }
     };
 }

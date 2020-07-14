@@ -138,18 +138,16 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                 unsafe {
                     if let Some(regs) = ptrace::rebase_regs_ptr_mut(context.regs, Some(&mut new_stack)) {
-                        // We'll need to tell the clone that it should
-                        // return 0, but that's it. We don't actually
-                        // clone the registers, because it will then
-                        // become None and be exempt from all kinds of
-                        // ptracing until the current syscall has
-                        // completed.
+                        // We'll need to tell the clone that it should return 0,
+                        // but that's it. We don't actually clone the registers
+                        // and put them on the child, because it will then
+                        // instead become None and be exempt from all kinds of
+                        // ptracing until the current syscall has completed.
                         (*regs).scratch.rax = 0;
                     }
 
-                    // Change the return address of the child
-                    // (previously syscall) to the arch-specific
-                    // clone_ret callback
+                    // Change the return address of the child (previously
+                    // syscall) to the arch-specific clone_ret callback
                     let func_ptr = new_stack.as_mut_ptr().add(offset);
                     *(func_ptr as *mut usize) = interrupt::syscall::clone_ret as usize;
                 }
