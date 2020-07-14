@@ -18,8 +18,6 @@ interrupt_stack!(divide_by_zero, stack, {
 interrupt_stack!(debug, stack, {
     let mut handled = false;
 
-    let guard = ptrace::set_process_regs(stack);
-
     // Disable singlestep before there is a breakpoint, since the breakpoint
     // handler might end up setting it again but unless it does we want the
     // default to be false.
@@ -32,8 +30,6 @@ interrupt_stack!(debug, stack, {
         // There was no breakpoint, restore original value
         stack.set_singlestep(had_singlestep);
     }
-
-    drop(guard);
 
     if !handled {
         println!("Debug trap");
@@ -61,11 +57,7 @@ interrupt_stack!(breakpoint, stack, {
     // int3 instruction. After all, it's the sanest thing to do.
     stack.iret.rip -= 1;
 
-    let guard = ptrace::set_process_regs(stack);
-
     if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
-        drop(guard);
-
         println!("Breakpoint trap");
         stack.dump();
         ksignal(SIGTRAP);

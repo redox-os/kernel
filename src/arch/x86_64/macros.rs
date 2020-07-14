@@ -48,9 +48,8 @@ impl ScratchRegisters {
 }
 
 macro_rules! scratch_push {
-    () => (asm!(
-        "push rax
-        push rcx
+    (without rax) => (asm!(
+        "push rcx
         push rdx
         push rdi
         push rsi
@@ -60,6 +59,10 @@ macro_rules! scratch_push {
         push r11"
         : : : : "intel", "volatile"
     ));
+    () => ({
+        asm!("push rax" : : : : "intel", "volatile");
+        scratch_push!(without rax);
+    });
 }
 
 macro_rules! scratch_pop {
@@ -332,6 +335,7 @@ macro_rules! interrupt_stack {
         pub unsafe extern fn $name () {
             #[inline(never)]
             unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptStack) {
+                let _guard = ptrace::set_process_regs($stack);
                 $func
             }
 
@@ -362,20 +366,14 @@ macro_rules! interrupt_stack {
 #[derive(Default)]
 #[repr(packed)]
 pub struct InterruptErrorStack {
-    pub fs: usize,
-    pub preserved: PreservedRegisters,
-    pub scratch: ScratchRegisters,
     pub code: usize,
-    pub iret: IretRegisters,
+    pub inner: InterruptStack,
 }
 
 impl InterruptErrorStack {
     pub fn dump(&self) {
-        self.iret.dump();
+        self.inner.dump();
         println!("CODE:  {:>016X}", { self.code });
-        self.scratch.dump();
-        self.preserved.dump();
-        println!("FS:    {:>016X}", { self.fs });
     }
 }
 
@@ -385,12 +383,23 @@ macro_rules! interrupt_error {
         #[naked]
         pub unsafe extern fn $name () {
             #[inline(never)]
-            unsafe fn inner($stack: &$crate::arch::x86_64::macros::InterruptErrorStack) {
+            unsafe fn inner($stack: &mut $crate::arch::x86_64::macros::InterruptErrorStack) {
+                let _guard = ptrace::set_process_regs(&mut $stack.inner);
                 $func
             }
 
-            // Push scratch registers
-            interrupt_push!();
+            // Swap RAX and error code, in order to push the code later and be
+            // compatible with InterruptStack.
+            asm!("xchg [rsp], rax" : : : : "intel", "volatile");
+
+            // Push all the registers (except for rax which is already pushed,
+            // in place of the error code)
+            scratch_push!(without rax);
+            preserved_push!();
+            fs_push!();
+
+            // Finally, push rax (now containing error code)
+            asm!("push rax" : : : : "intel", "volatile");
 
             // Get reference to stack variables
             let rsp: usize;
@@ -400,14 +409,14 @@ macro_rules! interrupt_error {
             $crate::arch::x86_64::pti::map();
 
             // Call inner rust function
-            inner(&*(rsp as *const $crate::arch::x86_64::macros::InterruptErrorStack));
+            inner(&mut *(rsp as *mut $crate::arch::x86_64::macros::InterruptErrorStack));
 
             // Unmap kernel
             $crate::arch::x86_64::pti::unmap();
 
-            // Pop scratch registers, error code, and return
-            interrupt_pop!();
+            // Pop error code, registers, and return
             asm!("add rsp, 8" : : : : "intel", "volatile"); // pop error code
+            interrupt_pop!();
             iret!();
         }
     };
