@@ -299,9 +299,7 @@ macro_rules! interrupt_stack {
                     $code
                 }
 
-                $crate::arch::x86_64::pti::map();
                 [<__interrupt_inner_ $name>](&mut *$stack);
-                $crate::arch::x86_64::pti::unmap();
             }
 
             function!(stringify!($name) => {
@@ -311,9 +309,15 @@ macro_rules! interrupt_stack {
                 push_preserved!(),
                 push_fs!(),
 
+                // TODO: Map PTI
+                // $crate::arch::x86_64::pti::map();
+
                 // Call inner function with pointer to stack
                 "mov rdi, rsp\n",
                 "call __interrupt_", stringify!($name), "\n",
+
+                // TODO: Unmap PTI
+                // $crate::arch::x86_64::pti::unmap();
 
                 // Restore all userspace registers
                 pop_fs!(),
@@ -340,9 +344,7 @@ macro_rules! interrupt {
                     $code
                 }
 
-                $crate::arch::x86_64::pti::map();
                 [<__interrupt_inner_ $name>]();
-                $crate::arch::x86_64::pti::unmap();
             }
 
             function!(stringify!($name) => {
@@ -351,8 +353,14 @@ macro_rules! interrupt {
                 push_scratch!(),
                 push_fs!(),
 
+                // TODO: Map PTI
+                // $crate::arch::x86_64::pti::map();
+
                 // Call inner function with pointer to stack
                 "call __interrupt_", stringify!($name), "\n",
+
+                // TODO: Unmap PTI
+                // $crate::arch::x86_64::pti::unmap();
 
                 // Restore all userspace registers
                 pop_fs!(),
@@ -378,9 +386,7 @@ macro_rules! interrupt_error {
                     $code
                 }
 
-                $crate::arch::x86_64::pti::map();
                 [<__interrupt_inner_ $name>](&mut *$stack);
-                $crate::arch::x86_64::pti::unmap();
             }
 
             function!(stringify!($name) => {
@@ -396,9 +402,15 @@ macro_rules! interrupt_error {
                 // Put code in, it's now in rax
                 "push rax\n",
 
+                // TODO: Map PTI
+                // $crate::arch::x86_64::pti::map();
+
                 // Call inner function with pointer to stack
                 "mov rdi, rsp\n",
                 "call __interrupt_", stringify!($name), "\n",
+
+                // TODO: Unmap PTI
+                // $crate::arch::x86_64::pti::unmap();
 
                 // Pop code
                 "add rsp, 8\n",
