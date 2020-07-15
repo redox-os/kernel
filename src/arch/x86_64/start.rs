@@ -10,7 +10,7 @@ use crate::allocator;
 #[cfg(feature = "acpi")]
 use crate::acpi;
 #[cfg(feature = "graphical_debug")]
-use arch::x86_64::graphical_debug;
+use crate::arch::x86_64::graphical_debug;
 use crate::arch::x86_64::pti;
 use crate::device;
 use crate::gdt;

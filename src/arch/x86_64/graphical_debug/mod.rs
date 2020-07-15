@@ -1,9 +1,9 @@
 use spin::Mutex;
 
-use memory::Frame;
-use paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
-use paging::entry::EntryFlags;
-use paging::mapper::MapperFlushAll;
+use crate::memory::Frame;
+use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use crate::paging::entry::EntryFlags;
+use crate::paging::mapper::MapperFlushAll;
 
 pub use self::debug::DebugDisplay;
 use self::display::Display;
@@ -54,13 +54,13 @@ pub fn init(active_table: &mut ActivePageTable) {
     {
         let size = width * height;
 
-        let onscreen = physbaseptr + ::KERNEL_OFFSET;
+        let onscreen = physbaseptr + crate::KERNEL_OFFSET;
         {
             let mut flush_all = MapperFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
             let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {
-                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() - ::KERNEL_OFFSET));
+                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() - crate::KERNEL_OFFSET));
                 let flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::HUGE_PAGE;
                 let result = active_table.map_to(page, frame, flags);
                 flush_all.consume(result);
