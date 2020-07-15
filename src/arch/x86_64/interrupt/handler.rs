@@ -234,33 +234,6 @@ macro_rules! push_scratch {
     " };
 }
 #[macro_export]
-macro_rules! push_preserved {
-    () => { "
-        // Push preserved registers
-        push rbx
-        push rbp
-        push r12
-        push r13
-        push r14
-        push r15
-    " };
-}
-#[macro_export]
-macro_rules! push_fs {
-    () => { "
-        // Push fs
-        push fs
-
-        // Load kernel tls
-        // We can't load the value directly into `fs`. We also can't use `rax`
-        // as the temporary value, as during errors that's already used for the
-        // error code.
-        mov rbx, 0x18
-        mov fs, bx
-    " };
-}
-
-#[macro_export]
 macro_rules! pop_scratch {
     () => { "
         // Pop scratch registers
@@ -275,6 +248,19 @@ macro_rules! pop_scratch {
         pop rax
     " };
 }
+
+#[macro_export]
+macro_rules! push_preserved {
+    () => { "
+        // Push preserved registers
+        push rbx
+        push rbp
+        push r12
+        push r13
+        push r14
+        push r15
+    " };
+}
 #[macro_export]
 macro_rules! pop_preserved {
     () => { "
@@ -285,6 +271,21 @@ macro_rules! pop_preserved {
         pop r12
         pop rbp
         pop rbx
+    " };
+}
+
+#[macro_export]
+macro_rules! push_fs {
+    () => { "
+        // Push fs
+        push fs
+
+        // Load kernel tls
+        // We can't load the value directly into `fs`. We also can't use `rax`
+        // as the temporary value, as during errors that's already used for the
+        // error code.
+        mov rbx, 0x18
+        mov fs, bx
     " };
 }
 #[macro_export]
@@ -300,8 +301,15 @@ macro_rules! interrupt_stack {
     ($name:ident, |$stack:ident| $code:block) => {
         paste::item! {
             #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                $code
+            unsafe extern "C" fn [<__interrupt_ $name>](stack: *mut $crate::arch::x86_64::interrupt::InterruptStack) {
+                // This inner function is needed because macros are buggy:
+                // https://github.com/dtolnay/paste/issues/7
+                #[inline(always)]
+                unsafe fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
+                    $code
+                }
+                let _guard = $crate::ptrace::set_process_regs(stack);
+                inner(&mut *stack);
             }
 
             function!($name => {
@@ -371,8 +379,14 @@ macro_rules! interrupt_error {
     ($name:ident, |$stack:ident| $code:block) => {
         paste::item! {
             #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
-                $code
+            unsafe extern "C" fn [<__interrupt_ $name>](stack: *mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+                // This inner function is needed because macros are buggy:
+                // https://github.com/dtolnay/paste/issues/7
+                unsafe fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+                    $code
+                }
+                let _guard = $crate::ptrace::set_process_regs(&mut (*stack).inner);
+                inner(&mut *stack);
             }
 
             function!($name => {

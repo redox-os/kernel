@@ -15,34 +15,17 @@ pub unsafe fn init() {
 }
 
 macro_rules! with_interrupt_stack {
-    ($name:ident |$stack:ident| $code:block) => {{
-        let _guard = ptrace::set_process_regs($stack);
-
+    (|$stack:ident| $code:block) => {{
         let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
             .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
 
         if allowed.unwrap_or(true) {
-            paste::expr! {
-                #[no_mangle]
-                unsafe extern "C" fn [<__inner_stack_ $name>]($stack: &mut InterruptStack) -> usize {
-                    $code
-                }
-
-                // A normal function call like inner(stack) is sadly not guaranteed
-                // to map to a `call` instruction - it can also be a `jmp`. We want
-                // this to definitely be its own call stack, to make `clone_ret`
-                // work as expected.
-                let ret;
-                asm!(
-                    concat!("call __inner_stack_", stringify!($name))
-                        : "={rax}"(ret)
-                        : "{rdi}"(&mut *$stack)
-                        : /* no clobbers */
-                        : "volatile", "intel"
-                );
-
-                (*$stack).scratch.rax = ret;
-            }
+            // If the syscall is `clone`, the clone won't return here. Instead,
+            // it'll return early and leave any undropped values. This is
+            // actually GOOD, because any references are at that point UB
+            // anyway, because they are based on the wrong stack.
+            let $stack = &mut *$stack;
+            (*$stack).scratch.rax = $code;
         }
 
         ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
@@ -51,7 +34,9 @@ macro_rules! with_interrupt_stack {
 
 #[no_mangle]
 pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
-    with_interrupt_stack!(syscall_instruction |stack| {
+    let _guard = ptrace::set_process_regs(stack);
+    with_interrupt_stack!(|stack| {
+        // Set a restore point for clone
         let rbp;
         asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
@@ -67,8 +52,8 @@ function!(syscall_instruction => {
         mov gs:[28], rsp          // Save userspace rsp
         mov rsp, gs:[4]           // Load kernel rsp
         push 5 * 8 + 3            // Push userspace data segment
-        push qword ptr gs:[28]    // Push userspace rsp
-        mov qword ptr gs:[28], 0  // Clear userspace rsp
+        push QWORD PTR gs:[28]    // Push userspace rsp
+        mov QWORD PTR gs:[28], 0  // Clear userspace rsp
         push r11                  // Push rflags
         push 4 * 8 + 3            // Push userspace code segment
         push rcx                  // Push userspace return pointer
@@ -101,7 +86,8 @@ function!(syscall_instruction => {
 });
 
 interrupt_stack!(syscall, |stack| {
-    with_interrupt_stack!(syscall |stack| {
+    with_interrupt_stack!(|stack| {
+        // Set a restore point for clone
         let rbp;
         asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
@@ -111,16 +97,18 @@ interrupt_stack!(syscall, |stack| {
 });
 
 function!(clone_ret => {
-    // The C x86_64 ABI specifies that rbp is pushed to save the old call frame.
-    // Popping rbp means we're using the parent's call frame and thus will not
-    // only return from this function but also from the function above this one.
-
-    // When this is called, the stack should have been
-    // interrupt->inner->syscall->clone->clone_ret
-    // then popped to
-    // interrupt->inner->syscall
-    // so this will return from "syscall".
-    "pop rbx\n",
-    "xor rax, rax\n",
+    // The address of this instruction is injected by `clone` in process.rs, on
+    // top of the stack syscall->inner in this file, which is done using the rbp
+    // register we save there.
+    //
+    // The top of our stack here is the address pointed to by rbp, which is:
+    //
+    // - the previous rbp
+    // - the return location
+    //
+    // Our goal is to return from the parent function, inner, so we restore
+    // rbp...
+    "pop rbp\n",
+    // ...and we return to the address at the top of the stack
     "ret\n",
 });

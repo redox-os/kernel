@@ -131,18 +131,18 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             }
 
             if let Some(ref stack) = context.kstack {
-                // Get the relative offset to the return address of this function
+                // Get the relative offset to the return address of the function
+                // obtaining `stack_base`.
+                //
                 // (base pointer - start of stack) - one
                 offset = stack_base - stack.as_ptr() as usize - mem::size_of::<usize>(); // Add clone ret
                 let mut new_stack = stack.clone();
 
                 unsafe {
+                    // Set clone's return value to zero. This is done because
+                    // the clone won't return like normal, which means the value
+                    // would otherwise never get set.
                     if let Some(regs) = ptrace::rebase_regs_ptr_mut(context.regs, Some(&mut new_stack)) {
-                        // We'll need to tell the clone that it should return 0,
-                        // but that's it. We don't actually clone the registers
-                        // and put them on the child, because it will then
-                        // instead become None and be exempt from all kinds of
-                        // ptracing until the current syscall has completed.
                         (*regs).scratch.rax = 0;
                     }
 

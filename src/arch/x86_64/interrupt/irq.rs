@@ -8,7 +8,7 @@ use crate::device::{local_apic, ioapic, pic};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::debug_input;
-use crate::{context, ptrace, time};
+use crate::{context, time};
 
 //resets to 0 in context::switch()
 #[thread_local]
@@ -169,7 +169,7 @@ unsafe fn ioapic_unmask(irq: usize) {
     ioapic::unmask(irq as u8);
 }
 
-interrupt_stack!(pit_stack, |stack| {
+interrupt_stack!(pit_stack, |_stack| {
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
     const PIT_RATE: u64 = 2_250_286;
