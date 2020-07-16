@@ -281,11 +281,13 @@ macro_rules! push_fs {
         push fs
 
         // Load kernel tls
-        // We can't load the value directly into `fs`. We also can't use `rax`
-        // as the temporary value, as during errors that's already used for the
-        // error code.
-        mov rbx, 0x18
-        mov fs, bx
+        //
+        // NOTE: We can't load the value directly into `fs`. So we need to use a
+        // scratch register (as preserved registers aren't backed up by the
+        // interrupt! macro) to store it. We also can't use `rax` as the temporary
+        // value, as during errors that's already used for the error code.
+        mov rcx, 0x18
+        mov fs, cx
     " };
 }
 #[macro_export]
