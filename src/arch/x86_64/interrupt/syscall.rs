@@ -1,7 +1,10 @@
-use crate::arch::interrupt::InterruptStack;
-use crate::arch::gdt;
-use crate::syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL};
-use crate::{ptrace, syscall};
+use crate::{
+    arch::{gdt, interrupt::InterruptStack},
+    context,
+    ptrace,
+    syscall,
+    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
+};
 use x86::msr;
 
 pub unsafe fn init() {
@@ -87,6 +90,18 @@ function!(syscall_instruction => {
 
 interrupt_stack!(syscall, |stack| {
     with_interrupt_stack!(|stack| {
+        {
+            let contexts = context::contexts();
+            let context = contexts.current();
+            if let Some(current) = context {
+                let current = current.read();
+                let name = current.name.lock();
+                println!("Warning: Context {} used deprecated `int 0x80` construct", core::str::from_utf8(&name).unwrap_or("(invalid utf8)"));
+            } else {
+                println!("Warning: Unknown context used deprecated `int 0x80` construct");
+            }
+        }
+
         // Set a restore point for clone
         let rbp;
         asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
