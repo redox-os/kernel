@@ -1,7 +1,8 @@
 use core::mem;
 use syscall::IntRegisters;
 
-#[allow(dead_code)]
+const FLAG_SINGLESTEP: usize = 1 << 8;
+
 #[derive(Default)]
 #[repr(packed)]
 pub struct ScratchRegisters {
@@ -30,7 +31,6 @@ impl ScratchRegisters {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Default)]
 #[repr(packed)]
 pub struct PreservedRegisters {
@@ -53,15 +53,18 @@ impl PreservedRegisters {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Default)]
 #[repr(packed)]
 pub struct IretRegisters {
     pub rip: usize,
     pub cs: usize,
     pub rflags: usize,
-    // Will only be present if interrupt is raised from another
-    // privilege ring
+
+    // ----
+    // The following will only be present if interrupt is raised from another
+    // privilege ring. Otherwise, they are undefined values.
+    // ----
+
     pub rsp: usize,
     pub ss: usize
 }
@@ -74,7 +77,6 @@ impl IretRegisters {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Default)]
 #[repr(packed)]
 pub struct InterruptStack {
@@ -169,18 +171,17 @@ impl InterruptStack {
     /// used for singlestep in the proc: scheme.
     pub fn set_singlestep(&mut self, enabled: bool) {
         if enabled {
-            self.iret.rflags |= 1 << 8;
+            self.iret.rflags |= FLAG_SINGLESTEP;
         } else {
-            self.iret.rflags &= !(1 << 8);
+            self.iret.rflags &= !FLAG_SINGLESTEP;
         }
     }
     /// Checks if the trap flag is enabled, see `set_singlestep`
     pub fn is_singlestep(&self) -> bool {
-        self.iret.rflags & 1 << 8 == 1 << 8
+        self.iret.rflags & FLAG_SINGLESTEP == FLAG_SINGLESTEP
     }
 }
 
-#[allow(dead_code)]
 #[derive(Default)]
 #[repr(packed)]
 pub struct InterruptErrorStack {
@@ -384,6 +385,7 @@ macro_rules! interrupt_error {
             unsafe extern "C" fn [<__interrupt_ $name>](stack: *mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
                 // This inner function is needed because macros are buggy:
                 // https://github.com/dtolnay/paste/issues/7
+                #[inline(always)]
                 unsafe fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
                     $code
                 }
