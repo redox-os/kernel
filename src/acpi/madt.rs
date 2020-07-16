@@ -5,7 +5,7 @@ use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 
 use super::sdt::Sdt;
-use super::{AP_STARTUP, TRAMPOLINE, find_sdt, load_table, get_sdt_signature};
+use super::{find_sdt, load_table, get_sdt_signature};
 
 use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
@@ -21,6 +21,9 @@ pub struct Madt {
     pub local_address: u32,
     pub flags: u32
 }
+
+const TRAMPOLINE: usize = 0x8000;
+static TRAMPOLINE_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/trampoline"));
 
 pub static mut MADT: Option<Madt> = None;
 pub const FLAG_PCAT: u32 = 1;
@@ -52,12 +55,18 @@ impl Madt {
             }
 
             if cfg!(feature = "multi_core") {
+                // Map trampoline
                 let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
-
-                // Map trampoline
                 let result = active_table.map_to(trampoline_page, trampoline_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
                 result.flush(active_table);
+
+                // Write trampoline, make sure TRAMPOLINE page is free for use
+                for i in 0..TRAMPOLINE_DATA.len() {
+                    unsafe {
+                        atomic_store((TRAMPOLINE as *mut u8).add(i), TRAMPOLINE_DATA[i]);
+                    }
+                }
 
                 for madt_entry in madt.iter() {
                     println!("      {:?}", madt_entry);
@@ -73,7 +82,7 @@ impl Madt {
                                 let stack_start = allocate_frames(64).expect("no more frames in acpi stack_start").start_address().get() + crate::KERNEL_OFFSET;
                                 let stack_end = stack_start + 64 * 4096;
 
-                                let ap_ready = TRAMPOLINE as *mut u64;
+                                let ap_ready = (TRAMPOLINE + 8) as *mut u64;
                                 let ap_cpu_id = unsafe { ap_ready.offset(1) };
                                 let ap_page_table = unsafe { ap_ready.offset(2) };
                                 let ap_stack_start = unsafe { ap_ready.offset(3) };
@@ -106,7 +115,7 @@ impl Madt {
                                 // Send START IPI
                                 {
                                     //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
-                                    let ap_segment = (AP_STARTUP >> 12) & 0xFF;
+                                    let ap_segment = (TRAMPOLINE >> 12) & 0xFF;
                                     let mut icr = 0x4600 | ap_segment as u64;
 
                                     if local_apic.x2 {
