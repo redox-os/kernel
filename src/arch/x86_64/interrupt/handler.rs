@@ -211,8 +211,12 @@ macro_rules! function {
     ($name:ident => { $($body:expr,)+ }) => {
         intel_asm!(
             ".global ", stringify!($name), "\n",
+            ".type ", stringify!($name), ", @function\n",
+            ".section .text.", stringify!($name), ", \"ax\", @progbits\n",
             stringify!($name), ":\n",
-            $($body,)+
+            $($body),+,
+            ".size ", stringify!($name), ", . - ", stringify!($name), "\n",
+            ".text\n",
         );
         extern "C" {
             pub fn $name();
