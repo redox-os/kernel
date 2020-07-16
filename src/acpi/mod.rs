@@ -39,9 +39,6 @@ pub mod aml;
 mod rxsdt;
 mod rsdp;
 
-const TRAMPOLINE: usize = 0x7E00;
-const AP_STARTUP: usize = TRAMPOLINE + 512;
-
 pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
     {
         let page = Page::containing_address(VirtualAddress::new(sdt_address));

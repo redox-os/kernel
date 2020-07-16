@@ -91,6 +91,26 @@ fn fill_from_location(f: &mut fs::File, loc: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+fn asm(_out_dir: &str) {}
+
+#[cfg(target_arch = "x86_64")]
+fn asm(out_dir: &str) {
+    use std::process::Command;
+
+    println!("cargo:rerun-if-changed=src/asm/x86_64/trampoline.asm");
+
+    let status = Command::new("nasm")
+        .arg("-f").arg("bin")
+        .arg("-o").arg(format!("{}/trampoline", out_dir))
+        .arg("src/asm/x86_64/trampoline.asm")
+        .status()
+        .expect("failed to run nasm");
+    if ! status.success() {
+        panic!("nasm failed with exit status {}", status);
+    }
+}
+
 fn main() {
     println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
     println!("cargo:rerun-if-env-changed=INITFS_FOLDER");
@@ -99,6 +119,8 @@ fn main() {
     let dest_path = Path::new(&out_dir).join("gen.rs");
     let mut f = fs::File::create(&dest_path).unwrap();
     let src = env::var("INITFS_FOLDER");
+
+    asm(&out_dir);
 
     // Write header
     f.write_all(
