@@ -73,15 +73,16 @@ impl Scheme for MemoryScheme {
             while i < grants.len()  {
                 let grant = &mut grants[i];
 
-                let mut grant_start = grant.start_address().get();
-                let mut grant_len = ((grant.size() + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
-                let mut grant_end = grant_start + grant_len;
+                let grant_start = grant.start_address().get();
+                let grant_len = ((grant.size() + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+                let grant_end = grant_start + grant_len;
 
-                if grant_end <= to_address {
+                if to_address < grant_start || grant_end <= to_address {
                     // grant has nothing to do with the memory to map, and thus we can safely just
                     // go on to the next one.
 
-                    if !fixed {
+                    if grant_start >= crate::USER_GRANT_OFFSET && !fixed {
+                        // don't ignore addresses outside of the automatic grant offset
                         to_address = grant_end;
                     }
                     i += 1;
@@ -96,6 +97,7 @@ impl Scheme for MemoryScheme {
                     // insert a new grant at the end (if not MapFlags::MAP_FIXED).
 
                     if fixed_noreplace {
+                        println!("grant: conflicts with: {:#x} - {:#x}", grant_start, grant_end);
                         return Err(Error::new(EEXIST));
                     } else if fixed {
                         /*
