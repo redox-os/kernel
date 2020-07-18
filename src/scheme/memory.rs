@@ -50,8 +50,9 @@ impl Scheme for MemoryScheme {
 
             let mut to_address = if map.address == 0 { crate::USER_GRANT_OFFSET } else {
                 if // map.address < crate::USER_GRANT_OFFSET || map.address + map.size > crate::USER_GRANT_OFFSET + crate::PML4_SIZE ||
-                    map.address % PAGE_SIZE != 0 {
-                        return Err(Error::new(EINVAL));
+                    map.address % PAGE_SIZE != 0
+                {
+                    return Err(Error::new(EINVAL));
                 }
                 map.address
             };
