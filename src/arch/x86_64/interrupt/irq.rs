@@ -2,12 +2,13 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::vec::Vec;
 
+use crate::{interrupt, interrupt_stack};
 use crate::context::timeout;
 use crate::device::{local_apic, ioapic, pic};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::debug_input;
-use crate::{context, ptrace, time};
+use crate::{context, time};
 
 //resets to 0 in context::switch()
 #[thread_local]
@@ -31,10 +32,10 @@ unsafe fn ps2_interrupt(_index: usize) {
         mov ah, al
         in al, 0x60
         "
-        : "={al}"(data), "={ah}"(status)
-        :
-        : "memory"
-        : "intel", "volatile"
+         : "={al}"(data), "={ah}"(status)
+         :
+         : "memory"
+         : "intel", "volatile"
     );
 
     if status & 1 != 0 {
@@ -168,7 +169,7 @@ unsafe fn ioapic_unmask(irq: usize) {
     ioapic::unmask(irq as u8);
 }
 
-interrupt_stack!(pit, stack, {
+interrupt_stack!(pit_stack, |_stack| {
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
     const PIT_RATE: u64 = 2_250_286;
@@ -189,46 +190,45 @@ interrupt_stack!(pit, stack, {
     timeout::trigger();
 
     if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
-        let _guard = ptrace::set_process_regs(stack);
         let _ = context::switch();
     }
 });
 
-interrupt!(keyboard, {
+interrupt!(keyboard, || {
     ps2_interrupt(0);
     eoi(1);
 });
 
-interrupt!(cascade, {
+interrupt!(cascade, || {
     // No need to do any operations on cascade
     eoi(2);
 });
 
-interrupt!(com2, {
+interrupt!(com2, || {
     while let Some(c) = COM2.lock().receive() {
         debug_input(c);
     }
     eoi(3);
 });
 
-interrupt!(com1, {
+interrupt!(com1, || {
     while let Some(c) = COM1.lock().receive() {
         debug_input(c);
     }
     eoi(4);
 });
 
-interrupt!(lpt2, {
+interrupt!(lpt2, || {
     trigger(5);
     eoi(5);
 });
 
-interrupt!(floppy, {
+interrupt!(floppy, || {
     trigger(6);
     eoi(6);
 });
 
-interrupt!(lpt1, {
+interrupt!(lpt1, || {
     if irq_method() == IrqMethod::Pic && pic::MASTER.isr() & (1 << 7) == 0 {
         // the IRQ was spurious, ignore it but increment a counter.
         SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
@@ -238,42 +238,42 @@ interrupt!(lpt1, {
     eoi(7);
 });
 
-interrupt!(rtc, {
+interrupt!(rtc, || {
     trigger(8);
     eoi(8);
 });
 
-interrupt!(pci1, {
+interrupt!(pci1, || {
     trigger(9);
     eoi(9);
 });
 
-interrupt!(pci2, {
+interrupt!(pci2, || {
     trigger(10);
     eoi(10);
 });
 
-interrupt!(pci3, {
+interrupt!(pci3, || {
     trigger(11);
     eoi(11);
 });
 
-interrupt!(mouse, {
+interrupt!(mouse, || {
     ps2_interrupt(1);
     eoi(12);
 });
 
-interrupt!(fpu, {
+interrupt!(fpu, || {
     trigger(13);
     eoi(13);
 });
 
-interrupt!(ata1, {
+interrupt!(ata1, || {
     trigger(14);
     eoi(14);
 });
 
-interrupt!(ata2, {
+interrupt!(ata2, || {
     if irq_method() == IrqMethod::Pic && pic::SLAVE.isr() & (1 << 7) == 0 {
         SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
         pic::MASTER.ack();
@@ -283,17 +283,17 @@ interrupt!(ata2, {
     eoi(15);
 });
 
-interrupt!(lapic_timer, {
+interrupt!(lapic_timer, || {
     println!("Local apic timer interrupt");
     lapic_eoi();
 });
 
-interrupt!(lapic_error, {
+interrupt!(lapic_error, || {
     println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());
     lapic_eoi();
 });
 
-interrupt!(calib_pit, {
+interrupt!(calib_pit, || {
     const PIT_RATE: u64 = 2_250_286;
 
     {
@@ -309,7 +309,7 @@ interrupt!(calib_pit, {
 
 macro_rules! allocatable_irq(
     ( $idt:expr, $number:literal, $name:ident ) => {
-        interrupt!($name, {
+        interrupt!($name, || {
             allocatable_irq_generic($number);
         });
     }

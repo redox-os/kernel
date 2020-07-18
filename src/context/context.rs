@@ -7,7 +7,7 @@ use core::cmp::Ordering;
 use core::mem;
 use spin::Mutex;
 
-use crate::arch::{macros::InterruptStack, paging::PAGE_SIZE};
+use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
 use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};

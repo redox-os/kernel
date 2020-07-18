@@ -99,7 +99,7 @@ pub unsafe fn set_tcb(pid: usize) {
 
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
-    use arch::x86_64::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
+    use super::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
     TSS.rsp[0] = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64;
     PTI_CONTEXT_STACK = stack;
 }

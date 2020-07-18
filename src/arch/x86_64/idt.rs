@@ -172,7 +172,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     current_idt[13].set_func(exception::protection);
     current_idt[14].set_func(exception::page);
     // 15 reserved
-    current_idt[16].set_func(exception::fpu);
+    current_idt[16].set_func(exception::fpu_fault);
     current_idt[17].set_func(exception::alignment_check);
     current_idt[18].set_func(exception::machine_check);
     current_idt[19].set_func(exception::simd);
@@ -186,7 +186,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
 
     if is_bsp {
         // Set up IRQs
-        current_idt[32].set_func(irq::pit);
+        current_idt[32].set_func(irq::pit_stack);
         current_idt[33].set_func(irq::keyboard);
         current_idt[34].set_func(irq::cascade);
         current_idt[35].set_func(irq::com2);

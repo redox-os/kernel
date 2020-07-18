@@ -1,11 +1,15 @@
 //! Interrupt instructions
 
+#[macro_use]
+pub mod handler;
+
 pub mod exception;
 pub mod ipi;
 pub mod irq;
 pub mod syscall;
 pub mod trace;
 
+pub use self::handler::InterruptStack;
 pub use self::trace::stack_trace;
 
 pub use super::idt::{available_irqs_iter, is_reserved, set_reserved};

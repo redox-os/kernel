@@ -1,7 +1,10 @@
-use crate::arch::macros::InterruptStack;
-use crate::arch::{gdt, pti};
-use crate::syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL};
-use crate::{ptrace, syscall};
+use crate::{
+    arch::{gdt, interrupt::InterruptStack},
+    context,
+    ptrace,
+    syscall,
+    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
+};
 use x86::msr;
 
 pub unsafe fn init() {
@@ -14,121 +17,113 @@ pub unsafe fn init() {
     msr::wrmsr(msr::IA32_EFER, efer | 1);
 }
 
-// Not a function pointer because it somehow messes up the returning
-// from clone() (via clone_ret()). Not sure what the problem is.
 macro_rules! with_interrupt_stack {
-    (unsafe fn $wrapped:ident($stack:ident) -> usize $code:block) => {
-        #[inline(never)]
-        unsafe fn $wrapped(stack: *mut InterruptStack) {
-            let _guard = ptrace::set_process_regs(stack);
+    (|$stack:ident| $code:block) => {{
+        let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
+            .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
 
-            let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
-                .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
-
-            if allowed.unwrap_or(true) {
-                // If syscall not ignored
-                let $stack = &mut *stack;
-                $stack.scratch.rax = $code;
-            }
-
-            ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
+        if allowed.unwrap_or(true) {
+            // If the syscall is `clone`, the clone won't return here. Instead,
+            // it'll return early and leave any undropped values. This is
+            // actually GOOD, because any references are at that point UB
+            // anyway, because they are based on the wrong stack.
+            let $stack = &mut *$stack;
+            (*$stack).scratch.rax = $code;
         }
-    }
+
+        ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
+    }}
 }
 
-#[naked]
-pub unsafe extern fn syscall_instruction() {
-    with_interrupt_stack! {
-        unsafe fn inner(stack) -> usize {
-            let rbp;
-            asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
+#[no_mangle]
+pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
+    let _guard = ptrace::set_process_regs(stack);
+    with_interrupt_stack!(|stack| {
+        // Set a restore point for clone
+        let rbp;
+        asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
-            let scratch = &stack.scratch;
-            syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
-        }
-    }
+        let scratch = &stack.scratch;
+        syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
+    });
+}
 
+function!(syscall_instruction => {
     // Yes, this is magic. No, you don't need to understand
-    asm!("
-          swapgs                    // Set gs segment to TSS
-          mov gs:[28], rsp          // Save userspace rsp
-          mov rsp, gs:[4]           // Load kernel rsp
-          push 5 * 8 + 3            // Push userspace data segment
-          push qword ptr gs:[28]    // Push userspace rsp
-          mov qword ptr gs:[28], 0  // Clear userspace rsp
-          push r11                  // Push rflags
-          push 4 * 8 + 3            // Push userspace code segment
-          push rcx                  // Push userspace return pointer
-          swapgs                    // Restore gs
-          "
-          :
-          :
-          :
-          : "intel", "volatile");
+    "
+        swapgs                    // Set gs segment to TSS
+        mov gs:[28], rsp          // Save userspace rsp
+        mov rsp, gs:[4]           // Load kernel rsp
+        push 5 * 8 + 3            // Push userspace data segment
+        push QWORD PTR gs:[28]    // Push userspace rsp
+        mov QWORD PTR gs:[28], 0  // Clear userspace rsp
+        push r11                  // Push rflags
+        push 4 * 8 + 3            // Push userspace code segment
+        push rcx                  // Push userspace return pointer
+        swapgs                    // Restore gs
+    ",
 
-    // Push scratch registers
-    interrupt_push!();
+    // Push context registers
+    "push rax\n",
+    push_scratch!(),
+    push_preserved!(),
+    push_fs!(),
 
-    // Get reference to stack variables
-    let rsp: usize;
-    asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
+    // TODO: Map PTI
+    // $crate::arch::x86_64::pti::map();
 
-    // Map kernel
-    pti::map();
+    // Call inner funtion
+    "mov rdi, rsp\n",
+    "call __inner_syscall_instruction\n",
 
-    inner(rsp as *mut InterruptStack);
+    // TODO: Unmap PTI
+    // $crate::arch::x86_64::pti::unmap();
 
-    // Unmap kernel
-    pti::unmap();
+    // Pop context registers
+    pop_fs!(),
+    pop_preserved!(),
+    pop_scratch!(),
 
-    // Interrupt return
-    interrupt_pop!();
-    iret!()
-}
+    // Return
+    "iretq\n",
+});
 
-#[naked]
-pub unsafe extern fn syscall() {
-    with_interrupt_stack! {
-        unsafe fn inner(stack) -> usize {
-            let rbp;
-            asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
-
-            let scratch = &stack.scratch;
-            syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
+interrupt_stack!(syscall, |stack| {
+    with_interrupt_stack!(|stack| {
+        {
+            let contexts = context::contexts();
+            let context = contexts.current();
+            if let Some(current) = context {
+                let current = current.read();
+                let name = current.name.lock();
+                println!("Warning: Context {} used deprecated `int 0x80` construct", core::str::from_utf8(&name).unwrap_or("(invalid utf8)"));
+            } else {
+                println!("Warning: Unknown context used deprecated `int 0x80` construct");
+            }
         }
-    }
 
-    // Push scratch registers
-    interrupt_push!();
+        // Set a restore point for clone
+        let rbp;
+        asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
-    // Get reference to stack variables
-    let rsp: usize;
-    asm!("" : "={rsp}"(rsp) : : : "intel", "volatile");
+        let scratch = &stack.scratch;
+        syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
+    })
+});
 
-    // Map kernel
-    pti::map();
-
-    inner(rsp as *mut InterruptStack);
-
-    // Unmap kernel
-    pti::unmap();
-
-    // Interrupt return
-    interrupt_pop!();
-    iret!();
-}
-
-#[naked]
-pub unsafe extern "C" fn clone_ret() {
-    // The C x86_64 ABI specifies that rbp is pushed to save the old
-    // call frame. Popping rbp means we're using the parent's call
-    // frame and thus will not only return from this function but also
-    // from the function above this one.
-    // When this is called, the stack should have been
-    // interrupt->inner->syscall->clone
-    // then changed to
-    // interrupt->inner->clone_ret->clone
-    // so this will return from "inner".
-
-    asm!("pop rbp" : : : : "intel", "volatile");
-}
+function!(clone_ret => {
+    // The address of this instruction is injected by `clone` in process.rs, on
+    // top of the stack syscall->inner in this file, which is done using the rbp
+    // register we save there.
+    //
+    // The top of our stack here is the address pointed to by rbp, which is:
+    //
+    // - the previous rbp
+    // - the return location
+    //
+    // Our goal is to return from the parent function, inner, so we restore
+    // rbp...
+    "pop rbp\n",
+    // ...and we return to the address at the top of the stack
+    "ret\n",
+});
