@@ -3,7 +3,7 @@
 use core::alloc::Layout;
 use core::panic::PanicInfo;
 
-use crate::interrupt;
+use crate::{cpu_id, context, interrupt};
 
 #[lang = "eh_personality"]
 #[no_mangle]
@@ -16,6 +16,9 @@ pub extern "C" fn rust_begin_unwind(info: &PanicInfo) -> ! {
     println!("KERNEL PANIC: {}", info);
 
     unsafe { interrupt::stack_trace(); }
+
+    println!("CPU {}, PID {:?}", cpu_id(), context::context_id());
+    //WARNING: name cannot be grabed, it may deadlock
 
     println!("HALT");
     loop {
