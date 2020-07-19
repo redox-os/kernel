@@ -9,6 +9,8 @@ pub mod rtc;
 pub mod serial;
 #[cfg(feature = "acpi")]
 pub mod hpet;
+#[cfg(feature = "system76_ec_debug")]
+pub mod system76_ec;
 
 pub unsafe fn init(active_table: &mut ActivePageTable) {
     pic::init();

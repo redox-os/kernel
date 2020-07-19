@@ -19,6 +19,8 @@ use super::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};
 use super::device::serial::LPSS;
 #[cfg(feature = "serial_debug")]
 use super::device::serial::COM1;
+#[cfg(feature = "system76_ec_debug")]
+use super::device::system76_ec::{SYSTEM76_EC, System76Ec};
 
 #[cfg(feature = "qemu_debug")]
 pub static QEMU: Mutex<Pio<u8>> = Mutex::new(Pio::<u8>::new(0x402));
@@ -33,6 +35,8 @@ pub struct Writer<'a> {
     qemu: MutexGuard<'a, Pio<u8>>,
     #[cfg(feature = "serial_debug")]
     serial: MutexGuard<'a, SerialPort<Pio<u8>>>,
+    #[cfg(feature = "system76_ec_debug")]
+    system76_ec: MutexGuard<'a, Option<System76Ec>>,
 }
 
 impl<'a> Writer<'a> {
@@ -47,6 +51,8 @@ impl<'a> Writer<'a> {
             qemu: QEMU.lock(),
             #[cfg(feature = "serial_debug")]
             serial: COM1.lock(),
+            #[cfg(feature = "system76_ec_debug")]
+            system76_ec: SYSTEM76_EC.lock(),
         }
     }
 
@@ -81,6 +87,13 @@ impl<'a> Writer<'a> {
         #[cfg(feature = "serial_debug")]
         {
             self.serial.write(buf);
+        }
+
+        #[cfg(feature = "system76_ec_debug")]
+        {
+            if let Some(ref mut system76_ec) = *self.system76_ec {
+                system76_ec.print_slice(buf);
+            }
         }
     }
 }

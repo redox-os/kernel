@@ -141,6 +141,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         #[cfg(feature="graphical_debug")]
         graphical_debug::init(&mut active_table);
 
+        #[cfg(feature = "system76_ec_debug")]
+        device::system76_ec::init();
+
         // Initialize devices
         device::init(&mut active_table);
 
