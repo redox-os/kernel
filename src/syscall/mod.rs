@@ -169,7 +169,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
             let context = context_lock.read();
             let name_raw = context.name.lock();
             let name = unsafe { core::str::from_utf8_unchecked(&name_raw) };
-            if name == "file:/lib/ld64.so.1" || name == "file:/home/user/test" {
+            if name == "file:/lib/ld64.so.1" || name == "file:/bin/ld" {
                 true
             } else {
                 false

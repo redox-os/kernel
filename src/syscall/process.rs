@@ -1043,13 +1043,13 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                 let interp_fd = super::fs::open(&interp, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
 
                 let mut args_vec = Vec::from(args);
-                args_vec.insert(0, interp.into_boxed_slice());
                 //TODO: pass file handle in auxv
                 let name_override = name.into_boxed_slice();
-                args_vec[1] = name_override.clone();
+                args_vec[0] = name_override.clone();
 
                 // Drop variables, since fexec_kernel probably won't return
                 drop(elf);
+                drop(interp);
 
                 return fexec_kernel(
                     interp_fd,
