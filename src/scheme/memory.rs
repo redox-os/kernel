@@ -1,7 +1,8 @@
+use core::cmp;
 use crate::context;
 use crate::context::memory::Grant;
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
-use crate::paging::VirtualAddress;
+use crate::paging::{ActivePageTable, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::syscall::data::{Map, Map2, StatVfs};
 use crate::syscall::error::*;
@@ -49,8 +50,9 @@ impl Scheme for MemoryScheme {
             let full_size = ((map.size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
 
             let mut to_address = if map.address == 0 { crate::USER_GRANT_OFFSET } else {
-                if // map.address < crate::USER_GRANT_OFFSET || map.address + map.size > crate::USER_GRANT_OFFSET + crate::PML4_SIZE ||
-                    map.address % PAGE_SIZE != 0
+                if
+                    map.address + full_size >= crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
+                    && map.address % PAGE_SIZE != 0
                 {
                     return Err(Error::new(EINVAL));
                 }
@@ -81,9 +83,12 @@ impl Scheme for MemoryScheme {
                     // grant has nothing to do with the memory to map, and thus we can safely just
                     // go on to the next one.
 
-                    if grant_start >= crate::USER_GRANT_OFFSET && !fixed {
-                        // don't ignore addresses outside of the automatic grant offset
-                        to_address = grant_end;
+                    if !fixed {
+                        // Use the default grant offset, or if we've already passed it, anything after that.
+                        to_address = cmp::max(
+                            cmp::max(crate::USER_GRANT_OFFSET, grant_end),
+                            to_address,
+                        );
                     }
                     i += 1;
 
@@ -126,15 +131,21 @@ impl Scheme for MemoryScheme {
                     }
                     continue;
                 }
-
-                i += 1;
             }
 
-            grants.insert(i, Grant::map(
-                VirtualAddress::new(to_address),
-                full_size,
-                entry_flags,
-            ));
+            let start_address = VirtualAddress::new(to_address);
+            let end_address = VirtualAddress::new(to_address + full_size);
+
+            // Make sure it's absolutely not mapped already
+            let active_table = unsafe { ActivePageTable::new() };
+
+            for page in Page::range_inclusive(Page::containing_address(start_address), Page::containing_address(end_address)) {
+                if active_table.translate_page(page).is_some() {
+                    return Err(Error::new(EEXIST))
+                }
+            }
+
+            grants.insert(i, Grant::map(start_address, full_size, entry_flags));
 
             Ok(to_address)
         }
