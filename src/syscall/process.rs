@@ -813,7 +813,7 @@ fn fexec_noreturn(
                 unsafe { *(sp as *mut usize) = arg; }
             };
 
-            // Push auxiliery vector
+            // Push auxiliary vector
             push(AT_NULL);
             for &arg in auxv.iter().rev() {
                 push(arg);
