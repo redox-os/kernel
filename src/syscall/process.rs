@@ -1002,7 +1002,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     };
 
     // `fexec_kernel` can recurse if an interpreter is found. We get the
-    // auxiliery vector from the first invocation, which is passed via an
+    // auxiliary vector from the first invocation, which is passed via an
     // argument, or if this is the first one we create it.
     let auxv = if let Some(auxv) = auxv {
         auxv
