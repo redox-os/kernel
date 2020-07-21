@@ -2,7 +2,7 @@ use core::{ascii, mem};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::data::{Map, Stat, TimeSpec};
+use super::data::{Map, Map2, Stat, TimeSpec};
 use super::flag::*;
 use super::number::*;
 use super::validate::*;
@@ -112,6 +112,14 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             validate_slice(
                 c as *const Map,
                 d/mem::size_of::<Map>()
+            ),
+        ),
+        SYS_FMAP2 => format!(
+            "fmap2({}, {:?})",
+            b,
+            validate_slice(
+                c as *const Map2,
+                d/mem::size_of::<Map2>()
             ),
         ),
         SYS_FUNMAP => format!(

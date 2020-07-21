@@ -187,7 +187,7 @@ pub extern fn userspace_init() {
         }
     }
 
-    syscall::fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None).expect("failed to execute init");
+    syscall::fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None, None).expect("failed to execute init");
 
     panic!("init returned");
 }
