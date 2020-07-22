@@ -453,15 +453,22 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
 
             let mut grants = context.grants.lock();
 
-            for i in 0 .. grants.len() {
-                let start = grants[i].start_address().get();
-                let end = start + grants[i].size();
-                if virtual_address >= start && virtual_address < end {
-                    let mut grant = grants.remove(i);
-                    desc_opt = grant.desc_opt.take();
-                    grant.unmap();
-                    break;
-                }
+            // TODO: Make BTreeSet roll around at the speed of sound,
+            // I mean, its got places to go, gotta follow its rainbow.
+            // Can't keep around, gotta moving on.
+            // Guess what lies ahead, only one way to find oooouuuut.
+
+            let grant = grants.iter().map(|grant| grant.region()).find(|grant| {
+                let start = grant.start_address().get();
+                let end = start + grant.size();
+
+                virtual_address >= start && virtual_address < end
+            });
+
+            if let Some(grant) = grant {
+                let mut grant = grants.take(&grant).unwrap();
+                desc_opt = grant.desc_opt.take();
+                grant.unmap();
             }
         }
 

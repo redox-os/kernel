@@ -11,7 +11,7 @@ use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
 use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::{Grant, Memory, SharedMemory, Tls};
+use crate::context::memory::{UserGrants, Memory, SharedMemory, Tls};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
@@ -230,7 +230,7 @@ pub struct Context {
     /// User Thread local storage
     pub tls: Option<Tls>,
     /// User grants
-    pub grants: Arc<Mutex<Vec<Grant>>>,
+    pub grants: Arc<Mutex<UserGrants>>,
     /// The name of the context
     pub name: Arc<Mutex<Box<[u8]>>>,
     /// The current working directory
@@ -289,7 +289,7 @@ impl Context {
             stack: None,
             sigstack: None,
             tls: None,
-            grants: Arc::new(Mutex::new(Vec::new())),
+            grants: Arc::new(Mutex::new(UserGrants::default())),
             name: Arc::new(Mutex::new(Vec::new().into_boxed_slice())),
             cwd: Arc::new(Mutex::new(Vec::new())),
             files: Arc::new(Mutex::new(Vec::new())),

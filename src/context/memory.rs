@@ -1,6 +1,9 @@
+use alloc::collections::{BTreeSet, VecDeque};
 use alloc::sync::{Arc, Weak};
-use alloc::collections::VecDeque;
+use core::borrow::Borrow;
+use core::cmp::{Eq, Ordering, PartialEq, PartialOrd};
 use core::intrinsics;
+use core::ops::{Deref, DerefMut};
 use spin::Mutex;
 
 use crate::arch::paging::PAGE_SIZE;
@@ -12,10 +15,70 @@ use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::MapperFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
 
-#[derive(Debug)]
-pub struct Grant {
+/// Round up to the nearest multiple of page size
+pub fn round_pages(size: usize) -> usize {
+    let rounded_up = size + PAGE_SIZE - 1;
+    rounded_up - rounded_up % PAGE_SIZE
+}
+
+#[derive(Debug, Default)]
+pub struct UserGrants {
+    pub inner: BTreeSet<Grant>,
+}
+impl Deref for UserGrants {
+    type Target = BTreeSet<Grant>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+impl DerefMut for UserGrants {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+pub struct Region {
     start: VirtualAddress,
     size: usize,
+}
+impl Region {
+    pub fn start_address(&self) -> VirtualAddress {
+        self.start
+    }
+    pub unsafe fn set_start_address(&mut self, start: VirtualAddress) {
+        self.start = start;
+    }
+
+    /// Return the exact size of the grant
+    pub fn size(&self) -> usize {
+        self.size
+    }
+    pub unsafe fn set_size(&mut self, size: usize) {
+        self.size = size;
+    }
+
+    /// Return the size of the grant in multiples of the page size
+    pub fn full_size(&self) -> usize {
+        round_pages(self.size)
+    }
+
+    /// Returns true if the address is within the grant's requested range
+    pub fn contains(&self, address: VirtualAddress, length: usize) -> bool {
+        self.start <= address && (address.get() - self.start.get() + length) <= self.size
+    }
+    /// Returns true if the address is within the grant's actual range (so,
+    /// rounded up to the page size)
+    pub fn occupies(&self, address: VirtualAddress, length: usize) -> bool {
+        self.start <= address && (address.get() - self.start.get() + length) <= self.full_size()
+    }
+}
+
+#[derive(Debug)]
+pub struct Grant {
+    // TODO: Use region here instead of start/end separately
+    region: Region,
+
     flags: EntryFlags,
     mapped: bool,
     owned: bool,
@@ -40,8 +103,10 @@ impl Grant {
         flush_all.flush(&mut active_table);
 
         Grant {
-            start: to,
-            size,
+            region: Region {
+                start: to,
+                size,
+            },
             flags,
             mapped: true,
             owned: false,
@@ -64,8 +129,10 @@ impl Grant {
         flush_all.flush(&mut active_table);
 
         Grant {
-            start: to,
-            size,
+            region: Region {
+                start: to,
+                size,
+            },
             flags,
             mapped: true,
             owned: true,
@@ -100,8 +167,10 @@ impl Grant {
         ipi(IpiKind::Tlb, IpiTarget::Other);
 
         Grant {
-            start: to,
-            size,
+            region: Region {
+                start: to,
+                size,
+            },
             flags,
             mapped: true,
             owned: false,
@@ -117,14 +186,14 @@ impl Grant {
 
         let mut flush_all = MapperFlushAll::new();
 
-        let start_page = Page::containing_address(self.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        let start_page = Page::containing_address(self.region.start);
+        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
             //TODO: One function to do both?
             let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
             let frame = active_table.translate_page(page).expect("grant references unmapped memory");
 
-            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.region.start.get() + new_start.get()));
             if self.owned {
                 let result = active_table.map(new_page, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
                 flush_all.consume(result);
@@ -138,7 +207,7 @@ impl Grant {
 
         if self.owned {
             unsafe {
-                intrinsics::copy(self.start.get() as *const u8, new_start.get() as *mut u8, self.size);
+                intrinsics::copy(self.region.start.get() as *const u8, new_start.get() as *mut u8, self.region.size);
             }
 
             let mut flush_all = MapperFlushAll::new();
@@ -147,7 +216,7 @@ impl Grant {
                 //TODO: One function to do both?
                 let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
 
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.region.start.get() + new_start.get()));
                 let result = active_table.remap(new_page, flags);
                 flush_all.consume(result);
             }
@@ -156,8 +225,10 @@ impl Grant {
         }
 
         Grant {
-            start: new_start,
-            size: self.size,
+            region: Region {
+                start: new_start,
+                size: self.region.size,
+            },
             flags: self.flags,
             mapped: true,
             owned: self.owned,
@@ -172,8 +243,8 @@ impl Grant {
 
         let mut flush_all = MapperFlushAll::new();
 
-        let start_page = Page::containing_address(self.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        let start_page = Page::containing_address(self.region.start);
+        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
             //TODO: One function to do both?
             let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
@@ -181,7 +252,7 @@ impl Grant {
             flush_all.consume(result);
 
             active_table.with(new_table, temporary_page, |mapper| {
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.region.start.get() + new_start.get()));
                 let result = mapper.map_to(new_page, frame, flags);
                 // Ignore result due to mapping on inactive table
                 unsafe { result.ignore(); }
@@ -190,22 +261,48 @@ impl Grant {
 
         flush_all.flush(&mut active_table);
 
-        self.start = new_start;
+        self.region.start = new_start;
     }
+
+    pub fn region(&self) -> Region {
+        self.region
+    }
+
+    // ------------------------
+    // Delegate to region
+    // ------------------------
 
     pub fn start_address(&self) -> VirtualAddress {
-        self.start
+        self.region.start
     }
     pub unsafe fn set_start_address(&mut self, start: VirtualAddress) {
-        self.start = start;
+        self.region.start = start;
     }
 
+    /// Return the exact size of the grant
     pub fn size(&self) -> usize {
-        self.size
+        self.region.size()
     }
     pub unsafe fn set_size(&mut self, size: usize) {
-        self.size = size;
+        self.region.set_size(size)
     }
+    /// Return the size of the grant in multiples of the page size
+    pub fn full_size(&self) -> usize {
+        self.region.full_size()
+    }
+    /// Returns true if the address is within the grant's requested range
+    pub fn contains(&self, address: VirtualAddress, length: usize) -> bool {
+        self.region.contains(address, length)
+    }
+    /// Returns true if the address is within the grant's actual range (so,
+    /// rounded up to the page size)
+    pub fn occupies(&self, address: VirtualAddress, length: usize) -> bool {
+        self.region.occupies(address, length)
+    }
+
+    // ------------------------
+    //        End TODO
+    // ------------------------
 
     pub fn flags(&self) -> EntryFlags {
         self.flags
@@ -226,8 +323,8 @@ impl Grant {
 
         let mut flush_all = MapperFlushAll::new();
 
-        let start_page = Page::containing_address(self.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        let start_page = Page::containing_address(self.region.start);
+        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
             let (result, _frame) = active_table.unmap_return(page, false);
             flush_all.consume(result);
@@ -253,8 +350,8 @@ impl Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         active_table.with(new_table, temporary_page, |mapper| {
-            let start_page = Page::containing_address(self.start);
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+            let start_page = Page::containing_address(self.region.start);
+            let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 let (result, _frame) = mapper.unmap_return(page, false);
                 // This is not the active table, so the flush can be ignored
@@ -270,6 +367,29 @@ impl Grant {
         }
 
         self.mapped = false;
+    }
+}
+
+impl PartialOrd for Grant {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.region.partial_cmp(&other.region)
+    }
+}
+impl Ord for Grant {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.region.cmp(&other.region)
+    }
+}
+impl PartialEq for Grant {
+    fn eq(&self, other: &Self) -> bool {
+        self.region.eq(&other.region)
+    }
+}
+impl Eq for Grant {}
+
+impl Borrow<Region> for Grant {
+    fn borrow(&self) -> &Region {
+        &self.region
     }
 }
 

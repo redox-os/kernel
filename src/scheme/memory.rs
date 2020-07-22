@@ -1,6 +1,6 @@
 use core::cmp;
 use crate::context;
-use crate::context::memory::Grant;
+use crate::context::memory::{round_pages, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
 use crate::paging::{ActivePageTable, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
@@ -47,7 +47,7 @@ impl Scheme for MemoryScheme {
 
             let mut grants = context.grants.lock();
 
-            let full_size = ((map.size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+            let full_size = round_pages(map.size);
 
             let mut to_address = if map.address == 0 { crate::USER_GRANT_OFFSET } else {
                 if
@@ -70,16 +70,12 @@ impl Scheme for MemoryScheme {
                 entry_flags |= EntryFlags::WRITABLE;
             }
 
-            let mut i = 0;
-
-            while i < grants.len()  {
-                let grant = &mut grants[i];
-
+            for grant in grants.iter() {
                 let grant_start = grant.start_address().get();
-                let grant_len = ((grant.size() + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
+                let grant_len = grant.full_size();
                 let grant_end = grant_start + grant_len;
 
-                if to_address < grant_start || grant_end <= to_address {
+                if !grant.occupies(VirtualAddress::new(to_address), full_size) {
                     // grant has nothing to do with the memory to map, and thus we can safely just
                     // go on to the next one.
 
@@ -90,14 +86,9 @@ impl Scheme for MemoryScheme {
                             to_address,
                         );
                     }
-                    i += 1;
 
                     continue;
-                }
-
-                // check whether this grant overlaps with the memory range to use, by checking that
-                // the start and end of the grant is not within the memory range to map
-                if grant_start <= to_address && grant_end > to_address || grant_start <= to_address + full_size && grant_end > to_address + full_size {
+                } else {
                     // the range overlaps, thus we'll have to continue to the next grant, or to
                     // insert a new grant at the end (if not MapFlags::MAP_FIXED).
 
@@ -110,7 +101,7 @@ impl Scheme for MemoryScheme {
                         // changed at all when mapping to a fixed address, we can just continue to
                         // the next grant and shrink or remove that one if it was also overlapping.
                         if to_address + full_size > grant_start {
-                            let new_start = core::cmp::min(grant_end, to_address + full_size);
+                        let new_start = core::cmp::min(grant_end, to_address + full_size);
 
                             let new_size = grant.size() - (new_start - grant_start);
                             unsafe { grant.set_size(new_size) };
@@ -127,7 +118,6 @@ impl Scheme for MemoryScheme {
                         return Err(Error::new(EOPNOTSUPP));
                     } else {
                         to_address = grant_end;
-                        i += 1;
                     }
                     continue;
                 }
@@ -145,7 +135,7 @@ impl Scheme for MemoryScheme {
                 }
             }
 
-            grants.insert(i, Grant::map(start_address, full_size, entry_flags));
+            grants.insert(Grant::map(start_address, full_size, entry_flags));
 
             Ok(to_address)
         }

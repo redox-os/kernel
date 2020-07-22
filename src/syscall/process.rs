@@ -1,13 +1,15 @@
-use alloc::sync::Arc;
 use alloc::boxed::Box;
+use alloc::collections::BTreeSet;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
-use core::{intrinsics, mem};
 use core::ops::DerefMut;
+use core::{intrinsics, mem};
 use spin::Mutex;
 
 use crate::context::file::FileDescriptor;
 use crate::context::{ContextId, WaitpidKey};
+use crate::context::memory::UserGrants;
 use crate::context;
 #[cfg(not(feature="doc"))]
 use crate::elf::{self, program_header};
@@ -280,12 +282,12 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             if flags.contains(CLONE_VM) {
                 grants = Arc::clone(&context.grants);
             } else {
-                let mut grants_vec = Vec::new();
+                let mut grants_set = UserGrants::default();
                 for grant in context.grants.lock().iter() {
                     let start = VirtualAddress::new(grant.start_address().get() + crate::USER_TMP_GRANT_OFFSET - crate::USER_GRANT_OFFSET);
-                    grants_vec.push(grant.secret_clone(start));
+                    grants_set.insert(grant.secret_clone(start));
                 }
-                grants = Arc::new(Mutex::new(grants_vec));
+                grants = Arc::new(Mutex::new(grants_set));
             }
 
             if flags.contains(CLONE_VM) {
@@ -332,19 +334,24 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
         if !flags.contains(CLONE_VM) {
-            let mut i = 0;
-            while i < grants.lock().len() {
+            let mut grants = grants.lock();
+
+            let mut to_remove = BTreeSet::new();
+
+            // TODO: Use drain_filter if possible
+
+            for grant in grants.iter() {
                 let remove = false;
-                if let Some(grant) = grants.lock().get(i) {
-                    if let Some(ref _desc) = grant.desc_opt {
-                        println!("todo: clone grant {} using fmap: {:?}", i, grant);
-                    }
+                if let Some(ref _desc) = grant.desc_opt {
+                    println!("todo: clone grant using fmap: {:?}", grant);
                 }
                 if remove {
-                    grants.lock().remove(i);
-                } else {
-                    i += 1;
+                    to_remove.insert(grant.region());
                 }
+            }
+
+            for region in to_remove {
+                grants.remove(&region);
             }
         }
 
@@ -510,9 +517,15 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
 
                 // Move grants
-                for grant in grants.lock().iter_mut() {
-                    let start = VirtualAddress::new(grant.start_address().get() + crate::USER_GRANT_OFFSET - crate::USER_TMP_GRANT_OFFSET);
-                    grant.move_to(start, &mut new_table, &mut temporary_page);
+                {
+                    let mut grants = grants.lock();
+                    let old_grants = mem::replace(&mut *grants, UserGrants::default());
+
+                    for mut grant in old_grants.inner.into_iter() {
+                        let start = VirtualAddress::new(grant.start_address().get() + crate::USER_GRANT_OFFSET - crate::USER_TMP_GRANT_OFFSET);
+                        grant.move_to(start, &mut new_table, &mut temporary_page);
+                        grants.insert(grant);
+                    }
                 }
                 context.grants = grants;
             }
@@ -626,7 +639,8 @@ fn empty(context: &mut context::Context, reaping: bool) {
 
     let mut grants = context.grants.lock();
     if Arc::strong_count(&context.grants) == 1 {
-        for grant in grants.drain(..) {
+        let grants = mem::replace(&mut *grants, UserGrants::default());
+        for grant in grants.inner.into_iter() {
             if reaping {
                 println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, grant);
 

@@ -138,21 +138,19 @@ impl UserInner {
                 entry_flags |= EntryFlags::WRITABLE;
             }
 
-            let mut i = 0;
-            while i < grants.len() {
-                let start = grants[i].start_address().get();
+            for grant in grants.iter() {
+                let start = grant.start_address().get();
                 if to_address + full_size < start {
                     break;
                 }
 
-                let pages = (grants[i].size() + 4095) / 4096;
+                let pages = (grant.size() + 4095) / 4096;
                 let end = start + pages * 4096;
                 to_address = end;
-                i += 1;
             }
 
             //TODO: Use syscall_head and syscall_tail to avoid leaking data
-            grants.insert(i, Grant::map_inactive(
+            grants.insert(Grant::map_inactive(
                 VirtualAddress::new(from_address),
                 VirtualAddress::new(to_address),
                 full_size,
@@ -178,14 +176,18 @@ impl UserInner {
 
             let mut grants = context.grants.lock();
 
-            for i in 0 .. grants.len() {
-                let start = grants[i].start_address().get();
-                let end = start + grants[i].size();
-                if address >= start && address < end {
-                    grants.remove(i).unmap_inactive(&mut new_table, &mut temporary_page);
+            // TODO Implementation can now use the powers of BTreeSet
 
-                    return Ok(());
-                }
+            let grant = grants.iter().map(|grant| grant.region()).find(|grant| {
+                let start = grant.start_address().get();
+                let end = start + grant.size();
+
+                address >= start && address < end
+            });
+
+            if let Some(grant) = grant {
+                grants.take(&grant).unwrap().unmap_inactive(&mut new_table, &mut temporary_page);
+                return Ok(());
             }
 
             Err(Error::new(EFAULT))
