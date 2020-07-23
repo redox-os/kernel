@@ -176,7 +176,7 @@ impl UserInner {
 
             let mut grants = context.grants.lock();
 
-            if let Some(region) = grants.find_conflict(Region::byte(VirtualAddress::new(address))).map(Region::from) {
+            if let Some(region) = grants.contains(VirtualAddress::new(address)).map(Region::from) {
                 grants.take(&region).unwrap().unmap_inactive(&mut new_table, &mut temporary_page);
                 return Ok(());
             }

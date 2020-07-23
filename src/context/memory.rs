@@ -26,13 +26,6 @@ pub struct UserGrants {
     pub inner: BTreeSet<Grant>,
 }
 impl UserGrants {
-    /// Returns the grant, if any, which occupies the requested region
-    pub fn find_conflict(&self, requested: Region) -> Option<&Grant> {
-        self.inner
-            .range(..requested)
-            .next_back()
-            .filter(|existing| existing.occupies(requested))
-    }
     /// Return a free region with the specified size
     pub fn find_free(&self, size: usize) -> Region {
         // TODO: Find deallocated regions that fits size
@@ -44,6 +37,28 @@ impl UserGrants {
         let address = cmp::max(last.end_address().get(), crate::USER_GRANT_OFFSET);
         // Create new region
         Region::new(VirtualAddress::new(address), size)
+    }
+    /// Returns the grant, if any, which occupies the specified address
+    pub fn contains(&self, address: VirtualAddress) -> Option<&Grant> {
+        let byte = Region::byte(address);
+        self.inner
+            .range(..byte)
+            .next_back()
+            .filter(|existing| existing.occupies(byte))
+    }
+    /// Returns an iterator over all grants that occupy some part of the
+    /// requested region
+    pub fn conflicts<'a>(&'a self, requested: Region) -> impl Iterator<Item = &'a Grant> + 'a {
+        let start = self.contains(requested.start_address());
+        let start_region = start.map(Region::from).unwrap_or(requested);
+        start
+            .into_iter()
+            .chain(
+                self
+                    .inner
+                    .range(start_region..)
+                    .take_while(move |region| region.occupies(requested))
+            )
     }
 }
 impl Deref for UserGrants {
@@ -77,16 +92,38 @@ impl Region {
         }
     }
 
+    /// Create a new region spanning between the start and end address
+    /// (exclusive end)
+    pub fn between(start: VirtualAddress, end: VirtualAddress) -> Self {
+        Self {
+            start,
+            size: end.get() - start.get(),
+        }
+    }
+
+    /// Return the part of the specified region that intersects with self.
+    pub fn intersect(&self, other: Self) -> Self {
+        Self::between(
+            cmp::max(self.start_address(), other.start_address()),
+            cmp::min(self.end_address(), other.end_address()),
+        )
+    }
+
     /// Get the start address of the region
     pub fn start_address(&self) -> VirtualAddress {
         self.start
     }
     /// Set the start address of the region
-    pub unsafe fn set_start_address(&mut self, start: VirtualAddress) {
+    pub fn set_start_address(&mut self, start: VirtualAddress) {
         self.start = start;
     }
 
-    /// Get the start address of the next region
+    /// Get the last address in the region (inclusive end)
+    pub fn final_address(&self) -> VirtualAddress {
+        VirtualAddress::new(self.start.get() + self.size - 1)
+    }
+
+    /// Get the start address of the next region (exclusive end)
     pub fn end_address(&self) -> VirtualAddress {
         VirtualAddress::new(self.start.get() + self.size)
     }
@@ -96,8 +133,14 @@ impl Region {
         self.size
     }
 
+    /// Return true if the size of this region is zero. Grants with such a
+    /// region should never exist.
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
     /// Set the exact size of the region
-    pub unsafe fn set_size(&mut self, size: usize) {
+    pub fn set_size(&mut self, size: usize) {
         self.size = size;
     }
 
@@ -115,13 +158,13 @@ impl Region {
     }
 
     /// Returns true if the address is within the regions's requested range
-    pub fn contains(&self, other: Self) -> bool {
+    pub fn collides(&self, other: Self) -> bool {
         self.start_address() <= other.start_address() && other.end_address().get() - self.start_address().get() < self.size()
     }
     /// Returns true if the address is within the regions's actual range (so,
     /// rounded up to the page size)
     pub fn occupies(&self, other: Self) -> bool {
-        self.start_address() <= other.start_address() && other.end_address().get() - self.start_address().get() < self.full_size()
+        self.round().collides(other)
     }
 }
 
@@ -132,11 +175,9 @@ impl<'a> From<&'a Grant> for Region {
 }
 
 
-    #[derive(Debug)]
+#[derive(Debug)]
 pub struct Grant {
-    // TODO: Use region here instead of start/end separately
     region: Region,
-
     flags: EntryFlags,
     mapped: bool,
     owned: bool,
@@ -145,6 +186,12 @@ pub struct Grant {
 }
 
 impl Grant {
+    /// Get a mutable reference to the region. This is unsafe, because a bad
+    /// region could lead to the wrong addresses being unmapped.
+    pub unsafe fn region_mut(&mut self) -> &mut Region {
+        &mut self.region
+    }
+
     pub fn physmap(from: PhysicalAddress, to: VirtualAddress, size: usize, flags: EntryFlags) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
@@ -341,8 +388,8 @@ impl Grant {
 
         let mut flush_all = MapperFlushAll::new();
 
-        let start_page = Page::containing_address(self.region.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
+        let start_page = Page::containing_address(self.start_address());
+        let end_page = Page::containing_address(self.final_address());
         for page in Page::range_inclusive(start_page, end_page) {
             let (result, _frame) = active_table.unmap_return(page, false);
             flush_all.consume(result);
@@ -368,8 +415,8 @@ impl Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         active_table.with(new_table, temporary_page, |mapper| {
-            let start_page = Page::containing_address(self.region.start);
-            let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
+            let start_page = Page::containing_address(self.start_address());
+            let end_page = Page::containing_address(self.final_address());
             for page in Page::range_inclusive(start_page, end_page) {
                 let (result, _frame) = mapper.unmap_return(page, false);
                 // This is not the active table, so the flush can be ignored
@@ -386,17 +433,68 @@ impl Grant {
 
         self.mapped = false;
     }
+
+    /// Extract out a region into a separate grant. The return value is as
+    /// follows: (before, new split, after). Before and after may be `None`,
+    /// which occurs when the split off region is at the start or end of the
+    /// page respectively.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the start or end addresses of the region is not aligned to the
+    /// page size. To round up the size to the nearest page size, use `.round()`
+    /// on the region.
+    pub fn split_out(mut self, region: Region) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
+        assert_eq!(region.start_address().get() % PAGE_SIZE, 0, "split_out must be called on page-size aligned start address");
+        assert_eq!(region.size() % PAGE_SIZE, 0, "split_out must be called on page-size aligned end address");
+
+        let region = self.intersect(region);
+
+        // Regions share no common points
+        if region.is_empty() {
+            return None;
+        }
+
+        let before = Region::between(
+            self.start_address(),
+            region.start_address(),
+        );
+        let after = Region::between(
+            region.end_address(),
+            self.end_address(),
+        );
+
+        let before_grant = if before.is_empty() { None } else {
+            Some(Grant {
+                region: before,
+                flags: self.flags,
+                mapped: self.mapped,
+                owned: self.owned,
+                desc_opt: self.desc_opt.clone(),
+            })
+        };
+        let after_grant = if after.is_empty() { None } else {
+            Some(Grant {
+                region: after,
+                flags: self.flags,
+                mapped: self.mapped,
+                owned: self.owned,
+                desc_opt: self.desc_opt.clone(),
+            })
+        };
+
+        unsafe {
+            *self.region_mut() = region;
+        }
+
+        Some((before_grant, self, after_grant))
+    }
 }
 
 impl Deref for Grant {
     type Target = Region;
     fn deref(&self) -> &Self::Target {
         &self.region
-    }
-}
-impl DerefMut for Grant {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.region
     }
 }
 
@@ -425,7 +523,7 @@ impl Borrow<Region> for Grant {
 
 impl Drop for Grant {
     fn drop(&mut self) {
-        assert!(!self.mapped);
+        assert!(!self.mapped, "Grant dropped while still mapped");
     }
 }
 
@@ -636,5 +734,17 @@ impl Tls {
             (self.mem.start_address().get() + self.offset) as *mut u8,
             self.file_size
         );
+    }
+}
+
+#[cfg(tests)]
+mod tests {
+    // TODO: Get these tests working
+    #[test]
+    fn region_collides() {
+        assert!(Region::new(0, 2).collides(Region::new(0, 1)));
+        assert!(Region::new(0, 2).collides(Region::new(1, 1)));
+        assert!(!Region::new(0, 2).collides(Region::new(2, 1)));
+        assert!(!Region::new(0, 2).collides(Region::new(3, 1)));
     }
 }

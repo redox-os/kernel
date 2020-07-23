@@ -131,7 +131,7 @@ pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
 
         let mut grants = context.grants.lock();
 
-        if let Some(region) = grants.find_conflict(Region::byte(VirtualAddress::new(virtual_address))).map(Region::from) {
+        if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
             grants.take(&region).unwrap().unmap();
             return Ok(0);
         }

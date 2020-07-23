@@ -58,7 +58,7 @@ impl Scheme for MemoryScheme {
                     return Err(Error::new(EINVAL));
                 }
 
-                if let Some(grant) = grants.find_conflict(requested) {
+                if let Some(grant) = grants.contains(requested.start_address()) {
                     if fixed_noreplace {
                         println!("grant: conflicts with: {:#x} - {:#x}", grant.start_address().get(), grant.end_address().get());
                         return Err(Error::new(EEXIST));

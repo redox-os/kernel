@@ -455,7 +455,49 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
 
             let mut grants = context.grants.lock();
 
-            if let Some(region) = grants.find_conflict(Region::byte(VirtualAddress::new(virtual_address))).map(Region::from) {
+            if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
+                let mut grant = grants.take(&region).unwrap();
+                desc_opt = grant.desc_opt.take();
+                grant.unmap();
+            }
+        }
+
+        if let Some(desc) = desc_opt {
+            let scheme_id = {
+                let description = desc.description.read();
+                description.scheme
+            };
+
+            let scheme = {
+                let schemes = scheme::schemes();
+                let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
+                scheme.clone()
+            };
+            let res = scheme.funmap(virtual_address);
+
+            let _ = desc.close();
+
+            res
+        } else {
+            Err(Error::new(EFAULT))
+        }
+    }
+}
+
+pub fn funmap2(virtual_address: usize, length: usize) -> Result<usize> {
+    if virtual_address == 0 {
+        Ok(0)
+    } else {
+        let mut desc_opt = None;
+
+        {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+
+            let mut grants = context.grants.lock();
+
+            if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
                 let mut grant = grants.take(&region).unwrap();
                 desc_opt = grant.desc_opt.take();
                 grant.unmap();
