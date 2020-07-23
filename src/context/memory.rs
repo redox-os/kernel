@@ -2,9 +2,14 @@ use alloc::collections::{BTreeSet, VecDeque};
 use alloc::sync::{Arc, Weak};
 use core::borrow::Borrow;
 use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
+use core::fmt::{self, Debug};
 use core::intrinsics;
 use core::ops::{Deref, DerefMut};
 use spin::Mutex;
+use syscall::{
+    flag::MapFlags,
+    error::*,
+};
 
 use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
@@ -15,10 +20,29 @@ use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::MapperFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
 
+/// Round down to the nearest multiple of page size
+pub fn round_down_pages(number: usize) -> usize {
+    number - number % PAGE_SIZE
+}
 /// Round up to the nearest multiple of page size
-pub fn round_pages(size: usize) -> usize {
-    let rounded_up = size + PAGE_SIZE - 1;
-    rounded_up - rounded_up % PAGE_SIZE
+pub fn round_up_pages(number: usize) -> usize {
+    round_down_pages(number + PAGE_SIZE - 1)
+}
+
+pub fn entry_flags(flags: MapFlags) -> EntryFlags {
+    let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
+
+    if !flags.contains(MapFlags::PROT_EXEC) {
+        entry_flags |= EntryFlags::NO_EXECUTE;
+    }
+    if flags.contains(MapFlags::PROT_READ) {
+        //TODO: PROT_READ
+    }
+    if flags.contains(MapFlags::PROT_WRITE) {
+        entry_flags |= EntryFlags::WRITABLE;
+    }
+
+    entry_flags
 }
 
 #[derive(Debug, Default)]
@@ -26,18 +50,6 @@ pub struct UserGrants {
     pub inner: BTreeSet<Grant>,
 }
 impl UserGrants {
-    /// Return a free region with the specified size
-    pub fn find_free(&self, size: usize) -> Region {
-        // TODO: Find deallocated regions that fits size
-        // Right now we just find region at end
-
-        // Get last used region
-        let last = self.inner.iter().next_back().map(Region::from).unwrap_or(Region::new(VirtualAddress::new(0), 0));
-        // At the earliest, start at grant offset
-        let address = cmp::max(last.end_address().get(), crate::USER_GRANT_OFFSET);
-        // Create new region
-        Region::new(VirtualAddress::new(address), size)
-    }
     /// Returns the grant, if any, which occupies the specified address
     pub fn contains(&self, address: VirtualAddress) -> Option<&Grant> {
         let byte = Region::byte(address);
@@ -51,14 +63,53 @@ impl UserGrants {
     pub fn conflicts<'a>(&'a self, requested: Region) -> impl Iterator<Item = &'a Grant> + 'a {
         let start = self.contains(requested.start_address());
         let start_region = start.map(Region::from).unwrap_or(requested);
-        start
-            .into_iter()
-            .chain(
-                self
-                    .inner
-                    .range(start_region..)
-                    .take_while(move |region| region.occupies(requested))
-            )
+        self
+            .inner
+            .range(start_region..)
+            .take_while(move |region| region.occupies(requested))
+    }
+    /// Return a free region with the specified size
+    pub fn find_free(&self, size: usize) -> Region {
+        // Get last used region
+        let last = self.inner.iter().next_back().map(Region::from).unwrap_or(Region::new(VirtualAddress::new(0), 0));
+        // At the earliest, start at grant offset
+        let address = cmp::max(last.end_address().get(), crate::USER_GRANT_OFFSET);
+        // Create new region
+        Region::new(VirtualAddress::new(address), size)
+    }
+    /// Return a free region, respecting the user's hinted address and flags. Address may be null.
+    pub fn find_free_at(&mut self, address: VirtualAddress, size: usize, flags: MapFlags) -> Result<Region> {
+        if address == VirtualAddress::new(0) {
+            // Free hands!
+            return Ok(self.find_free(size));
+        }
+
+        // The user wished to have this region...
+        let mut requested = Region::new(address, size);
+
+        if
+            requested.end_address().get() >= crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
+            && address.get() % PAGE_SIZE != 0
+        {
+            // ... but it was invalid
+            return Err(Error::new(EINVAL));
+        }
+
+        if let Some(grant) = self.contains(requested.start_address()) {
+            // ... but it already exists
+
+            if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) {
+                println!("grant: conflicts with: {:#x} - {:#x}", grant.start_address().get(), grant.end_address().get());
+                return Err(Error::new(EEXIST));
+            } else if flags.contains(MapFlags::MAP_FIXED) {
+                // TODO: Overwrite existing grant
+                return Err(Error::new(EOPNOTSUPP));
+            } else {
+                requested = self.find_free(requested.size());
+            }
+        }
+
+        Ok(requested)
     }
 }
 impl Deref for UserGrants {
@@ -73,7 +124,7 @@ impl DerefMut for UserGrants {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Region {
     start: VirtualAddress,
     size: usize,
@@ -147,7 +198,7 @@ impl Region {
     /// Round region up to nearest page size
     pub fn round(self) -> Self {
         Self {
-            size: round_pages(self.size),
+            size: round_up_pages(self.size),
             ..self
         }
     }
@@ -166,7 +217,22 @@ impl Region {
     pub fn occupies(&self, other: Self) -> bool {
         self.round().collides(other)
     }
+
+    /// Return all pages containing a chunk of the region
+    pub fn pages(&self) -> PageIter {
+        Page::range_inclusive(
+            Page::containing_address(self.start_address()),
+            Page::containing_address(self.end_address())
+        )
+    }
 }
+
+impl Debug for Region {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:#x}..{:#x} ({:#x} long)", self.start_address().get(), self.end_address().get(), self.size())
+    }
+}
+
 
 impl<'a> From<&'a Grant> for Region {
     fn from(source: &'a Grant) -> Self {
@@ -444,16 +510,15 @@ impl Grant {
     /// Panics if the start or end addresses of the region is not aligned to the
     /// page size. To round up the size to the nearest page size, use `.round()`
     /// on the region.
-    pub fn split_out(mut self, region: Region) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
+    ///
+    /// Also panics if the given region isn't completely contained within the
+    /// grant. Use `grant.intersect` to find a sub-region that works.
+    pub fn extract(mut self, region: Region) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
         assert_eq!(region.start_address().get() % PAGE_SIZE, 0, "split_out must be called on page-size aligned start address");
         assert_eq!(region.size() % PAGE_SIZE, 0, "split_out must be called on page-size aligned end address");
 
-        let region = self.intersect(region);
-
-        // Regions share no common points
-        if region.is_empty() {
-            return None;
-        }
+        assert!(self.start_address() <= region.start_address());
+        assert!(region.end_address() <= self.end_address());
 
         let before = Region::between(
             self.start_address(),

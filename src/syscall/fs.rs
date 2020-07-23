@@ -1,11 +1,13 @@
 //! Filesystem syscalls
-use core::sync::atomic::Ordering;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::Region;
 use crate::context;
+use crate::memory::PAGE_SIZE;
 use crate::paging::VirtualAddress;
 use crate::scheme::{self, FileHandle};
 use crate::syscall::data::{Packet, Stat};
@@ -485,43 +487,66 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
 }
 
 pub fn funmap2(virtual_address: usize, length: usize) -> Result<usize> {
-    if virtual_address == 0 {
-        Ok(0)
-    } else {
-        let mut desc_opt = None;
+    if virtual_address == 0 || length == 0 {
+        return Ok(0);
+    } else if virtual_address % PAGE_SIZE != 0 {
+        return Err(Error::new(EINVAL));
+    }
 
-        {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
+    let mut notify_files = Vec::new();
 
-            let mut grants = context.grants.lock();
+    let virtual_address = VirtualAddress::new(virtual_address);
+    let requested = Region::new(virtual_address, length);
 
-            if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
-                let mut grant = grants.take(&region).unwrap();
-                desc_opt = grant.desc_opt.take();
-                grant.unmap();
+    {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+
+        let mut grants = context.grants.lock();
+
+        let conflicting: Vec<Region> = grants.conflicts(requested).map(Region::from).collect();
+
+        for conflict in conflicting {
+            let grant = grants.take(&conflict).expect("conflicting region didn't exist");
+            let intersection = grant.intersect(requested);
+            let (before, mut grant, after) = grant.extract(intersection.round()).expect("conflicting region shared no common parts");
+
+            // Notify scheme that holds grant
+            if let Some(file_desc) = grant.desc_opt.take() {
+                notify_files.push((file_desc, intersection));
             }
-        }
 
-        if let Some(desc) = desc_opt {
-            let scheme_id = {
-                let description = desc.description.read();
-                description.scheme
-            };
+            // Keep untouched regions
+            if let Some(before) = before {
+                grants.insert(before);
+            }
+            if let Some(after) = after {
+                grants.insert(after);
+            }
 
-            let scheme = {
-                let schemes = scheme::schemes();
-                let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
-                scheme.clone()
-            };
-            let res = scheme.funmap(virtual_address);
-
-            let _ = desc.close();
-
-            res
-        } else {
-            Err(Error::new(EFAULT))
+            // Remove irrelevant region
+            grant.unmap();
         }
     }
+
+    for (desc, intersection) in notify_files {
+        let scheme_id = {
+            let description = desc.description.read();
+            description.scheme
+        };
+
+        let scheme = {
+            let schemes = scheme::schemes();
+            let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
+            scheme.clone()
+        };
+        let res = scheme.funmap2(intersection.start_address().get(), intersection.size());
+
+        let _ = desc.close();
+
+        res?;
+    }
+
+    Ok(0)
 }
