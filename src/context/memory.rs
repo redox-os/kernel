@@ -1,7 +1,7 @@
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::sync::{Arc, Weak};
 use core::borrow::Borrow;
-use core::cmp::{Eq, Ordering, PartialEq, PartialOrd};
+use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
 use core::intrinsics;
 use core::ops::{Deref, DerefMut};
 use spin::Mutex;
@@ -25,6 +25,27 @@ pub fn round_pages(size: usize) -> usize {
 pub struct UserGrants {
     pub inner: BTreeSet<Grant>,
 }
+impl UserGrants {
+    /// Returns the grant, if any, which occupies the requested region
+    pub fn find_conflict(&self, requested: Region) -> Option<&Grant> {
+        self.inner
+            .range(..requested)
+            .next_back()
+            .filter(|existing| existing.occupies(requested))
+    }
+    /// Return a free region with the specified size
+    pub fn find_free(&self, size: usize) -> Region {
+        // TODO: Find deallocated regions that fits size
+        // Right now we just find region at end
+
+        // Get last used region
+        let last = self.inner.iter().next_back().map(Region::from).unwrap_or(Region::new(VirtualAddress::new(0), 0));
+        // At the earliest, start at grant offset
+        let address = cmp::max(last.end_address().get(), crate::USER_GRANT_OFFSET);
+        // Create new region
+        Region::new(VirtualAddress::new(address), size)
+    }
+}
 impl Deref for UserGrants {
     type Target = BTreeSet<Grant>;
     fn deref(&self) -> &Self::Target {
@@ -43,38 +64,75 @@ pub struct Region {
     size: usize,
 }
 impl Region {
+    /// Create a new region with the given size
+    pub fn new(start: VirtualAddress, size: usize) -> Self {
+        Self { start, size }
+    }
+
+    /// Create a new region spanning exactly one byte
+    pub fn byte(address: VirtualAddress) -> Self {
+        Self {
+            start: address,
+            size: 1,
+        }
+    }
+
+    /// Get the start address of the region
     pub fn start_address(&self) -> VirtualAddress {
         self.start
     }
+    /// Set the start address of the region
     pub unsafe fn set_start_address(&mut self, start: VirtualAddress) {
         self.start = start;
     }
 
-    /// Return the exact size of the grant
+    /// Get the start address of the next region
+    pub fn end_address(&self) -> VirtualAddress {
+        VirtualAddress::new(self.start.get() + self.size)
+    }
+
+    /// Return the exact size of the region
     pub fn size(&self) -> usize {
         self.size
     }
+
+    /// Set the exact size of the region
     pub unsafe fn set_size(&mut self, size: usize) {
         self.size = size;
     }
 
-    /// Return the size of the grant in multiples of the page size
-    pub fn full_size(&self) -> usize {
-        round_pages(self.size)
+    /// Round region up to nearest page size
+    pub fn round(self) -> Self {
+        Self {
+            size: round_pages(self.size),
+            ..self
+        }
     }
 
-    /// Returns true if the address is within the grant's requested range
-    pub fn contains(&self, address: VirtualAddress, length: usize) -> bool {
-        self.start <= address && (address.get() - self.start.get() + length) <= self.size
+    /// Return the size of the grant in multiples of the page size
+    pub fn full_size(&self) -> usize {
+        self.round().size()
     }
-    /// Returns true if the address is within the grant's actual range (so,
+
+    /// Returns true if the address is within the regions's requested range
+    pub fn contains(&self, other: Self) -> bool {
+        self.start_address() <= other.start_address() && other.end_address().get() - self.start_address().get() < self.size()
+    }
+    /// Returns true if the address is within the regions's actual range (so,
     /// rounded up to the page size)
-    pub fn occupies(&self, address: VirtualAddress, length: usize) -> bool {
-        self.start <= address && (address.get() - self.start.get() + length) <= self.full_size()
+    pub fn occupies(&self, other: Self) -> bool {
+        self.start_address() <= other.start_address() && other.end_address().get() - self.start_address().get() < self.full_size()
     }
 }
 
-#[derive(Debug)]
+impl<'a> From<&'a Grant> for Region {
+    fn from(source: &'a Grant) -> Self {
+        source.region
+    }
+}
+
+
+    #[derive(Debug)]
 pub struct Grant {
     // TODO: Use region here instead of start/end separately
     region: Region,
@@ -264,46 +322,6 @@ impl Grant {
         self.region.start = new_start;
     }
 
-    pub fn region(&self) -> Region {
-        self.region
-    }
-
-    // ------------------------
-    // Delegate to region
-    // ------------------------
-
-    pub fn start_address(&self) -> VirtualAddress {
-        self.region.start
-    }
-    pub unsafe fn set_start_address(&mut self, start: VirtualAddress) {
-        self.region.start = start;
-    }
-
-    /// Return the exact size of the grant
-    pub fn size(&self) -> usize {
-        self.region.size()
-    }
-    pub unsafe fn set_size(&mut self, size: usize) {
-        self.region.set_size(size)
-    }
-    /// Return the size of the grant in multiples of the page size
-    pub fn full_size(&self) -> usize {
-        self.region.full_size()
-    }
-    /// Returns true if the address is within the grant's requested range
-    pub fn contains(&self, address: VirtualAddress, length: usize) -> bool {
-        self.region.contains(address, length)
-    }
-    /// Returns true if the address is within the grant's actual range (so,
-    /// rounded up to the page size)
-    pub fn occupies(&self, address: VirtualAddress, length: usize) -> bool {
-        self.region.occupies(address, length)
-    }
-
-    // ------------------------
-    //        End TODO
-    // ------------------------
-
     pub fn flags(&self) -> EntryFlags {
         self.flags
     }
@@ -367,6 +385,18 @@ impl Grant {
         }
 
         self.mapped = false;
+    }
+}
+
+impl Deref for Grant {
+    type Target = Region;
+    fn deref(&self) -> &Self::Target {
+        &self.region
+    }
+}
+impl DerefMut for Grant {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.region
     }
 }
 

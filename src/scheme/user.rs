@@ -8,7 +8,7 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::Grant;
+use crate::context::memory::{Grant, Region};
 use crate::event;
 use crate::paging::{InactivePageTable, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
@@ -176,17 +176,8 @@ impl UserInner {
 
             let mut grants = context.grants.lock();
 
-            // TODO Implementation can now use the powers of BTreeSet
-
-            let grant = grants.iter().map(|grant| grant.region()).find(|grant| {
-                let start = grant.start_address().get();
-                let end = start + grant.size();
-
-                address >= start && address < end
-            });
-
-            if let Some(grant) = grant {
-                grants.take(&grant).unwrap().unmap_inactive(&mut new_table, &mut temporary_page);
+            if let Some(region) = grants.find_conflict(Region::byte(VirtualAddress::new(address))).map(Region::from) {
+                grants.take(&region).unwrap().unmap_inactive(&mut new_table, &mut temporary_page);
                 return Ok(());
             }
 

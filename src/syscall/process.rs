@@ -9,7 +9,7 @@ use spin::Mutex;
 
 use crate::context::file::FileDescriptor;
 use crate::context::{ContextId, WaitpidKey};
-use crate::context::memory::UserGrants;
+use crate::context::memory::{UserGrants, Region};
 use crate::context;
 #[cfg(not(feature="doc"))]
 use crate::elf::{self, program_header};
@@ -346,7 +346,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     println!("todo: clone grant using fmap: {:?}", grant);
                 }
                 if remove {
-                    to_remove.insert(grant.region());
+                    to_remove.insert(Region::from(grant));
                 }
             }
 

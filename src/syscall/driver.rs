@@ -3,7 +3,7 @@ use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
 use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::context;
-use crate::context::memory::Grant;
+use crate::context::memory::{Grant, Region};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
@@ -131,17 +131,8 @@ pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
 
         let mut grants = context.grants.lock();
 
-        // TODO Implementation can now use the powers of BTreeSet
-
-        let grant = grants.iter().map(|grant| grant.region()).find(|grant| {
-            let start = grant.start_address().get();
-            let end = start + grant.size();
-
-            virtual_address >= start && virtual_address < end
-        });
-
-        if let Some(grant) = grant {
-            grants.take(&grant).unwrap().unmap();
+        if let Some(region) = grants.find_conflict(Region::byte(VirtualAddress::new(virtual_address))).map(Region::from) {
+            grants.take(&region).unwrap().unmap();
             return Ok(0);
         }
 

@@ -1,6 +1,5 @@
-use core::cmp;
 use crate::context;
-use crate::context::memory::{round_pages, Grant};
+use crate::context::memory::{Grant, Region};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
 use crate::paging::{ActivePageTable, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
@@ -47,16 +46,31 @@ impl Scheme for MemoryScheme {
 
             let mut grants = context.grants.lock();
 
-            let full_size = round_pages(map.size);
+            let requested = if map.address == 0 {
+                grants.find_free(map.size).round()
+            } else {
+                let mut requested = Region::new(VirtualAddress::new(map.address), map.size);
 
-            let mut to_address = if map.address == 0 { crate::USER_GRANT_OFFSET } else {
                 if
-                    map.address + full_size >= crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
+                    requested.end_address().get() >= crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
                     && map.address % PAGE_SIZE != 0
                 {
                     return Err(Error::new(EINVAL));
                 }
-                map.address
+
+                if let Some(grant) = grants.find_conflict(requested) {
+                    if fixed_noreplace {
+                        println!("grant: conflicts with: {:#x} - {:#x}", grant.start_address().get(), grant.end_address().get());
+                        return Err(Error::new(EEXIST));
+                    } else if fixed {
+                        // TODO: Overwrite existing grant
+                        return Err(Error::new(EOPNOTSUPP));
+                    } else {
+                        requested = grants.find_free(requested.size());
+                    }
+                }
+
+                requested.round()
             };
 
             let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
@@ -70,63 +84,12 @@ impl Scheme for MemoryScheme {
                 entry_flags |= EntryFlags::WRITABLE;
             }
 
-            for grant in grants.iter() {
-                let grant_start = grant.start_address().get();
-                let grant_len = grant.full_size();
-                let grant_end = grant_start + grant_len;
+            let start_address = requested.start_address();
+            let end_address = requested.end_address();
 
-                if !grant.occupies(VirtualAddress::new(to_address), full_size) {
-                    // grant has nothing to do with the memory to map, and thus we can safely just
-                    // go on to the next one.
+            // Make sure it's *absolutely* not mapped already
+            // TODO: Keep track of all allocated memory so this isn't necessary
 
-                    if !fixed {
-                        // Use the default grant offset, or if we've already passed it, anything after that.
-                        to_address = cmp::max(
-                            cmp::max(crate::USER_GRANT_OFFSET, grant_end),
-                            to_address,
-                        );
-                    }
-
-                    continue;
-                } else {
-                    // the range overlaps, thus we'll have to continue to the next grant, or to
-                    // insert a new grant at the end (if not MapFlags::MAP_FIXED).
-
-                    if fixed_noreplace {
-                        println!("grant: conflicts with: {:#x} - {:#x}", grant_start, grant_end);
-                        return Err(Error::new(EEXIST));
-                    } else if fixed {
-                        /*
-                        // shrink the grant, removing it if necessary. since the to_address isn't
-                        // changed at all when mapping to a fixed address, we can just continue to
-                        // the next grant and shrink or remove that one if it was also overlapping.
-                        if to_address + full_size > grant_start {
-                        let new_start = core::cmp::min(grant_end, to_address + full_size);
-
-                            let new_size = grant.size() - (new_start - grant_start);
-                            unsafe { grant.set_size(new_size) };
-                            grant_len = ((new_size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
-
-                            let new_start = VirtualAddress::new(new_start);
-                            unsafe { grant.set_start_address(new_start) };
-                            grant_start = new_start;
-
-                            grant_end = grant_start + grant_len;
-                        }
-                        */
-                        // TODO
-                        return Err(Error::new(EOPNOTSUPP));
-                    } else {
-                        to_address = grant_end;
-                    }
-                    continue;
-                }
-            }
-
-            let start_address = VirtualAddress::new(to_address);
-            let end_address = VirtualAddress::new(to_address + full_size);
-
-            // Make sure it's absolutely not mapped already
             let active_table = unsafe { ActivePageTable::new() };
 
             for page in Page::range_inclusive(Page::containing_address(start_address), Page::containing_address(end_address)) {
@@ -135,9 +98,9 @@ impl Scheme for MemoryScheme {
                 }
             }
 
-            grants.insert(Grant::map(start_address, full_size, entry_flags));
+            grants.insert(Grant::map(start_address, requested.size(), entry_flags));
 
-            Ok(to_address)
+            Ok(start_address.get())
         }
     }
     fn fmap(&self, id: usize, map: &Map) -> Result<usize> {

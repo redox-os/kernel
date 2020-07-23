@@ -3,13 +3,15 @@ use core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 use spin::RwLock;
 
+use crate::context::file::{FileDescriptor, FileDescription};
+use crate::context::memory::Region;
 use crate::context;
+use crate::paging::VirtualAddress;
 use crate::scheme::{self, FileHandle};
-use crate::syscall;
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::*;
-use crate::context::file::{FileDescriptor, FileDescription};
+use crate::syscall;
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let (file, pid, uid, gid) = {
@@ -453,20 +455,8 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
 
             let mut grants = context.grants.lock();
 
-            // TODO: Make BTreeSet roll around at the speed of sound,
-            // I mean, its got places to go, gotta follow its rainbow.
-            // Can't keep around, gotta moving on.
-            // Guess what lies ahead, only one way to find oooouuuut.
-
-            let grant = grants.iter().map(|grant| grant.region()).find(|grant| {
-                let start = grant.start_address().get();
-                let end = start + grant.size();
-
-                virtual_address >= start && virtual_address < end
-            });
-
-            if let Some(grant) = grant {
-                let mut grant = grants.take(&grant).unwrap();
+            if let Some(region) = grants.find_conflict(Region::byte(VirtualAddress::new(virtual_address))).map(Region::from) {
+                let mut grant = grants.take(&region).unwrap();
                 desc_opt = grant.desc_opt.take();
                 grant.unmap();
             }
