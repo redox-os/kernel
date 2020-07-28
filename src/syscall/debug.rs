@@ -126,6 +126,11 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "funmap({:#X})",
             b
         ),
+        SYS_FUNMAP2 => format!(
+            "funmap2({:#X}, {:#X})",
+            b,
+            c,
+        ),
         SYS_FPATH => format!(
             "fpath({}, {:#X}, {})",
             b,

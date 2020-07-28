@@ -218,8 +218,8 @@ impl UserInner {
                             println!("scheme returned unaligned address, causing extra frame to be allocated");
                         }
                         let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(desc));
-                        if let Ok(new_address) = res {
-                            self.funmap.lock().insert(new_address, address);
+                        if let Ok(grant_address) = res {
+                            self.funmap.lock().insert(grant_address, address);
                         }
                         packet.a = Error::mux(res);
                     } else {
@@ -439,27 +439,46 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn funmap(&self, new_address: usize) -> Result<usize> {
+    fn funmap(&self, grant_address: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
             let mut funmap = inner.funmap.lock();
-            funmap.remove(&new_address)
+            let entry = funmap.range(..=grant_address).next_back();
+
+            // TODO: Check region length!!
+            if let Some((&grant_base, &user_base)) = entry {
+                let user_address = grant_address - grant_base + user_base;
+                funmap.remove(&grant_base);
+                Some(user_address)
+            } else {
+                None
+            }
         };
-        if let Some(address) = address_opt {
-            inner.call(SYS_FUNMAP, address, 0, 0)
+        if let Some(user_address) = address_opt {
+            inner.call(SYS_FUNMAP, user_address, 0, 0)
         } else {
             Err(Error::new(EINVAL))
         }
     }
 
-    fn funmap2(&self, address: usize, size: usize) -> Result<usize> {
+    fn funmap2(&self, grant_address: usize, size: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
             let mut funmap = inner.funmap.lock();
-            funmap.remove(&address)
+            let entry = funmap.range(..=grant_address).next_back();
+
+            // TODO: Check region length!!
+            if let Some((&grant_base, &user_base)) = entry {
+                let user_address = grant_address - grant_base + user_base;
+                funmap.remove(&grant_base);
+                Some(user_address)
+            } else {
+                None
+            }
+
         };
-        if let Some(address) = address_opt {
-            inner.call(SYS_FUNMAP2, address, size, 0)
+        if let Some(user_address) = address_opt {
+            inner.call(SYS_FUNMAP2, user_address, size, 0)
         } else {
             Err(Error::new(EINVAL))
         }

@@ -507,6 +507,8 @@ pub fn funmap2(virtual_address: usize, length: usize) -> Result<usize> {
 
         let conflicting: Vec<Region> = grants.conflicts(requested).map(Region::from).collect();
 
+        println!("conflicts: {:#?}", conflicting);
+
         for conflict in conflicting {
             let grant = grants.take(&conflict).expect("conflicting region didn't exist");
             let intersection = grant.intersect(requested);

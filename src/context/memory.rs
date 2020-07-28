@@ -54,7 +54,7 @@ impl UserGrants {
     pub fn contains(&self, address: VirtualAddress) -> Option<&Grant> {
         let byte = Region::byte(address);
         self.inner
-            .range(..byte)
+            .range(..=byte)
             .next_back()
             .filter(|existing| existing.occupies(byte))
     }
@@ -66,7 +66,7 @@ impl UserGrants {
         self
             .inner
             .range(start_region..)
-            .take_while(move |region| region.occupies(requested))
+            .take_while(move |region| !region.intersect(requested).is_empty())
     }
     /// Return a free region with the specified size
     pub fn find_free(&self, size: usize) -> Region {
@@ -105,6 +105,7 @@ impl UserGrants {
                 // TODO: Overwrite existing grant
                 return Err(Error::new(EOPNOTSUPP));
             } else {
+                // TODO: Find grant close to requested address?
                 requested = self.find_free(requested.size());
             }
         }
@@ -124,7 +125,7 @@ impl DerefMut for UserGrants {
     }
 }
 
-#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub struct Region {
     start: VirtualAddress,
     size: usize,
@@ -137,19 +138,16 @@ impl Region {
 
     /// Create a new region spanning exactly one byte
     pub fn byte(address: VirtualAddress) -> Self {
-        Self {
-            start: address,
-            size: 1,
-        }
+        Self::new(address, 1)
     }
 
     /// Create a new region spanning between the start and end address
     /// (exclusive end)
     pub fn between(start: VirtualAddress, end: VirtualAddress) -> Self {
-        Self {
+        Self::new(
             start,
-            size: end.get() - start.get(),
-        }
+            end.get().saturating_sub(start.get()),
+        )
     }
 
     /// Return the part of the specified region that intersects with self.
@@ -224,6 +222,24 @@ impl Region {
             Page::containing_address(self.start_address()),
             Page::containing_address(self.end_address())
         )
+    }
+}
+
+impl PartialEq for Region {
+    fn eq(&self, other: &Self) -> bool {
+        self.start.eq(&other.start)
+    }
+}
+impl Eq for Region {}
+
+impl PartialOrd for Region {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.start.partial_cmp(&other.start)
+    }
+}
+impl Ord for Region {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.start.cmp(&other.start)
     }
 }
 
