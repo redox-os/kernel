@@ -30,7 +30,7 @@ pub struct UserInner {
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map2)>>,
-    funmap: Mutex<BTreeMap<usize, usize>>,
+    funmap: Mutex<BTreeMap<Region, usize>>,
     done: WaitMap<u64, usize>,
     unmounting: AtomicBool,
 }
@@ -103,20 +103,21 @@ impl UserInner {
     /// Map a readable structure to the scheme's userspace and return the
     /// pointer
     pub fn capture(&self, buf: &[u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, 0, buf.as_ptr() as usize, buf.len(), PROT_READ, None)
+        UserInner::capture_inner(&self.context, 0, buf.as_ptr() as usize, buf.len(), PROT_READ, None).map(|addr| addr.get())
     }
 
     /// Map a writeable structure to the scheme's userspace and return the
     /// pointer
     pub fn capture_mut(&self, buf: &mut [u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, 0, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None)
+        UserInner::capture_inner(&self.context, 0, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None).map(|addr| addr.get())
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, to_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>) -> Result<usize> {
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, to_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>)
+                     -> Result<VirtualAddress> {
         // TODO: More abstractions over grant creation!
 
         if size == 0 {
-            return Ok(0);
+            return Ok(VirtualAddress::new(0));
         }
 
         let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
@@ -143,7 +144,7 @@ impl UserInner {
             &mut temporary_page
         ));
 
-        Ok(to_region.start_address().get() + offset)
+        Ok(VirtualAddress::new(to_region.start_address().get() + offset))
     }
 
     pub fn release(&self, address: usize) -> Result<()> {
@@ -219,9 +220,9 @@ impl UserInner {
                         }
                         let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(desc));
                         if let Ok(grant_address) = res {
-                            self.funmap.lock().insert(grant_address, address);
+                            self.funmap.lock().insert(Region::new(grant_address, map.size), address);
                         }
-                        packet.a = Error::mux(res);
+                        packet.a = Error::mux(res.map(|addr| addr.get()));
                     } else {
                         let _ = desc.close();
                     }
@@ -443,12 +444,14 @@ impl Scheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
             let mut funmap = inner.funmap.lock();
-            let entry = funmap.range(..=grant_address).next_back();
+            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
-            // TODO: Check region length!!
-            if let Some((&grant_base, &user_base)) = entry {
-                let user_address = grant_address - grant_base + user_base;
-                funmap.remove(&grant_base);
+            if let Some((&grant, &user_base)) = entry {
+                if grant_address >= grant.end_address().get() {
+                    return Err(Error::new(EINVAL));
+                }
+                let user_address = grant_address - grant.start_address().get() + user_base;
+                funmap.remove(&grant);
                 Some(user_address)
             } else {
                 None
@@ -465,12 +468,14 @@ impl Scheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
             let mut funmap = inner.funmap.lock();
-            let entry = funmap.range(..=grant_address).next_back();
+            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
-            // TODO: Check region length!!
-            if let Some((&grant_base, &user_base)) = entry {
-                let user_address = grant_address - grant_base + user_base;
-                funmap.remove(&grant_base);
+            if let Some((&grant, &user_base)) = entry {
+                if grant_address >= grant.end_address().get() {
+                    return Err(Error::new(EINVAL));
+                }
+                let user_address = grant_address - grant.start_address().get() + user_base;
+                funmap.remove(&grant);
                 Some(user_address)
             } else {
                 None
