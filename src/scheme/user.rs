@@ -446,13 +446,15 @@ impl Scheme for UserScheme {
             let mut funmap = inner.funmap.lock();
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
+            let grant_address = VirtualAddress::new(grant_address);
+
             if let Some((&grant, &user_base)) = entry {
-                if grant_address >= grant.end_address().get() {
+                if grant_address >= grant.end_address() {
                     return Err(Error::new(EINVAL));
                 }
-                let user_address = grant_address - grant.start_address().get() + user_base;
                 funmap.remove(&grant);
-                Some(user_address)
+                let user = Region::new(VirtualAddress::new(user_base), grant.size());
+                Some(grant.rebase(user, grant_address).get())
             } else {
                 None
             }
@@ -470,13 +472,27 @@ impl Scheme for UserScheme {
             let mut funmap = inner.funmap.lock();
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
+            let grant_address = VirtualAddress::new(grant_address);
+
             if let Some((&grant, &user_base)) = entry {
-                if grant_address >= grant.end_address().get() {
+                let grant_requested = Region::new(grant_address, size);
+                if grant_requested.end_address() > grant.end_address() {
                     return Err(Error::new(EINVAL));
                 }
-                let user_address = grant_address - grant.start_address().get() + user_base;
+
                 funmap.remove(&grant);
-                Some(user_address)
+
+                let user = Region::new(VirtualAddress::new(user_base), grant.size());
+
+                if let Some(before) = grant.before(grant_requested) {
+                    funmap.insert(before, user_base);
+                }
+                if let Some(after) = grant.after(grant_requested) {
+                    let start = grant.rebase(user, after.start_address());
+                    funmap.insert(after, start.get());
+                }
+
+                Some(grant.rebase(user, grant_address).get())
             } else {
                 None
             }

@@ -223,6 +223,39 @@ impl Region {
             Page::containing_address(self.end_address())
         )
     }
+
+    /// Returns the region from the start of self until the start of the specified region.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the given region starts before self
+    pub fn before(self, region: Self) -> Option<Self> {
+        assert!(self.start_address() <= region.start_address());
+        Some(Self::between(
+            self.start_address(),
+            region.start_address(),
+        )).filter(|reg| !reg.is_empty())
+    }
+
+    /// Returns the region from the end of the given region until the end of self.
+    ///
+    /// # Panics
+    ///
+    /// Panics if self ends before the given region
+    pub fn after(self, region: Self) -> Option<Self> {
+        assert!(region.end_address() <= self.end_address());
+        Some(Self::between(
+            region.end_address(),
+            self.end_address(),
+        )).filter(|reg| !reg.is_empty())
+    }
+
+    /// Re-base address that lives inside this region, onto a new base region
+    pub fn rebase(self, new_base: Self, address: VirtualAddress) -> VirtualAddress {
+        let offset = address.get() - self.start_address().get();
+        let new_start = new_base.start_address().get() + offset;
+        VirtualAddress::new(new_start)
+    }
 }
 
 impl PartialEq for Region {
@@ -233,9 +266,9 @@ impl PartialEq for Region {
 impl Eq for Region {}
 
 impl PartialOrd for Region {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.start.partial_cmp(&other.start)
-    }
+fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    self.start.partial_cmp(&other.start)
+}
 }
 impl Ord for Region {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -533,36 +566,20 @@ impl Grant {
         assert_eq!(region.start_address().get() % PAGE_SIZE, 0, "split_out must be called on page-size aligned start address");
         assert_eq!(region.size() % PAGE_SIZE, 0, "split_out must be called on page-size aligned end address");
 
-        assert!(self.start_address() <= region.start_address());
-        assert!(region.end_address() <= self.end_address());
-
-        let before = Region::between(
-            self.start_address(),
-            region.start_address(),
-        );
-        let after = Region::between(
-            region.end_address(),
-            self.end_address(),
-        );
-
-        let before_grant = if before.is_empty() { None } else {
-            Some(Grant {
-                region: before,
-                flags: self.flags,
-                mapped: self.mapped,
-                owned: self.owned,
-                desc_opt: self.desc_opt.clone(),
-            })
-        };
-        let after_grant = if after.is_empty() { None } else {
-            Some(Grant {
-                region: after,
-                flags: self.flags,
-                mapped: self.mapped,
-                owned: self.owned,
-                desc_opt: self.desc_opt.clone(),
-            })
-        };
+        let before_grant = self.before(region).map(|region| Grant {
+            region,
+            flags: self.flags,
+            mapped: self.mapped,
+            owned: self.owned,
+            desc_opt: self.desc_opt.clone(),
+        });
+        let after_grant = self.after(region).map(|region| Grant {
+            region,
+            flags: self.flags,
+            mapped: self.mapped,
+            owned: self.owned,
+            desc_opt: self.desc_opt.clone(),
+        });
 
         unsafe {
             *self.region_mut() = region;
