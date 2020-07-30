@@ -3,7 +3,7 @@ use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
 use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::context;
-use crate::context::memory::Grant;
+use crate::context::memory::{Grant, Region};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
@@ -93,20 +93,20 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
             entry_flags |= EntryFlags::NO_CACHE;
         }
 
-        let mut i = 0;
-        while i < grants.len() {
-            let start = grants[i].start_address().get();
+        // TODO: Make this faster than Sonic himself by using le superpowers of BTreeSet
+
+        for grant in grants.iter() {
+            let start = grant.start_address().get();
             if to_address + full_size < start {
                 break;
             }
 
-            let pages = (grants[i].size() + 4095) / 4096;
+            let pages = (grant.size() + 4095) / 4096;
             let end = start + pages * 4096;
             to_address = end;
-            i += 1;
         }
 
-        grants.insert(i, Grant::physmap(
+        grants.insert(Grant::physmap(
             PhysicalAddress::new(from_address),
             VirtualAddress::new(to_address),
             full_size,
@@ -131,14 +131,9 @@ pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
 
         let mut grants = context.grants.lock();
 
-        for i in 0 .. grants.len() {
-            let start = grants[i].start_address().get();
-            let end = start + grants[i].size();
-            if virtual_address >= start && virtual_address < end {
-                grants.remove(i).unmap();
-
-                return Ok(0);
-            }
+        if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
+            grants.take(&region).unwrap().unmap();
+            return Ok(0);
         }
 
         Err(Error::new(EFAULT))

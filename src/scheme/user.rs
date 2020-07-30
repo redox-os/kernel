@@ -8,16 +8,15 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::Grant;
+use crate::context::memory::{entry_flags, round_down_pages, Grant, Region};
 use crate::event;
-use crate::paging::{InactivePageTable, Page, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{PAGE_SIZE, InactivePageTable, Page, VirtualAddress};
 use crate::paging::temporary_page::TemporaryPage;
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
-use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
+use crate::syscall::data::{Map, Map2, Packet, Stat, StatVfs, TimeSpec};
 use crate::syscall::error::*;
-use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_READ, PROT_WRITE};
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
 
@@ -30,8 +29,8 @@ pub struct UserInner {
     next_id: AtomicU64,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
-    funmap: Mutex<BTreeMap<usize, usize>>,
+    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map2)>>,
+    funmap: Mutex<BTreeMap<Region, VirtualAddress>>,
     done: WaitMap<u64, usize>,
     unmounting: AtomicBool,
 }
@@ -101,69 +100,51 @@ impl UserInner {
         Error::demux(self.done.receive(&id, "UserInner::call_inner"))
     }
 
+    /// Map a readable structure to the scheme's userspace and return the
+    /// pointer
     pub fn capture(&self, buf: &[u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, buf.as_ptr() as usize, buf.len(), PROT_READ, None)
+        UserInner::capture_inner(&self.context, 0, buf.as_ptr() as usize, buf.len(), PROT_READ, None).map(|addr| addr.get())
     }
 
+    /// Map a writeable structure to the scheme's userspace and return the
+    /// pointer
     pub fn capture_mut(&self, buf: &mut [u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None)
+        UserInner::capture_inner(&self.context, 0, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None).map(|addr| addr.get())
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>) -> Result<usize> {
-        //TODO: Abstract with other grant creation
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, to_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>)
+                     -> Result<VirtualAddress> {
+        // TODO: More abstractions over grant creation!
+
         if size == 0 {
-            Ok(0)
-        } else {
-            let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
-            let mut context = context_lock.write();
-
-            let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
-
-            let mut grants = context.grants.lock();
-
-            let from_address = (address/4096) * 4096;
-            let offset = address - from_address;
-            let full_size = ((offset + size + 4095)/4096) * 4096;
-            let mut to_address = crate::USER_GRANT_OFFSET;
-
-            let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
-            if !flags.contains(PROT_EXEC) {
-                entry_flags |= EntryFlags::NO_EXECUTE;
-            }
-            if flags.contains(PROT_READ) {
-                //TODO: PROT_READ
-            }
-            if flags.contains(PROT_WRITE) {
-                entry_flags |= EntryFlags::WRITABLE;
-            }
-
-            let mut i = 0;
-            while i < grants.len() {
-                let start = grants[i].start_address().get();
-                if to_address + full_size < start {
-                    break;
-                }
-
-                let pages = (grants[i].size() + 4095) / 4096;
-                let end = start + pages * 4096;
-                to_address = end;
-                i += 1;
-            }
-
-            //TODO: Use syscall_head and syscall_tail to avoid leaking data
-            grants.insert(i, Grant::map_inactive(
-                VirtualAddress::new(from_address),
-                VirtualAddress::new(to_address),
-                full_size,
-                entry_flags,
-                desc_opt,
-                &mut new_table,
-                &mut temporary_page
-            ));
-
-            Ok(to_address + offset)
+            return Ok(VirtualAddress::new(0));
         }
+
+        let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
+        let mut context = context_lock.write();
+
+        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
+        let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
+
+        let mut grants = context.grants.lock();
+
+        let from_address = round_down_pages(address);
+        let offset = address - from_address;
+        let from_region = Region::new(VirtualAddress::new(from_address), offset + size).round();
+        let to_region = grants.find_free_at(VirtualAddress::new(to_address), from_region.size(), flags)?;
+
+        //TODO: Use syscall_head and syscall_tail to avoid leaking data
+        grants.insert(Grant::map_inactive(
+            from_region.start_address(),
+            to_region.start_address(),
+            from_region.size(),
+            entry_flags(flags),
+            desc_opt,
+            &mut new_table,
+            &mut temporary_page
+        ));
+
+        Ok(VirtualAddress::new(to_region.start_address().get() + offset))
     }
 
     pub fn release(&self, address: usize) -> Result<()> {
@@ -178,14 +159,9 @@ impl UserInner {
 
             let mut grants = context.grants.lock();
 
-            for i in 0 .. grants.len() {
-                let start = grants[i].start_address().get();
-                let end = start + grants[i].size();
-                if address >= start && address < end {
-                    grants.remove(i).unmap_inactive(&mut new_table, &mut temporary_page);
-
-                    return Ok(());
-                }
+            if let Some(region) = grants.contains(VirtualAddress::new(address)).map(Region::from) {
+                grants.take(&region).unwrap().unmap_inactive(&mut new_table, &mut temporary_page);
+                return Ok(());
             }
 
             Err(Error::new(EFAULT))
@@ -239,12 +215,14 @@ impl UserInner {
             } else {
                 if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
-                        //TODO: Protect against sharing addresses that are not page aligned
-                        let res = UserInner::capture_inner(&context_weak, address, map.size, map.flags, Some(desc));
-                        if let Ok(new_address) = res {
-                            self.funmap.lock().insert(new_address, address);
+                        if address % PAGE_SIZE > 0 {
+                            println!("scheme returned unaligned address, causing extra frame to be allocated");
                         }
-                        packet.a = Error::mux(res);
+                        let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(desc));
+                        if let Ok(grant_address) = res {
+                            self.funmap.lock().insert(Region::new(grant_address, map.size), VirtualAddress::new(address));
+                        }
+                        packet.a = Error::mux(res.map(|addr| addr.get()));
                     } else {
                         let _ = desc.close();
                     }
@@ -391,7 +369,12 @@ impl Scheme for UserScheme {
 
         let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
 
-        inner.fmap.lock().insert(id, (context_lock, desc, *map));
+        inner.fmap.lock().insert(id, (context_lock, desc, Map2 {
+            offset: map.offset,
+            size: map.size,
+            flags: map.flags,
+            address: 0,
+        }));
 
         let result = inner.call_inner(Packet {
             id,
@@ -409,14 +392,114 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn funmap(&self, new_address: usize) -> Result<usize> {
+    fn fmap2(&self, file: usize, map: &Map2) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let (pid, uid, gid, context_lock, desc) = {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+            // TODO: Faster, cleaner mechanism to get descriptor
+            let scheme = inner.scheme_id.load(Ordering::SeqCst);
+            let mut desc_res = Err(Error::new(EBADF));
+            for context_file_opt in context.files.lock().iter() {
+                if let Some(context_file) = context_file_opt {
+                    let (context_scheme, context_number) = {
+                        let desc = context_file.description.read();
+                        (desc.scheme, desc.number)
+                    };
+                    if context_scheme == scheme && context_number == file {
+                        desc_res = Ok(context_file.clone());
+                        break;
+                    }
+                }
+            }
+            let desc = desc_res?;
+            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
+        };
+
+        let address = inner.capture(map)?;
+
+        let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
+
+        inner.fmap.lock().insert(id, (context_lock, desc, *map));
+
+        let result = inner.call_inner(Packet {
+            id,
+            pid: pid.into(),
+            uid,
+            gid,
+            a: SYS_FMAP2,
+            b: file,
+            c: address,
+            d: mem::size_of::<Map2>()
+        });
+
+        let _ = inner.release(address);
+
+        result
+    }
+
+    fn funmap(&self, grant_address: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
             let mut funmap = inner.funmap.lock();
-            funmap.remove(&new_address)
+            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
+
+            let grant_address = VirtualAddress::new(grant_address);
+
+            if let Some((&grant, &user_base)) = entry {
+                if grant_address >= grant.end_address() {
+                    return Err(Error::new(EINVAL));
+                }
+                funmap.remove(&grant);
+                let user = Region::new(user_base, grant.size());
+                Some(grant.rebase(user, grant_address).get())
+            } else {
+                None
+            }
         };
-        if let Some(address) = address_opt {
-            inner.call(SYS_FUNMAP, address, 0, 0)
+        if let Some(user_address) = address_opt {
+            inner.call(SYS_FUNMAP, user_address, 0, 0)
+        } else {
+            Err(Error::new(EINVAL))
+        }
+    }
+
+    fn funmap2(&self, grant_address: usize, size: usize) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let address_opt = {
+            let mut funmap = inner.funmap.lock();
+            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
+
+            let grant_address = VirtualAddress::new(grant_address);
+
+            if let Some((&grant, &user_base)) = entry {
+                let grant_requested = Region::new(grant_address, size);
+                if grant_requested.end_address() > grant.end_address() {
+                    return Err(Error::new(EINVAL));
+                }
+
+                funmap.remove(&grant);
+
+                let user = Region::new(user_base, grant.size());
+
+                if let Some(before) = grant.before(grant_requested) {
+                    funmap.insert(before, user_base);
+                }
+                if let Some(after) = grant.after(grant_requested) {
+                    let start = grant.rebase(user, after.start_address());
+                    funmap.insert(after, start);
+                }
+
+                Some(grant.rebase(user, grant_address).get())
+            } else {
+                None
+            }
+
+        };
+        if let Some(user_address) = address_opt {
+            inner.call(SYS_FUNMAP2, user_address, size, 0)
         } else {
             Err(Error::new(EINVAL))
         }

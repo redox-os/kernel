@@ -67,6 +67,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                         SYS_FEXEC => fexec(fd, validate_slice(c as *const [usize; 2], d)?, validate_slice(e as *const [usize; 2], f)?),
                         SYS_FRENAME => frename(fd, validate_slice(c as *const u8, d)?),
                         SYS_FUNMAP => funmap(b),
+                        SYS_FUNMAP2 => funmap2(b, c),
                         _ => file_op(a, fd, c, d)
                     }
                 }
