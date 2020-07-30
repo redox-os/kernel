@@ -30,7 +30,7 @@ pub struct UserInner {
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map2)>>,
-    funmap: Mutex<BTreeMap<Region, usize>>,
+    funmap: Mutex<BTreeMap<Region, VirtualAddress>>,
     done: WaitMap<u64, usize>,
     unmounting: AtomicBool,
 }
@@ -220,7 +220,7 @@ impl UserInner {
                         }
                         let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(desc));
                         if let Ok(grant_address) = res {
-                            self.funmap.lock().insert(Region::new(grant_address, map.size), address);
+                            self.funmap.lock().insert(Region::new(grant_address, map.size), VirtualAddress::new(address));
                         }
                         packet.a = Error::mux(res.map(|addr| addr.get()));
                     } else {
@@ -453,7 +453,7 @@ impl Scheme for UserScheme {
                     return Err(Error::new(EINVAL));
                 }
                 funmap.remove(&grant);
-                let user = Region::new(VirtualAddress::new(user_base), grant.size());
+                let user = Region::new(user_base, grant.size());
                 Some(grant.rebase(user, grant_address).get())
             } else {
                 None
@@ -482,14 +482,14 @@ impl Scheme for UserScheme {
 
                 funmap.remove(&grant);
 
-                let user = Region::new(VirtualAddress::new(user_base), grant.size());
+                let user = Region::new(user_base, grant.size());
 
                 if let Some(before) = grant.before(grant_requested) {
                     funmap.insert(before, user_base);
                 }
                 if let Some(after) = grant.after(grant_requested) {
                     let start = grant.rebase(user, after.start_address());
-                    funmap.insert(after, start.get());
+                    funmap.insert(after, start);
                 }
 
                 Some(grant.rebase(user, grant_address).get())
