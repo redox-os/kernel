@@ -41,14 +41,13 @@
 #![deny(unreachable_patterns)]
 
 #![feature(allocator_api)]
-#![feature(asm)]
+#![feature(llvm_asm)]
 #![feature(concat_idents)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
 #![feature(global_asm)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
-#![feature(matches_macro)] // stable in current Rust
 #![feature(naked_functions)]
 #![feature(ptr_internals)]
 #![feature(thread_local)]
