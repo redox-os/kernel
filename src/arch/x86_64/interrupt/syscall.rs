@@ -41,7 +41,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     with_interrupt_stack!(|stack| {
         // Set a restore point for clone
         let rbp;
-        asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
+        llvm_asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
         let scratch = &stack.scratch;
         syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
@@ -104,7 +104,7 @@ interrupt_stack!(syscall, |stack| {
 
         // Set a restore point for clone
         let rbp;
-        asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
+        llvm_asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
 
         let scratch = &stack.scratch;
         syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)

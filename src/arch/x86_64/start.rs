@@ -242,7 +242,7 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! 
         flags |= 1 << 8;
     }
 
-    asm!("push r10
+    llvm_asm!("push r10
           push r11
           push r12
           push r13
@@ -262,7 +262,7 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! 
     pti::unmap();
 
     // Go to usermode
-    asm!("mov ds, r14d
+    llvm_asm!("mov ds, r14d
          mov es, r14d
          mov fs, r15d
          mov gs, r14d

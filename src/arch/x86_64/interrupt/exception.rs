@@ -132,7 +132,7 @@ interrupt_error!(protection, |stack| {
 
 interrupt_error!(page, |stack| {
     let cr2: usize;
-    asm!("mov rax, cr2" : "={rax}"(cr2) : : : "intel", "volatile");
+    llvm_asm!("mov rax, cr2" : "={rax}"(cr2) : : : "intel", "volatile");
     println!("Page fault: {:>016X}", cr2);
     stack.dump();
     stack_trace();
