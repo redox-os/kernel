@@ -1,2 +1,5 @@
 [build]
-rustflags = ["-Cembed-bitcode=yes"]
+rustflags = [
+  # Kernel should preserve floating-point registers
+  "-Csoft-float",
+]

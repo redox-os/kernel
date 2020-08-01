@@ -44,3 +44,13 @@ qemu_debug = []
 serial_debug = []
 system76_ec_debug = []
 slab = ["slab_allocator"]
+
+[profile.dev]
+# Kernel doesn't yet work great with debug mode :(
+opt-level = 3
+
+# LTO fixes some duplicate symbols of memcpy/memmove/etc
+lto = true
+
+[profile.release]
+lto = true
