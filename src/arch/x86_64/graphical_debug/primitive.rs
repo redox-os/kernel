@@ -2,34 +2,44 @@
 #[inline(always)]
 #[cold]
 pub unsafe fn fast_copy(dst: *mut u8, src: *const u8, len: usize) {
-    llvm_asm!("cld
-        rep movsb"
-        :
-        : "{rdi}"(dst as usize), "{rsi}"(src as usize), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rsi", "rcx"
-        : "intel", "volatile");
+    asm!("cld
+        rep movsb",
+         in("rdi") (dst as usize),
+         in("rsi") (src as usize),
+         in("rcx") len,
+         out("cc") _,
+         out("rdi") _,
+         out("rsi") _,
+         out("rcx") _,
+    );
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 #[cold]
 pub unsafe fn fast_set32(dst: *mut u32, src: u32, len: usize) {
-    llvm_asm!("cld
-        rep stosd"
-        :
-        : "{rdi}"(dst as usize), "{eax}"(src), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rcx"
-        : "intel", "volatile");
+    asm!("cld
+        rep stosd",
+         in("rdi") (dst as usize),
+         in("eax") src,
+         in("rcx") len,
+         out("cc") _,
+         out("rdi") _,
+         out("rcx") _,
+    );
 }
 
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 #[cold]
 pub unsafe fn fast_set64(dst: *mut u64, src: u64, len: usize) {
-    llvm_asm!("cld
+    asm!("cld
         rep stosq"
-        :
-        : "{rdi}"(dst as usize), "{rax}"(src), "{rcx}"(len)
-        : "cc", "memory", "rdi", "rcx"
-        : "intel", "volatile");
+         in("rdi") (dst as usize),
+         in("rax") src,
+         in("rcx") len,
+         out("cc") _,
+         out("rdi") _,
+         out("rcx") _,
+    );
 }

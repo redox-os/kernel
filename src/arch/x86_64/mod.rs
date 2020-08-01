@@ -35,3 +35,9 @@ pub mod start;
 
 /// Stop function
 pub mod stop;
+
+// Flags
+pub mod flags {
+    pub const FLAG_SINGLESTEP: usize = 1 << 8;
+    pub const FLAG_INTERRUPTS: usize = 1 << 9;
+}

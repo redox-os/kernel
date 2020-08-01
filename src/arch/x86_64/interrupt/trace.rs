@@ -9,7 +9,7 @@ use crate::paging::{ActivePageTable, VirtualAddress};
 #[inline(never)]
 pub unsafe fn stack_trace() {
     let mut rbp: usize;
-    llvm_asm!("" : "={rbp}"(rbp) : : : "intel", "volatile");
+    asm!("mov {}, rbp", out(reg) rbp);
 
     println!("TRACE: {:>016X}", rbp);
     //Maximum 64 frames

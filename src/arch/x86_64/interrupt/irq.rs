@@ -24,18 +24,18 @@ unsafe fn ps2_interrupt(_index: usize) {
 
     let data: u8;
     let status: u8;
-    llvm_asm!("
+    asm!("
         sti
         nop
         cli
         in al, 0x64
         mov ah, al
         in al, 0x60
-        "
-         : "={al}"(data), "={ah}"(status)
-         :
-         : "memory"
-         : "intel", "volatile"
+        mov {}, al
+        mov {}, ah
+        ",
+         out(reg_byte) data,
+         out(reg_byte) status,
     );
 
     if status & 1 != 0 {

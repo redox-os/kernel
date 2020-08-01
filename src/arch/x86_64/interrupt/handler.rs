@@ -1,7 +1,7 @@
 use core::mem;
 use syscall::IntRegisters;
 
-const FLAG_SINGLESTEP: usize = 1 << 8;
+use super::super::flags::*;
 
 #[derive(Default)]
 #[repr(packed)]
@@ -123,7 +123,7 @@ impl InterruptStack {
 
         let cs: usize;
         unsafe {
-            llvm_asm!("mov $0, cs" : "=r"(cs) ::: "intel");
+            asm!("mov {}, cs", out(reg) cs);
         }
 
         if self.iret.cs & CPL_MASK == cs & CPL_MASK {
@@ -132,7 +132,7 @@ impl InterruptStack {
                 + mem::size_of::<Self>() // disregard Self
                 - mem::size_of::<usize>() * 2; // well, almost: rsp and ss need to be excluded as they aren't present
             unsafe {
-                llvm_asm!("mov $0, ss" : "=r"(all.ss) ::: "intel");
+                asm!("mov {}, ss", out(reg) all.ss);
             }
         } else {
             all.rsp = self.iret.rsp;
