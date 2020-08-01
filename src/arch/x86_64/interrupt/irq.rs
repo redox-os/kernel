@@ -24,7 +24,7 @@ unsafe fn ps2_interrupt(_index: usize) {
 
     let data: u8;
     let status: u8;
-    asm!("
+    llvm_asm!("
         sti
         nop
         cli

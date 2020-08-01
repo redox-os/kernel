@@ -15,9 +15,9 @@ pub unsafe extern fn kreset() -> ! {
     }
 
     // Use triple fault to guarantee reset
-    asm!("cli" : : : : "intel", "volatile");
-    asm!("lidt cs:0" : : : : "intel", "volatile");
-    asm!("int $$3" : : : : "intel", "volatile");
+    llvm_asm!("cli" : : : : "intel", "volatile");
+    llvm_asm!("lidt cs:0" : : : : "intel", "volatile");
+    llvm_asm!("int $$3" : : : : "intel", "volatile");
 
     unreachable!();
 }
@@ -47,6 +47,6 @@ pub unsafe extern fn kstop() -> ! {
     // Magic code for VMWare. Also a hard lock.
     println!("Shutdown with cli hlt");
     loop {
-        asm!("cli; hlt" : : : : "intel", "volatile");
+        llvm_asm!("cli; hlt" : : : : "intel", "volatile");
     }
 }

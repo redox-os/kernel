@@ -20,7 +20,7 @@ pub static mut PTI_CONTEXT_STACK: usize = 0;
 #[inline(always)]
 unsafe fn switch_stack(old: usize, new: usize) {
     let old_rsp: usize;
-    asm!("" : "={rsp}"(old_rsp) : : : "intel", "volatile");
+    llvm_asm!("" : "={rsp}"(old_rsp) : : : "intel", "volatile");
 
     let offset_rsp = old - old_rsp;
 
@@ -32,7 +32,7 @@ unsafe fn switch_stack(old: usize, new: usize) {
         offset_rsp
     );
 
-    asm!("" : : "{rsp}"(new_rsp) : : "intel", "volatile");
+    llvm_asm!("" : : "{rsp}"(new_rsp) : : "intel", "volatile");
 }
 
 #[cfg(feature = "pti")]

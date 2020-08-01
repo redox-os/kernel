@@ -123,7 +123,7 @@ impl InterruptStack {
 
         let cs: usize;
         unsafe {
-            asm!("mov $0, cs" : "=r"(cs) ::: "intel");
+            llvm_asm!("mov $0, cs" : "=r"(cs) ::: "intel");
         }
 
         if self.iret.cs & CPL_MASK == cs & CPL_MASK {
@@ -132,7 +132,7 @@ impl InterruptStack {
                 + mem::size_of::<Self>() // disregard Self
                 - mem::size_of::<usize>() * 2; // well, almost: rsp and ss need to be excluded as they aren't present
             unsafe {
-                asm!("mov $0, ss" : "=r"(all.ss) ::: "intel");
+                llvm_asm!("mov $0, ss" : "=r"(all.ss) ::: "intel");
             }
         } else {
             all.rsp = self.iret.rsp;
