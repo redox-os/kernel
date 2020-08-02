@@ -190,10 +190,11 @@ impl Mapper {
         }
 
         if let Some(p3_frame) = p4[page.p4_index()].pointed_frame() {
+            //TODO: Find out why this breaks user heap
             //println!("Free p3 {:?}", p3_frame);
-            p4.decrement_entry_count();
-            p4[page.p4_index()].set_unused();
-            deallocate_frames(p3_frame, 1);
+            //p4.decrement_entry_count();
+            //p4[page.p4_index()].set_unused();
+            //deallocate_frames(p3_frame, 1);
         } else {
             panic!("unmap_inner({:X}): p3_frame not found", page.start_address().get());
         }
