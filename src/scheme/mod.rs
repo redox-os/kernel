@@ -121,8 +121,19 @@ impl SchemeList {
             next_ns: 1,
             next_id: 1
         };
+        list.new_null();
         list.new_root();
         list
+    }
+
+    /// Initialize the null namespace
+    fn new_null(&mut self) {
+        let ns = SchemeNamespace(0);
+        self.names.insert(ns, BTreeMap::new());
+
+        //TODO: Only memory: is in the null namespace right now. It should be removed when
+        //anonymous mmap's are implemented
+        self.insert(ns, Box::new(*b"memory"), |_| Arc::new(MemoryScheme::new())).unwrap();
     }
 
     /// Initialize a new namespace
