@@ -18,13 +18,13 @@ pub use super::device::local_apic::bsp_apic_id;
 /// Clear interrupts
 #[inline(always)]
 pub unsafe fn disable() {
-    llvm_asm!("cli" : : : : "intel", "volatile");
+    asm!("cli", options(nomem, nostack));
 }
 
 /// Set interrupts
 #[inline(always)]
 pub unsafe fn enable() {
-    llvm_asm!("sti" : : : : "intel", "volatile");
+    asm!("sti", options(nomem, nostack));
 }
 
 /// Set interrupts and halt
@@ -32,9 +32,7 @@ pub unsafe fn enable() {
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
-    llvm_asm!("sti
-        hlt"
-        : : : : "intel", "volatile");
+    asm!("sti; hlt", options(nomem, nostack));
 }
 
 /// Set interrupts and nop
@@ -42,20 +40,18 @@ pub unsafe fn enable_and_halt() {
 /// Simply enabling interrupts does not gurantee that they will trigger, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_nop() {
-    llvm_asm!("sti
-        nop"
-        : : : : "intel", "volatile");
+    asm!("sti; nop", options(nomem, nostack));
 }
 
 /// Halt instruction
 #[inline(always)]
 pub unsafe fn halt() {
-    llvm_asm!("hlt" : : : : "intel", "volatile");
+    asm!("hlt", options(nomem, nostack));
 }
 
 /// Pause instruction
 /// Safe because it is similar to a NOP, and has no memory effects
 #[inline(always)]
 pub fn pause() {
-    unsafe { llvm_asm!("pause" : : : : "intel", "volatile"); }
+    unsafe { asm!("pause", options(nomem, nostack)); }
 }

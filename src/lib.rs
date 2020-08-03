@@ -41,7 +41,7 @@
 #![deny(unreachable_patterns)]
 
 #![feature(allocator_api)]
-#![feature(llvm_asm)]
+#![feature(asm)] // TODO: Relax requirements of most asm invocations
 #![feature(concat_idents)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]

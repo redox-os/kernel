@@ -12,6 +12,7 @@ use crate::acpi;
 #[cfg(feature = "graphical_debug")]
 use crate::arch::x86_64::graphical_debug;
 use crate::arch::x86_64::pti;
+use crate::arch::x86_64::flags::*;
 use crate::device;
 use crate::gdt;
 use crate::idt;
@@ -237,32 +238,30 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
 #[naked]
 pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! {
-    let mut flags = 1 << 9;
+    let mut flags = FLAG_INTERRUPTS;
     if singlestep {
-        flags |= 1 << 8;
+        flags |= FLAG_SINGLESTEP;
     }
 
-    llvm_asm!("push r10
+    asm!("push r10
           push r11
           push r12
           push r13
           push r14
-          push r15"
-          : // No output
-          :   "{r10}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
-              "{r11}"(sp), // Stack pointer
-              "{r12}"(flags), // Flags - Set interrupt enable flag
-              "{r13}"(gdt::GDT_USER_CODE << 3 | 3), // Code segment
-              "{r14}"(ip), // IP
-              "{r15}"(arg) // Argument
-          : // No clobbers
-          : "intel", "volatile");
+          push r15",
+         in("r10") (gdt::GDT_USER_DATA << 3 | 3), // Data segment
+         in("r11") sp, // Stack pointer
+         in("r12") flags, // Flags
+         in("r13") (gdt::GDT_USER_CODE << 3 | 3), // Code segment
+         in("r14") ip, // IP
+         in("r15") arg, // Argument
+    );
 
     // Unmap kernel
     pti::unmap();
 
     // Go to usermode
-    llvm_asm!("mov ds, r14d
+    asm!("mov ds, r14d
          mov es, r14d
          mov fs, r15d
          mov gs, r14d
@@ -283,11 +282,9 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! 
          xor r15, r15
          fninit
          pop rdi
-         iretq"
-         : // No output because it never returns
-         :   "{r14}"(gdt::GDT_USER_DATA << 3 | 3), // Data segment
-             "{r15}"(gdt::GDT_USER_TLS << 3 | 3) // TLS segment
-         : // No clobbers because it never returns
-         : "intel", "volatile");
-    unreachable!();
+         iretq",
+         in("r14") (gdt::GDT_USER_DATA << 3 | 3), // Data segment
+         in("r15") (gdt::GDT_USER_TLS << 3 | 3), // TLS segment
+         options(noreturn),
+    );
 }
