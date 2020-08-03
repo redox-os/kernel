@@ -76,6 +76,7 @@ impl Drop for MapperFlushAll {
     }
 }
 
+#[derive(Debug)]
 pub struct Mapper {
     p4: Unique<Table<Level4>>,
 }
