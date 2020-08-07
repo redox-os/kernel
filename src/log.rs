@@ -33,3 +33,21 @@ impl Log {
         }
     }
 }
+
+struct RedoxLogger {
+    log_func: fn(&log::Record),
+}
+
+impl ::log::Log for RedoxLogger {
+    fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+        false
+    }
+    fn log(&self, record: &log::Record<'_>) {
+        (self.log_func)(&record)
+    }
+    fn flush(&self) {}
+}
+
+static _LOGGER: RedoxLogger = RedoxLogger { log_func: |_| {} };
+
+pub use log::{debug, error, info, trace, warn};
