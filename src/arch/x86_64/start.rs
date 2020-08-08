@@ -87,10 +87,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         log::init_logger(|r| println!("{}:{} -- {}", r.target(), r.level(), r.args()));
 
         info!("Redox OS starting...");
-        println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
-        println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
-        println!("Env: {:X}:{:X}", env_base, env_base + env_size);
-        println!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
+        info!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
+        info!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
+        info!("Env: {:X}:{:X}", env_base, env_base + env_size);
+        info!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
 
         let ext_mem_ranges = if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
             Some([(acpi_rsdps_base as usize, acpi_rsdps_size as usize)])
