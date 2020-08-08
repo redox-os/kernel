@@ -58,4 +58,4 @@ pub fn init_logger() {
 
 static LOGGER: RedoxLogger = RedoxLogger { log_func: |_| {} };
 
-pub use log::{debug, error, info, trace, warn};
+pub use log::{debug, error, info, set_max_level, warn};
