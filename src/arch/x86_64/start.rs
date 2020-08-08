@@ -84,7 +84,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
 
         // Initialize logger
-        log::init_logger();
+        log::init_logger(|r| println!("{}:{} -- {}", r.target(), r.level(), r.args()));
 
         info!("Redox OS starting...");
         println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
