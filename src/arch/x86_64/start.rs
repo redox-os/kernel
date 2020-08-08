@@ -17,7 +17,7 @@ use crate::device;
 use crate::gdt;
 use crate::idt;
 use crate::interrupt;
-use crate::log;
+use crate::log::{self, info};
 use crate::memory;
 use crate::paging;
 
@@ -83,6 +83,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
 
+        // Initialize logger
+        log::init_logger();
+
+        info!("Redox OS starting...");
         println!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
         println!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
         println!("Env: {:X}:{:X}", env_base, env_base + env_size);

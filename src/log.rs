@@ -48,6 +48,14 @@ impl ::log::Log for RedoxLogger {
     fn flush(&self) {}
 }
 
-static _LOGGER: RedoxLogger = RedoxLogger { log_func: |_| {} };
+pub fn init_logger() {
+    ::log::set_max_level(::log::LevelFilter::Info);
+    match ::log::set_logger(&LOGGER) {
+        Ok(_) => ::log::info!("Logger initialized."),
+        Err(e) => println!("Logger setup failed! error: {}", e),
+    }
+}
+
+static LOGGER: RedoxLogger = RedoxLogger { log_func: |_| {} };
 
 pub use log::{debug, error, info, trace, warn};
