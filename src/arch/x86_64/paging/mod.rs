@@ -374,6 +374,7 @@ pub unsafe fn init_ap(
     init_tcb(cpu_id)
 }
 
+#[derive(Debug)]
 pub struct ActivePageTable {
     mapper: Mapper,
     locked: bool,
