@@ -12,6 +12,7 @@ use spin::RwLock;
 
 use crate::stop::kstop;
 
+use crate::log::info;
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
@@ -124,7 +125,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
 
     // Search for RSDP
     if let Some(rsdp) = RSDP::get_rsdp(active_table, already_supplied_rsdps) {
-        println!("RSDP: {:?}", rsdp);
+        info!("RSDP: {:?}", rsdp);
         let rxsdt = get_sdt(rsdp.sdt_address(), active_table);
 
         for &c in rxsdt.signature.iter() {

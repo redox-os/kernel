@@ -1,6 +1,7 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
+use crate::log::info;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 
 use self::bump::BumpAllocator;
@@ -76,7 +77,7 @@ pub unsafe fn init(kernel_start: usize, kernel_end: usize) {
     for (i, entry) in MEMORY_MAP.iter_mut().enumerate() {
         *entry = *(0x500 as *const MemoryArea).add(i);
         if entry._type != MEMORY_AREA_NULL {
-            println!("{:?}", entry);
+            info!("{:?}", entry);
         }
     }
 

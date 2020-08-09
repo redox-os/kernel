@@ -16,6 +16,11 @@ version = "1.0.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "cfg-if"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "goblin"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -31,6 +36,7 @@ dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "goblin 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "linked_list_allocator 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "paste 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "raw-cpuid 8.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.2.0",
@@ -62,6 +68,14 @@ version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "scopeguard 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "log"
+version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -194,10 +208,12 @@ dependencies = [
 "checksum bit_field 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a165d606cf084741d4ac3a28fb6e9b1eb0bd31f6cd999098cfddb0b2ab381dc0"
 "checksum bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 "checksum cc 1.0.52 (registry+https://github.com/rust-lang/crates.io-index)" = "c3d87b23d6a92cd03af510a5ade527033f6aa6fa92161e2d5863a907d4c5e31d"
+"checksum cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)" = "4785bdd1c96b2a846b2bd7cc02e86b6b3dbf14e7e53446c4f54c92a361040822"
 "checksum goblin 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ddd5e3132801a1ac34ac53b97acde50c4685414dd2f291b9ea52afa6f07468c8"
 "checksum linked_list_allocator 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)" = "47de1a43fad0250ee197e9e124e5b5deab3d7b39d4428ae8a6d741ceb340c362"
 "checksum linked_list_allocator 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)" = "e70e46c13c0e8374c26cec5752e3347ca1087d9711de8f45aa513a7700efd73d"
 "checksum lock_api 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "c4da24a77a3d8a6d4862d95f72e6fdb9c09a643ecdb402d754004a557f2bec75"
+"checksum log 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)" = "4fabed175da42fed1fa0746b0ea71f412aa9d35e76e95e59b192c64b9dc2bf8b"
 "checksum paste 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)" = "45ca20c77d80be666aef2b45486da86238fabe33e38306bd3118fe4af33fa880"
 "checksum paste-impl 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)" = "d95a7db200b97ef370c8e6de0088252f7e0dfff7d047a28528e47456c0fc98b6"
 "checksum plain 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"

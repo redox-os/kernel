@@ -12,6 +12,7 @@ crate-type = ["staticlib"]
 [dependencies]
 bitflags = "1.2.1"
 linked_list_allocator = "0.8.4"
+log = { version = "0.4" }
 raw-cpuid = "8.0.0"
 redox_syscall = { path = "syscall" }
 slab_allocator = { path = "slab_allocator", optional = true }
