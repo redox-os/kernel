@@ -444,7 +444,7 @@ pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {
     }
 }
 
-pub fn funmap(virtual_address: usize) -> Result<usize> {
+pub fn funmap_old(virtual_address: usize) -> Result<usize> {
     if virtual_address == 0 {
         Ok(0)
     } else {
@@ -475,7 +475,7 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
                 let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
                 scheme.clone()
             };
-            let res = scheme.funmap(virtual_address);
+            let res = scheme.funmap_old(virtual_address);
 
             let _ = desc.close();
 
@@ -486,7 +486,7 @@ pub fn funmap(virtual_address: usize) -> Result<usize> {
     }
 }
 
-pub fn funmap2(virtual_address: usize, length: usize) -> Result<usize> {
+pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     if virtual_address == 0 || length == 0 {
         return Ok(0);
     } else if virtual_address % PAGE_SIZE != 0 {
@@ -541,7 +541,7 @@ pub fn funmap2(virtual_address: usize, length: usize) -> Result<usize> {
             let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
             scheme.clone()
         };
-        let res = scheme.funmap2(intersection.start_address().get(), intersection.size());
+        let res = scheme.funmap(intersection.start_address().get(), intersection.size());
 
         let _ = desc.close();
 

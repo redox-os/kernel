@@ -14,7 +14,7 @@ use crate::paging::{PAGE_SIZE, InactivePageTable, Page, VirtualAddress};
 use crate::paging::temporary_page::TemporaryPage;
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
-use crate::syscall::data::{Map, Map2, Packet, Stat, StatVfs, TimeSpec};
+use crate::syscall::data::{Map, OldMap, Packet, Stat, StatVfs, TimeSpec};
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_READ, PROT_WRITE};
 use crate::syscall::number::*;
@@ -29,7 +29,7 @@ pub struct UserInner {
     next_id: AtomicU64,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map2)>>,
+    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
     funmap: Mutex<BTreeMap<Region, VirtualAddress>>,
     done: WaitMap<u64, usize>,
     unmounting: AtomicBool,
@@ -339,7 +339,7 @@ impl Scheme for UserScheme {
         inner.call(SYS_FEVENT, file, flags.bits(), 0).map(EventFlags::from_bits_truncate)
     }
 
-    fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
+    fn fmap_old(&self, file: usize, map: &OldMap) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let (pid, uid, gid, context_lock, desc) = {
@@ -369,7 +369,7 @@ impl Scheme for UserScheme {
 
         let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
 
-        inner.fmap.lock().insert(id, (context_lock, desc, Map2 {
+        inner.fmap.lock().insert(id, (context_lock, desc, Map {
             offset: map.offset,
             size: map.size,
             flags: map.flags,
@@ -381,10 +381,10 @@ impl Scheme for UserScheme {
             pid: pid.into(),
             uid,
             gid,
-            a: SYS_FMAP,
+            a: SYS_FMAP_OLD,
             b: file,
             c: address,
-            d: mem::size_of::<Map>()
+            d: mem::size_of::<OldMap>()
         });
 
         let _ = inner.release(address);
@@ -392,7 +392,7 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn fmap2(&self, file: usize, map: &Map2) -> Result<usize> {
+    fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let (pid, uid, gid, context_lock, desc) = {
@@ -429,10 +429,10 @@ impl Scheme for UserScheme {
             pid: pid.into(),
             uid,
             gid,
-            a: SYS_FMAP2,
+            a: SYS_FMAP,
             b: file,
             c: address,
-            d: mem::size_of::<Map2>()
+            d: mem::size_of::<Map>()
         });
 
         let _ = inner.release(address);
@@ -440,7 +440,7 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn funmap(&self, grant_address: usize) -> Result<usize> {
+    fn funmap_old(&self, grant_address: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
             let mut funmap = inner.funmap.lock();
@@ -460,13 +460,13 @@ impl Scheme for UserScheme {
             }
         };
         if let Some(user_address) = address_opt {
-            inner.call(SYS_FUNMAP, user_address, 0, 0)
+            inner.call(SYS_FUNMAP_OLD, user_address, 0, 0)
         } else {
             Err(Error::new(EINVAL))
         }
     }
 
-    fn funmap2(&self, grant_address: usize, size: usize) -> Result<usize> {
+    fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
             let mut funmap = inner.funmap.lock();
@@ -499,7 +499,7 @@ impl Scheme for UserScheme {
 
         };
         if let Some(user_address) = address_opt {
-            inner.call(SYS_FUNMAP2, user_address, size, 0)
+            inner.call(SYS_FUNMAP, user_address, size, 0)
         } else {
             Err(Error::new(EINVAL))
         }
