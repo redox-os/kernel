@@ -2,7 +2,7 @@ use crate::context;
 use crate::context::memory::{entry_flags, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
 use crate::paging::{ActivePageTable, VirtualAddress};
-use crate::syscall::data::{Map, Map2, StatVfs};
+use crate::syscall::data::{Map, OldMap, StatVfs};
 use crate::syscall::error::*;
 use crate::syscall::flag::MapFlags;
 use crate::syscall::scheme::Scheme;
@@ -31,7 +31,7 @@ impl Scheme for MemoryScheme {
         Ok(0)
     }
 
-    fn fmap2(&self, _id: usize, map: &Map2) -> Result<usize> {
+    fn fmap(&self, _id: usize, map: &Map) -> Result<usize> {
         //TODO: Abstract with other grant creation
         if map.size == 0 {
             Ok(0)
@@ -63,12 +63,12 @@ impl Scheme for MemoryScheme {
             Ok(region.start_address().get())
         }
     }
-    fn fmap(&self, id: usize, map: &Map) -> Result<usize> {
+    fn fmap_old(&self, id: usize, map: &OldMap) -> Result<usize> {
         if map.flags.contains(MapFlags::MAP_FIXED) {
             // not supported for fmap, which lacks the address argument.
             return Err(Error::new(EINVAL));
         }
-        self.fmap2(id, &Map2 {
+        self.fmap(id, &Map {
             offset: map.offset,
             size: map.size,
             flags: map.flags,
