@@ -455,14 +455,14 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                 // Copy user heap mapping, if found
                 if let Some(heap_shared) = heap_opt {
-                    //TODO: find out why this gets unmapped (perhaps it is never mapped)
+                    // This will not always be mapped. `context.heap` starts off
+                    // with a size of zero, and then any call to `brk` increases
+                    // it. But, if `brk` doesn't increase it, it's zero.
                     if let Some(frame) = active_table.p4()[crate::USER_HEAP_PML4].pointed_frame() {
                         let flags = active_table.p4()[crate::USER_HEAP_PML4].flags();
                         active_table.with(&mut new_table, &mut temporary_page, |mapper| {
                             mapper.p4_mut()[crate::USER_HEAP_PML4].set(frame, flags);
                         });
-                    } else {
-                        println!("clone: user heap not mapped for {:X?}", heap_shared);
                     }
                     context.heap = Some(heap_shared);
                 }
