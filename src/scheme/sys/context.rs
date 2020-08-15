@@ -83,11 +83,6 @@ pub fn resource() -> Result<Vec<u8>> {
                     memory += mem.size();
                 });
             }
-            if let Some(ref heap) = context.heap {
-                heap.with(|heap| {
-                    memory += heap.size();
-                });
-            }
             if let Some(ref stack) = context.stack {
                 stack.with(|stack| {
                     memory += stack.size();

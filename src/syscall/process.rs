@@ -33,43 +33,6 @@ use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, AT_PHDR,
 use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
-pub fn brk(address: usize) -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-
-    //println!("{}: {}: BRK {:X}", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) },
-    //                             context.id.into(), address);
-
-    let current = if let Some(ref heap_shared) = context.heap {
-        heap_shared.with(|heap| {
-            heap.start_address().get() + heap.size()
-        })
-    } else {
-        panic!("user heap not initialized");
-    };
-
-    if address == 0 {
-        //println!("Brk query {:X}", current);
-        Ok(current)
-    } else if address >= crate::USER_HEAP_OFFSET {
-        //TODO: out of memory errors
-        if let Some(ref heap_shared) = context.heap {
-            heap_shared.with(|heap| {
-                heap.resize(address - crate::USER_HEAP_OFFSET, true);
-            });
-        } else {
-            panic!("user heap not initialized");
-        }
-
-        //println!("Brk resize {:X}", address);
-        Ok(address)
-    } else {
-        //println!("Brk no mem");
-        Err(Error::new(ENOMEM))
-    }
-}
-
 pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
     let ppid;
     let pid;
@@ -90,7 +53,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let mut kstack_opt = None;
         let mut offset = 0;
         let mut image = vec![];
-        let mut heap_opt = None;
         let mut stack_opt = None;
         let mut sigstack_opt = None;
         let mut tls_opt = None;
@@ -161,10 +123,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 for memory_shared in context.image.iter() {
                     image.push(memory_shared.clone());
                 }
-
-                if let Some(ref heap_shared) = context.heap {
-                    heap_opt = Some(heap_shared.clone());
-                }
             } else {
                 for memory_shared in context.image.iter() {
                     memory_shared.with(|memory| {
@@ -183,26 +141,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                         new_memory.remap(memory.flags());
                         image.push(new_memory.to_shared());
-                    });
-                }
-
-                if let Some(ref heap_shared) = context.heap {
-                    heap_shared.with(|heap| {
-                        let mut new_heap = context::memory::Memory::new(
-                            VirtualAddress::new(crate::USER_TMP_HEAP_OFFSET),
-                            heap.size(),
-                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
-                            false
-                        );
-
-                        unsafe {
-                            intrinsics::copy(heap.start_address().get() as *const u8,
-                                            new_heap.start_address().get() as *mut u8,
-                                            heap.size());
-                        }
-
-                        new_heap.remap(heap.flags());
-                        heap_opt = Some(new_heap.to_shared());
                     });
                 }
             }
@@ -453,20 +391,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
                 context.image = image;
 
-                // Copy user heap mapping, if found
-                if let Some(heap_shared) = heap_opt {
-                    // This will not always be mapped. `context.heap` starts off
-                    // with a size of zero, and then any call to `brk` increases
-                    // it. But, if `brk` doesn't increase it, it's zero.
-                    if let Some(frame) = active_table.p4()[crate::USER_HEAP_PML4].pointed_frame() {
-                        let flags = active_table.p4()[crate::USER_HEAP_PML4].flags();
-                        active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                            mapper.p4_mut()[crate::USER_HEAP_PML4].set(frame, flags);
-                        });
-                    }
-                    context.heap = Some(heap_shared);
-                }
-
                 // Copy grant mapping
                 if ! grants.lock().is_empty() {
                     let frame = active_table.p4()[crate::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
@@ -511,14 +435,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     });
                 }
                 context.image = image;
-
-                // Move copy of heap
-                if let Some(heap_shared) = heap_opt {
-                    heap_shared.with(|heap| {
-                        heap.move_to(VirtualAddress::new(crate::USER_HEAP_OFFSET), &mut new_table, &mut temporary_page);
-                    });
-                    context.heap = Some(heap_shared);
-                }
 
                 // Move grants
                 {
@@ -628,14 +544,12 @@ fn empty(context: &mut context::Context, reaping: bool) {
     if reaping {
         // Memory should already be unmapped
         assert!(context.image.is_empty());
-        assert!(context.heap.is_none());
         assert!(context.stack.is_none());
         assert!(context.sigstack.is_none());
         assert!(context.tls.is_none());
     } else {
         // Unmap previous image, heap, grants, stack, and tls
         context.image.clear();
-        drop(context.heap.take());
         drop(context.stack.take());
         drop(context.sigstack.take());
         drop(context.tls.take());
@@ -792,14 +706,6 @@ fn fexec_noreturn(
 
             // Data no longer required, can deallocate
             drop(data);
-
-            // Map heap
-            context.heap = Some(context::memory::Memory::new(
-                VirtualAddress::new(crate::USER_HEAP_OFFSET),
-                0,
-                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-                true
-            ).to_shared());
 
             // Map stack
             context.stack = Some(context::memory::Memory::new(

@@ -174,10 +174,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             ),
         ),
 
-        SYS_BRK => format!(
-            "brk({:#X})",
-            b
-        ),
         SYS_CHDIR => format!(
             "chdir({:?})",
             validate_slice(b as *const u8, c).map(ByteStr)
