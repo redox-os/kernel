@@ -170,7 +170,12 @@ pub extern fn userspace_init() {
     let path = b"initfs:/bin/init";
     let env = unsafe { INIT_ENV };
 
-    assert_eq!(syscall::chdir(b"initfs:"), Ok(0));
+    if let Err(err) = syscall::chdir(b"initfs:") {
+        info!("Failed to enter initfs ({}).", err);
+        info!("Perhaps the kernel was compiled with an incorrect INITFS_FOLDER \
+               environment variable value?");
+        panic!("Unexpected error while trying to enter initfs:.");
+    }
 
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_RDONLY).map(FileHandle::into), Ok(0));
     assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
