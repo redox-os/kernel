@@ -83,6 +83,8 @@ pub mod common;
 pub mod arch;
 pub use crate::arch::*;
 
+use crate::log::info;
+
 /// Constants like memory locations
 pub mod consts;
 
@@ -201,8 +203,8 @@ pub fn kmain(cpus: usize, env: &'static [u8]) -> ! {
     context::init();
 
     let pid = syscall::getpid();
-    println!("BSP: {:?} {}", pid, cpus);
-    println!("Env: {:?}", ::core::str::from_utf8(env));
+    info!("BSP: {:?} {}", pid, cpus);
+    info!("Env: {:?}", ::core::str::from_utf8(env));
 
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {
@@ -238,7 +240,7 @@ pub fn kmain_ap(id: usize) -> ! {
         context::init();
 
         let pid = syscall::getpid();
-        println!("AP {}: {:?}", id, pid);
+        info!("AP {}: {:?}", id, pid);
 
         loop {
             unsafe {
@@ -252,7 +254,7 @@ pub fn kmain_ap(id: usize) -> ! {
             }
         }
     } else {
-        println!("AP {}: Disabled", id);
+        info!("AP {}: Disabled", id);
 
         loop {
             unsafe {
@@ -266,12 +268,12 @@ pub fn kmain_ap(id: usize) -> ! {
 /// Allow exception handlers to send signal to arch-independant kernel
 #[no_mangle]
 pub extern fn ksignal(signal: usize) {
-    println!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
+    info!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
     {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            println!("NAME {}", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) });
+            info!("NAME {}", unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) });
         }
     }
 
