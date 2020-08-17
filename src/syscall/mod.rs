@@ -73,7 +73,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                                 let current = contexts.current().unwrap();
                                 let current = current.read();
                                 let name = current.name.lock();
-                                println!("{:?} using deprecated fmap(...) call", name);
+                                println!("{:?} using deprecated fmap(...) call", core::str::from_utf8(&name));
                             }
                             file_op(a, fd, c, d)
                         },
@@ -83,7 +83,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                                 let current = contexts.current().unwrap();
                                 let current = current.read();
                                 let name = current.name.lock();
-                                println!("{:?} using deprecated funmap(...) call", name);
+                                println!("{:?} using deprecated funmap(...) call", core::str::from_utf8(&name));
                             }
                             funmap_old(b)
                         },
