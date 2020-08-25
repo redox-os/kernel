@@ -96,6 +96,11 @@ pub fn resource() -> Result<Vec<u8>> {
             if let Some(ref sigstack) = context.sigstack {
                 memory += sigstack.size();
             }
+            for grant in context.grants.lock().iter() {
+                if grant.is_owned() {
+                    memory += grant.size();
+                }
+            }
 
             let memory_string = if memory >= 1024 * 1024 * 1024 {
                 format!("{} GB", memory / 1024 / 1024 / 1024)

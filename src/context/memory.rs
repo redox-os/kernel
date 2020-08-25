@@ -301,6 +301,10 @@ pub struct Grant {
 }
 
 impl Grant {
+    pub fn is_owned(&self) -> bool {
+        self.owned
+    }
+
     /// Get a mutable reference to the region. This is unsafe, because a bad
     /// region could lead to the wrong addresses being unmapped.
     pub unsafe fn region_mut(&mut self) -> &mut Region {
@@ -495,10 +499,6 @@ impl Grant {
     pub fn unmap(mut self) {
         assert!(self.mapped);
 
-        if self.owned {
-            println!("Grant::unmap: leaked {:?}", self);
-        }
-
         let mut active_table = unsafe { ActivePageTable::new() };
 
         let mut flush_all = MapperFlushAll::new();
@@ -506,13 +506,18 @@ impl Grant {
         let start_page = Page::containing_address(self.start_address());
         let end_page = Page::containing_address(self.final_address());
         for page in Page::range_inclusive(start_page, end_page) {
-            let (result, _frame) = active_table.unmap_return(page, false);
+            let (result, frame) = active_table.unmap_return(page, false);
+            if self.owned {
+                //TODO: make sure this frame can be safely freed, physical use counter
+                crate::memory::deallocate_frames(frame, 1);
+            }
             flush_all.consume(result);
         }
 
         flush_all.flush(&mut active_table);
 
         if let Some(desc) = self.desc_opt.take() {
+            println!("Grant::unmap: close desc {:?}", desc);
             //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
             let _ = desc.close();
         }
@@ -523,17 +528,17 @@ impl Grant {
     pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
         assert!(self.mapped);
 
-        if self.owned {
-            println!("Grant::unmap_inactive: leaked {:?}", self);
-        }
-
         let mut active_table = unsafe { ActivePageTable::new() };
 
         active_table.with(new_table, temporary_page, |mapper| {
             let start_page = Page::containing_address(self.start_address());
             let end_page = Page::containing_address(self.final_address());
             for page in Page::range_inclusive(start_page, end_page) {
-                let (result, _frame) = mapper.unmap_return(page, false);
+                let (result, frame) = mapper.unmap_return(page, false);
+                if self.owned {
+                    //TODO: make sure this frame can be safely freed, physical use counter
+                    crate::memory::deallocate_frames(frame, 1);
+                }
                 // This is not the active table, so the flush can be ignored
                 unsafe { result.ignore(); }
             }
@@ -542,6 +547,7 @@ impl Grant {
         ipi(IpiKind::Tlb, IpiTarget::Other);
 
         if let Some(desc) = self.desc_opt.take() {
+            println!("Grant::unmap_inactive: close desc {:?}", desc);
             //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
             let _ = desc.close();
         }
