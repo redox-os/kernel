@@ -77,7 +77,7 @@ pub unsafe fn init(kernel_start: usize, kernel_end: usize) {
     for (i, entry) in MEMORY_MAP.iter_mut().enumerate() {
         *entry = *(0x500 as *const MemoryArea).add(i);
         if entry._type != MEMORY_AREA_NULL {
-            info!("{:?}", entry);
+            info!("{:X?}", entry);
         }
     }
 
