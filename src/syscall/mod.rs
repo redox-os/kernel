@@ -110,7 +110,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 ),
                 SYS_CLOCK_GETTIME => clock_gettime(b, validate_slice_mut(c as *mut TimeSpec, 1).map(|time| &mut time[0])?),
                 SYS_FUTEX => futex(validate_slice_mut(b as *mut i32, 1).map(|uaddr| &mut uaddr[0])?, c, d as i32, e, f as *mut i32),
-                SYS_BRK => brk(b),
                 SYS_GETPID => getpid().map(ContextId::into),
                 SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
                 SYS_GETPPID => getppid().map(ContextId::into),

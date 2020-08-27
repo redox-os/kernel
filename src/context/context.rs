@@ -221,8 +221,6 @@ pub struct Context {
     pub ksig_restore: bool,
     /// Executable image
     pub image: Vec<SharedMemory>,
-    /// User heap
-    pub heap: Option<SharedMemory>,
     /// User stack
     pub stack: Option<SharedMemory>,
     /// User signal stack
@@ -285,7 +283,6 @@ impl Context {
             ksig: None,
             ksig_restore: false,
             image: Vec::new(),
-            heap: None,
             stack: None,
             sigstack: None,
             tls: None,
