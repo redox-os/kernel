@@ -40,6 +40,7 @@ dependencies = [
  "paste 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "raw-cpuid 8.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "redox_syscall 0.2.1",
+ "rmm 0.1.0",
  "rustc-demangle 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "slab_allocator 0.3.1",
  "spin 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -131,6 +132,10 @@ version = "0.2.1"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "rmm"
+version = "0.1.0"
 
 [[package]]
 name = "rustc-demangle"

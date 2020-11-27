@@ -18,7 +18,6 @@ use crate::gdt;
 use crate::idt;
 use crate::interrupt;
 use crate::log::{self, info};
-use crate::memory;
 use crate::paging;
 
 /// Test of zero values in BSS.
@@ -101,23 +100,17 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Env: {:X}:{:X}", env_base, env_base + env_size);
         info!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
 
-        let ext_mem_ranges = if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
-            Some([(acpi_rsdps_base as usize, acpi_rsdps_size as usize)])
-        } else {
-            None
-        };
-
         // Set up GDT before paging
         gdt::init();
 
         // Set up IDT before paging
         idt::init();
 
-        // Initialize memory management
-        memory::init(0, kernel_base + ((kernel_size + 4095)/4096) * 4096);
+        // Initialize RMM
+        crate::arch::rmm::init(kernel_base + ((kernel_size + 4095)/4096) * 4096);
 
         // Initialize paging
-        let (mut active_table, tcb_offset) = paging::init(0, kernel_base, kernel_base + kernel_size, stack_base, stack_base + stack_size, ext_mem_ranges.as_ref().map(|arr| &arr[..]).unwrap_or(&[]));
+        let (mut active_table, tcb_offset) = paging::init(0);
 
         // Set up GDT after paging with TLS
         gdt::init_paging(tcb_offset, stack_base + stack_size);
@@ -171,9 +164,6 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
 
-        // Initialize memory functions after core has loaded
-        memory::init_noncore();
-
         // Stop graphical debug
         #[cfg(feature="graphical_debug")]
         graphical_debug::fini(&mut active_table);
@@ -200,7 +190,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         let args = &*args_ptr;
         let cpu_id = args.cpu_id as usize;
         let bsp_table = args.page_table as usize;
-        let stack_start = args.stack_start as usize;
+        let _stack_start = args.stack_start as usize;
         let stack_end = args.stack_end as usize;
 
         assert_eq!(BSS_TEST_ZERO, 0);
@@ -213,7 +203,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         idt::init();
 
         // Initialize paging
-        let tcb_offset = paging::init_ap(cpu_id, bsp_table, stack_start, stack_end);
+        let tcb_offset = paging::init_ap(cpu_id, bsp_table);
 
         // Set up GDT with TLS
         gdt::init_paging(tcb_offset, stack_end);

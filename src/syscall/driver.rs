@@ -34,7 +34,6 @@ pub fn inner_physalloc(size: usize, flags: PhysallocFlags, strategy: Option<Part
     if flags.contains(PhysallocFlags::SPACE_32 | PhysallocFlags::SPACE_64) {
         return Err(Error::new(EINVAL));
     }
-    let space32 = flags.contains(PhysallocFlags::SPACE_32);
     allocate_frames_complex((size + 4095) / 4096, flags, strategy, (min + 4095) / 4096).ok_or(Error::new(ENOMEM)).map(|(frame, count)| (frame.start_address().get(), count * 4096))
 }
 pub fn physalloc(size: usize) -> Result<usize> {

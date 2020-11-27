@@ -920,7 +920,17 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     let elf = match elf::Elf::from(&data) {
         Ok(elf) => elf,
         Err(err) => {
-            println!("fexec: failed to execute {}: {}", fd.into(), err);
+            let contexts = context::contexts();
+            if let Some(context_lock) = contexts.current() {
+                let context = context_lock.read();
+                println!(
+                    "{}: {}: fexec failed to execute {}: {}",
+                    context.id.into(),
+                    unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) },
+                    fd.into(),
+                    err
+                );
+            }
             return Err(Error::new(ENOEXEC));
         }
     };
