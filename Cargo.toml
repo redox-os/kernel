@@ -18,6 +18,7 @@ redox_syscall = { path = "syscall" }
 slab_allocator = { path = "slab_allocator", optional = true }
 spin = "0.5.2"
 paste = "0.1.18"
+rmm = { path = "rmm", default-features = false }
 
 [dependencies.goblin]
 version = "0.2.1"

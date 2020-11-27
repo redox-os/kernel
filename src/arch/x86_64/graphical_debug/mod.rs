@@ -27,29 +27,14 @@ pub fn init(active_table: &mut ActivePageTable) {
     let physbaseptr;
 
     {
-        let mode_info_addr = 0x5200;
-
-        {
-            let page = Page::containing_address(VirtualAddress::new(mode_info_addr));
-            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get()));
-            let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
-            result.flush(active_table);
-        }
-
-        {
-            let mode_info = unsafe { &*(mode_info_addr as *const VBEModeInfo) };
-
-            width = mode_info.xresolution as usize;
-            height = mode_info.yresolution as usize;
-            physbaseptr = mode_info.physbaseptr as usize;
-        }
-
-        {
-            let page = Page::containing_address(VirtualAddress::new(mode_info_addr));
-            let (result, _frame) = active_table.unmap_return(page, false);
-            result.flush(active_table);
-        }
+        let mode_info_addr = 0x5200 + crate::KERNEL_OFFSET;
+        let mode_info = unsafe { &*(mode_info_addr as *const VBEModeInfo) };
+        width = mode_info.xresolution as usize;
+        height = mode_info.yresolution as usize;
+        physbaseptr = mode_info.physbaseptr as usize;
     }
+
+    println!("Framebuffer {}x{} at {:X}", width, height, physbaseptr);
 
     {
         let size = width * height;

@@ -1,5 +1,3 @@
-use core::fmt;
-
 use super::Display;
 
 pub struct DebugDisplay {
