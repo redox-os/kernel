@@ -87,10 +87,20 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             arch = context.arch.clone();
 
             if let Some(ref fx) = context.kfx {
-                let mut new_fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024]) };
-                for (new_b, b) in new_fx.iter_mut().zip(fx.iter()) {
-                    *new_b = *b;
-                }
+                let mut new_fx = unsafe {
+                    let new_fx_ptr = crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16));
+                    if new_fx_ptr.is_null() {
+                        // FIXME: It's mildly ironic that the only place where clone can fail with
+                        // ENOMEM, is when copying 1024 bytes to merely store vector registers.
+                        // Although in order to achieve full kernel-panic immunity, we'll need to
+                        // completely phase out all usage of liballoc data structures, and use our
+                        // own library/port liballoc, since panicking on OOM is not good for a
+                        // kernel.
+                        return Err(Error::new(ENOMEM));
+                    }
+                    new_fx_ptr.copy_from_nonoverlapping(fx.as_ptr(), fx.len());
+                    Box::from_raw(new_fx_ptr as *mut [u8; 1024])
+                };
                 kfx_opt = Some(new_fx);
             }
 
