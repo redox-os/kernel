@@ -1,4 +1,4 @@
-use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::{Arc, Weak};
 use core::borrow::Borrow;
 use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
@@ -15,9 +15,8 @@ use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, PageIter, PhysicalAddress, RmmA, VirtualAddress};
 use crate::paging::mapper::PageFlushAll;
-use crate::paging::temporary_page::TemporaryPage;
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, PageIter, PhysicalAddress, RmmA, VirtualAddress};
 
 /// Round down to the nearest multiple of page size
 pub fn round_down_pages(number: usize) -> usize {
@@ -260,9 +259,9 @@ impl PartialEq for Region {
 impl Eq for Region {}
 
 impl PartialOrd for Region {
-fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    self.start.partial_cmp(&other.start)
-}
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.start.partial_cmp(&other.start)
+    }
 }
 impl Ord for Region {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -358,37 +357,31 @@ impl Grant {
         }
     }
 
-    pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<FileDescriptor>, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
-        let active_table = unsafe { ActivePageTable::new(from.kind()) };
+    pub fn map_inactive(src: VirtualAddress, dst: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<FileDescriptor>, inactive_table: &mut InactivePageTable) -> Grant {
+        let active_table = unsafe { ActivePageTable::new(src.kind()) };
+        let mut inactive_mapper = inactive_table.mapper();
 
-        //TODO: Do not allocate
-        let mut frames = VecDeque::with_capacity(size/PAGE_SIZE);
+        let src_start_page = Page::containing_address(src);
+        let src_end_page = Page::containing_address(VirtualAddress::new(src.data() + size - 1));
+        let src_range = Page::range_inclusive(src_start_page, src_end_page);
 
-        let start_page = Page::containing_address(from);
-        let end_page = Page::containing_address(VirtualAddress::new(from.data() + size - 1));
-        for page in Page::range_inclusive(start_page, end_page) {
-            let frame = active_table.translate_page(page).expect("grant references unmapped memory");
-            frames.push_back(frame);
+        let dst_start_page = Page::containing_address(dst);
+        let dst_end_page = Page::containing_address(VirtualAddress::new(dst.data() + size - 1));
+        let dst_range = Page::range_inclusive(dst_start_page, dst_end_page);
+
+        for (src_page, dst_page) in src_range.zip(dst_range) {
+            let frame = active_table.translate_page(src_page).expect("grant references unmapped memory");
+
+            let inactive_flush = inactive_mapper.map_to(dst_page, frame, flags);
+            // Ignore result due to mapping on inactive table
+            unsafe { inactive_flush.ignore(); }
         }
-
-        let mut active_table = unsafe { ActivePageTable::new(to.kind()) };
-
-        active_table.with(new_table, temporary_page, |mapper| {
-            let start_page = Page::containing_address(to);
-            let end_page = Page::containing_address(VirtualAddress::new(to.data() + size - 1));
-            for page in Page::range_inclusive(start_page, end_page) {
-                let frame = frames.pop_front().expect("grant did not find enough frames");
-                let result = mapper.map_to(page, frame, flags);
-                // Ignore result due to mapping on inactive table
-                unsafe { result.ignore(); }
-            }
-        });
 
         ipi(IpiKind::Tlb, IpiTarget::Other);
 
         Grant {
             region: Region {
-                start: to,
+                start: dst,
                 size,
             },
             flags,
@@ -456,7 +449,7 @@ impl Grant {
         }
     }
 
-    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
+    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable) {
         assert!(self.mapped);
 
         let mut active_table = unsafe { ActivePageTable::new(new_start.kind()) };
@@ -471,12 +464,10 @@ impl Grant {
             let (result, frame) = active_table.unmap_return(page, false);
             flush_all.consume(result);
 
-            active_table.with(new_table, temporary_page, |mapper| {
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
-                let result = mapper.map_to(new_page, frame, flags);
-                // Ignore result due to mapping on inactive table
-                unsafe { result.ignore(); }
-            });
+            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
+            let result = new_table.mapper().map_to(new_page, frame, flags);
+            // Ignore result due to mapping on inactive table
+            unsafe { result.ignore(); }
         }
 
         flush_all.flush();
@@ -522,24 +513,20 @@ impl Grant {
         self.mapped = false;
     }
 
-    pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
+    pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable) {
         assert!(self.mapped);
 
-        let mut active_table = unsafe { ActivePageTable::new(self.start_address().kind()) };
-
-        active_table.with(new_table, temporary_page, |mapper| {
-            let start_page = Page::containing_address(self.start_address());
-            let end_page = Page::containing_address(self.final_address());
-            for page in Page::range_inclusive(start_page, end_page) {
-                let (result, frame) = mapper.unmap_return(page, false);
-                if self.owned {
-                    //TODO: make sure this frame can be safely freed, physical use counter
-                    crate::memory::deallocate_frames(frame, 1);
-                }
-                // This is not the active table, so the flush can be ignored
-                unsafe { result.ignore(); }
+        let start_page = Page::containing_address(self.start_address());
+        let end_page = Page::containing_address(self.final_address());
+        for page in Page::range_inclusive(start_page, end_page) {
+            let (result, frame) = new_table.mapper().unmap_return(page, false);
+            if self.owned {
+                //TODO: make sure this frame can be safely freed, physical use counter
+                crate::memory::deallocate_frames(frame, 1);
             }
-        });
+            // This is not the active table, so the flush can be ignored
+            unsafe { result.ignore(); }
+        }
 
         ipi(IpiKind::Tlb, IpiTarget::Other);
 
@@ -734,7 +721,9 @@ impl Memory {
 
     /// A complicated operation to move a piece of memory to a new page table
     /// It also allows for changing the address at the same time
-    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) {
+    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable) {
+        let mut inactive_mapper = new_table.mapper();
+
         let mut active_table = unsafe { ActivePageTable::new(new_start.kind()) };
 
         let flush_all = PageFlushAll::new();
@@ -743,12 +732,10 @@ impl Memory {
             let (result, frame) = active_table.unmap_return(page, false);
             flush_all.consume(result);
 
-            active_table.with(new_table, temporary_page, |mapper| {
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.start.data() + new_start.data()));
-                let result = mapper.map_to(new_page, frame, self.flags);
-                // This is not the active table, so the flush can be ignored
-                unsafe { result.ignore(); }
-            });
+            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.start.data() + new_start.data()));
+            let result = inactive_mapper.map_to(new_page, frame, self.flags);
+            // This is not the active table, so the flush can be ignored
+            unsafe { result.ignore(); }
         }
 
         flush_all.flush();
@@ -837,6 +824,8 @@ impl Tls {
         );
     }
 }
+
+pub const DANGLING: usize = 1 << (usize::BITS - 2);
 
 #[cfg(tests)]
 mod tests {

@@ -100,11 +100,6 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kerne
             flush.ignore(); // Not the active table
         }
 
-        //TODO: remove backwards compatible recursive mapping
-        mapper.table().set_entry(511, rmm::PageEntry::new(
-            mapper.table().phys().data() | A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_PRESENT | A::ENTRY_FLAG_NO_EXEC
-        ));
-
         println!("Table: {:X}", mapper.table().phys().data());
         for i in 0..512 {
             if let Some(entry) = mapper.table().entry(i) {

@@ -20,7 +20,6 @@ use crate::interrupt;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::allocate_frames;
 use crate::paging::mapper::PageFlushAll;
-use crate::paging::temporary_page::TemporaryPage;
 use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, TableKind, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
@@ -332,12 +331,11 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             let mut active_utable = unsafe { ActivePageTable::new(TableKind::User) };
             let mut active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
 
-            let mut temporary_upage = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET)));
-            let mut temporary_kpage = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::KERNEL_TMP_MISC_OFFSET)));
-
-            let mut new_utable = {
+            let mut new_utable = unsafe {
                 let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
-                InactivePageTable::new(frame, &mut active_utable, &mut temporary_upage)
+                // SAFETY: This is safe because the frame is exclusive, owned, and valid, as we
+                // have just allocated it.
+                InactivePageTable::new(&mut active_utable, frame)
             };
             context.arch.set_page_utable(unsafe { new_utable.address() });
 
@@ -345,7 +343,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             let mut new_ktable = {
                 let mut new_ktable = {
                     let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
-                    InactivePageTable::new(frame, &mut active_ktable, &mut temporary_kpage)
+                    InactivePageTable::new(frame, &mut active_ktable)
                 };
                 context.arch.set_page_ktable(unsafe { new_ktable.address() });
                 new_ktable
@@ -360,35 +358,29 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             {
                 let frame = active_ktable.p4()[crate::KERNEL_PML4].pointed_frame().expect("kernel image not mapped");
                 let flags = active_ktable.p4()[crate::KERNEL_PML4].flags();
-                active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
-                    mapper.p4_mut()[crate::KERNEL_PML4].set(frame, flags);
-                });
+
+                new_ktable.mapper().p4_mut()[crate::KERNEL_PML4].set(frame, flags);
             }
 
             // Copy kernel heap mapping
             {
                 let frame = active_ktable.p4()[crate::KERNEL_HEAP_PML4].pointed_frame().expect("kernel heap not mapped");
                 let flags = active_ktable.p4()[crate::KERNEL_HEAP_PML4].flags();
-                active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
-                    mapper.p4_mut()[crate::KERNEL_HEAP_PML4].set(frame, flags);
-                });
+
+                new_ktable.mapper().p4_mut()[crate::KERNEL_HEAP_PML4].set(frame, flags);
             }
 
             // Copy physmap mapping
             {
                 let frame = active_ktable.p4()[crate::PHYS_PML4].pointed_frame().expect("physmap not mapped");
                 let flags = active_ktable.p4()[crate::PHYS_PML4].flags();
-                active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
-                    mapper.p4_mut()[crate::PHYS_PML4].set(frame, flags);
-                });
+                new_ktable.mapper().p4_mut()[crate::PHYS_PML4].set(frame, flags);
             }
             // Copy kernel percpu (similar to TLS) mapping.
             {
                 let frame = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].pointed_frame().expect("kernel TLS not mapped");
                 let flags = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].flags();
-                active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
-                    mapper.p4_mut()[crate::KERNEL_PERCPU_PML4].set(frame, flags);
-                });
+                new_ktable.mapper().p4_mut()[crate::KERNEL_PERCPU_PML4].set(frame, flags);
             }
 
             if let Some(fx) = kfx_opt.take() {
@@ -414,9 +406,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 if ! image.is_empty() {
                     let frame = active_utable.p4()[crate::USER_PML4].pointed_frame().expect("user image not mapped");
                     let flags = active_utable.p4()[crate::USER_PML4].flags();
-                    active_utable.with(&mut new_utable, &mut temporary_upage, |mapper| {
-                        mapper.p4_mut()[crate::USER_PML4].set(frame, flags);
-                    });
+
+                    new_utable.mapper().p4_mut()[crate::USER_PML4].set(frame, flags);
                 }
                 context.image = image;
 
@@ -424,9 +415,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 if ! grants.read().is_empty() {
                     let frame = active_utable.p4()[crate::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
                     let flags = active_utable.p4()[crate::USER_GRANT_PML4].flags();
-                    active_utable.with(&mut new_utable, &mut temporary_upage, |mapper| {
-                        mapper.p4_mut()[crate::USER_GRANT_PML4].set(frame, flags);
-                    });
+
+                    new_utable.mapper().p4_mut()[crate::USER_GRANT_PML4].set(frame, flags);
                 }
                 context.grants = grants;
             } else {
@@ -434,7 +424,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 for memory_shared in image.iter_mut() {
                     memory_shared.with(|memory| {
                         let start = VirtualAddress::new(memory.start_address().data() - crate::USER_TMP_OFFSET + crate::USER_OFFSET);
-                        memory.move_to(start, &mut new_utable, &mut temporary_upage);
+                        memory.move_to(start, &mut new_utable);
                     });
                 }
                 context.image = image;
@@ -446,7 +436,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                     for mut grant in old_grants.inner.into_iter() {
                         let start = VirtualAddress::new(grant.start_address().data() + crate::USER_GRANT_OFFSET - crate::USER_TMP_GRANT_OFFSET);
-                        grant.move_to(start, &mut new_utable, &mut temporary_upage);
+                        grant.move_to(start, &mut new_utable);
                         grants.insert(grant);
                     }
                 }
@@ -458,12 +448,11 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 if flags.contains(CLONE_STACK) {
                     let frame = active_utable.p4()[crate::USER_STACK_PML4].pointed_frame().expect("user stack not mapped");
                     let flags = active_utable.p4()[crate::USER_STACK_PML4].flags();
-                    active_utable.with(&mut new_utable, &mut temporary_upage, |mapper| {
-                        mapper.p4_mut()[crate::USER_STACK_PML4].set(frame, flags);
-                    });
+
+                    new_utable.mapper().p4_mut()[crate::USER_STACK_PML4].set(frame, flags);
                 } else {
                     stack_shared.with(|stack| {
-                        stack.move_to(VirtualAddress::new(crate::USER_STACK_OFFSET), &mut new_utable, &mut temporary_upage);
+                        stack.move_to(VirtualAddress::new(crate::USER_STACK_OFFSET), &mut new_utable);
                     });
                 }
                 context.stack = Some(stack_shared);
@@ -471,7 +460,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
             // Setup user sigstack
             if let Some(mut sigstack) = sigstack_opt {
-                sigstack.move_to(VirtualAddress::new(crate::USER_SIGSTACK_OFFSET), &mut new_utable, &mut temporary_upage);
+                sigstack.move_to(VirtualAddress::new(crate::USER_SIGSTACK_OFFSET), &mut new_utable);
                 context.sigstack = Some(sigstack);
             }
 
@@ -563,9 +552,8 @@ fn empty(context: &mut context::Context, reaping: bool) {
                 log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
-                let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
-                grant.unmap_inactive(&mut new_table, &mut temporary_page);
+                grant.unmap_inactive(&mut new_table);
             } else {
                 grant.unmap();
             }

@@ -1,32 +1,55 @@
-use core::ptr::Unique;
-
 use crate::memory::{allocate_frames, deallocate_frames, Frame};
-
 use super::{Page, PAGE_SIZE, PageFlags, PhysicalAddress, VirtualAddress};
-use super::table::{self, Table, Level4};
+
 use super::RmmA;
+use super::table::{Table, Level4};
 
 pub use rmm::{PageFlush, PageFlushAll};
 
-#[derive(Debug)]
-pub struct Mapper {
-    p4: Unique<Table<Level4>>,
+pub struct Mapper<'table> {
+    p4: &'table mut Table<Level4>,
 }
 
-impl Mapper {
-    /// Create a new page table
-    pub unsafe fn new() -> Mapper {
-        Mapper {
-            p4: Unique::new_unchecked(table::P4),
+impl core::fmt::Debug for Mapper<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Mapper referencing P4 at {:p}", self.p4)
+    }
+}
+
+impl<'table> Mapper<'table> {
+    /// Wrap the current address space in a mapper.
+    ///
+    /// # Safety
+    ///
+    /// For this to be safe, the caller must have exclusive access to the pointer in the CR3
+    /// register.
+    // TODO: Find some lifetime hack we can use for ensuring exclusive access at compile time?
+    pub unsafe fn current() -> Mapper<'table> {
+        // SAFETY: We know that CR3 must be a valid frame, since the processor would triple fault
+        // otherwise, and the caller has ensured exclusive ownership of the KERNEL_OFFSET+CR3.
+        Self::from_p4_unchecked(&mut Frame::containing_address(PhysicalAddress::new(x86::controlregs::cr3() as usize)))
+    }
+    /// Wrap a top-level page table (an entire address space) in a mapper.
+    ///
+    /// # Safety
+    ///
+    /// For this to be safe, the caller must have exclusive access to the frame argument. The frame
+    /// must also be valid, and the frame must not outlive the lifetime.
+    pub unsafe fn from_p4_unchecked(frame: &mut Frame) -> Self {
+        let phys = frame.start_address();
+        let virt = VirtualAddress::new(phys.data() + crate::KERNEL_OFFSET);
+
+        Self {
+            p4: &mut *(virt.data() as *mut Table<Level4>),
         }
     }
 
     pub fn p4(&self) -> &Table<Level4> {
-        unsafe { self.p4.as_ref() }
+        &*self.p4
     }
 
     pub fn p4_mut(&mut self) -> &mut Table<Level4> {
-        unsafe { self.p4.as_mut() }
+        &mut *self.p4
     }
 
     /// Map a page to a frame

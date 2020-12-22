@@ -5,11 +5,10 @@ use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
 
 use crate::memory::allocate_frames;
+use crate::paging::VirtualAddress;
 
 use super::{ENTRY_COUNT, PageFlags};
 use super::entry::{Entry, EntryFlags};
-
-pub const P4: *mut Table<Level4> = (crate::RECURSIVE_PAGE_OFFSET | 0x7f_ffff_f000) as *mut _;
 
 pub trait TableLevel {}
 
@@ -39,7 +38,7 @@ impl HierarchicalLevel for Level2 {
     type NextLevel = Level1;
 }
 
-#[repr(packed(4096))]
+#[repr(C, align(4096))]
 pub struct Table<L: TableLevel> {
     entries: [Entry; ENTRY_COUNT],
     level: PhantomData<L>,
@@ -84,11 +83,11 @@ impl<L> Table<L> where L: TableLevel {
 
 impl<L> Table<L> where L: HierarchicalLevel {
     pub fn next_table(&self, index: usize) -> Option<&Table<L::NextLevel>> {
-        self.next_table_address(index).map(|address| unsafe { &*(address as *const _) })
+        self.next_table_address(index).map(|address| unsafe { &*(address.data() as *const _) })
     }
 
     pub fn next_table_mut(&mut self, index: usize) -> Option<&mut Table<L::NextLevel>> {
-        self.next_table_address(index).map(|address| unsafe { &mut *(address as *mut _) })
+        self.next_table_address(index).map(|address| unsafe { &mut *(address.data() as *mut _) })
     }
 
     pub fn next_table_create(&mut self, index: usize) -> &mut Table<L::NextLevel> {
@@ -104,14 +103,19 @@ impl<L> Table<L> where L: HierarchicalLevel {
         self.next_table_mut(index).unwrap()
     }
 
-    fn next_table_address(&self, index: usize) -> Option<usize> {
-        let entry_flags = self[index].flags();
-        if entry_flags.has_present() && !entry_flags.has_flag(EntryFlags::HUGE_PAGE.bits()) {
-            let table_address = self as *const _ as usize;
-            Some((table_address << 9) | (index << 12))
-        } else {
-            None
-        }
+    fn next_table_address(&self, index: usize) -> Option<VirtualAddress> {
+        let entry = &self[index];
+        let entry_flags = entry.flags();
+
+        entry.pointed_frame().and_then(|next_table_frame| {
+            if entry_flags.has_flag(EntryFlags::HUGE_PAGE.bits()) {
+                return None;
+            }
+            let next_table_physaddr = next_table_frame.start_address();
+            let next_table_virtaddr = VirtualAddress::new(next_table_physaddr.data() + crate::KERNEL_OFFSET);
+
+            Some(next_table_virtaddr)
+        })
     }
 }
 

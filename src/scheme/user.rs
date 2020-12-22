@@ -8,10 +8,9 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{page_flags, round_down_pages, Grant, Region};
+use crate::context::memory::{DANGLING, page_flags, round_down_pages, Grant, Region};
 use crate::event;
-use crate::paging::{PAGE_SIZE, InactivePageTable, Page, VirtualAddress};
-use crate::paging::temporary_page::TemporaryPage;
+use crate::paging::{PAGE_SIZE, InactivePageTable, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, OldMap, Packet, Stat, StatVfs, TimeSpec};
@@ -124,7 +123,7 @@ impl UserInner {
         ).map(|addr| addr.data())
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, to_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>)
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, dst_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>)
                      -> Result<VirtualAddress> {
         // TODO: More abstractions over grant creation!
 
@@ -138,57 +137,50 @@ impl UserInner {
             // if they ever tried to access this dangling address.
 
             // Set the most significant bit.
-            let dangling: usize = 1 << (core::mem::size_of::<usize>() * 8 - 1);
-
-            return Ok(VirtualAddress::new(dangling));
+            return Ok(VirtualAddress::new(DANGLING));
         }
 
         let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
 
         let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
-        let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
         let mut grants = context.grants.write();
 
-        let from_address = round_down_pages(address);
-        let offset = address - from_address;
-        let from_region = Region::new(VirtualAddress::new(from_address), offset + size).round();
-        let to_region = grants.find_free_at(VirtualAddress::new(to_address), from_region.size(), flags)?;
+        let src_address = round_down_pages(address);
+        let offset = address - src_address;
+        let src_region = Region::new(VirtualAddress::new(src_address), offset + size).round();
+        let dst_region = grants.find_free_at(VirtualAddress::new(dst_address), src_region.size(), flags)?;
 
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
         grants.insert(Grant::map_inactive(
-            from_region.start_address(),
-            to_region.start_address(),
-            from_region.size(),
+            src_region.start_address(),
+            dst_region.start_address(),
+            src_region.size(),
             page_flags(flags),
             desc_opt,
             &mut new_table,
-            &mut temporary_page
         ));
 
-        Ok(VirtualAddress::new(to_region.start_address().data() + offset))
+        Ok(VirtualAddress::new(dst_region.start_address().data() + offset))
     }
 
     pub fn release(&self, address: usize) -> Result<()> {
-        if address == 0 {
-            Ok(())
-        } else {
-            let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
-            let mut context = context_lock.write();
-
-            let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
-            let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
-
-            let mut grants = context.grants.write();
-
-            if let Some(region) = grants.contains(VirtualAddress::new(address)).map(Region::from) {
-                grants.take(&region).unwrap().unmap_inactive(&mut new_table, &mut temporary_page);
-                return Ok(());
-            }
-
-            Err(Error::new(EFAULT))
+        if address == DANGLING {
+            return Ok(());
         }
+        let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
+        let mut context = context_lock.write();
+
+        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
+        let mut grants = context.grants.write();
+
+        let region = match grants.contains(VirtualAddress::new(address)).map(Region::from) {
+            Some(region) => region,
+            None => return  Err(Error::new(EFAULT)),
+        };
+        grants.take(&region).unwrap().unmap_inactive(&mut new_table);
+        Ok(())
     }
 
     pub fn read(&self, buf: &mut [u8]) -> Result<usize> {
