@@ -167,9 +167,11 @@ pub unsafe fn mapper_current() -> PageMapper<'static, X8664Arch, LockedAllocator
     PageMapper::current(&mut FRAME_ALLOCATOR)
 }
 
-pub unsafe fn init(kernel_end: usize) {
+pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
     type A = X8664Arch;
 
+    let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let kernel_end = kernel_base + kernel_size_aligned;
     println!("kernel_end: {:X}", kernel_end);
 
     // Copy memory map from bootloader location, and page align it
@@ -213,6 +215,11 @@ pub unsafe fn init(kernel_end: usize) {
         AREAS[area_i].size = size;
         area_i += 1;
     }
+
+    //TODO: this is a hack to ensure kernel is mapped, even if it uses invalid memory. We need to
+    //properly utilize the firmware memory map and not assume 0x100000 and onwards is free
+    AREAS[area_i].base = PhysicalAddress::new(kernel_base);
+    AREAS[area_i].size = kernel_size_aligned;
 
     println!("bump_offset: {:X}", bump_offset);
 
