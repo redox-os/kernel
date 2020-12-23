@@ -50,7 +50,7 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> usize {
     }
 }
 
-unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], bump_offset: usize) -> BuddyAllocator<A> {
+unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kernel_size_aligned: usize, bump_offset: usize) -> BuddyAllocator<A> {
     // First, calculate how much memory we have
     let mut size = 0;
     for area in areas.iter() {
@@ -65,7 +65,6 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], bump_offset: usize) -> Bu
     // Create a basic allocator for the first pages
     let mut bump_allocator = BumpAllocator::<A>::new(areas, bump_offset);
 
-    //TODO: memory protection
     {
         let mut mapper = PageMapper::<A, _>::create(
             &mut bump_allocator
@@ -84,6 +83,20 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], bump_offset: usize) -> Bu
                 ).expect("failed to map frame");
                 flush.ignore(); // Not the active table
             }
+        }
+
+        //TODO: this is a hack to ensure kernel is mapped, even if it uses invalid memory. We need to
+        //properly utilize the firmware memory map and not assume 0x100000 and onwards is free
+        for i in 0..kernel_size_aligned / A::PAGE_SIZE {
+            let phys = PhysicalAddress::new(kernel_base + i * A::PAGE_SIZE);
+            let virt = A::phys_to_virt(phys);
+            let flags = page_flags::<A>(virt);
+            let flush = mapper.map_phys(
+                virt,
+                phys,
+                flags
+            ).expect("failed to map frame");
+            flush.ignore(); // Not the active table
         }
 
         //TODO: remove backwards compatible recursive mapping
@@ -216,13 +229,8 @@ pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
         area_i += 1;
     }
 
-    //TODO: this is a hack to ensure kernel is mapped, even if it uses invalid memory. We need to
-    //properly utilize the firmware memory map and not assume 0x100000 and onwards is free
-    AREAS[area_i].base = PhysicalAddress::new(kernel_base);
-    AREAS[area_i].size = kernel_size_aligned;
-
     println!("bump_offset: {:X}", bump_offset);
 
-    let allocator = inner::<A>(&AREAS, bump_offset);
+    let allocator = inner::<A>(&AREAS, kernel_base, kernel_size_aligned, bump_offset);
     *FRAME_ALLOCATOR.inner.lock() = Some(allocator);
 }
