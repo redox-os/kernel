@@ -14,6 +14,4 @@ pub unsafe fn init() {
     COMMAND.write(SELECT_CHAN0 | LOHI | 5);
     CHAN0.write((CHAN0_DIVISOR & 0xFF) as u8);
     CHAN0.write((CHAN0_DIVISOR >> 8) as u8);
-
-    println!("Using PIT");
 }

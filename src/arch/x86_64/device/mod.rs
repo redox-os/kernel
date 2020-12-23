@@ -37,8 +37,11 @@ unsafe fn init_hpet() -> bool {
 }
 
 pub unsafe fn init_noncore() {
-    if ! init_hpet() {
+    if init_hpet() {
+        println!("HPET used as system timer");
+    } else {
         pit::init();
+        println!("PIT used as system timer");
     }
 
     rtc::init();
