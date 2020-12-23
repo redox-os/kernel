@@ -342,7 +342,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             let mut active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
 
             let mut new_utable = unsafe {
-                let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
+                let frame = allocate_frames(1).ok_or(Error::new(ENOMEM))?;
                 // SAFETY: This is safe because the frame is exclusive, owned, and valid, as we
                 // have just allocated it.
                 InactivePageTable::new(&mut active_utable, frame)
