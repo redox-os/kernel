@@ -8,6 +8,7 @@ use x86::msr;
 
 use crate::memory::Frame;
 
+use self::entry::EntryFlags;
 use self::mapper::{Mapper, PageFlushAll};
 use self::table::{Level4, Table};
 
@@ -94,8 +95,8 @@ unsafe fn init_pat() {
     );
 }
 
-/// Map TSS
-unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
+/// Map percpu
+unsafe fn map_percpu(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     extern "C" {
         /// The starting byte of the thread data segment
         static mut __tdata_start: u8;
@@ -115,7 +116,11 @@ unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     let start_page = Page::containing_address(VirtualAddress::new(start));
     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
     for page in Page::range_inclusive(start_page, end_page) {
-        let result = mapper.map(page, PageFlags::new().write(true));
+        let result = mapper.map(
+            page,
+            PageFlags::new().write(true).custom_flag(EntryFlags::GLOBAL.bits(), cfg!(not(feature = "pti"))),
+        )
+        .expect("failed to allocate page table frames while mapping percpu");
         flush_all.consume(result);
     }
     flush_all
@@ -188,7 +193,7 @@ pub unsafe fn init(
 
     let mut active_table = ActivePageTable::new_unlocked(TableKind::User);
 
-    let flush_all = map_tss(cpu_id, &mut active_table);
+    let flush_all = map_percpu(cpu_id, &mut active_table);
     flush_all.flush();
 
     return (active_table, init_tcb(cpu_id));
@@ -205,7 +210,7 @@ pub unsafe fn init_ap(
     let mut new_table = InactivePageTable::from_address(bsp_table);
 
     {
-        let flush_all = map_tss(cpu_id, &mut new_table.mapper());
+        let flush_all = map_percpu(cpu_id, &mut new_table.mapper());
         // The flush can be ignored as this is not the active table. See later active_table.switch
         flush_all.ignore();
     };

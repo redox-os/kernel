@@ -118,3 +118,6 @@ impl Iterator for FrameIter {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct Enomem;

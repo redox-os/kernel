@@ -339,7 +339,9 @@ impl Grant {
         let start_page = Page::containing_address(to);
         let end_page = Page::containing_address(VirtualAddress::new(to.data() + size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
-            let result = active_table.map(page, flags);
+            let result = active_table
+                .map(page, flags)
+                .expect("TODO: handle ENOMEM in Grant::map");
             flush_all.consume(result);
         }
 
@@ -408,7 +410,8 @@ impl Grant {
 
             let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
             if self.owned {
-                let result = active_table.map(new_page, PageFlags::new().write(true));
+                let result = active_table.map(new_page, PageFlags::new().write(true))
+                    .expect("TODO: handle ENOMEM in Grant::secret_clone");
                 flush_all.consume(result);
             } else {
                 let result = active_table.map_to(new_page, frame, flags);
@@ -692,7 +695,9 @@ impl Memory {
         let flush_all = PageFlushAll::new();
 
         for page in self.pages() {
-            let result = active_table.map(page, self.flags);
+            let result = active_table
+                .map(page, self.flags)
+                .expect("TODO: handle ENOMEM in Memory::map");
             flush_all.consume(result);
         }
 
@@ -769,7 +774,9 @@ impl Memory {
             let end_page = Page::containing_address(VirtualAddress::new(self.start.data() + new_size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 if active_table.translate_page(page).is_none() {
-                    let result = active_table.map(page, self.flags);
+                    let result = active_table
+                        .map(page, self.flags)
+                        .expect("TODO: Handle OOM in Memory::resize");
                     flush_all.consume(result);
                 }
             }

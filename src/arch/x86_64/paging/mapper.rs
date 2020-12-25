@@ -1,5 +1,5 @@
-use crate::memory::{allocate_frames, deallocate_frames, Frame};
 use super::{linear_phys_to_virt, Page, PAGE_SIZE, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::memory::{allocate_frames, deallocate_frames, Enomem, Frame};
 
 use super::RmmA;
 use super::table::{Table, Level4};
@@ -36,8 +36,7 @@ impl<'table> Mapper<'table> {
     /// For this to be safe, the caller must have exclusive access to the frame argument. The frame
     /// must also be valid, and the frame must not outlive the lifetime.
     pub unsafe fn from_p4_unchecked(frame: &mut Frame) -> Self {
-        let phys = frame.start_address();
-        let virt = linear_phys_to_virt(phys)
+        let virt = linear_phys_to_virt(frame.start_address())
             .expect("expected page table frame to fit within linear mapping");
 
         Self {
@@ -70,9 +69,9 @@ impl<'table> Mapper<'table> {
     }
 
     /// Map a page to the next free frame
-    pub fn map(&mut self, page: Page, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
-        let frame = allocate_frames(1).expect("out of frames");
-        self.map_to(page, frame, flags)
+    pub fn map(&mut self, page: Page, flags: PageFlags<RmmA>) -> Result<PageFlush<RmmA>, Enomem> {
+        let frame = allocate_frames(1).ok_or(Enomem)?;
+        Ok(self.map_to(page, frame, flags))
     }
 
     /// Update flags for a page
