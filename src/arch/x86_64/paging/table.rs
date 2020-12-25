@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
 
 use crate::memory::allocate_frames;
-use crate::paging::VirtualAddress;
+use crate::paging::{linear_phys_to_virt, VirtualAddress};
 
 use super::{ENTRY_COUNT, PageFlags};
 use super::entry::{Entry, EntryFlags};
@@ -112,7 +112,8 @@ impl<L> Table<L> where L: HierarchicalLevel {
                 return None;
             }
             let next_table_physaddr = next_table_frame.start_address();
-            let next_table_virtaddr = VirtualAddress::new(next_table_physaddr.data() + crate::KERNEL_OFFSET);
+            let next_table_virtaddr = linear_phys_to_virt(next_table_physaddr)
+                .expect("expected page table frame to fit within linear mapping");
 
             Some(next_table_virtaddr)
         })

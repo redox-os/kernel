@@ -310,7 +310,8 @@ impl InactivePageTable {
         // case it is outside the pre-mapped physical address range, or if such a range is too
         // large to fit the whole physical address space in the virtual address space.
         {
-            let table = VirtualAddress::new(frame.start_address().data() + crate::KERNEL_OFFSET);
+            let table = linear_phys_to_virt(frame.start_address())
+                .expect("cannot initialize InactivePageTable (currently) without the frame being linearly mapped");
             // now we are able to zero the table
 
             // SAFETY: The caller must ensure exclusive access to the pointed-to virtual address of

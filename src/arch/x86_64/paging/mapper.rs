@@ -1,5 +1,5 @@
 use crate::memory::{allocate_frames, deallocate_frames, Frame};
-use super::{Page, PAGE_SIZE, PageFlags, PhysicalAddress, VirtualAddress};
+use super::{linear_phys_to_virt, Page, PAGE_SIZE, PageFlags, PhysicalAddress, VirtualAddress};
 
 use super::RmmA;
 use super::table::{Table, Level4};
@@ -37,7 +37,8 @@ impl<'table> Mapper<'table> {
     /// must also be valid, and the frame must not outlive the lifetime.
     pub unsafe fn from_p4_unchecked(frame: &mut Frame) -> Self {
         let phys = frame.start_address();
-        let virt = VirtualAddress::new(phys.data() + crate::KERNEL_OFFSET);
+        let virt = linear_phys_to_virt(phys)
+            .expect("expected page table frame to fit within linear mapping");
 
         Self {
             p4: &mut *(virt.data() as *mut Table<Level4>),
