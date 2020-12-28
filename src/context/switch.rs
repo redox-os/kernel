@@ -98,6 +98,21 @@ pub unsafe fn switch() -> bool {
             from_ptr = context.deref_mut() as *mut Context;
         }
 
+        macro_rules! to {
+            ($context:expr) => {{
+                let context: &mut Context = $context;
+                if runnable(context, cpu_id) {
+                    to_ptr = context as *mut Context;
+                    if context.ksig.is_none() {
+                        to_sig = context.pending.pop_front();
+                    }
+                    true
+                } else {
+                    false
+                }
+            }};
+        };
+
         for (_pid, context_lock) in contexts.iter() {
             let mut context = context_lock.write();
             update(&mut context, cpu_id);
@@ -106,11 +121,7 @@ pub unsafe fn switch() -> bool {
         for (pid, context_lock) in contexts.iter() {
             if *pid > (*from_ptr).id {
                 let mut context = context_lock.write();
-                if runnable(&mut context, cpu_id) {
-                    to_ptr = context.deref_mut() as *mut Context;
-                    if (*to_ptr).ksig.is_none() {
-                        to_sig = context.pending.pop_front();
-                    }
+                if to!(&mut context) {
                     break;
                 }
             }
@@ -120,11 +131,7 @@ pub unsafe fn switch() -> bool {
             for (pid, context_lock) in contexts.iter() {
                 if *pid < (*from_ptr).id {
                     let mut context = context_lock.write();
-                    if runnable(&mut context, cpu_id) {
-                        to_ptr = context.deref_mut() as *mut Context;
-                        if (*to_ptr).ksig.is_none() {
-                            to_sig = context.pending.pop_front();
-                        }
+                    if to!(&mut context) {
                         break;
                     }
                 }
