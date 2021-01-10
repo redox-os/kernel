@@ -103,13 +103,13 @@ impl UserInner {
     /// Map a readable structure to the scheme's userspace and return the
     /// pointer
     pub fn capture(&self, buf: &[u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, 0, buf.as_ptr() as usize, buf.len(), PROT_READ, None).map(|addr| addr.get())
+        UserInner::capture_inner(&self.context, 0, buf.as_ptr() as usize, buf.len(), PROT_READ, None).map(|addr| addr.data())
     }
 
     /// Map a writeable structure to the scheme's userspace and return the
     /// pointer
     pub fn capture_mut(&self, buf: &mut [u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, 0, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None).map(|addr| addr.get())
+        UserInner::capture_inner(&self.context, 0, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None).map(|addr| addr.data())
     }
 
     fn capture_inner(context_weak: &Weak<RwLock<Context>>, to_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>)
@@ -144,7 +144,7 @@ impl UserInner {
             &mut temporary_page
         ));
 
-        Ok(VirtualAddress::new(to_region.start_address().get() + offset))
+        Ok(VirtualAddress::new(to_region.start_address().data() + offset))
     }
 
     pub fn release(&self, address: usize) -> Result<()> {
@@ -222,7 +222,7 @@ impl UserInner {
                         if let Ok(grant_address) = res {
                             self.funmap.lock().insert(Region::new(grant_address, map.size), VirtualAddress::new(address));
                         }
-                        packet.a = Error::mux(res.map(|addr| addr.get()));
+                        packet.a = Error::mux(res.map(|addr| addr.data()));
                     } else {
                         let _ = desc.close();
                     }
@@ -454,7 +454,7 @@ impl Scheme for UserScheme {
                 }
                 funmap.remove(&grant);
                 let user = Region::new(user_base, grant.size());
-                Some(grant.rebase(user, grant_address).get())
+                Some(grant.rebase(user, grant_address).data())
             } else {
                 None
             }
@@ -492,7 +492,7 @@ impl Scheme for UserScheme {
                     funmap.insert(after, start);
                 }
 
-                Some(grant.rebase(user, grant_address).get())
+                Some(grant.rebase(user, grant_address).data())
             } else {
                 None
             }

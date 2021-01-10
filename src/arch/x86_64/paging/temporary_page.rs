@@ -32,7 +32,7 @@ impl TemporaryPage {
     /// Maps the temporary page to the given page table frame in the active
     /// table. Returns a reference to the now mapped table.
     pub fn map_table_frame(&mut self, frame: Frame, flags: EntryFlags, active_table: &mut ActivePageTable) -> &mut Table<Level1> {
-        unsafe { &mut *(self.map(frame, flags, active_table).get() as *mut Table<Level1>) }
+        unsafe { &mut *(self.map(frame, flags, active_table).data() as *mut Table<Level1>) }
     }
 
     /// Unmaps the temporary page in the active table.

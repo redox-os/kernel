@@ -63,8 +63,8 @@ impl Entry {
     }
 
     pub fn set(&mut self, frame: Frame, flags: EntryFlags) {
-        debug_assert!(frame.start_address().get() & !ADDRESS_MASK == 0);
-        self.0 = (frame.start_address().get() as u64) | flags.bits() | (self.0 & COUNTER_MASK);
+        debug_assert!(frame.start_address().data() & !ADDRESS_MASK == 0);
+        self.0 = (frame.start_address().data() as u64) | flags.bits() | (self.0 & COUNTER_MASK);
     }
 
     /// Get bits 52-61 in entry, used as counter for page table

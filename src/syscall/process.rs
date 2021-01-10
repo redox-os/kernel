@@ -127,15 +127,15 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 for memory_shared in context.image.iter() {
                     memory_shared.with(|memory| {
                         let mut new_memory = context::memory::Memory::new(
-                            VirtualAddress::new(memory.start_address().get() + crate::USER_TMP_OFFSET),
+                            VirtualAddress::new(memory.start_address().data() + crate::USER_TMP_OFFSET),
                             memory.size(),
                             EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
                             false
                         );
 
                         unsafe {
-                            intrinsics::copy(memory.start_address().get() as *const u8,
-                                            new_memory.start_address().get() as *mut u8,
+                            intrinsics::copy(memory.start_address().data() as *const u8,
+                                            new_memory.start_address().data() as *mut u8,
                                             memory.size());
                         }
 
@@ -158,8 +158,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                         );
 
                         unsafe {
-                            intrinsics::copy(stack.start_address().get() as *const u8,
-                                            new_stack.start_address().get() as *mut u8,
+                            intrinsics::copy(stack.start_address().data() as *const u8,
+                                            new_stack.start_address().data() as *mut u8,
                                             stack.size());
                         }
 
@@ -178,8 +178,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 );
 
                 unsafe {
-                    intrinsics::copy(sigstack.start_address().get() as *const u8,
-                                    new_sigstack.start_address().get() as *mut u8,
+                    intrinsics::copy(sigstack.start_address().data() as *const u8,
+                                    new_sigstack.start_address().data() as *mut u8,
                                     sigstack.size());
                 }
 
@@ -207,8 +207,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     }
                 } else {
                     unsafe {
-                        intrinsics::copy(tls.mem.start_address().get() as *const u8,
-                                        new_tls.mem.start_address().get() as *mut u8,
+                        intrinsics::copy(tls.mem.start_address().data() as *const u8,
+                                        new_tls.mem.start_address().data() as *mut u8,
                                         tls.mem.size());
                     }
                 }
@@ -222,7 +222,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             } else {
                 let mut grants_set = UserGrants::default();
                 for grant in context.grants.lock().iter() {
-                    let start = VirtualAddress::new(grant.start_address().get() + crate::USER_TMP_GRANT_OFFSET - crate::USER_GRANT_OFFSET);
+                    let start = VirtualAddress::new(grant.start_address().data() + crate::USER_TMP_GRANT_OFFSET - crate::USER_GRANT_OFFSET);
                     grants_set.insert(grant.secret_clone(start));
                 }
                 grants = Arc::new(Mutex::new(grants_set));
@@ -430,7 +430,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 // Move copy of image
                 for memory_shared in image.iter_mut() {
                     memory_shared.with(|memory| {
-                        let start = VirtualAddress::new(memory.start_address().get() - crate::USER_TMP_OFFSET + crate::USER_OFFSET);
+                        let start = VirtualAddress::new(memory.start_address().data() - crate::USER_TMP_OFFSET + crate::USER_OFFSET);
                         memory.move_to(start, &mut new_table, &mut temporary_page);
                     });
                 }
@@ -442,7 +442,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     let old_grants = mem::replace(&mut *grants, UserGrants::default());
 
                     for mut grant in old_grants.inner.into_iter() {
-                        let start = VirtualAddress::new(grant.start_address().get() + crate::USER_GRANT_OFFSET - crate::USER_TMP_GRANT_OFFSET);
+                        let start = VirtualAddress::new(grant.start_address().data() + crate::USER_GRANT_OFFSET - crate::USER_TMP_GRANT_OFFSET);
                         grant.move_to(start, &mut new_table, &mut temporary_page);
                         grants.insert(grant);
                     }
@@ -497,7 +497,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 //println!("{}: Copy TLS: address 0x{:x}, size 0x{:x}", context.id.into(), tls_addr, tls.mem.size());
                 tls.mem.move_to(VirtualAddress::new(tls_addr), &mut new_table, &mut temporary_page);
                 unsafe {
-                    *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
+                    *(tcb_addr as *mut usize) = tls.mem.start_address().data() + tls.mem.size();
                 }
                 context.tls = Some(tls);
             } else {
@@ -692,7 +692,7 @@ fn fexec_noreturn(
                             };
 
                             unsafe {
-                                *(tcb_addr as *mut usize) = tls.mem.start_address().get() + tls.mem.size();
+                                *(tcb_addr as *mut usize) = tls.mem.start_address().data() + tls.mem.size();
                             }
 
                             tls_opt = Some(tls);

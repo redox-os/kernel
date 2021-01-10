@@ -241,7 +241,7 @@ pub unsafe fn handle_ioapic(active_table: &mut ActivePageTable, madt_ioapic: &'s
     let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::WRITABLE | EntryFlags::NO_CACHE);
     result.flush(active_table);
 
-    let ioapic_registers = page.start_address().get() as *const u32;
+    let ioapic_registers = page.start_address().data() as *const u32;
     let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
 
     assert_eq!(ioapic.regs.lock().id(), madt_ioapic.id, "mismatched ACPI MADT I/O APIC ID, and the ID reported by the I/O APIC");

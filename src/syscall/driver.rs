@@ -34,7 +34,7 @@ pub fn inner_physalloc(size: usize, flags: PhysallocFlags, strategy: Option<Part
     if flags.contains(PhysallocFlags::SPACE_32 | PhysallocFlags::SPACE_64) {
         return Err(Error::new(EINVAL));
     }
-    allocate_frames_complex((size + 4095) / 4096, flags, strategy, (min + 4095) / 4096).ok_or(Error::new(ENOMEM)).map(|(frame, count)| (frame.start_address().get(), count * 4096))
+    allocate_frames_complex((size + 4095) / 4096, flags, strategy, (min + 4095) / 4096).ok_or(Error::new(ENOMEM)).map(|(frame, count)| (frame.start_address().data(), count * 4096))
 }
 pub fn physalloc(size: usize) -> Result<usize> {
     enforce_root()?;
@@ -95,7 +95,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         // TODO: Make this faster than Sonic himself by using le superpowers of BTreeSet
 
         for grant in grants.iter() {
-            let start = grant.start_address().get();
+            let start = grant.start_address().data();
             if to_address + full_size < start {
                 break;
             }
@@ -148,7 +148,7 @@ pub fn virttophys(virtual_address: usize) -> Result<usize> {
 
     let active_table = unsafe { ActivePageTable::new() };
     match active_table.translate(VirtualAddress::new(virtual_address)) {
-        Some(physical_address) => Ok(physical_address.get()),
+        Some(physical_address) => Ok(physical_address.data()),
         None => Err(Error::new(EFAULT))
     }
 }

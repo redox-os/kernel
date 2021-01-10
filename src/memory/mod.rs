@@ -61,7 +61,7 @@ pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Op
 pub fn deallocate_frames(frame: Frame, count: usize) {
     unsafe {
         FRAME_ALLOCATOR.free(
-            rmm::PhysicalAddress::new(frame.start_address().get()),
+            rmm::PhysicalAddress::new(frame.start_address().data()),
             FrameCount::new(count)
         );
     }
@@ -90,7 +90,7 @@ impl Frame {
     /// Create a frame containing `address`
     pub fn containing_address(address: PhysicalAddress) -> Frame {
         Frame {
-            number: address.get() / PAGE_SIZE
+            number: address.data() / PAGE_SIZE
         }
     }
 

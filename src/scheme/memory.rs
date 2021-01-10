@@ -52,7 +52,7 @@ impl Scheme for MemoryScheme {
 
                 for page in region.pages() {
                     if active_table.translate_page(page).is_some() {
-                        println!("page at {:#x} was already mapped", page.start_address().get());
+                        println!("page at {:#x} was already mapped", page.start_address().data());
                         return Err(Error::new(EEXIST))
                     }
                 }
@@ -60,7 +60,7 @@ impl Scheme for MemoryScheme {
 
             grants.insert(Grant::map(region.start_address(), region.size(), entry_flags(map.flags)));
 
-            Ok(region.start_address().get())
+            Ok(region.start_address().data())
         }
     }
     fn fmap_old(&self, id: usize, map: &OldMap) -> Result<usize> {

@@ -15,11 +15,11 @@ fn validate(address: usize, size: usize, flags: EntryFlags) -> Result<()> {
     for page in Page::range_inclusive(start_page, end_page) {
         if let Some(page_flags) = active_table.translate_page_flags(page) {
             if ! page_flags.contains(flags) {
-                //println!("{:X}: Not {:?}", page.start_address().get(), flags);
+                //println!("{:X}: Not {:?}", page.start_address().data(), flags);
                 return Err(Error::new(EFAULT));
             }
         } else {
-            //println!("{:X}: Not found", page.start_address().get());
+            //println!("{:X}: Not found", page.start_address().data());
             return Err(Error::new(EFAULT));
         }
     }

@@ -324,7 +324,7 @@ impl Scheme for ProcScheme {
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
         let mut memory = handle.data.mem_data().ok_or(Error::new(EBADF))?;
 
-        let value = calc_seek_offset_usize(memory.offset.get(), pos, whence, isize::max_value() as usize)?;
+        let value = calc_seek_offset_usize(memory.offset.data(), pos, whence, isize::max_value() as usize)?;
         memory.offset = VirtualAddress::new(value as usize);
         Ok(value)
     }
@@ -363,7 +363,7 @@ impl Scheme for ProcScheme {
                     Ok(())
                 })?;
 
-                data.offset = VirtualAddress::new(data.offset.get() + buf.len());
+                data.offset = VirtualAddress::new(data.offset.data() + buf.len());
                 Ok(buf.len())
             },
             Operation::Regs(kind) => {
@@ -475,7 +475,7 @@ impl Scheme for ProcScheme {
                     Ok(())
                 })?;
 
-                data.offset = VirtualAddress::new(data.offset.get() + buf.len());
+                data.offset = VirtualAddress::new(data.offset.data() + buf.len());
                 Ok(buf.len())
             },
             Operation::Regs(kind) => match kind {

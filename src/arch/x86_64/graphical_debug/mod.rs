@@ -45,7 +45,7 @@ pub fn init(active_table: &mut ActivePageTable) {
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
             let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {
-                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() - crate::KERNEL_OFFSET));
+                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - crate::KERNEL_OFFSET));
                 let flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::HUGE_PAGE;
                 let result = active_table.map_to(page, frame, flags);
                 flush_all.consume(result);

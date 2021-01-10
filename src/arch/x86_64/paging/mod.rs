@@ -12,6 +12,8 @@ use self::entry::EntryFlags;
 use self::mapper::{Mapper, MapperFlushAll};
 use self::temporary_page::TemporaryPage;
 
+pub use rmm::{PhysicalAddress, VirtualAddress};
+
 pub mod entry;
 pub mod mapper;
 pub mod table;
@@ -262,14 +264,14 @@ impl ActivePageTable {
             )),
         };
         unsafe {
-            controlregs::cr3_write(new_table.p4_frame.start_address().get() as u64);
+            controlregs::cr3_write(new_table.p4_frame.start_address().data() as u64);
         }
         old_table
     }
 
     pub fn flush(&mut self, page: Page) {
         unsafe {
-            tlb::flush(page.start_address().get());
+            tlb::flush(page.start_address().data());
         }
     }
 
@@ -370,35 +372,7 @@ impl InactivePageTable {
     }
 
     pub unsafe fn address(&self) -> usize {
-        self.p4_frame.start_address().get()
-    }
-}
-
-/// A physical address.
-#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct PhysicalAddress(usize);
-
-impl PhysicalAddress {
-    pub fn new(address: usize) -> Self {
-        PhysicalAddress(address)
-    }
-
-    pub fn get(&self) -> usize {
-        self.0
-    }
-}
-
-/// A virtual address.
-#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct VirtualAddress(usize);
-
-impl VirtualAddress {
-    pub fn new(address: usize) -> Self {
-        VirtualAddress(address)
-    }
-
-    pub fn get(&self) -> usize {
-        self.0
+        self.p4_frame.start_address().data()
     }
 }
 
@@ -430,10 +404,10 @@ impl Page {
     }
 
     pub fn containing_address(address: VirtualAddress) -> Page {
-        //TODO assert!(address.get() < 0x0000_8000_0000_0000 || address.get() >= 0xffff_8000_0000_0000,
-        //    "invalid address: 0x{:x}", address.get());
+        //TODO assert!(address.data() < 0x0000_8000_0000_0000 || address.data() >= 0xffff_8000_0000_0000,
+        //    "invalid address: 0x{:x}", address.data());
         Page {
-            number: address.get() / PAGE_SIZE,
+            number: address.data() / PAGE_SIZE,
         }
     }
 

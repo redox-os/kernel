@@ -470,7 +470,7 @@ where F: FnOnce(*mut u8) -> Result<()>
     active_page_table.with(&mut target_page_table, &mut TemporaryPage::new(start), |mapper| {
         let mut inner = || -> Result<()> {
             let start = Page::containing_address(offset);
-            let end = Page::containing_address(VirtualAddress::new(offset.get() + len - 1));
+            let end = Page::containing_address(VirtualAddress::new(offset.data() + len - 1));
             for page in Page::range_inclusive(start, end) {
                 frames.push((
                     mapper.translate_page(page).ok_or(Error::new(EFAULT))?,
@@ -496,7 +496,7 @@ where F: FnOnce(*mut u8) -> Result<()>
 
     flusher.flush(&mut active_page_table);
 
-    let res = f((start.start_address().get() + offset.get() % PAGE_SIZE) as *mut u8);
+    let res = f((start.start_address().data() + offset.data() % PAGE_SIZE) as *mut u8);
 
     // Unmap all the pages (but allow no deallocation!)
     let mut page = start;

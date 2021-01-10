@@ -105,9 +105,9 @@ impl Mapper {
 
         assert!(p1[page.p1_index()].is_unused(),
             "{:X}: Set to {:X}: {:?}, requesting {:X}: {:?}",
-            page.start_address().get(),
-            p1[page.p1_index()].address().get(), p1[page.p1_index()].flags(),
-            frame.start_address().get(), flags);
+            page.start_address().data(),
+            p1[page.p1_index()].address().data(), p1[page.p1_index()].flags(),
+            frame.start_address().data(), flags);
         p1.increment_entry_count();
         p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
         MapperFlush::new(page)
@@ -131,7 +131,7 @@ impl Mapper {
 
     /// Identity map a frame
     pub fn identity_map(&mut self, frame: Frame, flags: EntryFlags) -> MapperFlush {
-        let page = Page::containing_address(VirtualAddress::new(frame.start_address().get()));
+        let page = Page::containing_address(VirtualAddress::new(frame.start_address().data()));
         self.map_to(page, frame, flags)
     }
 
@@ -145,7 +145,7 @@ impl Mapper {
                     frame = if let Some(frame) = p1[page.p1_index()].pointed_frame() {
                         frame
                     } else {
-                        panic!("unmap_inner({:X}): frame not found", page.start_address().get())
+                        panic!("unmap_inner({:X}): frame not found", page.start_address().data())
                     };
 
                     p1.decrement_entry_count();
@@ -155,7 +155,7 @@ impl Mapper {
                         return frame;
                     }
                 } else {
-                    panic!("unmap_inner({:X}): p1 not found", page.start_address().get());
+                    panic!("unmap_inner({:X}): p1 not found", page.start_address().data());
                 }
 
                 if let Some(p1_frame) = p2[page.p2_index()].pointed_frame() {
@@ -164,14 +164,14 @@ impl Mapper {
                     p2[page.p2_index()].set_unused();
                     deallocate_frames(p1_frame, 1);
                 } else {
-                    panic!("unmap_inner({:X}): p1_frame not found", page.start_address().get());
+                    panic!("unmap_inner({:X}): p1_frame not found", page.start_address().data());
                 }
 
                 if ! p2.is_unused() {
                     return frame;
                 }
             } else {
-                panic!("unmap_inner({:X}): p2 not found", page.start_address().get());
+                panic!("unmap_inner({:X}): p2 not found", page.start_address().data());
             }
 
             if let Some(p2_frame) = p3[page.p3_index()].pointed_frame() {
@@ -180,14 +180,14 @@ impl Mapper {
                 p3[page.p3_index()].set_unused();
                 deallocate_frames(p2_frame, 1);
             } else {
-                panic!("unmap_inner({:X}): p2_frame not found", page.start_address().get());
+                panic!("unmap_inner({:X}): p2_frame not found", page.start_address().data());
             }
 
             if ! p3.is_unused() {
                 return frame;
             }
         } else {
-            panic!("unmap_inner({:X}): p3 not found", page.start_address().get());
+            panic!("unmap_inner({:X}): p3 not found", page.start_address().data());
         }
 
         if let Some(p3_frame) = p4[page.p4_index()].pointed_frame() {
@@ -196,7 +196,7 @@ impl Mapper {
             p4[page.p4_index()].set_unused();
             deallocate_frames(p3_frame, 1);
         } else {
-            panic!("unmap_inner({:X}): p3_frame not found", page.start_address().get());
+            panic!("unmap_inner({:X}): p3_frame not found", page.start_address().data());
         }
 
         frame
@@ -231,8 +231,8 @@ impl Mapper {
 
     /// Translate a virtual address to a physical one
     pub fn translate(&self, virtual_address: VirtualAddress) -> Option<PhysicalAddress> {
-        let offset = virtual_address.get() % PAGE_SIZE;
+        let offset = virtual_address.data() % PAGE_SIZE;
         self.translate_page(Page::containing_address(virtual_address))
-            .map(|frame| PhysicalAddress::new(frame.start_address().get() + offset))
+            .map(|frame| PhysicalAddress::new(frame.start_address().data() + offset))
     }
 }

@@ -541,7 +541,7 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
             let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
             scheme.clone()
         };
-        let res = scheme.funmap(intersection.start_address().get(), intersection.size());
+        let res = scheme.funmap(intersection.start_address().data(), intersection.size());
 
         let _ = desc.close();
 

@@ -73,7 +73,7 @@ impl UserGrants {
         // Get last used region
         let last = self.inner.iter().next_back().map(Region::from).unwrap_or(Region::new(VirtualAddress::new(0), 0));
         // At the earliest, start at grant offset
-        let address = cmp::max(last.end_address().get(), crate::USER_GRANT_OFFSET);
+        let address = cmp::max(last.end_address().data(), crate::USER_GRANT_OFFSET);
         // Create new region
         Region::new(VirtualAddress::new(address), size)
     }
@@ -88,8 +88,8 @@ impl UserGrants {
         let mut requested = Region::new(address, size);
 
         if
-            requested.end_address().get() >= crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
-            && address.get() % PAGE_SIZE != 0
+            requested.end_address().data() >= crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
+            && address.data() % PAGE_SIZE != 0
         {
             // ... but it was invalid
             return Err(Error::new(EINVAL));
@@ -99,7 +99,7 @@ impl UserGrants {
             // ... but it already exists
 
             if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) {
-                println!("grant: conflicts with: {:#x} - {:#x}", grant.start_address().get(), grant.end_address().get());
+                println!("grant: conflicts with: {:#x} - {:#x}", grant.start_address().data(), grant.end_address().data());
                 return Err(Error::new(EEXIST));
             } else if flags.contains(MapFlags::MAP_FIXED) {
                 // TODO: Overwrite existing grant
@@ -146,7 +146,7 @@ impl Region {
     pub fn between(start: VirtualAddress, end: VirtualAddress) -> Self {
         Self::new(
             start,
-            end.get().saturating_sub(start.get()),
+            end.data().saturating_sub(start.data()),
         )
     }
 
@@ -169,12 +169,12 @@ impl Region {
 
     /// Get the last address in the region (inclusive end)
     pub fn final_address(&self) -> VirtualAddress {
-        VirtualAddress::new(self.start.get() + self.size - 1)
+        VirtualAddress::new(self.start.data() + self.size - 1)
     }
 
     /// Get the start address of the next region (exclusive end)
     pub fn end_address(&self) -> VirtualAddress {
-        VirtualAddress::new(self.start.get() + self.size)
+        VirtualAddress::new(self.start.data() + self.size)
     }
 
     /// Return the exact size of the region
@@ -208,7 +208,7 @@ impl Region {
 
     /// Returns true if the address is within the regions's requested range
     pub fn collides(&self, other: Self) -> bool {
-        self.start_address() <= other.start_address() && other.end_address().get() - self.start_address().get() < self.size()
+        self.start_address() <= other.start_address() && other.end_address().data() - self.start_address().data() < self.size()
     }
     /// Returns true if the address is within the regions's actual range (so,
     /// rounded up to the page size)
@@ -252,8 +252,8 @@ impl Region {
 
     /// Re-base address that lives inside this region, onto a new base region
     pub fn rebase(self, new_base: Self, address: VirtualAddress) -> VirtualAddress {
-        let offset = address.get() - self.start_address().get();
-        let new_start = new_base.start_address().get() + offset;
+        let offset = address.data() - self.start_address().data();
+        let new_start = new_base.start_address().data() + offset;
         VirtualAddress::new(new_start)
     }
 }
@@ -278,7 +278,7 @@ impl Ord for Region {
 
 impl Debug for Region {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:#x}..{:#x} ({:#x} long)", self.start_address().get(), self.end_address().get(), self.size())
+        write!(f, "{:#x}..{:#x} ({:#x} long)", self.start_address().data(), self.end_address().data(), self.size())
     }
 }
 
@@ -317,9 +317,9 @@ impl Grant {
         let mut flush_all = MapperFlushAll::new();
 
         let start_page = Page::containing_address(to);
-        let end_page = Page::containing_address(VirtualAddress::new(to.get() + size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(to.data() + size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
-            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().get() - to.get() + from.get()));
+            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - to.data() + from.data()));
             let result = active_table.map_to(page, frame, flags);
             flush_all.consume(result);
         }
@@ -344,7 +344,7 @@ impl Grant {
         let mut flush_all = MapperFlushAll::new();
 
         let start_page = Page::containing_address(to);
-        let end_page = Page::containing_address(VirtualAddress::new(to.get() + size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(to.data() + size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
             let result = active_table.map(page, flags);
             flush_all.consume(result);
@@ -371,7 +371,7 @@ impl Grant {
         let mut frames = VecDeque::with_capacity(size/PAGE_SIZE);
 
         let start_page = Page::containing_address(from);
-        let end_page = Page::containing_address(VirtualAddress::new(from.get() + size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(from.data() + size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
             let frame = active_table.translate_page(page).expect("grant references unmapped memory");
             frames.push_back(frame);
@@ -379,7 +379,7 @@ impl Grant {
 
         active_table.with(new_table, temporary_page, |mapper| {
             let start_page = Page::containing_address(to);
-            let end_page = Page::containing_address(VirtualAddress::new(to.get() + size - 1));
+            let end_page = Page::containing_address(VirtualAddress::new(to.data() + size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 let frame = frames.pop_front().expect("grant did not find enough frames");
                 let result = mapper.map_to(page, frame, flags);
@@ -411,13 +411,13 @@ impl Grant {
         let mut flush_all = MapperFlushAll::new();
 
         let start_page = Page::containing_address(self.region.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.data() + self.region.size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
             //TODO: One function to do both?
             let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
             let frame = active_table.translate_page(page).expect("grant references unmapped memory");
 
-            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.region.start.get() + new_start.get()));
+            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
             if self.owned {
                 let result = active_table.map(new_page, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
                 flush_all.consume(result);
@@ -431,7 +431,7 @@ impl Grant {
 
         if self.owned {
             unsafe {
-                intrinsics::copy(self.region.start.get() as *const u8, new_start.get() as *mut u8, self.region.size);
+                intrinsics::copy(self.region.start.data() as *const u8, new_start.data() as *mut u8, self.region.size);
             }
 
             let mut flush_all = MapperFlushAll::new();
@@ -440,7 +440,7 @@ impl Grant {
                 //TODO: One function to do both?
                 let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
 
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.region.start.get() + new_start.get()));
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
                 let result = active_table.remap(new_page, flags);
                 flush_all.consume(result);
             }
@@ -468,7 +468,7 @@ impl Grant {
         let mut flush_all = MapperFlushAll::new();
 
         let start_page = Page::containing_address(self.region.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.get() + self.region.size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.data() + self.region.size - 1));
         for page in Page::range_inclusive(start_page, end_page) {
             //TODO: One function to do both?
             let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
@@ -476,7 +476,7 @@ impl Grant {
             flush_all.consume(result);
 
             active_table.with(new_table, temporary_page, |mapper| {
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.region.start.get() + new_start.get()));
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
                 let result = mapper.map_to(new_page, frame, flags);
                 // Ignore result due to mapping on inactive table
                 unsafe { result.ignore(); }
@@ -569,7 +569,7 @@ impl Grant {
     /// Also panics if the given region isn't completely contained within the
     /// grant. Use `grant.intersect` to find a sub-region that works.
     pub fn extract(mut self, region: Region) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
-        assert_eq!(region.start_address().get() % PAGE_SIZE, 0, "split_out must be called on page-size aligned start address");
+        assert_eq!(region.start_address().data() % PAGE_SIZE, 0, "split_out must be called on page-size aligned start address");
         assert_eq!(region.size() % PAGE_SIZE, 0, "split_out must be called on page-size aligned end address");
 
         let before_grant = self.before(region).map(|region| Grant {
@@ -698,7 +698,7 @@ impl Memory {
 
     pub fn pages(&self) -> PageIter {
         let start_page = Page::containing_address(self.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+        let end_page = Page::containing_address(VirtualAddress::new(self.start.data() + self.size - 1));
         Page::range_inclusive(start_page, end_page)
     }
 
@@ -717,7 +717,7 @@ impl Memory {
         if clear {
             assert!(self.flags.contains(EntryFlags::WRITABLE));
             unsafe {
-                intrinsics::write_bytes(self.start_address().get() as *mut u8, 0, self.size);
+                intrinsics::write_bytes(self.start_address().data() as *mut u8, 0, self.size);
             }
         }
     }
@@ -747,7 +747,7 @@ impl Memory {
             flush_all.consume(result);
 
             active_table.with(new_table, temporary_page, |mapper| {
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().get() - self.start.get() + new_start.get()));
+                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.start.data() + new_start.data()));
                 let result = mapper.map_to(new_page, frame, self.flags);
                 // This is not the active table, so the flush can be ignored
                 unsafe { result.ignore(); }
@@ -781,8 +781,8 @@ impl Memory {
         if new_size > self.size {
             let mut flush_all = MapperFlushAll::new();
 
-            let start_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size));
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + new_size - 1));
+            let start_page = Page::containing_address(VirtualAddress::new(self.start.data() + self.size));
+            let end_page = Page::containing_address(VirtualAddress::new(self.start.data() + new_size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 if active_table.translate_page(page).is_none() {
                     let result = active_table.map(page, self.flags);
@@ -794,14 +794,14 @@ impl Memory {
 
             if clear {
                 unsafe {
-                    intrinsics::write_bytes((self.start.get() + self.size) as *mut u8, 0, new_size - self.size);
+                    intrinsics::write_bytes((self.start.data() + self.size) as *mut u8, 0, new_size - self.size);
                 }
             }
         } else if new_size < self.size {
             let mut flush_all = MapperFlushAll::new();
 
-            let start_page = Page::containing_address(VirtualAddress::new(self.start.get() + new_size));
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.get() + self.size - 1));
+            let start_page = Page::containing_address(VirtualAddress::new(self.start.data() + new_size));
+            let end_page = Page::containing_address(VirtualAddress::new(self.start.data() + self.size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 if active_table.translate_page(page).is_some() {
                     let result = active_table.unmap(page);
@@ -834,8 +834,8 @@ impl Tls {
     /// Load TLS data from master
     pub unsafe fn load(&mut self) {
         intrinsics::copy(
-            self.master.get() as *const u8,
-            (self.mem.start_address().get() + self.offset) as *mut u8,
+            self.master.data() as *const u8,
+            (self.mem.start_address().data() + self.offset) as *mut u8,
             self.file_size
         );
     }
