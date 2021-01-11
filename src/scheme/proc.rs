@@ -4,7 +4,9 @@ use crate::{
     ptrace,
     scheme::{AtomicSchemeId, SchemeId},
     syscall::{
-        data::{FloatRegisters, IntRegisters, PtraceEvent, Stat},
+        FloatRegisters,
+        IntRegisters,
+        data::{PtraceEvent, Stat},
         error::*,
         flag::*,
         scheme::{calc_seek_offset_usize, Scheme},

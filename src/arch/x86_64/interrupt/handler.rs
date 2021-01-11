@@ -1,5 +1,6 @@
 use core::mem;
-use syscall::IntRegisters;
+
+use crate::syscall::IntRegisters;
 
 use super::super::flags::*;
 

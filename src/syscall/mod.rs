@@ -4,7 +4,17 @@
 
 extern crate syscall;
 
-pub use self::syscall::{data, error, flag, io, number, ptrace_event, scheme};
+pub use self::syscall::{
+    FloatRegisters,
+    IntRegisters,
+    data,
+    error,
+    flag,
+    io,
+    number,
+    ptrace_event,
+    scheme,
+};
 
 pub use self::driver::*;
 pub use self::fs::*;
