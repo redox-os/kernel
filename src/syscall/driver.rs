@@ -18,6 +18,12 @@ fn enforce_root() -> Result<()> {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
+    Err(Error::new(syscall::error::ENOSYS))
+}
+
+#[cfg(target_arch = "x86_64")]
 pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
     enforce_root()?;
 
@@ -88,6 +94,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         if flags.contains(PHYSMAP_WRITE_COMBINE) {
             entry_flags |= EntryFlags::HUGE_PAGE;
         }
+        #[cfg(target_arch = "x86_64")] // TODO: AARCH64
         if flags.contains(PHYSMAP_NO_CACHE) {
             entry_flags |= EntryFlags::NO_CACHE;
         }

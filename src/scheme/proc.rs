@@ -331,6 +331,13 @@ impl Scheme for ProcScheme {
         Ok(value)
     }
 
+    #[cfg(target_arch = "aarch64")]
+    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        //TODO
+        Err(Error::new(EINVAL))
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
@@ -451,6 +458,13 @@ impl Scheme for ProcScheme {
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
+        //TODO
+        Err(Error::new(EINVAL))
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {

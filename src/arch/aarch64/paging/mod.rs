@@ -1,18 +1,16 @@
 //! # Paging
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
-use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
+use core::ops::{Deref, DerefMut};
 use spin::Mutex;
-use x86::{controlregs, msr, tlb};
 
-use crate::memory::Frame;
+use crate::device::cpu::registers::{control_regs, tlb};
+use crate::memory::{allocate_frames, Frame};
 
-use self::entry::EntryFlags;
-use self::mapper::{Mapper, MapperFlushAll};
+use self::entry::{EntryFlags, TableDescriptorFlags};
+use self::mapper::{Mapper, MapperFlushAll, MapperType};
 use self::temporary_page::TemporaryPage;
-
-pub use rmm::{PhysicalAddress, VirtualAddress};
 
 pub mod entry;
 pub mod mapper;
@@ -56,36 +54,15 @@ fn page_table_unlock() {
     lock.count -= 1;
 }
 
-/// Setup page attribute table
-unsafe fn init_pat() {
-    let uncacheable = 0;
-    let write_combining = 1;
-    let write_through = 4;
-    //let write_protected = 5;
-    let write_back = 6;
-    let uncached = 7;
+/// Setup Memory Access Indirection Register
+unsafe fn init_mair() {
+    let mut val: control_regs::MairEl1 = control_regs::mair_el1();
 
-    let pat0 = write_back;
-    let pat1 = write_through;
-    let pat2 = uncached;
-    let pat3 = uncacheable;
+    val.insert(control_regs::MairEl1::DEVICE_MEMORY);
+    val.insert(control_regs::MairEl1::NORMAL_UNCACHED_MEMORY);
+    val.insert(control_regs::MairEl1::NORMAL_WRITEBACK_MEMORY);
 
-    let pat4 = write_combining;
-    let pat5 = pat1;
-    let pat6 = pat2;
-    let pat7 = pat3;
-
-    msr::wrmsr(
-        msr::IA32_PAT,
-        pat7 << 56
-            | pat6 << 48
-            | pat5 << 40
-            | pat4 << 32
-            | pat3 << 24
-            | pat2 << 16
-            | pat1 << 8
-            | pat0,
-    );
+    control_regs::mair_el1_write(val);
 }
 
 /// Map TSS
@@ -140,6 +117,12 @@ unsafe fn init_tcb(cpu_id: usize) -> usize {
         let tbss_offset = &__tbss_start as *const _ as usize - &__tdata_start as *const _ as usize;
 
         let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
+        println!("SET TPIDR_EL1 TO {:X}", start - 0x10);
+        // FIXME: Empirically initializing tpidr to 16 bytes below start works. I do not know
+        // whether this is the correct way to handle TLS. Will need to revisit.
+        control_regs::tpidr_el1_write((start - 0x10) as u64);
+        println!("SET TPIDR_EL1 DONE");
+
         let end = start + size;
         tcb_offset = end - mem::size_of::<usize>();
 
@@ -184,7 +167,7 @@ pub unsafe fn init(
         static mut __bss_end: u8;
     }
 
-    init_pat();
+    init_mair();
 
     let mut active_table = ActivePageTable::new_unlocked();
 
@@ -198,7 +181,7 @@ pub unsafe fn init_ap(
     cpu_id: usize,
     bsp_table: usize,
 ) -> usize {
-    init_pat();
+    init_mair();
 
     let mut active_table = ActivePageTable::new_unlocked();
 
@@ -221,10 +204,14 @@ pub unsafe fn init_ap(
     init_tcb(cpu_id)
 }
 
-#[derive(Debug)]
 pub struct ActivePageTable {
     mapper: Mapper,
     locked: bool,
+}
+
+pub enum PageTableType {
+    User,
+    Kernel
 }
 
 impl Deref for ActivePageTable {
@@ -242,30 +229,46 @@ impl DerefMut for ActivePageTable {
 }
 
 impl ActivePageTable {
+    //TODO: table_type argument
     pub unsafe fn new() -> ActivePageTable {
+        let table_type = PageTableType::Kernel;
         page_table_lock();
         ActivePageTable {
-            mapper: Mapper::new(),
+            mapper: Mapper::new(match table_type {
+                PageTableType::User => MapperType::User,
+                PageTableType::Kernel => MapperType::Kernel,
+            }),
             locked: true,
         }
     }
 
+    //TODO: table_type argument
     pub unsafe fn new_unlocked() -> ActivePageTable {
+        let table_type = PageTableType::Kernel;
         ActivePageTable {
-            mapper: Mapper::new(),
+            mapper: Mapper::new(match table_type {
+                PageTableType::User => MapperType::User,
+                PageTableType::Kernel => MapperType::Kernel,
+            }),
             locked: false,
         }
     }
 
     pub fn switch(&mut self, new_table: InactivePageTable) -> InactivePageTable {
-        let old_table = InactivePageTable {
-            p4_frame: Frame::containing_address(PhysicalAddress::new(
-                unsafe { controlregs::cr3() } as usize,
-            )),
-        };
-        unsafe {
-            controlregs::cr3_write(new_table.p4_frame.start_address().data() as u64);
+        let old_table: InactivePageTable;
+
+        match self.mapper.mapper_type {
+            MapperType::User => {
+                old_table = InactivePageTable { p4_frame: Frame::containing_address(PhysicalAddress::new(unsafe { control_regs::ttbr0_el1() } as usize)) };
+                unsafe { control_regs::ttbr0_el1_write(new_table.p4_frame.start_address().data() as u64) };
+            },
+            MapperType::Kernel =>  {
+                old_table = InactivePageTable { p4_frame: Frame::containing_address(PhysicalAddress::new(unsafe { control_regs::ttbr1_el1() } as usize)) };
+                unsafe { control_regs::ttbr1_el1_write(new_table.p4_frame.start_address().data() as u64) };
+            }
         }
+
+        unsafe { tlb::flush_all() };
         old_table
     }
 
@@ -281,30 +284,24 @@ impl ActivePageTable {
         }
     }
 
-    pub fn with<F>(
-        &mut self,
-        table: &mut InactivePageTable,
-        temporary_page: &mut TemporaryPage,
-        f: F,
-    ) where
-        F: FnOnce(&mut Mapper),
+    pub fn with<F>(&mut self, table: &mut InactivePageTable, temporary_page: &mut TemporaryPage, f: F)
+        where F: FnOnce(&mut Mapper)
     {
         {
-            let backup = Frame::containing_address(PhysicalAddress::new(unsafe {
-                controlregs::cr3() as usize
-            }));
+            let backup: Frame;
 
-            // map temporary_page to current p4 table
-            let p4_table = temporary_page.map_table_frame(
-                backup.clone(),
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
-                self,
-            );
+            match self.mapper.mapper_type {
+                MapperType::User => backup = Frame::containing_address(PhysicalAddress::new(unsafe { control_regs::ttbr0_el1() as usize })),
+                MapperType::Kernel => backup = Frame::containing_address(PhysicalAddress::new(unsafe { control_regs::ttbr1_el1() as usize }))
+            }
+
+            // map temporary_kpage to current p4 table
+            let p4_table = temporary_page.map_table_frame(backup.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE, self);
 
             // overwrite recursive mapping
-            self.p4_mut()[crate::RECURSIVE_PAGE_PML4].set(
+            self.p4_mut()[crate::RECURSIVE_PAGE_PML4].page_table_entry_set(
                 table.p4_frame.clone(),
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                TableDescriptorFlags::PRESENT | TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE,
             );
             self.flush_all();
 
@@ -312,9 +309,9 @@ impl ActivePageTable {
             f(self);
 
             // restore recursive mapping to original p4 table
-            p4_table[crate::RECURSIVE_PAGE_PML4].set(
+            p4_table[crate::RECURSIVE_PAGE_PML4].page_table_entry_set(
                 backup,
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                TableDescriptorFlags::PRESENT | TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE,
             );
             self.flush_all();
         }
@@ -323,7 +320,10 @@ impl ActivePageTable {
     }
 
     pub unsafe fn address(&self) -> usize {
-        controlregs::cr3() as usize
+        match self.mapper.mapper_type {
+            MapperType::User => control_regs::ttbr0_el1() as usize,
+            MapperType::Kernel => control_regs::ttbr1_el1() as usize,
+        }
     }
 }
 
@@ -355,9 +355,9 @@ impl InactivePageTable {
             // now we are able to zero the table
             table.zero();
             // set up recursive mapping for the table
-            table[crate::RECURSIVE_PAGE_PML4].set(
+            table[crate::RECURSIVE_PAGE_PML4].page_table_entry_set(
                 frame.clone(),
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                TableDescriptorFlags::PRESENT | TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE
             );
         }
         temporary_page.unmap(active_table);
@@ -373,6 +373,47 @@ impl InactivePageTable {
 
     pub unsafe fn address(&self) -> usize {
         self.p4_frame.start_address().data()
+    }
+}
+
+/// A physical address.
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PhysicalAddress(usize);
+
+impl PhysicalAddress {
+    pub fn new(address: usize) -> Self {
+        PhysicalAddress(address)
+    }
+
+    pub fn data(&self) -> usize {
+        self.0
+    }
+}
+
+/// A virtual address.
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct VirtualAddress(usize);
+
+pub enum VAddrType {
+    User,
+    Kernel
+}
+
+impl VirtualAddress {
+    pub fn new(address: usize) -> Self {
+        VirtualAddress(address)
+    }
+
+    pub fn data(&self) -> usize {
+        self.0
+    }
+
+    pub fn get_type(&self) -> VAddrType {
+        if ((self.0 >> 48) & 0xffff) == 0xffff {
+            VAddrType::Kernel
+        } else {
+            VAddrType::User
+        }
     }
 }
 

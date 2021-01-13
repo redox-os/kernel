@@ -106,6 +106,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     // Set clone's return value to zero. This is done because
                     // the clone won't return like normal, which means the value
                     // would otherwise never get set.
+                    #[cfg(target_arch = "x86_64")] // TODO
                     if let Some(regs) = ptrace::rebase_regs_ptr_mut(context.regs, Some(&mut new_stack)) {
                         (*regs).scratch.rax = 0;
                     }

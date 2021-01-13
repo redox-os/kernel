@@ -42,6 +42,7 @@
 
 #![feature(allocator_api)]
 #![feature(asm)] // TODO: Relax requirements of most asm invocations
+#![cfg_attr(target_arch = "aarch64", feature(llvm_asm))] // TODO: Rewrite using asm!
 #![feature(concat_idents)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
@@ -61,6 +62,8 @@ extern crate alloc;
 
 #[macro_use]
 extern crate bitflags;
+#[macro_use]
+extern crate bitfield;
 extern crate goblin;
 extern crate linked_list_allocator;
 extern crate rustc_demangle;

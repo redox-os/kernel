@@ -1,3 +1,4 @@
+use rustc_cfg::Cfg;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -158,4 +159,13 @@ mod gen {
 ",
     )
     .unwrap();
+
+    // Build pre kstart init asm code for aarch64
+    let cfg = Cfg::new(env::var_os("TARGET").unwrap()).unwrap();
+    if cfg.target_arch == "aarch64" {
+        println!("cargo:rerun-if-changed=src/arch/aarch64/init/pre_kstart/early_init.S");
+        cc::Build::new()
+            .file("src/arch/aarch64/init/pre_kstart/early_init.S")
+            .compile("early_init");
+    }
 }

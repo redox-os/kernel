@@ -2,6 +2,7 @@ use core::sync::atomic::Ordering;
 
 use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
+#[cfg(target_arch = "x86_64")]
 use crate::gdt;
 use crate::interrupt::irq::PIT_TICKS;
 use crate::interrupt;
@@ -143,10 +144,13 @@ pub unsafe fn switch() -> bool {
     if to_ptr as usize != 0 {
         (*from_ptr).running = false;
         (*to_ptr).running = true;
-        if let Some(ref stack) = (*to_ptr).kstack {
-            gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
+        #[cfg(target_arch = "x86_64")]
+        {
+            if let Some(ref stack) = (*to_ptr).kstack {
+                gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
+            }
+            gdt::set_tcb((*to_ptr).id.into());
         }
-        gdt::set_tcb((*to_ptr).id.into());
         CONTEXT_ID.store((*to_ptr).id, Ordering::SeqCst);
     }
 

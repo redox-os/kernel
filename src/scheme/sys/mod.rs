@@ -52,6 +52,7 @@ impl SysScheme {
         files.insert(b"scheme_num", Box::new(scheme_num::resource));
         files.insert(b"syscall", Box::new(syscall::resource));
         files.insert(b"uname", Box::new(uname::resource));
+        #[cfg(target_arch = "x86_64")]
         files.insert(b"spurious_irq", Box::new(irq::spurious_irq_resource));
 
         SysScheme {
