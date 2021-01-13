@@ -1,6 +1,9 @@
 #[macro_use]
 pub mod macros;
 
+/// Constants like memory locations
+pub mod consts;
+
 /// Debugging support
 pub mod debug;
 

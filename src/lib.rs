@@ -86,9 +86,6 @@ pub use crate::arch::*;
 
 use crate::log::info;
 
-/// Constants like memory locations
-pub mod consts;
-
 /// Heap allocators
 pub mod allocator;
 
