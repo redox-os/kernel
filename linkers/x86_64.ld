@@ -12,21 +12,21 @@ SECTIONS {
     .text : AT(ADDR(.text) - KERNEL_OFFSET) {
         __text_start = .;
         *(.text*)
-		. = ALIGN(4096);
+        . = ALIGN(4096);
         __text_end = .;
     }
 
-	.rodata : AT(ADDR(.rodata) - KERNEL_OFFSET) {
+    .rodata : AT(ADDR(.rodata) - KERNEL_OFFSET) {
         __rodata_start = .;
         *(.rodata*)
-		. = ALIGN(4096);
+        . = ALIGN(4096);
         __rodata_end = .;
     }
 
     .data : AT(ADDR(.data) - KERNEL_OFFSET) {
         __data_start = .;
         *(.data*)
-		. = ALIGN(4096);
+        . = ALIGN(4096);
         __data_end = .;
         __bss_start = .;
         *(.bss*)
