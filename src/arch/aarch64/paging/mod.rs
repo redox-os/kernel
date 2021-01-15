@@ -301,7 +301,7 @@ impl ActivePageTable {
             // overwrite recursive mapping
             self.p4_mut()[crate::RECURSIVE_PAGE_PML4].page_table_entry_set(
                 table.p4_frame.clone(),
-                TableDescriptorFlags::PRESENT | TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE,
+                TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE,
             );
             self.flush_all();
 
@@ -311,7 +311,7 @@ impl ActivePageTable {
             // restore recursive mapping to original p4 table
             p4_table[crate::RECURSIVE_PAGE_PML4].page_table_entry_set(
                 backup,
-                TableDescriptorFlags::PRESENT | TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE,
+                TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE,
             );
             self.flush_all();
         }
@@ -357,7 +357,7 @@ impl InactivePageTable {
             // set up recursive mapping for the table
             table[crate::RECURSIVE_PAGE_PML4].page_table_entry_set(
                 frame.clone(),
-                TableDescriptorFlags::PRESENT | TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE
+                TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE
             );
         }
         temporary_page.unmap(active_table);

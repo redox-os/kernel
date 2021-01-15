@@ -110,8 +110,6 @@ impl Mapper {
         let p1 = p2.next_table_create(page.p2_index());
         let mut translated_flags: PageDescriptorFlags = PageDescriptorFlags::VALID | PageDescriptorFlags::PAGE | PageDescriptorFlags::AF;
 
-        translated_flags.insert(PageDescriptorFlags::PRESENT);
-
         if flags.contains(EntryFlags::NO_EXECUTE) {
             match page.start_address().get_type() {
                 VAddrType::User => {
@@ -164,8 +162,6 @@ impl Mapper {
         let p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
         let frame = p1[page.p1_index()].pointed_frame_at_l1().expect("failed to remap: not mapped");
         let mut translated_flags: PageDescriptorFlags = PageDescriptorFlags::VALID | PageDescriptorFlags::PAGE | PageDescriptorFlags::AF;
-
-        translated_flags.insert(PageDescriptorFlags::PRESENT);
 
         if flags.contains(EntryFlags::NO_EXECUTE) {
             match page.start_address().get_type() {
@@ -301,7 +297,7 @@ impl Mapper {
             .and_then(|p2| p2.next_table(page.p2_index()))
             .and_then(|p1| Some(p1[page.p1_index()].page_descriptor_entry_flags())) {
 
-                if flags.contains(PageDescriptorFlags::PRESENT) {
+                if flags.contains(PageDescriptorFlags::VALID) {
                     translated_flags.insert(EntryFlags::PRESENT);
                 }
 

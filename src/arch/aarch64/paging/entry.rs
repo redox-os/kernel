@@ -18,7 +18,6 @@ bitflags! {
         const VALID =                       1 << 0;
         const TABLE =                       1 << 1;
         const AF =                          1 << 10;    /* NOTE: TableDescriptors don't actually have an AF bit! */
-        const PRESENT =                     1 << 58;    /* ARM ARM says this is an IGNORED bit, so using it here should be OK */
         const PXNTABLE =                    1 << 59;
         const UXNTABLE =                    1 << 60;
         const APTABLE_0 =                   1 << 61;
@@ -48,7 +47,6 @@ bitflags! {
         const CONTIGUOUS =          1 << 52;
         const PXN =                 1 << 53;
         const UXN =                 1 << 54;
-        const PRESENT =             1 << 58;    /* Assuming DBM can be overloaded as PRESENT */
     }
 }
 
@@ -108,7 +106,7 @@ impl Entry {
 
     /// Get the associated frame, if available, for a level 4, 3, or 2 page
     pub fn pointed_frame(&self) -> Option<Frame> {
-        if self.page_table_entry_flags().contains(TableDescriptorFlags::PRESENT) {
+        if self.page_table_entry_flags().contains(TableDescriptorFlags::VALID) {
             Some(Frame::containing_address(self.address()))
         } else {
             None
@@ -117,7 +115,7 @@ impl Entry {
 
     /// Get the associated frame, if available, for a level 1 page
     pub fn pointed_frame_at_l1(&self) -> Option<Frame> {
-        if self.page_descriptor_entry_flags().contains(PageDescriptorFlags::PRESENT) {
+        if self.page_descriptor_entry_flags().contains(PageDescriptorFlags::VALID) {
             Some(Frame::containing_address(self.address()))
         } else {
             None
@@ -142,10 +140,10 @@ impl Entry {
         debug_assert!(frame.start_address().data() & !ADDRESS_MASK == 0);
         // ODDNESS Alert: We need to set the AF bit - despite this being a TableDescriptor!!!
         // The Arm ARM says this bit (bit 10) is IGNORED in Table Descriptors so hopefully this is OK
-        let mut translated_flags = TableDescriptorFlags::AF | TableDescriptorFlags::VALID | TableDescriptorFlags::TABLE;
+        let mut translated_flags = TableDescriptorFlags::AF | TableDescriptorFlags::TABLE;
 
         if flags.contains(EntryFlags::PRESENT) {
-            translated_flags.insert(TableDescriptorFlags::PRESENT);
+            translated_flags.insert(TableDescriptorFlags::VALID);
         }
 
         self.0 = (frame.start_address().data() as u64) | translated_flags.bits() | (self.0 & COUNTER_MASK);

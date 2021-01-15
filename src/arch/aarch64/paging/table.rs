@@ -121,8 +121,7 @@ impl<L> Table<L> where L: HierarchicalLevel {
             self.increment_entry_count();
 
             /* Allow users to go down the page table, implement permissions at the page level */
-            let mut perms = TableDescriptorFlags::PRESENT;
-            perms |= TableDescriptorFlags::VALID;
+            let mut perms = TableDescriptorFlags::VALID;
             perms |= TableDescriptorFlags::TABLE;
 
             self[index].page_table_entry_set(frame, perms);
@@ -133,7 +132,7 @@ impl<L> Table<L> where L: HierarchicalLevel {
 
     fn next_table_address(&self, index: usize) -> Option<usize> {
         let entry_flags = self[index].page_table_entry_flags();
-        if entry_flags.contains(TableDescriptorFlags::PRESENT) {
+        if entry_flags.contains(TableDescriptorFlags::VALID) {
             let table_address = self as *const _ as usize;
             if (table_address & KSPACE_ADDR_MASK) != 0 {
                 Some((table_address << 9) | (index << 12))
