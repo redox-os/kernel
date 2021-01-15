@@ -86,7 +86,7 @@ impl PreservedRegisters {
 pub struct InterruptStack {
     pub elr_el1: usize,
     //TODO: should this push be removed?
-    pub unkknown: usize,
+    pub unknown: usize,
     pub tpidr_el0: usize,
     pub tpidrro_el0: usize,
     pub spsr_el1: usize,
@@ -106,7 +106,7 @@ impl InterruptStack {
         println!("SPSR_EL1:    {:>016X}", { self.spsr_el1 });
         println!("TPIDRRO_EL0: {:>016X}", { self.tpidrro_el0 });
         println!("TPIDR_EL0:   {:>016X}", { self.tpidr_el0 });
-        println!("UNKNOWN:     {:>016X}", { self.unkknown });
+        println!("UNKNOWN:     {:>016X}", { self.unknown });
         println!("ELR_EL1:     {:>016X}", { self.elr_el1 });
     }
 
