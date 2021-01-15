@@ -17,7 +17,6 @@
     "dynamic-linking": false,
     "executables": false,
     "relocation-model": "pic",
-    "code-model": "large",
     "disable-redzone": true,
     "eliminate-frame-pointer": false,
     "exe-suffix": "",
