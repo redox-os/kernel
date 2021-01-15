@@ -15,6 +15,7 @@ pub struct PageDescriptor(u64);
 
 bitflags! {
     pub struct TableDescriptorFlags: u64 {
+        const PRESENT =                     1 << 0;
         const VALID =                       1 << 0;
         const TABLE =                       1 << 1;
         const AF =                          1 << 10;    /* NOTE: TableDescriptors don't actually have an AF bit! */
@@ -31,6 +32,7 @@ bitflags! {
 
 bitflags! {
     pub struct PageDescriptorFlags: u64 {
+        const PRESENT =             1 << 0;
         const VALID =               1 << 0;
         const PAGE =                1 << 1;
         const ATTR_INDEX_0 =        1 << 2;
