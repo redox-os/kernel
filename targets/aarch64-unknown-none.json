@@ -13,7 +13,7 @@
     "pre-link-args": {
         "gcc": ["-m64", "-nostdlib", "-static"]
     },
-    "features": "+a53,+strict-align,-fp-armv8",
+    "features": "+strict-align,-neon,-fp-armv8,+tpidr-el1",
     "dynamic-linking": false,
     "executables": false,
     "relocation-model": "pic",
