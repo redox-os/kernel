@@ -49,7 +49,7 @@ pub unsafe fn halt() {
 /// Safe because it is similar to a NOP, and has no memory effects
 #[inline(always)]
 pub fn pause() {
-    unsafe { llvm_asm!("wfi") };
+    unsafe { llvm_asm!("nop") };
 }
 
 pub fn available_irqs_iter(cpu_id: usize) -> impl Iterator<Item = u8> + 'static {
