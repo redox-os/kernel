@@ -81,12 +81,23 @@ impl ContextList {
             }
             let mut stack = vec![0; 65_536].into_boxed_slice();
             let offset = stack.len() - mem::size_of::<usize>();
+
+            #[cfg(target_arch = "x86_64")]
             unsafe {
                 let offset = stack.len() - mem::size_of::<usize>();
                 let func_ptr = stack.as_mut_ptr().add(offset);
                 *(func_ptr as *mut usize) = func as usize;
             }
-            context.arch.set_page_table(unsafe { paging::ActivePageTable::new().address() });
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                let context_id = context.id.into();
+                context.arch.set_tcb(context_id);
+                context.arch.set_lr(func as usize);
+                context.arch.set_context_handle();
+            }
+
+            context.arch.set_page_table(unsafe { ActivePageTable::new(PageTableType::User).address() });
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
             context.kfx = Some(fx);
