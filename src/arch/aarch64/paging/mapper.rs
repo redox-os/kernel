@@ -3,7 +3,7 @@ use core::ptr::Unique;
 
 use crate::memory::{allocate_frames, deallocate_frames, Frame};
 
-use super::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress, VAddrType};
+use super::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress, VirtualAddressType};
 use super::entry::{EntryFlags, PageDescriptorFlags};
 use super::table::{self, Table, Level4};
 
@@ -112,10 +112,10 @@ impl Mapper {
 
         if flags.contains(EntryFlags::NO_EXECUTE) {
             match page.start_address().get_type() {
-                VAddrType::User => {
+                VirtualAddressType::User => {
                     translated_flags.insert(PageDescriptorFlags::UXN);
                 },
-                VAddrType::Kernel => {
+                VirtualAddressType::Kernel => {
                     translated_flags.insert(PageDescriptorFlags::PXN);
                 },
             }
@@ -165,10 +165,10 @@ impl Mapper {
 
         if flags.contains(EntryFlags::NO_EXECUTE) {
             match page.start_address().get_type() {
-                VAddrType::User => {
+                VirtualAddressType::User => {
                     translated_flags.insert(PageDescriptorFlags::UXN);
                 },
-                VAddrType::Kernel => {
+                VirtualAddressType::Kernel => {
                     translated_flags.insert(PageDescriptorFlags::PXN);
                 },
             }

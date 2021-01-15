@@ -1,6 +1,6 @@
 use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
-use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
+use crate::paging::{ActivePageTable, PageTableType, PhysicalAddress, VirtualAddress, VirtualAddressType};
 use crate::paging::entry::EntryFlags;
 use crate::context;
 use crate::context::memory::{Grant, Region};
@@ -153,7 +153,11 @@ pub fn physunmap(virtual_address: usize) -> Result<usize> {
 pub fn virttophys(virtual_address: usize) -> Result<usize> {
     enforce_root()?;
 
-    let active_table = unsafe { ActivePageTable::new() };
+    let active_table = match VirtualAddress::new(virtual_address).get_type() {
+        VirtualAddressType::User => unsafe { ActivePageTable::new(PageTableType::User) },
+        VirtualAddressType::Kernel => unsafe { ActivePageTable::new(PageTableType::Kernel) }
+    };
+
     match active_table.translate(VirtualAddress::new(virtual_address)) {
         Some(physical_address) => Ok(physical_address.data()),
         None => Err(Error::new(EFAULT))

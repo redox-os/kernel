@@ -16,7 +16,7 @@ pub unsafe fn init() {
     }
     let (base, size) = device_tree::diag_uart_range(crate::KERNEL_DTB_OFFSET, crate::KERNEL_DTB_MAX_SIZE).unwrap();
 
-    let mut active_ktable = unsafe { ActivePageTable::new(/* TODO PageTableType::Kernel */) };
+    let mut active_ktable = unsafe { ActivePageTable::new(PageTableType::Kernel) };
     let mut flush_all = MapperFlushAll::new();
 
     let start_frame = Frame::containing_address(PhysicalAddress::new(base));

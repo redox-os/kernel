@@ -169,7 +169,7 @@ pub unsafe fn init(
 
     init_mair();
 
-    let mut active_table = ActivePageTable::new_unlocked();
+    let mut active_table = ActivePageTable::new_unlocked(PageTableType::Kernel);
 
     let flush_all = map_tss(cpu_id, &mut active_table);
     flush_all.flush(&mut active_table);
@@ -183,12 +183,12 @@ pub unsafe fn init_ap(
 ) -> usize {
     init_mair();
 
-    let mut active_table = ActivePageTable::new_unlocked();
+    let mut active_table = ActivePageTable::new_unlocked(PageTableType::Kernel);
 
     let mut new_table = InactivePageTable::from_address(bsp_table);
 
     let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(
-        crate::USER_TMP_MISC_OFFSET,
+        crate::KERNEL_TMP_MISC_OFFSET,
     )));
 
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
@@ -230,8 +230,7 @@ impl DerefMut for ActivePageTable {
 
 impl ActivePageTable {
     //TODO: table_type argument
-    pub unsafe fn new() -> ActivePageTable {
-        let table_type = PageTableType::Kernel;
+    pub unsafe fn new(table_type: PageTableType) -> ActivePageTable {
         page_table_lock();
         ActivePageTable {
             mapper: Mapper::new(match table_type {
@@ -243,8 +242,7 @@ impl ActivePageTable {
     }
 
     //TODO: table_type argument
-    pub unsafe fn new_unlocked() -> ActivePageTable {
-        let table_type = PageTableType::Kernel;
+    pub unsafe fn new_unlocked(table_type: PageTableType) -> ActivePageTable {
         ActivePageTable {
             mapper: Mapper::new(match table_type {
                 PageTableType::User => MapperType::User,
@@ -394,7 +392,7 @@ impl PhysicalAddress {
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct VirtualAddress(usize);
 
-pub enum VAddrType {
+pub enum VirtualAddressType {
     User,
     Kernel
 }
@@ -408,11 +406,11 @@ impl VirtualAddress {
         self.0
     }
 
-    pub fn get_type(&self) -> VAddrType {
+    pub fn get_type(&self) -> VirtualAddressType {
         if ((self.0 >> 48) & 0xffff) == 0xffff {
-            VAddrType::Kernel
+            VirtualAddressType::Kernel
         } else {
-            VAddrType::User
+            VirtualAddressType::User
         }
     }
 }

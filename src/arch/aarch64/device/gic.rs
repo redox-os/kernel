@@ -57,7 +57,7 @@ pub struct GicDistIf {
 impl GicDistIf {
     unsafe fn init(&mut self) {
         // Map in the Distributor interface
-        let mut active_table = ActivePageTable::new(/* TODO PageTableType::Kernel */);
+        let mut active_table = ActivePageTable::new(PageTableType::Kernel);
 
         let start_frame = Frame::containing_address(PhysicalAddress::new(0x08000000));
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x08000000 + 0x10000 - 1));

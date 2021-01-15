@@ -19,7 +19,7 @@ use crate::memory::allocate_frames;
 use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::MapperFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
+use crate::paging::{ActivePageTable, InactivePageTable, PageTableType, Page, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
@@ -338,7 +338,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
             context.arch = arch;
 
-            let mut active_table = unsafe { ActivePageTable::new() };
+            let mut active_table = unsafe { ActivePageTable::new(PageTableType::User) };
 
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET)));
 
@@ -1277,7 +1277,7 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
     let end_address = address.checked_add(end_offset).ok_or(Error::new(EFAULT))?;
 
-    let mut active_table = unsafe { ActivePageTable::new() };
+    let mut active_table = unsafe { ActivePageTable::new(PageTableType::User) };
 
     let mut flush_all = MapperFlushAll::new();
 

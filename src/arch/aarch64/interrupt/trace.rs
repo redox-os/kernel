@@ -12,7 +12,7 @@ pub unsafe fn stack_trace() {
 
     println!("TRACE: {:>016x}", fp);
     //Maximum 64 frames
-    let active_table = ActivePageTable::new(/* TODO PageTableType::Kernel */);
+    let active_table = ActivePageTable::new(PageTableType::User);
     for _frame in 0..64 {
         if let Some(pc_fp) = fp.checked_add(mem::size_of::<usize>()) {
             if active_table.translate(VirtualAddress::new(fp)).is_some() && active_table.translate(VirtualAddress::new(pc_fp)).is_some() {
