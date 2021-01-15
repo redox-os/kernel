@@ -239,6 +239,8 @@ impl Context {
 
         llvm_asm!("mov   $0, sp" : "=r"(self.sp) : : "memory" : "volatile");
         llvm_asm!("mov   sp, $0" : : "r"(next.sp) : "memory" : "volatile");
+
+        CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
     }
 }
 
