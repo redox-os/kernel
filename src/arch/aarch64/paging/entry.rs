@@ -15,10 +15,10 @@ pub struct PageDescriptor(u64);
 
 bitflags! {
     pub struct TableDescriptorFlags: u64 {
+        const PRESENT =                     1 << 0;
         const VALID =                       1 << 0;
         const TABLE =                       1 << 1;
         const AF =                          1 << 10;    /* NOTE: TableDescriptors don't actually have an AF bit! */
-        const PRESENT =                     1 << 58;    /* ARM ARM says this is an IGNORED bit, so using it here should be OK */
         const PXNTABLE =                    1 << 59;
         const UXNTABLE =                    1 << 60;
         const APTABLE_0 =                   1 << 61;
@@ -32,6 +32,7 @@ bitflags! {
 
 bitflags! {
     pub struct PageDescriptorFlags: u64 {
+        const PRESENT =             1 << 0;
         const VALID =               1 << 0;
         const PAGE =                1 << 1;
         const ATTR_INDEX_0 =        1 << 2;
@@ -48,7 +49,6 @@ bitflags! {
         const CONTIGUOUS =          1 << 52;
         const PXN =                 1 << 53;
         const UXN =                 1 << 54;
-        const PRESENT =             1 << 58;    /* Assuming DBM can be overloaded as PRESENT */
     }
 }
 
