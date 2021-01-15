@@ -1,6 +1,6 @@
 use core::{mem, slice};
 
-use crate::paging::{ActivePageTable, Page, VirtualAddress};
+use crate::paging::{ActivePageTable, PageTableType, Page, VirtualAddress, VirtualAddressType};
 use crate::paging::entry::EntryFlags;
 use crate::syscall::error::*;
 
@@ -8,7 +8,10 @@ fn validate(address: usize, size: usize, flags: EntryFlags) -> Result<()> {
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
     let end_address = address.checked_add(end_offset).ok_or(Error::new(EFAULT))?;
 
-    let active_table = unsafe { ActivePageTable::new() };
+    let active_table = match VirtualAddress::new(address).get_type() {
+        VirtualAddressType::User => unsafe { ActivePageTable::new(PageTableType::User) },
+        VirtualAddressType::Kernel => unsafe { ActivePageTable::new(PageTableType::Kernel) }
+    };
 
     let start_page = Page::containing_address(VirtualAddress::new(address));
     let end_page = Page::containing_address(VirtualAddress::new(end_address));

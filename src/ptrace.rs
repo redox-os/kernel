@@ -9,7 +9,7 @@ use crate::{
             entry::EntryFlags,
             mapper::MapperFlushAll,
             temporary_page::TemporaryPage,
-            ActivePageTable, InactivePageTable, Page, PAGE_SIZE, VirtualAddress
+            ActivePageTable, InactivePageTable, PageTableType, Page, PAGE_SIZE, VirtualAddress
         }
     },
     common::unique::Unique,
@@ -458,7 +458,7 @@ where F: FnOnce(*mut u8) -> Result<()>
     // in `proc:<pid>/mem`, or return a partial read/write.
     let start = Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET));
 
-    let mut active_page_table = unsafe { ActivePageTable::new() };
+    let mut active_page_table = unsafe { ActivePageTable::new(PageTableType::User) };
     let mut target_page_table = unsafe {
         InactivePageTable::from_address(context.arch.get_page_table())
     };

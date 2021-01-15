@@ -3,7 +3,7 @@ use core::ptr::{self, NonNull};
 use linked_list_allocator::Heap;
 use spin::Mutex;
 
-use crate::paging::ActivePageTable;
+use crate::paging::{ActivePageTable, PageTableType};
 
 static HEAP: Mutex<Option<Heap>> = Mutex::new(None);
 
@@ -32,7 +32,7 @@ unsafe impl GlobalAlloc for Allocator {
                         panic!("__rust_allocate: heap not initialized");
                     };
 
-                    super::map_heap(&mut ActivePageTable::new(), crate::KERNEL_HEAP_OFFSET + size, crate::KERNEL_HEAP_SIZE);
+                    super::map_heap(&mut ActivePageTable::new(PageTableType::Kernel), crate::KERNEL_HEAP_OFFSET + size, crate::KERNEL_HEAP_SIZE);
 
                     if let Some(ref mut heap) = *HEAP.lock() {
                         heap.extend(crate::KERNEL_HEAP_SIZE);

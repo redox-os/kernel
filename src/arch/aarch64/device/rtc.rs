@@ -29,7 +29,7 @@ struct Pl031rtc {
 
 impl Pl031rtc {
     unsafe fn init(&mut self) {
-        let mut active_table = ActivePageTable::new(/* TODO PageTableType::Kernel */);
+        let mut active_table = ActivePageTable::new(PageTableType::Kernel);
 
         let start_frame = Frame::containing_address(PhysicalAddress::new(0x09010000));
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
