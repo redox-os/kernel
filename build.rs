@@ -166,6 +166,7 @@ mod gen {
         println!("cargo:rerun-if-changed=src/arch/aarch64/init/pre_kstart/early_init.S");
         cc::Build::new()
             .file("src/arch/aarch64/init/pre_kstart/early_init.S")
+            .target("aarch64-unknown-redox")
             .compile("early_init");
     }
 }
