@@ -129,7 +129,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                     #[cfg(target_arch = "aarch64")]
                     {
                         //TODO: CLONE_STACK
-                        clone(b, bp).map(ContextId::into)
+                        let ret = clone(b, bp).map(ContextId::into);
+                        ret
                     }
 
                     #[cfg(target_arch = "x86_64")]
