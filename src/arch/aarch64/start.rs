@@ -176,10 +176,8 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 #[naked]
 pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! {
     let cpu_id: usize = 0;
-    let uspace_tls_start = (crate::USER_TLS_OFFSET + crate::USER_TLS_SIZE * cpu_id);
     let spsr: u32 = 0;
 
-    llvm_asm!("msr   tpidr_el0, $0" : : "r"(uspace_tls_start) : : "volatile");
     llvm_asm!("msr   spsr_el1, $0" : : "r"(spsr) : : "volatile");
     llvm_asm!("msr   elr_el1, $0" : : "r"(ip) : : "volatile");
     llvm_asm!("msr   sp_el0, $0" : : "r"(sp) : : "volatile");

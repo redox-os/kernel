@@ -12,7 +12,7 @@ pub static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
 
 #[naked]
 #[no_mangle]
-pub unsafe extern fn do_irq() {
+pub unsafe extern fn do_exception_irq() {
     #[inline(never)]
     unsafe fn inner() {
         irq_demux();

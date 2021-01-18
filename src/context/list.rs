@@ -92,12 +92,12 @@ impl ContextList {
             #[cfg(target_arch = "aarch64")]
             {
                 let context_id = context.id.into();
-                context.arch.set_tcb(context_id);
                 context.arch.set_lr(func as usize);
                 context.arch.set_context_handle();
             }
 
-            context.arch.set_page_table(unsafe { ActivePageTable::new(PageTableType::User).address() });
+            context.arch.set_page_utable(unsafe { ActivePageTable::new(PageTableType::User).address() });
+            context.arch.set_page_ktable(unsafe { ActivePageTable::new(PageTableType::Kernel).address() });
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
             context.kfx = Some(fx);

@@ -3,9 +3,91 @@ use crate::syscall;
 
 #[naked]
 #[no_mangle]
-pub unsafe extern fn do_syscall() {
+pub unsafe extern fn do_exception_unhandled() {
     #[inline(never)]
     unsafe fn inner(stack: &mut InterruptStack) -> usize {
+        println!("do_exception_unhandled: ELR: 0x{:016x}", stack.elr_el1);
+        loop {}
+    }
+
+    llvm_asm!("str	    x0, [sp, #-8]!
+          str	    x1, [sp, #-8]!
+          str	    x2, [sp, #-8]!
+          str	    x3, [sp, #-8]!
+          str	    x4, [sp, #-8]!
+          str	    x5, [sp, #-8]!
+          str	    x6, [sp, #-8]!
+          str	    x7, [sp, #-8]!
+          str	    x8, [sp, #-8]!
+          str	    x9, [sp, #-8]!
+          str	    x10, [sp, #-8]!
+          str	    x11, [sp, #-8]!
+          str	    x12, [sp, #-8]!
+          str	    x13, [sp, #-8]!
+          str	    x14, [sp, #-8]!
+          str	    x15, [sp, #-8]!
+          str	    x16, [sp, #-8]!
+          str	    x17, [sp, #-8]!
+          str	    x18, [sp, #-8]!
+          str	    x19, [sp, #-8]!
+          str	    x20, [sp, #-8]!
+          str	    x21, [sp, #-8]!
+          str	    x22, [sp, #-8]!
+          str	    x23, [sp, #-8]!
+          str	    x24, [sp, #-8]!
+          str	    x25, [sp, #-8]!
+          str	    x26, [sp, #-8]!
+          str	    x27, [sp, #-8]!
+          str	    x28, [sp, #-8]!
+          str	    x29, [sp, #-8]!
+          str	    x30, [sp, #-8]!
+
+          mrs       x18, sp_el0
+          str       x18, [sp, #-8]!
+
+          mrs       x18, esr_el1
+          str       x18, [sp, #-8]!
+
+          mrs       x18, spsr_el1
+          str       x18, [sp, #-8]!
+
+          mrs       x18, tpidrro_el0
+          str       x18, [sp, #-8]!
+
+          mrs       x18, tpidr_el0
+          str       x18, [sp, #-8]!
+
+          str       x18, [sp, #-8]!
+
+          mrs       x18, elr_el1
+          str       x18, [sp, #-8]!"
+    : : : : "volatile");
+
+    let sp: usize;
+    llvm_asm!("" : "={sp}"(sp) : : : "volatile");
+    llvm_asm!("mov x29, sp" : : : : "volatile");
+
+    let a = inner(&mut *(sp as *mut InterruptStack));
+}
+
+#[naked]
+#[no_mangle]
+pub unsafe extern fn do_exception_synchronous() {
+    #[inline(never)]
+    unsafe fn inner(stack: &mut InterruptStack) -> usize {
+        let exception_code = (stack.esr_el1 & (0x3f << 26)) >> 26;
+        if exception_code != 0b010101 {
+            println!("do_exception_synchronous: Non-SVC!!!");
+            loop {}
+        } else {
+            println!("do_exception_synchronous: SVC: x8: 0x{:016x}", stack.scratch.x8);
+        }
+
+        llvm_asm!("nop": : : : "volatile");
+        llvm_asm!("nop": : : : "volatile");
+        llvm_asm!("nop": : : : "volatile");
+        llvm_asm!("nop": : : : "volatile");
+
         let fp;
         llvm_asm!("" : "={fp}"(fp) : : : "volatile");
 
@@ -183,15 +265,6 @@ pub struct SyscallStack {
 
 #[naked]
 pub unsafe extern fn clone_ret() {
-    llvm_asm!("ldp x29, x30, [sp], #16");
+    llvm_asm!("ldp x29, x30, [sp], #0x60");
     llvm_asm!("mov x0, 0");
 }
-
-/*
-#[naked]
-pub unsafe extern fn clone_ret() {
-    llvm_asm!("add sp, sp, #16");
-    llvm_asm!("ldp x29, x30, [sp], #16");
-    llvm_asm!("mov x0, 0");
-}
-*/

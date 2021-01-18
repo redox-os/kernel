@@ -151,6 +151,11 @@ pub unsafe fn switch() -> bool {
             }
             gdt::set_tcb((*to_ptr).id.into());
         }
+        #[cfg(target_arch = "aarch64")]
+        {
+            let pid = (*to_ptr).id.into();
+            (*to_ptr).arch.set_tcb(pid);
+        }
         CONTEXT_ID.store((*to_ptr).id, Ordering::SeqCst);
     }
 
