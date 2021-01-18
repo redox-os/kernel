@@ -265,16 +265,6 @@ pub struct SyscallStack {
 
 #[naked]
 pub unsafe extern fn clone_ret() {
-    llvm_asm!("ldp x29, x30, [sp], #16");
-    llvm_asm!("add sp, sp, #16");
+    llvm_asm!("ldp x29, x30, [sp], #0x60");
     llvm_asm!("mov x0, 0");
 }
-
-/*
-#[naked]
-pub unsafe extern fn clone_ret() {
-    llvm_asm!("add sp, sp, #16");
-    llvm_asm!("ldp x29, x30, [sp], #16");
-    llvm_asm!("mov x0, 0");
-}
-*/
