@@ -418,9 +418,9 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                 // Copy grant mapping
                 if ! grants.lock().is_empty() {
-                    let frame = active_table.p4()[crate::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
-                    let flags = active_table.p4()[crate::USER_GRANT_PML4].flags();
-                    active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+                    let frame = active_utable.p4()[crate::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
+                    let flags = active_utable.p4()[crate::USER_GRANT_PML4].flags();
+                    active_utable.with(&mut new_utable, &mut temporary_upage, |mapper| {
                         mapper.p4_mut()[crate::USER_GRANT_PML4].set(frame, flags);
                     });
                 }
@@ -443,8 +443,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     let start_page = Page::containing_address(VirtualAddress::new(start));
                     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
                     for page in Page::range_inclusive(start_page, end_page) {
-                        let frame = active_table.translate_page(page).expect("kernel percpu not mapped");
-                        active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+                        let frame = active_ktable.translate_page(page).expect("kernel percpu not mapped");
+                        active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
                             let result = mapper.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
                             // Ignore result due to operating on inactive table
                             unsafe { result.ignore(); }
