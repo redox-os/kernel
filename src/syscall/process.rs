@@ -122,7 +122,14 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
             }
 
-                kstack_opt = Some(new_stack);
+            #[cfg(target_arch = "aarch64")]
+            {
+                if let Some(ref stack) = context.kstack {
+                    offset = stack_base - stack.as_ptr() as usize;
+                    let mut new_stack = stack.clone();
+
+                    kstack_opt = Some(new_stack);
+                }
             }
 
             if flags.contains(CLONE_VM) {
@@ -389,6 +396,10 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             if let Some(stack) = kstack_opt.take() {
                 context.arch.set_stack(stack.as_ptr() as usize + offset);
                 context.kstack = Some(stack);
+                #[cfg(target_arch = "aarch64")]
+                {
+                    context.arch.set_lr(interrupt::syscall::clone_ret as usize);
+                }
             }
 
             // TODO: Clone ksig?
@@ -494,6 +505,18 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
                 true
             );
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                if let Some(stack) = &mut context.kstack {
+                    unsafe {
+                        let interrupt_stack_offset_from_stack_base = *(stack_base as *const u64) - stack_base as u64;
+                        let mut interrupt_stack = &mut *(stack.as_mut_ptr().add(offset + interrupt_stack_offset_from_stack_base as usize) as *mut crate::arch::interrupt::InterruptStack);
+                        interrupt_stack.tpidr_el0 = tcb_addr;
+                    }
+                }
+            }
+
 
             // Setup user TLS
             if let Some(mut tls) = tls_opt {
