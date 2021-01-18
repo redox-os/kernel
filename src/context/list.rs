@@ -96,7 +96,8 @@ impl ContextList {
                 context.arch.set_context_handle();
             }
 
-            context.arch.set_page_table(unsafe { ActivePageTable::new(PageTableType::User).address() });
+            context.arch.set_page_utable(unsafe { ActivePageTable::new(PageTableType::User).address() });
+            context.arch.set_page_ktable(unsafe { ActivePageTable::new(PageTableType::Kernel).address() });
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
             context.kfx = Some(fx);

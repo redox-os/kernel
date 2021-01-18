@@ -14,6 +14,7 @@ pub struct Context {
     elr_el1: usize,
     sp_el0: usize,
     ttbr0_el1: usize,   /* Pointer to U4 translation table for this Context     */
+    ttbr1_el1: usize,   /* Pointer to P4 translation table for this Context     */
     tpidr_el0: usize,   /* Pointer to TLS region for this Context               */
     tpidrro_el0: usize, /* Pointer to TLS (read-only) region for this Context   */
     rflags: usize,
@@ -53,6 +54,7 @@ impl Context {
             elr_el1: 0,
             sp_el0: 0,
             ttbr0_el1: 0,
+            ttbr1_el1: 0,
             tpidr_el0: 0,
             tpidrro_el0: 0,
             rflags: 0,          /* spsr_el1 */
@@ -92,8 +94,12 @@ impl Context {
     pub fn set_fx(&mut self, _address: usize) {
     }
 
-    pub fn set_page_table(&mut self, address: usize) {
+    pub fn set_page_utable(&mut self, address: usize) {
         self.ttbr0_el1 = address;
+    }
+
+    pub fn set_page_ktable(&mut self, address: usize) {
+        self.ttbr1_el1 = address;
     }
 
     pub fn set_stack(&mut self, address: usize) {
