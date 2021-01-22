@@ -460,7 +460,7 @@ where F: FnOnce(*mut u8) -> Result<()>
 
     let mut active_page_table = unsafe { ActivePageTable::new(PageTableType::User) };
     let mut target_page_table = unsafe {
-        InactivePageTable::from_address(context.arch.get_page_table())
+        InactivePageTable::from_address(context.arch.get_page_utable())
     };
 
     // Find the physical frames for all pages

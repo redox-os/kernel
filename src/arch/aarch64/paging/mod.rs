@@ -392,6 +392,7 @@ impl PhysicalAddress {
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct VirtualAddress(usize);
 
+#[derive(Debug, PartialEq)]
 pub enum VirtualAddressType {
     User,
     Kernel

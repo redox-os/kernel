@@ -87,8 +87,12 @@ impl Context {
         }
     }
 
-    pub fn get_page_table(&self) -> usize {
+    pub fn get_page_utable(&self) -> usize {
         self.ttbr0_el1
+    }
+
+    pub fn get_page_ktable(&self) -> usize {
+        self.ttbr1_el1
     }
 
     pub fn set_fx(&mut self, _address: usize) {

@@ -371,7 +371,7 @@ impl Grant {
     }
 
     pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, desc_opt: Option<FileDescriptor>, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
-        let mut active_table = match to.get_type() {
+        let mut active_table = match from.get_type() {
             VirtualAddressType::User => unsafe { ActivePageTable::new(PageTableType::User) },
             VirtualAddressType::Kernel => unsafe { ActivePageTable::new(PageTableType::Kernel) }
         };
@@ -385,6 +385,11 @@ impl Grant {
             let frame = active_table.translate_page(page).expect("grant references unmapped memory");
             frames.push_back(frame);
         }
+
+        let mut active_table = match to.get_type() {
+            VirtualAddressType::User => unsafe { ActivePageTable::new(PageTableType::User) },
+            VirtualAddressType::Kernel => unsafe { ActivePageTable::new(PageTableType::Kernel) }
+        };
 
         active_table.with(new_table, temporary_page, |mapper| {
             let start_page = Page::containing_address(to);

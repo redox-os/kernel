@@ -599,7 +599,7 @@ fn empty(context: &mut context::Context, reaping: bool) {
             if reaping {
                 println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, grant);
 
-                let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
+                let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
                 let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
                 grant.unmap_inactive(&mut new_table, &mut temporary_page);
