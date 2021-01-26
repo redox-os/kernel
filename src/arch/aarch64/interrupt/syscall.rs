@@ -1,6 +1,14 @@
-use crate::interrupt::InterruptStack;
-use crate::syscall;
+use crate::{
+    arch::{interrupt::InterruptStack},
+    context,
+    syscall,
+    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
+};
 
+#[no_mangle]
+pub unsafe extern fn do_exception_unhandled() {}
+
+/*
 #[naked]
 #[no_mangle]
 pub unsafe extern fn do_exception_unhandled() {
@@ -69,7 +77,12 @@ pub unsafe extern fn do_exception_unhandled() {
 
     let a = inner(&mut *(sp as *mut InterruptStack));
 }
+*/
 
+#[no_mangle]
+pub unsafe extern fn do_exception_synchronous() {}
+
+/*
 #[naked]
 #[no_mangle]
 pub unsafe extern fn do_exception_synchronous() {
@@ -219,6 +232,7 @@ pub unsafe extern fn do_exception_synchronous() {
 
     llvm_asm!("eret" :::: "volatile");
 }
+*/
 
 #[allow(dead_code)]
 #[repr(packed)]
@@ -263,8 +277,55 @@ pub struct SyscallStack {
     pub x0: usize,
 }
 
-#[naked]
-pub unsafe extern fn clone_ret() {
-    llvm_asm!("ldp x29, x30, [sp], #0x60");
-    llvm_asm!("mov x0, 0");
+#[macro_export]
+macro_rules! with_exception_stack {
+    (|$stack:ident| $code:block) => {{
+            let $stack = &mut *$stack;
+            (*$stack).scratch.x0 = $code;
+    }}
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
+    with_exception_stack!(|stack| {
+        // Set a restore point for clone
+        let fp;
+        asm!("mov {}, fp", out(reg) fp);
+
+        let scratch = &stack.scratch;
+        syscall::syscall(scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, fp, stack)
+    });
+}
+
+function!(syscall_instruction => {
+    "
+        nop
+    ",
+
+    // Push context registers
+    push_preserved!(),
+    push_scratch!(),
+    push_special!(),
+
+    // TODO: Map PTI
+
+    // Call inner function
+    "mov x0, sp\n",
+    "bl __inner_syscall_instruction\n",
+
+    // TODO: Unmap PTI
+
+    // Pop context registers
+    pop_special!(),
+    pop_scratch!(),
+    pop_preserved!(),
+
+    // Return
+    "eret\n",
+});
+
+function!(clone_ret => {
+    "ldp x29, x30, [sp], #16\n",
+    "mov sp, x29\n",
+    "ret\n",
+});

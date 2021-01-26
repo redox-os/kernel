@@ -510,14 +510,25 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             {
                 if let Some(stack) = &mut context.kstack {
                     unsafe {
-                        let interrupt_stack_offset_from_stack_base = *(stack_base as *const u64) - stack_base as u64;
-                        let mut interrupt_stack = &mut *(stack.as_mut_ptr().add(offset + interrupt_stack_offset_from_stack_base as usize) as *mut crate::arch::interrupt::InterruptStack);
-                        interrupt_stack.tpidr_el0 = tcb_addr;
+                        // stack_base contains a pointer to InterruptStack. Get its offset from
+                        // stack_base itself
+                        let istack_offset = *(stack_base as *const u64) - stack_base as u64;
+
+                        // Get the top of the new process' stack
+                        let new_sp = stack.as_mut_ptr().add(offset);
+
+                        // Update the pointer to the InterruptStack to reflect the new process'
+                        // stack. (Without this the pointer would be InterruptStack on the parent
+                        // process' stack.
+                        *(new_sp as *mut u64) = new_sp as u64 + istack_offset;
+
+                        // Update tpidr_el0 in the new process' InterruptStack
+                        let mut interrupt_stack = &mut *(stack.as_mut_ptr().add(offset + istack_offset as usize) as *mut crate::arch::interrupt::InterruptStack);
+                        interrupt_stack.iret.tpidr_el0 = tcb_addr;
                     }
                 }
             }
-
-
+            
             // Setup user TLS
             if let Some(mut tls) = tls_opt {
                 // Copy TLS mapping

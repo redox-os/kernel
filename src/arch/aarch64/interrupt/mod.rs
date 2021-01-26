@@ -1,10 +1,12 @@
 //! Interrupt instructions
 
+#[macro_use]
 pub mod handler;
+
+pub mod exception;
 pub mod irq;
 pub mod syscall;
 pub mod trace;
-pub mod unhandled_exceptions;
 
 pub use self::handler::InterruptStack;
 pub use self::trace::stack_trace;
