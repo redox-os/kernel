@@ -150,6 +150,42 @@ impl Context {
         value
     }
 
+    pub fn dump(&self) {
+        println!("elr_el1: 0x{:016x}", self.elr_el1);
+        println!("sp_el0: 0x{:016x}", self.sp_el0);
+        println!("ttbr0_el1: 0x{:016x}", self.ttbr0_el1);
+        println!("ttbr1_el1: 0x{:016x}", self.ttbr1_el1);
+        println!("tpidr_el0: 0x{:016x}", self.tpidr_el0);
+        println!("tpidrro_el0: 0x{:016x}", self.tpidrro_el0);
+        println!("rflags: 0x{:016x}", self.rflags);
+        println!("esr_el1: 0x{:016x}", self.esr_el1);
+        println!("padding: 0x{:016x}", self.padding);
+        println!("sp: 0x{:016x}", self.sp);
+        println!("lr: 0x{:016x}", self.lr);
+        println!("fp: 0x{:016x}", self.fp);
+        println!("x28: 0x{:016x}", self.x28);
+        println!("x27: 0x{:016x}", self.x27);
+        println!("x26: 0x{:016x}", self.x26);
+        println!("x25: 0x{:016x}", self.x25);
+        println!("x24: 0x{:016x}", self.x24);
+        println!("x23: 0x{:016x}", self.x23);
+        println!("x22: 0x{:016x}", self.x22);
+        println!("x21: 0x{:016x}", self.x21);
+        println!("x20: 0x{:016x}", self.x20);
+        println!("x19: 0x{:016x}", self.x19);
+        println!("x18: 0x{:016x}", self.x18);
+        println!("x17: 0x{:016x}", self.x17);
+        println!("x16: 0x{:016x}", self.x16);
+        println!("x15: 0x{:016x}", self.x15);
+        println!("x14: 0x{:016x}", self.x14);
+        println!("x13: 0x{:016x}", self.x13);
+        println!("x12: 0x{:016x}", self.x12);
+        println!("x11: 0x{:016x}", self.x11);
+        println!("x10: 0x{:016x}", self.x10);
+        println!("x9: 0x{:016x}", self.x9);
+        println!("x8: 0x{:016x}", self.x8);
+    }
+
     #[cold]
     #[inline(never)]
     #[naked]
