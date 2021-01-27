@@ -2,6 +2,7 @@ use core::mem;
 use core::sync::atomic::{AtomicBool, AtomicUsize, ATOMIC_BOOL_INIT, ATOMIC_USIZE_INIT, Ordering};
 
 use crate::device::cpu::registers::{control_regs, tlb};
+use crate::syscall::FloatRegisters;
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
@@ -17,9 +18,10 @@ pub struct Context {
     ttbr1_el1: usize,   /* Pointer to P4 translation table for this Context     */
     tpidr_el0: usize,   /* Pointer to TLS region for this Context               */
     tpidrro_el0: usize, /* Pointer to TLS (read-only) region for this Context   */
-    rflags: usize,
+    spsr_el1: usize,
     esr_el1: usize,
-    padding: usize,
+    fx_loadable: bool,
+    fx_address: usize,
     sp: usize,          /* Stack Pointer (x31)                                  */
     lr: usize,          /* Link Register (x30)                                  */
     fp: usize,          /* Frame pointer Register (x29)                         */
@@ -46,8 +48,6 @@ pub struct Context {
     x8: usize,          /* Indirect location Register                           */
 }
 
-static CONTEXT_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
-
 impl Context {
     pub fn new() -> Context {
         Context {
@@ -57,9 +57,10 @@ impl Context {
             ttbr1_el1: 0,
             tpidr_el0: 0,
             tpidrro_el0: 0,
-            rflags: 0,          /* spsr_el1 */
+            spsr_el1: 0,
             esr_el1: 0,
-            padding: 0xbeef0000 | CONTEXT_COUNT.fetch_add(1, Ordering::SeqCst),
+            fx_loadable: false,
+            fx_address: 0,
             sp: 0,
             lr: 0,
             fp: 0,
@@ -93,9 +94,6 @@ impl Context {
 
     pub fn get_page_ktable(&self) -> usize {
         self.ttbr1_el1
-    }
-
-    pub fn set_fx(&mut self, _address: usize) {
     }
 
     pub fn set_page_utable(&mut self, address: usize) {
@@ -150,6 +148,44 @@ impl Context {
         value
     }
 
+    pub fn get_fx_regs(&self) -> Option<FloatRegisters> {
+        if !self.fx_loadable {
+            return None;
+        }
+        let mut regs = unsafe { *(self.fx_address as *const FloatRegisters) };
+        let mut new_st = regs.fp_simd_regs;
+        regs.fp_simd_regs = new_st;
+        Some(regs)
+    }
+
+    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) -> bool {
+        if !self.fx_loadable {
+            return false;
+        }
+
+        {
+            let old = unsafe { &*(self.fx_address as *const FloatRegisters) };
+            let old_st = new.fp_simd_regs;
+            let mut new_st = new.fp_simd_regs;
+            for (new_st, old_st) in new_st.iter_mut().zip(&old_st) {
+                *new_st = *old_st;
+            }
+            new.fp_simd_regs = new_st;
+
+            // Make sure we don't use `old` from now on
+        }
+
+        unsafe {
+            *(self.fx_address as *mut FloatRegisters) = new;
+        }
+        true
+    }
+
+    pub fn set_fx(&mut self, address: usize) {
+        self.fx_address = address;
+    }
+
+
     pub fn dump(&self) {
         println!("elr_el1: 0x{:016x}", self.elr_el1);
         println!("sp_el0: 0x{:016x}", self.sp_el0);
@@ -157,9 +193,8 @@ impl Context {
         println!("ttbr1_el1: 0x{:016x}", self.ttbr1_el1);
         println!("tpidr_el0: 0x{:016x}", self.tpidr_el0);
         println!("tpidrro_el0: 0x{:016x}", self.tpidrro_el0);
-        println!("rflags: 0x{:016x}", self.rflags);
+        println!("spsr_el1: 0x{:016x}", self.spsr_el1);
         println!("esr_el1: 0x{:016x}", self.esr_el1);
-        println!("padding: 0x{:016x}", self.padding);
         println!("sp: 0x{:016x}", self.sp);
         println!("lr: 0x{:016x}", self.lr);
         println!("fp: 0x{:016x}", self.fp);
@@ -190,6 +225,59 @@ impl Context {
     #[inline(never)]
     #[naked]
     pub unsafe fn switch_to(&mut self, next: &mut Context) {
+        let mut float_regs = self.fx_address as *mut FloatRegisters;
+        asm!(
+            "stp q0, q1, [{0}, #16 * 0]",
+            "stp q2, q3, [{0}, #16 * 2]",
+            "stp q4, q5, [{0}, #16 * 4]",
+            "stp q6, q7, [{0}, #16 * 6]",
+            "stp q8, q9, [{0}, #16 * 8]",
+            "stp q10, q11, [{0}, #16 * 10]",
+            "stp q12, q13, [{0}, #16 * 12]",
+            "stp q14, q15, [{0}, #16 * 14]",
+            "stp q16, q17, [{0}, #16 * 16]",
+            "stp q18, q19, [{0}, #16 * 18]",
+            "stp q20, q21, [{0}, #16 * 20]",
+            "stp q22, q23, [{0}, #16 * 22]",
+            "stp q24, q25, [{0}, #16 * 24]",
+            "stp q26, q27, [{0}, #16 * 26]",
+            "stp q28, q29, [{0}, #16 * 28]",
+            "stp q30, q31, [{0}, #16 * 30]",
+            "mrs {1}, fpcr",
+            "mrs {2}, fpsr",
+            in(reg) (&(*(float_regs)).fp_simd_regs),
+            out(reg) ((*(float_regs)).fpcr),
+            out(reg) ((*(float_regs)).fpsr)
+        );
+
+        self.fx_loadable = true;
+
+        if next.fx_loadable {
+            asm!(
+                "ldp q0, q1, [{0}, #16 * 0]",
+                "ldp q2, q3, [{0}, #16 * 2]",
+                "ldp q4, q5, [{0}, #16 * 4]",
+                "ldp q6, q7, [{0}, #16 * 6]",
+                "ldp q8, q9, [{0}, #16 * 8]",
+                "ldp q10, q11, [{0}, #16 * 10]",
+                "ldp q12, q13, [{0}, #16 * 12]",
+                "ldp q14, q15, [{0}, #16 * 14]",
+                "ldp q16, q17, [{0}, #16 * 16]",
+                "ldp q18, q19, [{0}, #16 * 18]",
+                "ldp q20, q21, [{0}, #16 * 20]",
+                "ldp q22, q23, [{0}, #16 * 22]",
+                "ldp q24, q25, [{0}, #16 * 24]",
+                "ldp q26, q27, [{0}, #16 * 26]",
+                "ldp q28, q29, [{0}, #16 * 28]",
+                "ldp q30, q31, [{0}, #16 * 30]",
+                "msr fpcr, {1}",
+                "msr fpsr, {2}",
+                in(reg) (&(*(float_regs)).fp_simd_regs),
+                in(reg) ((*(float_regs)).fpcr),
+                in(reg) ((*(float_regs)).fpsr)
+            );
+        }
+
         self.ttbr0_el1 = control_regs::ttbr0_el1() as usize;
         if next.ttbr0_el1 != self.ttbr0_el1 {
             control_regs::ttbr0_el1_write(next.ttbr0_el1 as u64);
@@ -277,8 +365,8 @@ impl Context {
         llvm_asm!("mrs   $0, tpidrro_el0" : "=r"(self.tpidrro_el0) : : "memory" : "volatile");
         llvm_asm!("msr   tpidrro_el0, $0" : : "r"(next.tpidrro_el0) : "memory" : "volatile");
 
-        llvm_asm!("mrs   $0, spsr_el1" : "=r"(self.rflags) : : "memory" : "volatile");
-        llvm_asm!("msr   spsr_el1, $0" : : "r"(next.rflags) : "memory" : "volatile");
+        llvm_asm!("mrs   $0, spsr_el1" : "=r"(self.spsr_el1) : : "memory" : "volatile");
+        llvm_asm!("msr   spsr_el1, $0" : : "r"(next.spsr_el1) : "memory" : "volatile");
 
         llvm_asm!("mrs   $0, esr_el1" : "=r"(self.esr_el1) : : "memory" : "volatile");
         llvm_asm!("msr   esr_el1, $0" : : "r"(next.esr_el1) : "memory" : "volatile");
