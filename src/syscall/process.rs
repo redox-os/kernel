@@ -519,7 +519,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                         // Update the pointer to the InterruptStack to reflect the new process'
                         // stack. (Without this the pointer would be InterruptStack on the parent
-                        // process' stack.
+                        // process' stack).
                         *(new_sp as *mut u64) = new_sp as u64 + istack_offset;
 
                         // Update tpidr_el0 in the new process' InterruptStack
