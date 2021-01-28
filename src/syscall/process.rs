@@ -87,7 +87,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             arch = context.arch.clone();
 
             if let Some(ref fx) = context.kfx {
-                let mut new_fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
+                let mut new_fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024]) };
                 for (new_b, b) in new_fx.iter_mut().zip(fx.iter()) {
                     *new_b = *b;
                 }
