@@ -225,7 +225,7 @@ impl Context {
     #[inline(never)]
     #[naked]
     pub unsafe fn switch_to(&mut self, next: &mut Context) {
-        let mut float_regs = self.fx_address as *mut FloatRegisters;
+        let mut float_regs = &mut *(self.fx_address as *mut FloatRegisters);
         asm!(
             "stp q0, q1, [{0}, #16 * 0]",
             "stp q2, q3, [{0}, #16 * 2]",
@@ -245,14 +245,15 @@ impl Context {
             "stp q30, q31, [{0}, #16 * 30]",
             "mrs {1}, fpcr",
             "mrs {2}, fpsr",
-            in(reg) (&(*(float_regs)).fp_simd_regs),
-            out(reg) ((*(float_regs)).fpcr),
-            out(reg) ((*(float_regs)).fpsr)
+            in(reg) &mut float_regs.fp_simd_regs,
+            out(reg) float_regs.fpcr,
+            out(reg) float_regs.fpsr
         );
 
         self.fx_loadable = true;
 
         if next.fx_loadable {
+            let mut float_regs = &mut *(next.fx_address as *mut FloatRegisters);
             asm!(
                 "ldp q0, q1, [{0}, #16 * 0]",
                 "ldp q2, q3, [{0}, #16 * 2]",
@@ -272,9 +273,9 @@ impl Context {
                 "ldp q30, q31, [{0}, #16 * 30]",
                 "msr fpcr, {1}",
                 "msr fpsr, {2}",
-                in(reg) (&(*(float_regs)).fp_simd_regs),
-                in(reg) ((*(float_regs)).fpcr),
-                in(reg) ((*(float_regs)).fpsr)
+                in(reg) &mut float_regs.fp_simd_regs,
+                in(reg) float_regs.fpcr,
+                in(reg) float_regs.fpsr
             );
         }
 
