@@ -79,7 +79,7 @@ pub unsafe fn switch() -> bool {
     let ticks = PIT_TICKS.swap(0, Ordering::SeqCst);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
-    while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(false, true, Ordering::SeqCst) {
+    while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(0_u8, 1_u8, Ordering::SeqCst) == 0_u8 {
         interrupt::pause();
     }
 
@@ -163,29 +163,27 @@ pub unsafe fn switch() -> bool {
             to_context.arch.signal_stack(signal_handler, sig);
         }
 
-        let from_ptr: *mut Context = &mut *from_context_guard;
-        let to_ptr: *mut Context = &mut *to_context;
+        let from_arch_ptr: *mut arch::Context = &mut from_context_guard.arch;
+        let to_arch: &mut arch::Context = &mut to_context.arch;
 
-        // FIXME: Ensure that this critical section is somehow still protected by the lock, and not
-        // just for other processes' context switching, but for other operations which do not
-        // require CONTEXT_SWITCH_LOCK.
-        //
-        // What I suggest, is that we wrap the Context struct (typically stored as
-        // `Arc<RwLock<Context>>`), into a wrapper with interior locking for the inner context type
-        // (which could be something like `RwLock<ContextInner>`). The wrapper would also contain
-        // a field of type `UnsafeCell<ContextArch>`, which would be accessible if and only if the
-        // `running` field is set to false, making that field function as a lock.
-        drop(from_context_guard);
-        drop(from_context_lock);
+        core::mem::forget(from_context_guard);
+
+        /*
+        let mut from_context_lock = Arc::clone(&from_context_lock);
+        let mut to_context_lock = Arc::clone(&to_context_lock);
+        */
+
+        arch::switch_to(&mut *from_arch_ptr, to_arch);
+
+        /*
         to_context_lock.force_write_unlock();
-        drop(to_context_lock);
-
-        (*from_ptr).arch.switch_to(&mut (*to_ptr).arch);
+        from_context_lock.force_write_unlock();
+        */
 
         true
     } else {
         // No target was found, unset global lock and return
-        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+        arch::CONTEXT_SWITCH_LOCK.store(0_u8, Ordering::SeqCst);
 
         false
     }

@@ -1,5 +1,7 @@
 use core::mem;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicU8, Ordering};
+
+use alloc::sync::Arc;
 
 use crate::syscall::FloatRegisters;
 
@@ -7,14 +9,13 @@ use crate::syscall::FloatRegisters;
 /// Compare and exchange this to true when beginning a context switch on any CPU
 /// The `Context::switch_to` function will set it back to false, allowing other CPU's to switch
 /// This must be done, as no locks can be held on the stack during switch
-pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
+pub static CONTEXT_SWITCH_LOCK: AtomicU8 = AtomicU8::new(AbiCompatBool::False as u8);
 
 const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
 #[derive(Clone, Debug)]
+#[repr(C)]
 pub struct Context {
-    /// FX valid?
-    loadable: bool,
     /// FX location
     fx: usize,
     /// Page table pointer
@@ -34,13 +35,22 @@ pub struct Context {
     /// Base pointer
     rbp: usize,
     /// Stack pointer
-    rsp: usize
+    rsp: usize,
+    /// FX valid?
+    loadable: AbiCompatBool,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AbiCompatBool {
+    False,
+    True,
 }
 
 impl Context {
     pub fn new() -> Context {
         Context {
-            loadable: false,
+            loadable: AbiCompatBool::False,
             fx: 0,
             cr3: 0,
             rflags: 0,
@@ -59,7 +69,7 @@ impl Context {
     }
 
     pub fn get_fx_regs(&self) -> Option<FloatRegisters> {
-        if !self.loadable {
+        if self.loadable == AbiCompatBool::False {
             return None;
         }
         let mut regs = unsafe { *(self.fx as *const FloatRegisters) };
@@ -74,7 +84,7 @@ impl Context {
     }
 
     pub fn set_fx_regs(&mut self, mut new: FloatRegisters) -> bool {
-        if !self.loadable {
+        if self.loadable == AbiCompatBool::False {
             return false;
         }
 
@@ -126,53 +136,81 @@ impl Context {
         self.rsp += mem::size_of::<usize>();
         value
     }
+}
 
-    /// Switch to the next context by restoring its stack and registers
-    /// Check disassembly!
-    #[cold]
-    #[inline(never)]
-    #[naked]
-    pub unsafe fn switch_to(&mut self, next: &mut Context) {
-        asm!("fxsave64 [{}]", in(reg) (self.fx));
-        self.loadable = true;
-        if next.loadable {
-            asm!("fxrstor64 [{}]", in(reg) (next.fx));
-        }else{
-            asm!("fninit");
-        }
+/// Switch to the next context by restoring its stack and registers
+/// Check disassembly!
+#[cold]
+#[inline(never)]
+#[naked]
+pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
+    asm!(
+        // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
+        //
+        // - the current parameters are passed in the registers `rdi`, `rsi`,
+        // - we can modify scratch registers, e.g. rax
+        // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
+        //   store them here in the first place.
+        "mov rax, [rdi + 0x00] // load `prev.fx`
+        fxsave64 [rax]         // save processor simd state in `prev.fx`
 
-        asm!("mov {}, cr3", out(reg) (self.cr3));
-        if next.cr3 != self.cr3 {
-            asm!("mov cr3, {}", in(reg) (next.cr3));
-        }
+        // set `prev.loadable` to true
+        mov BYTE PTR [rdi + 0x50], {true}
+        // compare `next.loadable` with true
+        cmp BYTE PTR [rsi + 0x50], {true}
+        je switch_to.next_is_loadable
 
-        asm!("pushfq ; pop {}", out(reg) (self.rflags));
-        asm!("push {} ; popfq", in(reg) (next.rflags));
+        fninit
+        jmp switch_to.after_fx
 
-        asm!("mov {}, rbx", out(reg) (self.rbx));
-        asm!("mov rbx, {}", in(reg) (next.rbx));
+        switch_to.next_is_loadable:
+        mov rax, [rsi + 0x00]
+        fxrstor64 [rax]
 
-        asm!("mov {}, r12", out(reg) (self.r12));
-        asm!("mov r12, {}", in(reg) (next.r12));
+        switch_to.after_fx:
+        mov rcx, cr3
+        mov [rdi + 0x08], rcx
+        mov rax, [rsi + 0x08]
+        cmp rax, rcx
 
-        asm!("mov {}, r13", out(reg) (self.r13));
-        asm!("mov r13, {}", in(reg) (next.r13));
+        je switch_to.same_cr3
+        mov cr3, rax
 
-        asm!("mov {}, r14", out(reg) (self.r14));
-        asm!("mov r14, {}", in(reg) (next.r14));
+        switch_to.same_cr3:
+        mov [rdi + 0x18], rbx
+        mov rbx, [rsi + 0x18]
 
-        asm!("mov {}, r15", out(reg) (self.r15));
-        asm!("mov r15, {}", in(reg) (next.r15));
+        mov [rdi + 0x20], r12
+        mov r12, [rsi + 0x20]
 
-        asm!("mov {}, rsp", out(reg) (self.rsp));
-        asm!("mov rsp, {}", in(reg) (next.rsp));
+        mov [rdi + 0x28], r13
+        mov r13, [rsi + 0x28]
 
-        asm!("mov {}, rbp", out(reg) (self.rbp));
-        asm!("mov rbp, {}", in(reg) (next.rbp));
+        mov [rdi + 0x30], r14
+        mov r14, [rsi + 0x30]
+
+        mov [rdi + 0x38], r15
+        mov r15, [rsi + 0x38]
+
+        mov [rdi + 0x40], rsp
+        mov rsp, [rsi + 0x40]
+
+        mov [rdi + 0x48], rbp
+        mov rbp, [rsi + 0x48]
+
+        pushfq
+        pop QWORD PTR [rdi + 0x10]
+
+        push QWORD PTR [rsi + 0x10]
+        popfq
 
         // Unset global lock after loading registers but before switch
-        CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-    }
+        xor eax, eax
+        xchg BYTE PTR [rip+{switch_lock}], al",
+
+        true = const(AbiCompatBool::True as u8),
+        switch_lock = sym CONTEXT_SWITCH_LOCK,
+    );
 }
 
 #[allow(dead_code)]
