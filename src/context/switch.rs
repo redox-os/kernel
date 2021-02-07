@@ -1,7 +1,10 @@
+use core::cell::Cell;
 use core::ops::Bound;
 use core::sync::atomic::Ordering;
 
 use alloc::sync::Arc;
+
+use spin::RwLock;
 
 use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
@@ -64,6 +67,24 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
     }
 }
 
+struct SwitchResult {
+    prev_lock: Arc<RwLock<Context>>,
+    next_lock: Arc<RwLock<Context>>,
+}
+
+pub unsafe extern "C" fn switch_finish_hook() {
+    if let Some(SwitchResult { prev_lock, next_lock }) = SWITCH_RESULT.take() {
+        prev_lock.force_write_unlock();
+        next_lock.force_write_unlock();
+    } else {
+        panic!("SWITCH_RESULT was not set");
+    }
+    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+}
+
+#[thread_local]
+static SWITCH_RESULT: Cell<Option<SwitchResult>> = Cell::new(None);
+
 unsafe fn runnable(context: &Context, cpu_id: usize) -> bool {
     // Switch to context if it needs to run, is not currently running, and is owned by the current CPU
     !context.running && !context.ptrace_stop && context.status == Status::Runnable && context.cpu_id == Some(cpu_id)
@@ -79,7 +100,7 @@ pub unsafe fn switch() -> bool {
     let ticks = PIT_TICKS.swap(0, Ordering::SeqCst);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
-    while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(0_u8, 1_u8, Ordering::SeqCst) == 0_u8 {
+    while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(false, true, Ordering::SeqCst) {
         interrupt::pause();
     }
 
@@ -164,26 +185,28 @@ pub unsafe fn switch() -> bool {
         }
 
         let from_arch_ptr: *mut arch::Context = &mut from_context_guard.arch;
-        let to_arch: &mut arch::Context = &mut to_context.arch;
-
         core::mem::forget(from_context_guard);
 
-        /*
-        let mut from_context_lock = Arc::clone(&from_context_lock);
-        let mut to_context_lock = Arc::clone(&to_context_lock);
-        */
+        let prev_arch: &mut arch::Context = &mut *from_arch_ptr;
+        let next_arch: &mut arch::Context = &mut to_context.arch;
 
-        arch::switch_to(&mut *from_arch_ptr, to_arch);
+        // to_context_guard only exists as a raw pointer, but is still locked
 
-        /*
-        to_context_lock.force_write_unlock();
-        from_context_lock.force_write_unlock();
-        */
+        SWITCH_RESULT.set(Some(SwitchResult {
+            prev_lock: from_context_lock,
+            next_lock: to_context_lock,
+        }));
+
+        arch::switch_to(prev_arch, next_arch);
+
+        // NOTE: After switch_to is called, the return address can even be different from the
+        // current return address, meaning that we cannot use local variables here, and that we
+        // need to use the `switch_finish_hook` to be able to release the locks.
 
         true
     } else {
         // No target was found, unset global lock and return
-        arch::CONTEXT_SWITCH_LOCK.store(0_u8, Ordering::SeqCst);
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
         false
     }

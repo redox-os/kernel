@@ -1,7 +1,5 @@
 use core::mem;
-use core::sync::atomic::{AtomicU8, Ordering};
-
-use alloc::sync::Arc;
+use core::sync::atomic::AtomicBool;
 
 use crate::syscall::FloatRegisters;
 
@@ -9,7 +7,7 @@ use crate::syscall::FloatRegisters;
 /// Compare and exchange this to true when beginning a context switch on any CPU
 /// The `Context::switch_to` function will set it back to false, allowing other CPU's to switch
 /// This must be done, as no locks can be held on the stack during switch
-pub static CONTEXT_SWITCH_LOCK: AtomicU8 = AtomicU8::new(AbiCompatBool::False as u8);
+pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 
 const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
@@ -151,8 +149,12 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         // - we can modify scratch registers, e.g. rax
         // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
         //   store them here in the first place.
-        "mov rax, [rdi + 0x00] // load `prev.fx`
-        fxsave64 [rax]         // save processor simd state in `prev.fx`
+        "
+        // load `prev.fx`
+        mov rax, [rdi + 0x00]
+
+        // save processor SSE/FPU/AVX state in `prev.fx` pointee
+        fxsave64 [rax]
 
         // set `prev.loadable` to true
         mov BYTE PTR [rdi + 0x50], {true}
@@ -168,6 +170,7 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         fxrstor64 [rax]
 
         switch_to.after_fx:
+        // Save the current CR3, and load the next CR3 if not identical
         mov rcx, cr3
         mov [rdi + 0x08], rcx
         mov rax, [rsi + 0x08]
@@ -177,6 +180,7 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         mov cr3, rax
 
         switch_to.same_cr3:
+        // Save old registers, and load new ones
         mov [rdi + 0x18], rbx
         mov rbx, [rsi + 0x18]
 
@@ -192,24 +196,32 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         mov [rdi + 0x38], r15
         mov r15, [rsi + 0x38]
 
-        mov [rdi + 0x40], rsp
-        mov rsp, [rsi + 0x40]
+        mov [rdi + 0x40], rbp
+        mov rbp, [rsi + 0x40]
 
-        mov [rdi + 0x48], rbp
-        mov rbp, [rsi + 0x48]
+        mov [rdi + 0x48], rsp
+        mov rsp, [rsi + 0x48]
 
+        // push RFLAGS (can only be modified via stack)
         pushfq
+        // pop RFLAGS into `self.rflags`
         pop QWORD PTR [rdi + 0x10]
 
+        // push `next.rflags`
         push QWORD PTR [rsi + 0x10]
+        // pop into RFLAGS
         popfq
 
-        // Unset global lock after loading registers but before switch
-        xor eax, eax
-        xchg BYTE PTR [rip+{switch_lock}], al",
+        // When we return, we cannot even guarantee that the return address on the stack, points to
+        // the calling function, `context::switch`. Thus, we have to execute this Rust hook by
+        // ourselves, which will unlock the contexts before the later switch.
+
+        call {switch_hook}
+
+        ",
 
         true = const(AbiCompatBool::True as u8),
-        switch_lock = sym CONTEXT_SWITCH_LOCK,
+        switch_hook = sym crate::context::switch_finish_hook,
     );
 }
 
