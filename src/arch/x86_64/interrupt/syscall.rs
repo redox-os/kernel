@@ -25,7 +25,7 @@ pub unsafe fn init() {
 
     // Inside kernel space, GS should _always_ point to the TSS. When leaving userspace, `swapgs`
     // is called again, making the userspace GS always point to user data.
-    msr::wrmsr(msr::IA32_KERNEL_GSBASE, 0);
+    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, &gdt::TSS as *const _ as usize as u64);
 
     let efer = msr::rdmsr(msr::IA32_EFER);
     msr::wrmsr(msr::IA32_EFER, efer | 1);
@@ -68,11 +68,12 @@ function!(syscall_instruction => {
         swapgs                    // Set gs segment to TSS
         mov gs:[0x70], rsp        // Save userspace stack pointer
         mov rsp, gs:[4]           // Load kernel stack pointer
-        push WORD PTR 5 * 8 + 3   // Push fake userspace SS (resembling iret frame)
+        push QWORD PTR 5 * 8 + 3  // Push fake userspace SS (resembling iret frame)
         push QWORD PTR gs:[0x70]  // Push userspace rsp
         push r11                  // Push rflags
-        push WORD PTR 6 * 8 + 3   // Push fake userspace CS (resembling iret frame)
+        push QWORD PTR 6 * 8 + 3  // Push fake userspace CS (resembling iret frame)
         push rcx                  // Push userspace return pointer
+        swapgs
     ",
 
     // Push context registers
@@ -99,10 +100,11 @@ function!(syscall_instruction => {
     // Return
     "
         pop rcx                 // Pop userspace return pointer
-        add rsp, 2              // Pop CS
+        add rsp, 8              // Pop CS
         pop r11                 // Pop rflags
+        swapgs
         pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
-        add rsp, 2              // Pop SS
+        add rsp, 8              // Pop SS
         mov rsp, gs:[0x70]      // Restore userspace stack pointer
         swapgs                  // Restore gs from TSS to user data
         sysretq                 // Return into userspace; RCX=>RIP,R11=>RFLAGS

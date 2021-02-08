@@ -194,7 +194,7 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
 
     segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     // Ensure that GS always points to the TSS segment in kernel space.
-    x86::msr::wrmsr(x86::msr::IA32_GS_BASE, &TSS as *const _ as usize as u64);
+    //x86::msr::wrmsr(x86::msr::IA32_GS_BASE, &TSS as *const _ as usize as u64);
 
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 

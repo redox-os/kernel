@@ -309,14 +309,38 @@ macro_rules! pop_fs {
     " };
 }
 
-macro_rules! swapgs_if_ring3 {
-    () => { "
+macro_rules! swapgs_iff_ring3 {
+    (error_code: true) => { "
         // Check whether the last two bits RSP+8 (code segment) are equal to zero.
-        test BYTE PTR [rsp + 8], 0x03
+        test QWORD PTR [rsp + 8], 0x3
         // Skip the SWAPGS instruction if CS & 0b11 == 0b00.
         jz 1f
         swapgs
         1:
+    " };
+    (error_code: false) => { "
+        test QWORD PTR [rsp + 16], 0x3
+        jz 1f
+        swapgs
+        1:
+    " };
+}
+macro_rules! swapgs_iff_ring3_slow {
+    () => { "
+    push eax
+    push edx
+    push ecx
+    mov ecx, 0xC000_0102
+    rdmsr
+    shl rdx, 32
+    or eax, edx
+    test rdx, rdx
+    jnz 1f
+    swapgs
+    1:
+    pop ecx
+    pop edx
+    pop eax
     " }
 }
 
@@ -338,7 +362,7 @@ macro_rules! interrupt_stack {
 
             function!($name => {
                 // Backup all userspace registers to stack
-                swapgs_if_ring3!(),
+                //swapgs_if_ring3!(error_code: false),
                 "push rax\n",
                 push_scratch!(),
                 push_preserved!(),
@@ -359,7 +383,7 @@ macro_rules! interrupt_stack {
                 pop_preserved!(),
                 pop_scratch!(),
 
-                swapgs_if_ring3!(),
+                //swapgs_if_ring3!(error_code: false),
                 "iretq\n",
             });
         }
@@ -377,7 +401,7 @@ macro_rules! interrupt {
 
             function!($name => {
                 // Backup all userspace registers to stack
-                swapgs_if_ring3!(),
+                //swapgs_if_ring3!(error_code: false),
                 "push rax\n",
                 push_scratch!(),
                 push_fs!(),
@@ -395,7 +419,7 @@ macro_rules! interrupt {
                 pop_fs!(),
                 pop_scratch!(),
 
-                swapgs_if_ring3!(),
+                //swapgs_if_ring3!(error_code: false),
                 "iretq\n",
             });
         }
@@ -419,7 +443,7 @@ macro_rules! interrupt_error {
             }
 
             function!($name => {
-                swapgs_if_ring3!(),
+                //swapgs_if_ring3!(error_code: true),
                 // Move rax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
                 "xchg [rsp], rax\n",
@@ -450,7 +474,7 @@ macro_rules! interrupt_error {
                 pop_preserved!(),
                 pop_scratch!(),
 
-                swapgs_if_ring3!(),
+                //swapgs_if_ring3!(error_code: true),
                 "iretq\n",
             });
         }

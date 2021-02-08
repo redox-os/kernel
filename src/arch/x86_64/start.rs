@@ -267,9 +267,6 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlest
             mov ds, r8d
             mov es, r8d
             mov fs, r9d
-            // Exchange the old kernel GS (pointing to TSS) and kernel data
-            swapgs
-            // Replace kernel data segment with user data segment
             mov gs, r8d
 
             // Target RFLAGS
@@ -279,7 +276,7 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlest
             // Target stack pointer
             mov rsp, r14
             // Target argument
-            mov rdi, r13
+            mov rdi, r15
 
             xor rax, rax
             xor rbx, rbx
