@@ -285,6 +285,6 @@ impl IdtEntry {
     // A function to set the offset more easily
     pub fn set_func(&mut self, func: unsafe extern fn()) {
         self.set_flags(IdtFlags::PRESENT | IdtFlags::RING_0 | IdtFlags::INTERRUPT);
-        self.set_offset(8, func as usize);
+        self.set_offset((crate::gdt::GDT_KERNEL_CODE as u16) << 3, func as usize);
     }
 }

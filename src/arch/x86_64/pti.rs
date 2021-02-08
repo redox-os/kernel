@@ -58,7 +58,7 @@ pub unsafe fn map() {
 
 #[cfg(feature = "pti")]
 #[inline(always)]
-pub unsafe fn unmap() {
+pub unsafe extern "C" fn unmap() {
     // Switch to per-CPU stack
     switch_stack(PTI_CONTEXT_STACK, PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len());
 
@@ -83,4 +83,4 @@ pub unsafe fn map() {}
 
 #[cfg(not(feature = "pti"))]
 #[inline(always)]
-pub unsafe fn unmap() {}
+pub unsafe extern "C" fn unmap() {}

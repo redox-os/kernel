@@ -75,6 +75,11 @@ impl IretRegisters {
         println!("RFLAG: {:>016X}", { self.rflags });
         println!("CS:    {:>016X}", { self.cs });
         println!("RIP:   {:>016X}", { self.rip });
+
+        if self.cs & 0b11 != 0b00 {
+            println!("RSP:   {:>016X}", { self.rsp });
+            println!("SS:    {:>016X}", { self.ss });
+        }
     }
 }
 
