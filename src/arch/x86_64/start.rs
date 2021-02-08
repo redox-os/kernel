@@ -240,13 +240,10 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 }
 
 #[naked]
-pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! {
-    let mut flags = FLAG_INTERRUPTS;
-    if singlestep {
-        flags |= FLAG_SINGLESTEP;
-    }
-
-    asm!("push r10
+#[inline(never)]
+// TODO: AbiCompatBool
+pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlestep: u32) -> ! {
+    /*asm!("push r10
           push r11
           push r12
           push r13
@@ -258,36 +255,62 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! 
          in("r13") (gdt::GDT_USER_CODE << 3 | 3), // Code segment
          in("r14") ip, // IP
          in("r15") arg, // Argument
-    );
+    );*/
+    // rdi, rsi, rdx, rcx
+    asm!(
+        "
+            mov rbx, {flag_interrupts}
+            test ecx, ecx
+            jz .after_singlestep_branch
+            or rbx, {flag_singlestep}
 
-    // Unmap kernel
-    pti::unmap();
+            .after_singlestep_branch:
+            mov r12, rdi
+            mov r13, rsi
+            mov rdi, rdx
+            call {pti_unmap}
 
-    // Go to usermode
-    asm!("mov ds, r14d
-         mov es, r14d
-         mov fs, r15d
-         mov gs, r14d
-         xor rax, rax
-         xor rbx, rbx
-         xor rcx, rcx
-         xor rdx, rdx
-         xor rsi, rsi
-         xor rdi, rdi
-         xor rbp, rbp
-         xor r8, r8
-         xor r9, r9
-         xor r10, r10
-         xor r11, r11
-         xor r12, r12
-         xor r13, r13
-         xor r14, r14
-         xor r15, r15
-         fninit
-         pop rdi
-         iretq",
-         in("r14") (gdt::GDT_USER_DATA << 3 | 3), // Data segment
-         in("r15") (gdt::GDT_USER_TLS << 3 | 3), // TLS segment
-         options(noreturn),
+            // Go to usermode
+            mov r14, {user_data_seg_selector}
+            mov r15, {user_tls_seg_selector}
+            mov ds, r14d
+            mov es, r14d
+            mov fs, r15d
+            mov gs, r14d
+
+            // Target RFLAGS
+            mov r11, rbx
+            // Target instruction pointer
+            mov rcx, r12
+            // Target stack pointer
+            mov rsp, r13
+
+            xor rax, rax
+            xor rbx, rbx
+            // Don't zero rcx; it's used for `ip`.
+            xor rdx, rdx
+            // Don't zero rdi; it's used for `arg`.
+            xor rsi, rsi
+            xor rbp, rbp
+            // Don't zero rsp, obviously.
+            xor r8, r8
+            xor r9, r9
+            xor r10, r10
+            // Don't zero r11; it's used for `rflags`.
+            xor r12, r12
+            xor r13, r13
+            xor r14, r14
+            xor r15, r15
+
+            fninit
+            sysretq
+        ",
+
+        flag_interrupts = const(FLAG_INTERRUPTS),
+        flag_singlestep = const(FLAG_SINGLESTEP),
+        pti_unmap = sym pti::unmap,
+        user_data_seg_selector = const(gdt::GDT_USER_DATA << 3 | 3),
+        user_tls_seg_selector = const(gdt::GDT_USER_TLS << 3 | 3),
+        options(noreturn),
     );
 }
