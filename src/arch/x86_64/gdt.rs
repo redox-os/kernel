@@ -85,15 +85,39 @@ pub static mut GDT: [GdtEntry; 10] = [
     GdtEntry::new(0, 0, 0, 0),
 ];
 
+#[repr(packed)]
+pub struct TssWrapper {
+    base: TaskStateSegment,
+    _pad: u64,
+    _user_stack: u64,
+}
+impl core::ops::Deref for TssWrapper {
+    type Target = TaskStateSegment;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
+impl core::ops::DerefMut for TssWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base
+    }
+}
+
 #[thread_local]
-pub static mut TSS: TaskStateSegment = TaskStateSegment {
-    reserved: 0,
-    rsp: [0; 3],
-    reserved2: 0,
-    ist: [0; 7],
-    reserved3: 0,
-    reserved4: 0,
-    iomap_base: 0xFFFF
+pub static mut TSS: TssWrapper = TssWrapper {
+    base: TaskStateSegment {
+        reserved: 0,
+        rsp: [0; 3],
+        reserved2: 0,
+        ist: [0; 7],
+        reserved3: 0,
+        reserved4: 0,
+        iomap_base: 0xFFFF
+    },
+    _pad: 0_u64,
+    // Accessed only from assembly, at `gs:[0x70]`
+    _user_stack: 0_u64,
 };
 
 pub unsafe fn set_tcb(pid: usize) {
@@ -167,7 +191,11 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
     segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16, Ring::Ring0));
+
     segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    // Ensure that GS always points to the TSS segment in kernel space.
+    x86::msr::wrmsr(x86::msr::IA32_GS_BASE, &TSS as *const _ as usize as u64);
+
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
     // Load the task register

@@ -41,6 +41,8 @@ interrupt_stack!(debug, |stack| {
     }
 });
 
+// TODO: Give NMI and double faults a separate stack, as they can trigger a triple fault due to the
+// way swapgs is used.
 interrupt_stack!(non_maskable, |stack| {
     println!("Non-maskable interrupt");
     stack.dump();

@@ -243,19 +243,6 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 #[inline(never)]
 // TODO: AbiCompatBool
 pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlestep: u32) -> ! {
-    /*asm!("push r10
-          push r11
-          push r12
-          push r13
-          push r14
-          push r15",
-         in("r10") (gdt::GDT_USER_DATA << 3 | 3), // Data segment
-         in("r11") sp, // Stack pointer
-         in("r12") flags, // Flags
-         in("r13") (gdt::GDT_USER_CODE << 3 | 3), // Code segment
-         in("r14") ip, // IP
-         in("r15") arg, // Argument
-    );*/
     // rdi, rsi, rdx, rcx
     asm!(
         "
@@ -265,25 +252,34 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlest
             or rbx, {flag_singlestep}
 
             .after_singlestep_branch:
-            mov r12, rdi
-            mov r13, rsi
-            mov rdi, rdx
+
+            // save `ip` (rdi), `sp` (rsi), and `arg` (rdx) in callee-preserved registers, so that
+            // they are not modified by `pti_unmap`
+
+            mov r13, rdi
+            mov r14, rsi
+            mov r15, rdx
             call {pti_unmap}
 
             // Go to usermode
-            mov r14, {user_data_seg_selector}
-            mov r15, {user_tls_seg_selector}
-            mov ds, r14d
-            mov es, r14d
-            mov fs, r15d
-            mov gs, r14d
+            mov r8, {user_data_seg_selector}
+            mov r9, {user_tls_seg_selector}
+            mov ds, r8d
+            mov es, r8d
+            mov fs, r9d
+            // Exchange the old kernel GS (pointing to TSS) and kernel data
+            swapgs
+            // Replace kernel data segment with user data segment
+            mov gs, r8d
 
             // Target RFLAGS
             mov r11, rbx
             // Target instruction pointer
-            mov rcx, r12
+            mov rcx, r13
             // Target stack pointer
-            mov rsp, r13
+            mov rsp, r14
+            // Target argument
+            mov rdi, r13
 
             xor rax, rax
             xor rbx, rbx

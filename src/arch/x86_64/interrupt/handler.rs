@@ -309,6 +309,17 @@ macro_rules! pop_fs {
     " };
 }
 
+macro_rules! swapgs_if_ring3 {
+    () => { "
+        // Check whether the last two bits RSP+8 (code segment) are equal to zero.
+        test BYTE PTR [rsp + 8], 0x03
+        // Skip the SWAPGS instruction if CS & 0b11 == 0b00.
+        jz 1f
+        swapgs
+        1:
+    " }
+}
+
 #[macro_export]
 macro_rules! interrupt_stack {
     ($name:ident, |$stack:ident| $code:block) => {
@@ -327,6 +338,7 @@ macro_rules! interrupt_stack {
 
             function!($name => {
                 // Backup all userspace registers to stack
+                swapgs_if_ring3!(),
                 "push rax\n",
                 push_scratch!(),
                 push_preserved!(),
@@ -347,6 +359,7 @@ macro_rules! interrupt_stack {
                 pop_preserved!(),
                 pop_scratch!(),
 
+                swapgs_if_ring3!(),
                 "iretq\n",
             });
         }
@@ -364,6 +377,7 @@ macro_rules! interrupt {
 
             function!($name => {
                 // Backup all userspace registers to stack
+                swapgs_if_ring3!(),
                 "push rax\n",
                 push_scratch!(),
                 push_fs!(),
@@ -381,6 +395,7 @@ macro_rules! interrupt {
                 pop_fs!(),
                 pop_scratch!(),
 
+                swapgs_if_ring3!(),
                 "iretq\n",
             });
         }
@@ -404,6 +419,7 @@ macro_rules! interrupt_error {
             }
 
             function!($name => {
+                swapgs_if_ring3!(),
                 // Move rax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
                 "xchg [rsp], rax\n",
@@ -434,6 +450,7 @@ macro_rules! interrupt_error {
                 pop_preserved!(),
                 pop_scratch!(),
 
+                swapgs_if_ring3!(),
                 "iretq\n",
             });
         }

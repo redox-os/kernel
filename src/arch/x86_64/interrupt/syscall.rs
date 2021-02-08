@@ -16,13 +16,16 @@ pub unsafe fn init() {
     // The base selector of the three consecutive segments (of which two are used) for user code
     // and user data. It points to a 32-bit code segment, which must be followed by a data segment
     // (stack), and a 64-bit code segment.
-    let sysret_cs_ss_base = ((gdt::GDT_USER_CODE32_UNUSED as u16) << 3) | u16::from(gdt::GDT_A_RING_3);
+    let sysret_cs_ss_base = ((gdt::GDT_USER_CODE32_UNUSED as u16) << 3) | 3;
     let star_high = u32::from(syscall_cs_ss_base) | (u32::from(sysret_cs_ss_base) << 16);
 
     msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
     msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
     msr::wrmsr(msr::IA32_FMASK, 0x0300); // Clear trap flag and interrupt enable
-    msr::wrmsr(msr::IA32_KERNEL_GSBASE, &gdt::TSS as *const _ as u64);
+
+    // Inside kernel space, GS should _always_ point to the TSS. When leaving userspace, `swapgs`
+    // is called again, making the userspace GS always point to user data.
+    msr::wrmsr(msr::IA32_KERNEL_GSBASE, 0);
 
     let efer = msr::rdmsr(msr::IA32_EFER);
     msr::wrmsr(msr::IA32_EFER, efer | 1);
@@ -63,10 +66,10 @@ function!(syscall_instruction => {
     // Yes, this is magic. No, you don't need to understand
     "
         swapgs                    // Set gs segment to TSS
-        mov gs:[28], rsp          // Save userspace stack pointer
+        mov gs:[0x70], rsp        // Save userspace stack pointer
         mov rsp, gs:[4]           // Load kernel stack pointer
         push WORD PTR 5 * 8 + 3   // Push fake userspace SS (resembling iret frame)
-        push QWORD PTR gs:[28]    // Push userspace rsp
+        push QWORD PTR gs:[0x70]  // Push userspace rsp
         push r11                  // Push rflags
         push WORD PTR 6 * 8 + 3   // Push fake userspace CS (resembling iret frame)
         push rcx                  // Push userspace return pointer
@@ -96,11 +99,12 @@ function!(syscall_instruction => {
     // Return
     "
         pop rcx                 // Pop userspace return pointer
-        add rsp, 2
+        add rsp, 2              // Pop CS
         pop r11                 // Pop rflags
-        add rsp, 10             // Pop SS and rsp
-        mov rsp, gs:[28]        // Restore userspace stack pointer
-        swapgs                  // Restore gs from TSS to kernel data
+        pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
+        add rsp, 2              // Pop SS
+        mov rsp, gs:[0x70]      // Restore userspace stack pointer
+        swapgs                  // Restore gs from TSS to user data
         sysretq                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
     ",
 });
