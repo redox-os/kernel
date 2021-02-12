@@ -193,13 +193,16 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
     segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16, Ring::Ring0));
 
     segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    // Ensure that GS always points to the TSS segment in kernel space.
-    //x86::msr::wrmsr(x86::msr::IA32_GS_BASE, &TSS as *const _ as usize as u64);
-
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+
+    // Ensure that GS always points to the TSS segment in kernel space.
+    x86::msr::wrmsr(x86::msr::IA32_GS_BASE, &TSS as *const _ as usize as u64);
+    // Inside kernel space, GS should _always_ point to the TSS. When leaving userspace, `swapgs`
+    // is called again, making the userspace GS always point to user data.
+    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
 }
 
 #[derive(Copy, Clone, Debug)]

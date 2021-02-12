@@ -262,6 +262,7 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlest
             call {pti_unmap}
 
             // Go to usermode
+            swapgs
             mov r8, {user_data_seg_selector}
             mov r9, {user_tls_seg_selector}
             mov ds, r8d

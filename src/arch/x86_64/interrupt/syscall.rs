@@ -23,10 +23,6 @@ pub unsafe fn init() {
     msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
     msr::wrmsr(msr::IA32_FMASK, 0x0300); // Clear trap flag and interrupt enable
 
-    // Inside kernel space, GS should _always_ point to the TSS. When leaving userspace, `swapgs`
-    // is called again, making the userspace GS always point to user data.
-    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, &gdt::TSS as *const _ as usize as u64);
-
     let efer = msr::rdmsr(msr::IA32_EFER);
     msr::wrmsr(msr::IA32_EFER, efer | 1);
 }
@@ -73,7 +69,6 @@ function!(syscall_instruction => {
         push r11                  // Push rflags
         push QWORD PTR 6 * 8 + 3  // Push fake userspace CS (resembling iret frame)
         push rcx                  // Push userspace return pointer
-        swapgs
     ",
 
     // Push context registers
@@ -102,7 +97,6 @@ function!(syscall_instruction => {
         pop rcx                 // Pop userspace return pointer
         add rsp, 8              // Pop CS
         pop r11                 // Pop rflags
-        swapgs
         pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
         add rsp, 8              // Pop SS
         mov rsp, gs:[0x70]      // Restore userspace stack pointer
