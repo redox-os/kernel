@@ -155,10 +155,11 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     IDTR.base = current_idt.as_ptr() as *const X86IdtEntry;
 
     let backup_ist = {
-        // A problem with SWAPGS, is that if a non-maskable interrupt were to occur in the middle
-        // of swapping, the CS would now point to the new kernel CS from the kernel-triggered
-        // interrupt, and no swap would occur. Thus, we give the NMI handler a separate stack. This
-        // is also true for Machine Check, and for Double Faults, but for other reasons.
+        // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
+        // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
+        // considered the most fatal, especially Double Faults which are caused by errors __when
+        // accessing the system IDT__. If that goes wrong, then kernel memory may be partially
+        // corrupt, and we want a separate stack.
         //
         // Note that each CPU has its own "backup interrupt stack".
         let index = 1_u8;
