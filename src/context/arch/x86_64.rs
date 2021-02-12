@@ -245,37 +245,38 @@ pub struct SignalHandlerStack {
 #[naked]
 unsafe extern fn signal_handler_wrapper() {
     #[inline(never)]
-    unsafe fn inner(stack: &SignalHandlerStack) {
+    unsafe extern "C" fn inner(stack: &SignalHandlerStack) {
         (stack.handler)(stack.sig);
     }
 
     // Push scratch registers
-    asm!("push rax
-        push rcx
-        push rdx
-        push rdi
-        push rsi
-        push r8
-        push r9
-        push r10
-        push r11");
+    asm!(
+        "
+            push rax
+            push rcx
+            push rdx
+            push rdi
+            push rsi
+            push r8
+            push r9
+            push r10
+            push r11
 
-    // Get reference to stack variables
-    let rsp: usize;
-    asm!("mov {}, rsp", out(reg) rsp);
+            mov rdi, rsp
+            call {inner}
 
-    // Call inner rust function
-    inner(&*(rsp as *const SignalHandlerStack));
+            pop r11
+            pop r10
+            pop r9
+            pop r8
+            pop rsi
+            pop rdi
+            pop rdx
+            pop rcx
+            pop rax
+            add rsp, 16
+        ",
 
-    // Pop scratch registers, error code, and return
-    asm!("pop r11
-        pop r10
-        pop r9
-        pop r8
-        pop rsi
-        pop rdi
-        pop rdx
-        pop rcx
-        pop rax
-        add rsp, 16");
+        inner = sym inner,
+    );
 }
