@@ -15,7 +15,7 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
     // Take ownership if not already owned
     if context.cpu_id == None {
         context.cpu_id = Some(cpu_id);
-        // println!("{}: take {} {}", cpu_id, context.id, ::core::str::from_utf8_unchecked(&context.name.read()));
+        // println!("{}: take {} {}", cpu_id, context.id, *context.name.read());
     }
 
     // Restore from signal, must only be done from another context to avoid overwriting the stack!
