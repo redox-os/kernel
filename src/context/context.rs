@@ -10,7 +10,7 @@ use core::{
     cmp::Ordering,
     mem,
 };
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 
 use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
@@ -233,7 +233,7 @@ pub struct Context {
     /// User Thread local storage
     pub tls: Option<Tls>,
     /// User grants
-    pub grants: Arc<Mutex<UserGrants>>,
+    pub grants: Arc<RwLock<UserGrants>>,
     /// The name of the context
     pub name: Arc<RwLock<Box<str>>>,
     /// The current working directory
@@ -291,7 +291,7 @@ impl Context {
             stack: None,
             sigstack: None,
             tls: None,
-            grants: Arc::new(Mutex::new(UserGrants::default())),
+            grants: Arc::new(RwLock::new(UserGrants::default())),
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(Vec::new())),
             files: Arc::new(RwLock::new(Vec::new())),

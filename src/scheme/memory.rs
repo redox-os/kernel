@@ -40,7 +40,7 @@ impl Scheme for MemoryScheme {
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
 
-            let mut grants = context.grants.lock();
+            let mut grants = context.grants.write();
 
             let region = grants.find_free_at(VirtualAddress::new(map.address), map.size, map.flags)?.round();
 

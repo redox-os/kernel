@@ -74,7 +74,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let mut grants = context.grants.lock();
+        let mut grants = context.grants.write();
 
         let from_address = (physical_address/4096) * 4096;
         let offset = physical_address - from_address;
@@ -128,7 +128,7 @@ pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let mut grants = context.grants.lock();
+        let mut grants = context.grants.write();
 
         if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
             grants.take(&region).unwrap().unmap();

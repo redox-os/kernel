@@ -126,7 +126,7 @@ impl UserInner {
         let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
         let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
-        let mut grants = context.grants.lock();
+        let mut grants = context.grants.write();
 
         let from_address = round_down_pages(address);
         let offset = address - from_address;
@@ -157,7 +157,7 @@ impl UserInner {
             let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
-            let mut grants = context.grants.lock();
+            let mut grants = context.grants.write();
 
             if let Some(region) = grants.contains(VirtualAddress::new(address)).map(Region::from) {
                 grants.take(&region).unwrap().unmap_inactive(&mut new_table, &mut temporary_page);

@@ -90,7 +90,7 @@ pub fn resource() -> Result<Vec<u8>> {
             if let Some(ref sigstack) = context.sigstack {
                 memory += sigstack.size();
             }
-            for grant in context.grants.lock().iter() {
+            for grant in context.grants.read().iter() {
                 if grant.is_owned() {
                     memory += grant.size();
                 }
