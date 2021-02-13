@@ -17,7 +17,7 @@ pub extern "C" fn signal_handler(sig: usize) {
         let contexts = contexts();
         let context_lock = contexts.current().expect("context::signal_handler not inside of context");
         let context = context_lock.read();
-        let actions = context.actions.lock();
+        let actions = context.actions.read();
         actions[sig]
     };
 

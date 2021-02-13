@@ -404,7 +404,7 @@ pub unsafe fn regs_for(context: &Context) -> Option<&InterruptStack> {
         None => None,
         Some((_, _, ref kstack, signum)) => {
             let is_user_handled = {
-                let actions = context.actions.lock();
+                let actions = context.actions.read();
                 signal::is_user_handled(actions[signum as usize].0.sa_handler)
             };
             if is_user_handled {
@@ -425,7 +425,7 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
         None => None,
         Some((_, _, ref mut kstack, signum)) => {
             let is_user_handled = {
-                let actions = context.actions.lock();
+                let actions = context.actions.read();
                 signal::is_user_handled(actions[signum as usize].0.sa_handler)
             };
             if is_user_handled {

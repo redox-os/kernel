@@ -265,7 +265,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             if flags.contains(CLONE_SIGHAND) {
                 actions = Arc::clone(&context.actions);
             } else {
-                actions = Arc::new(Mutex::new(context.actions.lock().clone()));
+                actions = Arc::new(RwLock::new(context.actions.read().clone()));
             }
         }
 
@@ -849,7 +849,7 @@ fn fexec_noreturn(
             drop(args);
             drop(vars);
 
-            context.actions = Arc::new(Mutex::new(vec![(
+            context.actions = Arc::new(RwLock::new(vec![(
                 SigAction {
                     sa_handler: unsafe { mem::transmute(SIG_DFL) },
                     sa_mask: [0; 2],
@@ -1414,7 +1414,7 @@ pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mu
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        let mut actions = context.actions.lock();
+        let mut actions = context.actions.write();
 
         if let Some(oldact) = oldact_opt {
             *oldact = actions[sig].0;
