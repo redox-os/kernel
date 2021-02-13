@@ -253,7 +253,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             if flags.contains(CLONE_FS) {
                 cwd = Arc::clone(&context.cwd);
             } else {
-                cwd = Arc::new(Mutex::new(context.cwd.lock().clone()));
+                cwd = Arc::new(RwLock::new(context.cwd.read().clone()));
             }
 
             if flags.contains(CLONE_FILES) {
