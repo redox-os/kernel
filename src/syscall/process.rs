@@ -8,7 +8,7 @@ use alloc::{
 use core::alloc::{GlobalAlloc, Layout};
 use core::ops::DerefMut;
 use core::{intrinsics, mem};
-use spin::{RwLock, Mutex};
+use spin::RwLock;
 
 use crate::context::file::FileDescriptor;
 use crate::context::{ContextId, WaitpidKey};
@@ -237,11 +237,11 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 grants = Arc::clone(&context.grants);
             } else {
                 let mut grants_set = UserGrants::default();
-                for grant in context.grants.lock().iter() {
+                for grant in context.grants.read().iter() {
                     let start = VirtualAddress::new(grant.start_address().data() + crate::USER_TMP_GRANT_OFFSET - crate::USER_GRANT_OFFSET);
                     grants_set.insert(grant.secret_clone(start));
                 }
-                grants = Arc::new(Mutex::new(grants_set));
+                grants = Arc::new(RwLock::new(grants_set));
             }
 
             if flags.contains(CLONE_VM) {
@@ -288,7 +288,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
         if !flags.contains(CLONE_VM) {
-            let mut grants = grants.lock();
+            let mut grants = grants.write();
 
             let mut to_remove = BTreeSet::new();
 
@@ -420,7 +420,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 context.image = image;
 
                 // Copy grant mapping
-                if ! grants.lock().is_empty() {
+                if ! grants.read().is_empty() {
                     let frame = active_utable.p4()[crate::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
                     let flags = active_utable.p4()[crate::USER_GRANT_PML4].flags();
                     active_utable.with(&mut new_utable, &mut temporary_upage, |mapper| {
@@ -466,7 +466,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                 // Move grants
                 {
-                    let mut grants = grants.lock();
+                    let mut grants = grants.write();
                     let old_grants = mem::replace(&mut *grants, UserGrants::default());
 
                     for mut grant in old_grants.inner.into_iter() {
@@ -606,7 +606,7 @@ fn empty(context: &mut context::Context, reaping: bool) {
         drop(context.tls.take());
     }
 
-    let mut grants = context.grants.lock();
+    let mut grants = context.grants.write();
     if Arc::strong_count(&context.grants) == 1 {
         let grants = mem::replace(&mut *grants, UserGrants::default());
         for grant in grants.inner.into_iter() {

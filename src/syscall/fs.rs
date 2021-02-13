@@ -455,7 +455,7 @@ pub fn funmap_old(virtual_address: usize) -> Result<usize> {
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
 
-            let mut grants = context.grants.lock();
+            let mut grants = context.grants.write();
 
             if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
                 let mut grant = grants.take(&region).unwrap();
@@ -503,7 +503,7 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let mut grants = context.grants.lock();
+        let mut grants = context.grants.write();
 
         let conflicting: Vec<Region> = grants.conflicts(requested).map(Region::from).collect();
 
