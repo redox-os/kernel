@@ -66,7 +66,7 @@ pub fn chdir(path: &[u8]) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
         let canonical = context.canonicalize(path);
-        *context.cwd.lock() = canonical;
+        *context.cwd.write() = canonical;
         Ok(0)
     } else {
         Err(Error::new(ENOTDIR))
@@ -78,7 +78,7 @@ pub fn getcwd(buf: &mut [u8]) -> Result<usize> {
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let context = context_lock.read();
-    let cwd = context.cwd.lock();
+    let cwd = context.cwd.read();
     let mut i = 0;
     while i < buf.len() && i < cwd.len() {
         buf[i] = cwd[i];

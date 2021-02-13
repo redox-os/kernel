@@ -237,7 +237,7 @@ pub struct Context {
     /// The name of the context
     pub name: Arc<RwLock<Box<str>>>,
     /// The current working directory
-    pub cwd: Arc<Mutex<Vec<u8>>>,
+    pub cwd: Arc<RwLock<Vec<u8>>>,
     /// The open files in the scheme
     pub files: Arc<Mutex<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
@@ -293,7 +293,7 @@ impl Context {
             tls: None,
             grants: Arc::new(Mutex::new(UserGrants::default())),
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
-            cwd: Arc::new(Mutex::new(Vec::new())),
+            cwd: Arc::new(RwLock::new(Vec::new())),
             files: Arc::new(Mutex::new(Vec::new())),
             actions: Arc::new(Mutex::new(vec![(
                 SigAction {
@@ -315,7 +315,7 @@ impl Context {
     /// "bar:/foo" will be used directly, as it is already absolute
     pub fn canonicalize(&self, path: &[u8]) -> Vec<u8> {
         let mut canon = if path.iter().position(|&b| b == b':').is_none() {
-            let cwd = self.cwd.lock();
+            let cwd = self.cwd.read();
 
             let mut canon = if !path.starts_with(b"/") {
                 let mut c = cwd.clone();
