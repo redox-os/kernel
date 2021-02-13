@@ -1,10 +1,15 @@
-use alloc::sync::Arc;
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use alloc::collections::VecDeque;
-use core::alloc::{GlobalAlloc, Layout};
-use core::cmp::Ordering;
-use core::mem;
+use alloc::{
+    boxed::Box,
+    collections::VecDeque,
+    string::String,
+    sync::Arc,
+    vec::Vec,
+};
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    cmp::Ordering,
+    mem,
+};
 use spin::{Mutex, RwLock};
 
 use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
@@ -112,7 +117,7 @@ pub struct ContextSnapshot {
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     // Clone fields
     //TODO: is there a faster way than allocation?
-    pub name: Box<[u8]>,
+    pub name: Box<str>,
     pub files: Vec<Option<FileDescription>>,
     // pub cwd: Box<[u8]>,
 }
@@ -230,7 +235,7 @@ pub struct Context {
     /// User grants
     pub grants: Arc<Mutex<UserGrants>>,
     /// The name of the context
-    pub name: Arc<RwLock<Box<[u8]>>>,
+    pub name: Arc<RwLock<Box<str>>>,
     /// The current working directory
     pub cwd: Arc<Mutex<Vec<u8>>>,
     /// The open files in the scheme
@@ -287,7 +292,7 @@ impl Context {
             sigstack: None,
             tls: None,
             grants: Arc::new(Mutex::new(UserGrants::default())),
-            name: Arc::new(RwLock::new(Vec::new().into_boxed_slice())),
+            name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(Mutex::new(Vec::new())),
             files: Arc::new(Mutex::new(Vec::new())),
             actions: Arc::new(Mutex::new(vec![(

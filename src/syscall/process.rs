@@ -1,7 +1,10 @@
-use alloc::boxed::Box;
-use alloc::collections::BTreeSet;
-use alloc::sync::Arc;
-use alloc::vec::Vec;
+use alloc::{
+    boxed::Box,
+    collections::BTreeSet,
+    string::String,
+    sync::Arc,
+    vec::Vec,
+};
 use core::alloc::{GlobalAlloc, Layout};
 use core::ops::DerefMut;
 use core::{intrinsics, mem};
@@ -608,7 +611,7 @@ fn empty(context: &mut context::Context, reaping: bool) {
         let grants = mem::replace(&mut *grants, UserGrants::default());
         for grant in grants.inner.into_iter() {
             if reaping {
-                println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.read()) }, grant);
+                println!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
                 let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
@@ -632,7 +635,7 @@ impl Drop for ExecFile {
 fn fexec_noreturn(
     setuid: Option<u32>,
     setgid: Option<u32>,
-    name: Box<[u8]>,
+    name: Box<str>,
     data: Box<[u8]>,
     args: Box<[Box<[u8]>]>,
     vars: Box<[Box<[u8]>]>,
@@ -893,7 +896,7 @@ fn fexec_noreturn(
     unsafe { usermode(entry, sp, 0, singlestep) }
 }
 
-pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<[u8]>>, auxv: Option<Vec<usize>>) -> Result<usize> {
+pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<str>>, auxv: Option<Vec<usize>>) -> Result<usize> {
     let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -902,7 +905,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     };
 
     let mut stat: Stat;
-    let mut name: Vec<u8>;
+    let name: String;
     let mut data: Vec<u8>;
     {
         let file = ExecFile(fd);
@@ -926,11 +929,18 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
         }
 
         if let Some(name_override) = name_override_opt {
-            name = Vec::from(name_override);
+            name = String::from(name_override);
         } else {
-            name = vec![0; 4096];
-            let len = syscall::file_op_mut_slice(syscall::number::SYS_FPATH, file.0, &mut name)?;
-            name.truncate(len);
+            let mut name_bytes = vec![0; 4096];
+            let len = syscall::file_op_mut_slice(syscall::number::SYS_FPATH, file.0, &mut name_bytes)?;
+            name_bytes.truncate(len);
+            name = match String::from_utf8(name_bytes) {
+                Ok(ok) => ok,
+                Err(_err) => {
+                    //TODO: print error?
+                    return Err(Error::new(EINVAL));
+                }
+            };
         }
 
         //TODO: Only read elf header, not entire file. Then read required segments
@@ -974,7 +984,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                 println!(
                     "{}: {}: fexec failed to execute {}: {}",
                     context.id.into(),
-                    unsafe { ::core::str::from_utf8_unchecked(&context.name.read()) },
+                    *context.name.read(),
                     fd.into(),
                     err
                 );
@@ -1026,8 +1036,8 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
 
                 let mut args_vec = Vec::from(args);
                 //TODO: pass file handle in auxv
-                let name_override = name.into_boxed_slice();
-                args_vec[0] = name_override.clone();
+                let name_override = name.into_boxed_str();
+                args_vec[0] = name_override.clone().into();
 
                 // Drop variables, since fexec_kernel probably won't return
                 drop(elf);
@@ -1060,7 +1070,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    fexec_noreturn(setuid, setgid, name.into_boxed_slice(), data.into_boxed_slice(), args, vars, auxv.into_boxed_slice());
+    fexec_noreturn(setuid, setgid, name.into_boxed_str(), data.into_boxed_slice(), args, vars, auxv.into_boxed_slice());
 }
 
 pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {

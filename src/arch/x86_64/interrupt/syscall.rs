@@ -95,8 +95,7 @@ interrupt_stack!(syscall, |stack| {
             let context = contexts.current();
             if let Some(current) = context {
                 let current = current.read();
-                let name = current.name.read();
-                println!("Warning: Context {} used deprecated `int 0x80` construct", core::str::from_utf8(&name).unwrap_or("(invalid utf8)"));
+                println!("Warning: Context {} used deprecated `int 0x80` construct", *current.name.read());
             } else {
                 println!("Warning: Unknown context used deprecated `int 0x80` construct");
             }

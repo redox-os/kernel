@@ -1,6 +1,5 @@
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::str;
 
 use crate::context;
 use crate::syscall::error::Result;
@@ -107,9 +106,6 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            let name_bytes = context.name.read();
-            let name = str::from_utf8(&name_bytes).unwrap_or("");
-
             string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<8}{}\n",
                                context.id.into(),
                                context.pgid.into(),
@@ -124,7 +120,7 @@ pub fn resource() -> Result<Vec<u8>> {
                                cpu_string,
                                ticks_string,
                                memory_string,
-                               name));
+                               *context.name.read()));
         }
     }
 

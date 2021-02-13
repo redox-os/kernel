@@ -22,7 +22,7 @@ pub fn resource() -> Result<Vec<u8>> {
 
         for row in rows.iter() {
             let id: usize = row.0.into();
-            let name = str::from_utf8(&row.1).unwrap_or(".");
+            let name = &row.1;
             let _ = writeln!(string, "{}: {}", id, name);
 
             for (fd, f) in row.2.iter().enumerate() {
