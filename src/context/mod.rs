@@ -34,6 +34,8 @@ pub mod signal;
 /// Timeout handling
 pub mod timeout;
 
+pub use self::switch::switch_finish_hook;
+
 /// Limit on number of contexts
 pub const CONTEXT_MAX_CONTEXTS: usize = (isize::max_value() as usize) - 1;
 

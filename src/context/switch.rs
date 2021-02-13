@@ -1,7 +1,10 @@
+use core::cell::Cell;
 use core::ops::Bound;
 use core::sync::atomic::Ordering;
 
 use alloc::sync::Arc;
+
+use spin::RwLock;
 
 use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
@@ -63,6 +66,24 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
         }
     }
 }
+
+struct SwitchResult {
+    prev_lock: Arc<RwLock<Context>>,
+    next_lock: Arc<RwLock<Context>>,
+}
+
+pub unsafe extern "C" fn switch_finish_hook() {
+    if let Some(SwitchResult { prev_lock, next_lock }) = SWITCH_RESULT.take() {
+        prev_lock.force_write_unlock();
+        next_lock.force_write_unlock();
+    } else {
+        panic!("SWITCH_RESULT was not set");
+    }
+    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+}
+
+#[thread_local]
+static SWITCH_RESULT: Cell<Option<SwitchResult>> = Cell::new(None);
 
 unsafe fn runnable(context: &Context, cpu_id: usize) -> bool {
     // Switch to context if it needs to run, is not currently running, and is owned by the current CPU
@@ -163,24 +184,24 @@ pub unsafe fn switch() -> bool {
             to_context.arch.signal_stack(signal_handler, sig);
         }
 
-        let from_ptr: *mut Context = &mut *from_context_guard;
-        let to_ptr: *mut Context = &mut *to_context;
+        let from_arch_ptr: *mut arch::Context = &mut from_context_guard.arch;
+        core::mem::forget(from_context_guard);
 
-        // FIXME: Ensure that this critical section is somehow still protected by the lock, and not
-        // just for other processes' context switching, but for other operations which do not
-        // require CONTEXT_SWITCH_LOCK.
-        //
-        // What I suggest, is that we wrap the Context struct (typically stored as
-        // `Arc<RwLock<Context>>`), into a wrapper with interior locking for the inner context type
-        // (which could be something like `RwLock<ContextInner>`). The wrapper would also contain
-        // a field of type `UnsafeCell<ContextArch>`, which would be accessible if and only if the
-        // `running` field is set to false, making that field function as a lock.
-        drop(from_context_guard);
-        drop(from_context_lock);
-        to_context_lock.force_write_unlock();
-        drop(to_context_lock);
+        let prev_arch: &mut arch::Context = &mut *from_arch_ptr;
+        let next_arch: &mut arch::Context = &mut to_context.arch;
 
-        (*from_ptr).arch.switch_to(&mut (*to_ptr).arch);
+        // to_context_guard only exists as a raw pointer, but is still locked
+
+        SWITCH_RESULT.set(Some(SwitchResult {
+            prev_lock: from_context_lock,
+            next_lock: to_context_lock,
+        }));
+
+        arch::switch_to(prev_arch, next_arch);
+
+        // NOTE: After switch_to is called, the return address can even be different from the
+        // current return address, meaning that we cannot use local variables here, and that we
+        // need to use the `switch_finish_hook` to be able to release the locks.
 
         true
     } else {
