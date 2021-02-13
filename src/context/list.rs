@@ -47,6 +47,9 @@ impl ContextList {
     pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<ContextId, Arc<RwLock<Context>>> {
         self.map.iter()
     }
+    pub fn range(&self, range: impl core::ops::RangeBounds<ContextId>) -> ::alloc::collections::btree_map::Range<'_, ContextId, Arc<RwLock<Context>>> {
+        self.map.range(range)
+    }
 
     /// Create a new context.
     pub fn new_context(&mut self) -> Result<&Arc<RwLock<Context>>> {
