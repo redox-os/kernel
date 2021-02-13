@@ -45,7 +45,7 @@ pub fn futexes_mut() -> RwLockWriteGuard<'static, FutexList> {
 // pointee cannot be changed by another thread, which could make atomic ops useless.
 pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) -> Result<usize> {
     let target_physaddr = unsafe {
-        let mut active_table = ActivePageTable::new();
+        let active_table = ActivePageTable::new();
         let virtual_address = VirtualAddress::new(addr as *mut i32 as usize);
 
         // FIXME: Already validated in syscall/mod.rs
@@ -133,7 +133,7 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
         },
         FUTEX_REQUEUE => {
             let addr2_physaddr = unsafe {
-                let mut active_table = ActivePageTable::new();
+                let active_table = ActivePageTable::new();
 
                 let addr2_safe = validate_slice_mut(addr2, 1).map(|addr2_safe| &mut addr2_safe[0])?;
                 let addr2_virt = VirtualAddress::new(addr2_safe as *mut i32 as usize);
