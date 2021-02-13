@@ -107,7 +107,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            let name_bytes = context.name.lock();
+            let name_bytes = context.name.read();
             let name = str::from_utf8(&name_bytes).unwrap_or("");
 
             string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<8}{}\n",

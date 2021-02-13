@@ -236,7 +236,7 @@ impl Scheme for ProcScheme {
             data = match operation {
                 Operation::Memory => OperationData::Memory(MemData::default()),
                 Operation::Trace => OperationData::Trace(TraceData::default()),
-                Operation::Static(_) => OperationData::Static(StaticData::new(target.name.lock().clone())),
+                Operation::Static(_) => OperationData::Static(StaticData::new(target.name.read().clone())),
                 _ => OperationData::Other,
             };
 

@@ -16,7 +16,7 @@ pub fn resource() -> Result<Vec<u8>> {
             let contexts = context::contexts();
             for (id, context_lock) in contexts.iter() {
                 let context = context_lock.read();
-                rows.push((*id, context.name.lock().clone(), context.syscall.clone()));
+                rows.push((*id, context.name.read().clone(), context.syscall.clone()));
             }
         }
 
