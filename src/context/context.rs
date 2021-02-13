@@ -241,7 +241,7 @@ pub struct Context {
     /// The open files in the scheme
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
-    pub actions: Arc<Mutex<Vec<(SigAction, usize)>>>,
+    pub actions: Arc<RwLock<Vec<(SigAction, usize)>>>,
     /// The pointer to the user-space registers, saved after certain
     /// interrupts. This pointer is somewhere inside kstack, and the
     /// kstack address at the time of creation is the first element in
@@ -295,7 +295,7 @@ impl Context {
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(Vec::new())),
             files: Arc::new(RwLock::new(Vec::new())),
-            actions: Arc::new(Mutex::new(vec![(
+            actions: Arc::new(RwLock::new(vec![(
                 SigAction {
                     sa_handler: unsafe { mem::transmute(SIG_DFL) },
                     sa_mask: [0; 2],
