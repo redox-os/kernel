@@ -349,7 +349,7 @@ impl Scheme for UserScheme {
             // TODO: Faster, cleaner mechanism to get descriptor
             let scheme = inner.scheme_id.load(Ordering::SeqCst);
             let mut desc_res = Err(Error::new(EBADF));
-            for context_file_opt in context.files.lock().iter() {
+            for context_file_opt in context.files.read().iter() {
                 if let Some(context_file) = context_file_opt {
                     let (context_scheme, context_number) = {
                         let desc = context_file.description.read();
@@ -402,7 +402,7 @@ impl Scheme for UserScheme {
             // TODO: Faster, cleaner mechanism to get descriptor
             let scheme = inner.scheme_id.load(Ordering::SeqCst);
             let mut desc_res = Err(Error::new(EBADF));
-            for context_file_opt in context.files.lock().iter() {
+            for context_file_opt in context.files.read().iter() {
                 if let Some(context_file) = context_file_opt {
                     let (context_scheme, context_number) = {
                         let desc = context_file.description.read();

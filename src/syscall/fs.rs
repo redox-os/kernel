@@ -377,7 +377,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let mut files = context.files.lock();
+        let mut files = context.files.write();
         match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
                 F_GETFD => {
