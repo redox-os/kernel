@@ -35,7 +35,7 @@ impl EventQueue {
                 let contexts = context::contexts();
                 let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
                 let context = context_lock.read();
-                let files = context.files.lock();
+                let files = context.files.read();
                 match files.get(event.id).ok_or(Error::new(EBADF))? {
                     Some(file) => file.clone(),
                     None => return Err(Error::new(EBADF))

@@ -259,7 +259,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             if flags.contains(CLONE_FILES) {
                 files = Arc::clone(&context.files);
             } else {
-                files = Arc::new(Mutex::new(context.files.lock().clone()));
+                files = Arc::new(RwLock::new(context.files.read().clone()));
             }
 
             if flags.contains(CLONE_SIGHAND) {
@@ -272,7 +272,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         // If not cloning files, dup to get a new number from scheme
         // This has to be done outside the context lock to prevent deadlocks
         if !flags.contains(CLONE_FILES) {
-            for (_fd, file_opt) in files.lock().iter_mut().enumerate() {
+            for (_fd, file_opt) in files.write().iter_mut().enumerate() {
                 let new_file_opt = if let Some(ref file) = *file_opt {
                     Some(FileDescriptor {
                         description: Arc::clone(&file.description),
@@ -866,7 +866,7 @@ fn fexec_noreturn(
             (vfork, context.ppid, files)
         };
 
-        for (_fd, file_opt) in files.lock().iter_mut().enumerate() {
+        for (_fd, file_opt) in files.write().iter_mut().enumerate() {
             let mut cloexec = false;
             if let Some(ref file) = *file_opt {
                 if file.cloexec {
@@ -1108,12 +1108,12 @@ pub fn exit(status: usize) -> ! {
         let pid = {
             let mut context = context_lock.write();
             {
-                let mut lock = context.files.lock();
+                let mut lock = context.files.write();
                 if Arc::strong_count(&context.files) == 1 {
                     mem::swap(lock.deref_mut(), &mut close_files);
                 }
             }
-            context.files = Arc::new(Mutex::new(Vec::new()));
+            context.files = Arc::new(RwLock::new(Vec::new()));
             context.id
         };
 

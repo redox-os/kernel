@@ -127,7 +127,7 @@ impl ContextSnapshot {
     pub fn new(context: &Context) -> Self {
         let name = context.name.read().clone();
         let mut files = Vec::new();
-        for descriptor_opt in context.files.lock().iter() {
+        for descriptor_opt in context.files.read().iter() {
             let description = if let Some(descriptor) = descriptor_opt {
                 let description = descriptor.description.read();
                 Some(FileDescription {
@@ -239,7 +239,7 @@ pub struct Context {
     /// The current working directory
     pub cwd: Arc<RwLock<Vec<u8>>>,
     /// The open files in the scheme
-    pub files: Arc<Mutex<Vec<Option<FileDescriptor>>>>,
+    pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
     pub actions: Arc<Mutex<Vec<(SigAction, usize)>>>,
     /// The pointer to the user-space registers, saved after certain
@@ -294,7 +294,7 @@ impl Context {
             grants: Arc::new(Mutex::new(UserGrants::default())),
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(Vec::new())),
-            files: Arc::new(Mutex::new(Vec::new())),
+            files: Arc::new(RwLock::new(Vec::new())),
             actions: Arc::new(Mutex::new(vec![(
                 SigAction {
                     sa_handler: unsafe { mem::transmute(SIG_DFL) },
@@ -416,7 +416,7 @@ impl Context {
     /// Add a file to the lowest available slot greater than or equal to min.
     /// Return the file descriptor number or None if no slot was found
     pub fn add_file_min(&self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
-        let mut files = self.files.lock();
+        let mut files = self.files.write();
         for (i, file_option) in files.iter_mut().enumerate() {
             if file_option.is_none() && i >= min {
                 *file_option = Some(file);
@@ -439,7 +439,7 @@ impl Context {
 
     /// Get a file
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
-        let files = self.files.lock();
+        let files = self.files.read();
         if i.into() < files.len() {
             files[i.into()].clone()
         } else {
@@ -450,7 +450,7 @@ impl Context {
     /// Insert a file with a specific handle number. This is used by dup2
     /// Return the file descriptor number or None if the slot was not empty, or i was invalid
     pub fn insert_file(&self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
-        let mut files = self.files.lock();
+        let mut files = self.files.write();
         if i.into() < super::CONTEXT_MAX_FILES {
             while i.into() >= files.len() {
                 files.push(None);
@@ -469,7 +469,7 @@ impl Context {
     /// Remove a file
     // TODO: adjust files vector to smaller size if possible
     pub fn remove_file(&self, i: FileHandle) -> Option<FileDescriptor> {
-        let mut files = self.files.lock();
+        let mut files = self.files.write();
         if i.into() < files.len() {
             files[i.into()].take()
         } else {
