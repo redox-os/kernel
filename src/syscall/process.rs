@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ops::DerefMut;
 use core::{intrinsics, mem};
-use spin::Mutex;
+use spin::{RwLock, Mutex};
 
 use crate::context::file::FileDescriptor;
 use crate::context::{ContextId, WaitpidKey};
@@ -244,7 +244,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             if flags.contains(CLONE_VM) {
                 name = Arc::clone(&context.name);
             } else {
-                name = Arc::new(Mutex::new(context.name.lock().clone()));
+                name = Arc::new(RwLock::new(context.name.read().clone()));
             }
 
             if flags.contains(CLONE_FS) {
@@ -608,7 +608,7 @@ fn empty(context: &mut context::Context, reaping: bool) {
         let grants = mem::replace(&mut *grants, UserGrants::default());
         for grant in grants.inner.into_iter() {
             if reaping {
-                println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) }, grant);
+                println!("{}: {}: Grant should not exist: {:?}", context.id.into(), unsafe { ::core::str::from_utf8_unchecked(&context.name.read()) }, grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
                 let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
@@ -652,7 +652,7 @@ fn fexec_noreturn(
                 ptrace::regs_for(&context).map(|s| s.is_singlestep()).unwrap_or(false)
             };
 
-            context.name = Arc::new(Mutex::new(name));
+            context.name = Arc::new(RwLock::new(name));
 
             empty(&mut context, false);
 
@@ -974,7 +974,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                 println!(
                     "{}: {}: fexec failed to execute {}: {}",
                     context.id.into(),
-                    unsafe { ::core::str::from_utf8_unchecked(&context.name.lock()) },
+                    unsafe { ::core::str::from_utf8_unchecked(&context.name.read()) },
                     fd.into(),
                     err
                 );

@@ -82,7 +82,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                                 let contexts = crate::context::contexts();
                                 let current = contexts.current().unwrap();
                                 let current = current.read();
-                                let name = current.name.lock();
+                                let name = current.name.read();
                                 println!("{:?} using deprecated fmap(...) call", core::str::from_utf8(&name));
                             }
                             file_op(a, fd, c, d)
@@ -92,7 +92,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                                 let contexts = crate::context::contexts();
                                 let current = contexts.current().unwrap();
                                 let current = current.read();
-                                let name = current.name.lock();
+                                let name = current.name.read();
                                 println!("{:?} using deprecated funmap(...) call", core::str::from_utf8(&name));
                             }
                             funmap_old(b)
@@ -208,7 +208,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            let name_raw = context.name.lock();
+            let name_raw = context.name.read();
             let name = unsafe { core::str::from_utf8_unchecked(&name_raw) };
             if name.contains("redoxfs") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
@@ -230,7 +230,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", unsafe { core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
+            print!("{} ({}): ", unsafe { core::str::from_utf8_unchecked(&context.name.read()) }, context.id.into());
         }
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
@@ -265,7 +265,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", unsafe { core::str::from_utf8_unchecked(&context.name.lock()) }, context.id.into());
+            print!("{} ({}): ", unsafe { core::str::from_utf8_unchecked(&context.name.read()) }, context.id.into());
         }
 
         print!("{} = ", debug::format_call(a, b, c, d, e, f));

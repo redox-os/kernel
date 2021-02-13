@@ -5,7 +5,7 @@ use alloc::collections::VecDeque;
 use core::alloc::{GlobalAlloc, Layout};
 use core::cmp::Ordering;
 use core::mem;
-use spin::Mutex;
+use spin::{Mutex, RwLock};
 
 use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
@@ -120,7 +120,7 @@ pub struct ContextSnapshot {
 impl ContextSnapshot {
     //TODO: Should this accept &mut Context to ensure name/files will not change?
     pub fn new(context: &Context) -> Self {
-        let name = context.name.lock().clone();
+        let name = context.name.read().clone();
         let mut files = Vec::new();
         for descriptor_opt in context.files.lock().iter() {
             let description = if let Some(descriptor) = descriptor_opt {
@@ -230,7 +230,7 @@ pub struct Context {
     /// User grants
     pub grants: Arc<Mutex<UserGrants>>,
     /// The name of the context
-    pub name: Arc<Mutex<Box<[u8]>>>,
+    pub name: Arc<RwLock<Box<[u8]>>>,
     /// The current working directory
     pub cwd: Arc<Mutex<Vec<u8>>>,
     /// The open files in the scheme
@@ -287,7 +287,7 @@ impl Context {
             sigstack: None,
             tls: None,
             grants: Arc::new(Mutex::new(UserGrants::default())),
-            name: Arc::new(Mutex::new(Vec::new().into_boxed_slice())),
+            name: Arc::new(RwLock::new(Vec::new().into_boxed_slice())),
             cwd: Arc::new(Mutex::new(Vec::new())),
             files: Arc::new(Mutex::new(Vec::new())),
             actions: Arc::new(Mutex::new(vec![(
