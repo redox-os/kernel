@@ -23,7 +23,7 @@ mod syscall;
 mod uname;
 
 struct Handle {
-    path: &'static [u8],
+    path: &'static str,
     data: Vec<u8>,
     mode: u16,
     seek: usize
@@ -34,26 +34,26 @@ type SysFn = dyn Fn() -> Result<Vec<u8>> + Send + Sync;
 /// System information scheme
 pub struct SysScheme {
     next_id: AtomicUsize,
-    files: BTreeMap<&'static [u8], Box<SysFn>>,
+    files: BTreeMap<&'static str, Box<SysFn>>,
     handles: RwLock<BTreeMap<usize, Handle>>
 }
 
 impl SysScheme {
     pub fn new() -> SysScheme {
-        let mut files: BTreeMap<&'static [u8], Box<SysFn>> = BTreeMap::new();
+        let mut files: BTreeMap<&'static str, Box<SysFn>> = BTreeMap::new();
 
-        files.insert(b"block", Box::new(block::resource));
-        files.insert(b"context", Box::new(context::resource));
-        files.insert(b"cpu", Box::new(cpu::resource));
-        files.insert(b"exe", Box::new(exe::resource));
-        files.insert(b"iostat", Box::new(iostat::resource));
-        files.insert(b"log", Box::new(log::resource));
-        files.insert(b"scheme", Box::new(scheme::resource));
-        files.insert(b"scheme_num", Box::new(scheme_num::resource));
-        files.insert(b"syscall", Box::new(syscall::resource));
-        files.insert(b"uname", Box::new(uname::resource));
+        files.insert("block", Box::new(block::resource));
+        files.insert("context", Box::new(context::resource));
+        files.insert("cpu", Box::new(cpu::resource));
+        files.insert("exe", Box::new(exe::resource));
+        files.insert("iostat", Box::new(iostat::resource));
+        files.insert("log", Box::new(log::resource));
+        files.insert("scheme", Box::new(scheme::resource));
+        files.insert("scheme_num", Box::new(scheme_num::resource));
+        files.insert("syscall", Box::new(syscall::resource));
+        files.insert("uname", Box::new(uname::resource));
         #[cfg(target_arch = "x86_64")]
-        files.insert(b"spurious_irq", Box::new(irq::spurious_irq_resource));
+        files.insert("spurious_irq", Box::new(irq::spurious_irq_resource));
 
         SysScheme {
             next_id: AtomicUsize::new(0),
@@ -64,22 +64,21 @@ impl SysScheme {
 }
 
 impl Scheme for SysScheme {
-    fn open(&self, path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let path_utf8 = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
-        let path_trimmed = path_utf8.trim_matches('/');
+    fn open(&self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+        let path = path.trim_matches('/');
 
-        if path_trimmed.is_empty() {
+        if path.is_empty() {
             let mut data = Vec::new();
             for entry in self.files.iter() {
                 if ! data.is_empty() {
                     data.push(b'\n');
                 }
-                data.extend_from_slice(entry.0);
+                data.extend_from_slice(entry.0.as_bytes());
             }
 
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
             self.handles.write().insert(id, Handle {
-                path: b"",
+                path: "",
                 data,
                 mode: MODE_DIR | 0o444,
                 seek: 0
@@ -88,7 +87,7 @@ impl Scheme for SysScheme {
         } else {
             //Have to iterate to get the path without allocation
             for entry in self.files.iter() {
-                if entry.0 == &path_trimmed.as_bytes() {
+                if entry.0 == &path {
                     let id = self.next_id.fetch_add(1, Ordering::SeqCst);
                     let data = entry.1()?;
                     self.handles.write().insert(id, Handle {
@@ -139,9 +138,10 @@ impl Scheme for SysScheme {
             i += 1;
         }
 
+        let path = handle.path.as_bytes();
         let mut j = 0;
-        while i < buf.len() && j < handle.path.len() {
-            buf[i] = handle.path[j];
+        while i < buf.len() && j < path.len() {
+            buf[i] = path[j];
             i += 1;
             j += 1;
         }

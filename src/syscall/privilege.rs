@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use crate::context;
 use crate::scheme::{self, SchemeNamespace};
 use crate::syscall::error::*;
-use crate::syscall::validate::validate_slice;
+use crate::syscall::validate::validate_str;
 
 pub fn getegid() -> Result<usize> {
     let contexts = context::contexts();
@@ -50,7 +50,7 @@ pub fn getuid() -> Result<usize> {
 pub fn mkns(name_ptrs: &[[usize; 2]]) -> Result<usize> {
     let mut names = Vec::new();
     for name_ptr in name_ptrs {
-        names.push(validate_slice(name_ptr[0] as *const u8, name_ptr[1])?);
+        names.push(validate_str(name_ptr[0] as *const u8, name_ptr[1])?);
     }
 
     let (uid, from) = {

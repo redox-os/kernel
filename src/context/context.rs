@@ -1,7 +1,7 @@
 use alloc::{
     boxed::Box,
     collections::VecDeque,
-    string::String,
+    string::{String, ToString},
     sync::Arc,
     vec::Vec,
 };
@@ -237,7 +237,7 @@ pub struct Context {
     /// The name of the context
     pub name: Arc<RwLock<Box<str>>>,
     /// The current working directory
-    pub cwd: Arc<RwLock<Vec<u8>>>,
+    pub cwd: Arc<RwLock<String>>,
     /// The open files in the scheme
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
@@ -293,7 +293,7 @@ impl Context {
             tls: None,
             grants: Arc::new(RwLock::new(UserGrants::default())),
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
-            cwd: Arc::new(RwLock::new(Vec::new())),
+            cwd: Arc::new(RwLock::new(String::new())),
             files: Arc::new(RwLock::new(Vec::new())),
             actions: Arc::new(RwLock::new(vec![(
                 SigAction {
@@ -313,35 +313,34 @@ impl Context {
     /// This function will turn "foo" into "scheme:/path/foo"
     /// "/foo" will turn into "scheme:/foo"
     /// "bar:/foo" will be used directly, as it is already absolute
-    pub fn canonicalize(&self, path: &[u8]) -> Vec<u8> {
-        let mut canon = if path.iter().position(|&b| b == b':').is_none() {
+    pub fn canonicalize(&self, path: &str) -> String {
+        let mut canon = if path.find(':').is_none() {
             let cwd = self.cwd.read();
 
-            let mut canon = if !path.starts_with(b"/") {
+            let mut canon = if !path.starts_with('/') {
                 let mut c = cwd.clone();
-                if ! c.ends_with(b"/") {
-                    c.push(b'/');
+                if ! c.ends_with('/') {
+                    c.push('/');
                 }
                 c
             } else {
-                cwd[..cwd.iter().position(|&b| b == b':').map_or(1, |i| i + 1)].to_vec()
+                cwd[..cwd.find(':').map_or(1, |i| i + 1)].to_string()
             };
 
-            canon.extend_from_slice(&path);
+            canon.push_str(&path);
             canon
         } else {
-            path.to_vec()
+            path.to_string()
         };
 
         // NOTE: assumes the scheme does not include anything like "../" or "./"
         let mut result = {
-            let parts = canon.split(|&c| c == b'/')
-                .filter(|&part| part != b".")
+            let parts = canon.split('/')
                 .rev()
                 .scan(0, |nskip, part| {
-                    if part == b"." {
+                    if part == "." {
                         Some(None)
-                    } else if part == b".." {
+                    } else if part == ".." {
                         *nskip += 1;
                         Some(None)
                     } else if *nskip > 0 {
@@ -357,18 +356,17 @@ impl Context {
             parts
                 .iter()
                 .rev()
-                .fold(Vec::new(), |mut vec, &part| {
-                    vec.extend_from_slice(part);
-                    vec.push(b'/');
-                    vec
+                .fold(String::new(), |mut string, &part| {
+                    string.push_str(part);
+                    string.push('/');
+                    string
                 })
         };
         result.pop(); // remove extra '/'
 
         // replace with the root of the scheme if it's empty
         if result.is_empty() {
-            let pos = canon.iter()
-                            .position(|&b| b == b':')
+            let pos = canon.find(':')
                             .map_or(canon.len(), |p| p + 1);
             canon.truncate(pos);
             canon

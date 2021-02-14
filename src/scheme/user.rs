@@ -23,7 +23,7 @@ use crate::syscall::scheme::Scheme;
 pub struct UserInner {
     root_id: SchemeId,
     handle_id: usize,
-    pub name: Box<[u8]>,
+    pub name: Box<str>,
     pub flags: usize,
     pub scheme_id: AtomicSchemeId,
     next_id: AtomicU64,
@@ -36,7 +36,7 @@ pub struct UserInner {
 }
 
 impl UserInner {
-    pub fn new(root_id: SchemeId, handle_id: usize, name: Box<[u8]>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
+    pub fn new(root_id: SchemeId, handle_id: usize, name: Box<str>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
         UserInner {
             root_id,
             handle_id,
@@ -103,13 +103,27 @@ impl UserInner {
     /// Map a readable structure to the scheme's userspace and return the
     /// pointer
     pub fn capture(&self, buf: &[u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, 0, buf.as_ptr() as usize, buf.len(), PROT_READ, None).map(|addr| addr.data())
+        UserInner::capture_inner(
+            &self.context,
+            0,
+            buf.as_ptr() as usize,
+            buf.len(),
+            PROT_READ,
+            None
+        ).map(|addr| addr.data())
     }
 
     /// Map a writeable structure to the scheme's userspace and return the
     /// pointer
     pub fn capture_mut(&self, buf: &mut [u8]) -> Result<usize> {
-        UserInner::capture_inner(&self.context, 0, buf.as_mut_ptr() as usize, buf.len(), PROT_WRITE, None).map(|addr| addr.data())
+        UserInner::capture_inner(
+            &self.context,
+            0,
+            buf.as_mut_ptr() as usize,
+            buf.len(),
+            PROT_WRITE,
+            None
+        ).map(|addr| addr.data())
     }
 
     fn capture_inner(context_weak: &Weak<RwLock<Context>>, to_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>)
@@ -257,33 +271,33 @@ impl UserScheme {
 }
 
 impl Scheme for UserScheme {
-    fn open(&self, path: &[u8], flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, path: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(path)?;
+        let address = inner.capture(path.as_bytes())?;
         let result = inner.call(SYS_OPEN, address, path.len(), flags);
         let _ = inner.release(address);
         result
     }
 
-    fn chmod(&self, path: &[u8], mode: u16, _uid: u32, _gid: u32) -> Result<usize> {
+    fn chmod(&self, path: &str, mode: u16, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(path)?;
+        let address = inner.capture(path.as_bytes())?;
         let result = inner.call(SYS_CHMOD, address, path.len(), mode as usize);
         let _ = inner.release(address);
         result
     }
 
-    fn rmdir(&self, path: &[u8], _uid: u32, _gid: u32) -> Result<usize> {
+    fn rmdir(&self, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(path)?;
+        let address = inner.capture(path.as_bytes())?;
         let result = inner.call(SYS_RMDIR, address, path.len(), 0);
         let _ = inner.release(address);
         result
     }
 
-    fn unlink(&self, path: &[u8], _uid: u32, _gid: u32) -> Result<usize> {
+    fn unlink(&self, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(path)?;
+        let address = inner.capture(path.as_bytes())?;
         let result = inner.call(SYS_UNLINK, address, path.len(), 0);
         let _ = inner.release(address);
         result
@@ -513,9 +527,9 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn frename(&self, file: usize, path: &[u8], _uid: u32, _gid: u32) -> Result<usize> {
+    fn frename(&self, file: usize, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(path)?;
+        let address = inner.capture(path.as_bytes())?;
         let result = inner.call(SYS_FRENAME, file, address, path.len());
         let _ = inner.release(address);
         result

@@ -1,7 +1,10 @@
-use alloc::sync::Arc;
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
+use alloc::{
+    boxed::Box,
+    collections::BTreeMap,
+    string::ToString,
+    sync::Arc,
+    vec::Vec,
+};
 use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
@@ -67,9 +70,8 @@ impl RootScheme {
 }
 
 impl Scheme for RootScheme {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        let path_utf8 = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
-        let path_trimmed = path_utf8.trim_matches('/');
+    fn open(&self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+        let path = path.trim_matches('/');
 
         //TODO: Make this follow standards for flags and errors
         if flags & O_CREAT == O_CREAT {
@@ -83,10 +85,10 @@ impl Scheme for RootScheme {
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
                 let inner = {
-                    let path_box = path_trimmed.as_bytes().to_vec().into_boxed_slice();
+                    let path_box = path.to_string().into_boxed_str();
                     let mut schemes = scheme::schemes_mut();
-                    let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box.clone(), flags, context));
-                    schemes.insert(self.scheme_ns, path_box, |scheme_id| {
+                    let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box, flags, context));
+                    schemes.insert(self.scheme_ns, path, |scheme_id| {
                         inner.scheme_id.store(scheme_id, Ordering::SeqCst);
                         Arc::new(UserScheme::new(Arc::downgrade(&inner)))
                     })?;
@@ -99,7 +101,7 @@ impl Scheme for RootScheme {
             } else {
                 Err(Error::new(EACCES))
             }
-        } else if path_trimmed.is_empty() {
+        } else if path.is_empty() {
             let scheme_ns = {
                 let contexts = context::contexts();
                 let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -111,7 +113,7 @@ impl Scheme for RootScheme {
             {
                 let schemes = scheme::schemes();
                 for (name, _scheme_id) in schemes.iter_name(scheme_ns) {
-                    data.extend_from_slice(name);
+                    data.extend_from_slice(name.as_bytes());
                     data.push(b'\n');
                 }
             }
@@ -126,7 +128,7 @@ impl Scheme for RootScheme {
             Ok(id)
         } else {
             let inner = Arc::new(
-                path_trimmed.as_bytes().to_vec().into_boxed_slice()
+                path.as_bytes().to_vec().into_boxed_slice()
             );
 
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
@@ -135,9 +137,8 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn unlink(&self, path: &[u8], uid: u32, _gid: u32) -> Result<usize> {
-        let path_utf8 = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
-        let path_trimmed = path_utf8.trim_matches('/');
+    fn unlink(&self, path: &str, uid: u32, _gid: u32) -> Result<usize> {
+        let path = path.trim_matches('/');
 
         if uid == 0 {
             let inner = {
@@ -145,7 +146,7 @@ impl Scheme for RootScheme {
                 handles.iter().find_map(|(_id, handle)| {
                     match handle {
                         Handle::Scheme(inner) => {
-                            if path_trimmed.as_bytes() == inner.name.as_ref() {
+                            if path == inner.name.as_ref() {
                                 return Some(inner.clone());
                             }
                         },
@@ -257,9 +258,10 @@ impl Scheme for RootScheme {
 
         match handle {
             Handle::Scheme(inner) => {
+                let name = inner.name.as_bytes();
                 let mut j = 0;
-                while i < buf.len() && j < inner.name.len() {
-                    buf[i] = inner.name[j];
+                while i < buf.len() && j < name.len() {
+                    buf[i] = name[j];
                     i += 1;
                     j += 1;
                 }

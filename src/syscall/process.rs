@@ -7,7 +7,7 @@ use alloc::{
 };
 use core::alloc::{GlobalAlloc, Layout};
 use core::ops::DerefMut;
-use core::{intrinsics, mem};
+use core::{intrinsics, mem, str};
 use spin::RwLock;
 
 use crate::context::file::FileDescriptor;
@@ -1030,9 +1030,11 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                 }
                 interp.truncate(i);
 
-                println!("  interpreter: {:?}", ::core::str::from_utf8(&interp));
+                let interp_str = str::from_utf8(&interp).map_err(|_| Error::new(EINVAL))?;
 
-                let interp_fd = super::fs::open(&interp, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
+                println!("  interpreter: {}", interp_str);
+
+                let interp_fd = super::fs::open(interp_str, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
 
                 let mut args_vec = Vec::from(args);
                 //TODO: pass file handle in auxv

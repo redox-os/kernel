@@ -16,7 +16,7 @@ pub fn resource() -> Result<Vec<u8>> {
 
     let schemes = scheme::schemes();
     for (name, _scheme_id) in schemes.iter_name(scheme_ns) {
-        data.extend_from_slice(name);
+        data.extend_from_slice(name.as_bytes());
         data.push(b'\n');
     }
 

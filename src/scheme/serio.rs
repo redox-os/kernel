@@ -60,13 +60,12 @@ impl SerioScheme {
 }
 
 impl Scheme for SerioScheme {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
             return Err(Error::new(EPERM));
         }
 
-        let index = str::from_utf8(path)
-            .or(Err(Error::new(ENOENT)))?
+        let index = path
             .parse::<usize>()
             .or(Err(Error::new(ENOENT)))?;
         if index >= INPUT.len() {
