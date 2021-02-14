@@ -1,6 +1,7 @@
 //! Filesystem syscalls
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::str;
 use core::sync::atomic::Ordering;
 use spin::RwLock;
 
@@ -55,7 +56,7 @@ pub fn file_op_mut_slice(a: usize, fd: FileHandle, slice: &mut [u8]) -> Result<u
 }
 
 /// Change the current working directory
-pub fn chdir(path: &[u8]) -> Result<usize> {
+pub fn chdir(path: &str) -> Result<usize> {
     let fd = open(path, O_RDONLY | O_DIRECTORY)?;
     let mut stat = Stat::default();
     let stat_res = file_op_mut_slice(syscall::number::SYS_FSTAT, fd, &mut stat);
@@ -79,16 +80,17 @@ pub fn getcwd(buf: &mut [u8]) -> Result<usize> {
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let context = context_lock.read();
     let cwd = context.cwd.read();
+    let cwd_bytes = cwd.as_bytes();
     let mut i = 0;
-    while i < buf.len() && i < cwd.len() {
-        buf[i] = cwd[i];
+    while i < buf.len() && i < cwd_bytes.len() {
+        buf[i] = cwd_bytes[i];
         i += 1;
     }
     Ok(i)
 }
 
 /// Open syscall
-pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
+pub fn open(path: &str, flags: usize) -> Result<FileHandle> {
     let (mut path_canon, uid, gid, scheme_ns, umask) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -103,7 +105,7 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
     for _level in 0..32 { // XXX What should the limit be?
         //println!("  level {} = {:?}", _level, ::core::str::from_utf8(&path_canon));
 
-        let mut parts = path_canon.splitn(2, |&b| b == b':');
+        let mut parts = path_canon.splitn(2, ':');
         let scheme_name_opt = parts.next();
         let reference_opt = parts.next();
 
@@ -114,7 +116,7 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
                 let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
                 (scheme_id, Arc::clone(&scheme))
             };
-            let reference = reference_opt.unwrap_or(b"");
+            let reference = reference_opt.unwrap_or("");
             let file_id = match scheme.open(reference, flags, uid, gid) {
                 Ok(ok) => ok,
                 Err(err) => if err.errno == EXDEV {
@@ -128,10 +130,12 @@ pub fn open(path: &[u8], flags: usize) -> Result<FileHandle> {
 
                     let count = res?;
 
+                    let buf_str = str::from_utf8(&buf[..count]).map_err(|_| Error::new(EINVAL))?;
+
                     let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
                     let context = context_lock.read();
-                    path_canon = context.canonicalize(&buf[..count]);
+                    path_canon = context.canonicalize(buf_str);
 
                     continue;
                 } else {
@@ -196,7 +200,7 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
 }
 
 /// chmod syscall
-pub fn chmod(path: &[u8], mode: u16) -> Result<usize> {
+pub fn chmod(path: &str, mode: u16) -> Result<usize> {
     let (path_canon, uid, gid, scheme_ns) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -204,7 +208,7 @@ pub fn chmod(path: &[u8], mode: u16) -> Result<usize> {
         (context.canonicalize(path), context.euid, context.egid, context.ens)
     };
 
-    let mut parts = path_canon.splitn(2, |&b| b == b':');
+    let mut parts = path_canon.splitn(2, ':');
     let scheme_name_opt = parts.next();
     let reference_opt = parts.next();
 
@@ -214,11 +218,11 @@ pub fn chmod(path: &[u8], mode: u16) -> Result<usize> {
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
         Arc::clone(&scheme)
     };
-    scheme.chmod(reference_opt.unwrap_or(b""), mode, uid, gid)
+    scheme.chmod(reference_opt.unwrap_or(""), mode, uid, gid)
 }
 
 /// rmdir syscall
-pub fn rmdir(path: &[u8]) -> Result<usize> {
+pub fn rmdir(path: &str) -> Result<usize> {
     let (path_canon, uid, gid, scheme_ns) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -226,7 +230,7 @@ pub fn rmdir(path: &[u8]) -> Result<usize> {
         (context.canonicalize(path), context.euid, context.egid, context.ens)
     };
 
-    let mut parts = path_canon.splitn(2, |&b| b == b':');
+    let mut parts = path_canon.splitn(2, ':');
     let scheme_name_opt = parts.next();
     let reference_opt = parts.next();
 
@@ -236,11 +240,11 @@ pub fn rmdir(path: &[u8]) -> Result<usize> {
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
         Arc::clone(&scheme)
     };
-    scheme.rmdir(reference_opt.unwrap_or(b""), uid, gid)
+    scheme.rmdir(reference_opt.unwrap_or(""), uid, gid)
 }
 
 /// Unlink syscall
-pub fn unlink(path: &[u8]) -> Result<usize> {
+pub fn unlink(path: &str) -> Result<usize> {
     let (path_canon, uid, gid, scheme_ns) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -248,7 +252,7 @@ pub fn unlink(path: &[u8]) -> Result<usize> {
         (context.canonicalize(path), context.euid, context.egid, context.ens)
     };
 
-    let mut parts = path_canon.splitn(2, |&b| b == b':');
+    let mut parts = path_canon.splitn(2, ':');
     let scheme_name_opt = parts.next();
     let reference_opt = parts.next();
 
@@ -258,7 +262,7 @@ pub fn unlink(path: &[u8]) -> Result<usize> {
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
         Arc::clone(&scheme)
     };
-    scheme.unlink(reference_opt.unwrap_or(b""), uid, gid)
+    scheme.unlink(reference_opt.unwrap_or(""), uid, gid)
 }
 
 /// Close syscall
@@ -409,7 +413,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     }
 }
 
-pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {
+pub fn frename(fd: FileHandle, path: &str) -> Result<usize> {
     let file = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -424,7 +428,7 @@ pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {
         (context.canonicalize(path), context.euid, context.egid, context.ens)
     };
 
-    let mut parts = path_canon.splitn(2, |&b| b == b':');
+    let mut parts = path_canon.splitn(2, ':');
     let scheme_name_opt = parts.next();
     let reference_opt = parts.next();
 
@@ -438,7 +442,7 @@ pub fn frename(fd: FileHandle, path: &[u8]) -> Result<usize> {
     let description = file.description.read();
 
     if scheme_id == description.scheme {
-        scheme.frename(description.number, reference_opt.unwrap_or(b""), uid, gid)
+        scheme.frename(description.number, reference_opt.unwrap_or(""), uid, gid)
     } else {
         Err(Error::new(EXDEV))
     }

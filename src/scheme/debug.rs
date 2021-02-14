@@ -57,7 +57,7 @@ impl DebugScheme {
 }
 
 impl Scheme for DebugScheme {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 {
             return Err(Error::new(EPERM));
         }

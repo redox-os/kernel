@@ -23,10 +23,8 @@ impl ITimerScheme {
 }
 
 impl Scheme for ITimerScheme {
-    fn open(&self, path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
-
-        let clock = path_str.parse::<usize>().or(Err(Error::new(ENOENT)))?;
+    fn open(&self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+        let clock = path.parse::<usize>().or(Err(Error::new(ENOENT)))?;
 
         match clock {
             CLOCK_REALTIME => (),

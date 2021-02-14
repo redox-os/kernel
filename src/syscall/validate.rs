@@ -1,4 +1,4 @@
-use core::{mem, slice};
+use core::{mem, slice, str};
 
 use crate::paging::{ActivePageTable, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
@@ -47,4 +47,11 @@ pub fn validate_slice_mut<T>(ptr: *mut T, len: usize) -> Result<&'static mut [T]
         validate(ptr as usize, len * mem::size_of::<T>(), EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE)?;
         Ok(unsafe { slice::from_raw_parts_mut(ptr, len) })
     }
+}
+
+/// Convert a pointer and length to str, if valid
+//TODO: Mark unsafe
+pub fn validate_str(ptr: *const u8, len: usize) -> Result<&'static str> {
+    let slice = validate_slice(ptr, len)?;
+    str::from_utf8(slice).map_err(|_| Error::new(EINVAL))
 }

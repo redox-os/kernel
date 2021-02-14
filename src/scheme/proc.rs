@@ -24,6 +24,7 @@ use core::{
     cmp,
     mem,
     slice,
+    str,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use spin::RwLock;
@@ -208,8 +209,7 @@ impl ProcScheme {
 }
 
 impl Scheme for ProcScheme {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, gid: u32) -> Result<usize> {
-        let path = core::str::from_utf8(path).map_err(|_| Error::new(EINVAL))?;
+    fn open(&self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
         let mut parts = path.splitn(2, '/');
         let pid = parts.next()
             .and_then(|s| s.parse().ok())
@@ -310,8 +310,10 @@ impl Scheme for ProcScheme {
             handle.info
         };
 
-        let mut path = format!("{}/", info.pid.into()).into_bytes();
-        path.extend_from_slice(buf);
+        let buf_str = str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?;
+
+        let mut path = format!("{}/", info.pid.into());
+        path.push_str(buf_str);
 
         let (uid, gid) = {
             let contexts = context::contexts();

@@ -9,7 +9,7 @@ use crate::syscall::scheme::Scheme;
 pub struct EventScheme;
 
 impl Scheme for EventScheme {
-    fn open(&self, _path: &[u8], _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, _path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
         let id = next_queue_id();
         queues_mut().insert(id, Arc::new(EventQueue::new(id)));
 

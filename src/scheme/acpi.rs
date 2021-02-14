@@ -217,13 +217,12 @@ fn serialize_table_filename(
 }
 
 impl Scheme for AcpiScheme {
-    fn open(&self, path: &[u8], flags: usize, opener_uid: u32, _opener_gid: u32) -> Result<usize> {
+    fn open(&self, path: &str, flags: usize, opener_uid: u32, _opener_gid: u32) -> Result<usize> {
         if opener_uid != 0 {
             return Err(Error::new(EACCES));
         }
 
-        let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
-        let path_str = path_str.trim_start_matches('/');
+        let path_str = path.trim_start_matches('/');
 
         // TODO: Use some kind of component iterator.
 

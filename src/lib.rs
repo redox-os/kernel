@@ -165,24 +165,24 @@ static mut INIT_ENV: &[u8] = &[];
 /// Initialize userspace by running the initfs:bin/init process
 /// This function will also set the CWD to initfs:bin and open debug: as stdio
 pub extern fn userspace_init() {
-    let path = b"initfs:/bin/init";
+    let path = "initfs:/bin/init";
     let env = unsafe { INIT_ENV };
 
-    if let Err(err) = syscall::chdir(b"initfs:") {
+    if let Err(err) = syscall::chdir("initfs:") {
         info!("Failed to enter initfs ({}).", err);
         info!("Perhaps the kernel was compiled with an incorrect INITFS_FOLDER \
                environment variable value?");
         panic!("Unexpected error while trying to enter initfs:.");
     }
 
-    assert_eq!(syscall::open(b"debug:", syscall::flag::O_RDONLY).map(FileHandle::into), Ok(0));
-    assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
-    assert_eq!(syscall::open(b"debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
+    assert_eq!(syscall::open("debug:", syscall::flag::O_RDONLY).map(FileHandle::into), Ok(0));
+    assert_eq!(syscall::open("debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
+    assert_eq!(syscall::open("debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
 
     let fd = syscall::open(path, syscall::flag::O_RDONLY).expect("failed to open init");
 
     let mut args = Vec::new();
-    args.push(path.to_vec().into_boxed_slice());
+    args.push(path.as_bytes().to_vec().into_boxed_slice());
 
     let mut vars = Vec::new();
     for var in env.split(|b| *b == b'\n') {

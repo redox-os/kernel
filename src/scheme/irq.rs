@@ -139,11 +139,10 @@ const fn vector_to_irq(vector: u8) -> u8 {
 }
 
 impl Scheme for IrqScheme {
-    fn open(&self, path: &[u8], flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+    fn open(&self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
         if uid != 0 { return Err(Error::new(EACCES)) }
 
-        let path_str = str::from_utf8(path).or(Err(Error::new(ENOENT)))?;
-        let path_str = path_str.trim_start_matches('/');
+        let path_str = path.trim_start_matches('/');
 
         let handle: Handle = if path_str.is_empty() {
             if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 { return Err(Error::new(EISDIR)) }

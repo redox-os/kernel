@@ -75,7 +75,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                         SYS_DUP2 => dup2(fd, FileHandle::from(c), validate_slice(d as *const u8, e)?).map(FileHandle::into),
                         SYS_FCNTL => fcntl(fd, c, d),
                         SYS_FEXEC => fexec(fd, validate_slice(c as *const [usize; 2], d)?, validate_slice(e as *const [usize; 2], f)?),
-                        SYS_FRENAME => frename(fd, validate_slice(c as *const u8, d)?),
+                        SYS_FRENAME => frename(fd, validate_str(c as *const u8, d)?),
                         SYS_FUNMAP => funmap(b, c),
                         SYS_FMAP_OLD => {
                             {
@@ -100,10 +100,10 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 }
             },
             SYS_CLASS_PATH => match a {
-                SYS_OPEN => open(validate_slice(b as *const u8, c)?, d).map(FileHandle::into),
-                SYS_CHMOD => chmod(validate_slice(b as *const u8, c)?, d as u16),
-                SYS_RMDIR => rmdir(validate_slice(b as *const u8, c)?),
-                SYS_UNLINK => unlink(validate_slice(b as *const u8, c)?),
+                SYS_OPEN => open(validate_str(b as *const u8, c)?, d).map(FileHandle::into),
+                SYS_CHMOD => chmod(validate_str(b as *const u8, c)?, d as u16),
+                SYS_RMDIR => rmdir(validate_str(b as *const u8, c)?),
+                SYS_UNLINK => unlink(validate_str(b as *const u8, c)?),
                 _ => Err(Error::new(ENOSYS))
             },
             _ => match a {
@@ -134,7 +134,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
                 SYS_WAITPID => waitpid(ContextId::from(b), c, WaitFlags::from_bits_truncate(d)).map(ContextId::into),
-                SYS_CHDIR => chdir(validate_slice(b as *const u8, c)?),
+                SYS_CHDIR => chdir(validate_str(b as *const u8, c)?),
                 SYS_IOPL => iopl(b, stack),
                 SYS_GETCWD => getcwd(validate_slice_mut(b as *mut u8, c)?),
                 SYS_GETEGID => getegid(),
