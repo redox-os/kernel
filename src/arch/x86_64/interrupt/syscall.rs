@@ -62,10 +62,10 @@ function!(syscall_instruction => {
     // Yes, this is magic. No, you don't need to understand
     "
         swapgs                    // Set gs segment to TSS
-        mov gs:[0x70], rsp        // Save userspace stack pointer
-        mov rsp, gs:[4]           // Load kernel stack pointer
-        push QWORD PTR 5 * 8 + 3  // Push fake SS (resembling iret stack frame)
-        push QWORD PTR gs:[0x70]  // Push userspace rsp
+        mov gs:[0x08], rsp        // Save userspace stack pointer
+        mov rsp, gs:[0x14]        // Load kernel stack pointer
+        push QWORD PTR 5 * 8 + 3  // Push fake userspace SS (resembling iret frame)
+        push QWORD PTR gs:[0x08]  // Push userspace rsp
         push r11                  // Push rflags
         push QWORD PTR 6 * 8 + 3  // Push fake CS (resembling iret stack frame)
         push rcx                  // Push userspace return pointer
@@ -75,7 +75,6 @@ function!(syscall_instruction => {
     "push rax\n",
     push_scratch!(),
     push_preserved!(),
-    push_fs!(),
 
     // TODO: Map PTI
     // $crate::arch::x86_64::pti::map();
@@ -88,7 +87,6 @@ function!(syscall_instruction => {
     // $crate::arch::x86_64::pti::unmap();
 
     // Pop context registers
-    pop_fs!(),
     pop_preserved!(),
     pop_scratch!(),
 
@@ -115,8 +113,8 @@ function!(syscall_instruction => {
         pop rcx                 // Pop userspace return pointer
         add rsp, 8              // Pop fake userspace CS
         pop r11                 // Pop rflags
-        pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
-        mov rsp, gs:[0x70]      // Restore userspace stack pointer
+        pop QWORD PTR gs:[0x08] // Pop userspace stack pointer
+        mov rsp, gs:[0x08]      // Restore userspace stack pointer
         swapgs                  // Restore gs from TSS to user data
         sysretq                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
 

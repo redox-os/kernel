@@ -86,7 +86,6 @@ impl IretRegisters {
 #[derive(Default)]
 #[repr(packed)]
 pub struct InterruptStack {
-    pub fs: usize,
     pub preserved: PreservedRegisters,
     pub scratch: ScratchRegisters,
     pub iret: IretRegisters,
@@ -97,13 +96,10 @@ impl InterruptStack {
         self.iret.dump();
         self.scratch.dump();
         self.preserved.dump();
-        println!("FS:    {:>016X}", { self.fs });
     }
     /// Saves all registers to a struct used by the proc:
     /// scheme to read/write registers.
     pub fn save(&self, all: &mut IntRegisters) {
-        all.fs = self.fs;
-
         all.r15 = self.preserved.r15;
         all.r14 = self.preserved.r14;
         all.r13 = self.preserved.r13;
@@ -284,31 +280,6 @@ macro_rules! pop_preserved {
         pop rbx
     " };
 }
-
-#[macro_export]
-macro_rules! push_fs {
-    () => { "
-        // Push fs
-        push fs
-
-        // Load kernel tls
-        //
-        // NOTE: We can't load the value directly into `fs`. So we need to use a
-        // scratch register (as preserved registers aren't backed up by the
-        // interrupt! macro) to store it. We also can't use `rax` as the temporary
-        // value, as during errors that's already used for the error code.
-        mov rcx, 0x18
-        mov fs, cx
-    " };
-}
-#[macro_export]
-macro_rules! pop_fs {
-    () => { "
-        // Pop fs
-        pop fs
-    " };
-}
-
 macro_rules! swapgs_iff_ring3_fast {
     () => { "
         // Check whether the last two bits RSP+8 (code segment) are equal to zero.
@@ -371,7 +342,6 @@ macro_rules! interrupt_stack {
                 "push rax\n",
                 push_scratch!(),
                 push_preserved!(),
-                push_fs!(),
 
                 // TODO: Map PTI
                 // $crate::arch::x86_64::pti::map();
@@ -384,7 +354,6 @@ macro_rules! interrupt_stack {
                 // $crate::arch::x86_64::pti::unmap();
 
                 // Restore all userspace registers
-                pop_fs!(),
                 pop_preserved!(),
                 pop_scratch!(),
 
@@ -410,7 +379,6 @@ macro_rules! interrupt {
                 swapgs_iff_ring3_fast!(),
                 "push rax\n",
                 push_scratch!(),
-                push_fs!(),
 
                 // TODO: Map PTI
                 // $crate::arch::x86_64::pti::map();
@@ -422,7 +390,6 @@ macro_rules! interrupt {
                 // $crate::arch::x86_64::pti::unmap();
 
                 // Restore all userspace registers
-                pop_fs!(),
                 pop_scratch!(),
 
                 swapgs_iff_ring3_fast!(),
@@ -457,7 +424,6 @@ macro_rules! interrupt_error {
                 // Push all userspace registers
                 push_scratch!(),
                 push_preserved!(),
-                push_fs!(),
 
                 // Put code in, it's now in rax
                 "push rax\n",
@@ -476,7 +442,6 @@ macro_rules! interrupt_error {
                 "add rsp, 8\n",
 
                 // Restore all userspace registers
-                pop_fs!(),
                 pop_preserved!(),
                 pop_scratch!(),
 
