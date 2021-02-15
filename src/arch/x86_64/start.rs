@@ -297,6 +297,12 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlest
             xor r15, r15
 
             fninit
+
+            // NOTE: Regarding the sysretq vulnerability, this is safe as we cannot modify RCX,
+            // even though the caller can give us the wrong address. But, it's marked unsafe, so
+            // the caller is responsible for this! (And, the likelihood of rcx being changed in the
+            // middle here, is minimal, unless the attacker already has partial control of kernel
+            // memory.)
             sysretq
         ",
 
