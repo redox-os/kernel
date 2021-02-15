@@ -108,7 +108,7 @@ function!(syscall_instruction => {
 
         // If ZF was set, i.e. the address was invalid higher-half, so jump to the slower iretq and
         // handle the error without being able to execute attacker-controlled code!
-        jmp 1f
+        jnz 1f
 
         // Otherwise, continue with the fast sysretq.
 
