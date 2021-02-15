@@ -112,7 +112,7 @@ function!(syscall_instruction => {
 
         // Otherwise, continue with the fast sysretq.
 
-        sub rsp, 8              // Pop fake userspace CS
+        add rsp, 8              // Pop fake userspace CS
         pop r11                 // Pop rflags
         pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
         mov rsp, gs:[0x70]      // Restore userspace stack pointer
