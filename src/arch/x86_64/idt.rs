@@ -154,10 +154,64 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     IDTR.limit = (current_idt.len() * mem::size_of::<IdtEntry>() - 1) as u16;
     IDTR.base = current_idt.as_ptr() as *const X86IdtEntry;
 
+    let backup_ist = {
+        // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
+        // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
+        // considered the most fatal, especially Double Faults which are caused by errors __when
+        // accessing the system IDT__. If that goes wrong, then kernel memory may be partially
+        // corrupt, and we want a separate stack.
+        //
+        // Note that each CPU has its own "backup interrupt stack".
+        let index = 1_u8;
+
+        // Allocate 64 KiB of stack space for the backup stack.
+        const BACKUP_STACK_SIZE: usize = 65536;
+        assert_eq!(BACKUP_STACK_SIZE % crate::memory::PAGE_SIZE, 0);
+        let page_count = BACKUP_STACK_SIZE / crate::memory::PAGE_SIZE;
+        let frames = crate::memory::allocate_frames(page_count)
+            .expect("failed to allocate pages for backup interrupt stack");
+
+        // Map them linearly, i.e. KERNEL_OFFSET + physaddr.
+        let base_address = {
+            use crate::memory::{Frame, PhysicalAddress};
+            use crate::paging::{ActivePageTable, Page, VirtualAddress};
+            use crate::paging::entry::EntryFlags;
+
+            let mut active_table = ActivePageTable::new();
+            let base_virtual_address = VirtualAddress::new(frames.start_address().data() + crate::KERNEL_OFFSET);
+
+            for i in 0..page_count {
+                let virtual_address = VirtualAddress::new(base_virtual_address.data() + i * crate::memory::PAGE_SIZE);
+                let physical_address = PhysicalAddress::new(frames.start_address().data() + i * crate::memory::PAGE_SIZE);
+                let page = Page::containing_address(virtual_address);
+
+                let flags = EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE;
+
+                let flusher = if let Some(already_mapped) = active_table.translate_page(page) {
+                    assert_eq!(already_mapped.start_address(), physical_address, "address already mapped, but non-linearly");
+                    active_table.remap(page, flags)
+                } else {
+                    active_table.map_to(page, Frame::containing_address(physical_address), flags)
+                };
+                flusher.flush(&mut active_table);
+            }
+
+            base_virtual_address
+        };
+        // Stack always grows downwards.
+        let address = base_address.data() + BACKUP_STACK_SIZE;
+
+        // Put them in the 1st entry of the IST.
+        crate::gdt::TSS.ist[usize::from(index - 1)] = address as u64;
+
+        index
+    };
+
     // Set up exceptions
     current_idt[0].set_func(exception::divide_by_zero);
     current_idt[1].set_func(exception::debug);
     current_idt[2].set_func(exception::non_maskable);
+    current_idt[2].set_ist(backup_ist);
     current_idt[3].set_func(exception::breakpoint);
     current_idt[3].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
     current_idt[4].set_func(exception::overflow);
@@ -165,6 +219,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     current_idt[6].set_func(exception::invalid_opcode);
     current_idt[7].set_func(exception::device_not_available);
     current_idt[8].set_func(exception::double_fault);
+    current_idt[8].set_ist(backup_ist);
     // 9 no longer available
     current_idt[10].set_func(exception::invalid_tss);
     current_idt[11].set_func(exception::segment_not_present);
@@ -175,6 +230,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     current_idt[16].set_func(exception::fpu_fault);
     current_idt[17].set_func(exception::alignment_check);
     current_idt[18].set_func(exception::machine_check);
+    current_idt[18].set_ist(backup_ist);
     current_idt[19].set_func(exception::simd);
     current_idt[20].set_func(exception::virtualization);
     // 21 through 29 reserved
@@ -275,6 +331,12 @@ impl IdtEntry {
         self.attribute = flags.bits;
     }
 
+    pub fn set_ist(&mut self, ist: u8) {
+        assert_eq!(ist & 0x07, ist, "interrupt stack table must be within 0..=7");
+        self.zero &= 0xF8;
+        self.zero |= ist;
+    }
+
     pub fn set_offset(&mut self, selector: u16, base: usize) {
         self.selector = selector;
         self.offsetl = base as u16;
@@ -285,6 +347,6 @@ impl IdtEntry {
     // A function to set the offset more easily
     pub fn set_func(&mut self, func: unsafe extern fn()) {
         self.set_flags(IdtFlags::PRESENT | IdtFlags::RING_0 | IdtFlags::INTERRUPT);
-        self.set_offset(8, func as usize);
+        self.set_offset((crate::gdt::GDT_KERNEL_CODE as u16) << 3, func as usize);
     }
 }

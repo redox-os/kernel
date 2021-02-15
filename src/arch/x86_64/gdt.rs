@@ -14,11 +14,12 @@ pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;
 pub const GDT_KERNEL_TLS: usize = 3;
-pub const GDT_USER_CODE: usize = 4;
+pub const GDT_USER_CODE32_UNUSED: usize = 4;
 pub const GDT_USER_DATA: usize = 5;
-pub const GDT_USER_TLS: usize = 6;
-pub const GDT_TSS: usize = 7;
-pub const GDT_TSS_HIGH: usize = 8;
+pub const GDT_USER_CODE: usize = 6;
+pub const GDT_USER_TLS: usize = 7;
+pub const GDT_TSS: usize = 8;
+pub const GDT_TSS_HIGH: usize = 9;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
@@ -61,7 +62,7 @@ pub static mut GDTR: DescriptorTablePointer<SegmentDescriptor> = DescriptorTable
 };
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 9] = [
+pub static mut GDT: [GdtEntry; 10] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -70,10 +71,12 @@ pub static mut GDT: [GdtEntry; 9] = [
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
     // Kernel TLS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // User code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    // Dummy 32-bit user code - apparently necessary for SYSEXIT. We restrict it to ring 0 anyway.
+    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
     // User data
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    // User (64-bit) code
+    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
     // User TLS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
     // TSS
@@ -82,15 +85,39 @@ pub static mut GDT: [GdtEntry; 9] = [
     GdtEntry::new(0, 0, 0, 0),
 ];
 
+#[repr(packed)]
+pub struct TssWrapper {
+    base: TaskStateSegment,
+    _pad: u64,
+    _user_stack: u64,
+}
+impl core::ops::Deref for TssWrapper {
+    type Target = TaskStateSegment;
+
+    fn deref(&self) -> &Self::Target {
+        &self.base
+    }
+}
+impl core::ops::DerefMut for TssWrapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.base
+    }
+}
+
 #[thread_local]
-pub static mut TSS: TaskStateSegment = TaskStateSegment {
-    reserved: 0,
-    rsp: [0; 3],
-    reserved2: 0,
-    ist: [0; 7],
-    reserved3: 0,
-    reserved4: 0,
-    iomap_base: 0xFFFF
+pub static mut TSS: TssWrapper = TssWrapper {
+    base: TaskStateSegment {
+        reserved: 0,
+        rsp: [0; 3],
+        reserved2: 0,
+        ist: [0; 7],
+        reserved3: 0,
+        reserved4: 0,
+        iomap_base: 0xFFFF
+    },
+    _pad: 0_u64,
+    // Accessed only from assembly, at `gs:[0x70]`
+    _user_stack: 0_u64,
 };
 
 pub unsafe fn set_tcb(pid: usize) {
@@ -164,11 +191,18 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
     segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_TLS as u16, Ring::Ring0));
+
     segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+
+    // Ensure that GS always points to the TSS segment in kernel space.
+    x86::msr::wrmsr(x86::msr::IA32_GS_BASE, &TSS as *const _ as usize as u64);
+    // Inside kernel space, GS should _always_ point to the TSS. When leaving userspace, `swapgs`
+    // is called again, making the userspace GS always point to user data.
+    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
 }
 
 #[derive(Copy, Clone, Debug)]

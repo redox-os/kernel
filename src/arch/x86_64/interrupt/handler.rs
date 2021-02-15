@@ -75,6 +75,11 @@ impl IretRegisters {
         println!("RFLAG: {:>016X}", { self.rflags });
         println!("CS:    {:>016X}", { self.cs });
         println!("RIP:   {:>016X}", { self.rip });
+
+        if self.cs & 0b11 != 0b00 {
+            println!("RSP:   {:>016X}", { self.rsp });
+            println!("SS:    {:>016X}", { self.ss });
+        }
     }
 }
 
@@ -304,9 +309,49 @@ macro_rules! pop_fs {
     " };
 }
 
+macro_rules! swapgs_iff_ring3_fast {
+    () => { "
+        // Check whether the last two bits RSP+8 (code segment) are equal to zero.
+        test QWORD PTR [rsp + 8], 0x3
+        // Skip the SWAPGS instruction if CS & 0b11 == 0b00.
+        jz 1f
+        swapgs
+        1:
+    " };
+}
+macro_rules! swapgs_iff_ring3_fast_errorcode {
+    () => { "
+        test QWORD PTR [rsp + 16], 0x3
+        jz 1f
+        swapgs
+        1:
+    " };
+}
+#[macro_export]
+macro_rules! swapgs_iff_ring3_slow {
+    () => { "
+    push rax
+    push rdx
+    push rcx
+    mov ecx, 0xC0000102
+    rdmsr
+    shl rdx, 32
+    or eax, edx
+    test rdx, rdx
+    jnz 1f
+    swapgs
+    1:
+    pop rcx
+    pop rdx
+    pop rax
+    " }
+}
+
 #[macro_export]
 macro_rules! interrupt_stack {
-    ($name:ident, |$stack:ident| $code:block) => {
+    // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
+    // use idents directly instead.
+    ($name:ident, super_atomic: $is_super_atomic:ident!, |$stack:ident| $code:block) => {
         paste::item! {
             #[no_mangle]
             unsafe extern "C" fn [<__interrupt_ $name>](stack: *mut $crate::arch::x86_64::interrupt::InterruptStack) {
@@ -322,6 +367,7 @@ macro_rules! interrupt_stack {
 
             function!($name => {
                 // Backup all userspace registers to stack
+                $is_super_atomic!(),
                 "push rax\n",
                 push_scratch!(),
                 push_preserved!(),
@@ -342,10 +388,12 @@ macro_rules! interrupt_stack {
                 pop_preserved!(),
                 pop_scratch!(),
 
+                $is_super_atomic!(),
                 "iretq\n",
             });
         }
     };
+    ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, super_atomic: swapgs_iff_ring3_fast!, |$stack| $code); };
 }
 
 #[macro_export]
@@ -359,6 +407,7 @@ macro_rules! interrupt {
 
             function!($name => {
                 // Backup all userspace registers to stack
+                swapgs_iff_ring3_fast!(),
                 "push rax\n",
                 push_scratch!(),
                 push_fs!(),
@@ -376,6 +425,7 @@ macro_rules! interrupt {
                 pop_fs!(),
                 pop_scratch!(),
 
+                swapgs_iff_ring3_fast!(),
                 "iretq\n",
             });
         }
@@ -399,6 +449,7 @@ macro_rules! interrupt_error {
             }
 
             function!($name => {
+                swapgs_iff_ring3_fast_errorcode!(),
                 // Move rax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
                 "xchg [rsp], rax\n",
@@ -429,6 +480,7 @@ macro_rules! interrupt_error {
                 pop_preserved!(),
                 pop_scratch!(),
 
+                swapgs_iff_ring3_fast_errorcode!(),
                 "iretq\n",
             });
         }

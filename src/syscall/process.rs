@@ -845,7 +845,7 @@ fn fexec_noreturn(
     }
 
     // Go to usermode
-    unsafe { usermode(entry, sp, 0, singlestep) }
+    unsafe { usermode(entry, sp, 0, u32::from(singlestep)) }
 }
 
 pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<str>>, auxv: Option<Vec<usize>>) -> Result<usize> {

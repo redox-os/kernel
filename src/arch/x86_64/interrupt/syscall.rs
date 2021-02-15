@@ -8,10 +8,20 @@ use crate::{
 use x86::msr;
 
 pub unsafe fn init() {
-    msr::wrmsr(msr::IA32_STAR, ((gdt::GDT_KERNEL_CODE as u64) << 3) << 32);
+    // IA32_STAR[31:0] are reserved.
+
+    // The base selector of the two consecutive segments for kernel code and the immediately
+    // suceeding stack (data).
+    let syscall_cs_ss_base = (gdt::GDT_KERNEL_CODE as u16) << 3;
+    // The base selector of the three consecutive segments (of which two are used) for user code
+    // and user data. It points to a 32-bit code segment, which must be followed by a data segment
+    // (stack), and a 64-bit code segment.
+    let sysret_cs_ss_base = ((gdt::GDT_USER_CODE32_UNUSED as u16) << 3) | 3;
+    let star_high = u32::from(syscall_cs_ss_base) | (u32::from(sysret_cs_ss_base) << 16);
+
+    msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
     msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
     msr::wrmsr(msr::IA32_FMASK, 0x0300); // Clear trap flag and interrupt enable
-    msr::wrmsr(msr::IA32_KERNEL_GSBASE, &gdt::TSS as *const _ as u64);
 
     let efer = msr::rdmsr(msr::IA32_EFER);
     msr::wrmsr(msr::IA32_EFER, efer | 1);
@@ -52,15 +62,13 @@ function!(syscall_instruction => {
     // Yes, this is magic. No, you don't need to understand
     "
         swapgs                    // Set gs segment to TSS
-        mov gs:[28], rsp          // Save userspace rsp
-        mov rsp, gs:[4]           // Load kernel rsp
-        push 5 * 8 + 3            // Push userspace data segment
-        push QWORD PTR gs:[28]    // Push userspace rsp
-        mov QWORD PTR gs:[28], 0  // Clear userspace rsp
+        mov gs:[0x70], rsp        // Save userspace stack pointer
+        mov rsp, gs:[4]           // Load kernel stack pointer
+        push QWORD PTR 5 * 8 + 3  // Push fake SS (resembling iret stack frame)
+        push QWORD PTR gs:[0x70]  // Push userspace rsp
         push r11                  // Push rflags
-        push 4 * 8 + 3            // Push userspace code segment
+        push QWORD PTR 6 * 8 + 3  // Push fake CS (resembling iret stack frame)
         push rcx                  // Push userspace return pointer
-        swapgs                    // Restore gs
     ",
 
     // Push context registers
@@ -85,7 +93,41 @@ function!(syscall_instruction => {
     pop_scratch!(),
 
     // Return
-    "iretq\n",
+    //
+    // We must test whether RCX is canonical. This is not strictly necessary, but could be
+    // fatal if some kernel bug would allow RCX to be modified by user code.
+    //
+    // See https://xenproject.org/2012/06/13/the-intel-sysret-privilege-escalation/.
+    //
+    // This is not just theoretical; ptrace allows userspace to change rcx of target processes.
+    "
+        pop rcx                 // Pop userspace return pointer
+
+        // Set ZF iff forbidden bit 47 (i.e. the bit that must be sign extended) is set.
+        bt rcx, 47
+
+        // If ZF was set, i.e. the address was invalid higher-half, so jump to the slower iretq and
+        // handle the error without being able to execute attacker-controlled code!
+        jmp 1f
+
+        // Otherwise, continue with the fast sysretq.
+
+        sub rsp, 8              // Pop fake userspace CS
+        pop r11                 // Pop rflags
+        pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
+        mov rsp, gs:[0x70]      // Restore userspace stack pointer
+        swapgs                  // Restore gs from TSS to user data
+        sysretq                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
+
+1:
+
+        // Slow iretq
+        push rcx
+        xor rcx, rcx
+        xor r11, r11
+        swapgs
+        iretq
+    ",
 });
 
 interrupt_stack!(syscall, |stack| {
