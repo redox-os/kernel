@@ -58,19 +58,6 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     });
 }
 
-macro_rules! fast_sysretq {
-    () => { "
-        pop rcx                 // Pop userspace return pointer
-        sub rsp, 8              // Pop fake userspace CS
-        pop r11                 // Pop rflags
-        pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
-        mov rsp, gs:[0x70]      // Restore userspace stack pointer
-        swapgs                  // Restore gs from TSS to user data
-        ud2
-        sysretq                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
-    " }
-}
-
 function!(syscall_instruction => {
     // Yes, this is magic. No, you don't need to understand
     "
@@ -106,51 +93,36 @@ function!(syscall_instruction => {
     pop_scratch!(),
 
     // Return
+    //
+    // We must test whether RCX is canonical. This is not strictly necessary, but could be
+    // fatal if some kernel bug would allow RCX to be modified by user code.
+    //
+    // See https://xenproject.org/2012/06/13/the-intel-sysret-privilege-escalation/.
+    //
+    // This is not just theoretical; ptrace allows userspace to change rcx of target processes.
     "
-        // Test whether RCX is canonical. This is not strictly necessary, but could be fatal if
-        // some kernel bug would allow RCX to be modified by user code.
+        pop rcx                 // Pop userspace return pointer
 
-        // Peek at the preserved RCX, to double-check that it is canonical.
-        // Set ZF iff bit 47 (i.e. the bit that must be sign extended) is set.
+        // Set ZF iff forbidden bit 47 (i.e. the bit that must be sign extended) is set.
+        bt rcx, 47
 
-        // TODO: Any hacky one-instruction canonicalness check?
+        // If ZF was set, i.e. the address was invalid higher-half, so jump to the slower iretq and
+        // handle the error without being able to execute attacker-controlled code!
+        jmp 1f
 
-        bt QWORD PTR [rsp], 47
+        // Otherwise, continue with the fast sysretq.
 
-        // Jump to the canonicalness check.
-        jnz 2f
+        sub rsp, 8              // Pop fake userspace CS
+        pop r11                 // Pop rflags
+        pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
+        mov rsp, gs:[0x70]      // Restore userspace stack pointer
+        swapgs                  // Restore gs from TSS to user data
+        sysretq                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
 
-        // Otherwise, continue with the fast return.
-        1:
-        // Fast sysretq
-    ",
+1:
 
-    fast_sysretq!(),
-
-    "
-        // Jumps to aligned addresses are faster, and it is not always the case the userspace
-        // doesn't call from higher half (though unlikely).
-        .align 8, 0x90
-
-        2:
-
-        // Load userspace return RIP.
-        mov rcx, [rsp]
-
-        // Shift it to the right by 47, only getting the bits which must all be zero or one.
-        shr rcx, 47
-        // Since we have already checked that RCX[47] == 1, RCX[63:47] must all be one.
-        cmp rcx, 0x1FFFF
-        // If the address is canonical, go to the slower iretq.
-        jne 3f
-    ",
-
-        fast_sysretq!(),
-
-    "
-        3:
         // Slow iretq
-
+        push rcx
         xor rcx, rcx
         xor r11, r11
         swapgs
