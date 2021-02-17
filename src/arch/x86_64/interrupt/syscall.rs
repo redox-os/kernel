@@ -94,17 +94,17 @@ function!(syscall_instruction => {
 
     // Return
     //
-    // We must test whether RCX is canonical. This is not strictly necessary, but could be
-    // fatal if some kernel bug would allow RCX to be modified by user code.
+    // We must test whether RCX is canonical; if it is not when running sysretq, the consequences
+    // can be fatal.
     //
     // See https://xenproject.org/2012/06/13/the-intel-sysret-privilege-escalation/.
     //
-    // This is not just theoretical; ptrace allows userspace to change rcx of target processes.
+    // This is not just theoretical; ptrace allows userspace to change RCX (via RIP) of target
+    // processes.
     "
-        pop rcx                 // Pop userspace return pointer
-
-        // Set ZF iff forbidden bit 47 (i.e. the bit that must be sign extended) is set.
-        bt rcx, 47
+        // Set ZF iff forbidden bits 63:47 (i.e. the bits that must be sign extended) of the pushed
+        // RCX are set.
+        test DWORD PTR [rsp + 4], 0xFFFF8000
 
         // If ZF was set, i.e. the address was invalid higher-half, so jump to the slower iretq and
         // handle the error without being able to execute attacker-controlled code!
@@ -112,6 +112,7 @@ function!(syscall_instruction => {
 
         // Otherwise, continue with the fast sysretq.
 
+        pop rcx                 // Pop userspace return pointer
         add rsp, 8              // Pop fake userspace CS
         pop r11                 // Pop rflags
         pop QWORD PTR gs:[0x70] // Pop userspace stack pointer
@@ -122,7 +123,6 @@ function!(syscall_instruction => {
 1:
 
         // Slow iretq
-        push rcx
         xor rcx, rcx
         xor r11, r11
         swapgs
