@@ -405,6 +405,14 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     mapper.p4_mut()[crate::PHYS_PML4].set(frame, flags);
                 });
             }
+            // Copy kernel percpu (similar to TLS) mapping.
+            {
+                let frame = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].pointed_frame().expect("kernel TLS not mapped");
+                let flags = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].flags();
+                active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
+                    mapper.p4_mut()[crate::KERNEL_PERCPU_PML4].set(frame, flags);
+                });
+            }
 
             if let Some(fx) = kfx_opt.take() {
                 context.arch.set_fx(fx.as_ptr() as usize);
@@ -445,32 +453,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
                 context.grants = grants;
             } else {
-                // Copy percpu mapping
-                for cpu_id in 0..crate::cpu_count() {
-                    extern {
-                        // The starting byte of the thread data segment
-                        static mut __tdata_start: u8;
-                        // The ending byte of the thread BSS segment
-                        static mut __tbss_end: u8;
-                    }
-
-                    let size = unsafe { & __tbss_end as *const _ as usize - & __tdata_start as *const _ as usize };
-
-                    let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
-                    let end = start + size;
-
-                    let start_page = Page::containing_address(VirtualAddress::new(start));
-                    let end_page = Page::containing_address(VirtualAddress::new(end - 1));
-                    for page in Page::range_inclusive(start_page, end_page) {
-                        let frame = active_ktable.translate_page(page).expect("kernel percpu not mapped");
-                        active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
-                            let result = mapper.map_to(page, frame, PageFlags::new().write(true));
-                            // Ignore result due to operating on inactive table
-                            unsafe { result.ignore(); }
-                        });
-                    }
-                }
-
                 // Move copy of image
                 for memory_shared in image.iter_mut() {
                     memory_shared.with(|memory| {
