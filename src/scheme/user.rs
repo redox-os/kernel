@@ -131,7 +131,18 @@ impl UserInner {
         // TODO: More abstractions over grant creation!
 
         if size == 0 {
-            return Ok(VirtualAddress::new(0));
+            // NOTE: Rather than returning NULL, we return a dummy dangling address, that is also
+            // non-canonical on x86. This means that scheme handlers do not need to check the
+            // length before creating a Rust slice (which cannot have NULL as address regardless of
+            // the length; this actually made nulld think that an empty path was invalid UTF-8
+            // because of enum layout optimization), independent of whatever alignment this slice
+            // will have.  Additionally, they would generate a general protection fault immediately
+            // if they ever tried to access this dangling address.
+
+            // Set the most significant bit.
+            let dangling: usize = 1 << (core::mem::size_of::<usize>() * 8 - 1);
+
+            return Ok(VirtualAddress::new(dangling));
         }
 
         let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
