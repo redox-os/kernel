@@ -558,12 +558,29 @@ fn empty(context: &mut context::Context, reaping: bool) {
         drop(context.tls.take());
     }
 
-    let mut grants = context.grants.write();
-    if Arc::strong_count(&context.grants) == 1 {
-        let grants = mem::replace(&mut *grants, UserGrants::default());
+    // NOTE: If we do not replace the grants `Arc`, then a strange situation can appear where the
+    // main thread and another thread exit simultaneously before either one is reaped. If that
+    // happens, then the last context that runs exit will think that there is still are still
+    // remaining references to the grants, where there are in fact none. However, if either one is
+    // reaped before, then that reference will disappear, and no leak will occur.
+    //
+    // By removing the reference to the grants when the context will no longer be used, this
+    // problem will never occur.
+
+    // FIXME, UNOPTIMIZED: Right now, this will allocate memory in order to store the new empty
+    // grants, which may not even be used (only in fexec I think). We should turn grants into an
+    // `Option`, and only reinitialize it there.
+    let mut grants_arc = mem::take(&mut context.grants);
+
+    if let Some(grants_lock_mut) = Arc::get_mut(&mut grants_arc) {
+        // TODO: Use get_mut to bypass the need to acquire a lock when there we already have an
+        // exclusive reference from `Arc::get_mut`. This will require updating `spin`.
+        let mut grants_guard = grants_lock_mut.write();
+
+        let grants = mem::replace(&mut *grants_guard, UserGrants::default());
         for grant in grants.inner.into_iter() {
             if reaping {
-                println!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
+                log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
                 let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
