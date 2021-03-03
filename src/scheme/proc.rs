@@ -258,7 +258,7 @@ impl Scheme for ProcScheme {
 
                 // Is it a subprocess of us? In the future, a capability could
                 // bypass this check.
-                match contexts.anchestors(target.ppid).find(|&(id, _context)| id == current.id) {
+                match contexts.ancestors(target.ppid).find(|&(id, _context)| id == current.id) {
                     Some((id, context)) => {
                         // Paranoid sanity check, as ptrace security holes
                         // wouldn't be fun

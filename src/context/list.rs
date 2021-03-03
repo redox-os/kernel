@@ -31,7 +31,7 @@ impl ContextList {
     }
 
     /// Get an iterator of all parents
-    pub fn anchestors(&'_ self, id: ContextId) -> impl Iterator<Item = (ContextId, &Arc<RwLock<Context>>)> + '_ {
+    pub fn ancestors(&'_ self, id: ContextId) -> impl Iterator<Item = (ContextId, &Arc<RwLock<Context>>)> + '_ {
         iter::successors(self.get(id).map(|context| (id, context)), move |(_id, context)| {
             let context = context.read();
             let id = context.ppid;
@@ -47,6 +47,7 @@ impl ContextList {
     pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<ContextId, Arc<RwLock<Context>>> {
         self.map.iter()
     }
+
     pub fn range(&self, range: impl core::ops::RangeBounds<ContextId>) -> ::alloc::collections::btree_map::Range<'_, ContextId, Arc<RwLock<Context>>> {
         self.map.range(range)
     }
