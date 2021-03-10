@@ -162,7 +162,7 @@ impl SchemeList {
 
         // These schemes should only be available on the root
         #[cfg(all(feature = "acpi", target_arch = "x86_64"))] {
-            self.insert(ns, "kernel/acpi", |_| Arc::new(AcpiScheme::new())).unwrap();
+            self.insert(ns, "kernel/acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
         }
         self.insert(ns, "debug", |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();
         self.insert(ns, "initfs", |_| Arc::new(InitFsScheme::new())).unwrap();

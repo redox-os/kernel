@@ -5,7 +5,7 @@ use self::drhd::Drhd;
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, PageFlags, PhysicalAddress};
 
-use super::{find_sdt, load_table, get_sdt_signature};
+use super::find_sdt;
 
 pub mod drhd;
 
@@ -22,7 +22,6 @@ impl Dmar {
     pub fn init(active_table: &mut ActivePageTable) {
         let dmar_sdt = find_sdt("DMAR");
         let dmar = if dmar_sdt.len() == 1 {
-            load_table(get_sdt_signature(dmar_sdt[0]));
             Dmar::new(dmar_sdt[0])
         } else {
             println!("Unable to find DMAR");

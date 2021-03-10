@@ -24,9 +24,6 @@ impl IoApicRegs {
         // offset 0x10
         unsafe { self.pointer.offset(4) }
     }
-    fn read_ioregsel(&self) -> u32 {
-        unsafe { ptr::read_volatile::<u32>(self.ioregsel()) }
-    }
     fn write_ioregsel(&mut self, value: u32) {
         unsafe { ptr::write_volatile::<u32>(self.ioregsel() as *mut u32, value) }
     }

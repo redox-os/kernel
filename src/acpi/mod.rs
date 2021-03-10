@@ -81,11 +81,6 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
         *sdt_ptrs = Some(BTreeMap::new());
     }
 
-    {
-        let mut order = SDT_ORDER.write();
-        *order = Some(vec!());
-    }
-
     // Search for RSDP
     if let Some(rsdp) = RSDP::get_rsdp(active_table, already_supplied_rsdps) {
         info!("RSDP: {:?}", rsdp);
@@ -149,7 +144,6 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
 
 pub type SdtSignature = (String, [u8; 6], [u8; 8]);
 pub static SDT_POINTERS: RwLock<Option<BTreeMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
-pub static SDT_ORDER: RwLock<Option<Vec<SdtSignature>>> = RwLock::new(None);
 
 pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
     let mut sdts: Vec<&'static Sdt> = vec!();
@@ -168,41 +162,6 @@ pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
 pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {
     let signature = String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");
     (signature, sdt.oem_id, sdt.oem_table_id)
-}
-
-pub fn load_table(signature: SdtSignature) {
-    let mut order = SDT_ORDER.write();
-
-    if let Some(ref mut o) = *order {
-        o.push(signature);
-    }
-}
-
-pub fn get_signature_from_index(index: usize) -> Option<SdtSignature> {
-    if let Some(ref order) = *(SDT_ORDER.read()) {
-        if index < order.len() {
-            Some(order[index].clone())
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
-pub fn get_index_from_signature(signature: SdtSignature) -> Option<usize> {
-    if let Some(ref order) = *(SDT_ORDER.read()) {
-        let mut i = order.len();
-        while i > 0 {
-            i -= 1;
-
-            if order[i] == signature {
-                return Some(i);
-            }
-        }
-    }
-
-    None
 }
 
 pub struct Acpi {

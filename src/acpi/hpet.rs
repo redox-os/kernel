@@ -6,7 +6,7 @@ use crate::memory::Frame;
 use crate::paging::{ActivePageTable, PhysicalAddress, Page, PageFlags, VirtualAddress};
 
 use super::sdt::Sdt;
-use super::{ACPI_TABLE, find_sdt, load_table, get_sdt_signature};
+use super::{ACPI_TABLE, find_sdt};
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,7 +38,6 @@ impl Hpet {
     pub fn init(active_table: &mut ActivePageTable) {
         let hpet_sdt = find_sdt("HPET");
         let hpet = if hpet_sdt.len() == 1 {
-            load_table(get_sdt_signature(hpet_sdt[0]));
             Hpet::new(hpet_sdt[0], active_table)
         } else {
             println!("Unable to find HPET");

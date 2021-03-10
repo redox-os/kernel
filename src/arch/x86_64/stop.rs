@@ -1,5 +1,10 @@
 #[cfg(feature = "acpi")]
-use crate::acpi;
+use crate::{
+    context,
+    scheme::acpi,
+    time,
+};
+
 use crate::syscall::io::{Io, Pio};
 
 #[no_mangle]
@@ -29,8 +34,22 @@ pub unsafe extern fn kstop() -> ! {
     // FIXME: RPC into userspace, maybe allowing the kernel ACPI scheme to support e.g. registering
     // an event queue, so that a special file can only be read/written when about to shut down.
 
-    // #[cfg(feature = "acpi")]
-    // acpi::set_global_s_state(5);
+    #[cfg(feature = "acpi")]
+    {
+        // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
+        // shutdown).
+        acpi::register_kstop();
+
+        // Since this driver is a userspace process, and we do not use any magic like directly
+        // context switching, we have to wait for the userspace driver to complete, with a timeout.
+        //
+        // We switch context, and wait for one second.
+        while time::monotonic().0 < 1 {
+            if ! context::switch() {
+                break;
+            }
+        }
+    }
 
     // Magic shutdown code for bochs and qemu (older versions).
     for c in "Shutdown".bytes() {
