@@ -356,7 +356,12 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     irq::set_irq_method(irq::IrqMethod::Apic);
 
     // tell the firmware that we're using APIC rather than the default 8259 PIC.
-    #[cfg(feature = "acpi")]
+
+    // FIXME: With ACPI moved to userspace, we should instead allow userspace to check whether the
+    // IOAPIC has been initialized, and then subsequently let some ACPI driver call the AML from
+    // userspace.
+
+    /*#[cfg(feature = "acpi")]
     {
         let method = {
             let namespace_guard = crate::acpi::ACPI_TABLE.namespace.read();
@@ -369,7 +374,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         if let Some(m) = method {
             m.execute("\\_PIC".into(), vec!(crate::acpi::aml::AmlValue::Integer(1)));
         }
-    }
+    }*/
 }
 fn get_override(irq: u8) -> Option<&'static Override> {
     src_overrides().iter().find(|over| over.bus_irq == irq)

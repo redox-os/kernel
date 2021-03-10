@@ -26,8 +26,11 @@ pub unsafe extern fn kreset() -> ! {
 pub unsafe extern fn kstop() -> ! {
     println!("kstop");
 
-    #[cfg(feature = "acpi")]
-    acpi::set_global_s_state(5);
+    // FIXME: RPC into userspace, maybe allowing the kernel ACPI scheme to support e.g. registering
+    // an event queue, so that a special file can only be read/written when about to shut down.
+
+    // #[cfg(feature = "acpi")]
+    // acpi::set_global_s_state(5);
 
     // Magic shutdown code for bochs and qemu (older versions).
     for c in "Shutdown".bytes() {
