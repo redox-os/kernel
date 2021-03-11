@@ -267,7 +267,8 @@ impl Scheme for AcpiScheme {
 
         Ok(bytes_to_copy)
     }
-    fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
+    // TODO
+    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
