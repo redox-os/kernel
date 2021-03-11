@@ -1128,6 +1128,8 @@ pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -
 pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(PTRACE_STOP_EXIT, Some(ptrace_event!(PTRACE_STOP_EXIT, status)));
 
+    let pid;
+
     {
         let context_lock = {
             let contexts = context::contexts();
@@ -1136,7 +1138,7 @@ pub fn exit(status: usize) -> ! {
         };
 
         let mut close_files = Vec::new();
-        let pid = {
+        pid = {
             let mut context = context_lock.write();
             {
                 let mut lock = context.files.write();
@@ -1147,6 +1149,22 @@ pub fn exit(status: usize) -> ! {
             context.files = Arc::new(RwLock::new(Vec::new()));
             context.id
         };
+
+        // TODO: Find a better way to implement this, perhaps when the init process calls exit.
+        if pid == ContextId::from(1) {
+            println!("Main kernel thread exited with status {:X}", status);
+
+            extern {
+                fn kreset() -> !;
+                fn kstop() -> !;
+            }
+
+            if status == SIGTERM {
+                unsafe { kreset(); }
+            } else {
+                unsafe { kstop(); }
+            }
+        }
 
         // Files must be closed while context is valid so that messages can be passed
         for (_fd, file_opt) in close_files.drain(..).enumerate() {
@@ -1214,26 +1232,10 @@ pub fn exit(status: usize) -> ! {
 
         // Alert any tracers waiting of this process
         ptrace::close_tracee(pid);
-
-        if pid == ContextId::from(1) {
-            println!("Main kernel thread exited with status {:X}", status);
-
-            extern {
-                fn kreset() -> !;
-                fn kstop() -> !;
-            }
-
-            if status == SIGTERM {
-                unsafe { kreset(); }
-            } else {
-                unsafe { kstop(); }
-            }
-        }
     }
 
     let _ = unsafe { context::switch() };
-
-    unreachable!();
+    unreachable!()
 }
 
 pub fn getpid() -> Result<ContextId> {

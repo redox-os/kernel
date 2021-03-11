@@ -27,29 +27,47 @@ pub unsafe extern fn kreset() -> ! {
     unreachable!();
 }
 
-#[no_mangle]
-pub unsafe extern fn kstop() -> ! {
-    println!("kstop");
+#[cfg(feature = "acpi")]
+fn userspace_acpi_shutdown() {
+    log::info!("Notifying any potential ACPI driver");
+    // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
+    // shutdown).
+    if ! acpi::register_kstop() {
+        // There was no context to switch to.
+        log::info!("No ACPI driver was alive to handle shutdown.");
+        return;
+    }
+    log::info!("Waiting one second for ACPI driver to run the shutdown sequence.");
+    let (initial_s, initial_ns) = time::monotonic();
 
-    // FIXME: RPC into userspace, maybe allowing the kernel ACPI scheme to support e.g. registering
-    // an event queue, so that a special file can only be read/written when about to shut down.
+    // Since this driver is a userspace process, and we do not use any magic like directly
+    // context switching, we have to wait for the userspace driver to complete, with a timeout.
+    //
+    // We switch context, and wait for one second.
+    loop {
+        // TODO: Switch directly to whichever process is handling the kstop pipe. We would add an
+        // event flag like EVENT_DIRECT, which has already been suggested for IRQs.
+        // TODO: Waitpid with timeout? Because, what if the ACPI driver would crash?
+        let _ = unsafe { context::switch() };
+        let (current_s, current_ns) = time::monotonic();
 
-    #[cfg(feature = "acpi")]
-    {
-        // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
-        // shutdown).
-        acpi::register_kstop();
+        let diff_s = current_s - initial_s;
+        let diff_part_ns = current_ns - initial_ns;
+        let diff_ns = diff_s * 1_000_000_000 + diff_part_ns;
 
-        // Since this driver is a userspace process, and we do not use any magic like directly
-        // context switching, we have to wait for the userspace driver to complete, with a timeout.
-        //
-        // We switch context, and wait for one second.
-        while time::monotonic().0 < 1 {
-            if ! context::switch() {
-                break;
-            }
+        if diff_ns > 1_000_000_000 {
+            log::info!("Timeout reached, thus falling back to other shutdown methods.");
+            return;
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern fn kstop() -> ! {
+    log::info!("Running kstop()");
+
+    #[cfg(feature = "acpi")]
+    userspace_acpi_shutdown();
 
     // Magic shutdown code for bochs and qemu (older versions).
     for c in "Shutdown".bytes() {
