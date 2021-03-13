@@ -23,7 +23,6 @@ use self::rsdp::RSDP;
 
 pub mod hpet;
 mod dmar;
-mod fadt;
 pub mod madt;
 mod rsdt;
 pub mod sdt;
