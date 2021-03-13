@@ -1233,7 +1233,8 @@ pub fn exit(status: usize) -> ! {
     }
 
     let _ = unsafe { context::switch() };
-    unreachable!()
+
+    unreachable!();
 }
 
 pub fn getpid() -> Result<ContextId> {
