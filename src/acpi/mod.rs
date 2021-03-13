@@ -12,7 +12,6 @@ use crate::log::info;
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
-use self::dmar::Dmar;
 use self::madt::Madt;
 use self::rsdt::Rsdt;
 use self::sdt::Sdt;
@@ -22,7 +21,6 @@ use self::rxsdt::Rxsdt;
 use self::rsdp::RSDP;
 
 pub mod hpet;
-mod dmar;
 pub mod madt;
 mod rsdt;
 pub mod sdt;
@@ -122,6 +120,8 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
             return;
         };
 
+        // TODO: Don't touch ACPI tables in kernel?
+
         rxsdt.map_all(active_table);
 
         for sdt_address in rxsdt.iter() {
@@ -133,8 +133,11 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
             }
         }
 
+        // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
+        // to initialize enumerated processors to userspace?
         Madt::init(active_table);
-        Dmar::init(active_table);
+        // TODO: Let userspace setup HPET, and then provide an interface to specify which timer to
+        // use?
         Hpet::init(active_table);
     } else {
         println!("NO RSDP FOUND");
