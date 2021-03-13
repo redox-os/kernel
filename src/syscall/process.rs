@@ -1128,8 +1128,6 @@ pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -
 pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(PTRACE_STOP_EXIT, Some(ptrace_event!(PTRACE_STOP_EXIT, status)));
 
-    let pid;
-
     {
         let context_lock = {
             let contexts = context::contexts();
@@ -1138,7 +1136,7 @@ pub fn exit(status: usize) -> ! {
         };
 
         let mut close_files = Vec::new();
-        pid = {
+        let pid = {
             let mut context = context_lock.write();
             {
                 let mut lock = context.files.write();
