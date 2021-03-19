@@ -78,7 +78,8 @@ pub unsafe extern "C" fn switch_finish_hook() {
         prev_lock.force_write_unlock();
         next_lock.force_write_unlock();
     } else {
-        panic!("SWITCH_RESULT was not set");
+        // TODO: unreachable_unchecked()?
+        core::intrinsics::abort();
     }
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 }
@@ -97,11 +98,12 @@ unsafe fn runnable(context: &Context, cpu_id: usize) -> bool {
 ///
 /// Do not call this while holding locks!
 pub unsafe fn switch() -> bool {
+    // TODO: Better memory orderings?
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
     let ticks = PIT_TICKS.swap(0, Ordering::SeqCst);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
-    while arch::CONTEXT_SWITCH_LOCK.compare_and_swap(false, true, Ordering::SeqCst) {
+    while arch::CONTEXT_SWITCH_LOCK.compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
         interrupt::pause();
     }
 
