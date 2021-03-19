@@ -21,7 +21,7 @@ log = { version = "0.4" }
 redox_syscall = { path = "syscall" }
 slab_allocator = { path = "slab_allocator", optional = true }
 spin = "0.5.2"
-paste = "0.1.18"
+paste = "1"
 rmm = { path = "rmm", default-features = false }
 
 [dependencies.goblin]
@@ -58,9 +58,6 @@ slab = ["slab_allocator"]
 [profile.dev]
 # Kernel doesn't yet work great with debug mode :(
 opt-level = 3
-
-# LTO fixes some duplicate symbols of memcpy/memmove/etc
-lto = true
 
 [profile.release]
 lto = true

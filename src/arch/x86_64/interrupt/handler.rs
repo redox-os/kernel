@@ -215,6 +215,8 @@ macro_rules! function {
             ".global ", stringify!($name), "\n",
             ".type ", stringify!($name), ", @function\n",
             ".section .text.", stringify!($name), ", \"ax\", @progbits\n",
+            // Align the function to a 16-byte boundary, padding with multi-byte NOPs.
+            ".p2align 4,,15\n",
             stringify!($name), ":\n",
             $($body),+,
             ".size ", stringify!($name), ", . - ", stringify!($name), "\n",
@@ -325,15 +327,15 @@ macro_rules! interrupt_stack {
     ($name:ident, super_atomic: $is_super_atomic:ident!, |$stack:ident| $code:block) => {
         paste::item! {
             #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>](stack: *mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                // This inner function is needed because macros are buggy:
-                // https://github.com/dtolnay/paste/issues/7
-                #[inline(always)]
-                unsafe fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
+            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
+                let _guard = $crate::ptrace::set_process_regs($stack);
+
+                // TODO: Force the declarations to specify unsafe?
+
+                #[allow(unused_unsafe)]
+                unsafe {
                     $code
                 }
-                let _guard = $crate::ptrace::set_process_regs(stack);
-                inner(&mut *stack);
             }
 
             function!($name => {
@@ -404,15 +406,13 @@ macro_rules! interrupt_error {
     ($name:ident, |$stack:ident| $code:block) => {
         paste::item! {
             #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>](stack: *mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
-                // This inner function is needed because macros are buggy:
-                // https://github.com/dtolnay/paste/issues/7
-                #[inline(always)]
-                unsafe fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+                let _guard = $crate::ptrace::set_process_regs(&mut $stack.inner);
+
+                #[allow(unused_unsafe)]
+                unsafe {
                     $code
                 }
-                let _guard = $crate::ptrace::set_process_regs(&mut (*stack).inner);
-                inner(&mut *stack);
             }
 
             function!($name => {
