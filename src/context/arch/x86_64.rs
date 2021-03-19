@@ -216,12 +216,14 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         // the calling function, `context::switch`. Thus, we have to execute this Rust hook by
         // ourselves, which will unlock the contexts before the later switch.
 
-        call {switch_hook}
+        // Note that switch_finish_hook will be responsible for executing `ret`.
+        jmp {switch_hook}
 
         ",
 
         true = const(AbiCompatBool::True as u8),
         switch_hook = sym crate::context::switch_finish_hook,
+        options(noreturn),
     );
 }
 
@@ -275,8 +277,10 @@ unsafe extern fn signal_handler_wrapper() {
             pop rcx
             pop rax
             add rsp, 16
+            ret
         ",
 
         inner = sym inner,
+        options(noreturn),
     );
 }
