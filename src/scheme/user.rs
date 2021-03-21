@@ -350,6 +350,17 @@ impl Scheme for UserScheme {
     }
 
     fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<usize> {
+        {
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+            if context.euid != 0 {
+                if uid != context.euid || gid != context.egid {
+                    return Err(Error::new(EPERM));
+                }
+            }
+        }
+
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner.call(SYS_FCHOWN, file, uid as usize, gid as usize)
     }
