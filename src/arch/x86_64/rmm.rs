@@ -8,6 +8,7 @@ use rmm::{
     FrameCount,
     FrameUsage,
     MemoryArea,
+    PageFlags,
     PageMapper,
     PhysicalAddress,
     VirtualAddress,
@@ -27,7 +28,7 @@ extern "C" {
     static mut __rodata_end: u8;
 }
 
-unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> usize {
+unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
     let virt_addr = virt.data();
 
     // Test for being inside a region
@@ -40,13 +41,13 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> usize {
 
     if in_section!(text) {
         // Remap text read-only, execute
-        0
+        PageFlags::new().write(false).execute(true)
     } else if in_section!(rodata) {
         // Remap rodata read-only, no execute
-        A::ENTRY_FLAG_NO_EXEC
+        PageFlags::new().write(false).execute(false)
     } else {
         // Remap everything else writable, no execute
-        A::ENTRY_FLAG_WRITABLE | A::ENTRY_FLAG_NO_EXEC
+        PageFlags::new().write(true).execute(false)
     }
 }
 
@@ -101,7 +102,7 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kerne
 
         //TODO: remove backwards compatible recursive mapping
         mapper.table().set_entry(511, rmm::PageEntry::new(
-            mapper.table().phys().data() | A::ENTRY_FLAG_WRITABLE | A::ENTRY_FLAG_PRESENT | A::ENTRY_FLAG_NO_EXEC
+            mapper.table().phys().data() | A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_PRESENT | A::ENTRY_FLAG_NO_EXEC
         ));
 
         println!("Table: {:X}", mapper.table().phys().data());
