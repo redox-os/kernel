@@ -233,8 +233,9 @@ pub fn src_overrides() -> &'static [Override] {
 #[cfg(feature = "acpi")]
 pub unsafe fn handle_ioapic(active_table: &mut ActivePageTable, madt_ioapic: &'static MadtIoApic) {
     // map the I/O APIC registers
+
     let frame = Frame::containing_address(PhysicalAddress::new(madt_ioapic.address as usize));
-    let page = Page::containing_address(VirtualAddress::new(madt_ioapic.address as usize + crate::KERNEL_OFFSET));
+    let page = Page::containing_address(VirtualAddress::new(madt_ioapic.address as usize + crate::PHYS_OFFSET));
 
     assert_eq!(active_table.translate_page(page), None);
 
@@ -370,13 +371,13 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     }
 }
 fn get_override(irq: u8) -> Option<&'static Override> {
-    src_overrides().iter().find(|over| over.bus_irq == irq) 
+    src_overrides().iter().find(|over| over.bus_irq == irq)
 }
 fn resolve(irq: u8) -> u32 {
     get_override(irq).map_or(u32::from(irq), |over| over.gsi)
 }
 fn find_ioapic(gsi: u32) -> Option<&'static IoApic> {
-    ioapics().iter().find(|apic| gsi >= apic.gsi_start && gsi < apic.gsi_start + u32::from(apic.count)) 
+    ioapics().iter().find(|apic| gsi >= apic.gsi_start && gsi < apic.gsi_start + u32::from(apic.count))
 }
 
 pub unsafe fn mask(irq: u8) {

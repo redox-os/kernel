@@ -171,14 +171,14 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         let frames = crate::memory::allocate_frames(page_count)
             .expect("failed to allocate pages for backup interrupt stack");
 
-        // Map them linearly, i.e. KERNEL_OFFSET + physaddr.
+        // Map them linearly, i.e. PHYS_OFFSET + physaddr.
         let base_address = {
             use crate::memory::{Frame, PhysicalAddress};
             use crate::paging::{ActivePageTable, Page, VirtualAddress};
             use crate::paging::entry::EntryFlags;
 
             let mut active_table = ActivePageTable::new();
-            let base_virtual_address = VirtualAddress::new(frames.start_address().data() + crate::KERNEL_OFFSET);
+            let base_virtual_address = VirtualAddress::new(frames.start_address().data() + crate::PHYS_OFFSET);
 
             for i in 0..page_count {
                 let virtual_address = VirtualAddress::new(base_virtual_address.data() + i * crate::memory::PAGE_SIZE);

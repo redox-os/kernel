@@ -79,7 +79,7 @@ impl Madt {
                                 CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 
                                 // Allocate a stack
-                                let stack_start = allocate_frames(64).expect("no more frames in acpi stack_start").start_address().data() + crate::KERNEL_OFFSET;
+                                let stack_start = allocate_frames(64).expect("no more frames in acpi stack_start").start_address().data() + crate::PHYS_OFFSET;
                                 let stack_end = stack_start + 64 * 4096;
 
                                 let ap_ready = (TRAMPOLINE + 8) as *mut u64;

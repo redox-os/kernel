@@ -43,12 +43,12 @@ pub fn bsp_apic_id() -> Option<u32> {
 
 impl LocalApic {
     unsafe fn init(&mut self, active_table: &mut ActivePageTable) {
-        self.address = (rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000) + crate::KERNEL_OFFSET;
+        self.address = (rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000) + crate::PHYS_OFFSET;
         self.x2 = CpuId::new().get_feature_info().unwrap().has_x2apic();
 
         if ! self.x2 {
             let page = Page::containing_address(VirtualAddress::new(self.address));
-            let frame = Frame::containing_address(PhysicalAddress::new(self.address - crate::KERNEL_OFFSET));
+            let frame = Frame::containing_address(PhysicalAddress::new(self.address - crate::PHYS_OFFSET));
             let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
             result.flush(active_table);
         }

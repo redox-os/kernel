@@ -19,7 +19,7 @@ pub unsafe fn init() {
     #[cfg(feature = "lpss_debug")]
     {
         // TODO: Make this configurable
-        let address = crate::KERNEL_OFFSET + 0xFE032000;
+        let address = crate::PHYS_OFFSET + 0xFE032000;
 
         {
             use crate::paging::{ActivePageTable, Page, VirtualAddress, entry::EntryFlags};
@@ -27,13 +27,13 @@ pub unsafe fn init() {
 
             let mut active_table = ActivePageTable::new();
             let page = Page::containing_address(VirtualAddress::new(address));
-            let frame = Frame::containing_address(PhysicalAddress::new(address - crate::KERNEL_OFFSET));
+            let frame = Frame::containing_address(PhysicalAddress::new(address - crate::PHYS_OFFSET));
             let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
             result.flush(&mut active_table);
         }
 
         let lpss = SerialPort::<Mmio<u32>>::new(
-            crate::KERNEL_OFFSET + 0xFE032000
+            crate::PHYS_OFFSET + 0xFE032000
         );
         lpss.init();
 

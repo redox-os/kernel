@@ -369,6 +369,15 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 });
             }
 
+            // Copy physmap mapping
+            {
+                let frame = active_table.p4()[crate::PHYS_PML4].pointed_frame().expect("physmap not mapped");
+                let flags = active_table.p4()[crate::PHYS_PML4].flags();
+                active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+                    mapper.p4_mut()[crate::PHYS_PML4].set(frame, flags);
+                });
+            }
+
             if let Some(fx) = kfx_opt.take() {
                 context.arch.set_fx(fx.as_ptr() as usize);
                 context.kfx = Some(fx);
