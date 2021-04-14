@@ -39,7 +39,7 @@ dependencies = [
  "log 0.4.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "paste 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "raw-cpuid 8.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "redox_syscall 0.2.5",
+ "redox_syscall 0.2.6",
  "rmm 0.1.0",
  "rustc-demangle 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "slab_allocator 0.3.1",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
