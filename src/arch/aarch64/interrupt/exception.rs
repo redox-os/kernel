@@ -1,4 +1,6 @@
 use crate::{
+    context,
+    cpu_id,
     interrupt::stack_trace,
     syscall,
     syscall::flag::*,
@@ -31,6 +33,7 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
             println!("FATAL: Not an SVC induced synchronous exception");
             stack.dump();
             stack_trace();
+            println!("CPU {}, PID {:?}", cpu_id(), context::context_id());
             loop {}
         }
 
