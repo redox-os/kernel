@@ -4,7 +4,7 @@
 use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
 use spin::Mutex;
-use x86::{controlregs, msr, tlb};
+use x86::msr;
 
 use crate::memory::Frame;
 
@@ -12,7 +12,12 @@ use self::entry::EntryFlags;
 use self::mapper::{Mapper, MapperFlushAll};
 use self::temporary_page::TemporaryPage;
 
-pub use rmm::{PhysicalAddress, VirtualAddress};
+pub use rmm::{
+    Arch as RmmArch,
+    PhysicalAddress,
+    VirtualAddress,
+    X8664Arch as RmmA,
+};
 
 pub mod entry;
 pub mod mapper;
@@ -259,25 +264,25 @@ impl ActivePageTable {
 
     pub fn switch(&mut self, new_table: InactivePageTable) -> InactivePageTable {
         let old_table = InactivePageTable {
-            p4_frame: Frame::containing_address(PhysicalAddress::new(
-                unsafe { controlregs::cr3() } as usize,
-            )),
+            frame: Frame::containing_address(unsafe {
+                RmmA::table()
+            })
         };
         unsafe {
-            controlregs::cr3_write(new_table.p4_frame.start_address().data() as u64);
+            RmmA::set_table(new_table.frame.start_address());
         }
         old_table
     }
 
     pub fn flush(&mut self, page: Page) {
         unsafe {
-            tlb::flush(page.start_address().data());
+            RmmA::invalidate(page.start_address());
         }
     }
 
     pub fn flush_all(&mut self) {
         unsafe {
-            tlb::flush_all();
+            RmmA::invalidate_all();
         }
     }
 
@@ -290,9 +295,9 @@ impl ActivePageTable {
         F: FnOnce(&mut Mapper),
     {
         {
-            let backup = Frame::containing_address(PhysicalAddress::new(unsafe {
-                controlregs::cr3() as usize
-            }));
+            let backup = Frame::containing_address(unsafe {
+                RmmA::table()
+            });
 
             // map temporary_page to current p4 table
             let p4_table = temporary_page.map_table_frame(
@@ -303,7 +308,7 @@ impl ActivePageTable {
 
             // overwrite recursive mapping
             self.p4_mut()[crate::RECURSIVE_PAGE_PML4].set(
-                table.p4_frame.clone(),
+                table.frame.clone(),
                 EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
             );
             self.flush_all();
@@ -323,7 +328,7 @@ impl ActivePageTable {
     }
 
     pub unsafe fn address(&self) -> usize {
-        controlregs::cr3() as usize
+        RmmA::table().data()
     }
 }
 
@@ -337,7 +342,7 @@ impl Drop for ActivePageTable {
 }
 
 pub struct InactivePageTable {
-    p4_frame: Frame,
+    frame: Frame,
 }
 
 impl InactivePageTable {
@@ -362,17 +367,17 @@ impl InactivePageTable {
         }
         temporary_page.unmap(active_table);
 
-        InactivePageTable { p4_frame: frame }
+        InactivePageTable { frame: frame }
     }
 
     pub unsafe fn from_address(cr3: usize) -> InactivePageTable {
         InactivePageTable {
-            p4_frame: Frame::containing_address(PhysicalAddress::new(cr3)),
+            frame: Frame::containing_address(PhysicalAddress::new(cr3)),
         }
     }
 
     pub unsafe fn address(&self) -> usize {
-        self.p4_frame.start_address().data()
+        self.frame.start_address().data()
     }
 }
 
