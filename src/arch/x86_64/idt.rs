@@ -10,6 +10,7 @@ use x86::dtables::{self, DescriptorTablePointer};
 
 use crate::interrupt::*;
 use crate::ipi::IpiKind;
+use crate::paging::PageFlags;
 
 use spin::RwLock;
 
@@ -175,7 +176,6 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         let base_address = {
             use crate::memory::{Frame, PhysicalAddress};
             use crate::paging::{ActivePageTable, Page, VirtualAddress};
-            use crate::paging::entry::EntryFlags;
 
             let mut active_table = ActivePageTable::new();
             let base_virtual_address = VirtualAddress::new(frames.start_address().data() + crate::PHYS_OFFSET);
@@ -185,7 +185,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
                 let physical_address = PhysicalAddress::new(frames.start_address().data() + i * crate::memory::PAGE_SIZE);
                 let page = Page::containing_address(virtual_address);
 
-                let flags = EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE;
+                let flags = PageFlags::new().write(true);
 
                 let flusher = if let Some(already_mapped) = active_table.translate_page(page) {
                     assert_eq!(already_mapped.start_address(), physical_address, "address already mapped, but non-linearly");

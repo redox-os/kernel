@@ -8,7 +8,7 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{entry_flags, round_down_pages, Grant, Region};
+use crate::context::memory::{page_flags, round_down_pages, Grant, Region};
 use crate::event;
 use crate::paging::{PAGE_SIZE, InactivePageTable, Page, VirtualAddress};
 use crate::paging::temporary_page::TemporaryPage;
@@ -163,7 +163,7 @@ impl UserInner {
             from_region.start_address(),
             to_region.start_address(),
             from_region.size(),
-            entry_flags(flags),
+            page_flags(flags),
             desc_opt,
             &mut new_table,
             &mut temporary_page

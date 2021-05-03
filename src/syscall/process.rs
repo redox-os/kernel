@@ -19,10 +19,9 @@ use crate::elf::{self, program_header};
 use crate::interrupt;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::allocate_frames;
-use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::PageFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
@@ -132,7 +131,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                         let mut new_memory = context::memory::Memory::new(
                             VirtualAddress::new(memory.start_address().data() + crate::USER_TMP_OFFSET),
                             memory.size(),
-                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                            PageFlags::new().write(true),
                             false
                         );
 
@@ -156,7 +155,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                         let mut new_stack = context::memory::Memory::new(
                             VirtualAddress::new(crate::USER_TMP_STACK_OFFSET),
                             stack.size(),
-                            EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                            PageFlags::new().write(true),
                             false
                         );
 
@@ -176,7 +175,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 let mut new_sigstack = context::memory::Memory::new(
                     VirtualAddress::new(crate::USER_TMP_SIGSTACK_OFFSET),
                     sigstack.size(),
-                    EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                    PageFlags::new().write(true),
                     false
                 );
 
@@ -197,7 +196,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     mem: context::memory::Memory::new(
                         VirtualAddress::new(crate::USER_TMP_TLS_OFFSET),
                         tls.mem.size(),
-                        EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                        PageFlags::new().write(true),
                         true
                     ),
                     offset: tls.offset,
@@ -432,7 +431,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     for page in Page::range_inclusive(start_page, end_page) {
                         let frame = active_table.translate_page(page).expect("kernel percpu not mapped");
                         active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-                            let result = mapper.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE);
+                            let result = mapper.map_to(page, frame, PageFlags::new().write(true));
                             // Ignore result due to operating on inactive table
                             unsafe { result.ignore(); }
                         });
@@ -489,7 +488,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             let mut tcb = context::memory::Memory::new(
                 VirtualAddress::new(tcb_addr),
                 PAGE_SIZE,
-                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                PageFlags::new().write(true).user(true),
                 true
             );
 
@@ -656,7 +655,7 @@ fn fexec_noreturn(
                 let tcb_mem = context::memory::Memory::new(
                     VirtualAddress::new(tcb_addr),
                     PAGE_SIZE,
-                    EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                    PageFlags::new().write(true).user(true),
                     true
                 );
 
@@ -669,7 +668,7 @@ fn fexec_noreturn(
                             let mut memory = context::memory::Memory::new(
                                 VirtualAddress::new(vaddr),
                                 segment.p_memsz as usize + voff,
-                                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                                PageFlags::new().write(true),
                                 true
                             );
 
@@ -680,17 +679,13 @@ fn fexec_noreturn(
                                                  segment.p_filesz as usize);
                             }
 
-                            let mut flags = EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
-
-                            if segment.p_flags & program_header::PF_R == program_header::PF_R {
-                                flags.insert(EntryFlags::PRESENT);
-                            }
+                            let mut flags = PageFlags::new().user(true);
 
                             // W ^ X. If it is executable, do not allow it to be writable, even if requested
                             if segment.p_flags & program_header::PF_X == program_header::PF_X {
-                                flags.remove(EntryFlags::NO_EXECUTE);
+                                flags = flags.execute(true);
                             } else if segment.p_flags & program_header::PF_W == program_header::PF_W {
-                                flags.insert(EntryFlags::WRITABLE);
+                                flags = flags.write(true);
                             }
 
                             memory.remap(flags);
@@ -714,7 +709,7 @@ fn fexec_noreturn(
                                 mem: context::memory::Memory::new(
                                     VirtualAddress::new(tls_addr),
                                     rounded_size as usize,
-                                    EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                                    PageFlags::new().write(true).user(true),
                                     true
                                 ),
                                 offset: rounded_offset as usize,
@@ -740,7 +735,7 @@ fn fexec_noreturn(
             context.stack = Some(context::memory::Memory::new(
                 VirtualAddress::new(crate::USER_STACK_OFFSET),
                 crate::USER_STACK_SIZE,
-                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                PageFlags::new().write(true).user(true),
                 true
             ).to_shared());
 
@@ -748,7 +743,7 @@ fn fexec_noreturn(
             context.sigstack = Some(context::memory::Memory::new(
                 VirtualAddress::new(crate::USER_SIGSTACK_OFFSET),
                 crate::USER_SIGSTACK_SIZE,
-                EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+                PageFlags::new().write(true).user(true),
                 true
             ));
 
@@ -799,7 +794,7 @@ fn fexec_noreturn(
                 let mut memory = context::memory::Memory::new(
                     VirtualAddress::new(crate::USER_ARG_OFFSET),
                     arg_size,
-                    EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE,
+                    PageFlags::new().write(true),
                     true
                 );
 
@@ -818,7 +813,7 @@ fn fexec_noreturn(
                     arg_offset += 1;
                 }
 
-                memory.remap(EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE);
+                memory.remap(PageFlags::new().user(true));
 
                 context.image.push(memory.to_shared());
             }
@@ -1329,21 +1324,21 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
             flush_all.flush();
             return Err(Error::new(EFAULT));
         };
-        if !page_flags.contains(EntryFlags::PRESENT) {
+        if !page_flags.has_present() {
             flush_all.flush();
             return Err(Error::new(EFAULT));
         }
 
         if flags.contains(PROT_EXEC) {
-            page_flags.remove(EntryFlags::NO_EXECUTE);
+            page_flags = page_flags.execute(true);
         } else {
-            page_flags.insert(EntryFlags::NO_EXECUTE);
+            page_flags = page_flags.execute(false);
         }
 
         if flags.contains(PROT_WRITE) {
             //TODO: Not allowing gain of write privileges
         } else {
-            page_flags.remove(EntryFlags::WRITABLE);
+            page_flags = page_flags.write(false);
         }
 
         if flags.contains(PROT_READ) {

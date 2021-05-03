@@ -4,8 +4,7 @@ use x86::cpuid::CpuId;
 use x86::msr::*;
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, PhysicalAddress, Page, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{ActivePageTable, PhysicalAddress, Page, PageFlags, VirtualAddress};
 
 pub static mut LOCAL_APIC: LocalApic = LocalApic {
     address: 0,
@@ -49,7 +48,7 @@ impl LocalApic {
         if ! self.x2 {
             let page = Page::containing_address(VirtualAddress::new(self.address));
             let frame = Frame::containing_address(PhysicalAddress::new(self.address - crate::PHYS_OFFSET));
-            let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+            let result = active_table.map_to(page, frame, PageFlags::new().write(true));
             result.flush();
         }
 

@@ -6,8 +6,8 @@ use core::ops::{Index, IndexMut};
 
 use crate::memory::allocate_frames;
 
-use super::entry::{EntryFlags, Entry};
-use super::ENTRY_COUNT;
+use super::{ENTRY_COUNT, PageFlags};
+use super::entry::{Entry, EntryFlags};
 
 pub const P4: *mut Table<Level4> = (crate::RECURSIVE_PAGE_OFFSET | 0x7f_ffff_f000) as *mut _;
 
@@ -93,11 +93,12 @@ impl<L> Table<L> where L: HierarchicalLevel {
 
     pub fn next_table_create(&mut self, index: usize) -> &mut Table<L::NextLevel> {
         if self.next_table(index).is_none() {
-            assert!(!self[index].flags().contains(EntryFlags::HUGE_PAGE),
+            assert!(!self[index].flags().has_flag(EntryFlags::HUGE_PAGE.bits()),
                     "next_table_create does not support huge pages");
             let frame = allocate_frames(1).expect("no frames available");
             self.increment_entry_count();
-            self[index].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE /* Allow users to go down the page table, implement permissions at the page level */);
+            //TODO: RISC-V will not like this
+            self[index].set(frame, PageFlags::new_table().execute(true).write(true).user(true) /* Allow users to go down the page table, implement permissions at the page level */);
             self.next_table_mut(index).unwrap().zero();
         }
         self.next_table_mut(index).unwrap()
@@ -105,7 +106,7 @@ impl<L> Table<L> where L: HierarchicalLevel {
 
     fn next_table_address(&self, index: usize) -> Option<usize> {
         let entry_flags = self[index].flags();
-        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE) {
+        if entry_flags.has_present() && !entry_flags.has_flag(EntryFlags::HUGE_PAGE.bits()) {
             let table_address = self as *const _ as usize;
             Some((table_address << 9) | (index << 12))
         } else {

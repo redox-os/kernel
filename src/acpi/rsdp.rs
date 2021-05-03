@@ -2,8 +2,7 @@ use core::convert::TryFrom;
 use core::mem;
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
@@ -91,7 +90,7 @@ impl RSDP {
             let end_frame = Frame::containing_address(PhysicalAddress::new(end_addr));
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 let page = Page::containing_address(VirtualAddress::new(frame.start_address().data()));
-                let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
+                let result = active_table.map_to(page, frame, PageFlags::new());
                 result.flush();
             }
         }

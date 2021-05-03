@@ -6,7 +6,6 @@ use crate::{
     arch::{
         interrupt::InterruptStack,
         paging::{
-            entry::EntryFlags,
             mapper::PageFlushAll,
             temporary_page::TemporaryPage,
             ActivePageTable, InactivePageTable, Page, PAGE_SIZE, VirtualAddress
@@ -488,7 +487,7 @@ where F: FnOnce(*mut u8) -> Result<()>
     let mut page = start;
     let flush_all = PageFlushAll::new();
     for (frame, mut flags) in frames {
-        flags |= EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE;
+        flags = flags.execute(false).write(true);
         flush_all.consume(active_page_table.map_to(page, frame, flags));
 
         page = page.next();

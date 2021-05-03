@@ -8,12 +8,12 @@ use x86::msr;
 
 use crate::memory::Frame;
 
-use self::entry::EntryFlags;
 use self::mapper::{Mapper, PageFlushAll};
 use self::temporary_page::TemporaryPage;
 
 pub use rmm::{
     Arch as RmmArch,
+    PageFlags,
     PhysicalAddress,
     VirtualAddress,
     X8664Arch as RmmA,
@@ -114,13 +114,7 @@ unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     let start_page = Page::containing_address(VirtualAddress::new(start));
     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
     for page in Page::range_inclusive(start_page, end_page) {
-        let result = mapper.map(
-            page,
-            EntryFlags::PRESENT
-                | EntryFlags::GLOBAL
-                | EntryFlags::NO_EXECUTE
-                | EntryFlags::WRITABLE,
-        );
+        let result = mapper.map(page, PageFlags::new().write(true));
         flush_all.consume(result);
     }
     flush_all
@@ -302,14 +296,14 @@ impl ActivePageTable {
             // map temporary_page to current p4 table
             let p4_table = temporary_page.map_table_frame(
                 backup.clone(),
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
                 self,
             );
 
             // overwrite recursive mapping
             self.p4_mut()[crate::RECURSIVE_PAGE_PML4].set(
                 table.frame.clone(),
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
             );
             self.flush_all();
 
@@ -319,7 +313,7 @@ impl ActivePageTable {
             // restore recursive mapping to original p4 table
             p4_table[crate::RECURSIVE_PAGE_PML4].set(
                 backup,
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
             );
             self.flush_all();
         }
@@ -354,7 +348,7 @@ impl InactivePageTable {
         {
             let table = temporary_page.map_table_frame(
                 frame.clone(),
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
                 active_table,
             );
             // now we are able to zero the table
@@ -362,7 +356,7 @@ impl InactivePageTable {
             // set up recursive mapping for the table
             table[crate::RECURSIVE_PAGE_PML4].set(
                 frame.clone(),
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
             );
         }
         temporary_page.unmap(active_table);

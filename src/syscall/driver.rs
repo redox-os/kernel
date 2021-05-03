@@ -1,6 +1,6 @@
 use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
-use crate::paging::{ActivePageTable, PhysicalAddress, VirtualAddress};
+use crate::paging::{ActivePageTable, PageFlags, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::context;
 use crate::context::memory::{Grant, Region};
@@ -81,15 +81,15 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         let full_size = ((offset + size + 4095)/4096) * 4096;
         let mut to_address = crate::USER_GRANT_OFFSET;
 
-        let mut entry_flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::USER_ACCESSIBLE;
+        let mut page_flags = PageFlags::new().user(true);
         if flags.contains(PHYSMAP_WRITE) {
-            entry_flags |= EntryFlags::WRITABLE;
+            page_flags = page_flags.write(true);
         }
         if flags.contains(PHYSMAP_WRITE_COMBINE) {
-            entry_flags |= EntryFlags::HUGE_PAGE;
+            page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
         }
         if flags.contains(PHYSMAP_NO_CACHE) {
-            entry_flags |= EntryFlags::NO_CACHE;
+            page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
         }
 
         // TODO: Make this faster than Sonic himself by using le superpowers of BTreeSet
@@ -109,7 +109,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
             PhysicalAddress::new(from_address),
             VirtualAddress::new(to_address),
             full_size,
-            entry_flags
+            page_flags
         ));
 
         Ok(to_address + offset)

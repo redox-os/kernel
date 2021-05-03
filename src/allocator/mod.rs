@@ -1,5 +1,4 @@
-use crate::paging::{ActivePageTable, Page, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{ActivePageTable, Page, PageFlags, VirtualAddress};
 use crate::paging::mapper::PageFlushAll;
 
 #[cfg(not(feature="slab"))]
@@ -20,7 +19,7 @@ unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usiz
     let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
     let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size-1));
     for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-        let result = active_table.map(page, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+        let result = active_table.map(page, PageFlags::new().write(true));
         flush_all.consume(result);
     }
 

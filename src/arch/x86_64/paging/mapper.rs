@@ -2,8 +2,7 @@ use core::ptr::Unique;
 
 use crate::memory::{allocate_frames, deallocate_frames, Frame};
 
-use super::{Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
-use super::entry::EntryFlags;
+use super::{Page, PAGE_SIZE, PageFlags, PhysicalAddress, VirtualAddress};
 use super::table::{self, Table, Level4};
 use super::RmmA;
 
@@ -31,7 +30,7 @@ impl Mapper {
     }
 
     /// Map a page to a frame
-    pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) -> PageFlush<RmmA> {
+    pub fn map_to(&mut self, page: Page, frame: Frame, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let p3 = self.p4_mut().next_table_create(page.p4_index());
         let p2 = p3.next_table_create(page.p3_index());
         let p1 = p2.next_table_create(page.p2_index());
@@ -42,28 +41,28 @@ impl Mapper {
             p1[page.p1_index()].address().data(), p1[page.p1_index()].flags(),
             frame.start_address().data(), flags);
         p1.increment_entry_count();
-        p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
+        p1[page.p1_index()].set(frame, flags);
         PageFlush::new(page.start_address())
     }
 
     /// Map a page to the next free frame
-    pub fn map(&mut self, page: Page, flags: EntryFlags) -> PageFlush<RmmA> {
+    pub fn map(&mut self, page: Page, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let frame = allocate_frames(1).expect("out of frames");
         self.map_to(page, frame, flags)
     }
 
     /// Update flags for a page
-    pub fn remap(&mut self, page: Page, flags: EntryFlags) -> PageFlush<RmmA> {
+    pub fn remap(&mut self, page: Page, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("failed to remap: no p3");
         let p2 = p3.next_table_mut(page.p3_index()).expect("failed to remap: no p2");
         let p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
         let frame = p1[page.p1_index()].pointed_frame().expect("failed to remap: not mapped");
-        p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
+        p1[page.p1_index()].set(frame, flags);
         PageFlush::new(page.start_address())
     }
 
     /// Identity map a frame
-    pub fn identity_map(&mut self, frame: Frame, flags: EntryFlags) -> PageFlush<RmmA> {
+    pub fn identity_map(&mut self, frame: Frame, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let page = Page::containing_address(VirtualAddress::new(frame.start_address().data()));
         self.map_to(page, frame, flags)
     }
@@ -155,7 +154,7 @@ impl Mapper {
             .and_then(|p1| p1[page.p1_index()].pointed_frame())
     }
 
-    pub fn translate_page_flags(&self, page: Page) -> Option<EntryFlags> {
+    pub fn translate_page_flags(&self, page: Page) -> Option<PageFlags<RmmA>> {
         self.p4().next_table(page.p4_index())
             .and_then(|p3| p3.next_table(page.p3_index()))
             .and_then(|p2| p2.next_table(page.p2_index()))

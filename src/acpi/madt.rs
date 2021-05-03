@@ -1,8 +1,7 @@
 use core::mem;
 
 use crate::memory::{allocate_frames, Frame};
-use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
 use super::sdt::Sdt;
 use super::{find_sdt, load_table, get_sdt_signature};
@@ -58,7 +57,7 @@ impl Madt {
                 // Map trampoline
                 let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
-                let result = active_table.map_to(trampoline_page, trampoline_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
+                let result = active_table.map_to(trampoline_page, trampoline_frame, PageFlags::new().execute(true).write(true)); //TODO: do not have writable and executable!
                 result.flush();
 
                 // Write trampoline, make sure TRAMPOLINE page is free for use

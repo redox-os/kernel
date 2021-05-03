@@ -1,5 +1,5 @@
 use crate::context;
-use crate::context::memory::{entry_flags, Grant};
+use crate::context::memory::{page_flags, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
 use crate::paging::{ActivePageTable, VirtualAddress};
 use crate::syscall::data::{Map, OldMap, StatVfs};
@@ -58,7 +58,7 @@ impl Scheme for MemoryScheme {
                 }
             }
 
-            grants.insert(Grant::map(region.start_address(), region.size(), entry_flags(map.flags)));
+            grants.insert(Grant::map(region.start_address(), region.size(), page_flags(map.flags)));
 
             Ok(region.start_address().data())
         }

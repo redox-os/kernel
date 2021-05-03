@@ -3,8 +3,7 @@ use core::{mem, ptr};
 use core::intrinsics::{volatile_load, volatile_store};
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, PhysicalAddress, Page, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{ActivePageTable, PhysicalAddress, Page, PageFlags, VirtualAddress};
 
 use super::sdt::Sdt;
 use super::{ACPI_TABLE, find_sdt, load_table, get_sdt_signature};
@@ -69,7 +68,7 @@ impl GenericAddressStructure {
     pub unsafe fn init(&self, active_table: &mut ActivePageTable) {
         let page = Page::containing_address(VirtualAddress::new(self.address as usize));
         let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
-        let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+        let result = active_table.map_to(page, frame, PageFlags::new().write(true));
         result.flush();
     }
 

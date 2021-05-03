@@ -8,7 +8,8 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIoApic, MadtIntSrcOverride};
 
 use crate::arch::interrupt::irq;
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, entry::EntryFlags, Page, PhysicalAddress, VirtualAddress};
+use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::paging::entry::EntryFlags;
 
 use super::pic;
 
@@ -239,7 +240,7 @@ pub unsafe fn handle_ioapic(active_table: &mut ActivePageTable, madt_ioapic: &'s
 
     assert_eq!(active_table.translate_page(page), None);
 
-    let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::WRITABLE | EntryFlags::NO_CACHE);
+    let result = active_table.map_to(page, frame, PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true));
     result.flush();
 
     let ioapic_registers = page.start_address().data() as *const u32;

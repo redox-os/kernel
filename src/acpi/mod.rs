@@ -14,8 +14,7 @@ use crate::stop::kstop;
 
 use crate::log::info;
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
 use self::dmar::Dmar;
 use self::fadt::Fadt;
@@ -45,7 +44,7 @@ pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'stat
         let page = Page::containing_address(VirtualAddress::new(sdt_address));
         if active_table.translate_page(page).is_none() {
             let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
-            let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
+            let result = active_table.map_to(page, frame, PageFlags::new());
             result.flush();
         }
     }
@@ -59,7 +58,7 @@ pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'stat
         for page in Page::range_inclusive(start_page, end_page) {
             if active_table.translate_page(page).is_none() {
                 let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
-                let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
+                let result = active_table.map_to(page, frame, PageFlags::new());
                 result.flush();
             }
         }

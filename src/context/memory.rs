@@ -15,8 +15,7 @@ use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, PageIter, PhysicalAddress, VirtualAddress};
-use crate::paging::entry::EntryFlags;
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, PageIter, PhysicalAddress, RmmA, VirtualAddress};
 use crate::paging::mapper::PageFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
 
@@ -29,20 +28,12 @@ pub fn round_up_pages(number: usize) -> usize {
     round_down_pages(number + PAGE_SIZE - 1)
 }
 
-pub fn entry_flags(flags: MapFlags) -> EntryFlags {
-    let mut entry_flags = EntryFlags::PRESENT | EntryFlags::USER_ACCESSIBLE;
-
-    if !flags.contains(MapFlags::PROT_EXEC) {
-        entry_flags |= EntryFlags::NO_EXECUTE;
-    }
-    if flags.contains(MapFlags::PROT_READ) {
+pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
+    PageFlags::new()
+        .user(true)
+        .execute(flags.contains(MapFlags::PROT_EXEC))
+        .write(flags.contains(MapFlags::PROT_WRITE))
         //TODO: PROT_READ
-    }
-    if flags.contains(MapFlags::PROT_WRITE) {
-        entry_flags |= EntryFlags::WRITABLE;
-    }
-
-    entry_flags
 }
 
 #[derive(Debug, Default)]
@@ -293,7 +284,7 @@ impl<'a> From<&'a Grant> for Region {
 #[derive(Debug)]
 pub struct Grant {
     region: Region,
-    flags: EntryFlags,
+    flags: PageFlags<RmmA>,
     mapped: bool,
     owned: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
@@ -311,7 +302,7 @@ impl Grant {
         &mut self.region
     }
 
-    pub fn physmap(from: PhysicalAddress, to: VirtualAddress, size: usize, flags: EntryFlags) -> Grant {
+    pub fn physmap(from: PhysicalAddress, to: VirtualAddress, size: usize, flags: PageFlags<RmmA>) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         let flush_all = PageFlushAll::new();
@@ -338,7 +329,7 @@ impl Grant {
         }
     }
 
-    pub fn map(to: VirtualAddress, size: usize, flags: EntryFlags) -> Grant {
+    pub fn map(to: VirtualAddress, size: usize, flags: PageFlags<RmmA>) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         let flush_all = PageFlushAll::new();
@@ -364,7 +355,7 @@ impl Grant {
         }
     }
 
-    pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: EntryFlags, desc_opt: Option<FileDescriptor>, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
+    pub fn map_inactive(from: VirtualAddress, to: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<FileDescriptor>, new_table: &mut InactivePageTable, temporary_page: &mut TemporaryPage) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         //TODO: Do not allocate
@@ -419,7 +410,7 @@ impl Grant {
 
             let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
             if self.owned {
-                let result = active_table.map(new_page, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+                let result = active_table.map(new_page, PageFlags::new().write(true));
                 flush_all.consume(result);
             } else {
                 let result = active_table.map_to(new_page, frame, flags);
@@ -488,7 +479,7 @@ impl Grant {
         self.region.start = new_start;
     }
 
-    pub fn flags(&self) -> EntryFlags {
+    pub fn flags(&self) -> PageFlags<RmmA> {
         self.flags
     }
 
@@ -664,11 +655,11 @@ impl SharedMemory {
 pub struct Memory {
     start: VirtualAddress,
     size: usize,
-    flags: EntryFlags
+    flags: PageFlags<RmmA>,
 }
 
 impl Memory {
-    pub fn new(start: VirtualAddress, size: usize, flags: EntryFlags, clear: bool) -> Self {
+    pub fn new(start: VirtualAddress, size: usize, flags: PageFlags<RmmA>, clear: bool) -> Self {
         let mut memory = Memory {
             start,
             size,
@@ -692,7 +683,7 @@ impl Memory {
         self.size
     }
 
-    pub fn flags(&self) -> EntryFlags {
+    pub fn flags(&self) -> PageFlags<RmmA> {
         self.flags
     }
 
@@ -715,7 +706,7 @@ impl Memory {
         flush_all.flush();
 
         if clear {
-            assert!(self.flags.contains(EntryFlags::WRITABLE));
+            assert!(self.flags.has_write());
             unsafe {
                 intrinsics::write_bytes(self.start_address().data() as *mut u8, 0, self.size);
             }
@@ -759,7 +750,7 @@ impl Memory {
         self.start = new_start;
     }
 
-    pub fn remap(&mut self, new_flags: EntryFlags) {
+    pub fn remap(&mut self, new_flags: PageFlags<RmmA>) {
         let mut active_table = unsafe { ActivePageTable::new() };
 
         let flush_all = PageFlushAll::new();
