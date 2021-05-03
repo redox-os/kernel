@@ -12,18 +12,23 @@ pub unsafe fn stack_trace() {
 
     println!("TRACE: {:>016x}", fp);
     //Maximum 64 frames
-    let active_table = ActivePageTable::new(PageTableType::User);
+    let active_ktable = ActivePageTable::new(PageTableType::Kernel);
+    let active_utable = ActivePageTable::new(PageTableType::User);
+    let in_kernel_or_user_table = |ptr| {
+        active_ktable.translate(VirtualAddress::new(ptr)).is_some() ||
+        active_utable.translate(VirtualAddress::new(ptr)).is_some()
+    };
     for _frame in 0..64 {
         if let Some(pc_fp) = fp.checked_add(mem::size_of::<usize>()) {
-            if active_table.translate(VirtualAddress::new(fp)).is_some() && active_table.translate(VirtualAddress::new(pc_fp)).is_some() {
+            if in_kernel_or_user_table(fp) && in_kernel_or_user_table(pc_fp) {
                 let pc = *(pc_fp as *const usize);
                 if pc == 0 {
                     println!(" {:>016x}: EMPTY RETURN", fp);
                     break;
                 }
-                println!("  {:>016x}: {:>016x}", fp, pc);
+                println!("  FP {:>016x}: PC {:>016x}", fp, pc);
                 fp = *(fp as *const usize);
-//                symbol_trace(pc);
+                //TODO symbol_trace(pc);
             } else {
                 println!("  {:>016x}: GUARD PAGE", fp);
                 break;
