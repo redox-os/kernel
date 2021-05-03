@@ -1589,7 +1589,7 @@ fn parse_def_mid(data: &[u8],
                 let mut res = s.clone().split_off(idx);
 
                 if len < res.len() {
-                    res.split_off(len);
+                    res.split_off(len).clear();
                 }
 
                 AmlValue::String(res)

@@ -39,6 +39,8 @@
 // This is usually a serious issue - a missing import of a define where it is interpreted
 // as a catch-all variable in a match, for example
 #![deny(unreachable_patterns)]
+// Ensure that all must_use results are used
+#![deny(unused_must_use)]
 
 #![feature(allocator_api)]
 #![feature(asm)] // TODO: Relax requirements of most asm invocations
