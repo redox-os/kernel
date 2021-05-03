@@ -11,12 +11,8 @@ pub struct Entry(u64);
 
 bitflags! {
     pub struct EntryFlags: usize {
-        const PRESENT =         RmmA::ENTRY_FLAG_PRESENT;
-        const WRITABLE =        RmmA::ENTRY_FLAG_READWRITE;
-        const USER_ACCESSIBLE = RmmA::ENTRY_FLAG_USER;
         const NO_CACHE =        1 << 4;
         const HUGE_PAGE =       1 << 7;
-        const NO_EXECUTE =      RmmA::ENTRY_FLAG_NO_EXEC;
     }
 }
 
