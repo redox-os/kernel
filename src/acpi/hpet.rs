@@ -70,7 +70,7 @@ impl GenericAddressStructure {
         let page = Page::containing_address(VirtualAddress::new(self.address as usize));
         let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
         let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
-        result.flush(active_table);
+        result.flush();
     }
 
     pub unsafe fn read_u64(&self, offset: usize) -> u64{

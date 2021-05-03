@@ -25,7 +25,7 @@ impl TemporaryPage {
     pub fn map(&mut self, frame: Frame, flags: EntryFlags, active_table: &mut ActivePageTable) -> VirtualAddress {
         assert!(active_table.translate_page(self.page).is_none(), "temporary page is already mapped");
         let result = active_table.map_to(self.page, frame, flags);
-        result.flush(active_table);
+        result.flush();
         self.page.start_address()
     }
 
@@ -38,6 +38,6 @@ impl TemporaryPage {
     /// Unmaps the temporary page in the active table.
     pub fn unmap(&mut self, active_table: &mut ActivePageTable) {
         let (result, _frame) = active_table.unmap_return(self.page, true);
-        result.flush(active_table);
+        result.flush();
     }
 }

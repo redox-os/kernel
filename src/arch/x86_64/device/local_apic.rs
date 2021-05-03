@@ -50,7 +50,7 @@ impl LocalApic {
             let page = Page::containing_address(VirtualAddress::new(self.address));
             let frame = Frame::containing_address(PhysicalAddress::new(self.address - crate::PHYS_OFFSET));
             let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
-            result.flush(active_table);
+            result.flush();
         }
 
         self.init_ap();

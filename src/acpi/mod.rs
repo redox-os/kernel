@@ -46,7 +46,7 @@ pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'stat
         if active_table.translate_page(page).is_none() {
             let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
             let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
-            result.flush(active_table);
+            result.flush();
         }
     }
 
@@ -60,7 +60,7 @@ pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'stat
             if active_table.translate_page(page).is_none() {
                 let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
                 let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
-                result.flush(active_table);
+                result.flush();
             }
         }
     }

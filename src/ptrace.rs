@@ -7,7 +7,7 @@ use crate::{
         interrupt::InterruptStack,
         paging::{
             entry::EntryFlags,
-            mapper::MapperFlushAll,
+            mapper::PageFlushAll,
             temporary_page::TemporaryPage,
             ActivePageTable, InactivePageTable, Page, PAGE_SIZE, VirtualAddress
         }
@@ -486,27 +486,27 @@ where F: FnOnce(*mut u8) -> Result<()>
     // Map all the physical frames into linear pages
     let pages = frames.len();
     let mut page = start;
-    let mut flusher = MapperFlushAll::new();
+    let flush_all = PageFlushAll::new();
     for (frame, mut flags) in frames {
         flags |= EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE;
-        flusher.consume(active_page_table.map_to(page, frame, flags));
+        flush_all.consume(active_page_table.map_to(page, frame, flags));
 
         page = page.next();
     }
 
-    flusher.flush(&mut active_page_table);
+    flush_all.flush();
 
     let res = f((start.start_address().data() + offset.data() % PAGE_SIZE) as *mut u8);
 
     // Unmap all the pages (but allow no deallocation!)
     let mut page = start;
-    let mut flusher = MapperFlushAll::new();
+    let flush_all = PageFlushAll::new();
     for _ in 0..pages {
-        flusher.consume(active_page_table.unmap_return(page, true).0);
+        flush_all.consume(active_page_table.unmap_return(page, true).0);
         page = page.next();
     }
 
-    flusher.flush(&mut active_page_table);
+    flush_all.flush();
 
     res
 }

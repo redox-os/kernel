@@ -1,80 +1,13 @@
-use core::mem;
 use core::ptr::Unique;
 
 use crate::memory::{allocate_frames, deallocate_frames, Frame};
 
-use super::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
+use super::{Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
 use super::entry::EntryFlags;
 use super::table::{self, Table, Level4};
+use super::RmmA;
 
-/// In order to enforce correct paging operations in the kernel, these types
-/// are returned on any mapping operation to get the code involved to specify
-/// how it intends to flush changes to a page table
-#[must_use = "The page table must be flushed, or the changes unsafely ignored"]
-pub struct MapperFlush(Page);
-
-impl MapperFlush {
-    /// Create a new page flush promise
-    pub fn new(page: Page) -> MapperFlush {
-        MapperFlush(page)
-    }
-
-    /// Flush this page in the active table
-    pub fn flush(self, table: &mut ActivePageTable) {
-        table.flush(self.0);
-        mem::forget(self);
-    }
-
-    /// Ignore the flush. This is unsafe, and a reason should be provided for use
-    pub unsafe fn ignore(self) {
-        mem::forget(self);
-    }
-}
-
-/// A flush cannot be dropped, it must be consumed
-impl Drop for MapperFlush {
-    fn drop(&mut self) {
-        panic!("Mapper flush was not utilized");
-    }
-}
-
-/// To allow for combining multiple flushes into one, we have a way of flushing
-/// the active table, which can consume `MapperFlush` structs
-#[must_use = "The page table must be flushed, or the changes unsafely ignored"]
-pub struct MapperFlushAll(bool);
-
-impl MapperFlushAll {
-    /// Create a new promise to flush all mappings
-    pub fn new() -> MapperFlushAll {
-        MapperFlushAll(false)
-    }
-
-    /// Consume a single page flush
-    pub fn consume(&mut self, flush: MapperFlush) {
-        self.0 = true;
-        mem::forget(flush);
-    }
-
-    /// Flush the active page table
-    pub fn flush(self, table: &mut ActivePageTable) {
-        if self.0 {
-            table.flush_all();
-        }
-        mem::forget(self);
-    }
-
-    /// Ignore the flush. This is unsafe, and a reason should be provided for use
-    pub unsafe fn ignore(self) {
-        mem::forget(self);
-    }
-}
-
-/// A flush cannot be dropped, it must be consumed
-impl Drop for MapperFlushAll {
-    fn drop(&mut self) {
-        panic!("Mapper flush all was not utilized");
-    }
-}
+pub use rmm::{PageFlush, PageFlushAll};
 
 #[derive(Debug)]
 pub struct Mapper {
@@ -98,7 +31,7 @@ impl Mapper {
     }
 
     /// Map a page to a frame
-    pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) -> MapperFlush {
+    pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) -> PageFlush<RmmA> {
         let p3 = self.p4_mut().next_table_create(page.p4_index());
         let p2 = p3.next_table_create(page.p3_index());
         let p1 = p2.next_table_create(page.p2_index());
@@ -110,27 +43,27 @@ impl Mapper {
             frame.start_address().data(), flags);
         p1.increment_entry_count();
         p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
-        MapperFlush::new(page)
+        PageFlush::new(page.start_address())
     }
 
     /// Map a page to the next free frame
-    pub fn map(&mut self, page: Page, flags: EntryFlags) -> MapperFlush {
+    pub fn map(&mut self, page: Page, flags: EntryFlags) -> PageFlush<RmmA> {
         let frame = allocate_frames(1).expect("out of frames");
         self.map_to(page, frame, flags)
     }
 
     /// Update flags for a page
-    pub fn remap(&mut self, page: Page, flags: EntryFlags) -> MapperFlush {
+    pub fn remap(&mut self, page: Page, flags: EntryFlags) -> PageFlush<RmmA> {
         let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("failed to remap: no p3");
         let p2 = p3.next_table_mut(page.p3_index()).expect("failed to remap: no p2");
         let p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
         let frame = p1[page.p1_index()].pointed_frame().expect("failed to remap: not mapped");
         p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
-        MapperFlush::new(page)
+        PageFlush::new(page.start_address())
     }
 
     /// Identity map a frame
-    pub fn identity_map(&mut self, frame: Frame, flags: EntryFlags) -> MapperFlush {
+    pub fn identity_map(&mut self, frame: Frame, flags: EntryFlags) -> PageFlush<RmmA> {
         let page = Page::containing_address(VirtualAddress::new(frame.start_address().data()));
         self.map_to(page, frame, flags)
     }
@@ -203,16 +136,16 @@ impl Mapper {
     }
 
     /// Unmap a page
-    pub fn unmap(&mut self, page: Page) -> MapperFlush {
+    pub fn unmap(&mut self, page: Page) -> PageFlush<RmmA> {
         let frame = self.unmap_inner(page, false);
         deallocate_frames(frame, 1);
-        MapperFlush::new(page)
+        PageFlush::new(page.start_address())
     }
 
     /// Unmap a page, return frame without free
-    pub fn unmap_return(&mut self, page: Page, keep_parents: bool) -> (MapperFlush, Frame) {
+    pub fn unmap_return(&mut self, page: Page, keep_parents: bool) -> (PageFlush<RmmA>, Frame) {
         let frame = self.unmap_inner(page, keep_parents);
-        (MapperFlush::new(page), frame)
+        (PageFlush::new(page.start_address()), frame)
     }
 
     pub fn translate_page(&self, page: Page) -> Option<Frame> {

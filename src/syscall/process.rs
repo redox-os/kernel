@@ -20,7 +20,7 @@ use crate::interrupt;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::allocate_frames;
 use crate::paging::entry::EntryFlags;
-use crate::paging::mapper::MapperFlushAll;
+use crate::paging::mapper::PageFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
 use crate::paging::{ActivePageTable, InactivePageTable, Page, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
@@ -1316,7 +1316,7 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
 
     let mut active_table = unsafe { ActivePageTable::new() };
 
-    let mut flush_all = MapperFlushAll::new();
+    let flush_all = PageFlushAll::new();
 
     let start_page = Page::containing_address(VirtualAddress::new(address));
     let end_page = Page::containing_address(VirtualAddress::new(end_address));
@@ -1326,11 +1326,11 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
         let mut page_flags = if let Some(page_flags) = active_table.translate_page_flags(page) {
             page_flags
         } else {
-            flush_all.flush(&mut active_table);
+            flush_all.flush();
             return Err(Error::new(EFAULT));
         };
         if !page_flags.contains(EntryFlags::PRESENT) {
-            flush_all.flush(&mut active_table);
+            flush_all.flush();
             return Err(Error::new(EFAULT));
         }
 
@@ -1356,7 +1356,7 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
         flush_all.consume(flush);
     }
 
-    flush_all.flush(&mut active_table);
+    flush_all.flush();
 
     Ok(0)
 }

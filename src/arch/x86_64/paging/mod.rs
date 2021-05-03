@@ -9,7 +9,7 @@ use x86::msr;
 use crate::memory::Frame;
 
 use self::entry::EntryFlags;
-use self::mapper::{Mapper, MapperFlushAll};
+use self::mapper::{Mapper, PageFlushAll};
 use self::temporary_page::TemporaryPage;
 
 pub use rmm::{
@@ -94,7 +94,7 @@ unsafe fn init_pat() {
 }
 
 /// Map TSS
-unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> MapperFlushAll {
+unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     extern "C" {
         /// The starting byte of the thread data segment
         static mut __tdata_start: u8;
@@ -110,7 +110,7 @@ unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> MapperFlushAll {
     let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
     let end = start + size;
 
-    let mut flush_all = MapperFlushAll::new();
+    let flush_all = PageFlushAll::new();
     let start_page = Page::containing_address(VirtualAddress::new(start));
     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
     for page in Page::range_inclusive(start_page, end_page) {
@@ -194,7 +194,7 @@ pub unsafe fn init(
     let mut active_table = ActivePageTable::new_unlocked();
 
     let flush_all = map_tss(cpu_id, &mut active_table);
-    flush_all.flush(&mut active_table);
+    flush_all.flush();
 
     return (active_table, init_tcb(cpu_id));
 }

@@ -1,6 +1,6 @@
 use crate::paging::{ActivePageTable, Page, VirtualAddress};
 use crate::paging::entry::EntryFlags;
-use crate::paging::mapper::MapperFlushAll;
+use crate::paging::mapper::PageFlushAll;
 
 #[cfg(not(feature="slab"))]
 pub use self::linked_list::Allocator;
@@ -15,7 +15,7 @@ mod linked_list;
 mod slab;
 
 unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usize) {
-    let mut flush_all = MapperFlushAll::new();
+    let flush_all = PageFlushAll::new();
 
     let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
     let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size-1));
@@ -24,7 +24,7 @@ unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usiz
         flush_all.consume(result);
     }
 
-    flush_all.flush(active_table);
+    flush_all.flush();
 }
 
 pub unsafe fn init(active_table: &mut ActivePageTable) {

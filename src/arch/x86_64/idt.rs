@@ -193,7 +193,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
                 } else {
                     active_table.map_to(page, Frame::containing_address(physical_address), flags)
                 };
-                flusher.flush(&mut active_table);
+                flusher.flush();
             }
 
             base_virtual_address

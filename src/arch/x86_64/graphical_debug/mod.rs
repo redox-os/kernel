@@ -3,7 +3,7 @@ use spin::Mutex;
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
-use crate::paging::mapper::MapperFlushAll;
+use crate::paging::mapper::PageFlushAll;
 
 pub use self::debug::DebugDisplay;
 use self::display::Display;
@@ -41,7 +41,7 @@ pub fn init(active_table: &mut ActivePageTable) {
 
         let onscreen = physbaseptr + crate::PHYS_OFFSET;
         {
-            let mut flush_all = MapperFlushAll::new();
+            let flush_all = PageFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
             let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {
@@ -67,7 +67,7 @@ pub fn fini(active_table: &mut ActivePageTable) {
         let onscreen = display.onscreen.as_mut_ptr() as usize;
         let size = display.width * display.height;
         {
-            let mut flush_all = MapperFlushAll::new();
+            let flush_all = PageFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
             let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {

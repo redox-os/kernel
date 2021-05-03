@@ -92,7 +92,7 @@ impl RSDP {
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 let page = Page::containing_address(VirtualAddress::new(frame.start_address().data()));
                 let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::NO_EXECUTE);
-                result.flush(active_table);
+                result.flush();
             }
         }
 

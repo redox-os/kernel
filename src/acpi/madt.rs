@@ -59,7 +59,7 @@ impl Madt {
                 let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
                 let result = active_table.map_to(trampoline_page, trampoline_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
-                result.flush(active_table);
+                result.flush();
 
                 // Write trampoline, make sure TRAMPOLINE page is free for use
                 for i in 0..TRAMPOLINE_DATA.len() {
@@ -150,7 +150,7 @@ impl Madt {
 
                 // Unmap trampoline
                 let (result, _frame) = active_table.unmap_return(trampoline_page, false);
-                result.flush(active_table);
+                result.flush();
             }
         }
     }

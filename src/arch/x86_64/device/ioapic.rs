@@ -240,7 +240,7 @@ pub unsafe fn handle_ioapic(active_table: &mut ActivePageTable, madt_ioapic: &'s
     assert_eq!(active_table.translate_page(page), None);
 
     let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::GLOBAL | EntryFlags::WRITABLE | EntryFlags::NO_CACHE);
-    result.flush(active_table);
+    result.flush();
 
     let ioapic_registers = page.start_address().data() as *const u32;
     let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
