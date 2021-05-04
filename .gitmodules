@@ -1,10 +1,11 @@
 [submodule "syscall"]
 	path = syscall
 	url = https://gitlab.redox-os.org/redox-os/syscall.git
+	branch = aarch64-rebase
 [submodule "slab_allocator"]
 	path = slab_allocator
 	url = https://gitlab.redox-os.org/redox-os/slab_allocator
 [submodule "rmm"]
 	path = rmm
 	url = https://gitlab.redox-os.org/redox-os/rmm.git
-	branch = master
+	branch = aarch64-rebase

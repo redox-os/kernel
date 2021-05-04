@@ -148,7 +148,7 @@ impl UserInner {
         let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
 
-        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
+        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
         let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
         let mut grants = context.grants.write();
@@ -179,7 +179,7 @@ impl UserInner {
             let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
             let mut context = context_lock.write();
 
-            let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_table()) };
+            let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
             let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_GRANT_OFFSET)));
 
             let mut grants = context.grants.write();

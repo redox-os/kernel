@@ -46,7 +46,7 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
         // Remap rodata read-only, no execute
         PageFlags::new()
     } else {
-        // Remap everything else writable, no execute
+        // Remap everything else read-write, no execute
         PageFlags::new().write(true)
     }
 }

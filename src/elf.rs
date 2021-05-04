@@ -7,7 +7,10 @@ use goblin::elf::section_header::SHT_SYMTAB;
 #[cfg(target_arch = "x86")]
 pub use goblin::elf32::{header, program_header, section_header, sym};
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(
+    target_arch = "aarch64",
+    target_arch = "x86_64"
+))]
 pub use goblin::elf64::{header, program_header, section_header, sym};
 
 /// An ELF executable

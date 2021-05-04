@@ -4,7 +4,7 @@ use alloc::collections::BTreeMap;
 use core::alloc::{GlobalAlloc, Layout};
 use core::{iter, mem};
 use core::sync::atomic::Ordering;
-use crate::paging;
+use crate::paging::{ActivePageTable, PageTableType};
 use spin::RwLock;
 
 use crate::syscall::error::{Result, Error, EAGAIN};
@@ -79,18 +79,30 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
+            let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024]) };
             for b in fx.iter_mut() {
                 *b = 0;
             }
             let mut stack = vec![0; 65_536].into_boxed_slice();
             let offset = stack.len() - mem::size_of::<usize>();
+
+            #[cfg(target_arch = "x86_64")]
             unsafe {
                 let offset = stack.len() - mem::size_of::<usize>();
                 let func_ptr = stack.as_mut_ptr().add(offset);
                 *(func_ptr as *mut usize) = func as usize;
             }
-            context.arch.set_page_table(unsafe { paging::ActivePageTable::new().address() });
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                let context_id = context.id.into();
+                context.arch.set_lr(func as usize);
+                context.arch.set_context_handle();
+            }
+
+            context.arch.set_page_utable(unsafe { ActivePageTable::new(PageTableType::User).address() });
+            #[cfg(target_arch = "aarch64")]
+            context.arch.set_page_ktable(unsafe { ActivePageTable::new(PageTableType::Kernel).address() });
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
             context.kfx = Some(fx);

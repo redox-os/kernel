@@ -123,13 +123,24 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_GETPPID => getppid().map(ContextId::into),
                 SYS_CLONE => {
                     let b = CloneFlags::from_bits_truncate(b);
-                    let old_rsp = stack.iret.rsp;
-                    if b.contains(flag::CLONE_STACK) {
-                        stack.iret.rsp = c;
+
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        //TODO: CLONE_STACK
+                        let ret = clone(b, bp).map(ContextId::into);
+                        ret
                     }
-                    let ret = clone(b, bp).map(ContextId::into);
-                    stack.iret.rsp = old_rsp;
-                    ret
+
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        let old_rsp = stack.iret.rsp;
+                        if b.contains(flag::CLONE_STACK) {
+                            stack.iret.rsp = c;
+                        }
+                        let ret = clone(b, bp).map(ContextId::into);
+                        stack.iret.rsp = old_rsp;
+                        ret
+                    }
                 },
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),

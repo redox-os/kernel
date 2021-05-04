@@ -1,7 +1,7 @@
 use crate::context;
 use crate::context::memory::{page_flags, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
-use crate::paging::{ActivePageTable, VirtualAddress};
+use crate::paging::{ActivePageTable, PageTableType, VirtualAddress, VirtualAddressType};
 use crate::syscall::data::{Map, OldMap, StatVfs};
 use crate::syscall::error::*;
 use crate::syscall::flag::MapFlags;
@@ -48,7 +48,10 @@ impl Scheme for MemoryScheme {
                 // Make sure it's *absolutely* not mapped already
                 // TODO: Keep track of all allocated memory so this isn't necessary
 
-                let active_table = unsafe { ActivePageTable::new() };
+                let active_table = match VirtualAddress::new(map.address).get_type() {
+                    VirtualAddressType::User => unsafe { ActivePageTable::new(PageTableType::User) },
+                    VirtualAddressType::Kernel => unsafe { ActivePageTable::new(PageTableType::Kernel) }
+                };
 
                 for page in region.pages() {
                     if active_table.translate_page(page).is_some() {

@@ -10,6 +10,11 @@ pub use self::context::{Context, ContextId, ContextSnapshot, Status, WaitpidKey}
 pub use self::list::ContextList;
 pub use self::switch::switch;
 
+#[cfg(target_arch = "aarch64")]
+#[path = "arch/aarch64.rs"]
+mod arch;
+
+#[cfg(target_arch = "x86_64")]
 #[path = "arch/x86_64.rs"]
 mod arch;
 
@@ -52,7 +57,7 @@ pub fn init() {
     let mut contexts = contexts_mut();
     let context_lock = contexts.new_context().expect("could not initialize first context");
     let mut context = context_lock.write();
-    let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(512, 16)) as *mut [u8; 512]) };
+    let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024]) };
     for b in fx.iter_mut() {
         *b = 0;
     }

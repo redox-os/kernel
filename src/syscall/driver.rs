@@ -1,6 +1,6 @@
 use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
-use crate::paging::{ActivePageTable, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::paging::{ActivePageTable, PageFlags, PageTableType, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::context;
 use crate::context::memory::{Grant, Region};
@@ -18,6 +18,12 @@ fn enforce_root() -> Result<()> {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
+    Err(Error::new(syscall::error::ENOSYS))
+}
+
+#[cfg(target_arch = "x86_64")]
 pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
     enforce_root()?;
 
@@ -88,6 +94,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         if flags.contains(PHYSMAP_WRITE_COMBINE) {
             page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
         }
+        #[cfg(target_arch = "x86_64")] // TODO: AARCH64
         if flags.contains(PHYSMAP_NO_CACHE) {
             page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
         }
@@ -146,7 +153,11 @@ pub fn physunmap(virtual_address: usize) -> Result<usize> {
 pub fn virttophys(virtual_address: usize) -> Result<usize> {
     enforce_root()?;
 
-    let active_table = unsafe { ActivePageTable::new() };
+    let active_table = match VirtualAddress::new(virtual_address).get_type() {
+        VirtualAddressType::User => unsafe { ActivePageTable::new(PageTableType::User) },
+        VirtualAddressType::Kernel => unsafe { ActivePageTable::new(PageTableType::Kernel) }
+    };
+
     match active_table.translate(VirtualAddress::new(virtual_address)) {
         Some(physical_address) => Ok(physical_address.data()),
         None => Err(Error::new(EFAULT))
