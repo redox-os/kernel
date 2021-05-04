@@ -3,7 +3,7 @@
 
 use crate::memory::Frame;
 
-use super::PhysicalAddress;
+use super::{PageFlags, PhysicalAddress, RmmA, RmmArch};
 
 /// A page table entry
 #[derive(Debug)]
@@ -56,7 +56,7 @@ bitflags! {
 // These are translated to AArch64 specific Page and Table descriptors as and when needed.
 bitflags! {
     #[derive(Default)]
-    pub struct EntryFlags: u64 {
+    pub struct EntryFlags: usize {
         const PRESENT =             1 << 0;
         const HUGE_PAGE =           1 << 1;
         const GLOBAL =              1 << 2;
@@ -102,8 +102,8 @@ impl Entry {
     }
 
     /// Get the current entry flags
-    pub fn flags(&self) -> EntryFlags {
-        EntryFlags::from_bits_truncate(self.0)
+    pub fn flags(&self) -> PageFlags<RmmA> {
+        unsafe { PageFlags::from_data((self.0 as usize & RmmA::ENTRY_FLAGS_MASK) & !(COUNTER_MASK as usize)) }
     }
 
     /// Get the associated frame, if available, for a level 4, 3, or 2 page
@@ -138,17 +138,9 @@ impl Entry {
         self.0 = (frame.start_address().data() as u64) | flags.bits() | access_flag.bits() | (self.0 & COUNTER_MASK);
     }
 
-    pub fn set(&mut self, frame: Frame, flags: EntryFlags) {
+    pub fn set(&mut self, frame: Frame, flags: PageFlags<RmmA>) {
         debug_assert!(frame.start_address().data() & !ADDRESS_MASK == 0);
-        // ODDNESS Alert: We need to set the AF bit - despite this being a TableDescriptor!!!
-        // The Arm ARM says this bit (bit 10) is IGNORED in Table Descriptors so hopefully this is OK
-        let mut translated_flags = TableDescriptorFlags::AF | TableDescriptorFlags::TABLE;
-
-        if flags.contains(EntryFlags::PRESENT) {
-            translated_flags.insert(TableDescriptorFlags::VALID);
-        }
-
-        self.0 = (frame.start_address().data() as u64) | translated_flags.bits() | (self.0 & COUNTER_MASK);
+        self.0 = (frame.start_address().data() as u64) | (flags.data() as u64) | (self.0 & COUNTER_MASK);
     }
 
     /// Get bit 51 in entry, used as 1 of 9 bits (in 9 entries) used as a counter for the page table

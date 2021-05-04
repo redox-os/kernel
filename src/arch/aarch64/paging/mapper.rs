@@ -3,95 +3,25 @@ use core::ptr::Unique;
 
 use crate::memory::{allocate_frames, deallocate_frames, Frame};
 
-use super::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress, VirtualAddressType};
+use super::{ActivePageTable, Page, PAGE_SIZE, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 use super::entry::{EntryFlags, PageDescriptorFlags};
 use super::table::{self, Table, Level4};
+use super::RmmA;
 
-/// In order to enforce correct paging operations in the kernel, these types
-/// are returned on any mapping operation to get the code involved to specify
-/// how it intends to flush changes to a page table
-#[must_use = "The page table must be flushed, or the changes unsafely ignored"]
-pub struct MapperFlush(Page);
+pub use rmm::{PageFlush, PageFlushAll};
 
-impl MapperFlush {
-    /// Create a new page flush promise
-    pub fn new(page: Page) -> MapperFlush {
-        MapperFlush(page)
-    }
-
-    /// Flush this page in the active table
-    pub fn flush(self, table: &mut ActivePageTable) {
-        table.flush(self.0);
-        mem::forget(self);
-    }
-
-    /// Ignore the flush. This is unsafe, and a reason should be provided for use
-    pub unsafe fn ignore(self) {
-        mem::forget(self);
-    }
-}
-
-/// A flush cannot be dropped, it must be consumed
-impl Drop for MapperFlush {
-    fn drop(&mut self) {
-        panic!("Mapper flush was not utilized");
-    }
-}
-
-/// To allow for combining multiple flushes into one, we have a way of flushing
-/// the active table, which can consume `MapperFlush` structs
-#[must_use = "The page table must be flushed, or the changes unsafely ignored"]
-pub struct MapperFlushAll(bool);
-
-impl MapperFlushAll {
-    /// Create a new promise to flush all mappings
-    pub fn new() -> MapperFlushAll {
-        MapperFlushAll(false)
-    }
-
-    /// Consume a single page flush
-    pub fn consume(&mut self, flush: MapperFlush) {
-        self.0 = true;
-        mem::forget(flush);
-    }
-
-    /// Flush the active page table
-    pub fn flush(self, table: &mut ActivePageTable) {
-        if self.0 {
-            table.flush_all();
-        }
-        mem::forget(self);
-    }
-
-    /// Ignore the flush. This is unsafe, and a reason should be provided for use
-    pub unsafe fn ignore(self) {
-        mem::forget(self);
-    }
-}
-
-/// A flush cannot be dropped, it must be consumed
-impl Drop for MapperFlushAll {
-    fn drop(&mut self) {
-        panic!("Mapper flush all was not utilized");
-    }
-}
-
+#[derive(Debug)]
 pub struct Mapper {
     p4: Unique<Table<Level4>>,
-    pub mapper_type: MapperType
-}
-
-pub enum MapperType {
-    User,
-    Kernel
+    pub table_kind: TableKind
 }
 
 impl Mapper {
     /// Create a new page table
-    pub unsafe fn new(mapper_type: MapperType) -> Mapper {
-        match mapper_type {
-            MapperType::User => Mapper { p4: Unique::new_unchecked(table::U4), mapper_type },
-            MapperType::Kernel => Mapper { p4: Unique::new_unchecked(table::P4), mapper_type }
+    pub unsafe fn new(table_kind: TableKind) -> Mapper {
+        match table_kind {
+            TableKind::User => Mapper { p4: Unique::new_unchecked(table::U4), table_kind },
+            TableKind::Kernel => Mapper { p4: Unique::new_unchecked(table::P4), table_kind }
         }
     }
 
@@ -104,105 +34,44 @@ impl Mapper {
     }
 
     /// Map a page to a frame
-    pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) -> MapperFlush {
+    pub fn map_to(&mut self, page: Page, frame: Frame, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let p3 = self.p4_mut().next_table_create(page.p4_index());
         let p2 = p3.next_table_create(page.p3_index());
         let p1 = p2.next_table_create(page.p2_index());
-        let mut translated_flags: PageDescriptorFlags = PageDescriptorFlags::VALID | PageDescriptorFlags::PAGE | PageDescriptorFlags::AF;
-
-        if flags.contains(EntryFlags::NO_EXECUTE) {
-            match page.start_address().kind() {
-                TableKind::User => {
-                    translated_flags.insert(PageDescriptorFlags::UXN);
-                },
-                TableKind::Kernel => {
-                    translated_flags.insert(PageDescriptorFlags::PXN);
-                },
-            }
-        }
-
-        if flags.contains(EntryFlags::WRITABLE) {
-            if flags.contains(EntryFlags::USER_ACCESSIBLE) {
-                translated_flags.remove(PageDescriptorFlags::AP_2);
-                translated_flags.insert(PageDescriptorFlags::AP_1);
-            } else {
-                translated_flags.remove(PageDescriptorFlags::AP_2);
-                translated_flags.remove(PageDescriptorFlags::AP_1);
-            }
-        } else {
-            if flags.contains(EntryFlags::USER_ACCESSIBLE) {
-                translated_flags.insert(PageDescriptorFlags::AP_2);
-                translated_flags.insert(PageDescriptorFlags::AP_1);
-            } else {
-                translated_flags.insert(PageDescriptorFlags::AP_2);
-                translated_flags.remove(PageDescriptorFlags::AP_1);
-            }
-        }
 
         assert!(p1[page.p1_index()].is_unused(),
             "{:X}: Set to {:X}: {:?}, requesting {:X}: {:?}",
             page.start_address().data(),
-            p1[page.p1_index()].address().data(), p1[page.p1_index()].page_descriptor_entry_flags(),
-            frame.start_address().data(), translated_flags);
+            p1[page.p1_index()].address().data(), p1[page.p1_index()].flags(),
+            frame.start_address().data(), flags);
         p1.increment_entry_count();
-        p1[page.p1_index()].page_descriptor_entry_set(frame, translated_flags);
-        MapperFlush::new(page)
+        p1[page.p1_index()].set(frame, flags);
+        PageFlush::new(page.start_address())
     }
 
     /// Map a page to the next free frame
-    pub fn map(&mut self, page: Page, flags: EntryFlags) -> MapperFlush {
+    pub fn map(&mut self, page: Page, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let frame = allocate_frames(1).expect("out of frames");
         self.map_to(page, frame, flags)
     }
 
     /// Update flags for a page
-    pub fn remap(&mut self, page: Page, flags: EntryFlags) -> MapperFlush {
+    pub fn remap(&mut self, page: Page, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("failed to remap: no p3");
         let p2 = p3.next_table_mut(page.p3_index()).expect("failed to remap: no p2");
         let p1 = p2.next_table_mut(page.p2_index()).expect("failed to remap: no p1");
         let frame = p1[page.p1_index()].pointed_frame_at_l1().expect("failed to remap: not mapped");
-        let mut translated_flags: PageDescriptorFlags = PageDescriptorFlags::VALID | PageDescriptorFlags::PAGE | PageDescriptorFlags::AF;
-
-        if flags.contains(EntryFlags::NO_EXECUTE) {
-            match page.start_address().get_type() {
-                VirtualAddressType::User => {
-                    translated_flags.insert(PageDescriptorFlags::UXN);
-                },
-                VirtualAddressType::Kernel => {
-                    translated_flags.insert(PageDescriptorFlags::PXN);
-                },
-            }
-        }
-
-        if flags.contains(EntryFlags::WRITABLE) {
-            if flags.contains(EntryFlags::USER_ACCESSIBLE) {
-                translated_flags.remove(PageDescriptorFlags::AP_2);
-                translated_flags.insert(PageDescriptorFlags::AP_1);
-            } else {
-                translated_flags.remove(PageDescriptorFlags::AP_2);
-                translated_flags.remove(PageDescriptorFlags::AP_1);
-            }
-        } else {
-            if flags.contains(EntryFlags::USER_ACCESSIBLE) {
-                translated_flags.insert(PageDescriptorFlags::AP_2);
-                translated_flags.insert(PageDescriptorFlags::AP_1);
-            } else {
-                translated_flags.insert(PageDescriptorFlags::AP_2);
-                translated_flags.remove(PageDescriptorFlags::AP_1);
-            }
-        }
-
-        p1[page.p1_index()].page_descriptor_entry_set(frame, translated_flags);
-        MapperFlush::new(page)
+        p1[page.p1_index()].set(frame, flags);
+        PageFlush::new(page.start_address())
     }
 
     /// Identity map a frame
-    pub fn identity_map(&mut self, frame: Frame, flags: EntryFlags) -> MapperFlush {
+    pub fn identity_map(&mut self, frame: Frame, flags: PageFlags<RmmA>) -> PageFlush<RmmA> {
         let page = Page::containing_address(VirtualAddress::new(frame.start_address().data()));
         self.map_to(page, frame, flags)
     }
 
-    fn unmap_inner(&mut self, page: &Page, keep_parents: bool) -> Frame {
+    fn unmap_inner(&mut self, page: Page, keep_parents: bool) -> Frame {
         let frame;
 
         let p4 = self.p4_mut();
@@ -270,16 +139,16 @@ impl Mapper {
     }
 
     /// Unmap a page
-    pub fn unmap(&mut self, page: Page) -> MapperFlush {
-        let frame = self.unmap_inner(&page, false);
+    pub fn unmap(&mut self, page: Page) -> PageFlush<RmmA> {
+        let frame = self.unmap_inner(page, false);
         deallocate_frames(frame, 1);
-        MapperFlush::new(page)
+        PageFlush::new(page.start_address())
     }
 
     /// Unmap a page, return frame without free
-    pub fn unmap_return(&mut self, page: Page, keep_parents: bool) -> (MapperFlush, Frame) {
-        let frame = self.unmap_inner(&page, keep_parents);
-        (MapperFlush::new(page), frame)
+    pub fn unmap_return(&mut self, page: Page, keep_parents: bool) -> (PageFlush<RmmA>, Frame) {
+        let frame = self.unmap_inner(page, keep_parents);
+        (PageFlush::new(page.start_address()), frame)
     }
 
     pub fn translate_page(&self, page: Page) -> Option<Frame> {
@@ -289,52 +158,11 @@ impl Mapper {
             .and_then(|p1| p1[page.p1_index()].pointed_frame())
     }
 
-    pub fn translate_page_flags(&self, page: Page) -> Option<EntryFlags> {
-        let mut translated_flags: EntryFlags = Default::default();
-
-        if let Some(flags) = self.p4().next_table(page.p4_index())
+    pub fn translate_page_flags(&self, page: Page) -> Option<PageFlags<RmmA>> {
+        self.p4().next_table(page.p4_index())
             .and_then(|p3| p3.next_table(page.p3_index()))
             .and_then(|p2| p2.next_table(page.p2_index()))
-            .and_then(|p1| Some(p1[page.p1_index()].page_descriptor_entry_flags())) {
-
-                if flags.contains(PageDescriptorFlags::VALID) {
-                    translated_flags.insert(EntryFlags::PRESENT);
-                }
-
-                if flags.contains(PageDescriptorFlags::AF) {
-                    translated_flags.insert(EntryFlags::AF);
-                }
-                translated_flags.insert(EntryFlags::AF);
-
-                if flags.contains(PageDescriptorFlags::UXN) || flags.contains(PageDescriptorFlags::PXN) {
-                    translated_flags.insert(EntryFlags::NO_EXECUTE);
-                }
-
-                if !flags.contains(PageDescriptorFlags::AP_2) && !flags.contains(PageDescriptorFlags::AP_1) {
-                    translated_flags.insert(EntryFlags::WRITABLE);
-                    translated_flags.remove(EntryFlags::USER_ACCESSIBLE);
-                }
-
-                if !flags.contains(PageDescriptorFlags::AP_2) && flags.contains(PageDescriptorFlags::AP_1) {
-                    translated_flags.insert(EntryFlags::WRITABLE);
-                    translated_flags.insert(EntryFlags::USER_ACCESSIBLE);
-                }
-
-                if flags.contains(PageDescriptorFlags::AP_2) && !flags.contains(PageDescriptorFlags::AP_1) {
-                    translated_flags.remove(EntryFlags::WRITABLE);
-                    translated_flags.remove(EntryFlags::USER_ACCESSIBLE);
-                }
-
-                if flags.contains(PageDescriptorFlags::AP_2) && flags.contains(PageDescriptorFlags::AP_1) {
-                    translated_flags.remove(EntryFlags::WRITABLE);
-                    translated_flags.insert(EntryFlags::USER_ACCESSIBLE);
-                }
-
-                Some(translated_flags)
-            }
-        else {
-            None
-        }
+            .and_then(|p1| Some(p1[page.p1_index()].flags()))
     }
 
     /// Translate a virtual address to a physical one
