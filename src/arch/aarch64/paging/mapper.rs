@@ -111,11 +111,11 @@ impl Mapper {
         let mut translated_flags: PageDescriptorFlags = PageDescriptorFlags::VALID | PageDescriptorFlags::PAGE | PageDescriptorFlags::AF;
 
         if flags.contains(EntryFlags::NO_EXECUTE) {
-            match page.start_address().get_type() {
-                VirtualAddressType::User => {
+            match page.start_address().kind() {
+                TableKind::User => {
                     translated_flags.insert(PageDescriptorFlags::UXN);
                 },
-                VirtualAddressType::Kernel => {
+                TableKind::Kernel => {
                     translated_flags.insert(PageDescriptorFlags::PXN);
                 },
             }

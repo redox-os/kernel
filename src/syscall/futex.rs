@@ -10,7 +10,7 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::context::{self, Context};
 use crate::time;
 use crate::memory::PhysicalAddress;
-use crate::paging::{ActivePageTable, VirtualAddress};
+use crate::paging::{ActivePageTable, TableKind, VirtualAddress};
 use crate::syscall::data::TimeSpec;
 use crate::syscall::error::{Error, Result, ESRCH, EAGAIN, EFAULT, EINVAL};
 use crate::syscall::flag::{FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE};
@@ -45,7 +45,7 @@ pub fn futexes_mut() -> RwLockWriteGuard<'static, FutexList> {
 // pointee cannot be changed by another thread, which could make atomic ops useless.
 pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) -> Result<usize> {
     let target_physaddr = unsafe {
-        let active_table = ActivePageTable::new();
+        let active_table = ActivePageTable::new(TableKind::User);
         let virtual_address = VirtualAddress::new(addr as *mut i32 as usize);
 
         // FIXME: Already validated in syscall/mod.rs
@@ -133,7 +133,7 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
         },
         FUTEX_REQUEUE => {
             let addr2_physaddr = unsafe {
-                let active_table = ActivePageTable::new();
+                let active_table = ActivePageTable::new(TableKind::User);
 
                 let addr2_safe = validate_slice_mut(addr2, 1).map(|addr2_safe| &mut addr2_safe[0])?;
                 let addr2_virt = VirtualAddress::new(addr2_safe as *mut i32 as usize);

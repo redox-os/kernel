@@ -21,7 +21,7 @@ use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::allocate_frames;
 use crate::paging::mapper::PageFlushAll;
 use crate::paging::temporary_page::TemporaryPage;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, PageTableType, VirtualAddress, PAGE_SIZE};
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, TableKind, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
@@ -352,8 +352,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
             context.arch = arch;
 
-            let mut active_utable = unsafe { ActivePageTable::new(PageTableType::User) };
-            let mut active_ktable = unsafe { ActivePageTable::new(PageTableType::Kernel) };
+            let mut active_utable = unsafe { ActivePageTable::new(TableKind::User) };
+            let mut active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
 
             let mut temporary_upage = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET)));
             let mut temporary_kpage = TemporaryPage::new(Page::containing_address(VirtualAddress::new(crate::KERNEL_TMP_MISC_OFFSET)));
@@ -399,9 +399,9 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
             // Copy physmap mapping
             {
-                let frame = active_table.p4()[crate::PHYS_PML4].pointed_frame().expect("physmap not mapped");
-                let flags = active_table.p4()[crate::PHYS_PML4].flags();
-                active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+                let frame = active_ktable.p4()[crate::PHYS_PML4].pointed_frame().expect("physmap not mapped");
+                let flags = active_ktable.p4()[crate::PHYS_PML4].flags();
+                active_ktable.with(&mut new_ktable, &mut temporary_kpage, |mapper| {
                     mapper.p4_mut()[crate::PHYS_PML4].set(frame, flags);
                 });
             }
@@ -1365,7 +1365,7 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
     let end_address = address.checked_add(end_offset).ok_or(Error::new(EFAULT))?;
 
-    let mut active_table = unsafe { ActivePageTable::new(PageTableType::User) };
+    let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
 
     let flush_all = PageFlushAll::new();
 

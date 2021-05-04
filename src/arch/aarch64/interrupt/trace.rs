@@ -1,7 +1,7 @@
 use core::mem;
 use goblin::elf::sym;
 
-use crate::paging::{ActivePageTable, PageTableType, VirtualAddress};
+use crate::paging::{ActivePageTable, TableKind, VirtualAddress};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
@@ -12,8 +12,8 @@ pub unsafe fn stack_trace() {
 
     println!("TRACE: {:>016x}", fp);
     //Maximum 64 frames
-    let active_ktable = ActivePageTable::new(PageTableType::Kernel);
-    let active_utable = ActivePageTable::new(PageTableType::User);
+    let active_ktable = ActivePageTable::new(TableKind::Kernel);
+    let active_utable = ActivePageTable::new(TableKind::User);
     let in_kernel_or_user_table = |ptr| {
         active_ktable.translate(VirtualAddress::new(ptr)).is_some() ||
         active_utable.translate(VirtualAddress::new(ptr)).is_some()

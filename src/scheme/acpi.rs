@@ -17,7 +17,7 @@ use spin::{Mutex, RwLock};
 
 use crate::acpi::sdt::Sdt;
 use crate::acpi::SdtSignature;
-use crate::paging::ActivePageTable;
+use crate::paging::{ActivePageTable, TableKind};
 
 #[derive(Clone, Copy)]
 struct PhysSlice {
@@ -92,7 +92,7 @@ enum Handle {
 
 impl AcpiScheme {
     fn get_tables() -> Vec<(SdtSignature, PhysSlice)> {
-        let mut active_table = unsafe { ActivePageTable::new() };
+        let mut active_table = unsafe { ActivePageTable::new(TableKind::Kernel) };
 
         let mut tables = Vec::new();
 
@@ -427,7 +427,7 @@ impl Scheme for AcpiScheme {
                 ) = self.tables[index];
                 assert_eq!(phys_ptr, old_virt);
                 let new_virt =
-                    crate::acpi::get_sdt(phys_ptr, unsafe { &mut ActivePageTable::new() })
+                    crate::acpi::get_sdt(phys_ptr, unsafe { &mut ActivePageTable::new(TableKind::Kernel) })
                         as *const Sdt as usize;
 
                 let table_contents =

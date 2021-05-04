@@ -9,10 +9,10 @@ use crate::device::cpu::registers::{control_regs, tlb};
 use crate::memory::{allocate_frames, Frame};
 
 use self::entry::{EntryFlags, TableDescriptorFlags};
-use self::mapper::{Mapper, MapperFlushAll, MapperType};
+use self::mapper::{Mapper, MapperFlushAll};
 use self::temporary_page::TemporaryPage;
 
-pub use rmm::PhysicalAddress;
+pub use rmm::{PhysicalAddress, TableKind, VirtualAddress};
 
 pub mod entry;
 pub mod mapper;
@@ -211,11 +211,6 @@ pub struct ActivePageTable {
     locked: bool,
 }
 
-pub enum PageTableType {
-    User,
-    Kernel
-}
-
 impl Deref for ActivePageTable {
     type Target = Mapper;
 
@@ -232,24 +227,18 @@ impl DerefMut for ActivePageTable {
 
 impl ActivePageTable {
     //TODO: table_type argument
-    pub unsafe fn new(table_type: PageTableType) -> ActivePageTable {
+    pub unsafe fn new(table_kind: TableKind) -> ActivePageTable {
         page_table_lock();
         ActivePageTable {
-            mapper: Mapper::new(match table_type {
-                PageTableType::User => MapperType::User,
-                PageTableType::Kernel => MapperType::Kernel,
-            }),
+            mapper: Mapper::new(table_kind),
             locked: true,
         }
     }
 
     //TODO: table_type argument
-    pub unsafe fn new_unlocked(table_type: PageTableType) -> ActivePageTable {
+    pub unsafe fn new_unlocked(table_kind: TableKind) -> ActivePageTable {
         ActivePageTable {
-            mapper: Mapper::new(match table_type {
-                PageTableType::User => MapperType::User,
-                PageTableType::Kernel => MapperType::Kernel,
-            }),
+            mapper: Mapper::new(table_kind),
             locked: false,
         }
     }
@@ -373,34 +362,6 @@ impl InactivePageTable {
 
     pub unsafe fn address(&self) -> usize {
         self.p4_frame.start_address().data()
-    }
-}
-
-/// A virtual address.
-#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct VirtualAddress(usize);
-
-#[derive(Debug, PartialEq)]
-pub enum VirtualAddressType {
-    User,
-    Kernel
-}
-
-impl VirtualAddress {
-    pub fn new(address: usize) -> Self {
-        VirtualAddress(address)
-    }
-
-    pub fn data(&self) -> usize {
-        self.0
-    }
-
-    pub fn get_type(&self) -> VirtualAddressType {
-        if ((self.0 >> 48) & 0xffff) == 0xffff {
-            VirtualAddressType::Kernel
-        } else {
-            VirtualAddressType::User
-        }
     }
 }
 
