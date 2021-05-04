@@ -12,7 +12,7 @@ use self::entry::EntryFlags;
 use self::mapper::{Mapper, MapperFlushAll};
 use self::temporary_page::TemporaryPage;
 
-pub use rmm::{PhysicalAddress, VirtualAddress};
+pub use rmm::PhysicalAddress;
 
 pub mod entry;
 pub mod mapper;
@@ -186,7 +186,7 @@ pub unsafe fn init(
 
     init_pat();
 
-    let mut active_table = ActivePageTable::new_unlocked();
+    let mut active_table = ActivePageTable::new_unlocked(PageTableType::User);
 
     let flush_all = map_tss(cpu_id, &mut active_table);
     flush_all.flush(&mut active_table);
@@ -200,7 +200,7 @@ pub unsafe fn init_ap(
 ) -> usize {
     init_pat();
 
-    let mut active_table = ActivePageTable::new_unlocked();
+    let mut active_table = ActivePageTable::new_unlocked(PageTableType::User);
 
     let mut new_table = InactivePageTable::from_address(bsp_table);
 
@@ -227,6 +227,11 @@ pub struct ActivePageTable {
     locked: bool,
 }
 
+pub enum PageTableType {
+    User,
+    Kernel
+}
+
 impl Deref for ActivePageTable {
     type Target = Mapper;
 
@@ -242,7 +247,7 @@ impl DerefMut for ActivePageTable {
 }
 
 impl ActivePageTable {
-    pub unsafe fn new() -> ActivePageTable {
+    pub unsafe fn new(_table_type: PageTableType) -> ActivePageTable {
         page_table_lock();
         ActivePageTable {
             mapper: Mapper::new(),
@@ -250,7 +255,7 @@ impl ActivePageTable {
         }
     }
 
-    pub unsafe fn new_unlocked() -> ActivePageTable {
+    pub unsafe fn new_unlocked(_table_type: PageTableType) -> ActivePageTable {
         ActivePageTable {
             mapper: Mapper::new(),
             locked: false,
@@ -373,6 +378,34 @@ impl InactivePageTable {
 
     pub unsafe fn address(&self) -> usize {
         self.p4_frame.start_address().data()
+    }
+}
+
+/// A virtual address.
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct VirtualAddress(usize);
+
+#[derive(Debug, PartialEq)]
+pub enum VirtualAddressType {
+    User,
+    Kernel
+}
+
+impl VirtualAddress {
+    pub fn new(address: usize) -> Self {
+        VirtualAddress(address)
+    }
+
+    pub fn data(&self) -> usize {
+        self.0
+    }
+
+    pub fn get_type(&self) -> VirtualAddressType {
+        if ((self.0 >> 48) & 0xffff) == 0xffff {
+            VirtualAddressType::Kernel
+        } else {
+            VirtualAddressType::User
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use core::{mem, str};
 use goblin::elf::sym;
 use rustc_demangle::demangle;
 
-use crate::paging::{ActivePageTable, VirtualAddress};
+use crate::paging::{ActivePageTable, PageTableType, VirtualAddress};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
@@ -13,7 +13,7 @@ pub unsafe fn stack_trace() {
 
     println!("TRACE: {:>016X}", rbp);
     //Maximum 64 frames
-    let active_table = ActivePageTable::new();
+    let active_table = ActivePageTable::new(PageTableType::User);
     for _frame in 0..64 {
         if let Some(rip_rbp) = rbp.checked_add(mem::size_of::<usize>()) {
             if active_table.translate(VirtualAddress::new(rbp)).is_some() && active_table.translate(VirtualAddress::new(rip_rbp)).is_some() {

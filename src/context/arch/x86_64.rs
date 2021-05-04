@@ -54,7 +54,7 @@ impl Context {
         }
     }
 
-    pub fn get_page_table(&mut self) -> usize {
+    pub fn get_page_utable(&mut self) -> usize {
         self.cr3
     }
 
@@ -102,7 +102,7 @@ impl Context {
         self.fx = address;
     }
 
-    pub fn set_page_table(&mut self, address: usize) {
+    pub fn set_page_utable(&mut self, address: usize) {
         self.cr3 = address;
     }
 

@@ -363,14 +363,22 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
                 InactivePageTable::new(frame, &mut active_utable, &mut temporary_upage)
             };
+            context.arch.set_page_utable(unsafe { new_utable.address() });
 
+            #[cfg(target_arch = "aarch64")]
             let mut new_ktable = {
-                let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
-                InactivePageTable::new(frame, &mut active_ktable, &mut temporary_kpage)
+                let mut new_ktable = {
+                    let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
+                    InactivePageTable::new(frame, &mut active_ktable, &mut temporary_kpage)
+                };
+                context.arch.set_page_ktable(unsafe { new_ktable.address() });
+                new_ktable
             };
 
-            context.arch.set_page_utable(unsafe { new_utable.address() });
-            context.arch.set_page_ktable(unsafe { new_ktable.address() });
+            #[cfg(target_arch = "x86_64")]
+            let mut new_ktable = unsafe {
+                InactivePageTable::from_address(new_utable.address())
+            };
 
             // Copy kernel image mapping
             {
@@ -531,7 +539,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     }
                 }
             }
-            
+
             // Setup user TLS
             if let Some(mut tls) = tls_opt {
                 // Copy TLS mapping
