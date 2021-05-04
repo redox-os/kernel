@@ -42,7 +42,7 @@ raw-cpuid = "8.0.0"
 x86 = { version = "0.32.0", default-features = false }
 
 [features]
-default = ["serial_debug"]
+default = ["acpi", "multi_core", "serial_debug"]
 acpi = []
 doc = []
 graphical_debug = []

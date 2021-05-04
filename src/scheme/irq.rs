@@ -83,7 +83,7 @@ impl IrqScheme {
 
         *HANDLES.write() = Some(BTreeMap::new());
 
-        #[cfg(feature = "acpi")]
+        #[cfg(all(feature = "acpi", target_arch = "x86_64"))]
         let cpus = {
             use crate::acpi::madt::*;
 
@@ -94,7 +94,7 @@ impl IrqScheme {
                 _ => None,
             }).collect::<Vec<_>>()
         };
-        #[cfg(not(feature = "acpi"))]
+        #[cfg(not(all(feature = "acpi", target_arch = "x86_64")))]
         let cpus = vec!(0);
 
         IrqScheme {
