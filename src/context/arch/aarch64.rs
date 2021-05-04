@@ -225,7 +225,7 @@ impl Context {
 #[cold]
 #[inline(never)]
 #[naked]
-pub unsafe fn switch_to(prev: &mut Context, next: &mut Context) {
+pub unsafe extern "C" fn switch_to(prev: &mut Context, next: &mut Context) {
     let mut float_regs = &mut *(prev.fx_address as *mut FloatRegisters);
     asm!(
         "stp q0, q1, [{0}, #16 * 0]",
@@ -376,7 +376,8 @@ pub unsafe fn switch_to(prev: &mut Context, next: &mut Context) {
     llvm_asm!("mov   $0, sp" : "=r"(prev.sp) : : "memory" : "volatile");
     llvm_asm!("mov   sp, $0" : : "r"(next.sp) : "memory" : "volatile");
 
-    CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+    // Jump to switch hook
+    asm!("b {switch_hook}", switch_hook = sym crate::context::switch_finish_hook);
 }
 
 #[allow(dead_code)]
