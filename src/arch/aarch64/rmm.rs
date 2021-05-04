@@ -1,7 +1,7 @@
 use rmm::{
     KILOBYTE,
     MEGABYTE,
-    AArch64Arch,
+    AArch64Arch as RmmA,
     Arch,
     BuddyAllocator,
     BumpAllocator,
@@ -42,13 +42,13 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
 
     if in_section!(text) {
         // Remap text read-only, execute
-        PageFlags::new().write(false).execute(true)
+        PageFlags::new().execute(true)
     } else if in_section!(rodata) {
         // Remap rodata read-only, no execute
-        PageFlags::new().write(false).execute(false)
+        PageFlags::new()
     } else {
         // Remap everything else read-write, no execute
-        PageFlags::new().write(true).execute(false)
+        PageFlags::new().write(true)
     }
 }
 
@@ -181,7 +181,7 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kerne
 }
 
 pub struct LockedAllocator {
-    inner: Mutex<Option<BuddyAllocator<AArch64Arch>>>,
+    inner: Mutex<Option<BuddyAllocator<RmmA>>>,
 }
 
 impl LockedAllocator {
@@ -223,21 +223,21 @@ static mut AREAS: [MemoryArea; 512] = [MemoryArea {
 
 pub static mut FRAME_ALLOCATOR: LockedAllocator = LockedAllocator::new();
 
-pub unsafe fn mapper_new(table_addr: PhysicalAddress) -> PageMapper<'static, AArch64Arch, LockedAllocator> {
+pub unsafe fn mapper_new(table_addr: PhysicalAddress) -> PageMapper<'static, RmmA, LockedAllocator> {
     PageMapper::new(table_addr, &mut FRAME_ALLOCATOR)
 }
 
 //TODO: global paging lock?
-pub unsafe fn mapper_create() -> Option<PageMapper<'static, AArch64Arch, LockedAllocator>> {
+pub unsafe fn mapper_create() -> Option<PageMapper<'static, RmmA, LockedAllocator>> {
     PageMapper::create(&mut FRAME_ALLOCATOR)
 }
 
-pub unsafe fn mapper_current() -> PageMapper<'static, AArch64Arch, LockedAllocator> {
+pub unsafe fn mapper_current() -> PageMapper<'static, RmmA, LockedAllocator> {
     PageMapper::current(&mut FRAME_ALLOCATOR)
 }
 
 pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
-    type A = AArch64Arch;
+    type A = RmmA;
 
     let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let kernel_end = kernel_base + kernel_size_aligned;

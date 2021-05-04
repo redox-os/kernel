@@ -7,8 +7,7 @@ use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::memory::{Frame};
-use crate::paging::{ActivePageTable, PageTableType, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
-use crate::paging::entry::{EntryFlags};
+use crate::paging::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
 
 use crate::allocator;
 use crate::device;
@@ -174,7 +173,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 }
 
 #[naked]
-pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, singlestep: bool) -> ! {
+pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, _singlestep: u32) -> ! {
     let cpu_id: usize = 0;
     let spsr: u32 = 0;
 

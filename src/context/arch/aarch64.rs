@@ -220,163 +220,163 @@ impl Context {
         println!("x9: 0x{:016x}", self.x9);
         println!("x8: 0x{:016x}", self.x8);
     }
+}
 
-    #[cold]
-    #[inline(never)]
-    #[naked]
-    pub unsafe fn switch_to(&mut self, next: &mut Context) {
-        let mut float_regs = &mut *(self.fx_address as *mut FloatRegisters);
+#[cold]
+#[inline(never)]
+#[naked]
+pub unsafe fn switch_to(prev: &mut Context, next: &mut Context) {
+    let mut float_regs = &mut *(prev.fx_address as *mut FloatRegisters);
+    asm!(
+        "stp q0, q1, [{0}, #16 * 0]",
+        "stp q2, q3, [{0}, #16 * 2]",
+        "stp q4, q5, [{0}, #16 * 4]",
+        "stp q6, q7, [{0}, #16 * 6]",
+        "stp q8, q9, [{0}, #16 * 8]",
+        "stp q10, q11, [{0}, #16 * 10]",
+        "stp q12, q13, [{0}, #16 * 12]",
+        "stp q14, q15, [{0}, #16 * 14]",
+        "stp q16, q17, [{0}, #16 * 16]",
+        "stp q18, q19, [{0}, #16 * 18]",
+        "stp q20, q21, [{0}, #16 * 20]",
+        "stp q22, q23, [{0}, #16 * 22]",
+        "stp q24, q25, [{0}, #16 * 24]",
+        "stp q26, q27, [{0}, #16 * 26]",
+        "stp q28, q29, [{0}, #16 * 28]",
+        "stp q30, q31, [{0}, #16 * 30]",
+        "mrs {1}, fpcr",
+        "mrs {2}, fpsr",
+        in(reg) &mut float_regs.fp_simd_regs,
+        out(reg) float_regs.fpcr,
+        out(reg) float_regs.fpsr
+    );
+
+    prev.fx_loadable = true;
+
+    if next.fx_loadable {
+        let mut float_regs = &mut *(next.fx_address as *mut FloatRegisters);
         asm!(
-            "stp q0, q1, [{0}, #16 * 0]",
-            "stp q2, q3, [{0}, #16 * 2]",
-            "stp q4, q5, [{0}, #16 * 4]",
-            "stp q6, q7, [{0}, #16 * 6]",
-            "stp q8, q9, [{0}, #16 * 8]",
-            "stp q10, q11, [{0}, #16 * 10]",
-            "stp q12, q13, [{0}, #16 * 12]",
-            "stp q14, q15, [{0}, #16 * 14]",
-            "stp q16, q17, [{0}, #16 * 16]",
-            "stp q18, q19, [{0}, #16 * 18]",
-            "stp q20, q21, [{0}, #16 * 20]",
-            "stp q22, q23, [{0}, #16 * 22]",
-            "stp q24, q25, [{0}, #16 * 24]",
-            "stp q26, q27, [{0}, #16 * 26]",
-            "stp q28, q29, [{0}, #16 * 28]",
-            "stp q30, q31, [{0}, #16 * 30]",
-            "mrs {1}, fpcr",
-            "mrs {2}, fpsr",
+            "ldp q0, q1, [{0}, #16 * 0]",
+            "ldp q2, q3, [{0}, #16 * 2]",
+            "ldp q4, q5, [{0}, #16 * 4]",
+            "ldp q6, q7, [{0}, #16 * 6]",
+            "ldp q8, q9, [{0}, #16 * 8]",
+            "ldp q10, q11, [{0}, #16 * 10]",
+            "ldp q12, q13, [{0}, #16 * 12]",
+            "ldp q14, q15, [{0}, #16 * 14]",
+            "ldp q16, q17, [{0}, #16 * 16]",
+            "ldp q18, q19, [{0}, #16 * 18]",
+            "ldp q20, q21, [{0}, #16 * 20]",
+            "ldp q22, q23, [{0}, #16 * 22]",
+            "ldp q24, q25, [{0}, #16 * 24]",
+            "ldp q26, q27, [{0}, #16 * 26]",
+            "ldp q28, q29, [{0}, #16 * 28]",
+            "ldp q30, q31, [{0}, #16 * 30]",
+            "msr fpcr, {1}",
+            "msr fpsr, {2}",
             in(reg) &mut float_regs.fp_simd_regs,
-            out(reg) float_regs.fpcr,
-            out(reg) float_regs.fpsr
+            in(reg) float_regs.fpcr,
+            in(reg) float_regs.fpsr
         );
-
-        self.fx_loadable = true;
-
-        if next.fx_loadable {
-            let mut float_regs = &mut *(next.fx_address as *mut FloatRegisters);
-            asm!(
-                "ldp q0, q1, [{0}, #16 * 0]",
-                "ldp q2, q3, [{0}, #16 * 2]",
-                "ldp q4, q5, [{0}, #16 * 4]",
-                "ldp q6, q7, [{0}, #16 * 6]",
-                "ldp q8, q9, [{0}, #16 * 8]",
-                "ldp q10, q11, [{0}, #16 * 10]",
-                "ldp q12, q13, [{0}, #16 * 12]",
-                "ldp q14, q15, [{0}, #16 * 14]",
-                "ldp q16, q17, [{0}, #16 * 16]",
-                "ldp q18, q19, [{0}, #16 * 18]",
-                "ldp q20, q21, [{0}, #16 * 20]",
-                "ldp q22, q23, [{0}, #16 * 22]",
-                "ldp q24, q25, [{0}, #16 * 24]",
-                "ldp q26, q27, [{0}, #16 * 26]",
-                "ldp q28, q29, [{0}, #16 * 28]",
-                "ldp q30, q31, [{0}, #16 * 30]",
-                "msr fpcr, {1}",
-                "msr fpsr, {2}",
-                in(reg) &mut float_regs.fp_simd_regs,
-                in(reg) float_regs.fpcr,
-                in(reg) float_regs.fpsr
-            );
-        }
-
-        self.ttbr0_el1 = control_regs::ttbr0_el1() as usize;
-        if next.ttbr0_el1 != self.ttbr0_el1 {
-            control_regs::ttbr0_el1_write(next.ttbr0_el1 as u64);
-            tlb::flush_all();
-        }
-
-        llvm_asm!("mov   $0, x8" : "=r"(self.x8) : : "memory" : "volatile");
-        llvm_asm!("mov   x8, $0" : :  "r"(next.x8) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x9" : "=r"(self.x9) : : "memory" : "volatile");
-        llvm_asm!("mov   x9, $0" : :  "r"(next.x9) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x10" : "=r"(self.x10) : : "memory" : "volatile");
-        llvm_asm!("mov   x10, $0" : :  "r"(next.x10) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x11" : "=r"(self.x11) : : "memory" : "volatile");
-        llvm_asm!("mov   x11, $0" : :  "r"(next.x11) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x12" : "=r"(self.x12) : : "memory" : "volatile");
-        llvm_asm!("mov   x12, $0" : :  "r"(next.x12) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x13" : "=r"(self.x13) : : "memory" : "volatile");
-        llvm_asm!("mov   x13, $0" : :  "r"(next.x13) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x14" : "=r"(self.x14) : : "memory" : "volatile");
-        llvm_asm!("mov   x14, $0" : :  "r"(next.x14) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x15" : "=r"(self.x15) : : "memory" : "volatile");
-        llvm_asm!("mov   x15, $0" : :  "r"(next.x15) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x16" : "=r"(self.x16) : : "memory" : "volatile");
-        llvm_asm!("mov   x16, $0" : :  "r"(next.x16) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x17" : "=r"(self.x17) : : "memory" : "volatile");
-        llvm_asm!("mov   x17, $0" : :  "r"(next.x17) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x18" : "=r"(self.x18) : : "memory" : "volatile");
-        llvm_asm!("mov   x18, $0" : :  "r"(next.x18) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x19" : "=r"(self.x19) : : "memory" : "volatile");
-        llvm_asm!("mov   x19, $0" : :  "r"(next.x19) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x20" : "=r"(self.x20) : : "memory" : "volatile");
-        llvm_asm!("mov   x20, $0" : :  "r"(next.x20) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x21" : "=r"(self.x21) : : "memory" : "volatile");
-        llvm_asm!("mov   x21, $0" : :  "r"(next.x21) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x22" : "=r"(self.x22) : : "memory" : "volatile");
-        llvm_asm!("mov   x22, $0" : :  "r"(next.x22) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x23" : "=r"(self.x23) : : "memory" : "volatile");
-        llvm_asm!("mov   x23, $0" : :  "r"(next.x23) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x24" : "=r"(self.x24) : : "memory" : "volatile");
-        llvm_asm!("mov   x24, $0" : :  "r"(next.x24) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x25" : "=r"(self.x25) : : "memory" : "volatile");
-        llvm_asm!("mov   x25, $0" : :  "r"(next.x25) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x26" : "=r"(self.x26) : : "memory" : "volatile");
-        llvm_asm!("mov   x26, $0" : :  "r"(next.x26) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x27" : "=r"(self.x27) : : "memory" : "volatile");
-        llvm_asm!("mov   x27, $0" : :  "r"(next.x27) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x28" : "=r"(self.x28) : : "memory" : "volatile");
-        llvm_asm!("mov   x28, $0" : :  "r"(next.x28) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x29" : "=r"(self.fp) : : "memory" : "volatile");
-        llvm_asm!("mov   x29, $0" : :  "r"(next.fp) :"memory" : "volatile");
-
-        llvm_asm!("mov   $0, x30" : "=r"(self.lr) : : "memory" : "volatile");
-        llvm_asm!("mov   x30, $0" : :  "r"(next.lr) :"memory" : "volatile");
-
-        llvm_asm!("mrs   $0, elr_el1" : "=r"(self.elr_el1) : : "memory" : "volatile");
-        llvm_asm!("msr   elr_el1, $0" : : "r"(next.elr_el1) : "memory" : "volatile");
-
-        llvm_asm!("mrs   $0, sp_el0" : "=r"(self.sp_el0) : : "memory" : "volatile");
-        llvm_asm!("msr   sp_el0, $0" : : "r"(next.sp_el0) : "memory" : "volatile");
-
-        llvm_asm!("mrs   $0, tpidr_el0" : "=r"(self.tpidr_el0) : : "memory" : "volatile");
-        llvm_asm!("msr   tpidr_el0, $0" : : "r"(next.tpidr_el0) : "memory" : "volatile");
-
-        llvm_asm!("mrs   $0, tpidrro_el0" : "=r"(self.tpidrro_el0) : : "memory" : "volatile");
-        llvm_asm!("msr   tpidrro_el0, $0" : : "r"(next.tpidrro_el0) : "memory" : "volatile");
-
-        llvm_asm!("mrs   $0, spsr_el1" : "=r"(self.spsr_el1) : : "memory" : "volatile");
-        llvm_asm!("msr   spsr_el1, $0" : : "r"(next.spsr_el1) : "memory" : "volatile");
-
-        llvm_asm!("mrs   $0, esr_el1" : "=r"(self.esr_el1) : : "memory" : "volatile");
-        llvm_asm!("msr   esr_el1, $0" : : "r"(next.esr_el1) : "memory" : "volatile");
-
-        llvm_asm!("mov   $0, sp" : "=r"(self.sp) : : "memory" : "volatile");
-        llvm_asm!("mov   sp, $0" : : "r"(next.sp) : "memory" : "volatile");
-
-        CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
     }
+
+    prev.ttbr0_el1 = control_regs::ttbr0_el1() as usize;
+    if next.ttbr0_el1 != prev.ttbr0_el1 {
+        control_regs::ttbr0_el1_write(next.ttbr0_el1 as u64);
+        tlb::flush_all();
+    }
+
+    llvm_asm!("mov   $0, x8" : "=r"(prev.x8) : : "memory" : "volatile");
+    llvm_asm!("mov   x8, $0" : :  "r"(next.x8) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x9" : "=r"(prev.x9) : : "memory" : "volatile");
+    llvm_asm!("mov   x9, $0" : :  "r"(next.x9) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x10" : "=r"(prev.x10) : : "memory" : "volatile");
+    llvm_asm!("mov   x10, $0" : :  "r"(next.x10) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x11" : "=r"(prev.x11) : : "memory" : "volatile");
+    llvm_asm!("mov   x11, $0" : :  "r"(next.x11) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x12" : "=r"(prev.x12) : : "memory" : "volatile");
+    llvm_asm!("mov   x12, $0" : :  "r"(next.x12) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x13" : "=r"(prev.x13) : : "memory" : "volatile");
+    llvm_asm!("mov   x13, $0" : :  "r"(next.x13) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x14" : "=r"(prev.x14) : : "memory" : "volatile");
+    llvm_asm!("mov   x14, $0" : :  "r"(next.x14) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x15" : "=r"(prev.x15) : : "memory" : "volatile");
+    llvm_asm!("mov   x15, $0" : :  "r"(next.x15) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x16" : "=r"(prev.x16) : : "memory" : "volatile");
+    llvm_asm!("mov   x16, $0" : :  "r"(next.x16) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x17" : "=r"(prev.x17) : : "memory" : "volatile");
+    llvm_asm!("mov   x17, $0" : :  "r"(next.x17) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x18" : "=r"(prev.x18) : : "memory" : "volatile");
+    llvm_asm!("mov   x18, $0" : :  "r"(next.x18) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x19" : "=r"(prev.x19) : : "memory" : "volatile");
+    llvm_asm!("mov   x19, $0" : :  "r"(next.x19) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x20" : "=r"(prev.x20) : : "memory" : "volatile");
+    llvm_asm!("mov   x20, $0" : :  "r"(next.x20) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x21" : "=r"(prev.x21) : : "memory" : "volatile");
+    llvm_asm!("mov   x21, $0" : :  "r"(next.x21) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x22" : "=r"(prev.x22) : : "memory" : "volatile");
+    llvm_asm!("mov   x22, $0" : :  "r"(next.x22) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x23" : "=r"(prev.x23) : : "memory" : "volatile");
+    llvm_asm!("mov   x23, $0" : :  "r"(next.x23) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x24" : "=r"(prev.x24) : : "memory" : "volatile");
+    llvm_asm!("mov   x24, $0" : :  "r"(next.x24) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x25" : "=r"(prev.x25) : : "memory" : "volatile");
+    llvm_asm!("mov   x25, $0" : :  "r"(next.x25) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x26" : "=r"(prev.x26) : : "memory" : "volatile");
+    llvm_asm!("mov   x26, $0" : :  "r"(next.x26) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x27" : "=r"(prev.x27) : : "memory" : "volatile");
+    llvm_asm!("mov   x27, $0" : :  "r"(next.x27) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x28" : "=r"(prev.x28) : : "memory" : "volatile");
+    llvm_asm!("mov   x28, $0" : :  "r"(next.x28) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x29" : "=r"(prev.fp) : : "memory" : "volatile");
+    llvm_asm!("mov   x29, $0" : :  "r"(next.fp) :"memory" : "volatile");
+
+    llvm_asm!("mov   $0, x30" : "=r"(prev.lr) : : "memory" : "volatile");
+    llvm_asm!("mov   x30, $0" : :  "r"(next.lr) :"memory" : "volatile");
+
+    llvm_asm!("mrs   $0, elr_el1" : "=r"(prev.elr_el1) : : "memory" : "volatile");
+    llvm_asm!("msr   elr_el1, $0" : : "r"(next.elr_el1) : "memory" : "volatile");
+
+    llvm_asm!("mrs   $0, sp_el0" : "=r"(prev.sp_el0) : : "memory" : "volatile");
+    llvm_asm!("msr   sp_el0, $0" : : "r"(next.sp_el0) : "memory" : "volatile");
+
+    llvm_asm!("mrs   $0, tpidr_el0" : "=r"(prev.tpidr_el0) : : "memory" : "volatile");
+    llvm_asm!("msr   tpidr_el0, $0" : : "r"(next.tpidr_el0) : "memory" : "volatile");
+
+    llvm_asm!("mrs   $0, tpidrro_el0" : "=r"(prev.tpidrro_el0) : : "memory" : "volatile");
+    llvm_asm!("msr   tpidrro_el0, $0" : : "r"(next.tpidrro_el0) : "memory" : "volatile");
+
+    llvm_asm!("mrs   $0, spsr_el1" : "=r"(prev.spsr_el1) : : "memory" : "volatile");
+    llvm_asm!("msr   spsr_el1, $0" : : "r"(next.spsr_el1) : "memory" : "volatile");
+
+    llvm_asm!("mrs   $0, esr_el1" : "=r"(prev.esr_el1) : : "memory" : "volatile");
+    llvm_asm!("msr   esr_el1, $0" : : "r"(next.esr_el1) : "memory" : "volatile");
+
+    llvm_asm!("mov   $0, sp" : "=r"(prev.sp) : : "memory" : "volatile");
+    llvm_asm!("mov   sp, $0" : : "r"(next.sp) : "memory" : "volatile");
+
+    CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 }
 
 #[allow(dead_code)]

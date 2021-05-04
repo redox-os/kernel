@@ -91,7 +91,7 @@ impl Mapper {
                 }
 
                 if let Some(p1_frame) = p2[page.p2_index()].pointed_frame() {
-                    //println!("Free p1 {:?}", p1_frame);
+                    //println!("unmap_inner: Free p1 {:?}", p1_frame);
                     p2.decrement_entry_count();
                     p2[page.p2_index()].set_unused();
                     deallocate_frames(p1_frame, 1);
@@ -107,7 +107,7 @@ impl Mapper {
             }
 
             if let Some(p2_frame) = p3[page.p3_index()].pointed_frame() {
-                //println!("Free p2 {:?}", p2_frame);
+                //println!("unmap_inner: Free p2 {:?}", p2_frame);
                 p3.decrement_entry_count();
                 p3[page.p3_index()].set_unused();
                 deallocate_frames(p2_frame, 1);
@@ -123,7 +123,7 @@ impl Mapper {
         }
 
         if let Some(p3_frame) = p4[page.p4_index()].pointed_frame() {
-            //println!("Free p3 {:?}", p3_frame);
+            //println!("unmap_inner: Free p3 {:?}", p3_frame);
             p4.decrement_entry_count();
             p4[page.p4_index()].set_unused();
             deallocate_frames(p3_frame, 1);
