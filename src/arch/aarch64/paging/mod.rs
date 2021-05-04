@@ -12,6 +12,8 @@ use self::entry::{EntryFlags, TableDescriptorFlags};
 use self::mapper::{Mapper, MapperFlushAll, MapperType};
 use self::temporary_page::TemporaryPage;
 
+pub use rmm::PhysicalAddress;
+
 pub mod entry;
 pub mod mapper;
 pub mod table;
@@ -371,20 +373,6 @@ impl InactivePageTable {
 
     pub unsafe fn address(&self) -> usize {
         self.p4_frame.start_address().data()
-    }
-}
-
-/// A physical address.
-#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct PhysicalAddress(usize);
-
-impl PhysicalAddress {
-    pub fn new(address: usize) -> Self {
-        PhysicalAddress(address)
-    }
-
-    pub fn data(&self) -> usize {
-        self.0
     }
 }
 
