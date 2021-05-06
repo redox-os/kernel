@@ -25,8 +25,8 @@
     pub const KERNEL_TMP_MISC_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;
 
     /// Offset to kernel percpu variables
-    //TODO: Use 64-bit fs offset to enable this pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;
-    pub const KERNEL_PERCPU_OFFSET: usize = 0xC000_0000;
+    pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_TMP_MISC_OFFSET - PML4_SIZE;
+    pub const KERNEL_PERCPU_PML4: usize = (KERNEL_PERCPU_OFFSET & PML4_MASK)/PML4_SIZE;
     /// Size of kernel percpu variables
     pub const KERNEL_PERCPU_SIZE: usize = 64 * 1024; // 64 KB
 
@@ -41,6 +41,9 @@
 
     /// Offset to user TCB
     /// Each process has 4096 bytes, at an offset of 4096 * PID
+    // TODO: Get a real 64-bit offset, and allow loading ELF sections higher up than the current
+    // limit, iff the processor supports fsgsbase (in which case it is cheap to use 64-bit FS
+    // offsets).
     pub const USER_TCB_OFFSET: usize = 0xB000_0000;
 
     /// Offset to user arguments
