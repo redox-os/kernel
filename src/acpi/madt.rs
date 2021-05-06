@@ -4,7 +4,7 @@ use crate::memory::{allocate_frames, Frame};
 use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
 use super::sdt::Sdt;
-use super::{find_sdt, load_table, get_sdt_signature};
+use super::find_sdt;
 
 use core::intrinsics::{atomic_load, atomic_store};
 use core::sync::atomic::Ordering;
@@ -31,7 +31,6 @@ impl Madt {
     pub fn init(active_table: &mut ActivePageTable) {
         let madt_sdt = find_sdt("APIC");
         let madt = if madt_sdt.len() == 1 {
-            load_table(get_sdt_signature(madt_sdt[0]));
             Madt::new(madt_sdt[0])
         } else {
             println!("Unable to find MADT");

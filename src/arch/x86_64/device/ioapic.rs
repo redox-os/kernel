@@ -24,9 +24,6 @@ impl IoApicRegs {
         // offset 0x10
         unsafe { self.pointer.offset(4) }
     }
-    fn read_ioregsel(&self) -> u32 {
-        unsafe { ptr::read_volatile::<u32>(self.ioregsel()) }
-    }
     fn write_ioregsel(&mut self, value: u32) {
         unsafe { ptr::write_volatile::<u32>(self.ioregsel() as *mut u32, value) }
     }
@@ -356,7 +353,12 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
     irq::set_irq_method(irq::IrqMethod::Apic);
 
     // tell the firmware that we're using APIC rather than the default 8259 PIC.
-    #[cfg(feature = "acpi")]
+
+    // FIXME: With ACPI moved to userspace, we should instead allow userspace to check whether the
+    // IOAPIC has been initialized, and then subsequently let some ACPI driver call the AML from
+    // userspace.
+
+    /*#[cfg(feature = "acpi")]
     {
         let method = {
             let namespace_guard = crate::acpi::ACPI_TABLE.namespace.read();
@@ -369,7 +371,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable) {
         if let Some(m) = method {
             m.execute("\\_PIC".into(), vec!(crate::acpi::aml::AmlValue::Integer(1)));
         }
-    }
+    }*/
 }
 fn get_override(irq: u8) -> Option<&'static Override> {
     src_overrides().iter().find(|over| over.bus_irq == irq)

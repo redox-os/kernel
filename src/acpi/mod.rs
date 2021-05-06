@@ -6,18 +6,12 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 
-use syscall::io::{Io, Pio};
-
-use spin::RwLock;
-
-use crate::stop::kstop;
+use spin::{Once, RwLock};
 
 use crate::log::info;
 use crate::memory::Frame;
 use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
-use self::dmar::Dmar;
-use self::fadt::Fadt;
 use self::madt::Madt;
 use self::rsdt::Rsdt;
 use self::sdt::Sdt;
@@ -26,16 +20,11 @@ use self::hpet::Hpet;
 use self::rxsdt::Rxsdt;
 use self::rsdp::RSDP;
 
-use self::aml::{parse_aml_table, AmlError, AmlValue};
-
 pub mod hpet;
-mod dmar;
-mod fadt;
 pub mod madt;
 mod rsdt;
 pub mod sdt;
 mod xsdt;
-pub mod aml;
 mod rxsdt;
 mod rsdp;
 
@@ -67,59 +56,26 @@ pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'stat
     sdt
 }
 
-fn init_aml_table(sdt: &'static Sdt) {
-    match parse_aml_table(sdt) {
-        Ok(_) => println!(": Parsed"),
-        Err(AmlError::AmlParseError(e)) => println!(": {}", e),
-        Err(AmlError::AmlInvalidOpCode) => println!(": Invalid opcode"),
-        Err(AmlError::AmlValueError) => println!(": Type constraints or value bounds not met"),
-        Err(AmlError::AmlDeferredLoad) => println!(": Deferred load reached top level"),
-        Err(AmlError::AmlFatalError(_, _, _)) => {
-            println!(": Fatal error occurred");
-            unsafe { kstop(); }
-        },
-        Err(AmlError::AmlHardFatal) => {
-            println!(": Fatal error occurred");
-            unsafe { kstop(); }
+pub enum RxsdtEnum {
+    Rsdt(Rsdt),
+    Xsdt(Xsdt),
+}
+impl Rxsdt for RxsdtEnum {
+    fn iter(&self) -> Box<dyn Iterator<Item = usize>> {
+        match self {
+            Self::Rsdt(rsdt) => <Rsdt as Rxsdt>::iter(rsdt),
+            Self::Xsdt(xsdt) => <Xsdt as Rxsdt>::iter(xsdt),
         }
     }
 }
 
-fn init_namespace() {
-    {
-        let mut namespace = ACPI_TABLE.namespace.write();
-        *namespace = Some(BTreeMap::new());
-    }
-
-    let dsdt = find_sdt("DSDT");
-    if dsdt.len() == 1 {
-        print!("  DSDT");
-        load_table(get_sdt_signature(dsdt[0]));
-        init_aml_table(dsdt[0]);
-    } else {
-        println!("Unable to find DSDT");
-        return;
-    };
-
-    let ssdts = find_sdt("SSDT");
-
-    for ssdt in ssdts {
-        print!("  SSDT");
-        load_table(get_sdt_signature(ssdt));
-        init_aml_table(ssdt);
-    }
-}
+pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
 pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: Option<(u64, u64)>) {
     {
         let mut sdt_ptrs = SDT_POINTERS.write();
         *sdt_ptrs = Some(BTreeMap::new());
-    }
-
-    {
-        let mut order = SDT_ORDER.write();
-        *order = Some(vec!());
     }
 
     // Search for RSDP
@@ -132,14 +88,39 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
         }
         println!(":");
 
-        let rxsdt: Box<dyn Rxsdt + Send + Sync> = if let Some(rsdt) = Rsdt::new(rxsdt) {
-            Box::new(rsdt)
+        let rxsdt = if let Some(rsdt) = Rsdt::new(rxsdt) {
+            let mut initialized = false;
+
+            let rsdt = RXSDT_ENUM.call_once(|| {
+                initialized = true;
+
+                RxsdtEnum::Rsdt(rsdt)
+            });
+
+            if !initialized {
+                log::error!("RXSDT_ENUM already initialized");
+            }
+
+            rsdt
         } else if let Some(xsdt) = Xsdt::new(rxsdt) {
-            Box::new(xsdt)
+            let mut initialized = false;
+
+            let xsdt = RXSDT_ENUM.call_once(|| {
+                initialized = true;
+
+                RxsdtEnum::Xsdt(xsdt)
+            });
+            if !initialized {
+                log::error!("RXSDT_ENUM already initialized");
+            }
+
+            xsdt
         } else {
             println!("UNKNOWN RSDT OR XSDT SIGNATURE");
             return;
         };
+
+        // TODO: Don't touch ACPI tables in kernel?
 
         rxsdt.map_all(active_table);
 
@@ -152,47 +133,19 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
             }
         }
 
-        Fadt::init(active_table);
+        // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
+        // to initialize enumerated processors to userspace?
         Madt::init(active_table);
-        Dmar::init(active_table);
+        // TODO: Let userspace setup HPET, and then provide an interface to specify which timer to
+        // use?
         Hpet::init(active_table);
-        init_namespace();
     } else {
         println!("NO RSDP FOUND");
     }
 }
 
-pub fn set_global_s_state(state: u8) {
-    if state == 5 {
-        let fadt = ACPI_TABLE.fadt.read();
-
-        if let Some(ref fadt) = *fadt {
-            let port = fadt.pm1a_control_block as u16;
-            let mut val = 1 << 13;
-
-            let namespace = ACPI_TABLE.namespace.read();
-
-            if let Some(ref namespace) = *namespace {
-                if let Some(s) = namespace.get("\\_S5") {
-                    if let Ok(p) = s.get_as_package() {
-                        let slp_typa = p[0].get_as_integer().expect("SLP_TYPa is not an integer");
-                        let slp_typb = p[1].get_as_integer().expect("SLP_TYPb is not an integer");
-
-                        println!("Shutdown SLP_TYPa {:X}, SLP_TYPb {:X}", slp_typa, slp_typb);
-                        val |= slp_typa as u16;
-
-                        println!("Shutdown with ACPI outw(0x{:X}, 0x{:X})", port, val);
-                        Pio::<u16>::new(port).write(val);
-                    }
-                }
-            }
-        }
-    }
-}
-
 pub type SdtSignature = (String, [u8; 6], [u8; 8]);
 pub static SDT_POINTERS: RwLock<Option<BTreeMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
-pub static SDT_ORDER: RwLock<Option<Vec<SdtSignature>>> = RwLock::new(None);
 
 pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
     let mut sdts: Vec<&'static Sdt> = vec!();
@@ -213,51 +166,12 @@ pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {
     (signature, sdt.oem_id, sdt.oem_table_id)
 }
 
-pub fn load_table(signature: SdtSignature) {
-    let mut order = SDT_ORDER.write();
-
-    if let Some(ref mut o) = *order {
-        o.push(signature);
-    }
-}
-
-pub fn get_signature_from_index(index: usize) -> Option<SdtSignature> {
-    if let Some(ref order) = *(SDT_ORDER.read()) {
-        if index < order.len() {
-            Some(order[index].clone())
-        } else {
-            None
-        }
-    } else {
-        None
-    }
-}
-
-pub fn get_index_from_signature(signature: SdtSignature) -> Option<usize> {
-    if let Some(ref order) = *(SDT_ORDER.read()) {
-        let mut i = order.len();
-        while i > 0 {
-            i -= 1;
-
-            if order[i] == signature {
-                return Some(i);
-            }
-        }
-    }
-
-    None
-}
-
 pub struct Acpi {
-    pub fadt: RwLock<Option<Fadt>>,
-    pub namespace: RwLock<Option<BTreeMap<String, AmlValue>>>,
     pub hpet: RwLock<Option<Hpet>>,
     pub next_ctx: RwLock<u64>,
 }
 
 pub static ACPI_TABLE: Acpi = Acpi {
-    fadt: RwLock::new(None),
-    namespace: RwLock::new(None),
     hpet: RwLock::new(None),
     next_ctx: RwLock::new(0),
 };

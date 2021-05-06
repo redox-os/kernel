@@ -34,7 +34,7 @@ pub enum Status {
     Runnable,
     Blocked,
     Stopped(usize),
-    Exited(usize)
+    Exited(usize),
 }
 
 #[derive(Copy, Clone, Debug)]

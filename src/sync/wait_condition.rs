@@ -10,7 +10,7 @@ pub struct WaitCondition {
 }
 
 impl WaitCondition {
-    pub fn new() -> WaitCondition {
+    pub const fn new() -> WaitCondition {
         WaitCondition {
             contexts: Mutex::new(Vec::new())
         }

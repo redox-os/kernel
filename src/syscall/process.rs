@@ -1148,6 +1148,22 @@ pub fn exit(status: usize) -> ! {
             context.id
         };
 
+        // TODO: Find a better way to implement this, perhaps when the init process calls exit.
+        if pid == ContextId::from(1) {
+            println!("Main kernel thread exited with status {:X}", status);
+
+            extern {
+                fn kreset() -> !;
+                fn kstop() -> !;
+            }
+
+            if status == SIGTERM {
+                unsafe { kreset(); }
+            } else {
+                unsafe { kstop(); }
+            }
+        }
+
         // Files must be closed while context is valid so that messages can be passed
         for (_fd, file_opt) in close_files.drain(..).enumerate() {
             if let Some(file) = file_opt {
@@ -1214,21 +1230,6 @@ pub fn exit(status: usize) -> ! {
 
         // Alert any tracers waiting of this process
         ptrace::close_tracee(pid);
-
-        if pid == ContextId::from(1) {
-            println!("Main kernel thread exited with status {:X}", status);
-
-            extern {
-                fn kreset() -> !;
-                fn kstop() -> !;
-            }
-
-            if status == SIGTERM {
-                unsafe { kreset(); }
-            } else {
-                unsafe { kstop(); }
-            }
-        }
     }
 
     let _ = unsafe { context::switch() };
