@@ -55,7 +55,8 @@ pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize
     let stdout_path = chosen_node.properties().find(|p| p.name.contains("stdout-path")).unwrap();
     let uart_node_name = core::str::from_utf8(stdout_path.data).unwrap()
         .split('/')
-        .collect::<Vec<&str>>()[1].trim_end();
+        .nth(1)?
+        .trim_end();
     let len = uart_node_name.len();
     let uart_node_name = &uart_node_name[0..len-1];
     let uart_node = dt.nodes().find(|n| n.name.contains(uart_node_name)).unwrap();

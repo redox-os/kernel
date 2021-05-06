@@ -95,6 +95,10 @@ impl SerialPort {
         }
     }
 
+    pub fn base(&self) -> usize {
+        self.base
+    }
+
     pub fn read_reg(&self, register: u8) -> u16 {
         unsafe { ptr::read_volatile((self.base + register as usize) as *mut u16) }
     }

@@ -37,13 +37,9 @@
     /// Offset of temporary mapping for misc kernel bring-up actions
     pub const KERNEL_TMP_MISC_OFFSET: usize = KERNEL_ENV_OFFSET - PML4_SIZE;
 
-    /// Offset of FDT DTB image
-    pub const KERNEL_DTB_OFFSET: usize = KERNEL_TMP_MISC_OFFSET - PML4_SIZE;
-    pub const KERNEL_DTB_MAX_SIZE: usize = 2 * 1024 * 1024; // 2 MB
-
     /// Offset to kernel percpu variables
     //TODO: Use 64-bit fs offset to enable this pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;
-    pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_DTB_OFFSET - PML4_SIZE;
+    pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_TMP_MISC_OFFSET - PML4_SIZE;
 
     /// Size of kernel percpu variables
     pub const KERNEL_PERCPU_SIZE: usize = 64 * 1024; // 64 KB

@@ -60,19 +60,6 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         let dtb_base = args.dtb_base as usize;
         let dtb_size = args.dtb_size as usize;
 
-        //TODO: remove this hack for early console, use device tree
-        {
-            let mut serial = device::uart_pl011::SerialPort::new(crate::KERNEL_DEVMAP_OFFSET + 0x9000000);
-            serial.init(false);
-            serial.send(b'T');
-            serial.send(b'E');
-            serial.send(b'S');
-            serial.send(b'T');
-            serial.send(b'\r');
-            serial.send(b'\n');
-            *device::serial::COM1.lock() = Some(serial);
-        }
-
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
@@ -81,6 +68,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
+
+        // Try to find serial port prior to logging
+        device::serial::init_early(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size);
 
         // Initialize logger
         log::init_logger(|r| {

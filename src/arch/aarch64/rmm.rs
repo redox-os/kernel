@@ -149,16 +149,16 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kerne
         }
 
         //TODO: this is another hack to map our UART
-        {
-            let phys = PhysicalAddress::new(0x9000000);
-            let virt = A::phys_to_virt(phys);
-            let flags = page_flags::<A>(virt);
-            let flush = mapper.map_phys(
-                virt,
-                phys,
-                flags
-            ).expect("failed to map frame");
-            flush.ignore(); // Not the active table
+        match crate::device::serial::COM1.lock().as_ref().map(|x| x.base()) {
+            Some(serial_base) => {
+                let flush = mapper.map_phys(
+                    VirtualAddress::new(serial_base),
+                    PhysicalAddress::new(serial_base - crate::KERNEL_DEVMAP_OFFSET),
+                    PageFlags::new().write(true)
+                ).expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            },
+            None => (),
         }
 
         //TODO: remove backwards compatible recursive mapping
