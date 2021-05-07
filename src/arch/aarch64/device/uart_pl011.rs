@@ -145,12 +145,6 @@ impl SerialPort {
         self.write_reg(self.data_reg, data as u16);
     }
 
-    pub fn send_dbg(&mut self, data: u16) {
-        if self.base != 0 {
-            self.write_reg(self.data_reg, data);
-        }
-    }
-
     pub fn clear_all_irqs(&mut self) {
         let flags = UartIcrFlags::RXIC;
         self.write_reg(self.intr_clr_reg, flags.bits());
@@ -166,9 +160,21 @@ impl SerialPort {
     }
 
     pub fn write(&mut self, buf: &[u8]) {
-        //TODO: some character conversion like in uart_16550.rs
         for &b in buf {
-            self.send_dbg(b as u16);
+            match b {
+                8 | 0x7F => {
+                    self.send(8);
+                    self.send(b' ');
+                    self.send(8);
+                }
+                b'\n' => {
+                    self.send(b'\r');
+                    self.send(b'\n');
+                }
+                _ => {
+                    self.send(b);
+                }
+            }
         }
     }
 }
