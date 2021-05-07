@@ -90,10 +90,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Env: {:X}:{:X}", env_base, env_base + env_size);
         info!("DTB: {:X}:{:X}", dtb_base, dtb_base + dtb_size);
 
-        //TODO: Until fixed, the DTB is at DEVMAP_OFFSET + dtb_base
-        // This is not required after paging is enabled because paging fixes this
+        println!("FILL MEMORY MAP START");
         device_tree::fill_memory_map(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size);
+        println!("FILL MEMORY MAP COMPLETE");
+
+        println!("FILL ENV DATA START");
         let env_size = device_tree::fill_env_data(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size, env_base);
+        println!("FILL ENV DATA COMPLETE");
 
         // Initialize RMM
         println!("RMM INIT START");
