@@ -74,7 +74,7 @@ unsafe fn init_mair() {
 }
 
 /// Map TSS
-unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
+unsafe fn map_tss(cpu_id: usize) {
     extern "C" {
         /// The starting byte of the thread data segment
         static mut __tdata_start: u8;
@@ -90,14 +90,18 @@ unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
     let end = start + size;
 
+    let mut mapper = crate::rmm::mapper_current();
     let flush_all = PageFlushAll::new();
     let start_page = Page::containing_address(VirtualAddress::new(start));
     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
     for page in Page::range_inclusive(start_page, end_page) {
-        let result = mapper.map(page, PageFlags::new().write(true));
+        let result = mapper.map(
+            page.start_address(),
+            PageFlags::new().write(true)
+        ).expect("Failed to map TSS page");
         flush_all.consume(result);
     }
-    flush_all
+    flush_all.flush();
 }
 
 /// Copy tdata, clear tbss, set TCB self pointer
@@ -169,14 +173,23 @@ pub unsafe fn init(
         static mut __bss_end: u8;
     }
 
+    println!("INIT MAIR START");
     init_mair();
+    println!("INIT MAIR COMPLETE");
 
-    let mut active_table = ActivePageTable::new_unlocked(TableKind::Kernel);
+    println!("ACTIVE TABLE START");
+    let active_table = ActivePageTable::new_unlocked(TableKind::Kernel);
+    println!("ACTIVE TABLE COMPLETE");
 
-    let flush_all = map_tss(cpu_id, &mut active_table);
-    flush_all.flush();
+    println!("MAP TSS START");
+    map_tss(cpu_id);
+    println!("MAP TSS COMPLETE");
 
-    return (active_table, init_tcb(cpu_id));
+    println!("INIT TCB START");
+    let tcb = init_tcb(cpu_id);
+    println!("INIT_TCB COMPLETE");
+
+    return (active_table, tcb);
 }
 
 pub unsafe fn init_ap(
@@ -189,19 +202,11 @@ pub unsafe fn init_ap(
 
     let mut new_table = InactivePageTable::from_address(bsp_table);
 
-    let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(
-        crate::KERNEL_TMP_MISC_OFFSET,
-    )));
-
-    active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-        let flush_all = map_tss(cpu_id, mapper);
-        // The flush can be ignored as this is not the active table. See later active_table.switch
-        flush_all.ignore();
-    });
-
     // This switches the active table, which is setup by the bootloader, to a correct table
     // setup by the lambda above. This will also flush the TLB
     active_table.switch(new_table);
+
+    map_tss(cpu_id);
 
     init_tcb(cpu_id)
 }
