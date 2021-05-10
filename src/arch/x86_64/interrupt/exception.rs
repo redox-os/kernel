@@ -134,6 +134,11 @@ interrupt_error!(page, |stack| {
     let cr2: usize;
     asm!("mov {}, cr2", out(reg) cr2);
     println!("Page fault: {:>016X}", cr2);
+    println!("  Present: {}", stack.code & 1 << 0 != 0);
+    println!("  Write: {}", stack.code & 1 << 1 != 0);
+    println!("  User: {}", stack.code & 1 << 2 != 0);
+    println!("  Reserved write: {}", stack.code & 1 << 3 != 0);
+    println!("  Instruction fetch: {}", stack.code & 1 << 4 != 0);
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
