@@ -38,6 +38,7 @@ unsafe fn trigger(irq: u32) {
 }
 
 pub unsafe fn acknowledge(_irq: usize) {
+    // TODO
 }
 
 pub unsafe fn irq_handler_com1(irq: u32) {

@@ -335,7 +335,7 @@ impl Scheme for ProcScheme {
         Ok(value)
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(not(target_arch = "x86_64"))]
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         //TODO
         Err(Error::new(EINVAL))

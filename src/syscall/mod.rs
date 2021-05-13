@@ -124,7 +124,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_CLONE => {
                     let b = CloneFlags::from_bits_truncate(b);
 
-                    #[cfg(target_arch = "aarch64")]
+                    #[cfg(not(target_arch = "x86_64"))]
                     {
                         //TODO: CLONE_STACK
                         let ret = clone(b, bp).map(ContextId::into);

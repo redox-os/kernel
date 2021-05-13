@@ -18,7 +18,7 @@ fn enforce_root() -> Result<()> {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(not(target_arch = "x86_64"))]
 pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
     Err(Error::new(syscall::error::ENOSYS))
 }

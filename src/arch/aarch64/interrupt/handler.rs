@@ -285,7 +285,7 @@ macro_rules! pop_special {
         ldp     x14, x15, [sp], 16
         msr     tpidrro_el0, x15
         msr     spsr_el1, x14
-        
+
         ldp     x14, x15, [sp], 16
         msr     elr_el1, x15
         msr     tpidr_el0, x14

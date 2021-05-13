@@ -124,7 +124,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
             }
 
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(not(target_arch = "x86_64"))]
             {
                 if let Some(ref stack) = context.kstack {
                     offset = stack_base - stack.as_ptr() as usize;
@@ -374,7 +374,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 new_ktable
             };
 
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(not(target_arch = "aarch64"))]
             let mut new_ktable = unsafe {
                 InactivePageTable::from_address(new_utable.address())
             };
