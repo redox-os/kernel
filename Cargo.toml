@@ -37,6 +37,10 @@ default-features = false
 byteorder = { version = "1", default-features = false }
 fdt = { git = "https://gitlab.redox-os.org/thomhuds/fdt.git", default-features = false }
 
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+byteorder = { version = "1", default-features = false }
+fdt = { git = "https://gitlab.redox-os.org/thomhuds/fdt.git", default-features = false }
+
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 raw-cpuid = "8.0.0"
 x86 = { version = "0.32.0", default-features = false }

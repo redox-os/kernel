@@ -14,6 +14,10 @@ pub use self::switch::switch;
 #[path = "arch/aarch64.rs"]
 mod arch;
 
+#[cfg(target_arch = "riscv64")]
+#[path = "arch/riscv64.rs"]
+mod arch;
+
 #[cfg(target_arch = "x86_64")]
 #[path = "arch/x86_64.rs"]
 mod arch;
