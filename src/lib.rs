@@ -47,7 +47,6 @@
 #![cfg_attr(target_arch = "aarch64", feature(llvm_asm))] // TODO: Rewrite using asm!
 #![feature(concat_idents)]
 #![feature(const_btree_new)]
-#![feature(const_fn)]
 #![feature(core_intrinsics)]
 #![feature(global_asm)]
 #![feature(integer_atomics)]

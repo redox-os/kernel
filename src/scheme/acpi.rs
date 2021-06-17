@@ -54,7 +54,7 @@ pub fn register_kstop() -> bool {
     *KSTOP_FLAG.lock() = true;
     let mut waiters_awoken = KSTOP_WAITCOND.notify();
 
-    if let Some(&acpi_scheme) = SCHEME_ID.r#try() {
+    if let Some(&acpi_scheme) = SCHEME_ID.get() {
         let handles = HANDLES.read();
 
         for (&fd, _) in handles.iter().filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe) {
@@ -88,7 +88,7 @@ impl AcpiScheme {
             data_init = true;
 
             let rsdt_or_xsdt = RXSDT_ENUM
-                .r#try()
+                .get()
                 .expect("expected RXSDT_ENUM to be initialized before AcpiScheme");
 
             let table = match rsdt_or_xsdt {
@@ -168,7 +168,7 @@ impl Scheme for AcpiScheme {
 
         match handle.kind {
             HandleKind::Rxsdt => {
-                let data = DATA.r#try().ok_or(Error::new(EBADFD))?;
+                let data = DATA.get().ok_or(Error::new(EBADFD))?;
 
                 stat.st_mode = MODE_FILE;
                 stat.st_size = data.len().try_into().unwrap_or(u64::max_value());
@@ -194,7 +194,7 @@ impl Scheme for AcpiScheme {
         }
 
         let file_len = match handle.kind {
-            HandleKind::Rxsdt => DATA.r#try().ok_or(Error::new(EBADFD))?.len(),
+            HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len(),
             HandleKind::ShutdownPipe => 1,
             HandleKind::TopLevel => TOPLEVEL_CONTENTS.len(),
         };
@@ -251,7 +251,7 @@ impl Scheme for AcpiScheme {
                 handle.offset = 1;
                 return Ok(1);
             }
-            HandleKind::Rxsdt => DATA.r#try().ok_or(Error::new(EBADFD))?,
+            HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?,
             HandleKind::TopLevel => TOPLEVEL_CONTENTS,
         };
 
