@@ -202,9 +202,7 @@ impl InterruptErrorStack {
 macro_rules! intel_asm {
     ($($strings:expr,)+) => {
         global_asm!(concat!(
-            ".intel_syntax noprefix\n",
             $($strings),+,
-            ".att_syntax prefix\n",
         ));
     };
 }
