@@ -3,6 +3,8 @@ use core::sync::atomic::AtomicBool;
 
 use crate::syscall::FloatRegisters;
 
+use memoffset::offset_of;
+
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
 /// The `Context::switch_to` function will set it back to false, allowing other CPU's to switch
@@ -138,10 +140,11 @@ impl Context {
 
 /// Switch to the next context by restoring its stack and registers
 /// Check disassembly!
-#[cold]
 #[inline(never)]
 #[naked]
 pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
+    use Context as Cx;
+
     asm!(
         // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
         //
@@ -151,29 +154,29 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         //   store them here in the first place.
         "
         // load `prev.fx`
-        mov rax, [rdi + 0x00]
+        mov rax, [rdi + {off_fx}]
 
         // save processor SSE/FPU/AVX state in `prev.fx` pointee
         fxsave64 [rax]
 
         // set `prev.loadable` to true
-        mov BYTE PTR [rdi + 0x50], {true}
+        mov BYTE PTR [rdi + {off_loadable}], {true}
         // compare `next.loadable` with true
-        cmp BYTE PTR [rsi + 0x50], {true}
+        cmp BYTE PTR [rsi + {off_loadable}], {true}
         je switch_to.next_is_loadable
 
         fninit
         jmp switch_to.after_fx
 
         switch_to.next_is_loadable:
-        mov rax, [rsi + 0x00]
+        mov rax, [rsi + {off_fx}]
         fxrstor64 [rax]
 
         switch_to.after_fx:
         // Save the current CR3, and load the next CR3 if not identical
         mov rcx, cr3
-        mov [rdi + 0x08], rcx
-        mov rax, [rsi + 0x08]
+        mov [rdi + {off_cr3}], rcx
+        mov rax, [rsi + {off_cr3}]
         cmp rax, rcx
 
         je switch_to.same_cr3
@@ -181,34 +184,34 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
 
         switch_to.same_cr3:
         // Save old registers, and load new ones
-        mov [rdi + 0x18], rbx
-        mov rbx, [rsi + 0x18]
+        mov [rdi + {off_rbx}], rbx
+        mov rbx, [rsi + {off_rbx}]
 
-        mov [rdi + 0x20], r12
-        mov r12, [rsi + 0x20]
+        mov [rdi + {off_r12}], r12
+        mov r12, [rsi + {off_r12}]
 
-        mov [rdi + 0x28], r13
-        mov r13, [rsi + 0x28]
+        mov [rdi + {off_r13}], r13
+        mov r13, [rsi + {off_r13}]
 
-        mov [rdi + 0x30], r14
-        mov r14, [rsi + 0x30]
+        mov [rdi + {off_r14}], r14
+        mov r14, [rsi + {off_r14}]
 
-        mov [rdi + 0x38], r15
-        mov r15, [rsi + 0x38]
+        mov [rdi + {off_r15}], r15
+        mov r15, [rsi + {off_r15}]
 
-        mov [rdi + 0x40], rbp
-        mov rbp, [rsi + 0x40]
+        mov [rdi + {off_rbp}], rbp
+        mov rbp, [rsi + {off_rbp}]
 
-        mov [rdi + 0x48], rsp
-        mov rsp, [rsi + 0x48]
+        mov [rdi + {off_rsp}], rsp
+        mov rsp, [rsi + {off_rsp}]
 
         // push RFLAGS (can only be modified via stack)
         pushfq
         // pop RFLAGS into `self.rflags`
-        pop QWORD PTR [rdi + 0x10]
+        pop QWORD PTR [rdi + {off_rflags}]
 
         // push `next.rflags`
-        push QWORD PTR [rsi + 0x10]
+        push QWORD PTR [rsi + {off_rflags}]
         // pop into RFLAGS
         popfq
 
@@ -220,6 +223,19 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         jmp {switch_hook}
 
         ",
+
+        off_fx = const(offset_of!(Cx, fx)),
+        off_cr3 = const(offset_of!(Cx, cr3)),
+        off_rflags = const(offset_of!(Cx, rflags)),
+        off_loadable = const(offset_of!(Cx, loadable)),
+
+        off_rbx = const(offset_of!(Cx, rbx)),
+        off_r12 = const(offset_of!(Cx, r12)),
+        off_r13 = const(offset_of!(Cx, r13)),
+        off_r14 = const(offset_of!(Cx, r14)),
+        off_r15 = const(offset_of!(Cx, r15)),
+        off_rbp = const(offset_of!(Cx, rbp)),
+        off_rsp = const(offset_of!(Cx, rsp)),
 
         true = const(AbiCompatBool::True as u8),
         switch_hook = sym crate::context::switch_finish_hook,
