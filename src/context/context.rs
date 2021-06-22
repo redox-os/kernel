@@ -282,7 +282,7 @@ impl Context {
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),
             wake: None,
-            arch: arch::Context::new(),
+            arch: arch::Context::new(id.into()),
             kfx: None,
             kstack: None,
             ksig: None,

@@ -56,6 +56,9 @@ serial_debug = []
 system76_ec_debug = []
 slab = ["slab_allocator"]
 
+# TODO: Either wait for LLVM 12 and use target_feature, or use another system for cpu features
+x86_fsgsbase = []
+
 [profile.dev]
 # Kernel doesn't yet work great with debug mode :(
 opt-level = 3

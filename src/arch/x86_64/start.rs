@@ -239,45 +239,130 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
     crate::kmain_ap(cpu_id);
 }
 
+#[cfg(not(feature = "pit"))]
+macro_rules! inner_pit_unmap(
+    () => {
+        "
+            // unused: {pti_unmap}
+        "
+    }
+);
+#[cfg(feature = "pit")]
+macro_rules! inner_pit_unmap(
+    () => {
+        "
+            push rdi
+            push rsi
+            push rdx
+            push rcx
+            sub rsp, 8
+
+            call {pti_unmap}
+
+            add rsp, 8
+            pop rcx
+            pop rdx
+            pop rsi
+            pop rdi
+        "
+    }
+);
+
+#[cfg(not(feature = "x86_fsgsbase"))]
+macro_rules! save_fsgsbase(
+    () => {
+        "
+            mov ecx, {MSR_FSBASE}
+            rdmsr
+            shl rdx, 32
+            mov edx, eax
+            mov r14, rdx
+
+            mov ecx, {MSR_GSBASE}
+            rdmsr
+            shl rdx, 32
+            mov edx, eax
+            mov r13, rdx
+        "
+    }
+);
+#[cfg(feature = "x86_fsgsbase")]
+macro_rules! save_fsgsbase(
+    () => {
+        "
+        // placeholder: {MSR_FSBASE} {MSR_GSBASE}
+        rdfsbase r14
+        rdgsbase r13
+        "
+    }
+);
+
+#[cfg(feature = "x86_fsgsbase")]
+macro_rules! restore_fsgsbase(
+    () => {
+        "
+        wrfsbase r14
+        wrgsbase r13
+        "
+    }
+);
+
+#[cfg(not(feature = "x86_fsgsbase"))]
+macro_rules! restore_fsgsbase(
+    () => {
+        "
+        mov ecx, {MSR_FSBASE}
+        mov rdx, r14
+        mov eax, edx
+        shr rdx, 32
+        wrmsr
+
+        mov ecx, {MSR_GSBASE}
+        mov rdx, r13
+        mov eax, edx
+        shr rdx, 32
+        wrmsr
+        "
+    }
+);
+
 #[naked]
 #[inline(never)]
 // TODO: AbiCompatBool
-pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlestep: u32) -> ! {
+pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singlestep: usize) -> ! {
     // rdi, rsi, rdx, rcx
     asm!(
-        "
-            mov rbx, {flag_interrupts}
-            test ecx, ecx
-            jz .after_singlestep_branch
-            or rbx, {flag_singlestep}
+        concat!("
+            shl rcx, {shift_singlestep}
+            or rcx, {flag_interrupts}
 
-            .after_singlestep_branch:
+            ", inner_pit_unmap!(), "
 
-            // save `ip` (rdi), `sp` (rsi), and `arg` (rdx) in callee-preserved registers, so that
-            // they are not modified by `pti_unmap`
+            // Save rdx for later
+            mov r12, rdx
 
-            mov r13, rdi
-            mov r14, rsi
-            mov r15, rdx
-            call {pti_unmap}
+            // Target RFLAGS
+            mov r11, rcx
 
             // Go to usermode
             swapgs
-            mov r8, {user_data_seg_selector}
-            mov r9, {user_tls_seg_selector}
-            mov ds, r8d
-            mov es, r8d
-            mov fs, r9d
-            mov gs, r8d
 
-            // Target RFLAGS
-            mov r11, rbx
+            ", save_fsgsbase!(), "
+
+            mov r15, {user_data_seg_selector}
+            mov ds, r15d
+            mov es, r15d
+            mov fs, r15d
+            mov gs, r15d
+
+            ", restore_fsgsbase!(), "
+
             // Target instruction pointer
-            mov rcx, r13
+            mov rcx, rdi
             // Target stack pointer
-            mov rsp, r14
+            mov rsp, rsi
             // Target argument
-            mov rdi, r15
+            mov rdi, r12
 
             xor rax, rax
             xor rbx, rbx
@@ -304,13 +389,16 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _singlest
             // middle here, is minimal, unless the attacker already has partial control of kernel
             // memory.)
             sysretq
-        ",
+        "),
 
         flag_interrupts = const(FLAG_INTERRUPTS),
-        flag_singlestep = const(FLAG_SINGLESTEP),
+        shift_singlestep = const(SHIFT_SINGLESTEP),
         pti_unmap = sym pti::unmap,
         user_data_seg_selector = const(gdt::GDT_USER_DATA << 3 | 3),
-        user_tls_seg_selector = const(gdt::GDT_USER_TLS << 3 | 3),
+
+        MSR_FSBASE = const(x86::msr::IA32_FS_BASE),
+        MSR_GSBASE = const(x86::msr::IA32_GS_BASE),
+
         options(noreturn),
     );
 }

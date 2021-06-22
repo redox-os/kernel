@@ -36,6 +36,10 @@ pub struct Context {
     rbp: usize,
     /// Stack pointer
     rsp: usize,
+    /// FSBASE
+    pub fsbase: usize,
+    /// GSBASE
+    gsbase: usize,
     /// FX valid?
     loadable: AbiCompatBool,
 }
@@ -48,7 +52,7 @@ enum AbiCompatBool {
 }
 
 impl Context {
-    pub fn new() -> Context {
+    pub fn new(pid: usize) -> Context {
         Context {
             loadable: AbiCompatBool::False,
             fx: 0,
@@ -60,8 +64,13 @@ impl Context {
             r14: 0,
             r15: 0,
             rbp: 0,
-            rsp: 0
+            rsp: 0,
+            fsbase: crate::USER_TCB_OFFSET + pid * crate::memory::PAGE_SIZE,
+            gsbase: 0,
         }
+    }
+    pub fn update_tcb(&mut self, pid: usize) {
+        self.fsbase = crate::USER_TCB_OFFSET + pid * crate::memory::PAGE_SIZE;
     }
 
     pub fn get_page_utable(&mut self) -> usize {
@@ -138,6 +147,66 @@ impl Context {
     }
 }
 
+macro_rules! switch_msr(
+    ($name:literal, $offset:literal) => {
+        concat!("
+            // EDX:EAX <= MSR
+
+            mov ecx, {", $name, "}
+            rdmsr
+            shl rdx, 32
+            mov edx, eax
+
+            // Save old, load new.
+
+            mov [rdi + {", $offset, "}], rdx
+            mov rdx, [rsi + {", $offset, "}]
+            mov eax, edx
+            shr rdx, 32
+
+            // MSR <= EDX:EAX
+            wrmsr
+        ")
+    }
+);
+
+// NOTE: RAX is a scratch register and can be set to whatever. There is also no return
+// value in switch_to, to it will also never be read. The same goes for RDX, and RCX.
+// TODO: Use runtime code patching (perhaps in the bootloader) by pushing alternative code
+// sequences into a specialized section, with some macro resembling Linux's `.ALTERNATIVE`.
+#[cfg(feature = "x86_fsgsbase")]
+macro_rules! switch_fsgsbase(
+    () => {
+        "
+            // placeholder: {MSR_FSBASE} {MSR_KERNELGSBASE}
+
+            rdfsbase rax
+            mov [rdi + {off_fsbase}], rax
+            mov rax, [rsi + {off_fsbase}]
+            wrfsbase rax
+
+            swapgs
+            rdgsbase rax
+            mov [rdi + {off_gsbase}], rax
+            mov rax, [rsi + {off_gsbase}]
+            wrgsbase rax
+            swapgs
+        "
+    }
+);
+
+#[cfg(not(feature = "x86_fsgsbase"))]
+macro_rules! switch_fsgsbase(
+    () => {
+        // TODO: Is it faster to perform two 32-bit memory accesses, rather than shifting?
+        concat!(
+            switch_msr!("MSR_FSBASE", "off_fsbase"),
+            switch_msr!("MSR_KERNELGSBASE", "off_gsbase"),
+        )
+    }
+);
+
+
 /// Switch to the next context by restoring its stack and registers
 /// Check disassembly!
 #[inline(never)]
@@ -152,7 +221,7 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         // - we can modify scratch registers, e.g. rax
         // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
         //   store them here in the first place.
-        "
+        concat!("
         // load `prev.fx`
         mov rax, [rdi + {off_fx}]
 
@@ -163,26 +232,26 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         mov BYTE PTR [rdi + {off_loadable}], {true}
         // compare `next.loadable` with true
         cmp BYTE PTR [rsi + {off_loadable}], {true}
-        je switch_to.next_is_loadable
+        je 3f
 
         fninit
-        jmp switch_to.after_fx
+        jmp 3f
 
-        switch_to.next_is_loadable:
+2:
         mov rax, [rsi + {off_fx}]
         fxrstor64 [rax]
 
-        switch_to.after_fx:
+3:
         // Save the current CR3, and load the next CR3 if not identical
         mov rcx, cr3
         mov [rdi + {off_cr3}], rcx
         mov rax, [rsi + {off_cr3}]
         cmp rax, rcx
 
-        je switch_to.same_cr3
+        je 4f
         mov cr3, rax
 
-        switch_to.same_cr3:
+4:
         // Save old registers, and load new ones
         mov [rdi + {off_rbx}], rbx
         mov rbx, [rsi + {off_rbx}]
@@ -205,6 +274,10 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         mov [rdi + {off_rsp}], rsp
         mov rsp, [rsi + {off_rsp}]
 
+        ",
+        switch_fsgsbase!(),
+        "
+
         // push RFLAGS (can only be modified via stack)
         pushfq
         // pop RFLAGS into `self.rflags`
@@ -222,7 +295,7 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         // Note that switch_finish_hook will be responsible for executing `ret`.
         jmp {switch_hook}
 
-        ",
+        "),
 
         off_fx = const(offset_of!(Cx, fx)),
         off_cr3 = const(offset_of!(Cx, cr3)),
@@ -237,12 +310,17 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         off_rbp = const(offset_of!(Cx, rbp)),
         off_rsp = const(offset_of!(Cx, rsp)),
 
+        off_fsbase = const(offset_of!(Cx, fsbase)),
+        off_gsbase = const(offset_of!(Cx, gsbase)),
+
+        MSR_FSBASE = const(x86::msr::IA32_FS_BASE),
+        MSR_KERNELGSBASE = const(x86::msr::IA32_KERNEL_GSBASE),
+
         true = const(AbiCompatBool::True as u8),
         switch_hook = sym crate::context::switch_finish_hook,
         options(noreturn),
     );
 }
-
 #[allow(dead_code)]
 #[repr(packed)]
 pub struct SignalHandlerStack {

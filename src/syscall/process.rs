@@ -378,6 +378,10 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             let mut new_ktable = unsafe {
                 InactivePageTable::from_address(new_utable.address())
             };
+            #[cfg(target_arch = "x86_64")]
+            {
+                context.arch.update_tcb(pid.into());
+            }
 
             // Copy kernel image mapping
             {
@@ -904,7 +908,7 @@ fn fexec_noreturn(
     }
 
     // Go to usermode
-    unsafe { usermode(entry, sp, 0, u32::from(singlestep)) }
+    unsafe { usermode(entry, sp, 0, usize::from(singlestep)) }
 }
 
 pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<str>>, auxv: Option<Vec<usize>>) -> Result<usize> {

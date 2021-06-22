@@ -173,7 +173,6 @@ pub unsafe fn switch() -> bool {
             if let Some(ref stack) = to_context.kstack {
                 gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
             }
-            gdt::set_tcb(to_context.id.into());
         }
         #[cfg(target_arch = "aarch64")]
         {
