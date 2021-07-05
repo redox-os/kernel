@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::event;
-use crate::scheme::{AtomicSchemeId, SchemeId};
+use crate::scheme::SchemeId;
 use crate::sync::WaitCondition;
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, EPIPE, ESPIPE};
 use crate::syscall::flag::{EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
@@ -12,30 +12,21 @@ use crate::syscall::scheme::Scheme;
 use crate::syscall::data::Stat;
 
 /// Pipes list
-pub static PIPE_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
+// TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
+// therefore only *one* pipe scheme.
+static PIPE_SCHEME_ID: Once<SchemeId> = Once::new();
 static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-static PIPES: Once<RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)>> = Once::new();
+static PIPES: RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> = RwLock::new((BTreeMap::new(), BTreeMap::new()));
 
-/// Initialize pipes, called if needed
-fn init_pipes() -> RwLock<(BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> {
-    RwLock::new((BTreeMap::new(), BTreeMap::new()))
-}
-
-/// Get the global pipes list, const
-fn pipes() -> RwLockReadGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> {
-    PIPES.call_once(init_pipes).read()
-}
-
-/// Get the global pipes list, mutable
-fn pipes_mut() -> RwLockWriteGuard<'static, (BTreeMap<usize, Arc<PipeRead>>, BTreeMap<usize, Arc<PipeWrite>>)> {
-    PIPES.call_once(init_pipes).write()
+pub fn pipe_scheme_id() -> Option<SchemeId> {
+    PIPE_SCHEME_ID.get().copied()
 }
 
 pub fn pipe(flags: usize) -> (usize, usize) {
-    let mut pipes = pipes_mut();
-    let scheme_id = PIPE_SCHEME_ID.load(Ordering::SeqCst);
-    let read_id = PIPE_NEXT_ID.fetch_add(1, Ordering::SeqCst);
-    let write_id = PIPE_NEXT_ID.fetch_add(1, Ordering::SeqCst);
+    let mut pipes = PIPES.write();
+    let scheme_id = *PIPE_SCHEME_ID.get().expect("pipe scheme not initialized when calling pipe()");
+    let read_id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let write_id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let read = PipeRead::new(scheme_id, write_id, flags);
     let write = PipeWrite::new(&read, read_id, flags);
     pipes.0.insert(read_id, Arc::new(read));
@@ -47,7 +38,12 @@ pub struct PipeScheme;
 
 impl PipeScheme {
     pub fn new(scheme_id: SchemeId) -> PipeScheme {
-        PIPE_SCHEME_ID.store(scheme_id, Ordering::SeqCst);
+        let mut called = false;
+        PIPE_SCHEME_ID.call_once(|| {
+            called = true;
+            scheme_id
+        });
+        assert!(called, "calling PipeScheme::new more than once");
         PipeScheme
     }
 }
@@ -56,7 +52,7 @@ impl Scheme for PipeScheme {
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         // Clone to prevent deadlocks
         let pipe = {
-            let pipes = pipes();
+            let pipes = PIPES.read();
             pipes.0.get(&id).map(|pipe| pipe.clone()).ok_or(Error::new(EBADF))?
         };
 
@@ -66,7 +62,7 @@ impl Scheme for PipeScheme {
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         // Clone to prevent deadlocks
         let pipe = {
-            let pipes = pipes();
+            let pipes = PIPES.read();
             pipes.1.get(&id).map(|pipe| pipe.clone()).ok_or(Error::new(EBADF))?
         };
 
@@ -74,7 +70,7 @@ impl Scheme for PipeScheme {
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        let pipes = pipes();
+        let pipes = PIPES.read();
 
         if let Some(pipe) = pipes.0.get(&id) {
             return pipe.fcntl(cmd, arg);
@@ -88,7 +84,7 @@ impl Scheme for PipeScheme {
     }
 
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
-        let pipes = pipes();
+        let pipes = PIPES.read();
 
         if let Some(pipe) = pipes.0.get(&id) {
             if flags == EVENT_READ {
@@ -111,13 +107,10 @@ impl Scheme for PipeScheme {
     }
 
     fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
-        let mut i = 0;
         let scheme_path = b"pipe:";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-        Ok(i)
+        let to_copy = core::cmp::min(buf.len(), scheme_path.len());
+        buf[..to_copy].copy_from_slice(&scheme_path[..to_copy]);
+        Ok(to_copy)
     }
 
     fn fstat(&self, _id: usize, stat: &mut Stat) -> Result<usize> {
@@ -134,7 +127,7 @@ impl Scheme for PipeScheme {
     }
 
     fn close(&self, id: usize) -> Result<usize> {
-        let mut pipes = pipes_mut();
+        let mut pipes = PIPES.write();
 
         drop(pipes.0.remove(&id));
         drop(pipes.1.remove(&id));
