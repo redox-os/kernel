@@ -18,7 +18,7 @@ pub struct ContextList {
 
 impl ContextList {
     /// Create a new context list.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         ContextList {
             map: BTreeMap::new(),
             next_id: 1
