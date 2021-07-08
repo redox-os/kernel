@@ -41,6 +41,8 @@ pub mod start;
 /// Stop function
 pub mod stop;
 
+pub use ::rmm::X8664Arch as CurrentRmmArch;
+
 // Flags
 pub mod flags {
     pub const FLAG_SINGLESTEP: usize = 1 << 8;
