@@ -48,7 +48,13 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
         let active_table = ActivePageTable::new(TableKind::User);
         let virtual_address = VirtualAddress::new(addr);
 
-        if !crate::CurrentRmmArch::virt_is_valid(virtual_address) || crate::CurrentRmmArch::virt_kind(virtual_address) == TableKind::Kernel {
+        if !crate::CurrentRmmArch::virt_is_valid(virtual_address) {
+            return Err(Error::new(EFAULT));
+        }
+        // TODO: Use this all over the code, making sure that no user pointers that are higher half
+        // can get to the page table walking procedure.
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if virtual_address.data() & (1 << 63) == (1 << 63) {
             return Err(Error::new(EFAULT));
         }
 
@@ -159,7 +165,13 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
             let addr2_physaddr = unsafe {
                 let addr2_virt = VirtualAddress::new(addr2);
 
-                if !crate::CurrentRmmArch::virt_is_valid(addr2_virt) || crate::CurrentRmmArch::virt_kind(addr2_virt) == TableKind::Kernel {
+                if !crate::CurrentRmmArch::virt_is_valid(addr2_virt) {
+                    return Err(Error::new(EFAULT));
+                }
+
+                // TODO
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                if addr2_virt.data() & (1 << 63) == (1 << 63) {
                     return Err(Error::new(EFAULT));
                 }
 
