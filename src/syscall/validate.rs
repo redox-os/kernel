@@ -41,9 +41,26 @@ pub fn validate_slice<T>(ptr: *const T, len: usize) -> Result<&'static [T]> {
         Ok(unsafe { slice::from_raw_parts(ptr, len) })
     }
 }
+/// Convert a pointer with fixed static length to a reference to an array, if valid.
+// TODO: This is probably also quite unsafe, mainly because we have no idea unless we do very
+// careful checking, that this upholds the rules that LLVM relies with shared references, namely
+// that the value cannot change by others. Atomic volatile.
+pub unsafe fn validate_array<'a, T, const N: usize>(ptr: *const T) -> Result<&'a [T; N]> {
+    validate(ptr as usize, mem::size_of::<T>() * N, false)?;
+    Ok(&*ptr.cast::<[T; N]>())
+}
+pub unsafe fn validate_array_mut<'a, T, const N: usize>(ptr: *mut T) -> Result<&'a mut [T; N]> {
+    validate(ptr as usize, mem::size_of::<T>() * N, true)?;
+    Ok(&mut *ptr.cast::<[T; N]>())
+}
 
 /// Convert a pointer and length to slice, if valid
-//TODO: Mark unsafe
+// TODO: Mark unsafe
+//
+// FIXME: This is probably never ever safe, except under very special circumstances. Any &mut
+// reference will allow LLVM to assume that nobody else will ever modify this value, which is
+// certainly not the case for multithreaded userspace programs. Instead, we will want something
+// like atomic volatile.
 pub fn validate_slice_mut<T>(ptr: *mut T, len: usize) -> Result<&'static mut [T]> {
     if len == 0 {
         Ok(&mut [])

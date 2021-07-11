@@ -7,14 +7,16 @@ use alloc::collections::VecDeque;
 use core::intrinsics;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use rmm::Arch;
+
 use crate::context::{self, Context};
 use crate::time;
 use crate::memory::PhysicalAddress;
 use crate::paging::{ActivePageTable, TableKind, VirtualAddress};
 use crate::syscall::data::TimeSpec;
 use crate::syscall::error::{Error, Result, ESRCH, EAGAIN, EFAULT, EINVAL};
-use crate::syscall::flag::{FUTEX_WAIT, FUTEX_WAKE, FUTEX_REQUEUE};
-use crate::syscall::validate::{validate_slice, validate_slice_mut};
+use crate::syscall::flag::{FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE, FUTEX_REQUEUE};
+use crate::syscall::validate::{validate_array, validate_slice, validate_slice_mut};
 
 type FutexList = VecDeque<FutexEntry>;
 
@@ -41,23 +43,34 @@ pub fn futexes_mut() -> RwLockWriteGuard<'static, FutexList> {
     FUTEXES.call_once(init_futexes).write()
 }
 
-// FIXME: Don't take a mutable reference to the addr, since rustc can make assumptions that the
-// pointee cannot be changed by another thread, which could make atomic ops useless.
-pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) -> Result<usize> {
+pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> Result<usize> {
     let target_physaddr = unsafe {
         let active_table = ActivePageTable::new(TableKind::User);
-        let virtual_address = VirtualAddress::new(addr as *mut i32 as usize);
+        let virtual_address = VirtualAddress::new(addr);
 
-        // FIXME: Already validated in syscall/mod.rs
+        if !crate::CurrentRmmArch::virt_is_valid(virtual_address) {
+            return Err(Error::new(EFAULT));
+        }
+        // TODO: Use this all over the code, making sure that no user pointers that are higher half
+        // can get to the page table walking procedure.
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        if virtual_address.data() & (1 << 63) == (1 << 63) {
+            return Err(Error::new(EFAULT));
+        }
+
         active_table.translate(virtual_address).ok_or(Error::new(EFAULT))?
     };
 
     match op {
-        FUTEX_WAIT => {
-            let timeout_opt = if val2 != 0 {
-                Some(validate_slice(val2 as *const TimeSpec, 1).map(|req| &req[0])?)
-            } else {
+        // TODO: FUTEX_WAIT_MULTIPLE?
+        FUTEX_WAIT | FUTEX_WAIT64 => {
+            let timeout_ptr = val2 as *const TimeSpec;
+
+            let timeout_opt = if timeout_ptr.is_null() {
                 None
+            } else {
+                let [timeout] = unsafe { *validate_array(timeout_ptr)? };
+                Some(timeout)
             };
 
             {
@@ -69,7 +82,22 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                     Arc::clone(&context_lock)
                 };
 
-                if unsafe { intrinsics::atomic_load(addr) != val } {
+                // TODO: Is the implicit SeqCst ordering too strong here?
+                let (fetched, expected) = if op == FUTEX_WAIT {
+                    // Must be aligned, otherwise it could cross a page boundary and mess up the
+                    // (simpler) validation we did in the first place.
+                    if addr % 4 != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+                    (u64::from(unsafe { intrinsics::atomic_load::<u32>(addr as *const u32) }), u64::from(val as u32))
+                } else {
+                    // op == FUTEX_WAIT64
+                    if addr % 8 != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+                    (unsafe { intrinsics::atomic_load::<u64>(addr as *const u64) }, val as u64)
+                };
+                if fetched != expected {
                     return Err(Error::new(EAGAIN));
                 }
 
@@ -116,15 +144,17 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                 let mut futexes = futexes_mut();
 
                 let mut i = 0;
-                while i < futexes.len() && (woken as i32) < val {
-                    if futexes[i].target_physaddr == target_physaddr {
-                        if let Some(futex) = futexes.swap_remove_back(i) {
-                            let mut context_guard = futex.context_lock.write();
-                            context_guard.unblock();
-                            woken += 1;
-                        }
-                    } else {
+
+                // TODO: Use retain, once it allows the closure to tell it to stop iterating...
+                while i < futexes.len() && woken < val {
+                    if futexes[i].target_physaddr != target_physaddr {
                         i += 1;
+                        continue;
+                    }
+                    if let Some(futex) = futexes.swap_remove_back(i) {
+                        let mut context_guard = futex.context_lock.write();
+                        context_guard.unblock();
+                        woken += 1;
                     }
                 }
             }
@@ -133,12 +163,19 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
         },
         FUTEX_REQUEUE => {
             let addr2_physaddr = unsafe {
+                let addr2_virt = VirtualAddress::new(addr2);
+
+                if !crate::CurrentRmmArch::virt_is_valid(addr2_virt) {
+                    return Err(Error::new(EFAULT));
+                }
+
+                // TODO
+                #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+                if addr2_virt.data() & (1 << 63) == (1 << 63) {
+                    return Err(Error::new(EFAULT));
+                }
+
                 let active_table = ActivePageTable::new(TableKind::User);
-
-                let addr2_safe = validate_slice_mut(addr2, 1).map(|addr2_safe| &mut addr2_safe[0])?;
-                let addr2_virt = VirtualAddress::new(addr2_safe as *mut i32 as usize);
-
-                // FIXME: Already validated.
                 active_table.translate(addr2_virt).ok_or(Error::new(EFAULT))?
             };
 
@@ -149,22 +186,21 @@ pub fn futex(addr: &mut i32, op: usize, val: i32, val2: usize, addr2: *mut i32) 
                 let mut futexes = futexes_mut();
 
                 let mut i = 0;
-                while i < futexes.len() && (woken as i32) < val {
-                    if futexes[i].target_physaddr == target_physaddr {
-                        if let Some(futex) = futexes.swap_remove_back(i) {
-                            futex.context_lock.write().unblock();
-                            woken += 1;
-                        }
-                    } else {
+                while i < futexes.len() && woken < val {
+                    if futexes[i].target_physaddr != target_physaddr {
                         i += 1;
+                    }
+                    if let Some(futex) = futexes.swap_remove_back(i) {
+                        futex.context_lock.write().unblock();
+                        woken += 1;
                     }
                 }
                 while i < futexes.len() && requeued < val2 {
-                    if futexes[i].target_physaddr == target_physaddr {
-                        futexes[i].target_physaddr = addr2_physaddr;
-                        requeued += 1;
+                    if futexes[i].target_physaddr != target_physaddr {
+                        i += 1;
                     }
-                    i += 1;
+                    futexes[i].target_physaddr = addr2_physaddr;
+                    requeued += 1;
                 }
             }
 
