@@ -82,6 +82,12 @@ impl<'a> Elf<'a> {
     pub fn program_headers(&self) -> usize {
         self.header.e_phoff as usize
     }
+    pub fn program_header_count(&self) -> usize {
+        self.header.e_phnum as usize
+    }
+    pub fn program_headers_size(&self) -> usize {
+        self.header.e_phentsize as usize
+    }
 }
 
 pub struct ElfSections<'a> {

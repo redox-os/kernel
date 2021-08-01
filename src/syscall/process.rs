@@ -27,7 +27,7 @@ use crate::scheme::FileHandle;
 use crate::start::usermode;
 use crate::syscall::data::{SigAction, Stat};
 use crate::syscall::error::*;
-use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, AT_PHDR, CloneFlags,
+use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, AT_PHDR, AT_PHENT, AT_PHNUM, CloneFlags,
                            CLONE_FILES, CLONE_FS, CLONE_SIGHAND, CLONE_STACK, CLONE_VFORK, CLONE_VM,
                            MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE, PTRACE_EVENT_CLONE,
                            PTRACE_STOP_EXIT, SigActionFlags, SIG_BLOCK, SIG_DFL, SIG_SETMASK, SIG_UNBLOCK,
@@ -57,7 +57,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let mut image = vec![];
         let mut stack_opt = None;
         let mut sigstack_opt = None;
-        let mut tls_opt = None;
         let grants;
         let name;
         let cwd;
@@ -202,36 +201,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 sigstack_opt = Some(new_sigstack);
             }
 
-            if let Some(ref tls) = context.tls {
-                let mut new_tls = context::memory::Tls {
-                    master: tls.master,
-                    file_size: tls.file_size,
-                    mem: context::memory::Memory::new(
-                        VirtualAddress::new(crate::USER_TMP_TLS_OFFSET),
-                        tls.mem.size(),
-                        PageFlags::new().write(true),
-                        true
-                    ),
-                    offset: tls.offset,
-                };
-
-
-                if flags.contains(CLONE_VM) {
-                    unsafe {
-                        new_tls.load();
-                    }
-                } else {
-                    unsafe {
-                        intrinsics::copy(tls.mem.start_address().data() as *const u8,
-                                        new_tls.mem.start_address().data() as *mut u8,
-                                        tls.mem.size());
-                    }
-                }
-
-                new_tls.mem.remap(tls.mem.flags());
-                tls_opt = Some(new_tls);
-            }
-
             if flags.contains(CLONE_VM) {
                 grants = Arc::clone(&context.grants);
             } else {
@@ -352,6 +321,14 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
             context.arch = arch;
 
+            // This is needed because these registers may have changed after this context was
+            // switched to, but before this was called.
+            #[cfg(all(target_arch = "x86_64", feature = "x86_fsgsbase"))]
+            unsafe {
+                context.arch.fsbase = x86::bits64::segmentation::rdfsbase() as usize;
+                context.arch.gsbase = x86::bits64::segmentation::rdgsbase() as usize;
+            }
+
             let mut active_utable = unsafe { ActivePageTable::new(TableKind::User) };
             let mut active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
 
@@ -378,10 +355,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             let mut new_ktable = unsafe {
                 InactivePageTable::from_address(new_utable.address())
             };
-            #[cfg(target_arch = "x86_64")]
-            {
-                context.arch.update_tcb(pid.into());
-            }
 
             // Copy kernel image mapping
             {
@@ -502,15 +475,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 context.sigstack = Some(sigstack);
             }
 
-            // Set up TCB
-            let tcb_addr = crate::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
-            let mut tcb = context::memory::Memory::new(
-                VirtualAddress::new(tcb_addr),
-                PAGE_SIZE,
-                PageFlags::new().write(true).user(true),
-                true
-            );
-
             #[cfg(target_arch = "aarch64")]
             {
                 if let Some(stack) = &mut context.kstack {
@@ -533,38 +497,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     }
                 }
             }
-
-            // Setup user TLS
-            if let Some(mut tls) = tls_opt {
-                // Copy TLS mapping
-                {
-                    let frame = active_utable.p4()[crate::USER_TLS_PML4].pointed_frame().expect("user tls not mapped");
-                    let flags = active_utable.p4()[crate::USER_TLS_PML4].flags();
-                    active_utable.with(&mut new_utable, &mut temporary_upage, |mapper| {
-                        mapper.p4_mut()[crate::USER_TLS_PML4].set(frame, flags);
-                    });
-                }
-
-                // TODO: Make sure size is not greater than USER_TLS_SIZE
-                let tls_addr = crate::USER_TLS_OFFSET + context.id.into() * crate::USER_TLS_SIZE;
-                //println!("{}: Copy TLS: address 0x{:x}, size 0x{:x}", context.id.into(), tls_addr, tls.mem.size());
-                tls.mem.move_to(VirtualAddress::new(tls_addr), &mut new_utable, &mut temporary_upage);
-                unsafe {
-                    *(tcb_addr as *mut usize) = tls.mem.start_address().data() + tls.mem.size();
-                }
-                context.tls = Some(tls);
-            } else {
-                //println!("{}: Copy TCB", context.id.into());
-                let parent_tcb_addr = crate::USER_TCB_OFFSET + ppid.into() * PAGE_SIZE;
-                unsafe {
-                    intrinsics::copy(parent_tcb_addr as *const u8,
-                                    tcb_addr as *mut u8,
-                                    tcb.size());
-                }
-            }
-
-            tcb.move_to(VirtualAddress::new(tcb_addr), &mut new_utable, &mut temporary_upage);
-            context.image.push(tcb.to_shared());
 
             context.name = name;
 
@@ -599,13 +531,11 @@ fn empty(context: &mut context::Context, reaping: bool) {
         assert!(context.image.is_empty());
         assert!(context.stack.is_none());
         assert!(context.sigstack.is_none());
-        assert!(context.tls.is_none());
     } else {
-        // Unmap previous image, heap, grants, stack, and tls
+        // Unmap previous image, heap, grants, stack
         context.image.clear();
         drop(context.stack.take());
         drop(context.sigstack.take());
-        drop(context.tls.take());
     }
 
     // NOTE: If we do not replace the grants `Arc`, then a strange situation can appear where the
@@ -651,10 +581,12 @@ impl Drop for ExecFile {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fexec_noreturn(
     setuid: Option<u32>,
     setgid: Option<u32>,
     name: Box<str>,
+    phdrs_region: core::ops::Range<usize>,
     data: Box<[u8]>,
     args: Box<[Box<[u8]>]>,
     vars: Box<[Box<[u8]>]>,
@@ -663,6 +595,11 @@ fn fexec_noreturn(
     let entry;
     let singlestep;
     let mut sp = crate::USER_STACK_OFFSET + crate::USER_STACK_SIZE - 256;
+
+    let phdrs_len = 4096;
+    let phdrs_base_addr = sp - phdrs_len;
+
+    sp -= phdrs_len;
 
     {
         let (vfork, ppid, files) = {
@@ -678,6 +615,25 @@ fn fexec_noreturn(
 
             empty(&mut context, false);
 
+            #[cfg(all(target_arch = "x86_64"))]
+            {
+                context.arch.fsbase = 0;
+                context.arch.gsbase = 0;
+
+                #[cfg(feature = "x86_fsgsbase")]
+                unsafe {
+                    x86::bits64::segmentation::wrfsbase(0);
+                    x86::bits64::segmentation::swapgs();
+                    x86::bits64::segmentation::wrgsbase(0);
+                    x86::bits64::segmentation::swapgs();
+                }
+                #[cfg(not(feature = "x86_fsgsbase"))]
+                unsafe {
+                    x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
+                    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
+                }
+            }
+
             if let Some(uid) = setuid {
                 context.euid = uid;
             }
@@ -687,19 +643,9 @@ fn fexec_noreturn(
             }
 
             // Map and copy new segments
-            let mut tls_opt = None;
             {
                 let elf = elf::Elf::from(&data).unwrap();
                 entry = elf.entry();
-
-                // Always map TCB
-                let tcb_addr = crate::USER_TCB_OFFSET + context.id.into() * PAGE_SIZE;
-                let tcb_mem = context::memory::Memory::new(
-                    VirtualAddress::new(tcb_addr),
-                    PAGE_SIZE,
-                    PageFlags::new().write(true).user(true),
-                    true
-                );
 
                 for segment in elf.segments() {
                     match segment.p_type {
@@ -734,44 +680,10 @@ fn fexec_noreturn(
 
                             context.image.push(memory.to_shared());
                         },
-                        program_header::PT_TLS => {
-                            let aligned_size = if segment.p_align > 0 {
-                                ((segment.p_memsz + (segment.p_align - 1))/segment.p_align) * segment.p_align
-                            } else {
-                                segment.p_memsz
-                            } as usize;
-                            let rounded_size = ((aligned_size + PAGE_SIZE - 1)/PAGE_SIZE) * PAGE_SIZE;
-                            let rounded_offset = rounded_size - aligned_size;
-
-                            // TODO: Make sure size is not greater than USER_TLS_SIZE
-                            let tls_addr = crate::USER_TLS_OFFSET + context.id.into() * crate::USER_TLS_SIZE;
-                            let tls = context::memory::Tls {
-                                master: VirtualAddress::new(segment.p_vaddr as usize),
-                                file_size: segment.p_filesz as usize,
-                                mem: context::memory::Memory::new(
-                                    VirtualAddress::new(tls_addr),
-                                    rounded_size as usize,
-                                    PageFlags::new().write(true).user(true),
-                                    true
-                                ),
-                                offset: rounded_offset as usize,
-                            };
-
-                            unsafe {
-                                *(tcb_addr as *mut usize) = tls.mem.start_address().data() + tls.mem.size();
-                            }
-
-                            tls_opt = Some(tls);
-                        },
                         _ => (),
                     }
                 }
-
-                context.image.push(tcb_mem.to_shared());
             }
-
-            // Data no longer required, can deallocate
-            drop(data);
 
             // Map stack
             context.stack = Some(context::memory::Memory::new(
@@ -789,19 +701,18 @@ fn fexec_noreturn(
                 true
             ));
 
-            // Map TLS
-            if let Some(mut tls) = tls_opt {
-                unsafe {
-                    tls.load();
-                }
-
-                context.tls = Some(tls);
-            }
-
             let mut push = |arg| {
                 sp -= mem::size_of::<usize>();
                 unsafe { *(sp as *mut usize) = arg; }
             };
+
+            unsafe {
+                let mut source = core::slice::from_raw_parts_mut(phdrs_base_addr as *mut u8, phdrs_len);
+                source[..phdrs_region.len()].copy_from_slice(&data[phdrs_region.clone()]);
+            }
+
+            // Data no longer required, can deallocate
+            drop(data);
 
             // Push auxiliary vector
             push(AT_NULL);
@@ -1019,7 +930,11 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
         auxv.push(AT_ENTRY);
         auxv.push(elf.entry());
         auxv.push(AT_PHDR);
-        auxv.push(elf.program_headers());
+        auxv.push(crate::USER_STACK_OFFSET + crate::USER_STACK_SIZE - 256 - 4096);
+        auxv.push(AT_PHENT);
+        auxv.push(elf.program_headers_size());
+        auxv.push(AT_PHNUM);
+        auxv.push(elf.program_header_count());
 
         auxv
     };
@@ -1068,26 +983,19 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                     Some(auxv),
                 );
             },
-            program_header::PT_LOAD => {
-                let voff = segment.p_vaddr as usize % PAGE_SIZE;
-                let vaddr = segment.p_vaddr as usize - voff;
-
-                // Due to the Userspace and kernel TLS bases being located right above 2GB,
-                // limit any loadable sections to lower than that. Eventually we will need
-                // to replace this with a more intelligent TLS address
-                if vaddr >= 0x8000_0000 {
-                    println!("exec: invalid section address {:X}", segment.p_vaddr);
-                    return Err(Error::new(ENOEXEC));
-                }
-            },
             _ => (),
         }
+    }
+
+    let phdr_range = elf.program_headers()..elf.program_headers() + elf.program_headers_size() * elf.program_header_count();
+    if phdr_range.len() > 4096 {
+        return Err(Error::new(ENOMEM));
     }
 
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    fexec_noreturn(setuid, setgid, name.into_boxed_str(), data.into_boxed_slice(), args, vars, auxv.into_boxed_slice());
+    fexec_noreturn(setuid, setgid, name.into_boxed_str(), phdr_range, data.into_boxed_slice(), args, vars, auxv.into_boxed_slice());
 }
 
 pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {

@@ -69,7 +69,7 @@ impl ContextList {
         let id = ContextId::from(self.next_id);
         self.next_id += 1;
 
-        assert!(self.map.insert(id, Arc::new(RwLock::new(Context::new(id)))).is_none());
+        assert!(self.map.insert(id, Arc::new(RwLock::new(Context::new(id)?))).is_none());
 
         Ok(self.map.get(&id).expect("Failed to insert new context. ID is out of bounds."))
     }

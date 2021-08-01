@@ -36,10 +36,16 @@ pub struct Context {
     rbp: usize,
     /// Stack pointer
     rsp: usize,
-    /// FSBASE
-    pub fsbase: usize,
-    /// GSBASE
-    gsbase: usize,
+    /// FSBASE.
+    ///
+    /// NOTE: Same fsgsbase behavior as with gsbase.
+    pub(crate) fsbase: usize,
+    /// GSBASE.
+    ///
+    /// NOTE: Without fsgsbase, this register will strictly be equal to the register value when
+    /// running. With fsgsbase, this is neither saved nor restored upon every syscall (there is no
+    /// need to!), and thus it must be re-read from the register before copying this struct.
+    pub(crate) gsbase: usize,
     /// FX valid?
     loadable: AbiCompatBool,
 }
@@ -52,7 +58,7 @@ enum AbiCompatBool {
 }
 
 impl Context {
-    pub fn new(pid: usize) -> Context {
+    pub fn new() -> Context {
         Context {
             loadable: AbiCompatBool::False,
             fx: 0,
@@ -65,12 +71,9 @@ impl Context {
             r15: 0,
             rbp: 0,
             rsp: 0,
-            fsbase: crate::USER_TCB_OFFSET + pid * crate::memory::PAGE_SIZE,
+            fsbase: 0,
             gsbase: 0,
         }
-    }
-    pub fn update_tcb(&mut self, pid: usize) {
-        self.fsbase = crate::USER_TCB_OFFSET + pid * crate::memory::PAGE_SIZE;
     }
 
     pub fn get_page_utable(&mut self) -> usize {
@@ -147,19 +150,10 @@ impl Context {
     }
 }
 
-macro_rules! switch_msr(
+macro_rules! load_msr(
     ($name:literal, $offset:literal) => {
         concat!("
-            // EDX:EAX <= MSR
-
             mov ecx, {", $name, "}
-            rdmsr
-            shl rdx, 32
-            mov edx, eax
-
-            // Save old, load new.
-
-            mov [rdi + {", $offset, "}], rdx
             mov rdx, [rsi + {", $offset, "}]
             mov eax, edx
             shr rdx, 32
@@ -198,10 +192,9 @@ macro_rules! switch_fsgsbase(
 #[cfg(not(feature = "x86_fsgsbase"))]
 macro_rules! switch_fsgsbase(
     () => {
-        // TODO: Is it faster to perform two 32-bit memory accesses, rather than shifting?
         concat!(
-            switch_msr!("MSR_FSBASE", "off_fsbase"),
-            switch_msr!("MSR_KERNELGSBASE", "off_gsbase"),
+            load_msr!("MSR_FSBASE", "off_fsbase"),
+            load_msr!("MSR_KERNELGSBASE", "off_gsbase"),
         )
     }
 );

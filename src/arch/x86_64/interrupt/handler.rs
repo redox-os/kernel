@@ -80,6 +80,11 @@ impl IretRegisters {
             println!("RSP:   {:>016X}", { self.rsp });
             println!("SS:    {:>016X}", { self.ss });
         }
+        unsafe {
+            let fsbase = x86::msr::rdmsr(x86::msr::IA32_FS_BASE);
+            let gsbase = x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE);
+            println!("FSBASE {:>016X}\nGSBASE {:016X}", fsbase, gsbase);
+        }
     }
 }
 

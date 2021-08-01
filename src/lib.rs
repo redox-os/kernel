@@ -48,6 +48,7 @@
 #![feature(concat_idents)]
 #![feature(const_btree_new)]
 #![feature(const_maybe_uninit_as_ptr)]
+#![feature(const_panic)]
 #![feature(const_ptr_offset_from)]
 #![feature(const_raw_ptr_deref)]
 #![feature(core_intrinsics)]
