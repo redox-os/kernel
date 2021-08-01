@@ -586,8 +586,8 @@ fn fexec_noreturn(
     setuid: Option<u32>,
     setgid: Option<u32>,
     name: Box<str>,
-    phdrs_region: core::ops::Range<usize>,
     data: Box<[u8]>,
+    phdr_grant: context::memory::Grant,
     args: Box<[Box<[u8]>]>,
     vars: Box<[Box<[u8]>]>,
     auxv: Box<[usize]>,
@@ -595,11 +595,6 @@ fn fexec_noreturn(
     let entry;
     let singlestep;
     let mut sp = crate::USER_STACK_OFFSET + crate::USER_STACK_SIZE - 256;
-
-    let phdrs_len = 4096;
-    let phdrs_base_addr = sp - phdrs_len;
-
-    sp -= phdrs_len;
 
     {
         let (vfork, ppid, files) = {
@@ -614,6 +609,8 @@ fn fexec_noreturn(
             context.name = Arc::new(RwLock::new(name));
 
             empty(&mut context, false);
+
+            context.grants.write().insert(phdr_grant);
 
             #[cfg(all(target_arch = "x86_64"))]
             {
@@ -701,18 +698,13 @@ fn fexec_noreturn(
                 true
             ));
 
+            // Data no longer required, can deallocate
+            drop(data);
+
             let mut push = |arg| {
                 sp -= mem::size_of::<usize>();
                 unsafe { *(sp as *mut usize) = arg; }
             };
-
-            unsafe {
-                let mut source = core::slice::from_raw_parts_mut(phdrs_base_addr as *mut u8, phdrs_len);
-                source[..phdrs_region.len()].copy_from_slice(&data[phdrs_region.clone()]);
-            }
-
-            // Data no longer required, can deallocate
-            drop(data);
 
             // Push auxiliary vector
             push(AT_NULL);
@@ -822,7 +814,7 @@ fn fexec_noreturn(
     unsafe { usermode(entry, sp, 0, usize::from(singlestep)) }
 }
 
-pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<str>>, auxv: Option<Vec<usize>>) -> Result<usize> {
+pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<str>>, auxv: Option<(Vec<usize>, context::memory::Grant)>) -> Result<usize> {
     let (uid, gid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -922,21 +914,42 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
     // `fexec_kernel` can recurse if an interpreter is found. We get the
     // auxiliary vector from the first invocation, which is passed via an
     // argument, or if this is the first one we create it.
-    let auxv = if let Some(auxv) = auxv {
-        auxv
+    let (auxv, phdr_grant) = if let Some((auxv, phdr_grant)) = auxv {
+        (auxv, phdr_grant)
     } else {
+        let phdr_grant = match context::contexts().current().ok_or(Error::new(ESRCH))?.read().grants.write() {
+            mut grants => {
+                let size = elf.program_headers_size() * elf.program_header_count();
+                let aligned_size = (size + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
+
+                if aligned_size > MAX_PHDRS_SIZE {
+                    return Err(Error::new(ENOMEM));
+                }
+
+                let phdrs_region = grants.find_free(aligned_size);
+                let grant = context::memory::Grant::map(phdrs_region.start_address(), aligned_size, PageFlags::new().write(true).user(true));
+
+                unsafe {
+                    let dst = core::slice::from_raw_parts_mut(grant.start_address().data() as *mut u8, aligned_size);
+                    dst[..size].copy_from_slice(&data[elf.program_headers()..elf.program_headers() + elf.program_headers_size() * elf.program_header_count()]);
+                }
+
+                grant
+            }
+
+        };
         let mut auxv = Vec::with_capacity(3);
 
         auxv.push(AT_ENTRY);
         auxv.push(elf.entry());
         auxv.push(AT_PHDR);
-        auxv.push(crate::USER_STACK_OFFSET + crate::USER_STACK_SIZE - 256 - 4096);
+        auxv.push(phdr_grant.start_address().data());
         auxv.push(AT_PHENT);
         auxv.push(elf.program_headers_size());
         auxv.push(AT_PHNUM);
         auxv.push(elf.program_header_count());
 
-        auxv
+        (auxv, phdr_grant)
     };
 
     // We check the validity of all loadable sections here
@@ -980,23 +993,19 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
                     args_vec.into_boxed_slice(),
                     vars,
                     Some(name_override),
-                    Some(auxv),
+                    Some((auxv, phdr_grant)),
                 );
             },
             _ => (),
         }
     }
 
-    let phdr_range = elf.program_headers()..elf.program_headers() + elf.program_headers_size() * elf.program_header_count();
-    if phdr_range.len() > 4096 {
-        return Err(Error::new(ENOMEM));
-    }
-
     // This is the point of no return, quite literaly. Any checks for validity need
     // to be done before, and appropriate errors returned. Otherwise, we have nothing
     // to return to.
-    fexec_noreturn(setuid, setgid, name.into_boxed_str(), phdr_range, data.into_boxed_slice(), args, vars, auxv.into_boxed_slice());
+    fexec_noreturn(setuid, setgid, name.into_boxed_str(), data.into_boxed_slice(), phdr_grant, args, vars, auxv.into_boxed_slice());
 }
+const MAX_PHDRS_SIZE: usize = PAGE_SIZE;
 
 pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
     let mut args = Vec::new();
