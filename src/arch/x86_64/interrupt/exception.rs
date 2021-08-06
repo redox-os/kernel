@@ -18,7 +18,7 @@ interrupt_stack!(divide_by_zero, |stack| {
     ksignal(SIGFPE);
 });
 
-interrupt_stack!(debug, super_atomic: swapgs_iff_ring3_slow!, |stack| {
+interrupt_stack!(debug, @paranoid, |stack| {
     let mut handled = false;
 
     // Disable singlestep before there is a breakpoint, since the breakpoint
@@ -41,7 +41,7 @@ interrupt_stack!(debug, super_atomic: swapgs_iff_ring3_slow!, |stack| {
     }
 });
 
-interrupt_stack!(non_maskable, super_atomic: swapgs_iff_ring3_slow!, |stack| {
+interrupt_stack!(non_maskable, @paranoid, |stack| {
     println!("Non-maskable interrupt");
     stack.dump();
 });
@@ -158,7 +158,7 @@ interrupt_error!(alignment_check, |stack| {
     ksignal(SIGBUS);
 });
 
-interrupt_stack!(machine_check, super_atomic: swapgs_iff_ring3_slow!, |stack| {
+interrupt_stack!(machine_check, @paranoid, |stack| {
     println!("Machine check fault");
     stack.dump();
     stack_trace();

@@ -52,7 +52,7 @@ static mut INIT_GDT: [GdtEntry; 4] = [
 ];
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 9] = [
+pub static mut GDT: [GdtEntry; 10] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -70,6 +70,9 @@ pub static mut GDT: [GdtEntry; 9] = [
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
     // TSS must be 16 bytes long, twice the normal size
+    GdtEntry::new(0, 0, 0, 0),
+    // Unused entry which stores the CPU ID. This is necessary for paranoid interrupts as they have
+    // no other way of determining it.
     GdtEntry::new(0, 0, 0, 0),
 ];
 
