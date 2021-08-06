@@ -204,34 +204,6 @@ impl InterruptErrorStack {
 }
 
 #[macro_export]
-macro_rules! intel_asm {
-    ($($strings:expr,)+) => {
-        global_asm!(concat!(
-            $($strings),+,
-        ));
-    };
-}
-#[macro_export]
-macro_rules! function {
-    ($name:ident => { $($body:expr,)+ }) => {
-        intel_asm!(
-            ".global ", stringify!($name), "\n",
-            ".type ", stringify!($name), ", @function\n",
-            ".section .text.", stringify!($name), ", \"ax\", @progbits\n",
-            // Align the function to a 16-byte boundary, padding with multi-byte NOPs.
-            ".p2align 4,,15\n",
-            stringify!($name), ":\n",
-            $($body),+,
-            ".size ", stringify!($name), ", . - ", stringify!($name), "\n",
-            ".text\n",
-        );
-        extern "C" {
-            pub fn $name();
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! push_scratch {
     () => { "
         // Push scratch registers

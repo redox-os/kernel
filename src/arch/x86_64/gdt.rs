@@ -78,9 +78,6 @@ pub static mut GDT: [GdtEntry; 10] = [
 
 #[repr(C, align(16))]
 pub struct ProcessorControlRegion {
-    // NOTE: If you plan to change any fields here, please make sure that you also modify the
-    // offsets in the syscall instruction handler accordingly!
-
     pub tcb_end: usize,
     pub user_rsp_tmp: usize,
     pub tss: TssWrapper,
