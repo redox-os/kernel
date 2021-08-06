@@ -331,6 +331,9 @@ macro_rules! interrupt_stack {
         paste::item! {
             #[no_mangle]
             unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
+                // Deadlock safety: interrupts are not normally enabled in the kernel, except in
+                // kmain. However, no locks for context list nor even individual context locks, are
+                // ever meant to be acquired there.
                 let _guard = $crate::ptrace::set_process_regs($stack);
 
                 // TODO: Force the declarations to specify unsafe?
@@ -410,7 +413,18 @@ macro_rules! interrupt_error {
         paste::item! {
             #[no_mangle]
             unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
-                let _guard = $crate::ptrace::set_process_regs(&mut $stack.inner);
+                let _guard;
+
+                // Only set_ptrace_process_regs if this error occured from userspace. If this fault
+                // originated from kernel mode, we have no idea what it might have locked (and
+                // kernel mode faults are never meant to occur unless something is wrong, and will
+                // not context switch anyway, rendering that statement useless in such a case
+                // anyway).
+                //
+                // Check the privilege level of CS against ring 3.
+                if $stack.inner.iret.cs & 0b11 == 0b11 {
+                    _guard = $crate::ptrace::set_process_regs(&mut $stack.inner);
+                }
 
                 #[allow(unused_unsafe)]
                 unsafe {
