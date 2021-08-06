@@ -6,6 +6,7 @@ use crate::{
     syscall::{
         FloatRegisters,
         IntRegisters,
+        EnvRegisters,
         data::{PtraceEvent, Stat},
         error::*,
         flag::*,
@@ -57,6 +58,9 @@ fn try_stop_context<F, T>(pid: ContextId, mut callback: F) -> Result<T>
 where
     F: FnMut(&mut Context) -> Result<T>,
 {
+    if pid == context::context_id() {
+        return Err(Error::new(EBADF));
+    }
     // Stop process
     let (was_stopped, mut running) = with_context_mut(pid, |context| {
         let was_stopped = context.ptrace_stop;
@@ -88,7 +92,8 @@ where
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RegsKind {
     Float,
-    Int
+    Int,
+    Env,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Operation {
@@ -195,6 +200,12 @@ pub static PROC_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 pub struct ProcScheme {
     next_id: AtomicUsize,
     handles: RwLock<BTreeMap<usize, Handle>>,
+    access: Access,
+}
+#[derive(PartialEq)]
+pub enum Access {
+    OtherProcesses,
+    Restricted,
 }
 
 impl ProcScheme {
@@ -204,6 +215,14 @@ impl ProcScheme {
         Self {
             next_id: AtomicUsize::new(0),
             handles: RwLock::new(BTreeMap::new()),
+            access: Access::OtherProcesses,
+        }
+    }
+    pub fn restricted() -> Self {
+        Self {
+            next_id: AtomicUsize::new(0),
+            handles: RwLock::new(BTreeMap::new()),
+            access: Access::Restricted,
         }
     }
 }
@@ -211,15 +230,22 @@ impl ProcScheme {
 impl Scheme for ProcScheme {
     fn open(&self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
         let mut parts = path.splitn(2, '/');
-        let pid = parts.next()
-            .and_then(|s| s.parse().ok())
-            .map(ContextId::from)
-            .ok_or(Error::new(EINVAL))?;
+        let pid_str = parts.next()
+            .ok_or(Error::new(ENOENT))?;
+
+        let pid = if pid_str == "current" {
+            context::context_id()
+        } else if self.access == Access::Restricted {
+            return Err(Error::new(EACCES));
+        } else {
+            ContextId::from(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
+        };
 
         let operation = match parts.next() {
             Some("mem") => Operation::Memory,
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
+            Some("regs/env") => Operation::Regs(RegsKind::Env),
             Some("trace") => Operation::Trace,
             Some("exe") => Operation::Static("exe"),
             _ => return Err(Error::new(EINVAL))
@@ -382,7 +408,8 @@ impl Scheme for ProcScheme {
             Operation::Regs(kind) => {
                 union Output {
                     float: FloatRegisters,
-                    int: IntRegisters
+                    int: IntRegisters,
+                    env: EnvRegisters,
                 }
 
                 let (output, size) = match kind {
@@ -406,7 +433,37 @@ impl Scheme for ProcScheme {
                             stack.save(&mut regs);
                             Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
                         }
-                    })?
+                    })?,
+                    RegsKind::Env => {
+                        let (fsbase, gsbase) = if info.pid == context::context_id() {
+                            #[cfg(not(feature = "x86_fsgsbase"))]
+                            unsafe {
+                                (
+                                    x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
+                                    x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE),
+                                )
+                            }
+                            #[cfg(feature = "x86_fsgsbase")]
+                            unsafe {
+                                use x86::bits64::segmentation::*;
+
+                                (
+                                    rdfsbase(),
+                                    {
+                                        swapgs();
+                                        let gsbase = rdgsbase();
+                                        swapgs();
+                                        gsbase
+                                    }
+                                )
+                            }
+                        } else {
+                            try_stop_context(info.pid, |context| {
+                                Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
+                            })?
+                        };
+                        (Output { env: EnvRegisters { fsbase, gsbase }}, mem::size_of::<EnvRegisters>())
+                    }
                 };
 
                 let bytes = unsafe {
@@ -503,6 +560,9 @@ impl Scheme for ProcScheme {
                     if buf.len() < mem::size_of::<FloatRegisters>() {
                         return Ok(0);
                     }
+                    if (buf.as_ptr() as usize) % mem::align_of::<FloatRegisters>() != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
                     let regs = unsafe {
                         *(buf as *const _ as *const FloatRegisters)
                     };
@@ -521,6 +581,9 @@ impl Scheme for ProcScheme {
                     if buf.len() < mem::size_of::<IntRegisters>() {
                         return Ok(0);
                     }
+                    if (buf.as_ptr() as usize) % mem::align_of::<FloatRegisters>() != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
                     let regs = unsafe {
                         *(buf as *const _ as *const IntRegisters)
                     };
@@ -536,6 +599,57 @@ impl Scheme for ProcScheme {
                             Ok(mem::size_of::<IntRegisters>())
                         }
                     })
+                }
+                RegsKind::Env => {
+                    if buf.len() < mem::size_of::<EnvRegisters>() {
+                        return Ok(0);
+                    }
+                    if (buf.as_ptr() as usize) % mem::align_of::<EnvRegisters>() != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+                    let regs = unsafe {
+                        *(buf as *const _ as *const EnvRegisters)
+                    };
+                    use rmm::{Arch as _, X8664Arch};
+                    if !(X8664Arch::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && X8664Arch::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    if info.pid == context::context_id() {
+                        #[cfg(not(feature = "x86_fsgsbase"))]
+                        unsafe {
+                            x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase);
+                            // We have to write to KERNEL_GSBASE, because when the kernel returns to
+                            // userspace, it will have executed SWAPGS first.
+                            x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase);
+
+                            match context::contexts().current().ok_or(Error::new(ESRCH))?.write().arch {
+                                ref mut arch => {
+                                    arch.fsbase = regs.fsbase as usize;
+                                    arch.gsbase = regs.gsbase as usize;
+                                }
+                            }
+                        }
+                        #[cfg(feature = "x86_fsgsbase")]
+                        unsafe {
+                            use x86::bits64::segmentation::*;
+
+                            wrfsbase(regs.fsbase);
+                            swapgs();
+                            wrgsbase(regs.gsbase);
+                            swapgs();
+
+                            // No need to update the current context; with fsgsbase enabled, these
+                            // registers are automatically saved and restored.
+                        }
+                    } else {
+                        try_stop_context(info.pid, |context| {
+                            context.arch.fsbase = regs.fsbase as usize;
+                            context.arch.gsbase = regs.gsbase as usize;
+                            Ok(())
+                        })?;
+                    }
+                    Ok(mem::size_of::<EnvRegisters>())
                 }
             },
             Operation::Trace => {
@@ -621,6 +735,7 @@ impl Scheme for ProcScheme {
             Operation::Memory => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
+            Operation::Regs(RegsKind::Env) => "regs/env",
             Operation::Trace => "trace",
             Operation::Static(path) => path,
         });

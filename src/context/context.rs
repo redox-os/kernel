@@ -9,6 +9,7 @@ use core::{
     alloc::{GlobalAlloc, Layout},
     cmp::Ordering,
     mem,
+    ptr::NonNull,
 };
 use spin::RwLock;
 
@@ -20,7 +21,9 @@ use crate::context::memory::{UserGrants, Memory, SharedMemory, Tls};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
+
 use crate::syscall::data::SigAction;
+use crate::syscall::error::{Result, Error, ENOMEM};
 use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
@@ -203,9 +206,9 @@ pub struct Context {
     /// Current system call
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
-    pub syscall_head: Box<[u8]>,
+    pub syscall_head: AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>,
     /// Tail buffer to use when system call buffers are not page aligned
-    pub syscall_tail: Box<[u8]>,
+    pub syscall_tail: AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>,
     /// Context is halting parent
     pub vfork: bool,
     /// Context is being waited on
@@ -230,8 +233,6 @@ pub struct Context {
     pub stack: Option<SharedMemory>,
     /// User signal stack
     pub sigstack: Option<Memory>,
-    /// User Thread local storage
-    pub tls: Option<Tls>,
     /// User grants
     pub grants: Arc<RwLock<UserGrants>>,
     /// The name of the context
@@ -253,12 +254,63 @@ pub struct Context {
     pub ptrace_stop: bool
 }
 
-impl Context {
-    pub fn new(id: ContextId) -> Context {
-        let syscall_head = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
-        let syscall_tail = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(PAGE_SIZE, PAGE_SIZE)) as *mut [u8; PAGE_SIZE]) };
+// Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
+// cannot be used for increased alignment directly.
+// TODO: move to common?
+pub struct AlignedBox<T, const ALIGN: usize> {
+    inner: Unique<T>,
+}
+pub unsafe trait ValidForZero {}
+unsafe impl<const N: usize> ValidForZero for [u8; N] {}
 
-        Context {
+impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
+    const LAYOUT: core::alloc::Layout = {
+        const fn max(a: usize, b: usize) -> usize {
+            if a > b { a } else { b }
+        }
+
+        match core::alloc::Layout::from_size_align(mem::size_of::<T>(), max(mem::align_of::<T>(), ALIGN)) {
+            Ok(l) => l,
+            Err(_) => panic!("layout validation failed at compile time"),
+        }
+    };
+    #[inline(always)]
+    pub fn try_zeroed() -> Result<Self>
+    where
+        T: ValidForZero,
+    {
+        Ok(unsafe {
+            let ptr = crate::ALLOCATOR.alloc_zeroed(Self::LAYOUT);
+            if ptr.is_null() {
+                return Err(Error::new(ENOMEM))?;
+            }
+            Self {
+                inner: Unique::new_unchecked(ptr.cast()),
+            }
+        })
+    }
+}
+
+impl<T, const ALIGN: usize> core::fmt::Debug for AlignedBox<T, ALIGN> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "[aligned box at {:p}, size {} alignment {}]", self.inner.as_ptr(), mem::size_of::<T>(), mem::align_of::<T>())
+    }
+}
+impl<T, const ALIGN: usize> Drop for AlignedBox<T, ALIGN> {
+    fn drop(&mut self) {
+        unsafe {
+            core::ptr::drop_in_place(self.inner.as_ptr());
+            crate::ALLOCATOR.dealloc(self.inner.as_ptr().cast(), Self::LAYOUT);
+        }
+    }
+}
+
+impl Context {
+    pub fn new(id: ContextId) -> Result<Context> {
+        let syscall_head = AlignedBox::try_zeroed()?;
+        let syscall_tail = AlignedBox::try_zeroed()?;
+
+        Ok(Context {
             id,
             pgid: id,
             ppid: ContextId::from(0),
@@ -290,7 +342,6 @@ impl Context {
             image: Vec::new(),
             stack: None,
             sigstack: None,
-            tls: None,
             grants: Arc::new(RwLock::new(UserGrants::default())),
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(String::new())),
@@ -305,7 +356,7 @@ impl Context {
             ); 128])),
             regs: None,
             ptrace_stop: false
-        }
+        })
     }
 
     /// Make a relative path absolute

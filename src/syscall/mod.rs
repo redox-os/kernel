@@ -7,6 +7,7 @@ extern crate syscall;
 pub use self::syscall::{
     FloatRegisters,
     IntRegisters,
+    EnvRegisters,
     data,
     error,
     flag,

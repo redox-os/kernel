@@ -39,13 +39,6 @@
     pub const USER_OFFSET: usize = 0;
     pub const USER_PML4: usize = (USER_OFFSET & PML4_MASK)/PML4_SIZE;
 
-    /// Offset to user TCB
-    /// Each process has 4096 bytes, at an offset of 4096 * PID
-    // TODO: Get a real 64-bit offset, and allow loading ELF sections higher up than the current
-    // limit, iff the processor supports fsgsbase (in which case it is cheap to use 64-bit FS
-    // offsets).
-    pub const USER_TCB_OFFSET: usize = 0xB000_0000;
-
     /// Offset to user arguments
     pub const USER_ARG_OFFSET: usize = USER_OFFSET + PML4_SIZE/2;
 
@@ -69,14 +62,8 @@
     /// Size of user sigstack
     pub const USER_SIGSTACK_SIZE: usize = 256 * 1024; // 256 KB
 
-    /// Offset to user TLS
-    pub const USER_TLS_OFFSET: usize = USER_SIGSTACK_OFFSET + PML4_SIZE;
-    pub const USER_TLS_PML4: usize = (USER_TLS_OFFSET & PML4_MASK)/PML4_SIZE;
-    // Maximum TLS allocated to each PID, should be approximately 8 MB
-    pub const USER_TLS_SIZE: usize = PML4_SIZE / 65536;
-
     /// Offset to user temporary image (used when cloning)
-    pub const USER_TMP_OFFSET: usize = USER_TLS_OFFSET + PML4_SIZE;
+    pub const USER_TMP_OFFSET: usize = USER_SIGSTACK_OFFSET + PML4_SIZE;
     pub const USER_TMP_PML4: usize = (USER_TMP_OFFSET & PML4_MASK)/PML4_SIZE;
 
     /// Offset to user temporary heap (used when cloning)
@@ -95,10 +82,6 @@
     pub const USER_TMP_SIGSTACK_OFFSET: usize = USER_TMP_STACK_OFFSET + PML4_SIZE;
     pub const USER_TMP_SIGSTACK_PML4: usize = (USER_TMP_SIGSTACK_OFFSET & PML4_MASK)/PML4_SIZE;
 
-    /// Offset to user temporary tls (used when cloning)
-    pub const USER_TMP_TLS_OFFSET: usize = USER_TMP_SIGSTACK_OFFSET + PML4_SIZE;
-    pub const USER_TMP_TLS_PML4: usize = (USER_TMP_TLS_OFFSET & PML4_MASK)/PML4_SIZE;
-
     /// Offset for usage in other temporary pages
-    pub const USER_TMP_MISC_OFFSET: usize = USER_TMP_TLS_OFFSET + PML4_SIZE;
+    pub const USER_TMP_MISC_OFFSET: usize = USER_TMP_SIGSTACK_OFFSET + PML4_SIZE;
     pub const USER_TMP_MISC_PML4: usize = (USER_TMP_MISC_OFFSET & PML4_MASK)/PML4_SIZE;

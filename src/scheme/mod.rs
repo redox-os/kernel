@@ -137,6 +137,7 @@ impl SchemeList {
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
         self.insert(ns, "memory", |_| Arc::new(MemoryScheme::new())).unwrap();
+        self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();
     }
 
     /// Initialize a new namespace
@@ -168,6 +169,7 @@ impl SchemeList {
         self.insert(ns, "initfs", |_| Arc::new(InitFsScheme::new())).unwrap();
         self.insert(ns, "irq", |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();
         self.insert(ns, "proc", |scheme_id| Arc::new(ProcScheme::new(scheme_id))).unwrap();
+        self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();
         self.insert(ns, "serio", |scheme_id| Arc::new(SerioScheme::new(scheme_id))).unwrap();
 
         #[cfg(feature = "live")] {

@@ -45,6 +45,7 @@ pub use ::rmm::X8664Arch as CurrentRmmArch;
 
 // Flags
 pub mod flags {
-    pub const FLAG_SINGLESTEP: usize = 1 << 8;
+    pub const SHIFT_SINGLESTEP: usize = 8;
+    pub const FLAG_SINGLESTEP: usize = 1 << SHIFT_SINGLESTEP;
     pub const FLAG_INTERRUPTS: usize = 1 << 9;
 }

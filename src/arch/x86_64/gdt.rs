@@ -19,9 +19,8 @@ pub const GDT_KERNEL_KPCR: usize = 3;
 pub const GDT_USER_CODE32_UNUSED: usize = 4;
 pub const GDT_USER_DATA: usize = 5;
 pub const GDT_USER_CODE: usize = 6;
-pub const GDT_USER_TLS: usize = 7;
-pub const GDT_TSS: usize = 8;
-pub const GDT_TSS_HIGH: usize = 9;
+pub const GDT_TSS: usize = 7;
+pub const GDT_TSS_HIGH: usize = 8;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
@@ -53,7 +52,7 @@ static mut INIT_GDT: [GdtEntry; 4] = [
 ];
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 10] = [
+pub static mut GDT: [GdtEntry; 9] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -68,8 +67,6 @@ pub static mut GDT: [GdtEntry; 10] = [
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
     // User (64-bit) code
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
-    // User TLS
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
     // TSS must be 16 bytes long, twice the normal size
@@ -105,11 +102,6 @@ pub static mut KPCR: ProcessorControlRegion = ProcessorControlRegion {
         iomap_base: 0xFFFF
     }),
 };
-
-pub unsafe fn set_tcb(pid: usize) {
-    GDT[GDT_USER_TLS].set_offset((crate::USER_TCB_OFFSET + pid * PAGE_SIZE) as u32);
-    x86::segmentation::load_fs(SegmentSelector::new(GDT_USER_TLS as u16, Ring::Ring3));
-}
 
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
@@ -199,8 +191,8 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
     // is called again, making the userspace GS always point to user data.
     x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
 
-    // Set the User TLS segment to the offset of the user TCB
-    set_tcb(0);
+    // Set the User TLS segment to zero, before we create any contexts and start scheduling.
+    x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
 
     // Reload the segment descriptors
     load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
@@ -214,6 +206,18 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+
+    let has_fsgsbase = raw_cpuid::CpuId::new()
+        .get_extended_feature_info()
+        .map_or(false, |extended_features| extended_features.has_fsgsbase());
+
+    if cfg!(feature = "x86_fsgsbase") {
+        assert!(has_fsgsbase, "running kernel with features not supported by the current CPU");
+    }
+
+    if has_fsgsbase {
+        x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
+    }
 }
 
 #[derive(Copy, Clone, Debug)]

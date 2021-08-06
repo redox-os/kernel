@@ -122,7 +122,7 @@ pub extern "C" fn signal_handler(sig: usize) {
             sp -= mem::size_of::<usize>();
             *(sp as *mut usize) = restorer;
 
-            usermode(handler, sp, sig, u32::from(singlestep));
+            usermode(handler, sp, sig, usize::from(singlestep));
         }
     }
 
