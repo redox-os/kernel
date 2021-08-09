@@ -21,6 +21,7 @@ pub const GDT_USER_DATA: usize = 5;
 pub const GDT_USER_CODE: usize = 6;
 pub const GDT_TSS: usize = 7;
 pub const GDT_TSS_HIGH: usize = 8;
+pub const GDT_CPU_ID_CONTAINER: usize = 9;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
@@ -145,7 +146,7 @@ pub unsafe fn init() {
 }
 
 /// Initialize GDT with TLS
-pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
+pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
     // Set temporary TLS segment to the self-pointer of the Thread Control Block.
     x86::msr::wrmsr(x86::msr::IA32_GS_BASE, tcb_offset as u64);
 
@@ -178,6 +179,10 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
 
         (&mut GDT[GDT_TSS_HIGH] as *mut GdtEntry).cast::<u32>().write(tss_hi);
     }
+
+    // And finally, populate the last GDT entry with the current CPU ID, to allow paranoid
+    // interrupt handlers to safely use TLS.
+    (&mut GDT[GDT_CPU_ID_CONTAINER] as *mut GdtEntry).cast::<u32>().write(cpu_id);
 
     // Set the stack pointer to use when coming back from userspace.
     set_tss_stack(stack_offset);

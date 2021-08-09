@@ -83,7 +83,8 @@ impl IretRegisters {
         unsafe {
             let fsbase = x86::msr::rdmsr(x86::msr::IA32_FS_BASE);
             let gsbase = x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE);
-            println!("FSBASE {:>016X}\nGSBASE {:016X}", fsbase, gsbase);
+            let kgsbase = x86::msr::rdmsr(x86::msr::IA32_GS_BASE);
+            println!("FSBASE  {:>016X}\nGSBASE  {:016X}\nKGSBASE {:016X}", fsbase, gsbase, kgsbase);
         }
     }
 }
@@ -151,7 +152,6 @@ impl InterruptStack {
     pub fn load(&mut self, all: &IntRegisters) {
         // TODO: Which of these should be allowed to change?
 
-        // self.fs = all.fs;
         self.preserved.r15 = all.r15;
         self.preserved.r14 = all.r14;
         self.preserved.r13 = all.r13;
@@ -319,14 +319,14 @@ macro_rules! restore_gsbase_paranoid {
 macro_rules! set_gsbase_paranoid {
     () => { "
         // Unused: {IA32_GS_BASE}
-        wrgsbase rax
+        wrgsbase rdx
     " }
 }
 #[cfg(not(feature = "x86_fsgsbase"))]
 macro_rules! set_gsbase_paranoid {
     () => { "
         mov ecx, {IA32_GS_BASE}
-        mov rdx, rax
+        mov eax, edx
         shr rdx, 32
         wrmsr
     " }
@@ -338,16 +338,20 @@ macro_rules! save_and_set_gsbase_paranoid {
     // two, as paranoid interrupts (e.g. NMIs) can occur even in kernel mode. In fact, they can
     // even occur within another IRQ, so we cannot check the the privilege level via the stack.
     //
-    // TODO: Linux uses the Interrupt Stack Table to figure out which NMIs were nested. Perhaps
-    // this could be done here, because if nested (sp > initial_sp), that means the NMI could not
-    // have come from userspace. But then, knowing the initial sp would somehow have to involve
-    // percpu, which brings us back to square one. But it might be useful if we would allow faults
-    // in NMIs.
-    //
     // What we do instead, is using a special entry in the GDT, since we know that the GDT will
     // always be thread local, as it contains the TSS. This gives us more than 32 bits to work
     // with, which already is the largest x2APIC ID that an x86 CPU can handle. Luckily we can also
     // use the stack, even though there might be interrupts in between.
+    //
+    // TODO: Linux uses the Interrupt Stack Table to figure out which NMIs were nested. Perhaps
+    // this could be done here, because if nested (sp > initial_sp), that means the NMI could not
+    // have come from userspace. But then, knowing the initial sp would somehow have to involve
+    // percpu, which brings us back to square one. But it might be useful if we would allow faults
+    // in NMIs. If we do detect a nested interrupt, then we can perform the iretq procedure
+    // ourselves, so that the newly nested NMI still blocks additional interrupts while still
+    // returning to the previously (faulting) NMI. See https://lwn.net/Articles/484932/, although I
+    // think the solution becomes a bit simpler when we cannot longer rely on GSBASE anymore.
+
     () => { concat!(
         save_gsbase_paranoid!(),
 
@@ -361,12 +365,12 @@ macro_rules! save_and_set_gsbase_paranoid {
         add rsp, 16
         ",
         // Load the lower 32 bits of that GDT entry.
-        "mov eax, [rax]\n",
+        "mov edx, [rax + {gdt_cpu_id_offset}]\n",
         // Calculate the percpu offset.
         "
         mov rbx, {KERNEL_PERCPU_OFFSET}
-        shl rax, {KERNEL_PERCPU_SHIFT}
-        add rax, rbx
+        shl rdx, {KERNEL_PERCPU_SHIFT}
+        add rdx, rbx
         ",
         // Set GSBASE to RAX accordingly
         set_gsbase_paranoid!(),
@@ -374,7 +378,7 @@ macro_rules! save_and_set_gsbase_paranoid {
 }
 macro_rules! nop {
     () => { "
-        // Unused: {IA32_GS_BASE} {KERNEL_PERCPU_OFFSET} {KERNEL_PERCPU_SHIFT}
+        // Unused: {IA32_GS_BASE} {KERNEL_PERCPU_OFFSET} {KERNEL_PERCPU_SHIFT} {gdt_cpu_id_offset}
         " }
 }
 
@@ -437,6 +441,8 @@ macro_rules! interrupt_stack {
             IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
             KERNEL_PERCPU_SHIFT = const(crate::KERNEL_PERCPU_SHIFT),
             KERNEL_PERCPU_OFFSET = const(crate::KERNEL_PERCPU_OFFSET),
+
+            gdt_cpu_id_offset = const(crate::gdt::GDT_CPU_ID_CONTAINER * core::mem::size_of::<crate::gdt::GdtEntry>()),
 
             options(noreturn),
 

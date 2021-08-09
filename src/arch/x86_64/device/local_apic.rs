@@ -106,10 +106,15 @@ impl LocalApic {
             unsafe { wrmsr(IA32_X2APIC_ICR, value); }
         } else {
             unsafe {
-                while self.read(0x300) & 1 << 12 == 1 << 12 {}
+                const PENDING: u32 = 1 << 12;
+                while self.read(0x300) & PENDING == PENDING {
+                    core::hint::spin_loop();
+                }
                 self.write(0x310, (value >> 32) as u32);
                 self.write(0x300, value as u32);
-                while self.read(0x300) & 1 << 12 == 1 << 12 {}
+                while self.read(0x300) & PENDING == PENDING {
+                    core::hint::spin_loop();
+                }
             }
         }
     }
@@ -122,6 +127,11 @@ impl LocalApic {
             icr |= (apic_id as u64) << 56;
         }
         self.set_icr(icr);
+    }
+    // Not used just yet, but allows triggering an NMI to another processor.
+    pub fn ipi_nmi(&mut self, apic_id: u32) {
+        let shift = if self.x2 { 32 } else { 56 };
+        self.set_icr((u64::from(apic_id) << shift) | (1 << 14) | (0b100 << 8));
     }
 
     pub unsafe fn eoi(&mut self) {
