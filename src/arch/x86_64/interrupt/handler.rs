@@ -83,7 +83,8 @@ impl IretRegisters {
         unsafe {
             let fsbase = x86::msr::rdmsr(x86::msr::IA32_FS_BASE);
             let gsbase = x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE);
-            println!("FSBASE {:>016X}\nGSBASE {:016X}", fsbase, gsbase);
+            let kgsbase = x86::msr::rdmsr(x86::msr::IA32_GS_BASE);
+            println!("FSBASE  {:>016X}\nGSBASE  {:016X}\nKGSBASE {:016X}", fsbase, gsbase, kgsbase);
         }
     }
 }
@@ -151,7 +152,6 @@ impl InterruptStack {
     pub fn load(&mut self, all: &IntRegisters) {
         // TODO: Which of these should be allowed to change?
 
-        // self.fs = all.fs;
         self.preserved.r15 = all.r15;
         self.preserved.r14 = all.r14;
         self.preserved.r13 = all.r13;
@@ -201,34 +201,6 @@ impl InterruptErrorStack {
         println!("CODE:  {:>016X}", { self.code });
         self.inner.dump();
     }
-}
-
-#[macro_export]
-macro_rules! intel_asm {
-    ($($strings:expr,)+) => {
-        global_asm!(concat!(
-            $($strings),+,
-        ));
-    };
-}
-#[macro_export]
-macro_rules! function {
-    ($name:ident => { $($body:expr,)+ }) => {
-        intel_asm!(
-            ".global ", stringify!($name), "\n",
-            ".type ", stringify!($name), ", @function\n",
-            ".section .text.", stringify!($name), ", \"ax\", @progbits\n",
-            // Align the function to a 16-byte boundary, padding with multi-byte NOPs.
-            ".p2align 4,,15\n",
-            stringify!($name), ":\n",
-            $($body),+,
-            ".size ", stringify!($name), ", . - ", stringify!($name), "\n",
-            ".text\n",
-        );
-        extern "C" {
-            pub fn $name();
-        }
-    };
 }
 
 #[macro_export]
@@ -303,35 +275,129 @@ macro_rules! swapgs_iff_ring3_fast_errorcode {
         1:
     " };
 }
-#[macro_export]
-macro_rules! swapgs_iff_ring3_slow {
+
+#[cfg(feature = "x86_fsgsbase")]
+macro_rules! save_gsbase_paranoid {
     () => { "
-    push rax
-    push rdx
-    push rcx
-    mov ecx, 0xC0000102
-    rdmsr
-    shl rdx, 32
-    or eax, edx
-    test rdx, rdx
-    jnz 1f
-    swapgs
-    1:
-    pop rcx
-    pop rdx
-    pop rax
+        // Unused: {IA32_GS_BASE}
+        rdgsbase rax
+        push rax
     " }
+}
+#[cfg(feature = "x86_fsgsbase")]
+macro_rules! restore_gsbase_paranoid {
+    () => { "
+        // Unused: {IA32_GS_BASE}
+        pop rax
+        wrgsbase rax
+    " }
+}
+#[cfg(not(feature = "x86_fsgsbase"))]
+macro_rules! save_gsbase_paranoid {
+    () => { "
+        mov ecx, {IA32_GS_BASE}
+        rdmsr
+        shl rdx, 32
+        or rax, rdx
+
+        push rax
+    " }
+}
+#[cfg(not(feature = "x86_fsgsbase"))]
+macro_rules! restore_gsbase_paranoid {
+    () => { "
+        pop rdx
+
+        mov ecx, {IA32_GS_BASE}
+        mov eax, edx
+        shr rdx, 32
+        wrmsr
+    " }
+}
+
+#[cfg(feature = "x86_fsgsbase")]
+macro_rules! set_gsbase_paranoid {
+    () => { "
+        // Unused: {IA32_GS_BASE}
+        wrgsbase rdx
+    " }
+}
+#[cfg(not(feature = "x86_fsgsbase"))]
+macro_rules! set_gsbase_paranoid {
+    () => { "
+        mov ecx, {IA32_GS_BASE}
+        mov eax, edx
+        shr rdx, 32
+        wrmsr
+    " }
+}
+
+macro_rules! save_and_set_gsbase_paranoid {
+    // For paranoid interrupt entries, we have to be extremely careful with how we use IA32_GS_BASE
+    // and IA32_KERNEL_GS_BASE. If FSGSBASE is enabled, then we have no way to differentiate these
+    // two, as paranoid interrupts (e.g. NMIs) can occur even in kernel mode. In fact, they can
+    // even occur within another IRQ, so we cannot check the the privilege level via the stack.
+    //
+    // What we do instead, is using a special entry in the GDT, since we know that the GDT will
+    // always be thread local, as it contains the TSS. This gives us more than 32 bits to work
+    // with, which already is the largest x2APIC ID that an x86 CPU can handle. Luckily we can also
+    // use the stack, even though there might be interrupts in between.
+    //
+    // TODO: Linux uses the Interrupt Stack Table to figure out which NMIs were nested. Perhaps
+    // this could be done here, because if nested (sp > initial_sp), that means the NMI could not
+    // have come from userspace. But then, knowing the initial sp would somehow have to involve
+    // percpu, which brings us back to square one. But it might be useful if we would allow faults
+    // in NMIs. If we do detect a nested interrupt, then we can perform the iretq procedure
+    // ourselves, so that the newly nested NMI still blocks additional interrupts while still
+    // returning to the previously (faulting) NMI. See https://lwn.net/Articles/484932/, although I
+    // think the solution becomes a bit simpler when we cannot longer rely on GSBASE anymore.
+
+    () => { concat!(
+        save_gsbase_paranoid!(),
+
+        // Allocate stack space for 8 bytes GDT base and 2 bytes size (ignored).
+        "sub rsp, 16\n",
+        // Set it to the GDT base.
+        "sgdt [rsp + 6]\n",
+        // Get the base pointer
+        "
+        mov rax, [rsp + 8]
+        add rsp, 16
+        ",
+        // Load the lower 32 bits of that GDT entry.
+        "mov edx, [rax + {gdt_cpu_id_offset}]\n",
+        // Calculate the percpu offset.
+        "
+        mov rbx, {KERNEL_PERCPU_OFFSET}
+        shl rdx, {KERNEL_PERCPU_SHIFT}
+        add rdx, rbx
+        ",
+        // Set GSBASE to RAX accordingly
+        set_gsbase_paranoid!(),
+    ) }
+}
+macro_rules! nop {
+    () => { "
+        // Unused: {IA32_GS_BASE} {KERNEL_PERCPU_OFFSET} {KERNEL_PERCPU_SHIFT} {gdt_cpu_id_offset}
+        " }
 }
 
 #[macro_export]
 macro_rules! interrupt_stack {
     // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
     // use idents directly instead.
-    ($name:ident, super_atomic: $is_super_atomic:ident!, |$stack:ident| $code:block) => {
-        paste::item! {
-            #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                let _guard = $crate::ptrace::set_process_regs($stack);
+    ($name:ident, $save1:ident!, $save2:ident!, $rstor2:ident!, $rstor1:ident!, is_paranoid: $is_paranoid:expr, |$stack:ident| $code:block) => {
+        #[naked]
+        pub unsafe extern "C" fn $name() {
+            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
+                let _guard;
+
+                if !$is_paranoid {
+                    // Deadlock safety: (non-paranoid) interrupts are not normally enabled in the
+                    // kernel, except in kmain. However, no locks for context list nor even
+                    // individual context locks, are ever meant to be acquired there.
+                    _guard = $crate::ptrace::set_process_regs($stack);
+                }
 
                 // TODO: Force the declarations to specify unsafe?
 
@@ -340,46 +406,63 @@ macro_rules! interrupt_stack {
                     $code
                 }
             }
-
-            function!($name => {
+            asm!(concat!(
                 // Backup all userspace registers to stack
-                $is_super_atomic!(),
+                $save1!(),
                 "push rax\n",
                 push_scratch!(),
                 push_preserved!(),
+
+                $save2!(),
 
                 // TODO: Map PTI
                 // $crate::arch::x86_64::pti::map();
 
                 // Call inner function with pointer to stack
-                "mov rdi, rsp\n",
-                "call __interrupt_", stringify!($name), "\n",
+                "
+                mov rdi, rsp
+                call {inner}
+                ",
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86_64::pti::unmap();
+
+                $rstor2!(),
 
                 // Restore all userspace registers
                 pop_preserved!(),
                 pop_scratch!(),
 
-                $is_super_atomic!(),
+                $rstor1!(),
                 "iretq\n",
-            });
+            ),
+
+            inner = sym inner,
+            IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
+            KERNEL_PERCPU_SHIFT = const(crate::KERNEL_PERCPU_SHIFT),
+            KERNEL_PERCPU_OFFSET = const(crate::KERNEL_PERCPU_OFFSET),
+
+            gdt_cpu_id_offset = const(crate::gdt::GDT_CPU_ID_CONTAINER * core::mem::size_of::<crate::gdt::GdtEntry>()),
+
+            options(noreturn),
+
+            );
         }
     };
-    ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, super_atomic: swapgs_iff_ring3_fast!, |$stack| $code); };
+    ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, swapgs_iff_ring3_fast!, nop!, nop!, swapgs_iff_ring3_fast!, is_paranoid: false, |$stack| $code); };
+    ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, nop!, save_and_set_gsbase_paranoid!, restore_gsbase_paranoid!, nop!, is_paranoid: true, |$stack| $code); }
 }
 
 #[macro_export]
 macro_rules! interrupt {
     ($name:ident, || $code:block) => {
-        paste::item! {
-            #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>]() {
+        #[naked]
+        pub unsafe extern "C" fn $name() {
+            unsafe extern "C" fn inner() {
                 $code
             }
 
-            function!($name => {
+            asm!(concat!(
                 // Backup all userspace registers to stack
                 swapgs_iff_ring3_fast!(),
                 "push rax\n",
@@ -389,7 +472,7 @@ macro_rules! interrupt {
                 // $crate::arch::x86_64::pti::map();
 
                 // Call inner function with pointer to stack
-                "call __interrupt_", stringify!($name), "\n",
+                "call {inner}\n",
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86_64::pti::unmap();
@@ -399,7 +482,12 @@ macro_rules! interrupt {
 
                 swapgs_iff_ring3_fast!(),
                 "iretq\n",
-            });
+            ),
+
+            inner = sym inner,
+
+            options(noreturn),
+            );
         }
     };
 }
@@ -407,10 +495,21 @@ macro_rules! interrupt {
 #[macro_export]
 macro_rules! interrupt_error {
     ($name:ident, |$stack:ident| $code:block) => {
-        paste::item! {
-            #[no_mangle]
-            unsafe extern "C" fn [<__interrupt_ $name>]($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
-                let _guard = $crate::ptrace::set_process_regs(&mut $stack.inner);
+        #[naked]
+        pub unsafe extern "C" fn $name() {
+            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+                let _guard;
+
+                // Only set_ptrace_process_regs if this error occured from userspace. If this fault
+                // originated from kernel mode, we have no idea what it might have locked (and
+                // kernel mode faults are never meant to occur unless something is wrong, and will
+                // not context switch anyway, rendering that statement useless in such a case
+                // anyway).
+                //
+                // Check the privilege level of CS against ring 3.
+                if $stack.inner.iret.cs & 0b11 == 0b11 {
+                    _guard = $crate::ptrace::set_process_regs(&mut $stack.inner);
+                }
 
                 #[allow(unused_unsafe)]
                 unsafe {
@@ -418,7 +517,7 @@ macro_rules! interrupt_error {
                 }
             }
 
-            function!($name => {
+            asm!(concat!(
                 swapgs_iff_ring3_fast_errorcode!(),
                 // Move rax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
@@ -435,8 +534,10 @@ macro_rules! interrupt_error {
                 // $crate::arch::x86_64::pti::map();
 
                 // Call inner function with pointer to stack
-                "mov rdi, rsp\n",
-                "call __interrupt_", stringify!($name), "\n",
+                "
+                mov rdi, rsp
+                call {inner}
+                ",
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86_64::pti::unmap();
@@ -448,9 +549,14 @@ macro_rules! interrupt_error {
                 pop_preserved!(),
                 pop_scratch!(),
 
-                swapgs_iff_ring3_fast_errorcode!(),
+                // The error code has already been popped, so use the regular macro.
+                swapgs_iff_ring3_fast!(),
                 "iretq\n",
-            });
+            ),
+
+            inner = sym inner,
+
+            options(noreturn));
         }
     };
 }

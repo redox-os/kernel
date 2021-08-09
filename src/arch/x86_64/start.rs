@@ -113,7 +113,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         let (mut active_table, tcb_offset) = paging::init(0);
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(tcb_offset, stack_base + stack_size);
+        gdt::init_paging(0, tcb_offset, stack_base + stack_size);
 
         // Set up IDT
         idt::init_paging_bsp();
@@ -206,7 +206,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         let tcb_offset = paging::init_ap(cpu_id, bsp_table);
 
         // Set up GDT with TLS
-        gdt::init_paging(tcb_offset, stack_end);
+        gdt::init_paging(cpu_id as u32, tcb_offset, stack_end);
 
         // Set up IDT for AP
         idt::init_paging_post_heap(false, cpu_id);

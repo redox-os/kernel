@@ -21,6 +21,7 @@ pub const GDT_USER_DATA: usize = 5;
 pub const GDT_USER_CODE: usize = 6;
 pub const GDT_TSS: usize = 7;
 pub const GDT_TSS_HIGH: usize = 8;
+pub const GDT_CPU_ID_CONTAINER: usize = 9;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
@@ -52,7 +53,7 @@ static mut INIT_GDT: [GdtEntry; 4] = [
 ];
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 9] = [
+pub static mut GDT: [GdtEntry; 10] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -71,13 +72,13 @@ pub static mut GDT: [GdtEntry; 9] = [
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
     // TSS must be 16 bytes long, twice the normal size
     GdtEntry::new(0, 0, 0, 0),
+    // Unused entry which stores the CPU ID. This is necessary for paranoid interrupts as they have
+    // no other way of determining it.
+    GdtEntry::new(0, 0, 0, 0),
 ];
 
 #[repr(C, align(16))]
 pub struct ProcessorControlRegion {
-    // NOTE: If you plan to change any fields here, please make sure that you also modify the
-    // offsets in the syscall instruction handler accordingly!
-
     pub tcb_end: usize,
     pub user_rsp_tmp: usize,
     pub tss: TssWrapper,
@@ -145,7 +146,7 @@ pub unsafe fn init() {
 }
 
 /// Initialize GDT with TLS
-pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
+pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
     // Set temporary TLS segment to the self-pointer of the Thread Control Block.
     x86::msr::wrmsr(x86::msr::IA32_GS_BASE, tcb_offset as u64);
 
@@ -178,6 +179,10 @@ pub unsafe fn init_paging(tcb_offset: usize, stack_offset: usize) {
 
         (&mut GDT[GDT_TSS_HIGH] as *mut GdtEntry).cast::<u32>().write(tss_hi);
     }
+
+    // And finally, populate the last GDT entry with the current CPU ID, to allow paranoid
+    // interrupt handlers to safely use TLS.
+    (&mut GDT[GDT_CPU_ID_CONTAINER] as *mut GdtEntry).cast::<u32>().write(cpu_id);
 
     // Set the stack pointer to use when coming back from userspace.
     set_tss_stack(stack_offset);

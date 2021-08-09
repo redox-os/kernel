@@ -28,7 +28,8 @@
     pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_TMP_MISC_OFFSET - PML4_SIZE;
     pub const KERNEL_PERCPU_PML4: usize = (KERNEL_PERCPU_OFFSET & PML4_MASK)/PML4_SIZE;
     /// Size of kernel percpu variables
-    pub const KERNEL_PERCPU_SIZE: usize = 64 * 1024; // 64 KB
+    pub const KERNEL_PERCPU_SHIFT: u8 = 16; // 2^16 = 64 KiB
+    pub const KERNEL_PERCPU_SIZE: usize = 1_usize << KERNEL_PERCPU_SHIFT;
 
     /// Offset of physmap
     // This needs to match RMM's PHYS_OFFSET

@@ -5,7 +5,8 @@ use crate::{
     syscall,
     syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
 };
-use x86::msr;
+use memoffset::offset_of;
+use x86::{bits64::task::TaskStateSegment, msr, segmentation::SegmentSelector};
 
 pub unsafe fn init() {
     // IA32_STAR[31:0] are reserved.
@@ -58,16 +59,18 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     });
 }
 
-function!(syscall_instruction => {
+#[naked]
+pub unsafe extern "C" fn syscall_instruction() {
+    asm!(concat!(
     // Yes, this is magic. No, you don't need to understand
     "
         swapgs                    // Set gs segment to TSS
-        mov gs:[0x08], rsp        // Save userspace stack pointer
-        mov rsp, gs:[0x14]        // Load kernel stack pointer
-        push QWORD PTR 5 * 8 + 3  // Push fake userspace SS (resembling iret frame)
-        push QWORD PTR gs:[0x08]  // Push userspace rsp
+        mov gs:[{sp}], rsp        // Save userspace stack pointer
+        mov rsp, gs:[{ksp}]       // Load kernel stack pointer
+        push QWORD PTR {ss_sel}   // Push fake userspace SS (resembling iret frame)
+        push QWORD PTR gs:[{sp}]  // Push userspace rsp
         push r11                  // Push rflags
-        push QWORD PTR 6 * 8 + 3  // Push fake CS (resembling iret stack frame)
+        push QWORD PTR {cs_sel}   // Push fake CS (resembling iret stack frame)
         push rcx                  // Push userspace return pointer
     ",
 
@@ -113,8 +116,8 @@ function!(syscall_instruction => {
         pop rcx                 // Pop userspace return pointer
         add rsp, 8              // Pop fake userspace CS
         pop r11                 // Pop rflags
-        pop QWORD PTR gs:[0x08] // Pop userspace stack pointer
-        mov rsp, gs:[0x08]      // Restore userspace stack pointer
+        pop QWORD PTR gs:[{sp}] // Pop userspace stack pointer
+        mov rsp, gs:[{sp}]      // Restore userspace stack pointer
         swapgs                  // Restore gs from TSS to user data
         sysretq                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
 
@@ -125,8 +128,16 @@ function!(syscall_instruction => {
         xor r11, r11
         swapgs
         iretq
-    ",
-});
+    "),
+
+    sp = const(offset_of!(gdt::ProcessorControlRegion, user_rsp_tmp)),
+    ksp = const(offset_of!(gdt::ProcessorControlRegion, tss) + offset_of!(TaskStateSegment, rsp)),
+    ss_sel = const(SegmentSelector::new(gdt::GDT_USER_DATA as u16, x86::Ring::Ring3).bits()),
+    cs_sel = const(SegmentSelector::new(gdt::GDT_USER_CODE as u16, x86::Ring::Ring3).bits()),
+
+    options(noreturn),
+    );
+}
 
 interrupt_stack!(syscall, |stack| {
     with_interrupt_stack!(|stack| {
@@ -150,7 +161,9 @@ interrupt_stack!(syscall, |stack| {
     })
 });
 
-function!(clone_ret => {
+#[naked]
+pub unsafe extern "C" fn clone_ret() {
+    asm!(concat!(
     // The address of this instruction is injected by `clone` in process.rs, on
     // top of the stack syscall->inner in this file, which is done using the rbp
     // register we save there.
@@ -165,4 +178,5 @@ function!(clone_ret => {
     "pop rbp\n",
     // ...and we return to the address at the top of the stack
     "ret\n",
-});
+    ), options(noreturn));
+}
