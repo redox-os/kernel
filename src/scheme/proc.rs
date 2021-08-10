@@ -277,21 +277,24 @@ impl Scheme for ProcScheme {
                 let current = contexts.current().ok_or(Error::new(ESRCH))?;
                 let current = current.read();
 
-                // Do we own the process?
-                if uid != target.euid && gid != target.egid {
-                    return Err(Error::new(EPERM));
-                }
+                // Are we the process?
+                if target.id != current.id {
+                    // Do we own the process?
+                    if uid != target.euid && gid != target.egid {
+                        return Err(Error::new(EPERM));
+                    }
 
-                // Is it a subprocess of us? In the future, a capability could
-                // bypass this check.
-                match contexts.ancestors(target.ppid).find(|&(id, _context)| id == current.id) {
-                    Some((id, context)) => {
-                        // Paranoid sanity check, as ptrace security holes
-                        // wouldn't be fun
-                        assert_eq!(id, current.id);
-                        assert_eq!(id, context.read().id);
-                    },
-                    None => return Err(Error::new(EPERM)),
+                    // Is it a subprocess of us? In the future, a capability could
+                    // bypass this check.
+                    match contexts.ancestors(target.ppid).find(|&(id, _context)| id == current.id) {
+                        Some((id, context)) => {
+                            // Paranoid sanity check, as ptrace security holes
+                            // wouldn't be fun
+                            assert_eq!(id, current.id);
+                            assert_eq!(id, context.read().id);
+                        },
+                        None => return Err(Error::new(EPERM)),
+                    }
                 }
             }
         };
