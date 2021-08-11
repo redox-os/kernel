@@ -1,4 +1,4 @@
-use alloc::collections::{BTreeSet, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::{Arc, Weak};
 use core::borrow::Borrow;
 use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
@@ -39,7 +39,10 @@ pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
 #[derive(Debug, Default)]
 pub struct UserGrants {
     pub inner: BTreeSet<Grant>,
+    //TODO: technically VirtualAddress is from a scheme's context!
+    pub funmap: BTreeMap<Region, VirtualAddress>,
 }
+
 impl UserGrants {
     /// Returns the grant, if any, which occupies the specified address
     pub fn contains(&self, address: VirtualAddress) -> Option<&Grant> {

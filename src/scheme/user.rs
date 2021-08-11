@@ -30,7 +30,6 @@ pub struct UserInner {
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
-    funmap: Mutex<BTreeMap<Region, VirtualAddress>>,
     done: WaitMap<u64, usize>,
     unmounting: AtomicBool,
 }
@@ -47,7 +46,6 @@ impl UserInner {
             context,
             todo: WaitQueue::new(),
             fmap: Mutex::new(BTreeMap::new()),
-            funmap: Mutex::new(BTreeMap::new()),
             done: WaitMap::new(),
             unmounting: AtomicBool::new(false),
         }
@@ -245,7 +243,17 @@ impl UserInner {
                         }
                         let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(desc));
                         if let Ok(grant_address) = res {
-                            self.funmap.lock().insert(Region::new(grant_address, map.size), VirtualAddress::new(address));
+                            if let Some(context_lock) = context_weak.upgrade() {
+                                let context = context_lock.read();
+                                let mut grants = context.grants.write();
+                                grants.funmap.insert(
+                                    Region::new(grant_address, map.size),
+                                    VirtualAddress::new(address)
+                                );
+                            } else {
+                                //TODO: packet.pid is an assumption
+                                println!("UserInner::write: failed to find context {} for fmap", packet.pid);
+                            }
                         }
                         packet.a = Error::mux(res.map(|addr| addr.data()));
                     } else {
@@ -479,7 +487,11 @@ impl Scheme for UserScheme {
     fn funmap_old(&self, grant_address: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
-            let mut funmap = inner.funmap.lock();
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+            let mut grants = context.grants.write();
+            let mut funmap = &mut grants.funmap;
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
             let grant_address = VirtualAddress::new(grant_address);
@@ -505,7 +517,11 @@ impl Scheme for UserScheme {
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address_opt = {
-            let mut funmap = inner.funmap.lock();
+            let contexts = context::contexts();
+            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context = context_lock.read();
+            let mut grants = context.grants.write();
+            let mut funmap = &mut grants.funmap;
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
             let grant_address = VirtualAddress::new(grant_address);
