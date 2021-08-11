@@ -813,25 +813,6 @@ impl Drop for Memory {
     }
 }
 
-#[derive(Debug)]
-pub struct Tls {
-    pub master: VirtualAddress,
-    pub file_size: usize,
-    pub mem: Memory,
-    pub offset: usize,
-}
-
-impl Tls {
-    /// Load TLS data from master
-    pub unsafe fn load(&mut self) {
-        intrinsics::copy(
-            self.master.data() as *const u8,
-            (self.mem.start_address().data() + self.offset) as *mut u8,
-            self.file_size
-        );
-    }
-}
-
 pub const DANGLING: usize = 1 << (usize::BITS - 2);
 
 #[cfg(tests)]
