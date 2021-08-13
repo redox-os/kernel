@@ -7,7 +7,6 @@ use crate::{
         interrupt::InterruptStack,
         paging::{
             mapper::PageFlushAll,
-            temporary_page::TemporaryPage,
             ActivePageTable, InactivePageTable, Page, PAGE_SIZE, TableKind, VirtualAddress
         }
     },
@@ -465,8 +464,9 @@ where F: FnOnce(*mut u8) -> Result<()>
     // Find the physical frames for all pages
     let mut frames = Vec::new();
 
-    let mut result = None;
-    active_page_table.with(&mut target_page_table, &mut TemporaryPage::new(start), |mapper| {
+    {
+        let mapper = target_page_table.mapper();
+
         let mut inner = || -> Result<()> {
             let start = Page::containing_address(offset);
             let end = Page::containing_address(VirtualAddress::new(offset.data() + len - 1));
@@ -478,9 +478,8 @@ where F: FnOnce(*mut u8) -> Result<()>
             }
             Ok(())
         };
-        result = Some(inner());
-    });
-    result.expect("with(...) callback should always be called")?;
+        inner()?;
+    }
 
     // Map all the physical frames into linear pages
     let pages = frames.len();

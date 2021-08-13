@@ -8,8 +8,9 @@ use x86::msr;
 
 use crate::memory::Frame;
 
+use self::entry::EntryFlags;
 use self::mapper::{Mapper, PageFlushAll};
-use self::temporary_page::TemporaryPage;
+use self::table::{Level4, Table};
 
 pub use rmm::{
     Arch as RmmArch,
@@ -94,8 +95,8 @@ unsafe fn init_pat() {
     );
 }
 
-/// Map TSS
-unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
+/// Map percpu
+unsafe fn map_percpu(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     extern "C" {
         /// The starting byte of the thread data segment
         static mut __tdata_start: u8;
@@ -115,7 +116,11 @@ unsafe fn map_tss(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     let start_page = Page::containing_address(VirtualAddress::new(start));
     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
     for page in Page::range_inclusive(start_page, end_page) {
-        let result = mapper.map(page, PageFlags::new().write(true));
+        let result = mapper.map(
+            page,
+            PageFlags::new().write(true).custom_flag(EntryFlags::GLOBAL.bits(), cfg!(not(feature = "pti"))),
+        )
+        .expect("failed to allocate page table frames while mapping percpu");
         flush_all.consume(result);
     }
     flush_all
@@ -188,7 +193,7 @@ pub unsafe fn init(
 
     let mut active_table = ActivePageTable::new_unlocked(TableKind::User);
 
-    let flush_all = map_tss(cpu_id, &mut active_table);
+    let flush_all = map_percpu(cpu_id, &mut active_table);
     flush_all.flush();
 
     return (active_table, init_tcb(cpu_id));
@@ -204,15 +209,11 @@ pub unsafe fn init_ap(
 
     let mut new_table = InactivePageTable::from_address(bsp_table);
 
-    let mut temporary_page = TemporaryPage::new(Page::containing_address(VirtualAddress::new(
-        crate::USER_TMP_MISC_OFFSET,
-    )));
-
-    active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-        let flush_all = map_tss(cpu_id, mapper);
+    {
+        let flush_all = map_percpu(cpu_id, &mut new_table.mapper());
         // The flush can be ignored as this is not the active table. See later active_table.switch
         flush_all.ignore();
-    });
+    };
 
     // This switches the active table, which is setup by the bootloader, to a correct table
     // setup by the lambda above. This will also flush the TLB
@@ -223,20 +224,20 @@ pub unsafe fn init_ap(
 
 #[derive(Debug)]
 pub struct ActivePageTable {
-    mapper: Mapper,
+    mapper: Mapper<'static>,
     locked: bool,
 }
 
 impl Deref for ActivePageTable {
-    type Target = Mapper;
+    type Target = Mapper<'static>;
 
-    fn deref(&self) -> &Mapper {
+    fn deref(&self) -> &Mapper<'static> {
         &self.mapper
     }
 }
 
 impl DerefMut for ActivePageTable {
-    fn deref_mut(&mut self) -> &mut Mapper {
+    fn deref_mut(&mut self) -> &mut Mapper<'static> {
         &mut self.mapper
     }
 }
@@ -245,14 +246,14 @@ impl ActivePageTable {
     pub unsafe fn new(_table_kind: TableKind) -> ActivePageTable {
         page_table_lock();
         ActivePageTable {
-            mapper: Mapper::new(),
+            mapper: Mapper::current(),
             locked: true,
         }
     }
 
     pub unsafe fn new_unlocked(_table_kind: TableKind) -> ActivePageTable {
         ActivePageTable {
-            mapper: Mapper::new(),
+            mapper: Mapper::current(),
             locked: false,
         }
     }
@@ -281,47 +282,6 @@ impl ActivePageTable {
         }
     }
 
-    pub fn with<F>(
-        &mut self,
-        table: &mut InactivePageTable,
-        temporary_page: &mut TemporaryPage,
-        f: F,
-    ) where
-        F: FnOnce(&mut Mapper),
-    {
-        {
-            let backup = Frame::containing_address(unsafe {
-                RmmA::table()
-            });
-
-            // map temporary_page to current p4 table
-            let p4_table = temporary_page.map_table_frame(
-                backup.clone(),
-                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
-                self,
-            );
-
-            // overwrite recursive mapping
-            self.p4_mut()[crate::RECURSIVE_PAGE_PML4].set(
-                table.frame.clone(),
-                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
-            );
-            self.flush_all();
-
-            // execute f in the new context
-            f(self);
-
-            // restore recursive mapping to original p4 table
-            p4_table[crate::RECURSIVE_PAGE_PML4].set(
-                backup,
-                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
-            );
-            self.flush_all();
-        }
-
-        temporary_page.unmap(self);
-    }
-
     pub unsafe fn address(&self) -> usize {
         RmmA::table().data()
     }
@@ -341,28 +301,30 @@ pub struct InactivePageTable {
 }
 
 impl InactivePageTable {
-    pub fn new(
+    /// Create a new inactive page table, located at a given frame.
+    ///
+    /// # Safety
+    ///
+    /// For this to be safe, the caller must have exclusive access to the corresponding virtual
+    /// address of the frame.
+    pub unsafe fn new(
+        _active_table: &mut ActivePageTable,
         frame: Frame,
-        active_table: &mut ActivePageTable,
-        temporary_page: &mut TemporaryPage,
     ) -> InactivePageTable {
+        // FIXME: Use active_table to ensure that the newly-allocated frame be linearly mapped, in
+        // case it is outside the pre-mapped physical address range, or if such a range is too
+        // large to fit the whole physical address space in the virtual address space.
         {
-            let table = temporary_page.map_table_frame(
-                frame.clone(),
-                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
-                active_table,
-            );
+            let table = linear_phys_to_virt(frame.start_address())
+                .expect("cannot initialize InactivePageTable (currently) without the frame being linearly mapped");
             // now we are able to zero the table
-            table.zero();
-            // set up recursive mapping for the table
-            table[crate::RECURSIVE_PAGE_PML4].set(
-                frame.clone(),
-                PageFlags::new_table().write(true), //TODO: RISC-V will not like this
-            );
-        }
-        temporary_page.unmap(active_table);
 
-        InactivePageTable { frame: frame }
+            // SAFETY: The caller must ensure exclusive access to the pointed-to virtual address of
+            // the frame.
+            (&mut *(table.data() as *mut Table::<Level4>)).zero();
+        }
+
+        InactivePageTable { frame }
     }
 
     pub unsafe fn from_address(address: usize) -> InactivePageTable {
@@ -371,10 +333,21 @@ impl InactivePageTable {
         }
     }
 
+    pub fn mapper<'inactive_table>(&'inactive_table mut self) -> Mapper<'inactive_table> {
+        unsafe { Mapper::from_p4_unchecked(&mut self.frame) }
+    }
     pub unsafe fn address(&self) -> usize {
         self.frame.start_address().data()
     }
 }
+
+pub fn linear_phys_to_virt(physical: PhysicalAddress) -> Option<VirtualAddress> {
+    physical.data().checked_add(crate::KERNEL_OFFSET).map(VirtualAddress::new)
+}
+pub fn linear_virt_to_phys(virt: VirtualAddress) -> Option<PhysicalAddress> {
+    virt.data().checked_sub(crate::KERNEL_OFFSET).map(PhysicalAddress::new)
+}
+
 
 /// Page
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
