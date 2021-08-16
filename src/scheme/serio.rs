@@ -162,3 +162,4 @@ impl Scheme for SerioScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for SerioScheme {}

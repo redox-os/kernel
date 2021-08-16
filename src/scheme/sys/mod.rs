@@ -170,3 +170,4 @@ impl Scheme for SysScheme {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }
+impl crate::scheme::KernelScheme for SysScheme {}

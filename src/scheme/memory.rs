@@ -85,3 +85,4 @@ impl Scheme for MemoryScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for MemoryScheme {}

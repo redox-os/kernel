@@ -528,3 +528,4 @@ impl Scheme for UserScheme {
         inner.call(SYS_CLOSE, file, 0, 0)
     }
 }
+impl crate::scheme::KernelScheme for UserScheme {}

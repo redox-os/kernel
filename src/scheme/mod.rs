@@ -107,7 +107,7 @@ impl<'a> Iterator for SchemeIter<'a> {
 
 /// Scheme list type
 pub struct SchemeList {
-    map: BTreeMap<SchemeId, Arc<dyn Scheme + Send + Sync>>,
+    map: BTreeMap<SchemeId, Arc<dyn KernelScheme + Send + Sync>>,
     names: BTreeMap<SchemeNamespace, BTreeMap<Box<str>, SchemeId>>,
     next_ns: usize,
     next_id: usize
@@ -201,7 +201,7 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<dyn Scheme + Send + Sync>> {
+    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<dyn KernelScheme + Send + Sync>> {
         self.map.iter()
     }
 
@@ -212,11 +212,11 @@ impl SchemeList {
     }
 
     /// Get the nth scheme.
-    pub fn get(&self, id: SchemeId) -> Option<&Arc<dyn Scheme + Send + Sync>> {
+    pub fn get(&self, id: SchemeId) -> Option<&Arc<dyn KernelScheme + Send + Sync>> {
         self.map.get(&id)
     }
 
-    pub fn get_name(&self, ns: SchemeNamespace, name: &str) -> Option<(SchemeId, &Arc<dyn Scheme + Send + Sync>)> {
+    pub fn get_name(&self, ns: SchemeNamespace, name: &str) -> Option<(SchemeId, &Arc<dyn KernelScheme + Send + Sync>)> {
         if let Some(names) = self.names.get(&ns) {
             if let Some(&id) = names.get(name) {
                 return self.get(id).map(|scheme| (id, scheme));
@@ -227,7 +227,7 @@ impl SchemeList {
 
     /// Create a new scheme.
     pub fn insert<F>(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: F) -> Result<SchemeId>
-        where F: Fn(SchemeId) -> Arc<dyn Scheme + Send + Sync>
+        where F: Fn(SchemeId) -> Arc<dyn KernelScheme + Send + Sync>
     {
         if let Some(names) = self.names.get(&ns) {
             if names.contains_key(name) {
@@ -298,3 +298,5 @@ pub fn schemes() -> RwLockReadGuard<'static, SchemeList> {
 pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
     SCHEMES.call_once(init_schemes).write()
 }
+
+pub trait KernelScheme: Scheme + Send + Sync + 'static {}

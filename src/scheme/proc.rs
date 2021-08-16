@@ -824,3 +824,4 @@ impl Scheme for ProcScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for ProcScheme {}

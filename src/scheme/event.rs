@@ -71,3 +71,4 @@ impl Scheme for EventScheme {
         queues_mut().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }
+impl crate::scheme::KernelScheme for EventScheme {}

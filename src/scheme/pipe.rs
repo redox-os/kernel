@@ -264,3 +264,4 @@ impl Drop for PipeWrite {
         self.condition.notify();
     }
 }
+impl crate::scheme::KernelScheme for PipeScheme {}

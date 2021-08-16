@@ -273,3 +273,4 @@ impl Scheme for InitFsScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for InitFsScheme {}
