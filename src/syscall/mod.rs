@@ -25,14 +25,14 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::validate::*;
 
-use self::data::{SigAction, TimeSpec};
+use self::data::{Map, SigAction, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
 use self::flag::{CloneFlags, MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
 
 use crate::context::ContextId;
 use crate::interrupt::InterruptStack;
-use crate::scheme::{FileHandle, SchemeNamespace};
+use crate::scheme::{FileHandle, SchemeNamespace, memory::MemoryScheme};
 
 /// Debug
 pub mod debug;
@@ -68,7 +68,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
             SYS_CLASS_FILE => {
                 let fd = FileHandle::from(b);
                 match a & SYS_ARG {
-                    SYS_ARG_SLICE => file_op_slice(a, fd, validate_slice(c as *const u8, d)?),
+                    SYS_ARG_SLICE => match a {
+                        SYS_FMAP if b == !0 => {
+                            MemoryScheme::fmap_anonymous(unsafe { validate_ref(c as *const Map, d)? })
+                        },
+                        _ => file_op_slice(a, fd, validate_slice(c as *const u8, d)?),
+                    }
                     SYS_ARG_MSLICE => file_op_mut_slice(a, fd, validate_slice_mut(c as *mut u8, d)?),
                     _ => match a {
                         SYS_CLOSE => close(fd),

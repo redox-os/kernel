@@ -13,25 +13,8 @@ impl MemoryScheme {
     pub fn new() -> Self {
         MemoryScheme
     }
-}
-impl Scheme for MemoryScheme {
-    fn open(&self, _path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        Ok(0)
-    }
 
-    fn fstatvfs(&self, _file: usize, stat: &mut StatVfs) -> Result<usize> {
-        let used = used_frames() as u64;
-        let free = free_frames() as u64;
-
-        stat.f_bsize = PAGE_SIZE as u32;
-        stat.f_blocks = used + free;
-        stat.f_bfree = free;
-        stat.f_bavail = stat.f_bfree;
-
-        Ok(0)
-    }
-
-    fn fmap(&self, _id: usize, map: &Map) -> Result<usize> {
+    pub fn fmap_anonymous(map: &Map) -> Result<usize> {
         //TODO: Abstract with other grant creation
         if map.size == 0 {
             Ok(0)
@@ -62,6 +45,27 @@ impl Scheme for MemoryScheme {
 
             Ok(region.start_address().data())
         }
+    }
+}
+impl Scheme for MemoryScheme {
+    fn open(&self, _path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn fstatvfs(&self, _file: usize, stat: &mut StatVfs) -> Result<usize> {
+        let used = used_frames() as u64;
+        let free = free_frames() as u64;
+
+        stat.f_bsize = PAGE_SIZE as u32;
+        stat.f_blocks = used + free;
+        stat.f_bfree = free;
+        stat.f_bavail = stat.f_bfree;
+
+        Ok(0)
+    }
+
+    fn fmap(&self, _id: usize, map: &Map) -> Result<usize> {
+        Self::fmap_anonymous(map)
     }
     fn fmap_old(&self, id: usize, map: &OldMap) -> Result<usize> {
         if map.flags.contains(MapFlags::MAP_FIXED) {
