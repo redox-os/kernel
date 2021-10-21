@@ -253,7 +253,16 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
+    #[cfg(feature = "no_threaded_syscalls")]
+    let syscall_lock = {
+        static SYSCALL_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+        SYSCALL_LOCK.lock();
+    };
+
     let result = inner(a, b, c, d, e, f, bp, stack);
+
+    #[cfg(feature = "no_threaded_syscalls")]
+    drop(syscall_lock);
 
     {
         let contexts = crate::context::contexts();
