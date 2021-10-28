@@ -17,32 +17,17 @@ impl Allocator {
 
 unsafe impl GlobalAlloc for Allocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        loop {
-            let res = if let Some(ref mut heap) = *HEAP.lock() {
-                heap.allocate_first_fit(layout)
-            } else {
-                panic!("__rust_allocate: heap not initialized");
-            };
-
-            match res {
+        while let Some(ref mut heap) = *HEAP.lock() {
+            match heap.allocate_first_fit(layout) {
                 Err(()) => {
-                    let size = if let Some(ref heap) = *HEAP.lock() {
-                        heap.size()
-                    } else {
-                        panic!("__rust_allocate: heap not initialized");
-                    };
-
+                    let size = heap.size();
                     super::map_heap(&mut ActivePageTable::new(TableKind::Kernel), crate::KERNEL_HEAP_OFFSET + size, crate::KERNEL_HEAP_SIZE);
-
-                    if let Some(ref mut heap) = *HEAP.lock() {
-                        heap.extend(crate::KERNEL_HEAP_SIZE);
-                    } else {
-                        panic!("__rust_allocate: heap not initialized");
-                    }
+                    heap.extend(crate::KERNEL_HEAP_SIZE);
                 },
                 other => return other.ok().map_or(ptr::null_mut(), |allocation| allocation.as_ptr()),
             }
         }
+        panic!("__rust_allocate: heap not initialized");
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
