@@ -42,7 +42,7 @@ raw-cpuid = "8.0.0"
 x86 = { version = "0.32.0", default-features = false }
 
 [features]
-default = ["acpi", "multi_core", "no_threaded_syscalls", "serial_debug"]
+default = ["acpi", "multi_core", "serial_debug"]
 acpi = []
 doc = []
 graphical_debug = []
@@ -50,7 +50,6 @@ live = []
 lpss_debug = []
 multi_core = ["acpi"]
 #TODO: remove when threading issues are fixed
-no_threaded_syscalls = []
 pti = []
 qemu_debug = []
 serial_debug = []
