@@ -10,9 +10,9 @@ use core::ops::DerefMut;
 use core::{intrinsics, mem, str};
 use spin::RwLock;
 
-use crate::context::file::FileDescriptor;
+use crate::context::file::{FileDescription, FileDescriptor};
 use crate::context::{ContextId, WaitpidKey};
-use crate::context::memory::{UserGrants, Region};
+use crate::context::memory::{Grant, UserGrants, Region};
 use crate::context;
 #[cfg(not(feature="doc"))]
 use crate::elf::{self, program_header};
@@ -267,23 +267,38 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
         if !flags.contains(CLONE_VM) {
             let mut grants = grants.write();
+            let old_grants = mem::take(&mut grants.inner);
 
-            let mut to_remove = BTreeSet::new();
+            // TODO: Find some way to do this without having to allocate.
 
-            // TODO: Use drain_filter if possible
+            // TODO: Check that the current process is not allowed to serve any scheme this logic
+            // could interfere with. Deadlocks would otherwise seem inevitable.
 
-            for grant in grants.iter() {
-                let remove = false;
-                if let Some(ref _desc) = grant.desc_opt {
-                    println!("todo: clone grant using fmap: {:?}", grant);
+            for mut grant in old_grants.into_iter() {
+                let address = grant.start_address().data();
+                let size = grant.size();
+
+                if let Some(ref mut file_ref) = grant.desc_opt {
+
+                    let FileDescription { scheme, number, .. } = { *file_ref.desc.description.read() };
+                    let scheme_arc = match crate::scheme::schemes().get(scheme) {
+                        Some(s) => Arc::clone(s),
+                        None => continue,
+                    };
+                    let map = crate::syscall::data::Map {
+                        address,
+                        size,
+                        offset: file_ref.offset,
+                        flags: file_ref.flags,
+                    };
+                    grant.unmap();
+                    match scheme_arc.fmap(number, &map) {
+                        Ok(_) => (),
+                        Err(_) => continue,
+                    };
+                } else {
+                    grants.insert(grant);
                 }
-                if remove {
-                    to_remove.insert(Region::from(grant));
-                }
-            }
-
-            for region in to_remove {
-                grants.remove(&region);
             }
         }
 
