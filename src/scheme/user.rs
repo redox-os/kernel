@@ -483,7 +483,7 @@ impl Scheme for UserScheme {
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
             let mut grants = context.grants.write();
-            let mut funmap = &mut grants.funmap;
+            let funmap = &mut grants.funmap;
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
             let grant_address = VirtualAddress::new(grant_address);
@@ -513,7 +513,7 @@ impl Scheme for UserScheme {
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
             let mut grants = context.grants.write();
-            let mut funmap = &mut grants.funmap;
+            let funmap = &mut grants.funmap;
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
             let grant_address = VirtualAddress::new(grant_address);

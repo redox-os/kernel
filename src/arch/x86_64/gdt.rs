@@ -10,8 +10,6 @@ use x86::dtables::{self, DescriptorTablePointer};
 use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
 use x86::task;
 
-use crate::paging::PAGE_SIZE;
-
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;

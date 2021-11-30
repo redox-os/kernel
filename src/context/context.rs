@@ -6,10 +6,9 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    alloc::{GlobalAlloc, Layout},
+    alloc::GlobalAlloc,
     cmp::Ordering,
     mem,
-    ptr::NonNull,
 };
 use spin::RwLock;
 

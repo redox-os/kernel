@@ -16,7 +16,7 @@ use crate::paging::{ActivePageTable, TableKind, VirtualAddress};
 use crate::syscall::data::TimeSpec;
 use crate::syscall::error::{Error, Result, ESRCH, EAGAIN, EFAULT, EINVAL};
 use crate::syscall::flag::{FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE, FUTEX_REQUEUE};
-use crate::syscall::validate::{validate_array, validate_slice, validate_slice_mut};
+use crate::syscall::validate::validate_array;
 
 type FutexList = VecDeque<FutexEntry>;
 

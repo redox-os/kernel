@@ -87,7 +87,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             arch = context.arch.clone();
 
             if let Some(ref fx) = context.kfx {
-                let mut new_fx = unsafe {
+                let new_fx = unsafe {
                     let new_fx_ptr = crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16));
                     if new_fx_ptr.is_null() {
                         // FIXME: It's mildly ironic that the only place where clone can fail with
@@ -339,7 +339,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             }
 
             let mut active_utable = unsafe { ActivePageTable::new(TableKind::User) };
-            let mut active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
+            let active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
 
             let mut new_utable = unsafe {
                 let frame = allocate_frames(1).ok_or(Error::new(ENOMEM))?;
@@ -916,7 +916,7 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
         (auxv, phdr_grant)
     } else {
         let phdr_grant = match context::contexts().current().ok_or(Error::new(ESRCH))?.read().grants.write() {
-            mut grants => {
+            grants => {
                 let size = elf.program_headers_size() * elf.program_header_count();
                 let aligned_size = (size + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
 
@@ -934,7 +934,6 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
 
                 grant
             }
-
         };
         let mut auxv = Vec::with_capacity(3);
 

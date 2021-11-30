@@ -45,7 +45,7 @@ impl Idt {
         let byte_index = index / 64;
         let bit = index % 64;
 
-        unsafe { &self.reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
+        { &self.reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
     }
 
     #[inline]
@@ -53,14 +53,14 @@ impl Idt {
         let byte_index = index / 64;
         let bit = index % 64;
 
-        unsafe { &self.reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
+        { &self.reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
     }
     #[inline]
     pub fn is_reserved_mut(&mut self, index: u8) -> bool {
         let byte_index = index / 64;
         let bit = index % 64;
 
-        *unsafe { &mut self.reservations[usize::from(byte_index)] }.get_mut() & (1 << bit) != 0
+        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() & (1 << bit) != 0
     }
 
     #[inline]
@@ -68,7 +68,7 @@ impl Idt {
         let byte_index = index / 64;
         let bit = index % 64;
 
-        *unsafe { &mut self.reservations[usize::from(byte_index)] }.get_mut() |= u64::from(reserved) << bit;
+        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() |= u64::from(reserved) << bit;
     }
 }
 
@@ -82,7 +82,7 @@ pub fn is_reserved(cpu_id: usize, index: u8) -> bool {
     let byte_index = index / 64;
     let bit = index % 64;
 
-    unsafe { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
+    { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
 }
 
 #[inline]
@@ -90,7 +90,7 @@ pub fn set_reserved(cpu_id: usize, index: u8, reserved: bool) {
     let byte_index = index / 64;
     let bit = index % 64;
 
-    unsafe { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
+    { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
 }
 
 pub fn allocate_interrupt() -> Option<NonZeroU8> {

@@ -68,21 +68,19 @@ where
 {
     pub fn init(&mut self) {
         //TODO: Cleanup
-        unsafe {
-            self.int_en.write(0x00.into());
-            self.line_ctrl.write(0x80.into());
-            self.data.write(0x01.into());
-            self.int_en.write(0x00.into());
-            self.line_ctrl.write(0x03.into());
-            self.fifo_ctrl.write(0xC7.into());
-            self.modem_ctrl.write(0x0B.into());
-            self.int_en.write(0x01.into());
-        }
+        self.int_en.write(0x00.into());
+        self.line_ctrl.write(0x80.into());
+        self.data.write(0x01.into());
+        self.int_en.write(0x00.into());
+        self.line_ctrl.write(0x03.into());
+        self.fifo_ctrl.write(0xC7.into());
+        self.modem_ctrl.write(0x0B.into());
+        self.int_en.write(0x01.into());
     }
 
     fn line_sts(&self) -> LineStsFlags {
         LineStsFlags::from_bits_truncate(
-            (unsafe { self.line_sts.read() } & 0xFF.into())
+            (self.line_sts.read() & 0xFF.into())
                 .try_into()
                 .unwrap_or(0),
         )
@@ -91,7 +89,7 @@ where
     pub fn receive(&mut self) -> Option<u8> {
         if self.line_sts().contains(LineStsFlags::INPUT_FULL) {
             Some(
-                (unsafe { self.data.read() } & 0xFF.into())
+                (self.data.read() & 0xFF.into())
                     .try_into()
                     .unwrap_or(0),
             )
@@ -102,7 +100,7 @@ where
 
     pub fn send(&mut self, data: u8) {
         while !self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-        unsafe { self.data.write(data.into()) }
+        self.data.write(data.into())
     }
 
     pub fn write(&mut self, buf: &[u8]) {

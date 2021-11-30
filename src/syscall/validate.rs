@@ -35,7 +35,7 @@ fn validate(address: usize, size: usize, writable: bool) -> Result<()> {
 pub unsafe fn validate_ref<T>(ptr: *const T, size: usize) -> Result<&'static T> {
     if size == mem::size_of::<T>() {
         validate(ptr as usize, mem::size_of::<T>(), false)?;
-        Ok(unsafe { &*ptr })
+        Ok(&*ptr)
     } else {
         Err(Error::new(EINVAL))
     }
