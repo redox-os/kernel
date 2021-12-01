@@ -973,8 +973,6 @@ pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>
 
                 let interp_str = str::from_utf8(&interp).map_err(|_| Error::new(EINVAL))?;
 
-                println!("  interpreter: {}", interp_str);
-
                 let interp_fd = super::fs::open(interp_str, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
 
                 let mut args_vec = Vec::from(args);
