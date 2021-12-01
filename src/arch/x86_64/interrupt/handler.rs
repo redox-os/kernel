@@ -20,15 +20,15 @@ pub struct ScratchRegisters {
 
 impl ScratchRegisters {
     pub fn dump(&self) {
-        println!("RAX:   {:>016X}", { self.rax });
-        println!("RCX:   {:>016X}", { self.rcx });
-        println!("RDX:   {:>016X}", { self.rdx });
-        println!("RDI:   {:>016X}", { self.rdi });
-        println!("RSI:   {:>016X}", { self.rsi });
-        println!("R8:    {:>016X}", { self.r8 });
-        println!("R9:    {:>016X}", { self.r9 });
-        println!("R10:   {:>016X}", { self.r10 });
-        println!("R11:   {:>016X}", { self.r11 });
+        println!("RAX:   {:016x}", { self.rax });
+        println!("RCX:   {:016x}", { self.rcx });
+        println!("RDX:   {:016x}", { self.rdx });
+        println!("RDI:   {:016x}", { self.rdi });
+        println!("RSI:   {:016x}", { self.rsi });
+        println!("R8:    {:016x}", { self.r8 });
+        println!("R9:    {:016x}", { self.r9 });
+        println!("R10:   {:016x}", { self.r10 });
+        println!("R11:   {:016x}", { self.r11 });
     }
 }
 
@@ -45,12 +45,12 @@ pub struct PreservedRegisters {
 
 impl PreservedRegisters {
     pub fn dump(&self) {
-        println!("RBX:   {:>016X}", { self.rbx });
-        println!("RBP:   {:>016X}", { self.rbp });
-        println!("R12:   {:>016X}", { self.r12 });
-        println!("R13:   {:>016X}", { self.r13 });
-        println!("R14:   {:>016X}", { self.r14 });
-        println!("R15:   {:>016X}", { self.r15 });
+        println!("RBX:   {:016x}", { self.rbx });
+        println!("RBP:   {:016x}", { self.rbp });
+        println!("R12:   {:016x}", { self.r12 });
+        println!("R13:   {:016x}", { self.r13 });
+        println!("R14:   {:016x}", { self.r14 });
+        println!("R15:   {:016x}", { self.r15 });
     }
 }
 
@@ -72,19 +72,19 @@ pub struct IretRegisters {
 
 impl IretRegisters {
     pub fn dump(&self) {
-        println!("RFLAG: {:>016X}", { self.rflags });
-        println!("CS:    {:>016X}", { self.cs });
-        println!("RIP:   {:>016X}", { self.rip });
+        println!("RFLAG: {:016x}", { self.rflags });
+        println!("CS:    {:016x}", { self.cs });
+        println!("RIP:   {:016x}", { self.rip });
 
         if self.cs & 0b11 != 0b00 {
-            println!("RSP:   {:>016X}", { self.rsp });
-            println!("SS:    {:>016X}", { self.ss });
+            println!("RSP:   {:016x}", { self.rsp });
+            println!("SS:    {:016x}", { self.ss });
         }
         unsafe {
             let fsbase = x86::msr::rdmsr(x86::msr::IA32_FS_BASE);
             let gsbase = x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE);
             let kgsbase = x86::msr::rdmsr(x86::msr::IA32_GS_BASE);
-            println!("FSBASE  {:>016X}\nGSBASE  {:016X}\nKGSBASE {:016X}", fsbase, gsbase, kgsbase);
+            println!("FSBASE  {:016x}\nGSBASE  {:016x}\nKGSBASE {:016x}", fsbase, gsbase, kgsbase);
         }
     }
 }
@@ -198,7 +198,7 @@ pub struct InterruptErrorStack {
 
 impl InterruptErrorStack {
     pub fn dump(&self) {
-        println!("CODE:  {:>016X}", { self.code });
+        println!("CODE:  {:016x}", { self.code });
         self.inner.dump();
     }
 }
