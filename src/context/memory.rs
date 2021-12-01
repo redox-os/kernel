@@ -298,9 +298,13 @@ impl Grant {
         self.owned
     }
 
+    pub fn region(&self) -> &Region {
+        &self.region
+    }
+
     /// Get a mutable reference to the region. This is unsafe, because a bad
     /// region could lead to the wrong addresses being unmapped.
-    pub unsafe fn region_mut(&mut self) -> &mut Region {
+    unsafe fn region_mut(&mut self) -> &mut Region {
         &mut self.region
     }
 
@@ -480,10 +484,6 @@ impl Grant {
 
     pub fn flags(&self) -> PageFlags<RmmA> {
         self.flags
-    }
-
-    pub unsafe fn set_mapped(&mut self, mapped: bool) {
-        self.mapped = mapped;
     }
 
     pub fn unmap(mut self) {
