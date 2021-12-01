@@ -47,7 +47,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let ens;
         let umask;
         let sigmask;
-        let cpu_id_opt = None;
+        let mut cpu_id_opt = None;
         let arch;
         let vfork;
         let mut kfx_opt = None;
@@ -80,9 +80,10 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             umask = context.umask;
 
             // Uncomment to disable threads on different CPUs
-            // if flags.contains(CLONE_VM) {
-            //     cpu_id_opt = context.cpu_id;
-            // }
+            //TODO: fix memory allocation races when this is removed
+            if flags.contains(CLONE_VM) {
+                cpu_id_opt = context.cpu_id;
+            }
 
             arch = context.arch.clone();
 
