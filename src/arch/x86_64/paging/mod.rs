@@ -265,7 +265,10 @@ impl ActivePageTable {
             })
         };
         unsafe {
+            // Activate new page table
             RmmA::set_table(new_table.frame.start_address());
+            // Update mapper to new page table
+            self.mapper = Mapper::current();
         }
         old_table
     }

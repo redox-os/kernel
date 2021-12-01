@@ -76,7 +76,7 @@ impl Context {
         }
     }
 
-    pub fn get_page_utable(&mut self) -> usize {
+    pub fn get_page_utable(&self) -> usize {
         self.cr3
     }
 
