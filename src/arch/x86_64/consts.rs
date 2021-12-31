@@ -42,12 +42,8 @@
     /// Offset to user arguments
     pub const USER_ARG_OFFSET: usize = USER_OFFSET + PML4_SIZE/2;
 
-    /// Offset to user heap
-    pub const USER_HEAP_OFFSET: usize = USER_OFFSET + PML4_SIZE;
-    pub const USER_HEAP_PML4: usize = (USER_HEAP_OFFSET & PML4_MASK)/PML4_SIZE;
-
     /// Offset to user grants
-    pub const USER_GRANT_OFFSET: usize = USER_HEAP_OFFSET + PML4_SIZE;
+    pub const USER_GRANT_OFFSET: usize = USER_OFFSET + PML4_SIZE;
     pub const USER_GRANT_PML4: usize = (USER_GRANT_OFFSET & PML4_MASK)/PML4_SIZE;
 
     /// Offset to user stack
