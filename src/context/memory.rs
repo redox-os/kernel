@@ -77,7 +77,8 @@ impl UserGrants {
         // Get last used region
         let last = self.inner.iter().next_back().map(Region::from).unwrap_or(Region::new(VirtualAddress::new(0), 0));
         // At the earliest, start at grant offset
-        let address = cmp::max(last.end_address().data(), crate::USER_GRANT_OFFSET);
+        // TODO
+        let address = last.start_address().data() - size;
         // Create new region
         Region::new(VirtualAddress::new(address), size)
     }
@@ -224,7 +225,7 @@ impl Region {
     pub fn pages(&self) -> PageIter {
         Page::range_inclusive(
             Page::containing_address(self.start_address()),
-            Page::containing_address(self.end_address())
+            Page::containing_address(self.final_address())
         )
     }
 

@@ -83,7 +83,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                         SYS_DUP => dup(fd, validate_slice(c as *const u8, d)?).map(FileHandle::into),
                         SYS_DUP2 => dup2(fd, FileHandle::from(c), validate_slice(d as *const u8, e)?).map(FileHandle::into),
                         SYS_FCNTL => fcntl(fd, c, d),
-                        SYS_FEXEC => fexec(fd, validate_slice(c as *const [usize; 2], d)?, validate_slice(e as *const [usize; 2], f)?),
                         SYS_FRENAME => frename(fd, validate_str(c as *const u8, d)?),
                         SYS_FUNMAP => funmap(b, c),
                         SYS_FMAP_OLD => {
@@ -210,13 +209,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
-    /*
     let debug = {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
             let name = context.name.read();
-            if name.contains("redoxfs") {
+            if true || name.contains("redoxfs") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
@@ -241,7 +239,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
     }
-    */
 
     // The next lines set the current syscall in the context struct, then once the inner() function
     // completes, we set the current syscall to none.
@@ -266,7 +263,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
-    /*
     if debug {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
@@ -285,7 +281,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
             }
         }
     }
-    */
 
     // errormux turns Result<usize> into -errno
     Error::mux(result)

@@ -226,12 +226,6 @@ pub struct Context {
     pub ksig: Option<(arch::Context, Option<Box<[u8]>>, Option<Box<[u8]>>, u8)>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
-    /// Executable image
-    pub image: Vec<SharedMemory>,
-    /// User stack
-    pub stack: Option<SharedMemory>,
-    /// User signal stack
-    pub sigstack: Option<Memory>,
     /// User grants
     pub grants: Arc<RwLock<UserGrants>>,
     /// The name of the context
@@ -338,9 +332,6 @@ impl Context {
             kstack: None,
             ksig: None,
             ksig_restore: false,
-            image: Vec::new(),
-            stack: None,
-            sigstack: None,
             grants: Arc::new(RwLock::new(UserGrants::default())),
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(String::new())),

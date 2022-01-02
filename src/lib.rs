@@ -172,33 +172,27 @@ static mut INIT_ENV: &[u8] = &[];
 /// Initialize userspace by running the initfs:bin/init process
 /// This function will also set the CWD to initfs:bin and open debug: as stdio
 pub extern fn userspace_init() {
-    let path = "initfs:/bin/init";
-    let env = unsafe { INIT_ENV };
+    let path = "initfs:/bin/bootstrap";
 
     if let Err(err) = syscall::chdir("initfs:") {
         info!("Failed to enter initfs ({}).", err);
         panic!("Unexpected error while trying to enter initfs:.");
     }
 
-    assert_eq!(syscall::open("debug:", syscall::flag::O_RDONLY).map(FileHandle::into), Ok(0));
-    assert_eq!(syscall::open("debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
-    assert_eq!(syscall::open("debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
-
     let fd = syscall::open(path, syscall::flag::O_RDONLY).expect("failed to open init");
 
-    let mut args = Vec::new();
-    args.push(path.as_bytes().to_vec().into_boxed_slice());
+    let mut total_bytes_read = 0;
+    let mut data = Vec::new();
 
-    let mut vars = Vec::new();
-    for var in env.split(|b| *b == b'\n') {
-        if ! var.is_empty() {
-            vars.push(var.to_vec().into_boxed_slice());
-        }
+    loop {
+        data.resize(total_bytes_read + 4096, 0);
+        let bytes_read = syscall::file_op_mut_slice(syscall::number::SYS_READ, fd, &mut data[total_bytes_read..]).expect("failed to read init");
+        if bytes_read == 0 { break }
+        total_bytes_read += bytes_read;
     }
+    let _ = syscall::close(fd);
 
-    syscall::fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None, None).expect("failed to execute init");
-
-    panic!("init returned");
+    crate::syscall::process::usermode_bootstrap(data.into_boxed_slice());
 }
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this

@@ -17,34 +17,33 @@ impl MemoryScheme {
     pub fn fmap_anonymous(map: &Map) -> Result<usize> {
         //TODO: Abstract with other grant creation
         if map.size == 0 {
-            Ok(0)
-        } else {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
+            return Ok(0);
+        }
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
 
-            let mut grants = context.grants.write();
+        let mut grants = context.grants.write();
 
-            let region = grants.find_free_at(VirtualAddress::new(map.address), map.size, map.flags)?.round();
+        let region = grants.find_free_at(VirtualAddress::new(map.address), map.size, map.flags)?.round();
 
-            {
-                // Make sure it's *absolutely* not mapped already
-                // TODO: Keep track of all allocated memory so this isn't necessary
+        {
+            // Make sure it's *absolutely* not mapped already
+            // TODO: Keep track of all allocated memory so this isn't necessary
 
-                let active_table = unsafe { ActivePageTable::new(VirtualAddress::new(map.address).kind()) };
+            let active_table = unsafe { ActivePageTable::new(rmm::TableKind::User) };
 
-                for page in region.pages() {
-                    if active_table.translate_page(page).is_some() {
-                        println!("page at {:#x} was already mapped", page.start_address().data());
-                        return Err(Error::new(EEXIST))
-                    }
+            for page in region.pages() {
+                if active_table.translate_page(page).is_some() {
+                    println!("page at {:#x} was already mapped", page.start_address().data());
+                    return Err(Error::new(EEXIST))
                 }
             }
-
-            grants.insert(Grant::map(region.start_address(), region.size(), page_flags(map.flags)));
-
-            Ok(region.start_address().data())
         }
+
+        grants.insert(Grant::map(region.start_address(), region.size(), page_flags(map.flags)));
+
+        Ok(region.start_address().data())
     }
 }
 impl Scheme for MemoryScheme {

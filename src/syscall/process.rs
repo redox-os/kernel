@@ -6,6 +6,7 @@ use alloc::{
     vec::Vec,
 };
 use core::alloc::{GlobalAlloc, Layout};
+use core::convert::TryFrom;
 use core::ops::DerefMut;
 use core::{intrinsics, mem, str};
 use spin::{RwLock, RwLockWriteGuard};
@@ -53,9 +54,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let mut kfx_opt = None;
         let mut kstack_opt = None;
         let mut offset = 0;
-        let mut image = vec![];
-        let mut stack_opt = None;
-        let mut sigstack_opt = None;
         let mut grants;
         let name;
         let cwd;
@@ -141,74 +139,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
                     kstack_opt = Some(new_stack);
                 }
-            }
-
-            if flags.contains(CLONE_VM) {
-                for memory_shared in context.image.iter() {
-                    image.push(memory_shared.clone());
-                }
-            } else {
-                for memory_shared in context.image.iter() {
-                    memory_shared.with(|memory| {
-                        let mut new_memory = context::memory::Memory::new(
-                            VirtualAddress::new(memory.start_address().data() + crate::USER_TMP_OFFSET),
-                            memory.size(),
-                            PageFlags::new().write(true),
-                            false
-                        );
-
-                        unsafe {
-                            intrinsics::copy(memory.start_address().data() as *const u8,
-                                            new_memory.start_address().data() as *mut u8,
-                                            memory.size());
-                        }
-
-                        new_memory.remap(memory.flags());
-                        image.push(new_memory.to_shared());
-                    });
-                }
-            }
-
-            if let Some(ref stack_shared) = context.stack {
-                if flags.contains(CLONE_STACK) {
-                    stack_opt = Some(stack_shared.clone());
-                } else {
-                    stack_shared.with(|stack| {
-                        let mut new_stack = context::memory::Memory::new(
-                            VirtualAddress::new(crate::USER_TMP_STACK_OFFSET),
-                            stack.size(),
-                            PageFlags::new().write(true),
-                            false
-                        );
-
-                        unsafe {
-                            intrinsics::copy(stack.start_address().data() as *const u8,
-                                            new_stack.start_address().data() as *mut u8,
-                                            stack.size());
-                        }
-
-                        new_stack.remap(stack.flags());
-                        stack_opt = Some(new_stack.to_shared());
-                    });
-                }
-            }
-
-            if let Some(ref sigstack) = context.sigstack {
-                let mut new_sigstack = context::memory::Memory::new(
-                    VirtualAddress::new(crate::USER_TMP_SIGSTACK_OFFSET),
-                    sigstack.size(),
-                    PageFlags::new().write(true),
-                    false
-                );
-
-                unsafe {
-                    intrinsics::copy(sigstack.start_address().data() as *const u8,
-                                    new_sigstack.start_address().data() as *mut u8,
-                                    sigstack.size());
-                }
-
-                new_sigstack.remap(sigstack.flags());
-                sigstack_opt = Some(new_sigstack);
             }
 
             if flags.contains(CLONE_VM) {
@@ -438,70 +368,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
             // TODO: Clone ksig?
 
-            // Setup image, heap, and grants
-            if flags.contains(CLONE_VM) {
-                // Copy user image mapping, if found
-                if ! image.is_empty() {
-                    let frame = active_utable.p4()[crate::USER_PML4].pointed_frame().expect("user image not mapped");
-                    let flags = active_utable.p4()[crate::USER_PML4].flags();
-
-                    new_utable.mapper().p4_mut()[crate::USER_PML4].set(frame, flags);
-                }
-                context.image = image;
-
-                // Copy grant mapping
-                if ! grants.read().is_empty() {
-                    let frame = active_utable.p4()[crate::USER_GRANT_PML4].pointed_frame().expect("user grants not mapped");
-                    let flags = active_utable.p4()[crate::USER_GRANT_PML4].flags();
-
-                    new_utable.mapper().p4_mut()[crate::USER_GRANT_PML4].set(frame, flags);
-                }
-                context.grants = grants;
-            } else {
-                // Move copy of image
-                for memory_shared in image.iter_mut() {
-                    memory_shared.with(|memory| {
-                        let start = VirtualAddress::new(memory.start_address().data() - crate::USER_TMP_OFFSET + crate::USER_OFFSET);
-                        memory.move_to(start, &mut new_utable);
-                    });
-                }
-                context.image = image;
-
-                // Move grants
-                {
-                    let mut grants = grants.write();
-                    let old_grants = mem::replace(&mut *grants, UserGrants::default());
-
-                    for mut grant in old_grants.inner.into_iter() {
-                        let start = VirtualAddress::new(grant.start_address().data() + crate::USER_GRANT_OFFSET - crate::USER_TMP_GRANT_OFFSET);
-                        grant.move_to(start, &mut new_utable);
-                        grants.insert(grant);
-                    }
-                }
-                context.grants = grants;
-            }
-
-            // Setup user stack
-            if let Some(stack_shared) = stack_opt {
-                if flags.contains(CLONE_STACK) {
-                    let frame = active_utable.p4()[crate::USER_STACK_PML4].pointed_frame().expect("user stack not mapped");
-                    let flags = active_utable.p4()[crate::USER_STACK_PML4].flags();
-
-                    new_utable.mapper().p4_mut()[crate::USER_STACK_PML4].set(frame, flags);
-                } else {
-                    stack_shared.with(|stack| {
-                        stack.move_to(VirtualAddress::new(crate::USER_STACK_OFFSET), &mut new_utable);
-                    });
-                }
-                context.stack = Some(stack_shared);
-            }
-
-            // Setup user sigstack
-            if let Some(mut sigstack) = sigstack_opt {
-                sigstack.move_to(VirtualAddress::new(crate::USER_SIGSTACK_OFFSET), &mut new_utable);
-                context.sigstack = Some(sigstack);
-            }
-
             #[cfg(target_arch = "aarch64")]
             {
                 if let Some(stack) = &mut context.kstack {
@@ -553,18 +419,6 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 }
 
 fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGuard<'lock, Context>, reaping: bool) -> RwLockWriteGuard<'lock, Context> {
-    if reaping {
-        // Memory should already be unmapped
-        assert!(context.image.is_empty());
-        assert!(context.stack.is_none());
-        assert!(context.sigstack.is_none());
-    } else {
-        // Unmap previous image, heap, grants, stack
-        context.image.clear();
-        drop(context.stack.take());
-        drop(context.sigstack.take());
-    }
-
     // NOTE: If we do not replace the grants `Arc`, then a strange situation can appear where the
     // main thread and another thread exit simultaneously before either one is reaped. If that
     // happens, then the last context that runs exit will think that there is still are still
@@ -580,9 +434,7 @@ fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGu
     let mut grants_arc = mem::take(&mut context.grants);
 
     if let Some(grants_lock_mut) = Arc::get_mut(&mut grants_arc) {
-        // TODO: Use get_mut to bypass the need to acquire a lock when there we already have an
-        // exclusive reference from `Arc::get_mut`. This will require updating `spin`.
-        let mut grants_guard = grants_lock_mut.write();
+        let mut grants_guard = grants_lock_mut.get_mut();
 
         let grants = mem::replace(&mut *grants_guard, UserGrants::default());
         for grant in grants.inner.into_iter() {
@@ -614,450 +466,6 @@ impl Drop for ExecFile {
     fn drop(&mut self) {
         let _ = syscall::close(self.0);
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn fexec_noreturn(
-    setuid: Option<u32>,
-    setgid: Option<u32>,
-    name: Box<str>,
-    data: Box<[u8]>,
-    phdr_grant: context::memory::Grant,
-    args: Box<[Box<[u8]>]>,
-    vars: Box<[Box<[u8]>]>,
-    auxv: Box<[usize]>,
-) -> ! {
-    let entry;
-    let singlestep;
-    let mut sp = crate::USER_STACK_OFFSET + crate::USER_STACK_SIZE - 256;
-
-    {
-        let (vfork, ppid, files) = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exec_noreturn pid not found");
-            let mut context = context_lock.write();
-
-            singlestep = unsafe {
-                ptrace::regs_for(&context).map(|s| s.is_singlestep()).unwrap_or(false)
-            };
-
-            context.name = Arc::new(RwLock::new(name));
-
-            context = empty(&context_lock, context, false);
-
-            context.grants.write().insert(phdr_grant);
-
-            #[cfg(all(target_arch = "x86_64"))]
-            {
-                context.arch.fsbase = 0;
-                context.arch.gsbase = 0;
-
-                #[cfg(feature = "x86_fsgsbase")]
-                unsafe {
-                    x86::bits64::segmentation::wrfsbase(0);
-                    x86::bits64::segmentation::swapgs();
-                    x86::bits64::segmentation::wrgsbase(0);
-                    x86::bits64::segmentation::swapgs();
-                }
-                #[cfg(not(feature = "x86_fsgsbase"))]
-                unsafe {
-                    x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
-                    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
-                }
-            }
-
-            if let Some(uid) = setuid {
-                context.euid = uid;
-            }
-
-            if let Some(gid) = setgid {
-                context.egid = gid;
-            }
-
-            // Map and copy new segments
-            {
-                let elf = elf::Elf::from(&data).unwrap();
-                entry = elf.entry();
-
-                for segment in elf.segments() {
-                    match segment.p_type {
-                        program_header::PT_LOAD => {
-                            let voff = segment.p_vaddr as usize % PAGE_SIZE;
-                            let vaddr = segment.p_vaddr as usize - voff;
-
-                            let mut memory = context::memory::Memory::new(
-                                VirtualAddress::new(vaddr),
-                                segment.p_memsz as usize + voff,
-                                PageFlags::new().write(true),
-                                true
-                            );
-
-                            unsafe {
-                                // Copy file data
-                                intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
-                                                 segment.p_vaddr as *mut u8,
-                                                 segment.p_filesz as usize);
-                            }
-
-                            let mut flags = PageFlags::new().user(true);
-
-                            // W ^ X. If it is executable, do not allow it to be writable, even if requested
-                            if segment.p_flags & program_header::PF_X == program_header::PF_X {
-                                flags = flags.execute(true);
-                            } else if segment.p_flags & program_header::PF_W == program_header::PF_W {
-                                flags = flags.write(true);
-                            }
-
-                            memory.remap(flags);
-
-                            context.image.push(memory.to_shared());
-                        },
-                        _ => (),
-                    }
-                }
-            }
-
-            // Map stack
-            context.stack = Some(context::memory::Memory::new(
-                VirtualAddress::new(crate::USER_STACK_OFFSET),
-                crate::USER_STACK_SIZE,
-                PageFlags::new().write(true).user(true),
-                true
-            ).to_shared());
-
-            // Map stack
-            context.sigstack = Some(context::memory::Memory::new(
-                VirtualAddress::new(crate::USER_SIGSTACK_OFFSET),
-                crate::USER_SIGSTACK_SIZE,
-                PageFlags::new().write(true).user(true),
-                true
-            ));
-
-            // Data no longer required, can deallocate
-            drop(data);
-
-            let mut push = |arg| {
-                sp -= mem::size_of::<usize>();
-                unsafe { *(sp as *mut usize) = arg; }
-            };
-
-            // Push auxiliary vector
-            push(AT_NULL);
-            for &arg in auxv.iter().rev() {
-                push(arg);
-            }
-
-            drop(auxv); // no longer required
-
-            let mut arg_size = 0;
-
-            // Push environment variables and arguments
-            for iter in &[&vars, &args] {
-                // Push null-terminator
-                push(0);
-
-                // Push pointer to content
-                for arg in iter.iter().rev() {
-                    push(crate::USER_ARG_OFFSET + arg_size);
-                    arg_size += arg.len() + 1;
-                }
-            }
-
-            // For some reason, Linux pushes the argument count here (in
-            // addition to being null-terminated), but not the environment
-            // variable count.
-            // TODO: Push more counts? Less? Stop having null-termination?
-            push(args.len());
-
-            // Write environment and argument pointers to USER_ARG_OFFSET
-            if arg_size > 0 {
-                let mut memory = context::memory::Memory::new(
-                    VirtualAddress::new(crate::USER_ARG_OFFSET),
-                    arg_size,
-                    PageFlags::new().write(true),
-                    true
-                );
-
-                let mut arg_offset = 0;
-                for arg in vars.iter().rev().chain(args.iter().rev()) {
-                    unsafe {
-                        intrinsics::copy(arg.as_ptr(),
-                               (crate::USER_ARG_OFFSET + arg_offset) as *mut u8,
-                               arg.len());
-                    }
-                    arg_offset += arg.len();
-
-                    unsafe {
-                        *((crate::USER_ARG_OFFSET + arg_offset) as *mut u8) = 0;
-                    }
-                    arg_offset += 1;
-                }
-
-                memory.remap(PageFlags::new().user(true));
-
-                context.image.push(memory.to_shared());
-            }
-
-            // Args and vars no longer required, can deallocate
-            drop(args);
-            drop(vars);
-
-            context.actions = Arc::new(RwLock::new(vec![(
-                SigAction {
-                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                    sa_mask: [0; 2],
-                    sa_flags: SigActionFlags::empty(),
-                },
-                0
-            ); 128]));
-
-            let vfork = context.vfork;
-            context.vfork = false;
-
-            let files = Arc::clone(&context.files);
-
-            (vfork, context.ppid, files)
-        };
-
-        for (_fd, file_opt) in files.write().iter_mut().enumerate() {
-            let mut cloexec = false;
-            if let Some(ref file) = *file_opt {
-                if file.cloexec {
-                    cloexec = true;
-                }
-            }
-
-            if cloexec {
-                let _ = file_opt.take().unwrap().close();
-            }
-        }
-
-        if vfork {
-            let contexts = context::contexts();
-            if let Some(context_lock) = contexts.get(ppid) {
-                let mut context = context_lock.write();
-                if ! context.unblock() {
-                    println!("{} not blocked for exec vfork unblock", ppid.into());
-                }
-            } else {
-                println!("{} not found for exec vfork unblock", ppid.into());
-            }
-        }
-    }
-
-    // Go to usermode
-    unsafe { usermode(entry, sp, 0, usize::from(singlestep)) }
-}
-
-pub fn fexec_kernel(fd: FileHandle, args: Box<[Box<[u8]>]>, vars: Box<[Box<[u8]>]>, name_override_opt: Option<Box<str>>, auxv: Option<(Vec<usize>, context::memory::Grant)>) -> Result<usize> {
-    let (uid, gid) = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        (context.euid, context.egid)
-    };
-
-    let mut stat: Stat;
-    let name: String;
-    let mut data: Vec<u8>;
-    {
-        let file = ExecFile(fd);
-
-        stat = Stat::default();
-        syscall::file_op_mut_slice(syscall::number::SYS_FSTAT, file.0, &mut stat)?;
-
-        let mut perm = stat.st_mode & 0o7;
-        if stat.st_uid == uid {
-            perm |= (stat.st_mode >> 6) & 0o7;
-        }
-        if stat.st_gid == gid {
-            perm |= (stat.st_mode >> 3) & 0o7;
-        }
-        if uid == 0 {
-            perm |= 0o7;
-        }
-
-        if perm & 0o1 != 0o1 {
-            return Err(Error::new(EACCES));
-        }
-
-        if let Some(name_override) = name_override_opt {
-            name = String::from(name_override);
-        } else {
-            let mut name_bytes = vec![0; 4096];
-            let len = syscall::file_op_mut_slice(syscall::number::SYS_FPATH, file.0, &mut name_bytes)?;
-            name_bytes.truncate(len);
-            name = match String::from_utf8(name_bytes) {
-                Ok(ok) => ok,
-                Err(_err) => {
-                    //TODO: print error?
-                    return Err(Error::new(EINVAL));
-                }
-            };
-        }
-
-        //TODO: Only read elf header, not entire file. Then read required segments
-        data = vec![0; stat.st_size as usize];
-        syscall::file_op_mut_slice(syscall::number::SYS_READ, file.0, &mut data)?;
-        drop(file);
-    }
-
-    // Set UID and GID are determined after resolving any hashbangs
-    let setuid = if stat.st_mode & syscall::flag::MODE_SETUID == syscall::flag::MODE_SETUID {
-        Some(stat.st_uid)
-    } else {
-        None
-    };
-
-    let setgid = if stat.st_mode & syscall::flag::MODE_SETGID == syscall::flag::MODE_SETGID {
-        Some(stat.st_gid)
-    } else {
-        None
-    };
-
-    // The argument list is limited to avoid using too much userspace stack
-    // This check is done last to allow all hashbangs to be resolved
-    //
-    // This should be based on the size of the userspace stack, divided
-    // by the cost of each argument, which should be usize * 2, with
-    // one additional argument added to represent the total size of the
-    // argument pointer array and potential padding
-    //
-    // A limit of 4095 would mean a stack of (4095 + 1) * 8 * 2 = 65536, or 64KB
-    if (args.len() + vars.len()) > 4095 {
-        return Err(Error::new(E2BIG));
-    }
-
-    let elf = match elf::Elf::from(&data) {
-        Ok(elf) => elf,
-        Err(err) => {
-            let contexts = context::contexts();
-            if let Some(context_lock) = contexts.current() {
-                let context = context_lock.read();
-                println!(
-                    "{}: {}: fexec failed to execute {}: {}",
-                    context.id.into(),
-                    *context.name.read(),
-                    fd.into(),
-                    err
-                );
-            }
-            return Err(Error::new(ENOEXEC));
-        }
-    };
-
-    // `fexec_kernel` can recurse if an interpreter is found. We get the
-    // auxiliary vector from the first invocation, which is passed via an
-    // argument, or if this is the first one we create it.
-    let (auxv, phdr_grant) = if let Some((auxv, phdr_grant)) = auxv {
-        (auxv, phdr_grant)
-    } else {
-        let phdr_grant = match context::contexts().current().ok_or(Error::new(ESRCH))?.read().grants.write() {
-            grants => {
-                let size = elf.program_headers_size() * elf.program_header_count();
-                let aligned_size = (size + PAGE_SIZE - 1) / PAGE_SIZE * PAGE_SIZE;
-
-                if aligned_size > MAX_PHDRS_SIZE {
-                    return Err(Error::new(ENOMEM));
-                }
-
-                let phdrs_region = grants.find_free(aligned_size);
-                let grant = context::memory::Grant::map(phdrs_region.start_address(), aligned_size, PageFlags::new().write(true).user(true));
-
-                unsafe {
-                    let dst = core::slice::from_raw_parts_mut(grant.start_address().data() as *mut u8, aligned_size);
-                    dst[..size].copy_from_slice(&data[elf.program_headers()..elf.program_headers() + elf.program_headers_size() * elf.program_header_count()]);
-                }
-
-                grant
-            }
-        };
-        let mut auxv = Vec::with_capacity(3);
-
-        auxv.push(AT_ENTRY);
-        auxv.push(elf.entry());
-        auxv.push(AT_PHDR);
-        auxv.push(phdr_grant.start_address().data());
-        auxv.push(AT_PHENT);
-        auxv.push(elf.program_headers_size());
-        auxv.push(AT_PHNUM);
-        auxv.push(elf.program_header_count());
-
-        (auxv, phdr_grant)
-    };
-
-    // We check the validity of all loadable sections here
-    for segment in elf.segments() {
-        match segment.p_type {
-            program_header::PT_INTERP => {
-                //TODO: length restraint, parse interp earlier
-                let mut interp = vec![0; segment.p_memsz as usize];
-                unsafe {
-                    intrinsics::copy((elf.data.as_ptr() as usize + segment.p_offset as usize) as *const u8,
-                                     interp.as_mut_ptr(),
-                                     segment.p_filesz as usize);
-                }
-
-                let mut i = 0;
-                while i < interp.len() {
-                    if interp[i] == 0 {
-                        break;
-                    }
-                    i += 1;
-                }
-                interp.truncate(i);
-
-                let interp_str = str::from_utf8(&interp).map_err(|_| Error::new(EINVAL))?;
-
-                let interp_fd = super::fs::open(interp_str, super::flag::O_RDONLY | super::flag::O_CLOEXEC)?;
-
-                let mut args_vec = Vec::from(args);
-                //TODO: pass file handle in auxv
-                let name_override = name.into_boxed_str();
-                args_vec[0] = name_override.clone().into();
-
-                // Drop variables, since fexec_kernel probably won't return
-                drop(elf);
-                drop(interp);
-
-                return fexec_kernel(
-                    interp_fd,
-                    args_vec.into_boxed_slice(),
-                    vars,
-                    Some(name_override),
-                    Some((auxv, phdr_grant)),
-                );
-            },
-            _ => (),
-        }
-    }
-
-    // This is the point of no return, quite literaly. Any checks for validity need
-    // to be done before, and appropriate errors returned. Otherwise, we have nothing
-    // to return to.
-    fexec_noreturn(setuid, setgid, name.into_boxed_str(), data.into_boxed_slice(), phdr_grant, args, vars, auxv.into_boxed_slice());
-}
-const MAX_PHDRS_SIZE: usize = PAGE_SIZE;
-
-pub fn fexec(fd: FileHandle, arg_ptrs: &[[usize; 2]], var_ptrs: &[[usize; 2]]) -> Result<usize> {
-    let mut args = Vec::new();
-    for arg_ptr in arg_ptrs {
-        let arg = validate_slice(arg_ptr[0] as *const u8, arg_ptr[1])?;
-        // Argument must be moved into kernel space before exec unmaps all memory
-        args.push(arg.to_vec().into_boxed_slice());
-    }
-
-    let mut vars = Vec::new();
-    for var_ptr in var_ptrs {
-        let var = validate_slice(var_ptr[0] as *const u8, var_ptr[1])?;
-        // Argument must be moved into kernel space before exec unmaps all memory
-        vars.push(var.to_vec().into_boxed_slice());
-    }
-
-    // Neither arg_ptrs nor var_ptrs should be used after this point, the kernel
-    // now has owned copies in args and vars
-
-    fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None, None)
 }
 
 pub fn exit(status: usize) -> ! {
@@ -1627,5 +1035,31 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: WaitFlags) -> Result<Co
         if let Some(res) = res_opt {
             return res;
         }
+    }
+}
+
+pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
+    assert!(!data.is_empty());
+
+    const LOAD_BASE: usize = 0;
+    let grant = context::memory::Grant::map(VirtualAddress::new(LOAD_BASE), data.len(), PageFlags::new().user(true).write(true).execute(true));
+
+    let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
+
+    for (index, page) in grant.pages().enumerate() {
+        let len = if data.len() - index * PAGE_SIZE < PAGE_SIZE { data.len() % PAGE_SIZE } else { PAGE_SIZE };
+        let frame = active_table.translate_page(page).expect("expected mapped init memory to have a corresponding frame");
+        unsafe { ((frame.start_address().data() + crate::KERNEL_OFFSET) as *mut u8).copy_from_nonoverlapping(data.as_ptr().add(index * PAGE_SIZE), len); }
+    }
+    context::contexts().current().expect("expected a context to exist when executing init").read().grants.write().insert(grant);
+
+    drop(data);
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let start = ((LOAD_BASE + 0x18) as *mut usize).read();
+        // Start with the (probably) ELF executable loaded, without any stack the ability to load
+        // sections to arbitrary addresses.
+        crate::arch::start::usermode(start, 0, 0, 0);
     }
 }

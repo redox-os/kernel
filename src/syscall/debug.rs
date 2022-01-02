@@ -192,8 +192,8 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b
         ),
         //TODO: Cleanup, do not allocate
-        SYS_FEXEC => format!(
-            "fexec({}, {:?}, {:?})",
+        /*SYS_EXEC => format!(
+            "exec({}, {:?}, {:?})",
             b,
             validate_slice(
                 c as *const [usize; 2],
@@ -213,7 +213,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
                     .and_then(|s| ::core::str::from_utf8(s).ok())
                 ).collect::<Vec<Option<&str>>>()
             })
-        ),
+        ),*/
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,

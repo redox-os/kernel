@@ -26,10 +26,12 @@ pub fn resource() -> Result<Vec<u8>> {
             let context = context_lock.read();
 
             let mut stat_string = String::new();
-            if context.stack.is_some() {
-                stat_string.push('U');
-            } else {
+            // TODO: All user programs must have some grant in order for executable memory to even
+            // exist, but is this a good indicator of whether it is user or kernel?
+            if context.grants.read().is_empty() {
                 stat_string.push('K');
+            } else {
+                stat_string.push('U');
             }
             match context.status {
                 context::Status::Runnable => {
@@ -76,19 +78,6 @@ pub fn resource() -> Result<Vec<u8>> {
             }
             if let Some(ref kstack) = context.kstack {
                 memory += kstack.len();
-            }
-            for shared_mem in context.image.iter() {
-                shared_mem.with(|mem| {
-                    memory += mem.size();
-                });
-            }
-            if let Some(ref stack) = context.stack {
-                stack.with(|stack| {
-                    memory += stack.size();
-                });
-            }
-            if let Some(ref sigstack) = context.sigstack {
-                memory += sigstack.size();
             }
             for grant in context.grants.read().iter() {
                 if grant.is_owned() {

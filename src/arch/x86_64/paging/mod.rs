@@ -386,7 +386,10 @@ impl Page {
         }
     }
 
-    pub fn range_inclusive(start: Page, end: Page) -> PageIter {
+    pub fn range_inclusive(start: Page, r#final: Page) -> PageIter {
+        PageIter { start, end: r#final.next() }
+    }
+    pub fn range_exclusive(start: Page, end: Page) -> PageIter {
         PageIter { start, end }
     }
 
@@ -406,7 +409,7 @@ impl Iterator for PageIter {
     type Item = Page;
 
     fn next(&mut self) -> Option<Page> {
-        if self.start <= self.end {
+        if self.start < self.end {
             let page = self.start;
             self.start = self.start.next();
             Some(page)
