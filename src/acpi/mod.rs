@@ -30,23 +30,23 @@ mod rsdp;
 
 pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
     {
-        let page = Page::containing_address(VirtualAddress::new(sdt_address));
+        let page = Page::containing_address(VirtualAddress::new(sdt_address + crate::KERNEL_OFFSET));
         if active_table.translate_page(page).is_none() {
-            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
+            let frame = Frame::containing_address(PhysicalAddress::new(sdt_address));
             let result = active_table.map_to(page, frame, PageFlags::new());
             result.flush();
         }
     }
 
-    let sdt = unsafe { &*(sdt_address as *const Sdt) };
+    let sdt = unsafe { &*((sdt_address + crate::KERNEL_OFFSET) as *const Sdt) };
 
     // Map extra SDT frames if required
     {
-        let start_page = Page::containing_address(VirtualAddress::new(sdt_address + 4096));
-        let end_page = Page::containing_address(VirtualAddress::new(sdt_address + sdt.length as usize));
+        let start_page = Page::containing_address(VirtualAddress::new(sdt_address + 4096 + crate::KERNEL_OFFSET));
+        let end_page = Page::containing_address(VirtualAddress::new(sdt_address + sdt.length as usize + crate::KERNEL_OFFSET));
         for page in Page::range_inclusive(start_page, end_page) {
             if active_table.translate_page(page).is_none() {
-                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
+                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - crate::KERNEL_OFFSET));
                 let result = active_table.map_to(page, frame, PageFlags::new());
                 result.flush();
             }
@@ -125,7 +125,7 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
         rxsdt.map_all(active_table);
 
         for sdt_address in rxsdt.iter() {
-            let sdt = &*(sdt_address as *const Sdt);
+            let sdt = &*((sdt_address + crate::KERNEL_OFFSET) as *const Sdt);
 
             let signature = get_sdt_signature(sdt);
             if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
