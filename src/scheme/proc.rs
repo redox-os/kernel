@@ -101,6 +101,7 @@ enum Operation {
     Regs(RegsKind),
     Trace,
     Static(&'static str),
+    Name,
 }
 impl Operation {
     fn needs_child_process(self) -> bool {
@@ -109,6 +110,7 @@ impl Operation {
             Self::Regs(_) => true,
             Self::Trace => true,
             Self::Static(_) => false,
+            Self::Name => false,
         }
     }
 }
@@ -248,6 +250,7 @@ impl Scheme for ProcScheme {
             Some("regs/env") => Operation::Regs(RegsKind::Env),
             Some("trace") => Operation::Trace,
             Some("exe") => Operation::Static("exe"),
+            Some("name") => Operation::Name,
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -519,6 +522,13 @@ impl Scheme for ProcScheme {
                 // Return read events
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
+            Operation::Name => match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read().name.read() {
+                name => {
+                    let to_copy = cmp::min(buf.len(), name.len());
+                    buf[..to_copy].copy_from_slice(&name.as_bytes()[..to_copy]);
+                    Ok(to_copy)
+                }
+            }
         }
     }
 
@@ -704,6 +714,11 @@ impl Scheme for ProcScheme {
 
                 Ok(mem::size_of::<u64>())
             },
+            Operation::Name => {
+                let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?.into_boxed_str();
+                *context::contexts().current().ok_or(Error::new(ESRCH))?.read().name.write() = utf8;
+                Ok(buf.len())
+            }
         }
     }
 
@@ -741,6 +756,7 @@ impl Scheme for ProcScheme {
             Operation::Regs(RegsKind::Env) => "regs/env",
             Operation::Trace => "trace",
             Operation::Static(path) => path,
+            Operation::Name => "name",
         });
 
         let len = cmp::min(path.len(), buf.len());

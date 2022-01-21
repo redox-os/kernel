@@ -311,7 +311,6 @@ impl InactivePageTable {
     /// For this to be safe, the caller must have exclusive access to the corresponding virtual
     /// address of the frame.
     pub unsafe fn new(
-        _active_table: &mut ActivePageTable,
         frame: Frame,
     ) -> InactivePageTable {
         // FIXME: Use active_table to ensure that the newly-allocated frame be linearly mapped, in
@@ -394,8 +393,11 @@ impl Page {
     }
 
     pub fn next(self) -> Page {
+        self.next_by(1)
+    }
+    pub fn next_by(self, n: usize) -> Page {
         Self {
-            number: self.number + 1,
+            number: self.number + n,
         }
     }
 }

@@ -34,8 +34,8 @@ impl MemoryScheme {
             let active_table = unsafe { ActivePageTable::new(rmm::TableKind::User) };
 
             for page in region.pages() {
-                if active_table.translate_page(page).is_some() {
-                    println!("page at {:#x} was already mapped", page.start_address().data());
+                if let Some(flags) = active_table.translate_page_flags(page).filter(|flags| flags.has_present()) {
+                    println!("page at {:#x} was already mapped, flags: {:?}", page.start_address().data(), flags);
                     return Err(Error::new(EEXIST))
                 }
             }

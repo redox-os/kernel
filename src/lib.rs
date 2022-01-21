@@ -190,6 +190,8 @@ pub extern fn userspace_init() {
         if bytes_read == 0 { break }
         total_bytes_read += bytes_read;
     }
+    data.truncate(total_bytes_read);
+
     let _ = syscall::close(fd);
 
     crate::syscall::process::usermode_bootstrap(data.into_boxed_slice());

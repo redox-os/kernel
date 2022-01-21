@@ -152,6 +152,10 @@ impl UserInner {
         let src_region = Region::new(VirtualAddress::new(src_address), offset + size).round();
         let dst_region = grants.find_free_at(VirtualAddress::new(dst_address), src_region.size(), flags)?;
 
+        /*if !dst_region.intersect(Region::new(VirtualAddress::new(0x39d000), 1)).is_empty() {
+            dbg!(dst_region);
+        }*/
+
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
         grants.insert(Grant::map_inactive(
             src_region.start_address(),
@@ -166,20 +170,21 @@ impl UserInner {
     }
 
     pub fn release(&self, address: usize) -> Result<()> {
+        //dbg!(address);
         if address == DANGLING {
             return Ok(());
         }
         let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
 
-        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
+        let mut other_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
         let mut grants = context.grants.write();
 
         let region = match grants.contains(VirtualAddress::new(address)).map(Region::from) {
             Some(region) => region,
-            None => return  Err(Error::new(EFAULT)),
+            None => return Err(Error::new(EFAULT)),
         };
-        grants.take(&region).unwrap().unmap_inactive(&mut new_table);
+        grants.take(&region).unwrap().unmap_inactive(&mut other_table);
         Ok(())
     }
 

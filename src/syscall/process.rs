@@ -9,23 +9,25 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::convert::TryFrom;
 use core::ops::DerefMut;
 use core::{intrinsics, mem, str};
+use crate::context::file::{FileDescription, FileDescriptor};
+
 use spin::{RwLock, RwLockWriteGuard};
 
-use crate::context::file::{FileDescription, FileDescriptor};
-use crate::context::memory::{UserGrants, Region};
 use crate::context::{Context, ContextId, WaitpidKey};
+use crate::context::memory::{Grant, Region, NewTables, page_flags, setup_new_utable, UserGrants};
+
 use crate::context;
 #[cfg(not(feature="doc"))]
 use crate::elf::{self, program_header};
 use crate::interrupt;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
-use crate::memory::allocate_frames;
+use crate::memory::{allocate_frames, Frame, PhysicalAddress};
 use crate::paging::mapper::PageFlushAll;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, TableKind, VirtualAddress, PAGE_SIZE};
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, RmmA, TableKind, VirtualAddress, PAGE_SIZE};
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
-use crate::syscall::data::{SigAction, Stat};
+use crate::syscall::data::{ExecMemRange, SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, AT_PHDR, AT_PHENT, AT_PHNUM, CloneFlags,
                            CLONE_FILES, CLONE_FS, CLONE_SIGHAND, CLONE_STACK, CLONE_VFORK, CLONE_VM,
@@ -141,16 +143,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 }
             }
 
-            if flags.contains(CLONE_VM) {
-                grants = Arc::clone(&context.grants);
-            } else {
-                let mut grants_set = UserGrants::default();
-                for grant in context.grants.read().iter() {
-                    let start = VirtualAddress::new(grant.start_address().data() + crate::USER_TMP_GRANT_OFFSET - crate::USER_GRANT_OFFSET);
-                    grants_set.insert(grant.secret_clone(start));
-                }
-                grants = Arc::new(RwLock::new(grants_set));
-            }
+            grants = Arc::clone(&context.grants);
 
             if flags.contains(CLONE_VM) {
                 name = Arc::clone(&context.name);
@@ -197,7 +190,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
         if !flags.contains(CLONE_VM) {
             let grants = Arc::get_mut(&mut grants).ok_or(Error::new(EBUSY))?.get_mut();
-            let old_grants = mem::take(&mut grants.inner);
+            let old_grants = mem::take(grants);
 
             // TODO: Find some way to do this without having to allocate.
 
@@ -296,59 +289,27 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                 context.arch.gsbase = x86::bits64::segmentation::rdgsbase() as usize;
             }
 
-            let mut active_utable = unsafe { ActivePageTable::new(TableKind::User) };
-            let active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
+            if flags.contains(CloneFlags::CLONE_VM) {
+                // Reuse same CR3, same grants, everything.
+                context.grants = grants;
+            } else {
+                // TODO: Handle ENOMEM
+                let mut new_tables = setup_new_utable().expect("failed to allocate new page tables for cloned process");
 
-            let mut new_utable = unsafe {
-                let frame = allocate_frames(1).ok_or(Error::new(ENOMEM))?;
-                // SAFETY: This is safe because the frame is exclusive, owned, and valid, as we
-                // have just allocated it.
-                InactivePageTable::new(&mut active_utable, frame)
-            };
-            context.arch.set_page_utable(unsafe { new_utable.address() });
+                let mut new_grants = UserGrants::new();
+                for old_grant in grants.read().iter() {
+                    new_grants.insert(old_grant.secret_clone(&mut new_tables.new_utable));
+                }
+                context.grants = Arc::new(RwLock::new(new_grants));
 
-            #[cfg(target_arch = "aarch64")]
-            let mut new_ktable = {
-                let mut new_ktable = {
-                    let frame = allocate_frames(1).expect("no more frames in syscall::clone new_table");
-                    InactivePageTable::new(frame, &mut active_ktable)
-                };
-                context.arch.set_page_ktable(unsafe { new_ktable.address() });
-                new_ktable
-            };
+                drop(grants);
 
-            #[cfg(not(target_arch = "aarch64"))]
-            let mut new_ktable = unsafe {
-                InactivePageTable::from_address(new_utable.address())
-            };
+                new_tables.take();
 
-            // Copy kernel image mapping
-            {
-                let frame = active_ktable.p4()[crate::KERNEL_PML4].pointed_frame().expect("kernel image not mapped");
-                let flags = active_ktable.p4()[crate::KERNEL_PML4].flags();
+                context.arch.set_page_utable(unsafe { new_tables.new_utable.address() });
 
-                new_ktable.mapper().p4_mut()[crate::KERNEL_PML4].set(frame, flags);
-            }
-
-            // Copy kernel heap mapping
-            {
-                let frame = active_ktable.p4()[crate::KERNEL_HEAP_PML4].pointed_frame().expect("kernel heap not mapped");
-                let flags = active_ktable.p4()[crate::KERNEL_HEAP_PML4].flags();
-
-                new_ktable.mapper().p4_mut()[crate::KERNEL_HEAP_PML4].set(frame, flags);
-            }
-
-            // Copy physmap mapping
-            {
-                let frame = active_ktable.p4()[crate::PHYS_PML4].pointed_frame().expect("physmap not mapped");
-                let flags = active_ktable.p4()[crate::PHYS_PML4].flags();
-                new_ktable.mapper().p4_mut()[crate::PHYS_PML4].set(frame, flags);
-            }
-            // Copy kernel percpu (similar to TLS) mapping.
-            {
-                let frame = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].pointed_frame().expect("kernel TLS not mapped");
-                let flags = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].flags();
-                new_ktable.mapper().p4_mut()[crate::KERNEL_PERCPU_PML4].set(frame, flags);
+                #[cfg(target_arch = "aarch64")]
+                context.arch.set_page_ktable(unsafe { new_tables.new_ktable.address() });
             }
 
             if let Some(fx) = kfx_opt.take() {
@@ -390,6 +351,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
                     }
                 }
             }
+
 
             context.name = name;
 
@@ -437,7 +399,7 @@ fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGu
         let mut grants_guard = grants_lock_mut.get_mut();
 
         let grants = mem::replace(&mut *grants_guard, UserGrants::default());
-        for grant in grants.inner.into_iter() {
+        for grant in grants.into_iter() {
             let unmap_result = if reaping {
                 log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
@@ -1042,7 +1004,7 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
     assert!(!data.is_empty());
 
     const LOAD_BASE: usize = 0;
-    let grant = context::memory::Grant::map(VirtualAddress::new(LOAD_BASE), data.len(), PageFlags::new().user(true).write(true).execute(true));
+    let grant = context::memory::Grant::map(VirtualAddress::new(LOAD_BASE), ((data.len()+PAGE_SIZE-1)/PAGE_SIZE)*PAGE_SIZE, PageFlags::new().user(true).write(true).execute(true));
 
     let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
 
@@ -1051,6 +1013,7 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
         let frame = active_table.translate_page(page).expect("expected mapped init memory to have a corresponding frame");
         unsafe { ((frame.start_address().data() + crate::KERNEL_OFFSET) as *mut u8).copy_from_nonoverlapping(data.as_ptr().add(index * PAGE_SIZE), len); }
     }
+
     context::contexts().current().expect("expected a context to exist when executing init").read().grants.write().insert(grant);
 
     drop(data);
@@ -1060,6 +1023,134 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
         let start = ((LOAD_BASE + 0x18) as *mut usize).read();
         // Start with the (probably) ELF executable loaded, without any stack the ability to load
         // sections to arbitrary addresses.
-        crate::arch::start::usermode(start, 0, 0, 0);
+        usermode(start, 0, 0, 0);
     }
+}
+
+pub fn exec(memranges: &[ExecMemRange], instruction_ptr: usize, stack_ptr: usize) -> Result<usize> {
+    // TODO: rlimit?
+    if memranges.len() > 1024 {
+        return Err(Error::new(EINVAL));
+    }
+
+    let mut new_grants = UserGrants::new();
+
+    {
+        let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
+
+        // Linux will always destroy other threads immediately if one of them executes execve(2).
+        // At the moment the Redox kernel is ignorant of threads, other than them sharing files,
+        // memory, etc. We fail with EBUSY if any resources that are being replaced, are shared.
+
+        let mut old_grants = Arc::try_unwrap(mem::take(&mut current_context_lock.write().grants)).map_err(|_| Error::new(EBUSY))?.into_inner();
+        // TODO: Allow multiple contexts which share the file table, to have one of them run exec?
+        let mut old_files = Arc::try_unwrap(mem::take(&mut current_context_lock.write().files)).map_err(|_| Error::new(EBUSY))?.into_inner();
+
+        // FIXME: Handle leak in case of ENOMEM.
+        let mut new_tables = setup_new_utable()?;
+
+        let mut flush = PageFlushAll::new();
+
+        // FIXME: This is to the extreme, but fetch with atomic volatile?
+        for memrange in memranges.iter().copied() {
+            let old_address = if memrange.old_address == !0 { None } else { Some(memrange.old_address) };
+
+            if memrange.address % PAGE_SIZE != 0 || old_address.map_or(false, |a| a % PAGE_SIZE != 0) || memrange.size % PAGE_SIZE != 0 {
+                return Err(Error::new(EINVAL));
+            }
+            if memrange.size == 0 { continue }
+
+            let new_start = Page::containing_address(VirtualAddress::new(memrange.address));
+            let flags = MapFlags::from_bits(memrange.flags).ok_or(Error::new(EINVAL))?;
+            let page_count = memrange.size / PAGE_SIZE;
+            let flags = page_flags(flags);
+
+            if let Some(old_address) = old_address {
+                let old_start = VirtualAddress::new(memrange.old_address);
+
+                let entire_region = Region::new(old_start, memrange.size);
+
+                // TODO: This will do one B-Tree search for each memrange. If a process runs exec
+                // and keeps every range the way it is, then this would be O(n log n)!
+                loop {
+                    let region = match old_grants.conflicts(entire_region).next().map(|g| *g.region()) {
+                        Some(r) => r,
+                        None => break,
+                    };
+                    let owned = old_grants.take(&region).expect("cannot fail");
+                    let (before, mut current, after) = owned.extract(region).expect("cannot fail");
+
+                    if let Some(before) = before { old_grants.insert(before); }
+                    if let Some(after) = after { old_grants.insert(after); }
+
+                    new_grants.insert(current.move_to_address_space(new_start, &mut new_tables.new_utable, flags, &mut flush));
+                }
+            } else {
+                new_grants.insert(Grant::zeroed_inactive(new_start, page_count, flags, &mut new_tables.new_utable)?);
+            }
+        }
+
+        {
+            unsafe { flush.ignore(); }
+
+            new_tables.take();
+
+            let mut context = current_context_lock.write();
+            context.grants = Arc::new(RwLock::new(new_grants));
+
+            let old_utable = context.arch.get_page_utable();
+            let old_frame = Frame::containing_address(PhysicalAddress::new(old_utable));
+
+            context.arch.set_page_utable(unsafe { new_tables.new_utable.address() });
+
+            #[cfg(target_arch = "x86_64")]
+            unsafe { x86::controlregs::cr3_write(new_tables.new_utable.address() as u64); }
+
+            for old_grant in old_grants.into_iter() {
+                old_grant.unmap_inactive(&mut unsafe { InactivePageTable::from_address(old_utable) });
+            }
+            crate::memory::deallocate_frames(old_frame, 1);
+
+            #[cfg(target_arch = "aarch64")]
+            context.arch.set_page_ktable(unsafe { new_tables.new_ktable.address() });
+
+            context.actions = Arc::new(RwLock::new(vec![(
+                SigAction {
+                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                    sa_mask: [0; 2],
+                    sa_flags: SigActionFlags::empty(),
+                },
+                0
+            ); 128]));
+            let was_vfork = mem::replace(&mut context.vfork, false);
+
+            // TODO: Reuse in place if the file table is not shared.
+            drop(context);
+
+            for file_slot in old_files.iter_mut().filter(|file_opt| file_opt.as_ref().map_or(false, |file| file.cloexec)) {
+                let file = file_slot.take().expect("iterator filter requires file slot to be occupied, not None");
+                let _ = file.close();
+            }
+            let mut context = current_context_lock.write();
+
+            context.files = Arc::new(RwLock::new(old_files));
+            let ppid = context.ppid;
+            drop(context);
+
+            // TODO: Should this code be preserved as is?
+            if was_vfork {
+                let contexts = context::contexts();
+                if let Some(context_lock) = contexts.get(ppid) {
+                    let mut context = context_lock.write();
+                    if !context.unblock() {
+                        println!("{} not blocked for exec vfork unblock", ppid.into());
+                    }
+                } else {
+                    println!("{} not found for exec vfork unblock", ppid.into());
+                }
+            }
+        }
+    }
+
+    unsafe { usermode(instruction_ptr, stack_ptr, 0, 0); }
 }

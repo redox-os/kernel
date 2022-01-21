@@ -100,9 +100,13 @@ impl ContextList {
                 context.arch.set_context_handle();
             }
 
-            context.arch.set_page_utable(unsafe { ActivePageTable::new(TableKind::User).address() });
+            let mut new_tables = super::memory::setup_new_utable()?;
+            new_tables.take();
+
+            context.arch.set_page_utable(unsafe { new_tables.new_utable.address() });
             #[cfg(target_arch = "aarch64")]
-            context.arch.set_page_ktable(unsafe { ActivePageTable::new(TableKind::Kernel).address() });
+            context.arch.set_page_ktable(unsafe { new_tables.new_ktable.address() });
+
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
             context.kfx = Some(fx);

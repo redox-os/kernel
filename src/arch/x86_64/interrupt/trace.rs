@@ -16,7 +16,9 @@ pub unsafe fn stack_trace() {
     let active_table = ActivePageTable::new(TableKind::User);
     for _frame in 0..64 {
         if let Some(rip_rbp) = rbp.checked_add(mem::size_of::<usize>()) {
-            if active_table.translate(VirtualAddress::new(rbp)).is_some() && active_table.translate(VirtualAddress::new(rip_rbp)).is_some() {
+            let rbp_virt = VirtualAddress::new(rbp);
+            let rip_rbp_virt = VirtualAddress::new(rip_rbp);
+            if rbp_virt.is_canonical() && rip_rbp_virt.is_canonical() && active_table.translate(rbp_virt).is_some() && active_table.translate(rip_rbp_virt).is_some() {
                 let rip = *(rip_rbp as *const usize);
                 if rip == 0 {
                     println!(" {:>016X}: EMPTY RETURN", rbp);

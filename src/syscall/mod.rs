@@ -25,7 +25,7 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::validate::*;
 
-use self::data::{Map, SigAction, Stat, TimeSpec};
+use self::data::{ExecMemRange, Map, SigAction, Stat, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
 use self::flag::{CloneFlags, MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
@@ -129,6 +129,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_GETPID => getpid().map(ContextId::into),
                 SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
                 SYS_GETPPID => getppid().map(ContextId::into),
+
+                SYS_EXEC => exec(validate_slice(b as *const ExecMemRange, c)?, d, e),
                 SYS_CLONE => {
                     let b = CloneFlags::from_bits_truncate(b);
 
@@ -209,12 +211,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
-    let debug = {
+    /*let debug = {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
             let name = context.name.read();
-            if true || name.contains("redoxfs") {
+            if name.contains("redoxfs") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
@@ -238,7 +240,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
-    }
+    }*/
 
     // The next lines set the current syscall in the context struct, then once the inner() function
     // completes, we set the current syscall to none.
@@ -263,7 +265,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
-    if debug {
+    /*if debug {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
@@ -280,7 +282,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 println!("Err({} ({:#X}))", err, err.errno);
             }
         }
-    }
+    }*/
 
     // errormux turns Result<usize> into -errno
     Error::mux(result)

@@ -16,7 +16,7 @@ use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
 use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::{UserGrants, Memory, SharedMemory};
+use crate::context::memory::UserGrants;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;

@@ -19,21 +19,6 @@ pub unsafe fn debugger() {
         if let Some((a, b, c, d, e, f)) = context.syscall {
             println!("syscall: {}", crate::syscall::debug::format_call(a, b, c, d, e, f));
         }
-        if ! context.image.is_empty() {
-            println!("image:");
-            for shared_memory in context.image.iter() {
-                shared_memory.with(|memory| {
-                    let region = crate::context::memory::Region::new(
-                        memory.start_address(),
-                        memory.size()
-                    );
-                    println!(
-                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x}",
-                        region.start_address().data(), region.final_address().data(), region.size()
-                    );
-                });
-            }
-        }
         {
             let grants = context.grants.read();
             if ! grants.is_empty() {

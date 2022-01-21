@@ -191,29 +191,15 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "exit({})",
             b
         ),
-        //TODO: Cleanup, do not allocate
-        /*SYS_EXEC => format!(
-            "exec({}, {:?}, {:?})",
-            b,
+        SYS_EXEC => format!(
+            "exec({:#x?}, {:p}, {:p})",
             validate_slice(
-                c as *const [usize; 2],
-                d
-            ).map(|slice| {
-                slice.iter().map(|a|
-                    validate_slice(a[0] as *const u8, a[1]).ok()
-                    .and_then(|s| ::core::str::from_utf8(s).ok())
-                ).collect::<Vec<Option<&str>>>()
-            }),
-            validate_slice(
-                e as *const [usize; 2],
-                f
-            ).map(|slice| {
-                slice.iter().map(|a|
-                    validate_slice(a[0] as *const u8, a[1]).ok()
-                    .and_then(|s| ::core::str::from_utf8(s).ok())
-                ).collect::<Vec<Option<&str>>>()
-            })
-        ),*/
+                b as *const crate::syscall::data::ExecMemRange,
+                c,
+            ),
+            d as *const u8,
+            e as *const u8,
+        ),
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,

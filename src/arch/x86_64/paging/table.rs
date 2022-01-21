@@ -46,11 +46,7 @@ pub struct Table<L: TableLevel> {
 
 impl<L> Table<L> where L: TableLevel {
     pub fn is_unused(&self) -> bool {
-        if self.entry_count() > 0 {
-            return false;
-        }
-
-        true
+        self.entry_count() == 0
     }
 
     pub fn zero(&mut self) {

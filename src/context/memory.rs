@@ -4,19 +4,20 @@ use core::borrow::Borrow;
 use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
 use core::fmt::{self, Debug};
 use core::intrinsics;
-use core::ops::{Deref, DerefMut};
+use core::ops::Deref;
 use spin::Mutex;
 use syscall::{
     flag::MapFlags,
     error::*,
 };
+use rmm::Arch as _;
 
 use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::Frame;
 use crate::paging::mapper::PageFlushAll;
-use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, PageIter, PhysicalAddress, RmmA, VirtualAddress};
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, PageIter, PhysicalAddress, RmmA, TableKind, VirtualAddress};
 
 /// Round down to the nearest multiple of page size
 pub fn round_down_pages(number: usize) -> usize {
@@ -46,14 +47,31 @@ impl Drop for UnmapResult {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct UserGrants {
-    pub inner: BTreeSet<Grant>,
+    inner: BTreeSet<Grant>,
+    holes: BTreeMap<VirtualAddress, usize>,
+    // TODO: Would an additional map ordered by (size,start) to allow for O(log n) allocations be
+    // beneficial?
+
     //TODO: technically VirtualAddress is from a scheme's context!
     pub funmap: BTreeMap<Region, VirtualAddress>,
 }
 
+impl Default for UserGrants {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UserGrants {
+    pub fn new() -> Self {
+        Self {
+            inner: BTreeSet::new(),
+            holes: core::iter::once((VirtualAddress::new(0), crate::PML4_SIZE * 256)).collect::<BTreeMap<_, _>>(),
+            funmap: BTreeMap::new(),
+        }
+    }
     /// Returns the grant, if any, which occupies the specified address
     pub fn contains(&self, address: VirtualAddress) -> Option<&Grant> {
         let byte = Region::byte(address);
@@ -73,28 +91,30 @@ impl UserGrants {
             .take_while(move |region| !region.intersect(requested).is_empty())
     }
     /// Return a free region with the specified size
-    pub fn find_free(&self, size: usize) -> Region {
-        // Get last used region
-        let last = self.inner.iter().next_back().map(Region::from).unwrap_or(Region::new(VirtualAddress::new(0), 0));
-        // At the earliest, start at grant offset
-        // TODO
-        let address = last.start_address().data() - size;
+    // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
+    pub fn find_free(&self, size: usize) -> Option<Region> {
+        // Get first available hole, but do reserve the page starting from zero as most compiled
+        // language cannot handle null pointers safely even if they do point to valid memory. If an
+        // application absolutely needs to map the 0th page, they will have to do so explicitly via
+        // MAP_FIXED/MAP_FIXED_NOREPLACE.
+
+        let (hole_start, hole_size) = self.holes.iter().find(|(hole_offset, hole_size)| size <= if hole_offset.data() == 0 { hole_size.saturating_sub(PAGE_SIZE) } else { **hole_size })?;
         // Create new region
-        Region::new(VirtualAddress::new(address), size)
+        Some(Region::new(VirtualAddress::new(cmp::max(hole_start.data(), PAGE_SIZE)), size))
     }
     /// Return a free region, respecting the user's hinted address and flags. Address may be null.
     pub fn find_free_at(&mut self, address: VirtualAddress, size: usize, flags: MapFlags) -> Result<Region> {
         if address == VirtualAddress::new(0) {
             // Free hands!
-            return Ok(self.find_free(size));
+            return self.find_free(size).ok_or(Error::new(ENOMEM));
         }
 
         // The user wished to have this region...
         let mut requested = Region::new(address, size);
 
         if
-            requested.end_address().data() >= crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
-            && address.data() % PAGE_SIZE != 0
+            requested.end_address().data() > crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
+            || address.data() % PAGE_SIZE != 0
         {
             // ... but it was invalid
             return Err(Error::new(EINVAL));
@@ -111,22 +131,76 @@ impl UserGrants {
                 return Err(Error::new(EOPNOTSUPP));
             } else {
                 // TODO: Find grant close to requested address?
-                requested = self.find_free(requested.size());
+                requested = self.find_free(requested.size()).ok_or(Error::new(ENOMEM))?;
             }
         }
 
         Ok(requested)
     }
-}
-impl Deref for UserGrants {
-    type Target = BTreeSet<Grant>;
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+    fn reserve(&mut self, grant: &Region) {
+        let previous_hole = self.holes.range_mut(..grant.start_address()).next_back();
+
+        if let Some((hole_offset, hole_size)) = previous_hole {
+            let prev_hole_end = hole_offset.data() + *hole_size;
+
+            // Note that prev_hole_end cannot exactly equal grant.start_address, since that would
+            // imply there is another grant at that position already, as it would otherwise have
+            // been larger.
+
+            if prev_hole_end > grant.start_address().data() {
+                // hole_offset must be below (but never equal to) the start address due to the
+                // `..grant.start_address()` limit; hence, all we have to do is to shrink the
+                // previous offset.
+                *hole_size = grant.start_address().data() - hole_offset.data();
+            }
+            if prev_hole_end > grant.end_address().data() {
+                // The grant is splitting this hole in two, so insert the new one at the end.
+                self.holes.insert(grant.end_address(), prev_hole_end - grant.end_address().data());
+            }
+        }
+
+        // Next hole
+        if let Some(hole_size) = self.holes.remove(&grant.start_address()) {
+            let remainder = hole_size - grant.size();
+            if remainder > 0 {
+                self.holes.insert(grant.end_address(), remainder);
+            }
+        }
     }
-}
-impl DerefMut for UserGrants {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+    fn unreserve(&mut self, grant: &Region) {
+        // The size of any possible hole directly after the to-be-freed region.
+        let exactly_after_size = self.holes.remove(&grant.end_address());
+
+        // There was a range that began exactly prior to the to-be-freed region, so simply
+        // increment the size such that it occupies the grant too. If in additional there was a
+        // grant directly after the grant, include it too in the size.
+        if let Some((hole_offset, hole_size)) = self.holes.range_mut(..grant.start_address()).next_back().filter(|(offset, size)| offset.data() + **size == grant.start_address().data()) {
+            *hole_size = grant.end_address().data() - hole_offset.data() + exactly_after_size.unwrap_or(0);
+        } else {
+            // There was no free region directly before the to-be-freed region, however will
+            // now unconditionally insert a new free region where the grant was, and add that extra
+            // size if there was something after it.
+            self.holes.insert(grant.start_address(), grant.size() + exactly_after_size.unwrap_or(0));
+        }
+    }
+    pub fn insert(&mut self, grant: Grant) {
+        self.reserve(&grant);
+        self.inner.insert(grant);
+    }
+    pub fn remove(&mut self, region: &Region) -> bool {
+        self.take(region).is_some()
+    }
+    pub fn take(&mut self, region: &Region) -> Option<Grant> {
+        let grant = self.inner.take(region)?;
+        self.unreserve(region);
+        Some(grant)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = &Grant> + '_ {
+        self.inner.iter()
+    }
+    pub fn is_empty(&self) -> bool { self.inner.is_empty() }
+    pub fn into_iter(self) -> impl Iterator<Item = Grant> {
+        self.inner.into_iter()
     }
 }
 
@@ -223,9 +297,9 @@ impl Region {
 
     /// Return all pages containing a chunk of the region
     pub fn pages(&self) -> PageIter {
-        Page::range_inclusive(
+        Page::range_exclusive(
             Page::containing_address(self.start_address()),
-            Page::containing_address(self.final_address())
+            Page::containing_address(self.end_address())
         )
     }
 
@@ -382,6 +456,15 @@ impl Grant {
             desc_opt: None,
         }
     }
+    pub fn zeroed_inactive(dst: Page, page_count: usize, flags: PageFlags<RmmA>, table: &mut InactivePageTable) -> Result<Grant> {
+        let mut inactive_mapper = table.mapper();
+
+        for page in Page::range_exclusive(dst, dst.next_by(page_count)) {
+            let flush = inactive_mapper.map(page, flags).map_err(|_| Error::new(ENOMEM))?;
+            unsafe { flush.ignore(); }
+        }
+        Ok(Grant { region: Region { start: dst.start_address(), size: page_count * PAGE_SIZE }, flags, mapped: true, owned: true, desc_opt: None })
+    }
 
     pub fn map_inactive(src: VirtualAddress, dst: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, inactive_table: &mut InactivePageTable) -> Grant {
         let active_table = unsafe { ActivePageTable::new(src.kind()) };
@@ -418,55 +501,44 @@ impl Grant {
     }
 
     /// This function should only be used in clone!
-    pub fn secret_clone(&self, new_start: VirtualAddress) -> Grant {
+    pub(crate) fn secret_clone(&self, inactive_table: &mut InactivePageTable) -> Grant {
         assert!(self.mapped);
 
-        let mut active_table = unsafe { ActivePageTable::new(new_start.kind()) };
+        let active_table = unsafe { ActivePageTable::new(TableKind::User) };
+        let mut inactive_mapper = inactive_table.mapper();
 
-        let flush_all = PageFlushAll::new();
-
-        let start_page = Page::containing_address(self.region.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.data() + self.region.size - 1));
-        for page in Page::range_inclusive(start_page, end_page) {
+        for page in self.pages() {
             //TODO: One function to do both?
             let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
-            let frame = active_table.translate_page(page).expect("grant references unmapped memory");
+            let old_frame = active_table.translate_page(page).expect("grant references unmapped memory");
 
-            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
-            if self.owned {
-                let result = active_table.map(new_page, PageFlags::new().write(true))
+            let frame = if self.owned {
+                // TODO: CoW paging
+                let new_frame = crate::memory::allocate_frames(1)
                     .expect("TODO: handle ENOMEM in Grant::secret_clone");
-                flush_all.consume(result);
+
+                unsafe {
+                    // We might as well use self.start_address() directly, but if we were to
+                    // introduce SMAP it would help to only move to/from kernel memory, and we are
+                    // copying physical frames anyway.
+                    let src_pointer = RmmA::phys_to_virt(old_frame.start_address()).data() as *const u8;
+                    let dst_pointer = RmmA::phys_to_virt(new_frame.start_address()).data() as *mut u8;
+                    dst_pointer.copy_from_nonoverlapping(src_pointer, PAGE_SIZE);
+                }
+
+                new_frame
             } else {
-                let result = active_table.map_to(new_page, frame, flags);
-                flush_all.consume(result);
-            }
-        }
+                old_frame
+            };
 
-        flush_all.flush();
-
-        if self.owned {
-            unsafe {
-                intrinsics::copy(self.region.start.data() as *const u8, new_start.data() as *mut u8, self.region.size);
-            }
-
-            let flush_all = PageFlushAll::new();
-
-            for page in Page::range_inclusive(start_page, end_page) {
-                //TODO: One function to do both?
-                let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
-
-                let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
-                let result = active_table.remap(new_page, flags);
-                flush_all.consume(result);
-            }
-
-            flush_all.flush();
+            let flush = inactive_mapper.map_to(page, frame, flags);
+            // SAFETY: This happens within an inactive table.
+            unsafe { flush.ignore() }
         }
 
         Grant {
             region: Region {
-                start: new_start,
+                start: self.region.start,
                 size: self.region.size,
             },
             flags: self.flags,
@@ -474,32 +546,6 @@ impl Grant {
             owned: self.owned,
             desc_opt: self.desc_opt.clone()
         }
-    }
-
-    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable) {
-        assert!(self.mapped);
-
-        let mut active_table = unsafe { ActivePageTable::new(new_start.kind()) };
-
-        let flush_all = PageFlushAll::new();
-
-        let start_page = Page::containing_address(self.region.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.region.start.data() + self.region.size - 1));
-        for page in Page::range_inclusive(start_page, end_page) {
-            //TODO: One function to do both?
-            let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
-            let (result, frame) = active_table.unmap_return(page, false);
-            flush_all.consume(result);
-
-            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.region.start.data() + new_start.data()));
-            let result = new_table.mapper().map_to(new_page, frame, flags);
-            // Ignore result due to mapping on inactive table
-            unsafe { result.ignore(); }
-        }
-
-        flush_all.flush();
-
-        self.region.start = new_start;
     }
 
     pub fn flags(&self) -> PageFlags<RmmA> {
@@ -511,12 +557,9 @@ impl Grant {
 
         let mut active_table = unsafe { ActivePageTable::new(self.start_address().kind()) };
 
-
         let flush_all = PageFlushAll::new();
 
-        let start_page = Page::containing_address(self.start_address());
-        let end_page = Page::containing_address(self.final_address());
-        for page in Page::range_inclusive(start_page, end_page) {
+        for page in self.pages() {
             let (result, frame) = active_table.unmap_return(page, false);
             if self.owned {
                 //TODO: make sure this frame can be safely freed, physical use counter
@@ -533,13 +576,11 @@ impl Grant {
         UnmapResult { file_desc: self.desc_opt.take() }
     }
 
-    pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable) -> UnmapResult {
+    pub fn unmap_inactive(mut self, other_table: &mut InactivePageTable) -> UnmapResult {
         assert!(self.mapped);
 
-        let start_page = Page::containing_address(self.start_address());
-        let end_page = Page::containing_address(self.final_address());
-        for page in Page::range_inclusive(start_page, end_page) {
-            let (result, frame) = new_table.mapper().unmap_return(page, false);
+        for page in self.pages() {
+            let (result, frame) = other_table.mapper().unmap_return(page, false);
             if self.owned {
                 //TODO: make sure this frame can be safely freed, physical use counter
                 crate::memory::deallocate_frames(frame, 1);
@@ -594,6 +635,34 @@ impl Grant {
 
         Some((before_grant, self, after_grant))
     }
+    pub fn move_to_address_space(&mut self, new_start: Page, new_page_table: &mut InactivePageTable, flags: PageFlags<RmmA>, flush_all: &mut PageFlushAll<RmmA>) -> Grant {
+        assert!(self.mapped);
+
+        let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
+        let mut new_mapper = new_page_table.mapper();
+        let keep_parents = false;
+
+        for (i, page) in self.pages().enumerate() {
+            unsafe {
+                let (flush, frame) = active_table.unmap_return(page, keep_parents);
+                flush_all.consume(flush);
+
+                let flush = new_mapper.map_to(new_start.next_by(i), frame, flags);
+                flush.ignore();
+            }
+        }
+
+        let was_owned = core::mem::replace(&mut self.owned, false);
+        self.mapped = false;
+
+        Self {
+            region: Region::new(new_start.start_address(), self.region.size),
+            flags,
+            mapped: true,
+            owned: was_owned,
+            desc_opt: self.desc_opt.clone(),
+        }
+    }
 }
 
 impl Deref for Grant {
@@ -632,202 +701,84 @@ impl Drop for Grant {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum SharedMemory {
-    Owned(Arc<Mutex<Memory>>),
-    Borrowed(Weak<Mutex<Memory>>)
-}
-
-impl SharedMemory {
-    pub fn with<F, T>(&self, f: F) -> T where F: FnOnce(&mut Memory) -> T {
-        match *self {
-            SharedMemory::Owned(ref memory_lock) => {
-                let mut memory = memory_lock.lock();
-                f(&mut *memory)
-            },
-            SharedMemory::Borrowed(ref memory_weak) => {
-                let memory_lock = memory_weak.upgrade().expect("SharedMemory::Borrowed no longer valid");
-                let mut memory = memory_lock.lock();
-                f(&mut *memory)
-            }
-        }
-    }
-
-    pub fn borrow(&self) -> SharedMemory {
-        match *self {
-            SharedMemory::Owned(ref memory_lock) => SharedMemory::Borrowed(Arc::downgrade(memory_lock)),
-            SharedMemory::Borrowed(ref memory_lock) => SharedMemory::Borrowed(memory_lock.clone())
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Memory {
-    start: VirtualAddress,
-    size: usize,
-    flags: PageFlags<RmmA>,
-}
-
-impl Memory {
-    pub fn new(start: VirtualAddress, size: usize, flags: PageFlags<RmmA>, clear: bool) -> Self {
-        let mut memory = Memory {
-            start,
-            size,
-            flags,
-        };
-
-        memory.map(clear);
-
-        memory
-    }
-
-    pub fn to_shared(self) -> SharedMemory {
-        SharedMemory::Owned(Arc::new(Mutex::new(self)))
-    }
-
-    pub fn start_address(&self) -> VirtualAddress {
-        self.start
-    }
-
-    pub fn size(&self) -> usize {
-        self.size
-    }
-
-    pub fn flags(&self) -> PageFlags<RmmA> {
-        self.flags
-    }
-
-    pub fn pages(&self) -> PageIter {
-        let start_page = Page::containing_address(self.start);
-        let end_page = Page::containing_address(VirtualAddress::new(self.start.data() + self.size - 1));
-        Page::range_inclusive(start_page, end_page)
-    }
-
-    fn map(&mut self, clear: bool) {
-        let mut active_table = unsafe { ActivePageTable::new(self.start.kind()) };
-
-        let flush_all = PageFlushAll::new();
-
-        for page in self.pages() {
-            let result = active_table
-                .map(page, self.flags)
-                .expect("TODO: handle ENOMEM in Memory::map");
-            flush_all.consume(result);
-        }
-
-        flush_all.flush();
-
-        if clear {
-            assert!(self.flags.has_write());
-            unsafe {
-                intrinsics::write_bytes(self.start_address().data() as *mut u8, 0, self.size);
-            }
-        }
-    }
-
-    fn unmap(&mut self) {
-        let mut active_table = unsafe { ActivePageTable::new(self.start.kind()) };
-
-        let flush_all = PageFlushAll::new();
-
-        for page in self.pages() {
-            let result = active_table.unmap(page);
-            flush_all.consume(result);
-        }
-
-        flush_all.flush();
-    }
-
-    /// A complicated operation to move a piece of memory to a new page table
-    /// It also allows for changing the address at the same time
-    pub fn move_to(&mut self, new_start: VirtualAddress, new_table: &mut InactivePageTable) {
-        let mut inactive_mapper = new_table.mapper();
-
-        let mut active_table = unsafe { ActivePageTable::new(new_start.kind()) };
-
-        let flush_all = PageFlushAll::new();
-
-        for page in self.pages() {
-            let (result, frame) = active_table.unmap_return(page, false);
-            flush_all.consume(result);
-
-            let new_page = Page::containing_address(VirtualAddress::new(page.start_address().data() - self.start.data() + new_start.data()));
-            let result = inactive_mapper.map_to(new_page, frame, self.flags);
-            // This is not the active table, so the flush can be ignored
-            unsafe { result.ignore(); }
-        }
-
-        flush_all.flush();
-
-        self.start = new_start;
-    }
-
-    pub fn remap(&mut self, new_flags: PageFlags<RmmA>) {
-        let mut active_table = unsafe { ActivePageTable::new(self.start.kind()) };
-
-        let flush_all = PageFlushAll::new();
-
-        for page in self.pages() {
-            let result = active_table.remap(page, new_flags);
-            flush_all.consume(result);
-        }
-
-        flush_all.flush();
-
-        self.flags = new_flags;
-    }
-
-    pub fn resize(&mut self, new_size: usize, clear: bool) {
-        let mut active_table = unsafe { ActivePageTable::new(self.start.kind()) };
-
-        //TODO: Calculate page changes to minimize operations
-        if new_size > self.size {
-            let flush_all = PageFlushAll::new();
-
-            let start_page = Page::containing_address(VirtualAddress::new(self.start.data() + self.size));
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.data() + new_size - 1));
-            for page in Page::range_inclusive(start_page, end_page) {
-                if active_table.translate_page(page).is_none() {
-                    let result = active_table
-                        .map(page, self.flags)
-                        .expect("TODO: Handle OOM in Memory::resize");
-                    flush_all.consume(result);
-                }
-            }
-
-            flush_all.flush();
-
-            if clear {
-                unsafe {
-                    intrinsics::write_bytes((self.start.data() + self.size) as *mut u8, 0, new_size - self.size);
-                }
-            }
-        } else if new_size < self.size {
-            let flush_all = PageFlushAll::new();
-
-            let start_page = Page::containing_address(VirtualAddress::new(self.start.data() + new_size));
-            let end_page = Page::containing_address(VirtualAddress::new(self.start.data() + self.size - 1));
-            for page in Page::range_inclusive(start_page, end_page) {
-                if active_table.translate_page(page).is_some() {
-                    let result = active_table.unmap(page);
-                    flush_all.consume(result);
-                }
-            }
-
-            flush_all.flush();
-        }
-
-        self.size = new_size;
-    }
-}
-
-impl Drop for Memory {
-    fn drop(&mut self) {
-        self.unmap();
-    }
-}
-
 pub const DANGLING: usize = 1 << (usize::BITS - 2);
+
+pub struct NewTables {
+    #[cfg(target_arch = "aarch64")]
+    pub new_ktable: InactivePageTable,
+    pub new_utable: InactivePageTable,
+
+    taken: bool,
+}
+impl NewTables {
+    pub fn take(&mut self) {
+        self.taken = true;
+    }
+}
+
+impl Drop for NewTables {
+    fn drop(&mut self) {
+        if self.taken { return }
+
+        unsafe {
+            use crate::memory::deallocate_frames;
+            deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.new_utable.address())), 1);
+
+            #[cfg(target_arch = "aarch64")]
+            deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.new_ktable.address())), 1);
+        }
+    }
+}
+
+/// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
+pub fn setup_new_utable() -> Result<NewTables> {
+    let mut new_utable = unsafe { InactivePageTable::new(crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?) };
+
+    let mut new_ktable = if cfg!(target_arch = "aarch64") {
+        unsafe { InactivePageTable::new(crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?) }
+    } else {
+        unsafe { InactivePageTable::from_address(new_utable.address()) }
+    };
+
+    let active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
+
+    // Copy kernel image mapping
+    {
+        let frame = active_ktable.p4()[crate::KERNEL_PML4].pointed_frame().expect("kernel image not mapped");
+        let flags = active_ktable.p4()[crate::KERNEL_PML4].flags();
+
+        new_ktable.mapper().p4_mut()[crate::KERNEL_PML4].set(frame, flags);
+    }
+
+    // Copy kernel heap mapping
+    {
+        let frame = active_ktable.p4()[crate::KERNEL_HEAP_PML4].pointed_frame().expect("kernel heap not mapped");
+        let flags = active_ktable.p4()[crate::KERNEL_HEAP_PML4].flags();
+
+        new_ktable.mapper().p4_mut()[crate::KERNEL_HEAP_PML4].set(frame, flags);
+    }
+
+    // Copy physmap mapping
+    {
+        let frame = active_ktable.p4()[crate::PHYS_PML4].pointed_frame().expect("physmap not mapped");
+        let flags = active_ktable.p4()[crate::PHYS_PML4].flags();
+        new_ktable.mapper().p4_mut()[crate::PHYS_PML4].set(frame, flags);
+    }
+    // Copy kernel percpu (similar to TLS) mapping.
+    {
+        let frame = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].pointed_frame().expect("kernel TLS not mapped");
+        let flags = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].flags();
+        new_ktable.mapper().p4_mut()[crate::KERNEL_PERCPU_PML4].set(frame, flags);
+    }
+
+    Ok(NewTables {
+        taken: false,
+        new_utable,
+        #[cfg(target_arch = "aarch64")]
+        new_ktable,
+    })
+}
+
 
 #[cfg(tests)]
 mod tests {
