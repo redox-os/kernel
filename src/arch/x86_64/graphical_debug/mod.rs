@@ -62,14 +62,16 @@ pub fn init(active_table: &mut ActivePageTable) {
 }
 
 pub fn fini(active_table: &mut ActivePageTable) {
-    if let Some(debug_display) = DEBUG_DISPLAY.lock().take() {
+    let debug_display_opt = DEBUG_DISPLAY.lock().take();
+    if let Some(debug_display) = debug_display_opt {
         let display = debug_display.into_display();
         let onscreen = display.onscreen.as_mut_ptr() as usize;
-        let size = display.width * display.height;
-        {
+        let size = display.onscreen.len() * 4;
+        //TODO: fix crash if we unmap this memory
+        if false {
             let flush_all = PageFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
-            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
+            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size));
             for page in Page::range_inclusive(start_page, end_page) {
                 let (result, _frame) = active_table.unmap_return(page, false);
                 flush_all.consume(result);
