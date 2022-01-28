@@ -1,7 +1,7 @@
 use spin::Mutex;
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PhysicalAddress, VirtualAddress};
+use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::paging::mapper::PageFlushAll;
 
@@ -46,11 +46,11 @@ pub fn init(active_table: &mut ActivePageTable) {
             let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
             for page in Page::range_inclusive(start_page, end_page) {
                 let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - crate::PHYS_OFFSET));
-                let flags = EntryFlags::PRESENT | EntryFlags::NO_EXECUTE | EntryFlags::WRITABLE | EntryFlags::HUGE_PAGE;
+                let flags = PageFlags::new().write(true).custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
                 let result = active_table.map_to(page, frame, flags);
                 flush_all.consume(result);
             }
-            flush_all.flush(active_table);
+            flush_all.flush();
         }
 
         unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
@@ -74,7 +74,7 @@ pub fn fini(active_table: &mut ActivePageTable) {
                 let (result, _frame) = active_table.unmap_return(page, false);
                 flush_all.consume(result);
             }
-            flush_all.flush(active_table);
+            flush_all.flush();
         }
     }
 
