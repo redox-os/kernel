@@ -51,7 +51,12 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
     }
 }
 
-unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kernel_size_aligned: usize) -> BuddyAllocator<A> {
+unsafe fn inner<A: Arch>(
+    areas: &'static [MemoryArea],
+    kernel_base: usize, kernel_size_aligned: usize,
+    stack_base: usize, stack_size_aligned: usize,
+    env_base: usize, env_size_aligned: usize
+) -> BuddyAllocator<A> {
     // First, calculate how much memory we have
     let mut size = 0;
     for area in areas.iter() {
@@ -86,11 +91,44 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kerne
             }
         }
 
-        // Map kernel at KERNEL_OFFSET
-        //TODO: map bss
+        // Map kernel at KERNEL_OFFSET and identity map too
         for i in 0..kernel_size_aligned / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(kernel_base + i * A::PAGE_SIZE);
             let virt = VirtualAddress::new(crate::KERNEL_OFFSET + i * A::PAGE_SIZE);
+            let flags = page_flags::<A>(virt);
+            let flush = mapper.map_phys(
+                virt,
+                phys,
+                flags
+            ).expect("failed to map frame");
+            flush.ignore(); // Not the active table
+
+            let virt = A::phys_to_virt(phys);
+            let flush = mapper.map_phys(
+                virt,
+                phys,
+                flags
+            ).expect("failed to map frame");
+            flush.ignore(); // Not the active table
+        }
+
+        // Map stack with identity mapping
+        for i in 0..stack_size_aligned / A::PAGE_SIZE {
+            let phys = PhysicalAddress::new(stack_base + i * A::PAGE_SIZE);
+            let virt = A::phys_to_virt(phys);
+            let flags = page_flags::<A>(virt);
+            let flush = mapper.map_phys(
+                virt,
+                phys,
+                flags
+            ).expect("failed to map frame");
+            flush.ignore(); // Not the active table
+        }
+
+        // Map env with identity mapping
+        for i in 0..env_size_aligned / A::PAGE_SIZE {
+            let phys = PhysicalAddress::new(env_base + i * A::PAGE_SIZE);
+            let virt = A::phys_to_virt(phys);
             let flags = page_flags::<A>(virt);
             let flush = mapper.map_phys(
                 virt,
@@ -176,12 +214,24 @@ pub unsafe fn mapper_current() -> PageMapper<'static, RmmA, LockedAllocator> {
     PageMapper::current(&mut FRAME_ALLOCATOR)
 }
 
-pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
+pub unsafe fn init(
+    kernel_base: usize, kernel_size: usize,
+    stack_base: usize, stack_size: usize,
+    env_base: usize, env_size: usize
+) {
     type A = RmmA;
 
     let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let kernel_end = kernel_base + kernel_size_aligned;
     println!("kernel_end: {:X}", kernel_end);
+
+    let stack_size_aligned = ((stack_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let stack_end = stack_base + stack_size_aligned;
+    println!("stack_end: {:X}", stack_end);
+
+    let env_size_aligned = ((env_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let env_end = env_base + env_size_aligned;
+    println!("env_end: {:X}", env_end);
 
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
@@ -211,9 +261,18 @@ pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
         println!(" => {:X}:{:X}", base, size);
 
         // Ensure kernel areas are not used
-        //TODO: should stack and env also be tested?
         if base < kernel_end && base + size > kernel_base {
             panic!("{:X}:{:X} overlaps with kernel {:X}:{:X}", base, size, kernel_base, kernel_size);
+        }
+
+        // Ensure stack areas are not used
+        if base < stack_end && base + size > stack_base {
+            panic!("{:X}:{:X} overlaps with stack {:X}:{:X}", base, size, stack_base, stack_size);
+        }
+
+        // Ensure env areas are not used
+        if base < env_end && base + size > env_base {
+            panic!("{:X}:{:X} overlaps with env {:X}:{:X}", base, size, env_base, env_size);
         }
 
         if size == 0 {
@@ -226,6 +285,11 @@ pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
         area_i += 1;
     }
 
-    let allocator = inner::<A>(&AREAS, kernel_base, kernel_size_aligned);
+    let allocator = inner::<A>(
+        &AREAS,
+        kernel_base, kernel_size_aligned,
+        stack_base, stack_size_aligned,
+        env_base, env_size_aligned
+    );
     *FRAME_ALLOCATOR.inner.lock() = Some(allocator);
 }

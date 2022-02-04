@@ -107,7 +107,11 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         idt::init();
 
         // Initialize RMM
-        crate::arch::rmm::init(kernel_base, kernel_size);
+        crate::arch::rmm::init(
+            kernel_base, kernel_size,
+            stack_base, stack_size,
+            env_base, env_size
+        );
 
         // Initialize paging
         let (mut active_table, tcb_offset) = paging::init(0);
@@ -170,7 +174,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         BSP_READY.store(true, Ordering::SeqCst);
 
-        slice::from_raw_parts(env_base as *const u8, env_size)
+        slice::from_raw_parts((env_base + crate::PHYS_OFFSET) as *const u8, env_size)
     };
 
     crate::kmain(CPU_COUNT.load(Ordering::SeqCst), env);
