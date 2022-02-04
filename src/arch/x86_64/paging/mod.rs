@@ -345,12 +345,11 @@ impl InactivePageTable {
 }
 
 pub fn linear_phys_to_virt(physical: PhysicalAddress) -> Option<VirtualAddress> {
-    physical.data().checked_add(crate::KERNEL_OFFSET).map(VirtualAddress::new)
+    physical.data().checked_add(crate::PHYS_OFFSET).map(VirtualAddress::new)
 }
 pub fn linear_virt_to_phys(virt: VirtualAddress) -> Option<PhysicalAddress> {
-    virt.data().checked_sub(crate::KERNEL_OFFSET).map(PhysicalAddress::new)
+    virt.data().checked_sub(crate::PHYS_OFFSET).map(PhysicalAddress::new)
 }
-
 
 /// Page
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -46,7 +46,7 @@ pub unsafe fn symbol_trace(addr: usize) {
     use crate::elf::Elf;
     use crate::start::{KERNEL_BASE, KERNEL_SIZE};
 
-    let kernel_ptr = (KERNEL_BASE.load(Ordering::SeqCst) + crate::KERNEL_OFFSET) as *const u8;
+    let kernel_ptr = (KERNEL_BASE.load(Ordering::SeqCst) + crate::PHYS_OFFSET) as *const u8;
     let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
     if let Ok(elf) = Elf::from(kernel_slice) {
         let mut strtab_opt = None;

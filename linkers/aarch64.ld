@@ -1,7 +1,7 @@
 ENTRY(early_init)
 OUTPUT_FORMAT("elf64-littleaarch64", "elf64-littleaarch64", "elf64-littleaarch64")
 
-KERNEL_OFFSET = 0xffffff0000000000;
+KERNEL_OFFSET = 0xFFFFFF0000000000;
 
 SECTIONS {
     . = KERNEL_OFFSET;
