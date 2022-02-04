@@ -51,7 +51,7 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
     }
 }
 
-unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kernel_size_aligned: usize, bump_offset: usize) -> BuddyAllocator<A> {
+unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kernel_size_aligned: usize) -> BuddyAllocator<A> {
     // First, calculate how much memory we have
     let mut size = 0;
     for area in areas.iter() {
@@ -64,7 +64,7 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kerne
     println!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
 
     // Create a basic allocator for the first pages
-    let mut bump_allocator = BumpAllocator::<A>::new(areas, bump_offset);
+    let mut bump_allocator = BumpAllocator::<A>::new(areas, 0);
 
     {
         let mut mapper = PageMapper::<A, _>::create(
@@ -86,11 +86,11 @@ unsafe fn inner<A: Arch>(areas: &'static [MemoryArea], kernel_base: usize, kerne
             }
         }
 
-        //TODO: this is a hack to ensure kernel is mapped, even if it uses invalid memory. We need to
-        //properly utilize the firmware memory map and not assume 0x100000 and onwards is free
+        // Map kernel at KERNEL_OFFSET
+        //TODO: map bss
         for i in 0..kernel_size_aligned / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(kernel_base + i * A::PAGE_SIZE);
-            let virt = A::phys_to_virt(phys);
+            let virt = VirtualAddress::new(crate::KERNEL_OFFSET + i * A::PAGE_SIZE);
             let flags = page_flags::<A>(virt);
             let flush = mapper.map_phys(
                 virt,
@@ -185,7 +185,6 @@ pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
 
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
-    let mut bump_offset = 0;
     for i in 0..512 {
         let old = *(0x500 as *const crate::memory::MemoryArea).add(i);
         if old._type != 1 {
@@ -195,6 +194,8 @@ pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
 
         let mut base = old.base_addr as usize;
         let mut size = old.length as usize;
+
+        print!("{:X}:{:X}", base, size);
 
         // Page align base
         let base_offset = (A::PAGE_SIZE - (base & A::PAGE_OFFSET_MASK)) & A::PAGE_OFFSET_MASK;
@@ -207,17 +208,17 @@ pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
 
         // Page align size
         size &= !A::PAGE_OFFSET_MASK;
+        println!(" => {:X}:{:X}", base, size);
+
+        // Ensure kernel areas are not used
+        //TODO: should stack and env also be tested?
+        if base < kernel_end && base + size > kernel_base {
+            panic!("{:X}:{:X} overlaps with kernel {:X}:{:X}", base, size, kernel_base, kernel_size);
+        }
+
         if size == 0 {
             // Area is zero sized
             continue;
-        }
-
-        if base + size < kernel_end {
-            // Area is below static kernel data
-            bump_offset += size;
-        } else if base < kernel_end {
-            // Area contains static kernel data
-            bump_offset += kernel_end - base;
         }
 
         AREAS[area_i].base = PhysicalAddress::new(base);
@@ -225,8 +226,6 @@ pub unsafe fn init(kernel_base: usize, kernel_size: usize) {
         area_i += 1;
     }
 
-    println!("bump_offset: {:X}", bump_offset);
-
-    let allocator = inner::<A>(&AREAS, kernel_base, kernel_size_aligned, bump_offset);
+    let allocator = inner::<A>(&AREAS, kernel_base, kernel_size_aligned);
     *FRAME_ALLOCATOR.inner.lock() = Some(allocator);
 }
