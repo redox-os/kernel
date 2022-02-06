@@ -55,7 +55,8 @@ unsafe fn inner<A: Arch>(
     areas: &'static [MemoryArea],
     kernel_base: usize, kernel_size_aligned: usize,
     stack_base: usize, stack_size_aligned: usize,
-    env_base: usize, env_size_aligned: usize
+    env_base: usize, env_size_aligned: usize,
+    acpi_base: usize, acpi_size: usize
 ) -> BuddyAllocator<A> {
     // First, calculate how much memory we have
     let mut size = 0;
@@ -217,7 +218,8 @@ pub unsafe fn mapper_current() -> PageMapper<'static, RmmA, LockedAllocator> {
 pub unsafe fn init(
     kernel_base: usize, kernel_size: usize,
     stack_base: usize, stack_size: usize,
-    env_base: usize, env_size: usize
+    env_base: usize, env_size: usize,
+    acpi_base: usize, acpi_size: usize
 ) {
     type A = RmmA;
 
@@ -232,6 +234,10 @@ pub unsafe fn init(
     let env_size_aligned = ((env_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let env_end = env_base + env_size_aligned;
     println!("env_end: {:X}", env_end);
+
+    let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let acpi_end = acpi_base + acpi_size_aligned;
+    println!("acpi_end: {:X}", acpi_end);
 
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
@@ -275,6 +281,11 @@ pub unsafe fn init(
             panic!("{:X}:{:X} overlaps with env {:X}:{:X}", base, size, env_base, env_size);
         }
 
+        // Ensure acpi areas are not used
+        if base < acpi_end && base + size > acpi_base {
+            panic!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
+        }
+
         if size == 0 {
             // Area is zero sized
             continue;
@@ -289,7 +300,8 @@ pub unsafe fn init(
         &AREAS,
         kernel_base, kernel_size_aligned,
         stack_base, stack_size_aligned,
-        env_base, env_size_aligned
+        env_base, env_size_aligned,
+        acpi_base, acpi_size_aligned
     );
     *FRAME_ALLOCATOR.inner.lock() = Some(allocator);
 }

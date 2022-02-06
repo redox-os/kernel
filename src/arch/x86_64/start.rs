@@ -110,7 +110,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         crate::arch::rmm::init(
             kernel_base, kernel_size,
             stack_base, stack_size,
-            env_base, env_size
+            env_base, env_size,
+            acpi_rsdps_base as usize, acpi_rsdps_size as usize
         );
 
         // Initialize paging
