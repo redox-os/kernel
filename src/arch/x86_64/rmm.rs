@@ -1,3 +1,4 @@
+use core::cmp;
 use rmm::{
     KILOBYTE,
     MEGABYTE,
@@ -223,21 +224,21 @@ pub unsafe fn init(
 ) {
     type A = RmmA;
 
+    let real_base = 0;
+    let real_size = 0x100000;
+    let real_end = real_base + real_size;
+
     let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let kernel_end = kernel_base + kernel_size_aligned;
-    println!("kernel_end: {:X}", kernel_end);
 
     let stack_size_aligned = ((stack_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let stack_end = stack_base + stack_size_aligned;
-    println!("stack_end: {:X}", stack_end);
 
     let env_size_aligned = ((env_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let env_end = env_base + env_size_aligned;
-    println!("env_end: {:X}", env_end);
 
     let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let acpi_end = acpi_base + acpi_size_aligned;
-    println!("acpi_end: {:X}", acpi_end);
 
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
@@ -266,24 +267,43 @@ pub unsafe fn init(
         size &= !A::PAGE_OFFSET_MASK;
         println!(" => {:X}:{:X}", base, size);
 
+        let mut new_base = base;
+
+        // Ensure real-mode areas are not used
+        if base < real_end && base + size > real_base {
+            println!("{:X}:{:X} overlaps with real mode {:X}:{:X}", base, size, real_base, real_size);
+            new_base = cmp::max(new_base, real_end);
+        }
+
         // Ensure kernel areas are not used
         if base < kernel_end && base + size > kernel_base {
-            panic!("{:X}:{:X} overlaps with kernel {:X}:{:X}", base, size, kernel_base, kernel_size);
+            println!("{:X}:{:X} overlaps with kernel {:X}:{:X}", base, size, kernel_base, kernel_size);
+            new_base = cmp::max(new_base, kernel_end);
         }
 
         // Ensure stack areas are not used
         if base < stack_end && base + size > stack_base {
-            panic!("{:X}:{:X} overlaps with stack {:X}:{:X}", base, size, stack_base, stack_size);
+            println!("{:X}:{:X} overlaps with stack {:X}:{:X}", base, size, stack_base, stack_size);
+            new_base = cmp::max(new_base, stack_end);
         }
 
         // Ensure env areas are not used
         if base < env_end && base + size > env_base {
-            panic!("{:X}:{:X} overlaps with env {:X}:{:X}", base, size, env_base, env_size);
+            println!("{:X}:{:X} overlaps with env {:X}:{:X}", base, size, env_base, env_size);
+            new_base = cmp::max(new_base, env_end);
         }
 
         // Ensure acpi areas are not used
         if base < acpi_end && base + size > acpi_base {
-            panic!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
+            println!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
+            new_base = cmp::max(new_base, acpi_end);
+        }
+
+        if new_base != base {
+            let end = base + size;
+            base = new_base;
+            size = end.checked_sub(base).unwrap_or(0);
+            println!("moved to {:X}:{:X}", base, size);
         }
 
         if size == 0 {
