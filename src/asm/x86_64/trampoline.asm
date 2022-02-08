@@ -27,7 +27,7 @@ startup_ap:
     mov sp, 0
 
     ;cr3 holds pointer to PML4
-    mov edi, 0x70000
+    mov edi, [trampoline.page_table]
     mov cr3, edi
 
     ; Enable FPU
