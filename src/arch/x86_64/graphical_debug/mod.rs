@@ -52,13 +52,13 @@ pub fn init(active_table: &mut ActivePageTable, env: &[u8]) {
     println!("Framebuffer {}x{} at {:X}", width, height, physbaseptr);
 
     {
-        let size = width * height;
+        let size = width * height * 4;
 
         let onscreen = physbaseptr + crate::PHYS_OFFSET;
         {
             let flush_all = PageFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
-            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size * 4));
+            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - crate::PHYS_OFFSET));
                 let flags = PageFlags::new().write(true).custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
@@ -68,7 +68,7 @@ pub fn init(active_table: &mut ActivePageTable, env: &[u8]) {
             flush_all.flush();
         }
 
-        unsafe { fast_set64(onscreen as *mut u64, 0, size/2) };
+        unsafe { fast_set64(onscreen as *mut u64, 0, size/8) };
 
         let display = Display::new(width, height, onscreen);
         let debug_display = DebugDisplay::new(display);
@@ -86,7 +86,7 @@ pub fn fini(active_table: &mut ActivePageTable) {
         if false {
             let flush_all = PageFlushAll::new();
             let start_page = Page::containing_address(VirtualAddress::new(onscreen));
-            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size));
+            let end_page = Page::containing_address(VirtualAddress::new(onscreen + size - 1));
             for page in Page::range_inclusive(start_page, end_page) {
                 let (result, _frame) = active_table.unmap_return(page, false);
                 flush_all.consume(result);
