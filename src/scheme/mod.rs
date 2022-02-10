@@ -54,8 +54,7 @@ pub mod irq;
 /// `itimer:` - support for getitimer and setitimer
 pub mod itimer;
 
-/// When compiled with "live" feature - `disk:` - embedded filesystem for live disk
-#[cfg(feature="live")]
+/// When `disk/live:` - embedded filesystem for live disk
 pub mod live;
 
 /// `memory:` - a scheme for accessing physical memory
@@ -172,8 +171,8 @@ impl SchemeList {
         self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();
         self.insert(ns, "serio", |scheme_id| Arc::new(SerioScheme::new(scheme_id))).unwrap();
 
-        #[cfg(feature = "live")] {
-            self.insert(ns, "disk/live", |_| Arc::new(self::live::DiskScheme::new())).unwrap();
+        if let Some(scheme) = self::live::DiskScheme::new().map(Arc::new) {
+            self.insert(ns, "disk/live", move |_| scheme.clone()).unwrap();
         }
 
         // Pipe is special and needs to be in the root namespace

@@ -218,7 +218,7 @@ pub fn kmain(cpus: usize, env: &'static [u8]) -> ! {
 
     let pid = syscall::getpid();
     info!("BSP: {:?} {}", pid, cpus);
-    info!("Env: {:?}", ::core::str::from_utf8(env));
+    info!("Env: {:?}", ::core::str::from_utf8(unsafe { INIT_ENV }));
 
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {

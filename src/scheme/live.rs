@@ -2,14 +2,20 @@
 
 use alloc::sync::Arc;
 use alloc::collections::BTreeMap;
-use core::slice;
+use core::{slice, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
 use syscall::data::Stat;
 use syscall::error::*;
-use syscall::flag::MODE_FILE;
+use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::scheme::{calc_seek_offset_usize, Scheme};
+
+use crate::memory::Frame;
+use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
+use crate::paging::mapper::PageFlushAll;
+
+static mut LIST: [u8; 2] = [b'0', b'\n'];
 
 struct Handle {
     path: &'static [u8],
@@ -20,48 +26,87 @@ struct Handle {
 
 pub struct DiskScheme {
     next_id: AtomicUsize,
+    list: Arc<RwLock<&'static mut [u8]>>,
     data: Arc<RwLock<&'static mut [u8]>>,
     handles: RwLock<BTreeMap<usize, Handle>>
 }
 
 impl DiskScheme {
-    pub fn new() -> DiskScheme {
-        let data;
-        unsafe {
-            extern {
-                static mut __live_start: u8;
-                static mut __live_end: u8;
+    pub fn new() -> Option<DiskScheme> {
+        let mut phys = 0;
+        let mut size = 0;
+
+        for line in str::from_utf8(unsafe { crate::INIT_ENV }).unwrap_or("").lines() {
+            let mut parts = line.splitn(2, '=');
+            let name = parts.next().unwrap_or("");
+            let value = parts.next().unwrap_or("");
+
+            if name == "DISK_LIVE_ADDR" {
+                phys = usize::from_str_radix(value, 16).unwrap_or(0);
             }
 
-            let start = &mut __live_start as *mut u8;
-            let end = &mut __live_end as *mut u8;
-
-            if end as usize >= start as usize {
-                data = slice::from_raw_parts_mut(start, end as usize - start as usize);
-            } else {
-                data = &mut [];
-            };
+            if name == "DISK_LIVE_SIZE" {
+                size = usize::from_str_radix(value, 16).unwrap_or(0);
+            }
         }
 
-        DiskScheme {
-            next_id: AtomicUsize::new(0),
-            data: Arc::new(RwLock::new(data)),
-            handles: RwLock::new(BTreeMap::new())
+        if phys > 0 && size > 0 {
+            // Map live disk pages
+            let virt = phys + crate::PHYS_OFFSET;
+            unsafe {
+                let mut active_table = ActivePageTable::new(TableKind::Kernel);
+                let flush_all = PageFlushAll::new();
+                let start_page = Page::containing_address(VirtualAddress::new(virt));
+                let end_page = Page::containing_address(VirtualAddress::new(virt + size - 1));
+                for page in Page::range_inclusive(start_page, end_page) {
+                    let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - crate::PHYS_OFFSET));
+                    let flags = PageFlags::new().write(true);
+                    let result = active_table.map_to(page, frame, flags);
+                    flush_all.consume(result);
+                }
+                flush_all.flush();
+            }
+
+            Some(DiskScheme {
+                next_id: AtomicUsize::new(0),
+                list: Arc::new(RwLock::new(unsafe { &mut LIST })),
+                data: Arc::new(RwLock::new(unsafe {
+                    slice::from_raw_parts_mut(virt as *mut u8, size)
+                })),
+                handles: RwLock::new(BTreeMap::new())
+            })
+        } else {
+            None
         }
     }
 }
 
 impl Scheme for DiskScheme {
-    fn open(&self, _path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.handles.write().insert(id, Handle {
-            path: b"0",
-            data: self.data.clone(),
-            mode: MODE_FILE | 0o744,
-            seek: 0
-        });
-
-        Ok(id)
+    fn open(&self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+        let path_trimmed = path.trim_matches('/');
+        match path_trimmed {
+            "" => {
+                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                self.handles.write().insert(id, Handle {
+                    path: b"",
+                    data: self.list.clone(),
+                    mode: MODE_DIR | 0o755,
+                    seek: 0
+                });
+                Ok(id)
+            },
+            "0" => {
+                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                self.handles.write().insert(id, Handle {
+                    path: b"0",
+                    data: self.data.clone(),
+                    mode: MODE_FILE | 0o644,
+                    seek: 0
+                });
+                Ok(id)
+            }
+            _ => Err(Error::new(ENOENT))
+        }
     }
 
     fn read(&self, id: usize, buffer: &mut [u8]) -> Result<usize> {
@@ -116,7 +161,7 @@ impl Scheme for DiskScheme {
 
         //TODO: Copy scheme part in kernel
         let mut i = 0;
-        let scheme_path = b"disk:";
+        let scheme_path = b"disk/live:";
         while i < buf.len() && i < scheme_path.len() {
             buf[i] = scheme_path[i];
             i += 1;
