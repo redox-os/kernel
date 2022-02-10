@@ -104,6 +104,9 @@ mod acpi;
 /// Context management
 pub mod context;
 
+/// Debugger
+pub mod debugger;
+
 /// Architecture-independent devices
 pub mod devices;
 
