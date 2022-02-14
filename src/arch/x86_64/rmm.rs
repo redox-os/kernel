@@ -1,4 +1,8 @@
-use core::cmp;
+use core::{
+    cmp,
+    mem,
+    slice,
+};
 use rmm::{
     KILOBYTE,
     MEGABYTE,
@@ -27,6 +31,25 @@ extern "C" {
     static mut __rodata_start: u8;
     /// The ending byte of the _.rodata_ (read-only data) segment.
     static mut __rodata_end: u8;
+}
+
+// Keep synced with OsMemoryKind in bootloader
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u64)]
+pub enum BootloaderMemoryKind {
+    Null = 0,
+    Free = 1,
+    Reclaim = 2,
+    Reserved = 3,
+}
+
+// Keep synced with OsMemoryEntry in bootloader
+#[derive(Clone, Copy, Debug)]
+#[repr(packed)]
+pub struct BootloaderMemoryEntry {
+    pub base: u64,
+    pub size: u64,
+    pub kind: BootloaderMemoryKind,
 }
 
 unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
@@ -220,7 +243,8 @@ pub unsafe fn init(
     kernel_base: usize, kernel_size: usize,
     stack_base: usize, stack_size: usize,
     env_base: usize, env_size: usize,
-    acpi_base: usize, acpi_size: usize
+    acpi_base: usize, acpi_size: usize,
+    areas_base: usize, areas_size: usize,
 ) {
     type A = RmmA;
 
@@ -240,17 +264,21 @@ pub unsafe fn init(
     let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let acpi_end = acpi_base + acpi_size_aligned;
 
+    let bootloader_areas = slice::from_raw_parts(
+        areas_base as *const BootloaderMemoryEntry,
+        areas_size / mem::size_of::<BootloaderMemoryEntry>()
+    );
+
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
-    for i in 0..512 {
-        let old = *(0x500 as *const crate::memory::MemoryArea).add(i);
-        if old._type != 1 {
+    for bootloader_area in bootloader_areas.iter() {
+        if bootloader_area.kind != BootloaderMemoryKind::Free {
             // Not a free area
             continue;
         }
 
-        let mut base = old.base_addr as usize;
-        let mut size = old.length as usize;
+        let mut base = bootloader_area.base as usize;
+        let mut size = bootloader_area.size as usize;
 
         print!("{:X}:{:X}", base, size);
 

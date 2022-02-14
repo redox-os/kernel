@@ -56,6 +56,9 @@ pub struct KernelArgs {
     acpi_rsdps_base: u64,
     /// The size of the RSDPs region.
     acpi_rsdps_size: u64,
+
+    areas_base: u64,
+    areas_size: u64,
 }
 
 /// The entry to Rust, all things must be initialized
@@ -72,6 +75,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         let env_size = args.env_size as usize;
         let acpi_rsdps_base = args.acpi_rsdps_base;
         let acpi_rsdps_size = args.acpi_rsdps_size;
+        let areas_base = args.areas_base as usize;
+        let areas_size = args.areas_size as usize;
 
         // BSS should already be zero
         {
@@ -99,6 +104,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
         info!("Env: {:X}:{:X}", env_base, env_base + env_size);
         info!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
+        info!("Areas: {:X}:{:X}", areas_base, areas_base + areas_size);
 
         // Set up GDT before paging
         gdt::init();
@@ -111,7 +117,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             kernel_base, kernel_size,
             stack_base, stack_size,
             env_base, env_size,
-            acpi_rsdps_base as usize, acpi_rsdps_size as usize
+            acpi_rsdps_base as usize, acpi_rsdps_size as usize,
+            areas_base, areas_size,
         );
 
         // Initialize paging
