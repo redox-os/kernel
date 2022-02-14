@@ -42,6 +42,10 @@ fn handles_mut() -> RwLockWriteGuard<'static, BTreeMap<usize, Handle>> {
 /// Add to the input queue
 pub fn debug_input(data: u8) {
     INPUT.call_once(init_input).send(data);
+}
+
+// Notify readers of input updates
+pub fn debug_notify() {
     for (id, _handle) in handles().iter() {
         event::trigger(SCHEME_ID.load(Ordering::SeqCst), *id, EVENT_READ);
     }

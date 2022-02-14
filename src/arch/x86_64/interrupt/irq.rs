@@ -7,7 +7,7 @@ use crate::context::timeout;
 use crate::device::{local_apic, ioapic, pic};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
-use crate::scheme::debug::debug_input;
+use crate::scheme::debug::{debug_input, debug_notify};
 use crate::{context, time};
 
 //resets to 0 in context::switch()
@@ -208,6 +208,7 @@ interrupt!(com2, || {
     while let Some(c) = COM2.lock().receive() {
         debug_input(c);
     }
+    debug_notify();
     eoi(3);
 });
 
@@ -215,6 +216,7 @@ interrupt!(com1, || {
     while let Some(c) = COM1.lock().receive() {
         debug_input(c);
     }
+    debug_notify();
     eoi(4);
 });
 

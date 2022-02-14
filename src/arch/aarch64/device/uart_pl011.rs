@@ -2,7 +2,7 @@ use core::fmt::{self, Write};
 use core::ptr;
 
 use crate::device::gic;
-use crate::scheme::debug::debug_input;
+use crate::scheme::debug::{debug_input, debug_notify};
 
 bitflags! {
     /// UARTFR
@@ -138,6 +138,7 @@ impl SerialPort {
         while self.line_sts().contains(UartFrFlags::RXFF) {
             debug_input(self.read_reg(self.data_reg) as u8);
         }
+        debug_notify();
     }
 
     pub fn send(&mut self, data: u8) {
