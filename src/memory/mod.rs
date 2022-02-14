@@ -1,6 +1,8 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
+use core::cmp;
+
 use crate::arch::rmm::FRAME_ALLOCATOR;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 
@@ -43,8 +45,10 @@ pub fn allocate_frames(count: usize) -> Option<Frame> {
     }
 }
 pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Option<PartialAllocStrategy>, min: usize) -> Option<(Frame, usize)> {
-    if count == min && flags == PhysallocFlags::SPACE_64 && strategy.is_none() {
-        return allocate_frames(count).map(|frame| (frame, count));
+    //TODO: support partial allocation
+    if flags == PhysallocFlags::SPACE_64 && strategy.is_none() {
+        let actual = cmp::max(count, min);
+        return allocate_frames(actual).map(|frame| (frame, actual));
     }
 
     println!(
