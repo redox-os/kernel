@@ -448,6 +448,27 @@ pub fn frename(fd: FileHandle, path: &str) -> Result<usize> {
     }
 }
 
+/// File status
+pub fn fstat(fd: FileHandle, stat: &mut Stat) -> Result<usize> {
+    let file = {
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+        context.get_file(fd).ok_or(Error::new(EBADF))?
+    };
+
+    let description = file.description.read();
+
+    let scheme = {
+        let schemes = scheme::schemes();
+        let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
+        Arc::clone(&scheme)
+    };
+    // Fill in scheme number as device number
+    stat.st_dev = description.scheme.into() as u64;
+    scheme.fstat(description.number, stat)
+}
+
 pub fn funmap_old(virtual_address: usize) -> Result<usize> {
     if virtual_address == 0 {
         Ok(0)

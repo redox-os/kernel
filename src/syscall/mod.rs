@@ -25,7 +25,7 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::validate::*;
 
-use self::data::{Map, SigAction, TimeSpec};
+use self::data::{Map, SigAction, Stat, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
 use self::flag::{CloneFlags, MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
@@ -74,7 +74,10 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                         },
                         _ => file_op_slice(a, fd, validate_slice(c as *const u8, d)?),
                     }
-                    SYS_ARG_MSLICE => file_op_mut_slice(a, fd, validate_slice_mut(c as *mut u8, d)?),
+                    SYS_ARG_MSLICE => match a {
+                        SYS_FSTAT => fstat(fd, unsafe { validate_ref_mut(c as *mut Stat, d)? }),
+                        _ => file_op_mut_slice(a, fd, validate_slice_mut(c as *mut u8, d)?),
+                    },
                     _ => match a {
                         SYS_CLOSE => close(fd),
                         SYS_DUP => dup(fd, validate_slice(c as *const u8, d)?).map(FileHandle::into),

@@ -41,6 +41,16 @@ pub unsafe fn validate_ref<T>(ptr: *const T, size: usize) -> Result<&'static T> 
     }
 }
 
+/// Convert a pointer and length to mutable reference, if valid
+pub unsafe fn validate_ref_mut<T>(ptr: *mut T, size: usize) -> Result<&'static mut T> {
+    if size == mem::size_of::<T>() {
+        validate(ptr as usize, mem::size_of::<T>(), false)?;
+        Ok(&mut *ptr)
+    } else {
+        Err(Error::new(EINVAL))
+    }
+}
+
 /// Convert a pointer and length to slice, if valid
 //TODO: Mark unsafe
 pub fn validate_slice<T>(ptr: *const T, len: usize) -> Result<&'static [T]> {
