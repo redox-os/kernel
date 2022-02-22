@@ -244,7 +244,11 @@ pub struct Context {
     /// A somewhat hacky way to initially stop a context when creating
     /// a new instance of the proc: scheme, entirely separate from
     /// signals or any other way to restart a process.
-    pub ptrace_stop: bool
+    pub ptrace_stop: bool,
+    /// A pointer to the signal stack. If this is unset, none of the sigactions can be anything
+    /// else than SIG_DFL, otherwise signals will not be delivered. Userspace is responsible for
+    /// setting this.
+    pub sigstack: Option<usize>,
 }
 
 // Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
@@ -345,7 +349,8 @@ impl Context {
                 0
             ); 128])),
             regs: None,
-            ptrace_stop: false
+            ptrace_stop: false,
+            sigstack: None,
         })
     }
 

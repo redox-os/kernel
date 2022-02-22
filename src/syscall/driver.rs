@@ -1,9 +1,9 @@
 use crate::interrupt::InterruptStack;
-use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
+use crate::memory::{allocate_frames_complex, deallocate_frames, Frame, PAGE_SIZE};
 use crate::paging::{ActivePageTable, PageFlags, PhysicalAddress, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 use crate::context;
-use crate::context::memory::{Grant, Region};
+use crate::context::memory::{DANGLING, Grant, Region};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
@@ -71,56 +71,47 @@ pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
 }
 
 //TODO: verify exlusive access to physical memory
+// TODO: Replace this completely with something such as `memory:physical`. Mmapping at offset
+// `physaddr` to `address` (optional) will map that physical address. We would have to find out
+// some way to pass flags such as WRITE_COMBINE/NO_CACHE however.
 pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     //TODO: Abstract with other grant creation
     if size == 0 {
-        Ok(0)
-    } else {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        let mut grants = context.grants.write();
-
-        let from_address = (physical_address/4096) * 4096;
-        let offset = physical_address - from_address;
-        let full_size = ((offset + size + 4095)/4096) * 4096;
-        let mut to_address = crate::USER_GRANT_OFFSET;
-
-        let mut page_flags = PageFlags::new().user(true);
-        if flags.contains(PHYSMAP_WRITE) {
-            page_flags = page_flags.write(true);
-        }
-        if flags.contains(PHYSMAP_WRITE_COMBINE) {
-            page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
-        }
-        #[cfg(target_arch = "x86_64")] // TODO: AARCH64
-        if flags.contains(PHYSMAP_NO_CACHE) {
-            page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
-        }
-
-        // TODO: Make this faster than Sonic himself by using le superpowers of BTreeSet
-
-        for grant in grants.iter() {
-            let start = grant.start_address().data();
-            if to_address + full_size < start {
-                break;
-            }
-
-            let pages = (grant.size() + 4095) / 4096;
-            let end = start + pages * 4096;
-            to_address = end;
-        }
-
-        grants.insert(Grant::physmap(
-            PhysicalAddress::new(from_address),
-            VirtualAddress::new(to_address),
-            full_size,
-            page_flags
-        ));
-
-        Ok(to_address + offset)
+        return Ok(DANGLING);
     }
+    if size % PAGE_SIZE != 0 || physical_address % PAGE_SIZE != 0 {
+        return Err(Error::new(EINVAL));
+    }
+    // TODO: Enforce size being a multiple of the page size, fail otherwise.
+
+    let contexts = context::contexts();
+    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+    let context = context_lock.read();
+
+    let mut grants = context.grants.write();
+
+    let dst_address = grants.find_free(size).ok_or(Error::new(ENOMEM))?;
+
+    let mut page_flags = PageFlags::new().user(true);
+    if flags.contains(PHYSMAP_WRITE) {
+        page_flags = page_flags.write(true);
+    }
+    if flags.contains(PHYSMAP_WRITE_COMBINE) {
+        page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
+    }
+    #[cfg(target_arch = "x86_64")] // TODO: AARCH64
+    if flags.contains(PHYSMAP_NO_CACHE) {
+        page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
+    }
+
+    grants.insert(Grant::physmap(
+        PhysicalAddress::new(physical_address),
+        dst_address.start_address(),
+        size,
+        page_flags,
+    ));
+
+    Ok(dst_address.start_address().data())
 }
 pub fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     enforce_root()?;

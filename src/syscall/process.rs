@@ -27,7 +27,7 @@ use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, RmmA, T
 use crate::{ptrace, syscall};
 use crate::scheme::FileHandle;
 use crate::start::usermode;
-use crate::syscall::data::{ExecMemRange, SigAction, Stat};
+use crate::syscall::data::{CloneInfo, ExecMemRange, SigAction, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, AT_PHDR, AT_PHENT, AT_PHNUM, CloneFlags,
                            CLONE_FILES, CLONE_FS, CLONE_SIGHAND, CLONE_STACK, CLONE_VFORK, CLONE_VM,
@@ -37,7 +37,7 @@ use crate::syscall::flag::{wifcontinued, wifstopped, AT_ENTRY, AT_NULL, AT_PHDR,
 use crate::syscall::ptrace_event;
 use crate::syscall::validate::{validate_slice, validate_slice_mut};
 
-pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
+pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> Result<ContextId> {
     let ppid;
     let pid;
     {
@@ -61,6 +61,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let cwd;
         let files;
         let actions;
+        let old_sigstack;
 
         // Copy from old process
         {
@@ -78,6 +79,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             ens = context.ens;
             sigmask = context.sigmask;
             umask = context.umask;
+            old_sigstack = context.sigstack;
 
             // Uncomment to disable threads on different CPUs
             //TODO: fix memory allocation races when this is removed
@@ -360,6 +362,12 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
             context.files = files;
 
             context.actions = actions;
+
+            if flags.contains(CLONE_VM) {
+                context.sigstack = info.and_then(|info| (info.target_sigstack != !0).then(|| info.target_sigstack));
+            } else {
+                context.sigstack = old_sigstack;
+            }
         }
     }
 
@@ -747,24 +755,23 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
 }
 
 pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mut SigAction>, restorer: usize) -> Result<usize> {
-    if sig > 0 && sig <= 0x7F {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        let mut actions = context.actions.write();
-
-        if let Some(oldact) = oldact_opt {
-            *oldact = actions[sig].0;
-        }
-
-        if let Some(act) = act_opt {
-            actions[sig] = (*act, restorer);
-        }
-
-        Ok(0)
-    } else {
-        Err(Error::new(EINVAL))
+    if sig == 0 || sig > 0x7F {
+        return Err(Error::new(EINVAL));
     }
+    let contexts = context::contexts();
+    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+    let context = context_lock.read();
+    let mut actions = context.actions.write();
+
+    if let Some(oldact) = oldact_opt {
+        *oldact = actions[sig].0;
+    }
+
+    if let Some(act) = act_opt {
+        actions[sig] = (*act, restorer);
+    }
+
+    Ok(0)
 }
 
 pub fn sigprocmask(how: usize, mask_opt: Option<&[u64; 2]>, oldmask_opt: Option<&mut [u64; 2]>) -> Result<usize> {

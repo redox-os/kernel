@@ -13,12 +13,12 @@ pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
 }
 
 pub extern "C" fn signal_handler(sig: usize) {
-    let (action, restorer) = {
+    let ((action, restorer), sigstack) = {
         let contexts = contexts();
         let context_lock = contexts.current().expect("context::signal_handler not inside of context");
         let context = context_lock.read();
         let actions = context.actions.read();
-        actions[sig]
+        (actions[sig], context.sigstack)
     };
 
     let handler = action.sa_handler.map(|ptr| ptr as usize).unwrap_or(0);
@@ -115,7 +115,7 @@ pub extern "C" fn signal_handler(sig: usize) {
         };
 
         unsafe {
-            let mut sp = crate::USER_SIGSTACK_OFFSET + crate::USER_SIGSTACK_SIZE - 256;
+            let mut sp = sigstack.expect("sigaction was set while sigstack was not") - 256;
 
             sp = (sp / 16) * 16;
 

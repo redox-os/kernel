@@ -25,8 +25,8 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::validate::*;
 
-use self::data::{ExecMemRange, Map, SigAction, Stat, TimeSpec};
-use self::error::{Error, Result, ENOSYS};
+use self::data::{CloneInfo, ExecMemRange, Map, SigAction, Stat, TimeSpec};
+use self::error::{Error, Result, ENOSYS, EINVAL};
 use self::flag::{CloneFlags, MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
 
@@ -134,6 +134,13 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_CLONE => {
                     let b = CloneFlags::from_bits_truncate(b);
 
+                    let info = if b.contains(CloneFlags::CLONE_VM) {
+                        if d < core::mem::size_of::<CloneInfo>() {
+                            return Err(Error::new(EINVAL));
+                        }
+                        Some(&validate_slice(c as *const CloneInfo, 1)?[0])
+                    } else { None };
+
                     #[cfg(not(target_arch = "x86_64"))]
                     {
                         //TODO: CLONE_STACK
@@ -144,10 +151,11 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                     #[cfg(target_arch = "x86_64")]
                     {
                         let old_rsp = stack.iret.rsp;
+                        // TODO: Unify CLONE_STACK and CLONE_VM.
                         if b.contains(flag::CLONE_STACK) {
-                            stack.iret.rsp = c;
+                            stack.iret.rsp = info.as_ref().ok_or(Error::new(EINVAL))?.target_stack;
                         }
-                        let ret = clone(b, bp).map(ContextId::into);
+                        let ret = clone(b, bp, info).map(ContextId::into);
                         stack.iret.rsp = old_rsp;
                         ret
                     }

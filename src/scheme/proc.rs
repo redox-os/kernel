@@ -23,6 +23,7 @@ use alloc::{
 };
 use core::{
     cmp,
+    convert::TryFrom,
     mem,
     slice,
     str,
@@ -102,6 +103,7 @@ enum Operation {
     Trace,
     Static(&'static str),
     Name,
+    Sigstack,
 }
 impl Operation {
     fn needs_child_process(self) -> bool {
@@ -111,6 +113,7 @@ impl Operation {
             Self::Trace => true,
             Self::Static(_) => false,
             Self::Name => false,
+            Self::Sigstack => false,
         }
     }
 }
@@ -251,6 +254,7 @@ impl Scheme for ProcScheme {
             Some("trace") => Operation::Trace,
             Some("exe") => Operation::Static("exe"),
             Some("name") => Operation::Name,
+            Some("sigstack") => Operation::Sigstack,
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -529,6 +533,13 @@ impl Scheme for ProcScheme {
                     Ok(to_copy)
                 }
             }
+            Operation::Sigstack => match context::contexts().current().ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes() {
+                sigstack => {
+                    let to_copy = cmp::min(buf.len(), sigstack.len());
+                    buf[..to_copy].copy_from_slice(&sigstack[..to_copy]);
+                    Ok(to_copy)
+                }
+            }
         }
     }
 
@@ -719,6 +730,12 @@ impl Scheme for ProcScheme {
                 *context::contexts().current().ok_or(Error::new(ESRCH))?.read().name.write() = utf8;
                 Ok(buf.len())
             }
+            Operation::Sigstack => {
+                let bytes = <[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?;
+                let sigstack = usize::from_ne_bytes(bytes);
+                context::contexts().current().ok_or(Error::new(ESRCH))?.write().sigstack = (sigstack != !0).then(|| sigstack);
+                Ok(buf.len())
+            }
         }
     }
 
@@ -757,6 +774,7 @@ impl Scheme for ProcScheme {
             Operation::Trace => "trace",
             Operation::Static(path) => path,
             Operation::Name => "name",
+            Operation::Sigstack => "sigstack",
         });
 
         let len = cmp::min(path.len(), buf.len());
