@@ -172,7 +172,11 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
         {
-            acpi::init(&mut active_table, if acpi_rsdps_base != 0 && acpi_rsdps_size > 0 { Some((acpi_rsdps_base, acpi_rsdps_size)) } else { None });
+            acpi::init(&mut active_table, if acpi_rsdps_base != 0 && acpi_rsdps_size > 0 {
+                Some((acpi_rsdps_base + crate::PHYS_OFFSET as u64, acpi_rsdps_size))
+            } else {
+                None
+            });
             device::init_after_acpi(&mut active_table);
         }
 

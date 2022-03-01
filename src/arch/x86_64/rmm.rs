@@ -80,7 +80,7 @@ unsafe fn inner<A: Arch>(
     kernel_base: usize, kernel_size_aligned: usize,
     stack_base: usize, stack_size_aligned: usize,
     env_base: usize, env_size_aligned: usize,
-    acpi_base: usize, acpi_size: usize
+    acpi_base: usize, acpi_size_aligned: usize
 ) -> BuddyAllocator<A> {
     // First, calculate how much memory we have
     let mut size = 0;
@@ -153,6 +153,19 @@ unsafe fn inner<A: Arch>(
         // Map env with identity mapping
         for i in 0..env_size_aligned / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(env_base + i * A::PAGE_SIZE);
+            let virt = A::phys_to_virt(phys);
+            let flags = page_flags::<A>(virt);
+            let flush = mapper.map_phys(
+                virt,
+                phys,
+                flags
+            ).expect("failed to map frame");
+            flush.ignore(); // Not the active table
+        }
+
+        // Map acpi with identity mapping
+        for i in 0..acpi_size_aligned / A::PAGE_SIZE {
+            let phys = PhysicalAddress::new(acpi_base + i * A::PAGE_SIZE);
             let virt = A::phys_to_virt(phys);
             let flags = page_flags::<A>(virt);
             let flush = mapper.map_phys(
