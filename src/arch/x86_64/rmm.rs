@@ -176,6 +176,36 @@ unsafe fn inner<A: Arch>(
             flush.ignore(); // Not the active table
         }
 
+        // Ensure graphical debug region remains paged
+        #[cfg(feature = "graphical_debug")]
+        {
+            use super::graphical_debug::DEBUG_DISPLAY;
+            use super::paging::entry::EntryFlags;
+
+            let (base, size) = if let Some(debug_display) = &*DEBUG_DISPLAY.lock() {
+                let data = &debug_display.as_display().data;
+                (
+                    data.as_ptr() as usize - crate::PHYS_OFFSET,
+                    data.len() * 4
+                )
+            } else {
+                (0, 0)
+            };
+
+            let pages = (size + A::PAGE_SIZE - 1) / A::PAGE_SIZE;
+            for i in 0..pages {
+                let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
+                let virt = A::phys_to_virt(phys);
+                let flags = PageFlags::new().write(true);
+                let flush = mapper.map_phys(
+                    virt,
+                    phys,
+                    flags
+                ).expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        }
+
         println!("Table: {:X}", mapper.table().phys().data());
         for i in 0..512 {
             if let Some(entry) = mapper.table().entry(i) {

@@ -21,6 +21,10 @@ impl DebugDisplay {
         }
     }
 
+    pub fn as_display(&self) -> &Display {
+        &self.display
+    }
+
     pub fn into_display(self) -> Display {
         self.display
     }
@@ -37,36 +41,14 @@ impl DebugDisplay {
 
             self.display.scroll(d_y * 16);
 
-            self.display.rect(
-                0, (self.h - d_y) * 16,
-                self.w * 8, d_y * 16,
-                0x000000
-            );
-
-            self.display.sync(
-                0, 0,
-                self.w * 8, self.h * 16
-            );
-
             self.y = new_y;
         }
 
         if c != '\n' {
-            self.display.rect(
-                self.x * 8, self.y * 16,
-                8, 16,
-                0x000000
-            );
-
             self.display.char(
                 self.x * 8, self.y * 16,
                 c,
                 0xFFFFFF
-            );
-
-            self.display.sync(
-                self.x * 8, self.y * 16,
-                8, 16
             );
 
             self.x += 1;

@@ -87,6 +87,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
 
+        // Convert env to slice
+        let env = slice::from_raw_parts((env_base + crate::PHYS_OFFSET) as *const u8, env_size);
+
+        // Set up graphical debug
+        #[cfg(feature="graphical_debug")]
+        graphical_debug::init(env);
+
         // Initialize logger
         log::init_logger(|r| {
             use core::fmt::Write;
@@ -156,13 +163,6 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Activate memory logging
         log::init();
 
-        // Convert env to slice
-        let env = slice::from_raw_parts((env_base + crate::PHYS_OFFSET) as *const u8, env_size);
-
-        // Use graphical debug
-        #[cfg(feature="graphical_debug")]
-        graphical_debug::init(&mut active_table, env);
-
         #[cfg(feature = "system76_ec_debug")]
         device::system76_ec::init();
 
@@ -185,7 +185,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Stop graphical debug
         #[cfg(feature="graphical_debug")]
-        graphical_debug::fini(&mut active_table);
+        graphical_debug::fini();
 
         BSP_READY.store(true, Ordering::SeqCst);
 
