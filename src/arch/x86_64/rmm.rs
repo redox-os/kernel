@@ -183,7 +183,7 @@ unsafe fn inner<A: Arch>(
             use super::paging::entry::EntryFlags;
 
             let (base, size) = if let Some(debug_display) = &*DEBUG_DISPLAY.lock() {
-                let data = &debug_display.as_display().data;
+                let data = &debug_display.display.data;
                 (
                     data.as_ptr() as usize - crate::PHYS_OFFSET,
                     data.len() * 4

@@ -48,10 +48,9 @@ impl Display {
         let offset = cmp::min(self.height, lines) * self.width;
         let size = self.data.len() - offset;
         unsafe {
-            let src = self.data.as_ptr();
-            let dst = self.data.as_mut_ptr().add(offset);
-            ptr::copy(src, dst, size);
-            ptr::write_bytes(dst, 0, offset);
+            let ptr = self.data.as_mut_ptr();
+            ptr::copy(ptr.add(offset), ptr, size);
+            ptr::write_bytes(ptr.add(size), 0, offset);
         }
     }
 }

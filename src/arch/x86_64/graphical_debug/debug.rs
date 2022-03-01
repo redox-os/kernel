@@ -1,7 +1,7 @@
 use super::Display;
 
 pub struct DebugDisplay {
-    display: Display,
+    pub (crate) display: Display,
     x: usize,
     y: usize,
     w: usize,
@@ -19,14 +19,6 @@ impl DebugDisplay {
             w: w,
             h: h,
         }
-    }
-
-    pub fn as_display(&self) -> &Display {
-        &self.display
-    }
-
-    pub fn into_display(self) -> Display {
-        self.display
     }
 
     pub fn write_char(&mut self, c: char) {
