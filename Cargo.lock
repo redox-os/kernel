@@ -75,7 +75,7 @@ dependencies = [
  "linked_list_allocator 0.9.0",
  "log",
  "memoffset",
- "raw-cpuid 8.1.2",
+ "raw-cpuid 10.2.0",
  "redox_syscall",
  "rmm",
  "rustc-cfg",
@@ -149,13 +149,11 @@ dependencies = [
 
 [[package]]
 name = "raw-cpuid"
-version = "8.1.2"
+version = "10.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fdf7d9dbd43f3d81d94a49c1c3df73cc2b3827995147e6cf7f89d4ec5483e73"
+checksum = "929f54e29691d4e6a9cc558479de70db7aa3d98cd6fe7ab86d7507aa2886b9d2"
 dependencies = [
  "bitflags",
- "cc",
- "rustc_version",
 ]
 
 [[package]]

@@ -11,10 +11,8 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
         writeln!(w, "Vendor: {}", info.as_string())?;
     }
 
-    if let Some(info) = cpuid.get_extended_function_info() {
-        if let Some(brand) = info.processor_brand_string() {
-            writeln!(w, "Model: {}", brand)?;
-        }
+    if let Some(brand) = cpuid.get_processor_brand_string() {
+        writeln!(w, "Model: {}", brand.as_str())?;
     }
 
     if let Some(info) = cpuid.get_processor_frequency_info() {
@@ -92,7 +90,7 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
         if info.has_rdrand() { write!(w, " rdrand")? };
     }
 
-    if let Some(info) = cpuid.get_extended_function_info() {
+    if let Some(info) = cpuid.get_extended_processor_and_feature_identifiers() {
         if info.has_64bit_mode() { write!(w, " lm")? };
         if info.has_rdtscp() { write!(w, " rdtscp")? };
         if info.has_1gib_pages() { write!(w, " pdpe1gb")? };
@@ -101,6 +99,9 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
         if info.has_prefetchw() { write!(w, " prefetchw")? };
         if info.has_lzcnt() { write!(w, " lzcnt")? };
         if info.has_lahf_sahf() { write!(w, " lahf_lm")? };
+    }
+
+    if let Some(info) = cpuid.get_advanced_power_mgmt_info() {
         if info.has_invariant_tsc() { write!(w, " constant_tsc")? };
     }
 
