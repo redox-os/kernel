@@ -86,12 +86,12 @@ unsafe fn inner<A: Arch>(
     let mut size = 0;
     for area in areas.iter() {
         if area.size > 0 {
-            println!("{:X?}", area);
+            log::debug!("{:X?}", area);
             size += area.size;
         }
     }
 
-    println!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
+    log::info!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
 
     // Create a basic allocator for the first pages
     let mut bump_allocator = BumpAllocator::<A>::new(areas, 0);
@@ -206,11 +206,11 @@ unsafe fn inner<A: Arch>(
             }
         }
 
-        println!("Table: {:X}", mapper.table().phys().data());
+        log::debug!("Table: {:X}", mapper.table().phys().data());
         for i in 0..512 {
             if let Some(entry) = mapper.table().entry(i) {
                 if entry.present() {
-                    println!("{}: {:X}", i, entry.data());
+                    log::debug!("{}: {:X}", i, entry.data());
                 }
             }
         }
@@ -221,7 +221,7 @@ unsafe fn inner<A: Arch>(
 
     // Create the physical memory map
     let offset = bump_allocator.offset();
-    println!("Permanently used: {} KB", (offset + (KILOBYTE - 1)) / KILOBYTE);
+    log::info!("Permanently used: {} KB", (offset + (KILOBYTE - 1)) / KILOBYTE);
 
     BuddyAllocator::<A>::new(bump_allocator).expect("failed to create BuddyAllocator")
 }
@@ -323,7 +323,7 @@ pub unsafe fn init(
         let mut base = bootloader_area.base as usize;
         let mut size = bootloader_area.size as usize;
 
-        print!("{:X}:{:X}", base, size);
+        log::debug!("{:X}:{:X}", base, size);
 
         // Page align base
         let base_offset = (A::PAGE_SIZE - (base & A::PAGE_OFFSET_MASK)) & A::PAGE_OFFSET_MASK;
@@ -336,45 +336,46 @@ pub unsafe fn init(
 
         // Page align size
         size &= !A::PAGE_OFFSET_MASK;
-        println!(" => {:X}:{:X}", base, size);
+        log::debug!(" => {:X}:{:X}", base, size);
 
         let mut new_base = base;
 
         // Ensure real-mode areas are not used
         if base < real_end && base + size > real_base {
-            println!("{:X}:{:X} overlaps with real mode {:X}:{:X}", base, size, real_base, real_size);
+            log::warn!("{:X}:{:X} overlaps with real mode {:X}:{:X}", base, size, real_base, real_size);
             new_base = cmp::max(new_base, real_end);
         }
 
         // Ensure kernel areas are not used
         if base < kernel_end && base + size > kernel_base {
-            println!("{:X}:{:X} overlaps with kernel {:X}:{:X}", base, size, kernel_base, kernel_size);
+            log::warn!("{:X}:{:X} overlaps with kernel {:X}:{:X}", base, size, kernel_base, kernel_size);
             new_base = cmp::max(new_base, kernel_end);
         }
 
         // Ensure stack areas are not used
         if base < stack_end && base + size > stack_base {
-            println!("{:X}:{:X} overlaps with stack {:X}:{:X}", base, size, stack_base, stack_size);
+            log::warn!("{:X}:{:X} overlaps with stack {:X}:{:X}", base, size, stack_base, stack_size);
             new_base = cmp::max(new_base, stack_end);
         }
 
         // Ensure env areas are not used
         if base < env_end && base + size > env_base {
-            println!("{:X}:{:X} overlaps with env {:X}:{:X}", base, size, env_base, env_size);
+            log::warn!("{:X}:{:X} overlaps with env {:X}:{:X}", base, size, env_base, env_size);
             new_base = cmp::max(new_base, env_end);
         }
 
         // Ensure acpi areas are not used
         if base < acpi_end && base + size > acpi_base {
-            println!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
+            log::warn!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
             new_base = cmp::max(new_base, acpi_end);
         }
 
         if new_base != base {
             let end = base + size;
+            let new_size = end.checked_sub(new_base).unwrap_or(0);
+            log::info!("{:X}:{:X} moved to {:X}:{:X}", base, size, new_base, new_size);
             base = new_base;
-            size = end.checked_sub(base).unwrap_or(0);
-            println!("moved to {:X}:{:X}", base, size);
+            size = new_size;
         }
 
         if size == 0 {
