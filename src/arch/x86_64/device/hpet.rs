@@ -21,6 +21,7 @@ static PER_INT_CAP: u64 = 0x10;
 pub unsafe fn init(hpet: &mut Hpet) -> bool {
     let capability = hpet.base_address.read_u64(CAPABILITY_OFFSET);
     if capability & LEG_RT_CAP == 0 {
+        log::warn!("HPET missing capability LEG_RT_CAP");
         return false;
     }
 
@@ -31,6 +32,7 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
 
     let t0_capabilities = hpet.base_address.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
     if t0_capabilities & PER_INT_CAP == 0 {
+        log::warn!("HPET T0 missing capability PER_INT_CAP");
         return false;
     }
 
