@@ -132,7 +132,7 @@ interrupt_error!(protection, |stack| {
 
 interrupt_error!(page, |stack| {
     let cr2: usize;
-    asm!("mov {}, cr2", out(reg) cr2);
+    core::arch::asm!("mov {}, cr2", out(reg) cr2);
     println!("Page fault: {:>016X}", cr2);
     println!("  Present: {}", stack.code & 1 << 0 != 0);
     println!("  Write: {}", stack.code & 1 << 1 != 0);

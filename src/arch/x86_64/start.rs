@@ -350,11 +350,10 @@ macro_rules! restore_fsgsbase(
 );
 
 #[naked]
-#[inline(never)]
 // TODO: AbiCompatBool
 pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singlestep: usize) -> ! {
     // rdi, rsi, rdx, rcx
-    asm!(
+    core::arch::asm!(
         concat!("
             shl rcx, {shift_singlestep}
             or rcx, {flag_interrupts}

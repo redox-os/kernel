@@ -131,7 +131,7 @@ impl InterruptStack {
 
         let cs: usize;
         unsafe {
-            asm!("mov {}, cs", out(reg) cs);
+            core::arch::asm!("mov {}, cs", out(reg) cs);
         }
 
         if self.iret.cs & CPL_MASK == cs & CPL_MASK {
@@ -140,7 +140,7 @@ impl InterruptStack {
                 + mem::size_of::<Self>() // disregard Self
                 - mem::size_of::<usize>() * 2; // well, almost: rsp and ss need to be excluded as they aren't present
             unsafe {
-                asm!("mov {}, ss", out(reg) all.ss);
+                core::arch::asm!("mov {}, ss", out(reg) all.ss);
             }
         } else {
             all.rsp = self.iret.rsp;
@@ -406,7 +406,7 @@ macro_rules! interrupt_stack {
                     $code
                 }
             }
-            asm!(concat!(
+            core::arch::asm!(concat!(
                 // Backup all userspace registers to stack
                 $save1!(),
                 "push rax\n",
@@ -462,7 +462,7 @@ macro_rules! interrupt {
                 $code
             }
 
-            asm!(concat!(
+            core::arch::asm!(concat!(
                 // Backup all userspace registers to stack
                 swapgs_iff_ring3_fast!(),
                 "push rax\n",
@@ -517,7 +517,7 @@ macro_rules! interrupt_error {
                 }
             }
 
-            asm!(concat!(
+            core::arch::asm!(concat!(
                 swapgs_iff_ring3_fast_errorcode!(),
                 // Move rax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
