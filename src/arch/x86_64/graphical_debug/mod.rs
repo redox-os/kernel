@@ -55,6 +55,14 @@ pub fn init(env: &[u8]) {
     }
 }
 
+pub fn init_heap() {
+    if let Some(debug_display) = &mut *DEBUG_DISPLAY.lock() {
+        debug_display.display.offscreen = Some(
+            debug_display.display.onscreen.to_vec().into_boxed_slice()
+        );
+    }
+}
+
 pub fn fini() {
     DEBUG_DISPLAY.lock().take();
 

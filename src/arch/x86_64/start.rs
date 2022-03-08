@@ -161,6 +161,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init(&mut active_table);
 
+        // Set up double buffer for grpahical debug now that heap is available
+        #[cfg(feature = "graphical_debug")]
+        graphical_debug::init_heap();
+
         idt::init_paging_post_heap(true, 0);
 
         // Activate memory logging

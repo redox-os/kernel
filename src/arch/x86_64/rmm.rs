@@ -183,7 +183,7 @@ unsafe fn inner<A: Arch>(
             use super::paging::entry::EntryFlags;
 
             let (base, size) = if let Some(debug_display) = &*DEBUG_DISPLAY.lock() {
-                let data = &debug_display.display.data;
+                let data = &debug_display.display.onscreen;
                 (
                     data.as_ptr() as usize - crate::PHYS_OFFSET,
                     data.len() * 4
@@ -196,7 +196,8 @@ unsafe fn inner<A: Arch>(
             for i in 0..pages {
                 let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
-                let flags = PageFlags::new().write(true);
+                let flags = PageFlags::new().write(true)
+                    .custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
                 let flush = mapper.map_phys(
                     virt,
                     phys,
