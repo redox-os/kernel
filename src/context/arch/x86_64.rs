@@ -202,12 +202,11 @@ macro_rules! switch_fsgsbase(
 
 /// Switch to the next context by restoring its stack and registers
 /// Check disassembly!
-#[inline(never)]
 #[naked]
 pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
     use Context as Cx;
 
-    asm!(
+    core::arch::asm!(
         // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
         //
         // - the current parameters are passed in the registers `rdi`, `rsi`,
@@ -339,7 +338,7 @@ unsafe extern fn signal_handler_wrapper() {
     }
 
     // Push scratch registers
-    asm!(
+    core::arch::asm!(
         "
             push rax
             push rcx

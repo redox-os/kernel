@@ -20,9 +20,11 @@ pub unsafe extern fn kreset() -> ! {
     }
 
     // Use triple fault to guarantee reset
-    asm!("cli");
-    asm!("lidt cs:0");
-    asm!("int $3");
+    core::arch::asm!("
+        cli
+        lidt cs:0
+        int $3
+    ");
 
     unreachable!();
 }
@@ -87,6 +89,6 @@ pub unsafe extern fn kstop() -> ! {
     // Magic code for VMWare. Also a hard lock.
     println!("Shutdown with cli hlt");
     loop {
-        asm!("cli; hlt");
+        core::arch::asm!("cli; hlt");
     }
 }

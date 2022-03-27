@@ -19,11 +19,10 @@
     "relocation-model": "pic",
     "code-model": "kernel",
     "disable-redzone": true,
-    "eliminate-frame-pointer": false,
+    "frame-pointer": "always",
     "exe-suffix": "",
     "has-rpath": false,
-    "no-compiler-rt": true,
     "no-default-libraries": true,
     "position-independent-executables": false,
-    "has-elf-tls": true
+    "tls-model": "global-dynamic"
 }

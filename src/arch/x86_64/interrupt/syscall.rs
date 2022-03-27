@@ -52,7 +52,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     with_interrupt_stack!(|stack| {
         // Set a restore point for clone
         let rbp;
-        asm!("mov {}, rbp", out(reg) rbp);
+        core::arch::asm!("mov {}, rbp", out(reg) rbp);
 
         let scratch = &stack.scratch;
         syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
 
 #[naked]
 pub unsafe extern "C" fn syscall_instruction() {
-    asm!(concat!(
+    core::arch::asm!(concat!(
     // Yes, this is magic. No, you don't need to understand
     "
         swapgs                    // Set gs segment to TSS
@@ -154,7 +154,7 @@ interrupt_stack!(syscall, |stack| {
 
         // Set a restore point for clone
         let rbp;
-        asm!("mov {}, rbp", out(reg) rbp);
+        core::arch::asm!("mov {}, rbp", out(reg) rbp);
 
         let scratch = &stack.scratch;
         syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
@@ -163,7 +163,7 @@ interrupt_stack!(syscall, |stack| {
 
 #[naked]
 pub unsafe extern "C" fn clone_ret() {
-    asm!(concat!(
+    core::arch::asm!(concat!(
     // The address of this instruction is injected by `clone` in process.rs, on
     // top of the stack syscall->inner in this file, which is done using the rbp
     // register we save there.

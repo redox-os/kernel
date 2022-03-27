@@ -43,16 +43,12 @@
 #![deny(unused_must_use)]
 
 #![feature(allocator_api)]
-#![feature(asm)] // TODO: Relax requirements of most asm invocations
+#![feature(asm_const, asm_sym)] // TODO: Relax requirements of most asm invocations
 #![cfg_attr(target_arch = "aarch64", feature(llvm_asm))] // TODO: Rewrite using asm!
 #![feature(concat_idents)]
 #![feature(const_btree_new)]
-#![feature(const_maybe_uninit_as_ptr)]
-#![feature(const_panic)]
 #![feature(const_ptr_offset_from)]
-#![feature(const_raw_ptr_deref)]
 #![feature(core_intrinsics)]
-#![feature(global_asm)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
 #![feature(naked_functions)]
