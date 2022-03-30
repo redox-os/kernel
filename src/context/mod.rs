@@ -48,7 +48,7 @@ pub const CONTEXT_MAX_CONTEXTS: usize = (isize::max_value() as usize) - 1;
 pub const CONTEXT_MAX_FILES: usize = 65_536;
 
 /// Contexts list
-static CONTEXTS: Once<RwLock<ContextList>> = Once::new();
+static CONTEXTS: RwLock<ContextList> = RwLock::new(ContextList::new());
 
 #[thread_local]
 static CONTEXT_ID: context::AtomicContextId = context::AtomicContextId::default();
@@ -77,16 +77,20 @@ fn init_contexts() -> RwLock<ContextList> {
 
 /// Get the global schemes list, const
 pub fn contexts() -> RwLockReadGuard<'static, ContextList> {
-    //call once will init_contexts only once during the kernel's exececution, otherwise it will return the current context via a
-    //cache.
-    CONTEXTS.call_once(init_contexts).read()
+    CONTEXTS.read()
 }
 
 /// Get the global schemes list, mutable
 pub fn contexts_mut() -> RwLockWriteGuard<'static, ContextList> {
-    CONTEXTS.call_once(init_contexts).write()
+    CONTEXTS.write()
 }
 
 pub fn context_id() -> ContextId {
-    CONTEXT_ID.load(Ordering::SeqCst)
+    // Thread local variables can and should only be modified using Relaxed. This is to prevent a
+    // hardware thread from racing with itself, for example if there is an interrupt. Orderings
+    // stronger than Relaxed are only necessary for inter-processor synchronization.
+    let id = CONTEXT_ID.load(Ordering::Relaxed);
+    // Prevent the compiler from reordering subsequent loads and stores to before this load.
+    core::sync::atomic::compiler_fence(Ordering::Acquire);
+    id
 }
