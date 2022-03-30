@@ -8,7 +8,7 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{DANGLING, page_flags, round_down_pages, Grant, Region};
+use crate::context::memory::{DANGLING, page_flags, round_down_pages, Grant, Region, GrantFileRef};
 use crate::event;
 use crate::paging::{PAGE_SIZE, InactivePageTable, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
@@ -123,7 +123,7 @@ impl UserInner {
         ).map(|addr| addr.data())
     }
 
-    fn capture_inner(context_weak: &Weak<RwLock<Context>>, dst_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<FileDescriptor>)
+    fn capture_inner(context_weak: &Weak<RwLock<Context>>, dst_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<GrantFileRef>)
                      -> Result<VirtualAddress> {
         // TODO: More abstractions over grant creation!
 
@@ -233,7 +233,8 @@ impl UserInner {
                         if address % PAGE_SIZE > 0 {
                             println!("scheme returned unaligned address, causing extra frame to be allocated");
                         }
-                        let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(desc));
+                        let file_ref = GrantFileRef { desc, offset: map.offset, flags: map.flags };
+                        let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(file_ref));
                         if let Ok(grant_address) = res {
                             if let Some(context_lock) = context_weak.upgrade() {
                                 let context = context_lock.read();
