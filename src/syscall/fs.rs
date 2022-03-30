@@ -162,41 +162,41 @@ pub fn open(path: &str, flags: usize) -> Result<FileHandle> {
 }
 
 pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
-    if fds.len() >= 2 {
-        let scheme_id = crate::scheme::pipe::PIPE_SCHEME_ID.load(Ordering::SeqCst);
-        let (read_id, write_id) = crate::scheme::pipe::pipe(flags);
-
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        let read_fd = context.add_file(FileDescriptor {
-            description: Arc::new(RwLock::new(FileDescription {
-                namespace: context.ens,
-                scheme: scheme_id,
-                number: read_id,
-                flags: O_RDONLY | flags & !O_ACCMODE & !O_CLOEXEC,
-            })),
-            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-        }).ok_or(Error::new(EMFILE))?;
-
-        let write_fd = context.add_file(FileDescriptor {
-            description: Arc::new(RwLock::new(FileDescription {
-                namespace: context.ens,
-                scheme: scheme_id,
-                number: write_id,
-                flags: O_WRONLY | flags & !O_ACCMODE & !O_CLOEXEC,
-            })),
-            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-        }).ok_or(Error::new(EMFILE))?;
-
-        fds[0] = read_fd.into();
-        fds[1] = write_fd.into();
-
-        Ok(0)
-    } else {
-        Err(Error::new(EFAULT))
+    if fds.len() < 2 {
+        return Err(Error::new(EFAULT));
     }
+
+    let scheme_id = crate::scheme::pipe::pipe_scheme_id().ok_or(Error::new(ENODEV))?;
+    let (read_id, write_id) = crate::scheme::pipe::pipe(flags);
+
+    let contexts = context::contexts();
+    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+    let context = context_lock.read();
+
+    let read_fd = context.add_file(FileDescriptor {
+        description: Arc::new(RwLock::new(FileDescription {
+            namespace: context.ens,
+            scheme: scheme_id,
+            number: read_id,
+            flags: O_RDONLY | flags & !O_ACCMODE & !O_CLOEXEC,
+        })),
+        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
+    }).ok_or(Error::new(EMFILE))?;
+
+    let write_fd = context.add_file(FileDescriptor {
+        description: Arc::new(RwLock::new(FileDescription {
+            namespace: context.ens,
+            scheme: scheme_id,
+            number: write_id,
+            flags: O_WRONLY | flags & !O_ACCMODE & !O_CLOEXEC,
+        })),
+        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
+    }).ok_or(Error::new(EMFILE))?;
+
+    fds[0] = read_fd.into();
+    fds[1] = write_fd.into();
+
+    Ok(0)
 }
 
 /// chmod syscall
