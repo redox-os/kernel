@@ -290,15 +290,7 @@ pub struct Grant {
     mapped: bool,
     owned: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
-    pub desc_opt: Option<GrantFileRef>,
-}
-#[derive(Clone, Debug)]
-pub struct GrantFileRef {
-    pub desc: FileDescriptor,
-    pub offset: usize,
-    // TODO: Can the flags maybe be stored together with the page flags. Should some flags be kept,
-    // and others discarded when re-fmapping on clone?
-    pub flags: MapFlags,
+    pub desc_opt: Option<FileDescriptor>,
 }
 
 impl Grant {
@@ -371,7 +363,7 @@ impl Grant {
         }
     }
 
-    pub fn map_inactive(src: VirtualAddress, dst: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, inactive_table: &mut InactivePageTable) -> Grant {
+    pub fn map_inactive(src: VirtualAddress, dst: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<FileDescriptor>, inactive_table: &mut InactivePageTable) -> Grant {
         let active_table = unsafe { ActivePageTable::new(src.kind()) };
         let mut inactive_mapper = inactive_table.mapper();
 
@@ -515,9 +507,10 @@ impl Grant {
 
         flush_all.flush();
 
-        if let Some(file_ref) = self.desc_opt.take() {
+        if let Some(desc) = self.desc_opt.take() {
+            println!("Grant::unmap: close desc {:?}", desc);
             //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
-            let _ = file_ref.desc.close();
+            let _ = desc.close();
         }
 
         self.mapped = false;
@@ -540,9 +533,10 @@ impl Grant {
 
         ipi(IpiKind::Tlb, IpiTarget::Other);
 
-        if let Some(file_ref) = self.desc_opt.take() {
+        if let Some(desc) = self.desc_opt.take() {
+            println!("Grant::unmap_inactive: close desc {:?}", desc);
             //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
-            let _ = file_ref.desc.close();
+            let _ = desc.close();
         }
 
         self.mapped = false;

@@ -489,8 +489,11 @@ pub fn funmap_old(virtual_address: usize) -> Result<usize> {
             }
         }
 
-        if let Some(file_ref) = desc_opt {
-            let scheme_id = { file_ref.desc.description.read().scheme };
+        if let Some(desc) = desc_opt {
+            let scheme_id = {
+                let description = desc.description.read();
+                description.scheme
+            };
 
             let scheme = {
                 let schemes = scheme::schemes();
@@ -499,7 +502,7 @@ pub fn funmap_old(virtual_address: usize) -> Result<usize> {
             };
             let res = scheme.funmap_old(virtual_address);
 
-            let _ = file_ref.desc.close();
+            let _ = desc.close();
 
             res
         } else {
@@ -552,8 +555,11 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
         }
     }
 
-    for (file_ref, intersection) in notify_files {
-        let scheme_id = { file_ref.desc.description.read().scheme };
+    for (desc, intersection) in notify_files {
+        let scheme_id = {
+            let description = desc.description.read();
+            description.scheme
+        };
 
         let scheme = {
             let schemes = scheme::schemes();
@@ -562,7 +568,7 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
         };
         let res = scheme.funmap(intersection.start_address().data(), intersection.size());
 
-        let _ = file_ref.desc.close();
+        let _ = desc.close();
 
         res?;
     }

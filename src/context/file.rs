@@ -7,7 +7,7 @@ use crate::scheme::{self, SchemeNamespace, SchemeId};
 use crate::syscall::error::{Result, Error, EBADF};
 
 /// A file description
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct FileDescription {
     /// The namespace the file was opened from (used for debugging)
     pub namespace: SchemeNamespace,
