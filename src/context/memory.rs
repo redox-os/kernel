@@ -36,12 +36,12 @@ pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
 }
 
 pub struct UnmapResult {
-    pub file_desc: Option<FileDescriptor>,
+    pub file_desc: Option<GrantFileRef>,
 }
 impl Drop for UnmapResult {
     fn drop(&mut self) {
         if let Some(fd) = self.file_desc.take() {
-            let _ = fd.close();
+            let _ = fd.desc.close();
         }
     }
 }
@@ -301,7 +301,15 @@ pub struct Grant {
     mapped: bool,
     owned: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
-    pub desc_opt: Option<FileDescriptor>,
+    pub desc_opt: Option<GrantFileRef>,
+}
+#[derive(Clone, Debug)]
+pub struct GrantFileRef {
+    pub desc: FileDescriptor,
+    pub offset: usize,
+    // TODO: Can the flags maybe be stored together with the page flags. Should some flags be kept,
+    // and others discarded when re-fmapping on clone?
+    pub flags: MapFlags,
 }
 
 impl Grant {
@@ -374,7 +382,7 @@ impl Grant {
         }
     }
 
-    pub fn map_inactive(src: VirtualAddress, dst: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<FileDescriptor>, inactive_table: &mut InactivePageTable) -> Grant {
+    pub fn map_inactive(src: VirtualAddress, dst: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, inactive_table: &mut InactivePageTable) -> Grant {
         let active_table = unsafe { ActivePageTable::new(src.kind()) };
         let mut inactive_mapper = inactive_table.mapper();
 

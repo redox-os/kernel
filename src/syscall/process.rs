@@ -10,7 +10,7 @@ use core::ops::DerefMut;
 use core::{intrinsics, mem, str};
 use spin::{RwLock, RwLockWriteGuard};
 
-use crate::context::file::FileDescriptor;
+use crate::context::file::{FileDescription, FileDescriptor};
 use crate::context::memory::{UserGrants, Region};
 use crate::context::{Context, ContextId, WaitpidKey};
 use crate::context;
@@ -56,7 +56,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let mut image = vec![];
         let mut stack_opt = None;
         let mut sigstack_opt = None;
-        let grants;
+        let mut grants;
         let name;
         let cwd;
         let files;
@@ -266,24 +266,51 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
         if !flags.contains(CLONE_VM) {
-            let mut grants = grants.write();
+            let grants = Arc::get_mut(&mut grants).ok_or(Error::new(EBUSY))?.get_mut();
+            let old_grants = mem::take(&mut grants.inner);
 
-            let mut to_remove = BTreeSet::new();
+            // TODO: Find some way to do this without having to allocate.
 
-            // TODO: Use drain_filter if possible
+            // TODO: Check that the current process is not allowed to serve any scheme this logic
+            // could interfere with. Deadlocks would otherwise seem inevitable.
 
-            for grant in grants.iter() {
-                let remove = false;
-                if let Some(ref _desc) = grant.desc_opt {
-                    println!("todo: clone grant using fmap: {:?}", grant);
-                }
-                if remove {
-                    to_remove.insert(Region::from(grant));
-                }
-            }
+            for mut grant in old_grants.into_iter() {
+                let region = *grant.region();
+                let address = region.start_address().data();
+                let size = region.size();
 
-            for region in to_remove {
-                grants.remove(&region);
+                let new_grant = if let Some(ref mut file_ref) = grant.desc_opt.take() {
+                    // TODO: Technically this is redundant as the grants are already secret_cloned.
+                    // Maybe grants with fds can be excluded from that step?
+                    grant.unmap();
+
+                    let FileDescription { scheme, number, .. } = { *file_ref.desc.description.read() };
+                    let scheme_arc = match crate::scheme::schemes().get(scheme) {
+                        Some(s) => Arc::clone(s),
+                        None => continue,
+                    };
+                    let map = crate::syscall::data::Map {
+                        address,
+                        size,
+                        offset: file_ref.offset,
+                        flags: file_ref.flags | MapFlags::MAP_FIXED_NOREPLACE,
+                    };
+
+                    let ptr = match scheme_arc.fmap(number, &map) {
+                        Ok(new_range) => new_range as *mut u8,
+                        Err(_) => continue,
+                    };
+
+                    // This will eventually be freed from the parent context after move_to is
+                    // called.
+                    context::contexts().current().ok_or(Error::new(ESRCH))?
+                        .read().grants.write()
+                        .take(&Region::new(VirtualAddress::new(ptr as usize), map.size))
+                        .ok_or(Error::new(EFAULT))?
+                } else {
+                    grant
+                };
+                grants.insert(new_grant);
             }
         }
 
