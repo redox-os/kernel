@@ -8,11 +8,11 @@ use alloc::{
 use core::alloc::{GlobalAlloc, Layout};
 use core::ops::DerefMut;
 use core::{intrinsics, mem, str};
-use spin::RwLock;
+use spin::{RwLock, RwLockWriteGuard};
 
 use crate::context::file::FileDescriptor;
-use crate::context::{ContextId, WaitpidKey};
 use crate::context::memory::{UserGrants, Region};
+use crate::context::{Context, ContextId, WaitpidKey};
 use crate::context;
 #[cfg(not(feature="doc"))]
 use crate::elf::{self, program_header};
@@ -525,7 +525,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
     Ok(pid)
 }
 
-fn empty(context: &mut context::Context, reaping: bool) {
+fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGuard<'lock, Context>, reaping: bool) -> RwLockWriteGuard<'lock, Context> {
     if reaping {
         // Memory should already be unmapped
         assert!(context.image.is_empty());
@@ -559,17 +559,26 @@ fn empty(context: &mut context::Context, reaping: bool) {
 
         let grants = mem::replace(&mut *grants_guard, UserGrants::default());
         for grant in grants.inner.into_iter() {
-            if reaping {
+            let unmap_result = if reaping {
                 log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
 
-                grant.unmap_inactive(&mut new_table);
+                grant.unmap_inactive(&mut new_table)
             } else {
-                grant.unmap();
+                grant.unmap()
+            };
+
+            if unmap_result.file_desc.is_some() {
+                drop(context);
+
+                drop(unmap_result);
+
+                context = context_lock.write();
             }
         }
     }
+    context
 }
 
 struct ExecFile(FileHandle);
@@ -607,7 +616,7 @@ fn fexec_noreturn(
 
             context.name = Arc::new(RwLock::new(name));
 
-            empty(&mut context, false);
+            context = empty(&context_lock, context, false);
 
             context.grants.write().insert(phdr_grant);
 
@@ -1091,7 +1100,7 @@ pub fn exit(status: usize) -> ! {
         let (vfork, children) = {
             let mut context = context_lock.write();
 
-            empty(&mut context, false);
+            context = empty(&context_lock, context, false);
 
             let vfork = context.vfork;
             context.vfork = false;
@@ -1439,7 +1448,7 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     let context_lock = contexts.remove(pid).ok_or(Error::new(ESRCH))?;
     {
         let mut context = context_lock.write();
-        empty(&mut context, true);
+        context = empty(&context_lock, context, true);
     }
     drop(context_lock);
 

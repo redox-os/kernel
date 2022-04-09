@@ -35,6 +35,17 @@ pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
         //TODO: PROT_READ
 }
 
+pub struct UnmapResult {
+    pub file_desc: Option<FileDescriptor>,
+}
+impl Drop for UnmapResult {
+    fn drop(&mut self) {
+        if let Some(fd) = self.file_desc.take() {
+            let _ = fd.close();
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct UserGrants {
     pub inner: BTreeSet<Grant>,
@@ -486,7 +497,7 @@ impl Grant {
         self.flags
     }
 
-    pub fn unmap(mut self) {
+    pub fn unmap(mut self) -> UnmapResult {
         assert!(self.mapped);
 
         let mut active_table = unsafe { ActivePageTable::new(self.start_address().kind()) };
@@ -507,16 +518,13 @@ impl Grant {
 
         flush_all.flush();
 
-        if let Some(desc) = self.desc_opt.take() {
-            println!("Grant::unmap: close desc {:?}", desc);
-            //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
-            let _ = desc.close();
-        }
-
         self.mapped = false;
+
+        // TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
+        UnmapResult { file_desc: self.desc_opt.take() }
     }
 
-    pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable) {
+    pub fn unmap_inactive(mut self, new_table: &mut InactivePageTable) -> UnmapResult {
         assert!(self.mapped);
 
         let start_page = Page::containing_address(self.start_address());
@@ -533,13 +541,10 @@ impl Grant {
 
         ipi(IpiKind::Tlb, IpiTarget::Other);
 
-        if let Some(desc) = self.desc_opt.take() {
-            println!("Grant::unmap_inactive: close desc {:?}", desc);
-            //TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
-            let _ = desc.close();
-        }
-
         self.mapped = false;
+
+        // TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
+        UnmapResult { file_desc: self.desc_opt.take() }
     }
 
     /// Extract out a region into a separate grant. The return value is as
