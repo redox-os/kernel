@@ -177,8 +177,6 @@ pub extern fn userspace_init() {
 
     if let Err(err) = syscall::chdir("initfs:") {
         info!("Failed to enter initfs ({}).", err);
-        info!("Perhaps the kernel was compiled with an incorrect INITFS_FOLDER \
-               environment variable value?");
         panic!("Unexpected error while trying to enter initfs:.");
     }
 

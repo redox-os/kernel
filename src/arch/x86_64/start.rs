@@ -52,13 +52,17 @@ pub struct KernelArgs {
     ///
     /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
     /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
-    /// memory instead. On UEFI systems, searching is not guaranteed to actually work though.
+    /// memory instead. On UEFI systems, BIOS-like searching is not guaranteed to actually work though.
     acpi_rsdps_base: u64,
     /// The size of the RSDPs region.
     acpi_rsdps_size: u64,
 
     areas_base: u64,
     areas_size: u64,
+
+    /// The physical base 64-bit pointer to the contiguous initfs.
+    initfs_base: u64,
+    initfs_size: u64,
 }
 
 /// The entry to Rust, all things must be initialized
@@ -77,6 +81,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         let acpi_rsdps_size = args.acpi_rsdps_size;
         let areas_base = args.areas_base as usize;
         let areas_size = args.areas_size as usize;
+        let initfs_base = args.initfs_base as usize;
+        let initfs_size = args.initfs_size as usize;
 
         // BSS should already be zero
         {
@@ -89,6 +95,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Convert env to slice
         let env = slice::from_raw_parts((env_base + crate::PHYS_OFFSET) as *const u8, env_size);
+        let initfs = slice::from_raw_parts((initfs_base + crate::PHYS_OFFSET) as *const u8, initfs_size);
 
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]
@@ -115,6 +122,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Env: {:X}:{:X}", env_base, env_base + env_size);
         info!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
         info!("Areas: {:X}:{:X}", areas_base, areas_base + areas_size);
+        info!("Initfs: {:X}:{:X}", initfs_base, initfs_base + initfs_size);
 
         // Set up GDT before paging
         gdt::init();
@@ -129,6 +137,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             env_base, env_size,
             acpi_rsdps_base as usize, acpi_rsdps_size as usize,
             areas_base, areas_size,
+            initfs_base, initfs_size,
         );
 
         // Initialize paging
@@ -186,6 +195,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
+
+        crate::scheme::initfs::init(initfs);
 
         // Stop graphical debug
         #[cfg(feature = "graphical_debug")]

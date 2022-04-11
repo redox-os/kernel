@@ -165,7 +165,7 @@ impl SchemeList {
             self.insert(ns, "kernel/acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
         }
         self.insert(ns, "debug", |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();
-        self.insert(ns, "initfs", |_| Arc::new(InitFsScheme::new())).unwrap();
+        self.insert(ns, "initfs", |_| Arc::new(InitFsScheme)).unwrap();
         self.insert(ns, "irq", |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();
         self.insert(ns, "proc", |scheme_id| Arc::new(ProcScheme::new(scheme_id))).unwrap();
         self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();
