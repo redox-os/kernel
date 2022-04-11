@@ -8,11 +8,11 @@ use alloc::{
 use core::alloc::{GlobalAlloc, Layout};
 use core::ops::DerefMut;
 use core::{intrinsics, mem, str};
-use spin::RwLock;
+use spin::{RwLock, RwLockWriteGuard};
 
-use crate::context::file::FileDescriptor;
-use crate::context::{ContextId, WaitpidKey};
+use crate::context::file::{FileDescription, FileDescriptor};
 use crate::context::memory::{UserGrants, Region};
+use crate::context::{Context, ContextId, WaitpidKey};
 use crate::context;
 #[cfg(not(feature="doc"))]
 use crate::elf::{self, program_header};
@@ -56,7 +56,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
         let mut image = vec![];
         let mut stack_opt = None;
         let mut sigstack_opt = None;
-        let grants;
+        let mut grants;
         let name;
         let cwd;
         let files;
@@ -266,24 +266,51 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
 
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
         if !flags.contains(CLONE_VM) {
-            let mut grants = grants.write();
+            let grants = Arc::get_mut(&mut grants).ok_or(Error::new(EBUSY))?.get_mut();
+            let old_grants = mem::take(&mut grants.inner);
 
-            let mut to_remove = BTreeSet::new();
+            // TODO: Find some way to do this without having to allocate.
 
-            // TODO: Use drain_filter if possible
+            // TODO: Check that the current process is not allowed to serve any scheme this logic
+            // could interfere with. Deadlocks would otherwise seem inevitable.
 
-            for grant in grants.iter() {
-                let remove = false;
-                if let Some(ref _desc) = grant.desc_opt {
-                    println!("todo: clone grant using fmap: {:?}", grant);
-                }
-                if remove {
-                    to_remove.insert(Region::from(grant));
-                }
-            }
+            for mut grant in old_grants.into_iter() {
+                let region = *grant.region();
+                let address = region.start_address().data();
+                let size = region.size();
 
-            for region in to_remove {
-                grants.remove(&region);
+                let new_grant = if let Some(ref mut file_ref) = grant.desc_opt.take() {
+                    // TODO: Technically this is redundant as the grants are already secret_cloned.
+                    // Maybe grants with fds can be excluded from that step?
+                    grant.unmap();
+
+                    let FileDescription { scheme, number, .. } = { *file_ref.desc.description.read() };
+                    let scheme_arc = match crate::scheme::schemes().get(scheme) {
+                        Some(s) => Arc::clone(s),
+                        None => continue,
+                    };
+                    let map = crate::syscall::data::Map {
+                        address,
+                        size,
+                        offset: file_ref.offset,
+                        flags: file_ref.flags | MapFlags::MAP_FIXED_NOREPLACE,
+                    };
+
+                    let ptr = match scheme_arc.fmap(number, &map) {
+                        Ok(new_range) => new_range as *mut u8,
+                        Err(_) => continue,
+                    };
+
+                    // This will eventually be freed from the parent context after move_to is
+                    // called.
+                    context::contexts().current().ok_or(Error::new(ESRCH))?
+                        .read().grants.write()
+                        .take(&Region::new(VirtualAddress::new(ptr as usize), map.size))
+                        .ok_or(Error::new(EFAULT))?
+                } else {
+                    grant
+                };
+                grants.insert(new_grant);
             }
         }
 
@@ -525,7 +552,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize) -> Result<ContextId> {
     Ok(pid)
 }
 
-fn empty(context: &mut context::Context, reaping: bool) {
+fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGuard<'lock, Context>, reaping: bool) -> RwLockWriteGuard<'lock, Context> {
     if reaping {
         // Memory should already be unmapped
         assert!(context.image.is_empty());
@@ -559,17 +586,26 @@ fn empty(context: &mut context::Context, reaping: bool) {
 
         let grants = mem::replace(&mut *grants_guard, UserGrants::default());
         for grant in grants.inner.into_iter() {
-            if reaping {
+            let unmap_result = if reaping {
                 log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
                 let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
 
-                grant.unmap_inactive(&mut new_table);
+                grant.unmap_inactive(&mut new_table)
             } else {
-                grant.unmap();
+                grant.unmap()
+            };
+
+            if unmap_result.file_desc.is_some() {
+                drop(context);
+
+                drop(unmap_result);
+
+                context = context_lock.write();
             }
         }
     }
+    context
 }
 
 struct ExecFile(FileHandle);
@@ -607,7 +643,7 @@ fn fexec_noreturn(
 
             context.name = Arc::new(RwLock::new(name));
 
-            empty(&mut context, false);
+            context = empty(&context_lock, context, false);
 
             context.grants.write().insert(phdr_grant);
 
@@ -1091,7 +1127,7 @@ pub fn exit(status: usize) -> ! {
         let (vfork, children) = {
             let mut context = context_lock.write();
 
-            empty(&mut context, false);
+            context = empty(&context_lock, context, false);
 
             let vfork = context.vfork;
             context.vfork = false;
@@ -1439,7 +1475,7 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     let context_lock = contexts.remove(pid).ok_or(Error::new(ESRCH))?;
     {
         let mut context = context_lock.write();
-        empty(&mut context, true);
+        context = empty(&context_lock, context, true);
     }
     drop(context_lock);
 
