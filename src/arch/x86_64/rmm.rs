@@ -80,7 +80,8 @@ unsafe fn inner<A: Arch>(
     kernel_base: usize, kernel_size_aligned: usize,
     stack_base: usize, stack_size_aligned: usize,
     env_base: usize, env_size_aligned: usize,
-    acpi_base: usize, acpi_size_aligned: usize
+    acpi_base: usize, acpi_size_aligned: usize,
+    initfs_base: usize, initfs_size_aligned: usize,
 ) -> BuddyAllocator<A> {
     // First, calculate how much memory we have
     let mut size = 0;
@@ -137,44 +138,26 @@ unsafe fn inner<A: Arch>(
             flush.ignore(); // Not the active table
         }
 
-        // Map stack with identity mapping
-        for i in 0..stack_size_aligned / A::PAGE_SIZE {
-            let phys = PhysicalAddress::new(stack_base + i * A::PAGE_SIZE);
-            let virt = A::phys_to_virt(phys);
-            let flags = page_flags::<A>(virt);
-            let flush = mapper.map_phys(
-                virt,
-                phys,
-                flags
-            ).expect("failed to map frame");
-            flush.ignore(); // Not the active table
-        }
+        let mut identity_map = |base, size_aligned| {
+            // Map stack with identity mapping
+            for i in 0..size / A::PAGE_SIZE {
+                let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
+                let virt = A::phys_to_virt(phys);
+                let flags = page_flags::<A>(virt);
+                let flush = mapper.map_phys(
+                    virt,
+                    phys,
+                    flags
+                ).expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        };
 
-        // Map env with identity mapping
-        for i in 0..env_size_aligned / A::PAGE_SIZE {
-            let phys = PhysicalAddress::new(env_base + i * A::PAGE_SIZE);
-            let virt = A::phys_to_virt(phys);
-            let flags = page_flags::<A>(virt);
-            let flush = mapper.map_phys(
-                virt,
-                phys,
-                flags
-            ).expect("failed to map frame");
-            flush.ignore(); // Not the active table
-        }
 
-        // Map acpi with identity mapping
-        for i in 0..acpi_size_aligned / A::PAGE_SIZE {
-            let phys = PhysicalAddress::new(acpi_base + i * A::PAGE_SIZE);
-            let virt = A::phys_to_virt(phys);
-            let flags = page_flags::<A>(virt);
-            let flush = mapper.map_phys(
-                virt,
-                phys,
-                flags
-            ).expect("failed to map frame");
-            flush.ignore(); // Not the active table
-        }
+        identity_map(stack_base, stack_size_aligned);
+        identity_map(env_base, env_size_aligned);
+        identity_map(acpi_base, acpi_size_aligned);
+        identity_map(initfs_base, initfs_size_aligned);
 
         // Ensure graphical debug region remains paged
         #[cfg(feature = "graphical_debug")]
@@ -289,6 +272,7 @@ pub unsafe fn init(
     env_base: usize, env_size: usize,
     acpi_base: usize, acpi_size: usize,
     areas_base: usize, areas_size: usize,
+    initfs_base: usize, initfs_size: usize,
 ) {
     type A = RmmA;
 
@@ -307,6 +291,9 @@ pub unsafe fn init(
 
     let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let acpi_end = acpi_base + acpi_size_aligned;
+
+    let initfs_size_aligned = ((initfs_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let initfs_end = initfs_base + initfs_size_aligned;
 
     let bootloader_areas = slice::from_raw_parts(
         areas_base as *const BootloaderMemoryEntry,
@@ -370,6 +357,10 @@ pub unsafe fn init(
             log::warn!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
             new_base = cmp::max(new_base, acpi_end);
         }
+        if base < initfs_end && base + size > initfs_base {
+            log::warn!("{:X}:{:X} overlaps with initfs {:X}:{:X}", base, size, initfs_base, initfs_size);
+            new_base = cmp::max(new_base, initfs_end);
+        }
 
         if new_base != base {
             let end = base + size;
@@ -394,7 +385,8 @@ pub unsafe fn init(
         kernel_base, kernel_size_aligned,
         stack_base, stack_size_aligned,
         env_base, env_size_aligned,
-        acpi_base, acpi_size_aligned
+        acpi_base, acpi_size_aligned,
+        initfs_base, initfs_size_aligned,
     );
     *FRAME_ALLOCATOR.inner.lock() = Some(allocator);
 }
