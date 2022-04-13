@@ -48,8 +48,16 @@ impl LocalApic {
         if ! self.x2 {
             let page = Page::containing_address(VirtualAddress::new(self.address));
             let frame = Frame::containing_address(PhysicalAddress::new(self.address - crate::PHYS_OFFSET));
+            log::info!("Detected xAPIC at {:#x}", frame.start_address().data());
+            if active_table.translate_page(page).is_some() {
+                // Unmap xAPIC page if already mapped
+                let (result, _frame) = active_table.unmap_return(page, true);
+                result.flush();
+            }
             let result = active_table.map_to(page, frame, PageFlags::new().write(true));
             result.flush();
+        } else {
+            log::info!("Detected x2APIC");
         }
 
         self.init_ap();
