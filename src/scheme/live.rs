@@ -11,10 +11,6 @@ use syscall::error::*;
 use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::scheme::{calc_seek_offset_usize, Scheme};
 
-use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
-use crate::paging::mapper::PageFlushAll;
-
 static mut LIST: [u8; 2] = [b'0', b'\n'];
 
 struct Handle {
@@ -51,22 +47,8 @@ impl DiskScheme {
         }
 
         if phys > 0 && size > 0 {
-            // Map live disk pages
+            // Live disk pages already mapped
             let virt = phys + crate::PHYS_OFFSET;
-            unsafe {
-                let mut active_table = ActivePageTable::new(TableKind::Kernel);
-                let flush_all = PageFlushAll::new();
-                let start_page = Page::containing_address(VirtualAddress::new(virt));
-                let end_page = Page::containing_address(VirtualAddress::new(virt + size - 1));
-                for page in Page::range_inclusive(start_page, end_page) {
-                    let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - crate::PHYS_OFFSET));
-                    let flags = PageFlags::new().write(true);
-                    let result = active_table.map_to(page, frame, flags);
-                    flush_all.consume(result);
-                }
-                flush_all.flush();
-            }
-
             Some(DiskScheme {
                 next_id: AtomicUsize::new(0),
                 list: Arc::new(RwLock::new(unsafe { &mut LIST })),
