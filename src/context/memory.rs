@@ -94,9 +94,10 @@ impl UserGrants {
     // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
     pub fn find_free(&self, size: usize) -> Option<Region> {
         // Get first available hole, but do reserve the page starting from zero as most compiled
-        // language cannot handle null pointers safely even if they do point to valid memory. If an
+        // languages cannot handle null pointers safely even if they point to valid memory. If an
         // application absolutely needs to map the 0th page, they will have to do so explicitly via
         // MAP_FIXED/MAP_FIXED_NOREPLACE.
+        // TODO: Allow explicitly allocating guard pages?
 
         let (hole_start, hole_size) = self.holes.iter().find(|(hole_offset, hole_size)| size <= if hole_offset.data() == 0 { hole_size.saturating_sub(PAGE_SIZE) } else { **hole_size })?;
         // Create new region

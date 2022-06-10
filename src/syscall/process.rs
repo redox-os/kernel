@@ -191,8 +191,8 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
 
         // If not cloning virtual memory, use fmap to re-obtain every grant where possible
         if !flags.contains(CLONE_VM) {
-            let grants = Arc::get_mut(&mut grants).ok_or(Error::new(EBUSY))?.get_mut();
-            let old_grants = mem::take(grants);
+            let mut grants = grants.write();
+            let old_grants = mem::take(&mut *grants);
 
             // TODO: Find some way to do this without having to allocate.
 
@@ -1018,7 +1018,7 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
     for (index, page) in grant.pages().enumerate() {
         let len = if data.len() - index * PAGE_SIZE < PAGE_SIZE { data.len() % PAGE_SIZE } else { PAGE_SIZE };
         let frame = active_table.translate_page(page).expect("expected mapped init memory to have a corresponding frame");
-        unsafe { ((frame.start_address().data() + crate::KERNEL_OFFSET) as *mut u8).copy_from_nonoverlapping(data.as_ptr().add(index * PAGE_SIZE), len); }
+        unsafe { ((frame.start_address().data() + crate::PHYS_OFFSET) as *mut u8).copy_from_nonoverlapping(data.as_ptr().add(index * PAGE_SIZE), len); }
     }
 
     context::contexts().current().expect("expected a context to exist when executing init").read().grants.write().insert(grant);
