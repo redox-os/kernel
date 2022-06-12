@@ -16,6 +16,7 @@ use alloc::{
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::context::Context;
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
 
@@ -299,4 +300,10 @@ pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
     SCHEMES.call_once(init_schemes).write()
 }
 
-pub trait KernelScheme: Scheme + Send + Sync + 'static {}
+pub trait KernelScheme: Scheme + Send + Sync + 'static {
+    #[allow(unused_arguments)]
+    fn kfmap(&self, number: usize, map: &syscall::data::Map, target_context: &Arc<RwLock<Context>>) -> Result<usize> {
+        log::error!("Returning ENOSYS since kfmap can only be called on UserScheme schemes");
+        Err(Error::new(ENOSYS))
+    }
+}

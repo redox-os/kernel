@@ -189,55 +189,25 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
             }
         }
 
-        // If not cloning virtual memory, use fmap to re-obtain every grant where possible
-        if !flags.contains(CLONE_VM) {
-            let mut grants = grants.write();
-            let old_grants = mem::take(&mut *grants);
-
-            // TODO: Find some way to do this without having to allocate.
-
-            // TODO: Check that the current process is not allowed to serve any scheme this logic
-            // could interfere with. Deadlocks would otherwise seem inevitable.
-
-            for mut grant in old_grants.into_iter() {
-                let region = *grant.region();
-                let address = region.start_address().data();
-                let size = region.size();
-
-                let new_grant = if let Some(ref mut file_ref) = grant.desc_opt.take() {
-                    // TODO: Technically this is redundant as the grants are already secret_cloned.
-                    // Maybe grants with fds can be excluded from that step?
-                    grant.unmap();
-
-                    let FileDescription { scheme, number, .. } = { *file_ref.desc.description.read() };
-                    let scheme_arc = match crate::scheme::schemes().get(scheme) {
-                        Some(s) => Arc::clone(s),
-                        None => continue,
-                    };
-                    let map = crate::syscall::data::Map {
-                        address,
-                        size,
-                        offset: file_ref.offset,
-                        flags: file_ref.flags | MapFlags::MAP_FIXED_NOREPLACE,
-                    };
-
-                    let ptr = match scheme_arc.fmap(number, &map) {
-                        Ok(new_range) => new_range as *mut u8,
-                        Err(_) => continue,
-                    };
-
-                    // This will eventually be freed from the parent context after move_to is
-                    // called.
-                    context::contexts().current().ok_or(Error::new(ESRCH))?
-                        .read().grants.write()
-                        .take(&Region::new(VirtualAddress::new(ptr as usize), map.size))
-                        .ok_or(Error::new(EFAULT))?
-                } else {
-                    grant
+        let maps_to_reobtain = if flags.contains(CLONE_VM) {
+            Vec::new()
+        } else {
+            grants.read().iter().filter_map(|grant| grant.desc_opt.as_ref().and_then(|file_ref| {
+                let FileDescription { scheme, number, .. } = { *file_ref.desc.description.read() };
+                let scheme_arc = match crate::scheme::schemes().get(scheme) {
+                    Some(s) => Arc::downgrade(s),
+                    None => return None,
                 };
-                grants.insert(new_grant);
-            }
-        }
+                let map = crate::syscall::data::Map {
+                    address: grant.start_address().data(),
+                    size: grant.size(),
+                    offset: file_ref.offset,
+                    flags: file_ref.flags | MapFlags::MAP_FIXED_NOREPLACE,
+                };
+
+                Some((scheme_arc, number, map))
+            })).collect()
+        };
 
         // If vfork, block the current process
         // This has to be done after the operations that may require context switches
@@ -252,7 +222,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
         }
 
         // Set up new process
-        {
+        let new_context_lock = {
             let mut contexts = context::contexts_mut();
             let context_lock = contexts.new_context()?;
             let mut context = context_lock.write();
@@ -277,7 +247,9 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
                 context.cpu_id = Some(pid.into() % crate::cpu_count());
             }
 
-            context.status = context::Status::Runnable;
+            // Start as blocked. This is to ensure the context is never switched before any grants
+            // that have to be remapped, are mapped.
+            context.status = context::Status::Blocked;
 
             context.vfork = vfork;
 
@@ -299,7 +271,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
                 let mut new_tables = setup_new_utable().expect("failed to allocate new page tables for cloned process");
 
                 let mut new_grants = UserGrants::new();
-                for old_grant in grants.read().iter() {
+                for old_grant in grants.read().iter().filter(|g| g.desc_opt.is_none()) {
                     new_grants.insert(old_grant.secret_clone(&mut new_tables.new_utable));
                 }
                 context.grants = Arc::new(RwLock::new(new_grants));
@@ -368,7 +340,17 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
             } else {
                 context.sigstack = old_sigstack;
             }
+
+            Arc::clone(context_lock)
+        };
+        for (scheme_weak, number, map) in maps_to_reobtain {
+            let scheme = match scheme_weak.upgrade() {
+                Some(s) => s,
+                None => continue,
+            };
+            let _ = scheme.kfmap(number, &map, &new_context_lock);
         }
+        new_context_lock.write().unblock();
     }
 
     if ptrace::send_event(ptrace_event!(PTRACE_EVENT_CLONE, pid.into())).is_some() {

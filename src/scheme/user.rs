@@ -152,10 +152,6 @@ impl UserInner {
         let src_region = Region::new(VirtualAddress::new(src_address), offset + size).round();
         let dst_region = grants.find_free_at(VirtualAddress::new(dst_address), src_region.size(), flags)?;
 
-        /*if !dst_region.intersect(Region::new(VirtualAddress::new(0x39d000), 1)).is_empty() {
-            dbg!(dst_region);
-        }*/
-
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
         grants.insert(Grant::map_inactive(
             src_region.start_address(),
@@ -233,6 +229,9 @@ impl UserInner {
                     _ => println!("Unknown scheme -> kernel message {}", packet.a)
                 }
             } else {
+                // The motivation of doing this here instead of within the fmap handler, is that we
+                // can operate on an inactive table. This reduces the number of page table reloads
+                // from two (context switch + active TLB flush) to one (context switch).
                 if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
                         if address % PAGE_SIZE > 0 {
@@ -273,6 +272,51 @@ impl UserInner {
 
     pub fn fsync(&self) -> Result<usize> {
         Ok(0)
+    }
+
+    fn fmap_inner(&self, file: usize, map: &Map, context_lock: &Arc<RwLock<Context>>) -> Result<usize> {
+        let (pid, uid, gid, context_weak, desc) = {
+            let context = context_lock.read();
+            // TODO: Faster, cleaner mechanism to get descriptor
+            let scheme = self.scheme_id.load(Ordering::SeqCst);
+            let mut desc_res = Err(Error::new(EBADF));
+            for context_file_opt in context.files.read().iter() {
+                if let Some(context_file) = context_file_opt {
+                    let (context_scheme, context_number) = {
+                        let desc = context_file.description.read();
+                        (desc.scheme, desc.number)
+                    };
+                    if context_scheme == scheme && context_number == file {
+                        desc_res = Ok(context_file.clone());
+                        break;
+                    }
+                }
+            }
+            let desc = desc_res?;
+            (context.id, context.euid, context.egid, Arc::downgrade(context_lock), desc)
+        };
+        drop(context_lock);
+
+        let address = self.capture(map)?;
+
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        self.fmap.lock().insert(id, (context_weak, desc, *map));
+
+        let result = self.call_inner(Packet {
+            id,
+            pid: pid.into(),
+            uid,
+            gid,
+            a: SYS_FMAP,
+            b: file,
+            c: address,
+            d: mem::size_of::<Map>()
+        });
+
+        let _ = self.release(address);
+
+        result
     }
 }
 
@@ -384,49 +428,7 @@ impl Scheme for UserScheme {
     fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let (pid, uid, gid, context_lock, desc) = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            // TODO: Faster, cleaner mechanism to get descriptor
-            let scheme = inner.scheme_id.load(Ordering::SeqCst);
-            let mut desc_res = Err(Error::new(EBADF));
-            for context_file_opt in context.files.read().iter() {
-                if let Some(context_file) = context_file_opt {
-                    let (context_scheme, context_number) = {
-                        let desc = context_file.description.read();
-                        (desc.scheme, desc.number)
-                    };
-                    if context_scheme == scheme && context_number == file {
-                        desc_res = Ok(context_file.clone());
-                        break;
-                    }
-                }
-            }
-            let desc = desc_res?;
-            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
-        };
-
-        let address = inner.capture(map)?;
-
-        let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
-
-        inner.fmap.lock().insert(id, (context_lock, desc, *map));
-
-        let result = inner.call_inner(Packet {
-            id,
-            pid: pid.into(),
-            uid,
-            gid,
-            a: SYS_FMAP,
-            b: file,
-            c: address,
-            d: mem::size_of::<Map>()
-        });
-
-        let _ = inner.release(address);
-
-        result
+        inner.fmap_inner(file, map, &Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?))
     }
 
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
@@ -528,4 +530,9 @@ impl Scheme for UserScheme {
         inner.call(SYS_CLOSE, file, 0, 0)
     }
 }
-impl crate::scheme::KernelScheme for UserScheme {}
+impl crate::scheme::KernelScheme for UserScheme {
+    fn kfmap(&self, number: usize, map: &Map, target_context: &Arc<RwLock<Context>>) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        inner.fmap_inner(number, map, target_context)
+    }
+}

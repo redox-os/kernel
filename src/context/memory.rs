@@ -125,7 +125,7 @@ impl UserGrants {
             // ... but it already exists
 
             if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) {
-                println!("grant: conflicts with: {:#x} - {:#x}", grant.start_address().data(), grant.end_address().data());
+                println!("grant: {:#x} conflicts with: {:#x} - {:#x}", address.data(), grant.start_address().data(), grant.end_address().data());
                 return Err(Error::new(EEXIST));
             } else if flags.contains(MapFlags::MAP_FIXED) {
                 // TODO: Overwrite existing grant
