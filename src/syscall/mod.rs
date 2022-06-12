@@ -85,24 +85,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                         SYS_FCNTL => fcntl(fd, c, d),
                         SYS_FRENAME => frename(fd, validate_str(c as *const u8, d)?),
                         SYS_FUNMAP => funmap(b, c),
-                        SYS_FMAP_OLD => {
-                            {
-                                let contexts = crate::context::contexts();
-                                let current = contexts.current().unwrap();
-                                let current = current.read();
-                                println!("{:?} using deprecated fmap(...) call", *current.name.read());
-                            }
-                            file_op(a, fd, c, d)
-                        },
-                        SYS_FUNMAP_OLD => {
-                            {
-                                let contexts = crate::context::contexts();
-                                let current = contexts.current().unwrap();
-                                let current = current.read();
-                                println!("{:?} using deprecated funmap(...) call", *current.name.read());
-                            }
-                            funmap_old(b)
-                        },
                         _ => file_op(a, fd, c, d)
                     }
                 }

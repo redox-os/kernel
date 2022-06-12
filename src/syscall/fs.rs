@@ -469,45 +469,6 @@ pub fn fstat(fd: FileHandle, stat: &mut Stat) -> Result<usize> {
     scheme.fstat(description.number, stat)
 }
 
-pub fn funmap_old(virtual_address: usize) -> Result<usize> {
-    if virtual_address == 0 {
-        Ok(0)
-    } else {
-        let mut desc_opt = None;
-
-        {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            let mut grants = context.grants.write();
-
-            if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
-                let mut grant = grants.take(&region).unwrap();
-                desc_opt = grant.desc_opt.take();
-                grant.unmap();
-            }
-        }
-
-        if let Some(file_ref) = desc_opt {
-            let scheme_id = { file_ref.desc.description.read().scheme };
-
-            let scheme = {
-                let schemes = scheme::schemes();
-                let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
-                scheme.clone()
-            };
-            let res = scheme.funmap_old(virtual_address);
-
-            let _ = file_ref.desc.close();
-
-            res
-        } else {
-            Err(Error::new(EFAULT))
-        }
-    }
-}
-
 pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     if virtual_address == 0 || length == 0 {
         return Ok(0);

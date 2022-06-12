@@ -66,18 +66,6 @@ impl Scheme for MemoryScheme {
     fn fmap(&self, _id: usize, map: &Map) -> Result<usize> {
         Self::fmap_anonymous(map)
     }
-    fn fmap_old(&self, id: usize, map: &OldMap) -> Result<usize> {
-        if map.flags.contains(MapFlags::MAP_FIXED) {
-            // not supported for fmap, which lacks the address argument.
-            return Err(Error::new(EINVAL));
-        }
-        self.fmap(id, &Map {
-            offset: map.offset,
-            size: map.size,
-            flags: map.flags,
-            address: 0,
-        })
-    }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)

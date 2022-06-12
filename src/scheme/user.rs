@@ -381,59 +381,6 @@ impl Scheme for UserScheme {
         inner.call(SYS_FEVENT, file, flags.bits(), 0).map(EventFlags::from_bits_truncate)
     }
 
-    fn fmap_old(&self, file: usize, map: &OldMap) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-
-        let (pid, uid, gid, context_lock, desc) = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            // TODO: Faster, cleaner mechanism to get descriptor
-            let scheme = inner.scheme_id.load(Ordering::SeqCst);
-            let mut desc_res = Err(Error::new(EBADF));
-            for context_file_opt in context.files.read().iter() {
-                if let Some(context_file) = context_file_opt {
-                    let (context_scheme, context_number) = {
-                        let desc = context_file.description.read();
-                        (desc.scheme, desc.number)
-                    };
-                    if context_scheme == scheme && context_number == file {
-                        desc_res = Ok(context_file.clone());
-                        break;
-                    }
-                }
-            }
-            let desc = desc_res?;
-            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
-        };
-
-        let address = inner.capture(map)?;
-
-        let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
-
-        inner.fmap.lock().insert(id, (context_lock, desc, Map {
-            offset: map.offset,
-            size: map.size,
-            flags: map.flags,
-            address: 0,
-        }));
-
-        let result = inner.call_inner(Packet {
-            id,
-            pid: pid.into(),
-            uid,
-            gid,
-            a: SYS_FMAP_OLD,
-            b: file,
-            c: address,
-            d: mem::size_of::<OldMap>()
-        });
-
-        let _ = inner.release(address);
-
-        result
-    }
-
     fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
@@ -480,36 +427,6 @@ impl Scheme for UserScheme {
         let _ = inner.release(address);
 
         result
-    }
-
-    fn funmap_old(&self, grant_address: usize) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address_opt = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            let mut grants = context.grants.write();
-            let funmap = &mut grants.funmap;
-            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
-
-            let grant_address = VirtualAddress::new(grant_address);
-
-            if let Some((&grant, &user_base)) = entry {
-                if grant_address >= grant.end_address() {
-                    return Err(Error::new(EINVAL));
-                }
-                funmap.remove(&grant);
-                let user = Region::new(user_base, grant.size());
-                Some(grant.rebase(user, grant_address).data())
-            } else {
-                None
-            }
-        };
-        if let Some(user_address) = address_opt {
-            inner.call(SYS_FUNMAP_OLD, user_address, 0, 0)
-        } else {
-            Err(Error::new(EINVAL))
-        }
     }
 
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {

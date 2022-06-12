@@ -106,14 +106,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             d
         ),
-        SYS_FMAP_OLD => format!(
-            "fmap_old({}, {:?})",
-            b,
-            validate_slice(
-                c as *const OldMap,
-                d/mem::size_of::<OldMap>()
-            ),
-        ),
         SYS_FMAP => format!(
             "fmap({}, {:?})",
             b,
@@ -121,10 +113,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
                 c as *const Map,
                 d/mem::size_of::<Map>()
             ),
-        ),
-        SYS_FUNMAP_OLD => format!(
-            "funmap_old({:#X})",
-            b
         ),
         SYS_FUNMAP => format!(
             "funmap({:#X}, {:#X})",
