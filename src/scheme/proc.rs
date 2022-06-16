@@ -1,6 +1,7 @@
 use crate::{
-    arch::paging::VirtualAddress,
-    context::{self, Context, ContextId, Status},
+    arch::paging::{ActivePageTable, InactivePageTable, mapper::{Mapper, PageFlushAll}, Page, VirtualAddress},
+    context::{self, Context, ContextId, Status, memory::{Grant, page_flags, Region}},
+    memory::PAGE_SIZE,
     ptrace,
     scheme::{AtomicSchemeId, SchemeId},
     syscall::{
@@ -19,6 +20,8 @@ use crate::{
 use alloc::{
     boxed::Box,
     collections::BTreeMap,
+    string::{String, ToString},
+    sync::Arc,
     vec::Vec,
 };
 use core::{
@@ -30,6 +33,14 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use spin::RwLock;
+
+fn read_from(dst: &mut [u8], src: &[u8], offset: &mut usize) -> Result<usize> {
+    let byte_count = cmp::min(dst.len(), src.len().saturating_sub(*offset));
+    let next_offset = offset.saturating_add(byte_count);
+    dst[..byte_count].copy_from_slice(&src[*offset..next_offset]);
+    *offset = next_offset;
+    Ok(byte_count)
+}
 
 fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
 where
@@ -99,22 +110,27 @@ enum RegsKind {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Operation {
     Memory,
+    Grants,
     Regs(RegsKind),
     Trace,
     Static(&'static str),
     Name,
     Sigstack,
+    Attr(Attr),
+    Files,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attr {
+    Uid,
+    Gid,
+    // TODO: namespace, tid, etc.
 }
 impl Operation {
     fn needs_child_process(self) -> bool {
-        match self {
-            Self::Memory => true,
-            Self::Regs(_) => true,
-            Self::Trace => true,
-            Self::Static(_) => false,
-            Self::Name => false,
-            Self::Sigstack => false,
-        }
+        matches!(self, Self::Memory | Self::Grants | Self::Regs(_) | Self::Trace | Self::Files)
+    }
+    fn needs_root(self) -> bool {
+        matches!(self, Self::Attr(_))
     }
 }
 struct MemData {
@@ -248,6 +264,7 @@ impl Scheme for ProcScheme {
 
         let operation = match parts.next() {
             Some("mem") => Operation::Memory,
+            Some("grants") => Operation::Grants,
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
             Some("regs/env") => Operation::Regs(RegsKind::Env),
@@ -255,13 +272,16 @@ impl Scheme for ProcScheme {
             Some("exe") => Operation::Static("exe"),
             Some("name") => Operation::Name,
             Some("sigstack") => Operation::Sigstack,
+            Some("uid") => Operation::Attr(Attr::Uid),
+            Some("gid") => Operation::Attr(Attr::Gid),
+            Some("files") => Operation::Files,
             _ => return Err(Error::new(EINVAL))
         };
 
         let contexts = context::contexts();
         let target = contexts.get(pid).ok_or(Error::new(ESRCH))?;
 
-        let data;
+        let mut data;
 
         {
             let target = target.read();
@@ -303,6 +323,20 @@ impl Scheme for ProcScheme {
                         None => return Err(Error::new(EPERM)),
                     }
                 }
+            } else if operation.needs_root() && (uid != 0 || gid != 0) {
+                return Err(Error::new(EPERM));
+            }
+
+            if matches!(operation, Operation::Files) {
+                data = OperationData::Static(StaticData::new({
+                    use core::fmt::Write;
+
+                    let mut data = String::new();
+                    for index in target.files.read().iter().enumerate().filter_map(|(idx, val)| val.as_ref().map(|_| idx)) {
+                        write!(data, "{}\n", index).unwrap();
+                    }
+                    data.into_bytes().into_boxed_slice()
+                }));
             }
         };
 
@@ -407,14 +441,23 @@ impl Scheme for ProcScheme {
                 let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
                 let mut context = context.write();
 
-                ptrace::with_context_memory(&mut context, data.offset, buf.len(), |ptr| {
-                    buf.copy_from_slice(validate::validate_slice(ptr, buf.len())?);
-                    Ok(())
-                })?;
+                let mut bytes_read = 0;
 
-                data.offset = VirtualAddress::new(data.offset.data() + buf.len());
-                Ok(buf.len())
+                for chunk_opt in ptrace::context_memory(&mut *context, data.offset, buf.len()) {
+                    let chunk = chunk_opt.ok_or(Error::new(EFAULT))?;
+                    let dst_slice = &mut buf[bytes_read..bytes_read + chunk.len()];
+                    unsafe {
+                        chunk.as_mut_ptr().copy_to_nonoverlapping(dst_slice.as_mut_ptr(), dst_slice.len());
+                    }
+                    bytes_read += chunk.len();
+                }
+
+                data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
+                Ok(bytes_read)
             },
+            // TODO: Allow reading process mappings?
+            Operation::Grants => return Err(Error::new(EBADF)),
+
             Operation::Regs(kind) => {
                 union Output {
                     float: FloatRegisters,
@@ -526,19 +569,22 @@ impl Scheme for ProcScheme {
                 // Return read events
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
-            Operation::Name => match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read().name.read() {
-                name => {
-                    let to_copy = cmp::min(buf.len(), name.len());
-                    buf[..to_copy].copy_from_slice(&name.as_bytes()[..to_copy]);
-                    Ok(to_copy)
-                }
+            Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.read().as_bytes(), &mut 0),
+            Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
+            Operation::Attr(attr) => {
+                let src_buf = match (attr, &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?).read()) {
+                    (Attr::Uid, context) => context.euid.to_string(),
+                    (Attr::Gid, context) => context.egid.to_string(),
+                }.into_bytes();
+
+                read_from(buf, &src_buf, &mut 0)
             }
-            Operation::Sigstack => match context::contexts().current().ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes() {
-                sigstack => {
-                    let to_copy = cmp::min(buf.len(), sigstack.len());
-                    buf[..to_copy].copy_from_slice(&sigstack[..to_copy]);
-                    Ok(to_copy)
-                }
+            Operation::Files => {
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.static_data().expect("operations can't change");
+
+                read_from(buf, &data.buf, &mut data.offset)
             }
         }
     }
@@ -571,14 +617,89 @@ impl Scheme for ProcScheme {
                 let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
                 let mut context = context.write();
 
-                ptrace::with_context_memory(&mut context, data.offset, buf.len(), |ptr| {
-                    validate::validate_slice_mut(ptr, buf.len())?.copy_from_slice(buf);
-                    Ok(())
-                })?;
+                let mut bytes_written = 0;
 
-                data.offset = VirtualAddress::new(data.offset.data() + buf.len());
-                Ok(buf.len())
+                for chunk_opt in ptrace::context_memory(&mut *context, data.offset, buf.len()) {
+                    let chunk = chunk_opt.ok_or(Error::new(EFAULT))?;
+                    let src_slice = &buf[bytes_written..bytes_written + chunk.len()];
+                    unsafe {
+                        chunk.as_mut_ptr().copy_from_nonoverlapping(src_slice.as_ptr(), src_slice.len());
+                    }
+                    bytes_written += chunk.len();
+                }
+
+                data.offset = VirtualAddress::new(data.offset.data() + bytes_written);
+                Ok(bytes_written)
             },
+            Operation::Grants => {
+                // FIXME: Forbid upgrading external mappings.
+
+                let pid = self.handles.read()
+                    .get(&id).ok_or(Error::new(EBADF))?
+                    .info.pid;
+
+                let mut chunks = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
+                // Update grant mappings, like mprotect but allowed to target other contexts.
+                let base = chunks.next().ok_or(Error::new(EINVAL))?;
+                let size = chunks.next().ok_or(Error::new(EINVAL))?;
+                let flags = chunks.next().and_then(|f| MapFlags::from_bits(f)).ok_or(Error::new(EINVAL))?;
+                let region = Region::new(VirtualAddress::new(base), size);
+
+                if base % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || base.saturating_add(size) > crate::PML4_SIZE * 256 {
+                    return Err(Error::new(EINVAL));
+                }
+
+                let is_inactive = pid != context::context_id();
+
+                let callback = |context: &mut Context| {
+                    let mut inactive = is_inactive.then(|| unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) });
+
+                    let mut grants = context.grants.write();
+
+                    let conflicting = grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
+                    for conflicting_region in conflicting {
+                        let whole_grant = grants.take(&conflicting_region).ok_or(Error::new(EBADFD))?;
+                        let (before_opt, current, after_opt) = whole_grant.extract(region.intersect(conflicting_region)).ok_or(Error::new(EBADFD))?;
+
+                        if let Some(before) = before_opt {
+                            grants.insert(before);
+                        }
+                        if let Some(after) = after_opt {
+                            grants.insert(after);
+                        }
+
+                        let res = if let Some(ref mut inactive) = inactive {
+                            current.unmap_inactive(inactive)
+                        } else {
+                            current.unmap()
+                        };
+                        if res.file_desc.is_some() {
+                            drop(grants);
+                            return Err(Error::new(EBUSY));
+                        }
+
+                        // TODO: Partial free if grant is mapped externally.
+                    }
+
+                    if flags.intersects(MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::PROT_WRITE) {
+                        let base = VirtualAddress::new(base);
+
+                        if let Some(ref mut inactive) = inactive {
+                            grants.insert(Grant::zeroed_inactive(Page::containing_address(base), size / PAGE_SIZE, page_flags(flags), inactive).unwrap());
+                        } else {
+                            grants.insert(Grant::map(base, size, page_flags(flags)));
+                        }
+                    }
+                    Ok(())
+                };
+
+                if is_inactive {
+                    with_context_mut(pid, callback)?;
+                } else {
+                    try_stop_context(pid, callback)?;
+                }
+                Ok(3 * mem::size_of::<usize>())
+            }
             Operation::Regs(kind) => match kind {
                 RegsKind::Float => {
                     if buf.len() < mem::size_of::<FloatRegisters>() {
@@ -727,15 +848,26 @@ impl Scheme for ProcScheme {
             },
             Operation::Name => {
                 let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?.into_boxed_str();
-                *context::contexts().current().ok_or(Error::new(ESRCH))?.read().name.write() = utf8;
+                *context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.write() = utf8;
                 Ok(buf.len())
             }
             Operation::Sigstack => {
                 let bytes = <[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?;
                 let sigstack = usize::from_ne_bytes(bytes);
-                context::contexts().current().ok_or(Error::new(ESRCH))?.write().sigstack = (sigstack != !0).then(|| sigstack);
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sigstack = (sigstack != !0).then(|| sigstack);
                 Ok(buf.len())
             }
+            Operation::Attr(attr) => {
+                let context_lock = Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?);
+                let id = core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?.parse::<u32>().map_err(|_| Error::new(EINVAL))?;
+
+                match attr {
+                    Attr::Uid => context_lock.write().euid = id,
+                    Attr::Gid => context_lock.write().egid = id,
+                }
+                Ok(buf.len())
+            }
+            Operation::Files => return Err(Error::new(EBADF)),
         }
     }
 
@@ -768,6 +900,7 @@ impl Scheme for ProcScheme {
 
         let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.info.operation {
             Operation::Memory => "mem",
+            Operation::Grants => "grants",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
             Operation::Regs(RegsKind::Env) => "regs/env",
@@ -775,12 +908,12 @@ impl Scheme for ProcScheme {
             Operation::Static(path) => path,
             Operation::Name => "name",
             Operation::Sigstack => "sigstack",
+            Operation::Attr(Attr::Uid) => "uid",
+            Operation::Attr(Attr::Gid) => "gid",
+            Operation::Files => "files",
         });
 
-        let len = cmp::min(path.len(), buf.len());
-        buf[..len].copy_from_slice(&path.as_bytes()[..len]);
-
-        Ok(len)
+        read_from(buf, &path.as_bytes(), &mut 0)
     }
 
     fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {

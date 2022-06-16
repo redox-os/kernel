@@ -44,9 +44,7 @@ raw-cpuid = "10.2.0"
 x86 = { version = "0.47.0", default-features = false }
 
 [features]
-# TODO: Fix multicore
-#default = ["acpi", "multi_core", "graphical_debug", "serial_debug"]
-default = ["acpi", "graphical_debug", "serial_debug"]
+default = ["acpi", "multi_core", "graphical_debug", "serial_debug"]
 acpi = []
 doc = []
 graphical_debug = []

@@ -260,7 +260,9 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
             #[cfg(all(target_arch = "x86_64", feature = "x86_fsgsbase"))]
             unsafe {
                 context.arch.fsbase = x86::bits64::segmentation::rdfsbase() as usize;
+                x86::bits64::segmentation::swapgs();
                 context.arch.gsbase = x86::bits64::segmentation::rdgsbase() as usize;
+                x86::bits64::segmentation::swapgs();
             }
 
             if flags.contains(CloneFlags::CLONE_VM) {
@@ -1116,10 +1118,6 @@ pub fn exec(memranges: &[ExecMemRange], instruction_ptr: usize, stack_ptr: usize
             // TODO: Reuse in place if the file table is not shared.
             drop(context);
 
-            for file_slot in old_files.iter_mut().filter(|file_opt| file_opt.as_ref().map_or(false, |file| file.cloexec)) {
-                let file = file_slot.take().expect("iterator filter requires file slot to be occupied, not None");
-                let _ = file.close();
-            }
             let mut context = current_context_lock.write();
 
             context.files = Arc::new(RwLock::new(old_files));

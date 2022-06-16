@@ -171,17 +171,18 @@ impl<'table> Mapper<'table> {
     }
 
     pub fn translate_page(&self, page: Page) -> Option<Frame> {
-        self.p4().next_table(page.p4_index())
-            .and_then(|p3| p3.next_table(page.p3_index()))
-            .and_then(|p2| p2.next_table(page.p2_index()))
-            .and_then(|p1| p1[page.p1_index()].pointed_frame())
+        self.translate_page_and_flags(page).map(|(frame, _)| frame)
     }
 
     pub fn translate_page_flags(&self, page: Page) -> Option<PageFlags<RmmA>> {
+        self.translate_page_and_flags(page).map(|(_, flags)| flags)
+    }
+    pub fn translate_page_and_flags(&self, page: Page) -> Option<(Frame, PageFlags<RmmA>)> {
         self.p4().next_table(page.p4_index())
             .and_then(|p3| p3.next_table(page.p3_index()))
             .and_then(|p2| p2.next_table(page.p2_index()))
-            .and_then(|p1| Some(p1[page.p1_index()].flags()))
+            .map(|p1| &p1[page.p1_index()])
+            .and_then(|entry| Some((entry.pointed_frame()?, entry.flags())))
     }
 
     /// Translate a virtual address to a physical one

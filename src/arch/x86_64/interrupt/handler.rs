@@ -150,8 +150,6 @@ impl InterruptStack {
     /// Loads all registers from a struct used by the proc:
     /// scheme to read/write registers.
     pub fn load(&mut self, all: &IntRegisters) {
-        // TODO: Which of these should be allowed to change?
-
         self.preserved.r15 = all.r15;
         self.preserved.r14 = all.r14;
         self.preserved.r13 = all.r13;
@@ -168,9 +166,11 @@ impl InterruptStack {
         self.scratch.rcx = all.rcx;
         self.scratch.rax = all.rax;
         self.iret.rip = all.rip;
+        self.iret.rsp = all.rsp;
 
-        // These should probably be restricted
-        // self.iret.cs = all.cs;
+        // CS and SS are immutable
+
+        // TODO: RFLAGS should be restricted before being changeable
         // self.iret.rflags = all.eflags;
     }
     /// Enables the "Trap Flag" in the FLAGS register, causing the CPU

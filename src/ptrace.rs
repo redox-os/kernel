@@ -2,6 +2,8 @@
 //! handling should go here, unless they closely depend on the design
 //! of the scheme.
 
+use rmm::Arch;
+
 use crate::{
     arch::{
         interrupt::InterruptStack,
@@ -21,6 +23,7 @@ use crate::{
         flag::*,
         ptrace_event
     },
+    CurrentRmmArch as RmmA,
 };
 
 use alloc::{
@@ -445,66 +448,41 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
 // |_|  |_|\___|_| |_| |_|\___/|_|   \__, |
 //                                   |___/
 
-pub fn with_context_memory<F>(context: &mut Context, offset: VirtualAddress, len: usize, f: F) -> Result<()>
-where F: FnOnce(*mut u8) -> Result<()>
-{
-    // As far as I understand, mapping any regions following
-    // USER_TMP_MISC_OFFSET is safe because no other memory location
-    // is used after it. In the future it might be necessary to define
-    // a maximum amount of pages that can be mapped in one batch,
-    // which could be used to either internally retry `read`/`write`
-    // in `proc:<pid>/mem`, or return a partial read/write.
-    let start = Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET));
+// Returns an iterator which splits [start, start + len) into an iterator of possibly trimmed
+// pages.
+fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item = (usize, usize)> {
+    // TODO: Define this elsewhere!
+    #[cfg(target_arch = "x86_64")]
+    const KERNEL_SPLIT_START: usize = crate::PML4_SIZE * 256;
 
-    let mut active_page_table = unsafe { ActivePageTable::new(TableKind::User) };
-    let mut target_page_table = unsafe {
-        InactivePageTable::from_address(context.arch.get_page_utable())
-    };
-
-    // Find the physical frames for all pages
-    let mut frames = Vec::new();
-
-    {
-        let mapper = target_page_table.mapper();
-
-        let mut inner = || -> Result<()> {
-            let start = Page::containing_address(offset);
-            let end = Page::containing_address(VirtualAddress::new(offset.data() + len - 1));
-            for page in Page::range_inclusive(start, end) {
-                frames.push((
-                    mapper.translate_page(page).ok_or(Error::new(EFAULT))?,
-                    mapper.translate_page_flags(page).ok_or(Error::new(EFAULT))?
-                ));
-            }
-            Ok(())
-        };
-        inner()?;
+    // Ensure no pages can overlap with kernel memory.
+    if start.saturating_add(len) > KERNEL_SPLIT_START {
+        len = KERNEL_SPLIT_START.saturating_sub(start);
     }
 
-    // Map all the physical frames into linear pages
-    let pages = frames.len();
-    let mut page = start;
-    let flush_all = PageFlushAll::new();
-    for (frame, mut flags) in frames {
-        flags = flags.execute(false).write(true);
-        flush_all.consume(active_page_table.map_to(page, frame, flags));
+    let first_len = core::cmp::min(len, PAGE_SIZE - start % PAGE_SIZE);
+    let first = Some((start, first_len)).filter(|(_, len)| *len > 0);
+    start += first_len;
+    len -= first_len;
 
-        page = page.next();
-    }
+    let last_len = len % PAGE_SIZE;
+    len -= last_len;
+    let last = Some((start + len, last_len)).filter(|(_, len)| *len > 0);
 
-    flush_all.flush();
+    first.into_iter().chain((start..start + len).step_by(PAGE_SIZE).map(|off| (off, PAGE_SIZE))).chain(last)
+}
 
-    let res = f((start.start_address().data() + offset.data() % PAGE_SIZE) as *mut u8);
+pub fn context_memory(context: &mut Context, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<*mut [u8]>> + '_ {
+    let mut table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
 
-    // Unmap all the pages (but allow no deallocation!)
-    let mut page = start;
-    let flush_all = PageFlushAll::new();
-    for _ in 0..pages {
-        flush_all.consume(active_page_table.unmap_return(page, true).0);
-        page = page.next();
-    }
+    page_aligned_chunks(offset.data(), len).map(move |(addr, len)| unsafe {
+        // [addr,addr+len) is a continuous page starting and/or ending at page boundaries, with the
+        // possible exception of an unaligned head/tail.
 
-    flush_all.flush();
+        //log::info!("ADDR {:p} LEN {:#0x}", page as *const u8, len);
 
-    res
+        let frame = table.mapper().translate_page(Page::containing_address(VirtualAddress::new(addr)))?;
+        let start = RmmA::phys_to_virt(frame.start_address()).data() + addr % crate::memory::PAGE_SIZE;
+        Some(core::ptr::slice_from_raw_parts_mut(start as *mut u8, len))
+    })
 }
