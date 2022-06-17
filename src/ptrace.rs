@@ -451,13 +451,9 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
 // Returns an iterator which splits [start, start + len) into an iterator of possibly trimmed
 // pages.
 fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item = (usize, usize)> {
-    // TODO: Define this elsewhere!
-    #[cfg(target_arch = "x86_64")]
-    const KERNEL_SPLIT_START: usize = crate::PML4_SIZE * 256;
-
     // Ensure no pages can overlap with kernel memory.
-    if start.saturating_add(len) > KERNEL_SPLIT_START {
-        len = KERNEL_SPLIT_START.saturating_sub(start);
+    if start.saturating_add(len) > crate::USER_END_OFFSET {
+        len = crate::USER_END_OFFSET.saturating_sub(start);
     }
 
     let first_len = core::cmp::min(len, PAGE_SIZE - start % PAGE_SIZE);

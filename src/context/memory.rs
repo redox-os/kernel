@@ -68,7 +68,7 @@ impl UserGrants {
     pub fn new() -> Self {
         Self {
             inner: BTreeSet::new(),
-            holes: core::iter::once((VirtualAddress::new(0), crate::PML4_SIZE * 256)).collect::<BTreeMap<_, _>>(),
+            holes: core::iter::once((VirtualAddress::new(0), crate::USER_END_OFFSET)).collect::<BTreeMap<_, _>>(),
             funmap: BTreeMap::new(),
         }
     }
@@ -114,7 +114,7 @@ impl UserGrants {
         let mut requested = Region::new(address, size);
 
         if
-            requested.end_address().data() > crate::PML4_SIZE * 256 // There are 256 PML4 entries reserved for userspace
+            requested.end_address().data() > crate::USER_END_OFFSET
             || address.data() % PAGE_SIZE != 0
         {
             // ... but it was invalid

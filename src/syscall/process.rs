@@ -87,6 +87,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
                 cpu_id_opt = context.cpu_id;
             }
 
+            // TODO: Fill with newest registers.
             arch = context.arch.clone();
 
             if let Some(ref fx) = context.kfx {
@@ -115,6 +116,9 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
                     //
                     // (base pointer - start of stack) - one
                     offset = stack_base - stack.as_ptr() as usize - mem::size_of::<usize>(); // Add clone ret
+                    // FIXME: This is incredibly UB, making Rust think the current stack being
+                    // copied is simply a regular immutable slice. This part should either be
+                    // written in assembly or have clone moved to userspace.
                     let mut new_stack = stack.clone();
 
                     unsafe {
@@ -352,7 +356,7 @@ pub fn clone(flags: CloneFlags, stack_base: usize, info: Option<&CloneInfo>) -> 
             };
             let _ = scheme.kfmap(number, &map, &new_context_lock);
         }
-        new_context_lock.write().unblock();
+        new_context_lock.write().status = context::Status::Runnable;
     }
 
     if ptrace::send_event(ptrace_event!(PTRACE_EVENT_CLONE, pid.into())).is_some() {
@@ -997,12 +1001,14 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
     const LOAD_BASE: usize = 0;
     let grant = context::memory::Grant::map(VirtualAddress::new(LOAD_BASE), ((data.len()+PAGE_SIZE-1)/PAGE_SIZE)*PAGE_SIZE, PageFlags::new().user(true).write(true).execute(true));
 
-    let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
+    {
+        let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
 
-    for (index, page) in grant.pages().enumerate() {
-        let len = if data.len() - index * PAGE_SIZE < PAGE_SIZE { data.len() % PAGE_SIZE } else { PAGE_SIZE };
-        let frame = active_table.translate_page(page).expect("expected mapped init memory to have a corresponding frame");
-        unsafe { ((frame.start_address().data() + crate::PHYS_OFFSET) as *mut u8).copy_from_nonoverlapping(data.as_ptr().add(index * PAGE_SIZE), len); }
+        for (index, page) in grant.pages().enumerate() {
+            let len = if data.len() - index * PAGE_SIZE < PAGE_SIZE { data.len() % PAGE_SIZE } else { PAGE_SIZE };
+            let frame = active_table.translate_page(page).expect("expected mapped init memory to have a corresponding frame");
+            unsafe { ((frame.start_address().data() + crate::PHYS_OFFSET) as *mut u8).copy_from_nonoverlapping(data.as_ptr().add(index * PAGE_SIZE), len); }
+        }
     }
 
     context::contexts().current().expect("expected a context to exist when executing init").read().grants.write().insert(grant);
@@ -1012,8 +1018,7 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let start = ((LOAD_BASE + 0x18) as *mut usize).read();
-        // Start with the (probably) ELF executable loaded, without any stack the ability to load
-        // sections to arbitrary addresses.
+        // Start with the (probably) ELF executable loaded, without any stack.
         usermode(start, 0, 0, 0);
     }
 }

@@ -645,7 +645,7 @@ impl Scheme for ProcScheme {
                 let flags = chunks.next().and_then(|f| MapFlags::from_bits(f)).ok_or(Error::new(EINVAL))?;
                 let region = Region::new(VirtualAddress::new(base), size);
 
-                if base % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || base.saturating_add(size) > crate::PML4_SIZE * 256 {
+                if base % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || base.saturating_add(size) > crate::USER_END_OFFSET {
                     return Err(Error::new(EINVAL));
                 }
 

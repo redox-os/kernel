@@ -38,7 +38,5 @@
     /// Offset to user image
     pub const USER_OFFSET: usize = 0;
 
-    /// Offset for usage in other temporary pages
-    // TODO: Currently used for ptrace but should be removed or replaced with a kernel address.
-    pub const USER_TMP_MISC_OFFSET: usize = USER_OFFSET + PML4_SIZE;
-    pub const USER_TMP_MISC_PML4: usize = (USER_TMP_MISC_OFFSET & PML4_MASK)/PML4_SIZE;
+    /// End offset of the user image, i.e. kernel start
+    pub const USER_END_OFFSET: usize = 256 * PML4_SIZE;
