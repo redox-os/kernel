@@ -1,6 +1,6 @@
 use crate::{
-    arch::paging::{ActivePageTable, InactivePageTable, mapper::{Mapper, PageFlushAll}, Page, VirtualAddress},
-    context::{self, Context, ContextId, Status, memory::{Grant, page_flags, Region}},
+    arch::paging::{ActivePageTable, Flusher, InactivePageTable, mapper::{InactiveFlusher, Mapper, PageFlushAll}, Page, RmmA, VirtualAddress},
+    context::{self, Context, ContextId, Status, memory::{addrspace, Grant, new_addrspace, PtId, page_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{AtomicSchemeId, SchemeId},
@@ -32,7 +32,7 @@ use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use spin::RwLock;
+use spin::{Once, RwLock};
 
 fn read_from(dst: &mut [u8], src: &[u8], offset: &mut usize) -> Result<usize> {
     let byte_count = cmp::min(dst.len(), src.len().saturating_sub(*offset));
@@ -68,7 +68,7 @@ where
 }
 fn try_stop_context<F, T>(pid: ContextId, mut callback: F) -> Result<T>
 where
-    F: FnMut(&mut Context) -> Result<T>,
+    F: FnOnce(&mut Context) -> Result<T>,
 {
     if pid == context::context_id() {
         return Err(Error::new(EBADF));
@@ -118,6 +118,8 @@ enum Operation {
     Sigstack,
     Attr(Attr),
     Files,
+    AddrSpace { id: PtId },
+    CurrentAddrSpace,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -216,7 +218,7 @@ impl Handle {
     }
 }
 
-pub static PROC_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
+pub static PROC_SCHEME_ID: Once<SchemeId> = Once::new();
 
 pub struct ProcScheme {
     next_id: AtomicUsize,
@@ -231,7 +233,7 @@ pub enum Access {
 
 impl ProcScheme {
     pub fn new(scheme_id: SchemeId) -> Self {
-        PROC_SCHEME_ID.store(scheme_id, Ordering::SeqCst);
+        PROC_SCHEME_ID.call_once(|| scheme_id);
 
         Self {
             next_id: AtomicUsize::new(0),
@@ -245,6 +247,11 @@ impl ProcScheme {
             handles: RwLock::new(BTreeMap::new()),
             access: Access::Restricted,
         }
+    }
+    fn new_handle(&self, handle: Handle) -> Result<usize> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let _ = self.handles.write().insert(id, handle);
+        Ok(id)
     }
 }
 
@@ -264,7 +271,8 @@ impl Scheme for ProcScheme {
 
         let operation = match parts.next() {
             Some("mem") => Operation::Memory,
-            Some("grants") => Operation::Grants,
+            Some("addrspace") => Operation::AddrSpace { id: context::contexts().current().ok_or(Error::new(ESRCH))?.read().addr_space()?.read().id },
+            Some("current-addrspace") => Operation::CurrentAddrSpace,
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
             Some("regs/env") => Operation::Regs(RegsKind::Env),
@@ -340,9 +348,16 @@ impl Scheme for ProcScheme {
             }
         };
 
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = self.new_handle(Handle {
+            info: Info {
+                flags,
+                pid,
+                operation,
+            },
+            data,
+        })?;
 
-        if let Operation::Trace { .. } = operation {
+        if let Operation::Trace = operation {
             if !ptrace::try_new_session(pid, id) {
                 // There is no good way to handle id being occupied for nothing
                 // here, is there?
@@ -355,44 +370,41 @@ impl Scheme for ProcScheme {
             }
         }
 
-        self.handles.write().insert(id, Handle {
-            info: Info {
-                flags,
-                pid,
-                operation,
-            },
-            data,
-        });
         Ok(id)
     }
 
-    /// Using dup for `proc:` simply opens another operation on the same PID
-    /// ```rust,ignore
-    /// let trace = syscall::open("proc:1234/trace")?;
-    ///
-    /// // let regs = syscall::open("proc:1234/regs/int")?;
-    /// let regs = syscall::dup(trace, "regs/int")?;
-    /// ```
+    /// Dup is currently used to implement clone() and execve().
     fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
         let info = {
             let handles = self.handles.read();
             let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
+
             handle.info
         };
 
-        let buf_str = str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?;
+        self.new_handle(match info.operation {
+            Operation::AddrSpace { id } => {
+                let new_ptid = match buf {
+                    // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
+                    // in that case, what scheme?
+                    b"empty" => new_addrspace()?.0,
+                    // Reuse same ID.
+                    b"shared" => id,
+                    b"exclusive" => addrspace(id).ok_or(Error::new(EBADFD))?.read().try_clone()?.0,
 
-        let mut path = format!("{}/", info.pid.into());
-        path.push_str(buf_str);
-
-        let (uid, gid) = {
-            let contexts = context::contexts();
-            let context = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context.read();
-            (context.euid, context.egid)
-        };
-
-        self.open(&path, info.flags, uid, gid)
+                    _ => return Err(Error::new(EINVAL)),
+                };
+                Handle {
+                    info: Info {
+                        flags: 0,
+                        pid: info.pid,
+                        operation: Operation::AddrSpace { id: new_ptid },
+                    },
+                    data: OperationData::Other,
+                }
+            }
+            _ => return Err(Error::new(EINVAL)),
+        })
     }
 
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
@@ -421,6 +433,7 @@ impl Scheme for ProcScheme {
         };
 
         match info.operation {
+            Operation::Grants => return Err(Error::new(ENOSYS)),
             Operation::Static(_) => {
                 let mut handles = self.handles.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -455,8 +468,7 @@ impl Scheme for ProcScheme {
                 data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
                 Ok(bytes_read)
             },
-            // TODO: Allow reading process mappings?
-            Operation::Grants => return Err(Error::new(EBADF)),
+            Operation::AddrSpace { .. } => return Err(Error::new(EBADF)),
 
             Operation::Regs(kind) => {
                 union Output {
@@ -586,6 +598,14 @@ impl Scheme for ProcScheme {
 
                 read_from(buf, &data.buf, &mut data.offset)
             }
+            // TODO: Replace write() with SYS_DUP_FORWARD.
+            // TODO: Find a better way to switch address spaces, since they also require switching
+            // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
+            // with `<pid>/ctx`
+            Operation::CurrentAddrSpace  => {
+                //read_from(buf, &usize::to_ne_bytes(id.into()), &mut 0)
+                Ok(0)
+            }
         }
     }
 
@@ -606,6 +626,7 @@ impl Scheme for ProcScheme {
         };
 
         match info.operation {
+            Operation::Grants => Err(Error::new(ENOSYS)),
             Operation::Static(_) => Err(Error::new(EBADF)),
             Operation::Memory => {
                 // Won't context switch, don't worry about the locks
@@ -631,7 +652,7 @@ impl Scheme for ProcScheme {
                 data.offset = VirtualAddress::new(data.offset.data() + bytes_written);
                 Ok(bytes_written)
             },
-            Operation::Grants => {
+            Operation::AddrSpace { .. } => {
                 // FIXME: Forbid upgrading external mappings.
 
                 let pid = self.handles.read()
@@ -649,51 +670,52 @@ impl Scheme for ProcScheme {
                     return Err(Error::new(EINVAL));
                 }
 
-                let is_inactive = pid != context::context_id();
+                let is_active = pid == context::context_id();
 
                 let callback = |context: &mut Context| {
-                    let mut inactive = is_inactive.then(|| unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) });
+                    let (mut inactive, mut active);
 
-                    let mut grants = context.grants.write();
+                    let mut addr_space = context.addr_space()?.write();
 
-                    let conflicting = grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
+                    let (mut mapper, mut flusher) = if is_active {
+                        active = (unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new());
+                        (active.0.mapper(), &mut active.1 as &mut dyn Flusher<RmmA>)
+                    } else {
+                        inactive = (unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) }, InactiveFlusher::new());
+                        (inactive.0.mapper(), &mut inactive.1 as &mut dyn Flusher<RmmA>)
+                    };
+
+                    let conflicting = addr_space.grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
                     for conflicting_region in conflicting {
-                        let whole_grant = grants.take(&conflicting_region).ok_or(Error::new(EBADFD))?;
+                        let whole_grant = addr_space.grants.take(&conflicting_region).ok_or(Error::new(EBADFD))?;
                         let (before_opt, current, after_opt) = whole_grant.extract(region.intersect(conflicting_region)).ok_or(Error::new(EBADFD))?;
 
                         if let Some(before) = before_opt {
-                            grants.insert(before);
+                            addr_space.grants.insert(before);
                         }
                         if let Some(after) = after_opt {
-                            grants.insert(after);
+                            addr_space.grants.insert(after);
                         }
 
-                        let res = if let Some(ref mut inactive) = inactive {
-                            current.unmap_inactive(inactive)
-                        } else {
-                            current.unmap()
-                        };
+                        let res = current.unmap(&mut mapper, &mut flusher);
+
                         if res.file_desc.is_some() {
-                            drop(grants);
                             return Err(Error::new(EBUSY));
                         }
 
-                        // TODO: Partial free if grant is mapped externally.
+                        // TODO: Partial free if grant is mapped externally, or fail and force
+                        // userspace to do it.
                     }
 
                     if flags.intersects(MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::PROT_WRITE) {
-                        let base = VirtualAddress::new(base);
+                        let base = Page::containing_address(VirtualAddress::new(base));
 
-                        if let Some(ref mut inactive) = inactive {
-                            grants.insert(Grant::zeroed_inactive(Page::containing_address(base), size / PAGE_SIZE, page_flags(flags), inactive).unwrap());
-                        } else {
-                            grants.insert(Grant::map(base, size, page_flags(flags)));
-                        }
+                        addr_space.grants.insert(Grant::zeroed(base, size / PAGE_SIZE, page_flags(flags), &mut mapper, flusher)?);
                     }
                     Ok(())
                 };
 
-                if is_inactive {
+                if is_active {
                     with_context_mut(pid, callback)?;
                 } else {
                     try_stop_context(pid, callback)?;
@@ -868,6 +890,24 @@ impl Scheme for ProcScheme {
                 Ok(buf.len())
             }
             Operation::Files => return Err(Error::new(EBADF)),
+            Operation::CurrentAddrSpace { .. } => {
+                let mut iter = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
+                let id = iter.next().ok_or(Error::new(EINVAL))?;
+                let sp = iter.next().ok_or(Error::new(EINVAL))?;
+                let ip = iter.next().ok_or(Error::new(EINVAL))?;
+
+                let space = addrspace(PtId::from(id)).ok_or(Error::new(EINVAL))?;
+
+                try_stop_context(info.pid, |context| unsafe {
+                    let regs = &mut ptrace::regs_for_mut(context).ok_or(Error::new(ESRCH))?.iret;
+                    regs.rip = ip;
+                    regs.rsp = sp;
+
+                    context.set_addr_space(space);
+                    Ok(())
+                })?;
+                Ok(3 * mem::size_of::<usize>())
+            }
         }
     }
 
@@ -911,6 +951,8 @@ impl Scheme for ProcScheme {
             Operation::Attr(Attr::Uid) => "uid",
             Operation::Attr(Attr::Gid) => "gid",
             Operation::Files => "files",
+            Operation::AddrSpace { .. } => "addrspace",
+            Operation::CurrentAddrSpace => "current-addrspace",
         });
 
         read_from(buf, &path.as_bytes(), &mut 0)

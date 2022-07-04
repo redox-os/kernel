@@ -1,3 +1,4 @@
+use rmm::Flusher;
 use crate::paging::{ActivePageTable, Page, PageFlags, VirtualAddress, mapper::PageFlushAll, entry::EntryFlags};
 
 #[cfg(not(feature="slab"))]
@@ -13,7 +14,7 @@ mod linked_list;
 mod slab;
 
 unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usize) {
-    let flush_all = PageFlushAll::new();
+    let mut flush_all = PageFlushAll::new();
 
     let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
     let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size-1));

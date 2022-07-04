@@ -1,8 +1,7 @@
 use core::{ascii, mem};
 use alloc::string::String;
-use alloc::vec::Vec;
 
-use super::data::{OldMap, Map, Stat, TimeSpec};
+use super::data::{Map, Stat, TimeSpec};
 use super::flag::*;
 use super::number::*;
 use super::validate::*;

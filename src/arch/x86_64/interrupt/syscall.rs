@@ -160,23 +160,3 @@ interrupt_stack!(syscall, |stack| {
         syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
     })
 });
-
-#[naked]
-pub unsafe extern "C" fn clone_ret() {
-    core::arch::asm!(concat!(
-    // The address of this instruction is injected by `clone` in process.rs, on
-    // top of the stack syscall->inner in this file, which is done using the rbp
-    // register we save there.
-    //
-    // The top of our stack here is the address pointed to by rbp, which is:
-    //
-    // - the previous rbp
-    // - the return location
-    //
-    // Our goal is to return from the parent function, inner, so we restore
-    // rbp...
-    "pop rbp\n",
-    // ...and we return to the address at the top of the stack
-    "ret\n",
-    ), options(noreturn));
-}

@@ -5,7 +5,8 @@ use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
 use core::fmt::{self, Debug};
 use core::intrinsics;
 use core::ops::Deref;
-use spin::Mutex;
+use core::sync::atomic;
+use spin::{Mutex, RwLock};
 use syscall::{
     flag::MapFlags,
     error::*,
@@ -14,9 +15,8 @@ use rmm::Arch as _;
 
 use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
-use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::Frame;
-use crate::paging::mapper::PageFlushAll;
+use crate::paging::mapper::{Flusher, InactiveFlusher, Mapper, PageFlushAll};
 use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, PageIter, PhysicalAddress, RmmA, TableKind, VirtualAddress};
 
 /// Round down to the nearest multiple of page size
@@ -44,6 +44,76 @@ impl Drop for UnmapResult {
         if let Some(fd) = self.file_desc.take() {
             let _ = fd.desc.close();
         }
+    }
+}
+
+int_like!(PtId, usize);
+
+static ADDRSPACES: RwLock<BTreeMap<PtId, Arc<RwLock<AddrSpace>>>> = RwLock::new(BTreeMap::new());
+static NEXT_PTID: atomic::AtomicUsize = atomic::AtomicUsize::new(1);
+
+pub fn new_addrspace() -> Result<(PtId, Arc<RwLock<AddrSpace>>)> {
+    let id = PtId::from(NEXT_PTID.fetch_add(1, atomic::Ordering::Relaxed));
+    let arc = Arc::try_new(RwLock::new(AddrSpace::new(id)?)).map_err(|_| Error::new(ENOMEM))?;
+    ADDRSPACES.write().insert(id, Arc::clone(&arc));
+    Ok((id, arc))
+}
+pub fn addrspace(id: PtId) -> Option<Arc<RwLock<AddrSpace>>> {
+    ADDRSPACES.read().get(&id).map(Arc::clone)
+}
+
+#[derive(Debug)]
+pub struct AddrSpace {
+    pub frame: Tables,
+    pub grants: UserGrants,
+    pub id: PtId,
+}
+impl AddrSpace {
+    /// Attempt to clone an existing address space so that all mappings are copied (CoW).
+    // TODO: Actually use CoW!
+    pub fn try_clone(&self) -> Result<(PtId, Arc<RwLock<Self>>)> {
+        let (id, mut new) = new_addrspace()?;
+
+        // TODO: Abstract away this.
+        let (mut inactive, mut active);
+
+        // TODO: aarch64
+        let mut this_mapper = if self.frame.utable.start_address().data() == unsafe { x86::controlregs::cr3() } as usize {
+            active = unsafe { ActivePageTable::new(rmm::TableKind::User) };
+            active.mapper()
+        } else {
+            inactive = unsafe { InactivePageTable::from_address(self.frame.utable.start_address().data()) };
+            inactive.mapper()
+        };
+        let mut new_mapper = unsafe { InactivePageTable::from_address(new.read().frame.utable.start_address().data()) };
+
+        for grant in self.grants.iter() {
+            // TODO: Fail if there are borrowed grants, rather than simply ignoring them?
+            if !grant.is_owned() { continue; }
+
+            let new_grant = Grant::zeroed(Page::containing_address(grant.start_address()), grant.size() / PAGE_SIZE, grant.flags(), &mut new_mapper.mapper(), ())?;
+
+            for page in new_grant.pages() {
+                // FIXME: ENOMEM is wrong here, it cannot fail.
+                let current_frame = this_mapper.translate_page(page).ok_or(Error::new(ENOMEM))?.start_address().data() as *const u8;
+                let new_frame = new_mapper.mapper().translate_page(page).ok_or(Error::new(ENOMEM))?.start_address().data() as *mut u8;
+
+                // TODO: Replace this with CoW
+                unsafe {
+                    new_frame.copy_from_nonoverlapping(current_frame, PAGE_SIZE);
+                }
+            }
+
+            new.write().grants.insert(new_grant);
+        }
+        Ok((id, new))
+    }
+    pub fn new(id: PtId) -> Result<Self> {
+        Ok(Self {
+            grants: UserGrants::new(),
+            frame: setup_new_utable()?,
+            id,
+        })
     }
 }
 
@@ -406,7 +476,7 @@ impl Grant {
     pub fn physmap(from: PhysicalAddress, to: VirtualAddress, size: usize, flags: PageFlags<RmmA>) -> Grant {
         let mut active_table = unsafe { ActivePageTable::new(to.kind()) };
 
-        let flush_all = PageFlushAll::new();
+        let mut flush_all = PageFlushAll::new();
 
         let start_page = Page::containing_address(to);
         let end_page = Page::containing_address(VirtualAddress::new(to.data() + size - 1));
@@ -429,40 +499,10 @@ impl Grant {
             desc_opt: None,
         }
     }
-
-    pub fn map(to: VirtualAddress, size: usize, flags: PageFlags<RmmA>) -> Grant {
-        let mut active_table = unsafe { ActivePageTable::new(to.kind()) };
-
-        let flush_all = PageFlushAll::new();
-
-        let start_page = Page::containing_address(to);
-        let end_page = Page::containing_address(VirtualAddress::new(to.data() + size - 1));
-        for page in Page::range_inclusive(start_page, end_page) {
-            let result = active_table
-                .map(page, flags)
-                .expect("TODO: handle ENOMEM in Grant::map");
-            flush_all.consume(result);
-        }
-
-        flush_all.flush();
-
-        Grant {
-            region: Region {
-                start: to,
-                size,
-            },
-            flags,
-            mapped: true,
-            owned: true,
-            desc_opt: None,
-        }
-    }
-    pub fn zeroed_inactive(dst: Page, page_count: usize, flags: PageFlags<RmmA>, table: &mut InactivePageTable) -> Result<Grant> {
-        let mut inactive_mapper = table.mapper();
-
+    pub fn zeroed(dst: Page, page_count: usize, flags: PageFlags<RmmA>, mapper: &mut Mapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant> {
         for page in Page::range_exclusive(dst, dst.next_by(page_count)) {
-            let flush = inactive_mapper.map(page, flags).map_err(|_| Error::new(ENOMEM))?;
-            unsafe { flush.ignore(); }
+            let flush = mapper.map(page, flags).map_err(|_| Error::new(ENOMEM))?;
+            flusher.consume(flush);
         }
         Ok(Grant { region: Region { start: dst.start_address(), size: page_count * PAGE_SIZE }, flags, mapped: true, owned: true, desc_opt: None })
     }
@@ -487,8 +527,6 @@ impl Grant {
             unsafe { inactive_flush.ignore(); }
         }
 
-        ipi(IpiKind::Tlb, IpiTarget::Other);
-
         Grant {
             region: Region {
                 start: dst,
@@ -501,96 +539,21 @@ impl Grant {
         }
     }
 
-    /// This function should only be used in clone!
-    pub(crate) fn secret_clone(&self, inactive_table: &mut InactivePageTable) -> Grant {
-        assert!(self.mapped);
-
-        let active_table = unsafe { ActivePageTable::new(TableKind::User) };
-        let mut inactive_mapper = inactive_table.mapper();
-
-        for page in self.pages() {
-            //TODO: One function to do both?
-            let flags = active_table.translate_page_flags(page).expect("grant references unmapped memory");
-            let old_frame = active_table.translate_page(page).expect("grant references unmapped memory");
-
-            let frame = if self.owned {
-                // TODO: CoW paging
-                let new_frame = crate::memory::allocate_frames(1)
-                    .expect("TODO: handle ENOMEM in Grant::secret_clone");
-
-                unsafe {
-                    // We might as well use self.start_address() directly, but if we were to
-                    // introduce SMAP it would help to only move to/from kernel memory, and we are
-                    // copying physical frames anyway.
-                    let src_pointer = RmmA::phys_to_virt(old_frame.start_address()).data() as *const u8;
-                    let dst_pointer = RmmA::phys_to_virt(new_frame.start_address()).data() as *mut u8;
-                    dst_pointer.copy_from_nonoverlapping(src_pointer, PAGE_SIZE);
-                }
-
-                new_frame
-            } else {
-                old_frame
-            };
-
-            let flush = inactive_mapper.map_to(page, frame, flags);
-            // SAFETY: This happens within an inactive table.
-            unsafe { flush.ignore() }
-        }
-
-        Grant {
-            region: Region {
-                start: self.region.start,
-                size: self.region.size,
-            },
-            flags: self.flags,
-            mapped: true,
-            owned: self.owned,
-            desc_opt: self.desc_opt.clone()
-        }
-    }
-
     pub fn flags(&self) -> PageFlags<RmmA> {
         self.flags
     }
 
-    pub fn unmap(mut self) -> UnmapResult {
+    pub fn unmap(mut self, mapper: &mut Mapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
         assert!(self.mapped);
 
-        let mut active_table = unsafe { ActivePageTable::new(self.start_address().kind()) };
-
-        let flush_all = PageFlushAll::new();
-
         for page in self.pages() {
-            let (result, frame) = active_table.unmap_return(page, false);
+            let (result, frame) = mapper.unmap_return(page, false);
             if self.owned {
                 //TODO: make sure this frame can be safely freed, physical use counter
                 crate::memory::deallocate_frames(frame, 1);
             }
-            flush_all.consume(result);
+            flusher.consume(result);
         }
-
-        flush_all.flush();
-
-        self.mapped = false;
-
-        // TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
-        UnmapResult { file_desc: self.desc_opt.take() }
-    }
-
-    pub fn unmap_inactive(mut self, other_table: &mut InactivePageTable) -> UnmapResult {
-        assert!(self.mapped);
-
-        for page in self.pages() {
-            let (result, frame) = other_table.mapper().unmap_return(page, false);
-            if self.owned {
-                //TODO: make sure this frame can be safely freed, physical use counter
-                crate::memory::deallocate_frames(frame, 1);
-            }
-            // This is not the active table, so the flush can be ignored
-            unsafe { result.ignore(); }
-        }
-
-        ipi(IpiKind::Tlb, IpiTarget::Other);
 
         self.mapped = false;
 
@@ -636,34 +599,6 @@ impl Grant {
 
         Some((before_grant, self, after_grant))
     }
-    pub fn move_to_address_space(&mut self, new_start: Page, new_page_table: &mut InactivePageTable, flags: PageFlags<RmmA>, flush_all: &mut PageFlushAll<RmmA>) -> Grant {
-        assert!(self.mapped);
-
-        let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
-        let mut new_mapper = new_page_table.mapper();
-        let keep_parents = false;
-
-        for (i, page) in self.pages().enumerate() {
-            unsafe {
-                let (flush, frame) = active_table.unmap_return(page, keep_parents);
-                flush_all.consume(flush);
-
-                let flush = new_mapper.map_to(new_start.next_by(i), frame, flags);
-                flush.ignore();
-            }
-        }
-
-        let was_owned = core::mem::replace(&mut self.owned, false);
-        self.mapped = false;
-
-        Self {
-            region: Region::new(new_start.start_address(), self.region.size),
-            flags,
-            mapped: true,
-            owned: was_owned,
-            desc_opt: self.desc_opt.clone(),
-        }
-    }
 }
 
 impl Deref for Grant {
@@ -704,79 +639,68 @@ impl Drop for Grant {
 
 pub const DANGLING: usize = 1 << (usize::BITS - 2);
 
-pub struct NewTables {
+#[derive(Debug)]
+pub struct Tables {
     #[cfg(target_arch = "aarch64")]
-    pub new_ktable: InactivePageTable,
-    pub new_utable: InactivePageTable,
+    pub ktable: Frame,
 
-    taken: bool,
-}
-impl NewTables {
-    pub fn take(&mut self) {
-        self.taken = true;
-    }
+    pub utable: Frame,
 }
 
-impl Drop for NewTables {
+impl Drop for Tables {
     fn drop(&mut self) {
-        if self.taken { return }
+        use crate::memory::deallocate_frames;
+        deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.utable.start_address().data())), 1);
 
-        unsafe {
-            use crate::memory::deallocate_frames;
-            deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.new_utable.address())), 1);
-
-            #[cfg(target_arch = "aarch64")]
-            deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.new_ktable.address())), 1);
-        }
+        #[cfg(target_arch = "aarch64")]
+        deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.ktable.start_address().data())), 1);
     }
 }
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
-pub fn setup_new_utable() -> Result<NewTables> {
-    let mut new_utable = unsafe { InactivePageTable::new(crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?) };
+pub fn setup_new_utable() -> Result<Tables> {
+    let mut new_utable = crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?;
 
-    let mut new_ktable = if cfg!(target_arch = "aarch64") {
-        unsafe { InactivePageTable::new(crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?) }
-    } else {
-        unsafe { InactivePageTable::from_address(new_utable.address()) }
-    };
+    // TODO: There is only supposed to be one ktable, right? Use a global variable to store the
+    // ktable (or access it from a control register) on architectures which have ktables, or obtain
+    // it from *any* utable on architectures which do not.
+    #[cfg(target_arch = "aarch64")]
+    let new_ktable = crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?;
 
     let active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
 
-    // Copy kernel image mapping
-    {
-        let frame = active_ktable.p4()[crate::KERNEL_PML4].pointed_frame().expect("kernel image not mapped");
-        let flags = active_ktable.p4()[crate::KERNEL_PML4].flags();
+    #[cfg(target_arch = "aarch64")]
+    let ktable = &new_ktable;
 
-        new_ktable.mapper().p4_mut()[crate::KERNEL_PML4].set(frame, flags);
-    }
+    #[cfg(not(target_arch = "aarch64"))]
+    let ktable = &new_utable;
+
+    let mut new_mapper = unsafe { InactivePageTable::from_address(ktable.start_address().data()) };
+
+    let mut copy_mapping = |p4_no| {
+        let frame = active_ktable.p4()[p4_no].pointed_frame().expect("kernel image not mapped");
+        let flags = active_ktable.p4()[p4_no].flags();
+
+        new_mapper.mapper().p4_mut()[p4_no].set(frame, flags);
+    };
+    // TODO: Just copy all 256 mappings?
+
+    // Copy kernel image mapping
+    copy_mapping(crate::KERNEL_PML4);
 
     // Copy kernel heap mapping
-    {
-        let frame = active_ktable.p4()[crate::KERNEL_HEAP_PML4].pointed_frame().expect("kernel heap not mapped");
-        let flags = active_ktable.p4()[crate::KERNEL_HEAP_PML4].flags();
-
-        new_ktable.mapper().p4_mut()[crate::KERNEL_HEAP_PML4].set(frame, flags);
-    }
+    copy_mapping(crate::KERNEL_HEAP_PML4);
 
     // Copy physmap mapping
-    {
-        let frame = active_ktable.p4()[crate::PHYS_PML4].pointed_frame().expect("physmap not mapped");
-        let flags = active_ktable.p4()[crate::PHYS_PML4].flags();
-        new_ktable.mapper().p4_mut()[crate::PHYS_PML4].set(frame, flags);
-    }
-    // Copy kernel percpu (similar to TLS) mapping.
-    {
-        let frame = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].pointed_frame().expect("kernel TLS not mapped");
-        let flags = active_ktable.p4()[crate::KERNEL_PERCPU_PML4].flags();
-        new_ktable.mapper().p4_mut()[crate::KERNEL_PERCPU_PML4].set(frame, flags);
-    }
+    copy_mapping(crate::PHYS_PML4);
 
-    Ok(NewTables {
-        taken: false,
-        new_utable,
+    // Copy kernel percpu (similar to TLS) mapping.
+    copy_mapping(crate::KERNEL_PERCPU_PML4);
+
+    Ok(Tables {
+        utable: new_utable,
         #[cfg(target_arch = "aarch64")]
-        new_ktable,
+        ktable: new_ktable,
     })
 }
 

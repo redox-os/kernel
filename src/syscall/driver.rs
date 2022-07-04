@@ -88,9 +88,9 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let context = context_lock.read();
 
-    let mut grants = context.grants.write();
+    let mut addr_space = context.addr_space()?.write();
 
-    let dst_address = grants.find_free(size).ok_or(Error::new(ENOMEM))?;
+    let dst_address = addr_space.grants.find_free(size).ok_or(Error::new(ENOMEM))?;
 
     let mut page_flags = PageFlags::new().user(true);
     if flags.contains(PHYSMAP_WRITE) {
@@ -104,7 +104,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
     }
 
-    grants.insert(Grant::physmap(
+    addr_space.grants.insert(Grant::physmap(
         PhysicalAddress::new(physical_address),
         dst_address.start_address(),
         size,
@@ -113,6 +113,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
 
     Ok(dst_address.start_address().data())
 }
+// TODO: Remove this syscall, funmap makes it redundant.
 pub fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     enforce_root()?;
     inner_physmap(physical_address, size, flags)
@@ -126,10 +127,12 @@ pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let mut grants = context.grants.write();
+        let mut addr_space = context.addr_space()?.write();
 
-        if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
-            grants.take(&region).unwrap().unmap();
+        if let Some(region) = addr_space.grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
+            use crate::paging::{ActivePageTable, mapper::PageFlushAll, TableKind};
+
+            addr_space.grants.take(&region).unwrap().unmap(&mut *unsafe { ActivePageTable::new(TableKind::User) }, PageFlushAll::new());
             return Ok(0);
         }
 

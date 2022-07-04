@@ -14,6 +14,7 @@ use self::table::{Level4, Table};
 
 pub use rmm::{
     Arch as RmmArch,
+    Flusher,
     PageFlags,
     PhysicalAddress,
     TableKind,
@@ -112,7 +113,7 @@ unsafe fn map_percpu(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
     let end = start + size;
 
-    let flush_all = PageFlushAll::new();
+    let mut flush_all = PageFlushAll::new();
     let start_page = Page::containing_address(VirtualAddress::new(start));
     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
     for page in Page::range_inclusive(start_page, end_page) {
@@ -287,6 +288,11 @@ impl ActivePageTable {
 
     pub unsafe fn address(&self) -> usize {
         RmmA::table().data()
+    }
+    pub fn mapper<'a>(&'a mut self) -> Mapper<'a> {
+        Mapper {
+            p4: self.p4,
+        }
     }
 }
 

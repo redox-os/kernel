@@ -2,7 +2,6 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::str;
-use core::sync::atomic::Ordering;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
@@ -482,11 +481,11 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     let requested = Region::new(virtual_address, length);
 
     {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
         let context = context_lock.read();
 
-        let mut grants = context.grants.write();
+        let mut addr_space = context.addr_space()?.write();
+        let grants = &mut addr_space.grants;
 
         let conflicting: Vec<Region> = grants.conflicts(requested).map(Region::from).collect();
 
@@ -507,9 +506,10 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
             if let Some(after) = after {
                 grants.insert(after);
             }
+            use crate::paging::{ActivePageTable, mapper::PageFlushAll, TableKind};
 
             // Remove irrelevant region
-            grant.unmap();
+            grant.unmap(&mut *unsafe { ActivePageTable::new(TableKind::User) }, PageFlushAll::new());
         }
     }
 

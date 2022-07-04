@@ -5,6 +5,7 @@ use alloc::collections::BTreeMap;
 use core::{slice, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
+use rmm::Flusher;
 
 use syscall::data::Stat;
 use syscall::error::*;
@@ -55,7 +56,7 @@ impl DiskScheme {
             let virt = phys + crate::PHYS_OFFSET;
             unsafe {
                 let mut active_table = ActivePageTable::new(TableKind::Kernel);
-                let flush_all = PageFlushAll::new();
+                let mut flush_all = PageFlushAll::new();
                 let start_page = Page::containing_address(VirtualAddress::new(virt));
                 let end_page = Page::containing_address(VirtualAddress::new(virt + size - 1));
                 for page in Page::range_inclusive(start_page, end_page) {

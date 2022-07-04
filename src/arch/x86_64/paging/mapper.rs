@@ -1,13 +1,15 @@
 use super::{linear_phys_to_virt, Page, PAGE_SIZE, PageFlags, PhysicalAddress, VirtualAddress};
+
+use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::{allocate_frames, deallocate_frames, Enomem, Frame};
 
 use super::RmmA;
 use super::table::{Table, Level4};
 
-pub use rmm::{PageFlush, PageFlushAll};
+pub use rmm::{Flusher, PageFlush, PageFlushAll};
 
 pub struct Mapper<'table> {
-    p4: &'table mut Table<Level4>,
+    pub(in super) p4: &'table mut Table<Level4>,
 }
 
 impl core::fmt::Debug for Mapper<'_> {
@@ -190,5 +192,23 @@ impl<'table> Mapper<'table> {
         let offset = virtual_address.data() % PAGE_SIZE;
         self.translate_page(Page::containing_address(virtual_address))
             .map(|frame| PhysicalAddress::new(frame.start_address().data() + offset))
+    }
+}
+
+pub struct InactiveFlusher { _inner: () }
+impl InactiveFlusher {
+    // TODO: cpu id
+    pub fn new() -> Self { Self { _inner: () } }
+}
+
+impl Flusher<RmmA> for InactiveFlusher {
+    fn consume(&mut self, flush: PageFlush<RmmA>) {
+        // TODO: Push to TLB "mailbox" or tell it to reload CR3 if there are too many entries.
+        unsafe { flush.ignore(); }
+    }
+}
+impl Drop for InactiveFlusher {
+    fn drop(&mut self) {
+        ipi(IpiKind::Tlb, IpiTarget::Other);
     }
 }

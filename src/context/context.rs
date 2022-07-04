@@ -16,13 +16,13 @@ use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
 use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::UserGrants;
+use crate::context::memory::{AddrSpace, new_addrspace, UserGrants};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 
 use crate::syscall::data::SigAction;
-use crate::syscall::error::{Result, Error, ENOMEM};
+use crate::syscall::error::{Result, Error, ENOMEM, ESRCH};
 use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
@@ -226,8 +226,9 @@ pub struct Context {
     pub ksig: Option<(arch::Context, Option<Box<[u8]>>, Option<Box<[u8]>>, u8)>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
-    /// User grants
-    pub grants: Arc<RwLock<UserGrants>>,
+    /// Address space containing a page table lock, and grants. Normally this will have a value,
+    /// but can be None while the context is being reaped.
+    pub addr_space: Option<Arc<RwLock<AddrSpace>>>,
     /// The name of the context
     pub name: Arc<RwLock<Box<str>>>,
     /// The current working directory
@@ -307,7 +308,7 @@ impl Context {
         let syscall_head = AlignedBox::try_zeroed()?;
         let syscall_tail = AlignedBox::try_zeroed()?;
 
-        Ok(Context {
+        let mut this = Context {
             id,
             pgid: id,
             ppid: ContextId::from(0),
@@ -336,7 +337,7 @@ impl Context {
             kstack: None,
             ksig: None,
             ksig_restore: false,
-            grants: Arc::new(RwLock::new(UserGrants::default())),
+            addr_space: None,
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(String::new())),
             files: Arc::new(RwLock::new(Vec::new())),
@@ -351,7 +352,9 @@ impl Context {
             regs: None,
             ptrace_stop: false,
             sigstack: None,
-        })
+        };
+        this.set_addr_space(new_addrspace()?.1);
+        Ok(this)
     }
 
     /// Make a relative path absolute
@@ -519,5 +522,14 @@ impl Context {
         } else {
             None
         }
+    }
+
+    pub fn addr_space(&self) -> Result<&Arc<RwLock<AddrSpace>>> {
+        self.addr_space.as_ref().ok_or(Error::new(ESRCH))
+    }
+    pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) {
+        assert!(!self.running);
+        self.arch.set_page_utable(addr_space.read().frame.utable.start_address().data());
+        self.addr_space = Some(addr_space);
     }
 }

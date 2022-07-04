@@ -13,7 +13,7 @@ use crate::event;
 use crate::paging::{PAGE_SIZE, InactivePageTable, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
-use crate::syscall::data::{Map, OldMap, Packet, Stat, StatVfs, TimeSpec};
+use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_READ, PROT_WRITE};
 use crate::syscall::number::*;
@@ -145,15 +145,15 @@ impl UserInner {
 
         let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
 
-        let mut grants = context.grants.write();
+        let mut addr_space = context.addr_space()?.write();
 
         let src_address = round_down_pages(address);
         let offset = address - src_address;
         let src_region = Region::new(VirtualAddress::new(src_address), offset + size).round();
-        let dst_region = grants.find_free_at(VirtualAddress::new(dst_address), src_region.size(), flags)?;
+        let dst_region = addr_space.grants.find_free_at(VirtualAddress::new(dst_address), src_region.size(), flags)?;
 
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
-        grants.insert(Grant::map_inactive(
+        addr_space.grants.insert(Grant::map_inactive(
             src_region.start_address(),
             dst_region.start_address(),
             src_region.size(),
@@ -166,7 +166,6 @@ impl UserInner {
     }
 
     pub fn release(&self, address: usize) -> Result<()> {
-        //dbg!(address);
         if address == DANGLING {
             return Ok(());
         }
@@ -174,13 +173,13 @@ impl UserInner {
         let mut context = context_lock.write();
 
         let mut other_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
-        let mut grants = context.grants.write();
+        let mut addr_space = context.addr_space()?.write();
 
-        let region = match grants.contains(VirtualAddress::new(address)).map(Region::from) {
+        let region = match addr_space.grants.contains(VirtualAddress::new(address)).map(Region::from) {
             Some(region) => region,
             None => return Err(Error::new(EFAULT)),
         };
-        grants.take(&region).unwrap().unmap_inactive(&mut other_table);
+        addr_space.grants.take(&region).unwrap().unmap(&mut other_table.mapper(), crate::paging::mapper::InactiveFlusher::new());
         Ok(())
     }
 
@@ -242,8 +241,8 @@ impl UserInner {
                         if let Ok(grant_address) = res {
                             if let Some(context_lock) = context_weak.upgrade() {
                                 let context = context_lock.read();
-                                let mut grants = context.grants.write();
-                                grants.funmap.insert(
+                                let mut addr_space = context.addr_space()?.write();
+                                addr_space.grants.funmap.insert(
                                     Region::new(grant_address, map.size),
                                     VirtualAddress::new(address)
                                 );
@@ -437,8 +436,8 @@ impl Scheme for UserScheme {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
-            let mut grants = context.grants.write();
-            let funmap = &mut grants.funmap;
+            let mut addr_space = context.addr_space()?.write();
+            let funmap = &mut addr_space.grants.funmap;
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
             let grant_address = VirtualAddress::new(grant_address);

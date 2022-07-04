@@ -301,7 +301,7 @@ pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
 }
 
 pub trait KernelScheme: Scheme + Send + Sync + 'static {
-    #[allow(unused_arguments)]
+    #[allow(unused_variables)]
     fn kfmap(&self, number: usize, map: &syscall::data::Map, target_context: &Arc<RwLock<Context>>) -> Result<usize> {
         log::error!("Returning ENOSYS since kfmap can only be called on UserScheme schemes");
         Err(Error::new(ENOSYS))

@@ -1,7 +1,7 @@
 use crate::context;
 use crate::context::memory::{page_flags, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
-use crate::paging::{ActivePageTable, VirtualAddress};
+use crate::paging::{ActivePageTable, mapper::PageFlushAll, Page, VirtualAddress};
 use crate::syscall::data::{Map, OldMap, StatVfs};
 use crate::syscall::error::*;
 use crate::syscall::flag::MapFlags;
@@ -23,25 +23,11 @@ impl MemoryScheme {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        let mut grants = context.grants.write();
+        let mut addr_space = context.addr_space()?.write();
 
-        let region = grants.find_free_at(VirtualAddress::new(map.address), map.size, map.flags)?.round();
+        let region = addr_space.grants.find_free_at(VirtualAddress::new(map.address), map.size, map.flags)?.round();
 
-        {
-            // Make sure it's *absolutely* not mapped already
-            // TODO: Keep track of all allocated memory so this isn't necessary
-
-            let active_table = unsafe { ActivePageTable::new(rmm::TableKind::User) };
-
-            for page in region.pages() {
-                if let Some(flags) = active_table.translate_page_flags(page).filter(|flags| flags.has_present()) {
-                    println!("page at {:#x} was already mapped, flags: {:?}", page.start_address().data(), flags);
-                    return Err(Error::new(EEXIST))
-                }
-            }
-        }
-
-        grants.insert(Grant::map(region.start_address(), region.size(), page_flags(map.flags)));
+        addr_space.grants.insert(Grant::zeroed(Page::containing_address(region.start_address()), map.size / PAGE_SIZE, page_flags(map.flags), &mut *unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new())?);
 
         Ok(region.start_address().data())
     }

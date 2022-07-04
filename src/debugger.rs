@@ -19,11 +19,11 @@ pub unsafe fn debugger() {
         if let Some((a, b, c, d, e, f)) = context.syscall {
             println!("syscall: {}", crate::syscall::debug::format_call(a, b, c, d, e, f));
         }
-        {
-            let grants = context.grants.read();
-            if ! grants.is_empty() {
+        if let Some(ref addr_space) = context.addr_space {
+            let addr_space = addr_space.read();
+            if ! addr_space.grants.is_empty() {
                 println!("grants:");
-                for grant in grants.iter() {
+                for grant in addr_space.grants.iter() {
                     let region = grant.region();
                     println!(
                         "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {}",

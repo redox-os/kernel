@@ -190,7 +190,11 @@ pub fn is_traced(pid: ContextId) -> bool {
 
 /// Trigger a notification to the event: scheme
 fn proc_trigger_event(file_id: usize, flags: EventFlags) {
-    event::trigger(proc::PROC_SCHEME_ID.load(Ordering::SeqCst), file_id, flags);
+    if let Some(scheme_id) = proc::PROC_SCHEME_ID.get() {
+        event::trigger(*scheme_id, file_id, flags);
+    } else {
+        log::warn!("Failed to trigger proc event: scheme never initialized");
+    }
 }
 
 /// Dispatch an event to any tracer tracing `self`. This will cause
@@ -471,6 +475,10 @@ fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item =
 pub fn context_memory(context: &mut Context, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<*mut [u8]>> + '_ {
     let mut table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
 
+    // TODO: Iterate over grants instead to avoid yielding None too many times. What if
+    // context_memory is used for an entire process's address space, where the stack is at the very
+    // end? Alternatively we can skip pages recursively, i.e. first skip unpopulated PML4s and then
+    // onwards.
     page_aligned_chunks(offset.data(), len).map(move |(addr, len)| unsafe {
         // [addr,addr+len) is a continuous page starting and/or ending at page boundaries, with the
         // possible exception of an unaligned head/tail.

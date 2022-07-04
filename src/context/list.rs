@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 use crate::paging::{ActivePageTable, TableKind};
 use spin::RwLock;
 
-use crate::syscall::error::{Result, Error, EAGAIN};
+use crate::syscall::error::{Result, Error, EAGAIN, ENOMEM};
 use super::context::{Context, ContextId};
 
 /// Context list type
@@ -79,7 +79,11 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024]) };
+            let mut fx = unsafe {
+                let ptr = crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024];
+                if ptr.is_null() { return Err(Error::new(ENOMEM)); }
+                Box::from_raw(ptr)
+            };
             for b in fx.iter_mut() {
                 *b = 0;
             }
@@ -99,13 +103,6 @@ impl ContextList {
                 context.arch.set_lr(func as usize);
                 context.arch.set_context_handle();
             }
-
-            let mut new_tables = super::memory::setup_new_utable()?;
-            new_tables.take();
-
-            context.arch.set_page_utable(unsafe { new_tables.new_utable.address() });
-            #[cfg(target_arch = "aarch64")]
-            context.arch.set_page_ktable(unsafe { new_tables.new_ktable.address() });
 
             context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);

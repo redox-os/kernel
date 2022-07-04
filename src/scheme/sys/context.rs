@@ -28,11 +28,15 @@ pub fn resource() -> Result<Vec<u8>> {
             let mut stat_string = String::new();
             // TODO: All user programs must have some grant in order for executable memory to even
             // exist, but is this a good indicator of whether it is user or kernel?
-            if context.grants.read().is_empty() {
-                stat_string.push('K');
+            stat_string.push(if let Ok(addr_space) = context.addr_space() {
+                if addr_space.read().grants.is_empty() {
+                    'K'
+                } else {
+                    'U'
+                }
             } else {
-                stat_string.push('U');
-            }
+                'R'
+            });
             match context.status {
                 context::Status::Runnable => {
                     stat_string.push('R');
@@ -79,9 +83,11 @@ pub fn resource() -> Result<Vec<u8>> {
             if let Some(ref kstack) = context.kstack {
                 memory += kstack.len();
             }
-            for grant in context.grants.read().iter() {
-                if grant.is_owned() {
-                    memory += grant.size();
+            if let Ok(addr_space) = context.addr_space() {
+                for grant in addr_space.read().grants.iter() {
+                    if grant.is_owned() {
+                        memory += grant.size();
+                    }
                 }
             }
 
