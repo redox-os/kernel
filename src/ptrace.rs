@@ -13,7 +13,7 @@ use crate::{
         }
     },
     common::unique::Unique,
-    context::{self, signal, Context, ContextId},
+    context::{self, signal, Context, ContextId, memory::AddrSpace},
     event,
     scheme::proc,
     sync::WaitCondition,
@@ -472,8 +472,8 @@ fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item =
     first.into_iter().chain((start..start + len).step_by(PAGE_SIZE).map(|off| (off, PAGE_SIZE))).chain(last)
 }
 
-pub fn context_memory(context: &mut Context, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<*mut [u8]>> + '_ {
-    let mut table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
+pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<*mut [u8]>> + '_ {
+    let mut table = unsafe { InactivePageTable::from_address(addrspace.frame.utable.start_address().data()) };
 
     // TODO: Iterate over grants instead to avoid yielding None too many times. What if
     // context_memory is used for an entire process's address space, where the stack is at the very

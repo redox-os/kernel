@@ -1,9 +1,9 @@
 use crate::{
     arch::paging::{ActivePageTable, Flusher, InactivePageTable, mapper::{InactiveFlusher, Mapper, PageFlushAll}, Page, RmmA, VirtualAddress},
-    context::{self, Context, ContextId, Status, memory::{addrspace, Grant, new_addrspace, PtId, page_flags, Region}},
+    context::{self, Context, ContextId, Status, file::FileDescriptor, memory::{AddrSpace, Grant, new_addrspace, PtId, page_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
-    scheme::{AtomicSchemeId, SchemeId},
+    scheme::{self, AtomicSchemeId, FileHandle, KernelScheme, SchemeId},
     syscall::{
         FloatRegisters,
         IntRegisters,
@@ -107,19 +107,22 @@ enum RegsKind {
     Int,
     Env,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 enum Operation {
-    Memory,
-    Grants,
+    Memory { addrspace: Arc<RwLock<AddrSpace>> },
     Regs(RegsKind),
     Trace,
     Static(&'static str),
     Name,
+    Cwd,
     Sigstack,
     Attr(Attr),
-    Files,
-    AddrSpace { id: PtId },
+    Filetable { filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>> },
+    AddrSpace { addrspace: Arc<RwLock<AddrSpace>> },
     CurrentAddrSpace,
+    CurrentFiletable,
+    // TODO: Any better interface to access newly created contexts? Openat?
+    OpenViaDup,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -128,10 +131,10 @@ enum Attr {
     // TODO: namespace, tid, etc.
 }
 impl Operation {
-    fn needs_child_process(self) -> bool {
-        matches!(self, Self::Memory | Self::Grants | Self::Regs(_) | Self::Trace | Self::Files)
+    fn needs_child_process(&self) -> bool {
+        matches!(self, Self::Memory { .. } | Self::Regs(_) | Self::Trace | Self::Filetable { .. } | Self::AddrSpace { .. } | Self::CurrentAddrSpace | Self::CurrentFiletable)
     }
-    fn needs_root(self) -> bool {
+    fn needs_root(&self) -> bool {
         matches!(self, Self::Attr(_))
     }
 }
@@ -186,7 +189,7 @@ impl OperationData {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Info {
     pid: ContextId,
     flags: usize,
@@ -255,34 +258,29 @@ impl ProcScheme {
     }
 }
 
-impl Scheme for ProcScheme {
-    fn open(&self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
-        let mut parts = path.splitn(2, '/');
-        let pid_str = parts.next()
-            .ok_or(Error::new(ENOENT))?;
+fn current_addrspace() -> Result<Arc<RwLock<AddrSpace>>> {
+    Ok(Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?.read().addr_space()?))
+}
 
-        let pid = if pid_str == "current" {
-            context::context_id()
-        } else if self.access == Access::Restricted {
-            return Err(Error::new(EACCES));
-        } else {
-            ContextId::from(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
-        };
-
-        let operation = match parts.next() {
-            Some("mem") => Operation::Memory,
-            Some("addrspace") => Operation::AddrSpace { id: context::contexts().current().ok_or(Error::new(ESRCH))?.read().addr_space()?.read().id },
+impl ProcScheme {
+    fn open_inner(&self, pid: ContextId, operation_str: Option<&str>, flags: usize, uid: u32, gid: u32) -> Result<usize> {
+        let operation = match operation_str {
+            Some("mem") => Operation::Memory { addrspace: current_addrspace()? },
+            Some("addrspace") => Operation::AddrSpace { addrspace: current_addrspace()? },
+            Some("filetable") => Operation::Filetable { filetable: Arc::clone(&context::contexts().current().ok_or(Error::new(ESRCH))?.read().files) },
             Some("current-addrspace") => Operation::CurrentAddrSpace,
+            Some("current-filetable") => Operation::CurrentFiletable,
             Some("regs/float") => Operation::Regs(RegsKind::Float),
             Some("regs/int") => Operation::Regs(RegsKind::Int),
             Some("regs/env") => Operation::Regs(RegsKind::Env),
             Some("trace") => Operation::Trace,
             Some("exe") => Operation::Static("exe"),
             Some("name") => Operation::Name,
+            Some("cwd") => Operation::Cwd,
             Some("sigstack") => Operation::Sigstack,
             Some("uid") => Operation::Attr(Attr::Uid),
             Some("gid") => Operation::Attr(Attr::Gid),
-            Some("files") => Operation::Files,
+            Some("open_via_dup") => Operation::OpenViaDup,
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -295,7 +293,7 @@ impl Scheme for ProcScheme {
             let target = target.read();
 
             data = match operation {
-                Operation::Memory => OperationData::Memory(MemData::default()),
+                Operation::Memory { .. } => OperationData::Memory(MemData::default()),
                 Operation::Trace => OperationData::Trace(TraceData::default()),
                 Operation::Static(_) => OperationData::Static(StaticData::new(
                     target.name.read().clone().into()
@@ -335,7 +333,7 @@ impl Scheme for ProcScheme {
                 return Err(Error::new(EPERM));
             }
 
-            if matches!(operation, Operation::Files) {
+            if matches!(operation, Operation::Filetable { .. }) {
                 data = OperationData::Static(StaticData::new({
                     use core::fmt::Write;
 
@@ -352,7 +350,7 @@ impl Scheme for ProcScheme {
             info: Info {
                 flags,
                 pid,
-                operation,
+                operation: operation.clone(),
             },
             data,
         })?;
@@ -372,6 +370,26 @@ impl Scheme for ProcScheme {
 
         Ok(id)
     }
+}
+
+impl Scheme for ProcScheme {
+    fn open(&self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
+        let mut parts = path.splitn(2, '/');
+        let pid_str = parts.next()
+            .ok_or(Error::new(ENOENT))?;
+
+        let pid = if pid_str == "current" {
+            context::context_id()
+        } else if pid_str == "new" {
+            inherit_context()?
+        } else if self.access == Access::Restricted {
+            return Err(Error::new(EACCES));
+        } else {
+            ContextId::from(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
+        };
+
+        self.open_inner(pid, parts.next(), flags, uid, gid)
+    }
 
     /// Dup is currently used to implement clone() and execve().
     fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
@@ -379,18 +397,41 @@ impl Scheme for ProcScheme {
             let handles = self.handles.read();
             let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
 
-            handle.info
+            handle.info.clone()
         };
 
         self.new_handle(match info.operation {
-            Operation::AddrSpace { id } => {
-                let new_ptid = match buf {
+            Operation::OpenViaDup => {
+                let (uid, gid) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read() {
+                    context => (context.euid, context.egid),
+                };
+                return self.open_inner(info.pid, Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?).filter(|s| !s.is_empty()), O_RDWR | O_CLOEXEC, uid, gid);
+            },
+
+            Operation::Filetable { filetable } => {
+                // TODO: Maybe allow userspace to either copy or transfer recently dupped file
+                // descriptors between file tables.
+                if buf != b"copy" {
+                    return Err(Error::new(EINVAL));
+                }
+                let new_filetable = Arc::try_new(RwLock::new(filetable.read().iter().cloned().collect::<Vec<_>>())).map_err(|_| Error::new(ENOMEM))?;
+
+                Handle {
+                    info: Info {
+                        flags: 0,
+                        pid: info.pid,
+                        operation: Operation::Filetable { filetable: new_filetable },
+                    },
+                    data: OperationData::Other,
+                }
+            }
+            Operation::AddrSpace { addrspace } => {
+                let (new_addrspace, is_mem) = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
-                    b"empty" => new_addrspace()?.0,
-                    // Reuse same ID.
-                    b"shared" => id,
-                    b"exclusive" => addrspace(id).ok_or(Error::new(EBADFD))?.read().try_clone()?.0,
+                    b"empty" => (new_addrspace()?.1, false),
+                    b"exclusive" => (addrspace.read().try_clone()?.1, false),
+                    b"mem" => (Arc::clone(&addrspace), true),
 
                     _ => return Err(Error::new(EINVAL)),
                 };
@@ -398,9 +439,9 @@ impl Scheme for ProcScheme {
                     info: Info {
                         flags: 0,
                         pid: info.pid,
-                        operation: Operation::AddrSpace { id: new_ptid },
+                        operation: if is_mem { Operation::Memory { addrspace: new_addrspace } } else { Operation::AddrSpace { addrspace: new_addrspace } },
                     },
-                    data: OperationData::Other,
+                    data: if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Other },
                 }
             }
             _ => return Err(Error::new(EINVAL)),
@@ -429,11 +470,10 @@ impl Scheme for ProcScheme {
         let info = {
             let handles = self.handles.read();
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-            handle.info
+            handle.info.clone()
         };
 
         match info.operation {
-            Operation::Grants => return Err(Error::new(ENOSYS)),
             Operation::Static(_) => {
                 let mut handles = self.handles.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -444,19 +484,15 @@ impl Scheme for ProcScheme {
                 data.offset += len;
                 Ok(len)
             },
-            Operation::Memory => {
+            Operation::Memory { addrspace } => {
                 // Won't context switch, don't worry about the locks
                 let mut handles = self.handles.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
                 let data = handle.data.mem_data().expect("operations can't change");
 
-                let contexts = context::contexts();
-                let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
-                let mut context = context.write();
-
                 let mut bytes_read = 0;
 
-                for chunk_opt in ptrace::context_memory(&mut *context, data.offset, buf.len()) {
+                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
                     let chunk = chunk_opt.ok_or(Error::new(EFAULT))?;
                     let dst_slice = &mut buf[bytes_read..bytes_read + chunk.len()];
                     unsafe {
@@ -468,6 +504,7 @@ impl Scheme for ProcScheme {
                 data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
                 Ok(bytes_read)
             },
+            // TODO: Support querying which grants exist and where
             Operation::AddrSpace { .. } => return Err(Error::new(EBADF)),
 
             Operation::Regs(kind) => {
@@ -582,6 +619,7 @@ impl Scheme for ProcScheme {
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
             Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.read().as_bytes(), &mut 0),
+            Operation::Cwd => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().cwd.read().as_bytes(), &mut 0),
             Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
             Operation::Attr(attr) => {
                 let src_buf = match (attr, &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?).read()) {
@@ -591,7 +629,7 @@ impl Scheme for ProcScheme {
 
                 read_from(buf, &src_buf, &mut 0)
             }
-            Operation::Files => {
+            Operation::Filetable { .. } => {
                 let mut handles = self.handles.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
                 let data = handle.data.static_data().expect("operations can't change");
@@ -602,10 +640,8 @@ impl Scheme for ProcScheme {
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
             // with `<pid>/ctx`
-            Operation::CurrentAddrSpace  => {
-                //read_from(buf, &usize::to_ne_bytes(id.into()), &mut 0)
-                Ok(0)
-            }
+            Operation::CurrentAddrSpace | Operation::CurrentFiletable => return Err(Error::new(EBADF)),
+            Operation::OpenViaDup => return Err(Error::new(EBADF)),
         }
     }
 
@@ -622,25 +658,20 @@ impl Scheme for ProcScheme {
             let mut handles = self.handles.write();
             let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
             handle.continue_ignored_children();
-            handle.info
+            handle.info.clone()
         };
 
         match info.operation {
-            Operation::Grants => Err(Error::new(ENOSYS)),
             Operation::Static(_) => Err(Error::new(EBADF)),
-            Operation::Memory => {
+            Operation::Memory { addrspace } => {
                 // Won't context switch, don't worry about the locks
                 let mut handles = self.handles.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
                 let data = handle.data.mem_data().expect("operations can't change");
 
-                let contexts = context::contexts();
-                let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
-                let mut context = context.write();
-
                 let mut bytes_written = 0;
 
-                for chunk_opt in ptrace::context_memory(&mut *context, data.offset, buf.len()) {
+                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
                     let chunk = chunk_opt.ok_or(Error::new(EFAULT))?;
                     let src_slice = &buf[bytes_written..bytes_written + chunk.len()];
                     unsafe {
@@ -652,7 +683,7 @@ impl Scheme for ProcScheme {
                 data.offset = VirtualAddress::new(data.offset.data() + bytes_written);
                 Ok(bytes_written)
             },
-            Operation::AddrSpace { .. } => {
+            Operation::AddrSpace { addrspace } => {
                 // FIXME: Forbid upgrading external mappings.
 
                 let pid = self.handles.read()
@@ -670,18 +701,19 @@ impl Scheme for ProcScheme {
                     return Err(Error::new(EINVAL));
                 }
 
-                let is_active = pid == context::context_id();
+                let mut addrspace = addrspace.write();
+                let is_active = addrspace.is_current();
 
-                let callback = |context: &mut Context| {
+                let callback = |addr_space: &mut AddrSpace| {
                     let (mut inactive, mut active);
 
-                    let mut addr_space = context.addr_space()?.write();
+                    //let mut addr_space = context.addr_space()?.write();
 
                     let (mut mapper, mut flusher) = if is_active {
                         active = (unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new());
                         (active.0.mapper(), &mut active.1 as &mut dyn Flusher<RmmA>)
                     } else {
-                        inactive = (unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) }, InactiveFlusher::new());
+                        inactive = (unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) }, InactiveFlusher::new());
                         (inactive.0.mapper(), &mut inactive.1 as &mut dyn Flusher<RmmA>)
                     };
 
@@ -714,12 +746,17 @@ impl Scheme for ProcScheme {
                     }
                     Ok(())
                 };
+                callback(&mut *addrspace)?;
 
-                if is_active {
+                // TODO: Set some "in use" flag every time an address space is switched to. This
+                // way, we know what hardware threads are using any given page table, which we need
+                // to know while doing TLB shootdown.
+
+                /*if is_active {
                     with_context_mut(pid, callback)?;
                 } else {
                     try_stop_context(pid, callback)?;
-                }
+                }*/
                 Ok(3 * mem::size_of::<usize>())
             }
             Operation::Regs(kind) => match kind {
@@ -868,9 +905,15 @@ impl Scheme for ProcScheme {
 
                 Ok(mem::size_of::<u64>())
             },
+            // TODO: Deduplicate name and cwd
             Operation::Name => {
                 let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?.into_boxed_str();
                 *context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.write() = utf8;
+                Ok(buf.len())
+            }
+            Operation::Cwd => {
+                let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?;
+                *context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().cwd.write() = utf8;
                 Ok(buf.len())
             }
             Operation::Sigstack => {
@@ -889,25 +932,49 @@ impl Scheme for ProcScheme {
                 }
                 Ok(buf.len())
             }
-            Operation::Files => return Err(Error::new(EBADF)),
+            Operation::Filetable { .. } => return Err(Error::new(EBADF)),
+            Operation::CurrentFiletable => {
+                let filetable_fd = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
+                let (hopefully_this_scheme, number) = extract_scheme_number(filetable_fd)?;
+
+                let mut filetable = hopefully_this_scheme.as_filetable(number)?;
+
+                try_stop_context(info.pid, |context| {
+                    context.files = filetable;
+                    Ok(())
+                })?;
+                Ok(mem::size_of::<usize>())
+            }
             Operation::CurrentAddrSpace { .. } => {
+                println!("Setting current address space! ({} {})", info.pid.into(), context::context_id().into());
+
                 let mut iter = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
-                let id = iter.next().ok_or(Error::new(EINVAL))?;
+                let addrspace_fd = iter.next().ok_or(Error::new(EINVAL))?;
                 let sp = iter.next().ok_or(Error::new(EINVAL))?;
                 let ip = iter.next().ok_or(Error::new(EINVAL))?;
 
-                let space = addrspace(PtId::from(id)).ok_or(Error::new(EINVAL))?;
+                let (hopefully_this_scheme, number) = extract_scheme_number(addrspace_fd)?;
+                let space = hopefully_this_scheme.as_addrspace(number)?;
 
-                try_stop_context(info.pid, |context| unsafe {
-                    let regs = &mut ptrace::regs_for_mut(context).ok_or(Error::new(ESRCH))?.iret;
-                    regs.rip = ip;
-                    regs.rsp = sp;
+                let callback = |context: &mut Context| unsafe {
+                    if let Some(saved_regs) = ptrace::regs_for_mut(context) {
+                        saved_regs.iret.rip = ip;
+                        saved_regs.iret.rsp = sp;
+                    } else {
+                        context.clone_entry = Some([ip, sp]);
+                    }
 
                     context.set_addr_space(space);
                     Ok(())
-                })?;
+                };
+                if info.pid == context::context_id() {
+                    with_context_mut(info.pid, callback)?;
+                } else {
+                    try_stop_context(info.pid, callback)?;
+                }
                 Ok(3 * mem::size_of::<usize>())
             }
+            Operation::OpenViaDup => return Err(Error::new(EBADF)),
         }
     }
 
@@ -939,20 +1006,22 @@ impl Scheme for ProcScheme {
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.info.operation {
-            Operation::Memory => "mem",
-            Operation::Grants => "grants",
+            Operation::Memory { .. } => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
             Operation::Regs(RegsKind::Env) => "regs/env",
             Operation::Trace => "trace",
             Operation::Static(path) => path,
             Operation::Name => "name",
+            Operation::Cwd => "cwd",
             Operation::Sigstack => "sigstack",
             Operation::Attr(Attr::Uid) => "uid",
             Operation::Attr(Attr::Gid) => "gid",
-            Operation::Files => "files",
+            Operation::Filetable { .. } => "filetable",
             Operation::AddrSpace { .. } => "addrspace",
             Operation::CurrentAddrSpace => "current-addrspace",
+            Operation::CurrentFiletable => "current-filetable",
+            Operation::OpenViaDup => "open-via-dup",
         });
 
         read_from(buf, &path.as_bytes(), &mut 0)
@@ -999,4 +1068,58 @@ impl Scheme for ProcScheme {
         Ok(0)
     }
 }
-impl crate::scheme::KernelScheme for ProcScheme {}
+impl KernelScheme for ProcScheme {
+    fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
+        if let Operation::AddrSpace { ref addrspace } | Operation::Memory { ref addrspace } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
+            Ok(Arc::clone(addrspace))
+        } else {
+            Err(Error::new(EBADF))
+        }
+    }
+    fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
+        if !matches!(self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation, Operation::Filetable { .. }) {
+            return Err(Error::new(EBADF));
+        }
+        Ok(Arc::clone(&context::contexts().current().ok_or(Error::new(ESRCH))?.read().files))
+    }
+}
+extern "C" fn clone_handler() {
+    let context_lock = Arc::clone(context::contexts().current().expect("expected the current context to be set in a spawn closure"));
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let [ip, sp] = context_lock.read().clone_entry.expect("clone_entry must be set");
+        let [arg, is_singlestep] = [0; 2];
+
+        crate::start::usermode(ip, sp, arg, is_singlestep);
+    }
+}
+
+fn inherit_context() -> Result<ContextId> {
+    let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
+    let new_context_lock = Arc::clone(context::contexts_mut().spawn(clone_handler)?);
+
+    let current_context = current_context_lock.read();
+    let mut new_context = new_context_lock.write();
+
+    new_context.status = Status::Stopped(SIGSTOP);
+    new_context.euid = current_context.euid;
+    new_context.egid = current_context.egid;
+    new_context.ruid = current_context.ruid;
+    new_context.rgid = current_context.rgid;
+    new_context.ens = current_context.ens;
+    new_context.rns = current_context.rns;
+    new_context.ppid = current_context.id;
+
+    // TODO: More to copy?
+
+    Ok(new_context.id)
+}
+fn extract_scheme_number(fd: usize) -> Result<(Arc<dyn KernelScheme>, usize)> {
+    let (scheme_id, number) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read().get_file(FileHandle::from(fd)).ok_or(Error::new(EBADF))?.description.read() {
+        desc => (desc.scheme, desc.number)
+    };
+    let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(ENODEV))?);
+
+    Ok((scheme, number))
+}

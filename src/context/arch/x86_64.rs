@@ -35,7 +35,7 @@ pub struct Context {
     /// Base pointer
     rbp: usize,
     /// Stack pointer
-    rsp: usize,
+    pub(crate) rsp: usize,
     /// FSBASE.
     ///
     /// NOTE: Same fsgsbase behavior as with gsbase.

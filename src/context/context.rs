@@ -12,7 +12,7 @@ use core::{
 };
 use spin::RwLock;
 
-use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
+use crate::arch::{interrupt::InterruptStack, paging::{PAGE_SIZE, RmmA, RmmArch}};
 use crate::common::unique::Unique;
 use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};
@@ -250,6 +250,11 @@ pub struct Context {
     /// else than SIG_DFL, otherwise signals will not be delivered. Userspace is responsible for
     /// setting this.
     pub sigstack: Option<usize>,
+    /// An even hackier way to pass the return entry point and stack pointer to new contexts while
+    /// implementing clone. Before a context has returned to userspace, its IntRegisters cannot be
+    /// set since there is no interrupt stack (unless the kernel stack is copied, but that is in my
+    /// opinion hackier and less efficient than this (and UB to do in Rust)).
+    pub clone_entry: Option<[usize; 2]>,
 }
 
 // Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
@@ -352,6 +357,7 @@ impl Context {
             regs: None,
             ptrace_stop: false,
             sigstack: None,
+            clone_entry: None,
         };
         this.set_addr_space(new_addrspace()?.1);
         Ok(this)
@@ -528,8 +534,14 @@ impl Context {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
     pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) {
-        assert!(!self.running);
-        self.arch.set_page_utable(addr_space.read().frame.utable.start_address().data());
+        let physaddr = addr_space.read().frame.utable.start_address();
+        if self.running {
+            unsafe {
+                RmmA::set_table(physaddr);
+            }
+        }
+
+        self.arch.set_page_utable(physaddr.data());
         self.addr_space = Some(addr_space);
     }
 }

@@ -77,8 +77,7 @@ impl AddrSpace {
         // TODO: Abstract away this.
         let (mut inactive, mut active);
 
-        // TODO: aarch64
-        let mut this_mapper = if self.frame.utable.start_address().data() == unsafe { x86::controlregs::cr3() } as usize {
+        let mut this_mapper = if self.is_current() {
             active = unsafe { ActivePageTable::new(rmm::TableKind::User) };
             active.mapper()
         } else {
@@ -95,8 +94,8 @@ impl AddrSpace {
 
             for page in new_grant.pages() {
                 // FIXME: ENOMEM is wrong here, it cannot fail.
-                let current_frame = this_mapper.translate_page(page).ok_or(Error::new(ENOMEM))?.start_address().data() as *const u8;
-                let new_frame = new_mapper.mapper().translate_page(page).ok_or(Error::new(ENOMEM))?.start_address().data() as *mut u8;
+                let current_frame = unsafe { RmmA::phys_to_virt(this_mapper.translate_page(page).ok_or(Error::new(ENOMEM))?.start_address()) }.data() as *const u8;
+                let new_frame = unsafe { RmmA::phys_to_virt(new_mapper.mapper().translate_page(page).ok_or(Error::new(ENOMEM))?.start_address()) }.data() as *mut u8;
 
                 // TODO: Replace this with CoW
                 unsafe {
@@ -114,6 +113,9 @@ impl AddrSpace {
             frame: setup_new_utable()?,
             id,
         })
+    }
+    pub fn is_current(&self) -> bool {
+        self.frame.utable.start_address() == unsafe { RmmA::table() }
     }
 }
 
