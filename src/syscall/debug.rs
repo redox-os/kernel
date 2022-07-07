@@ -170,10 +170,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b,
             validate_slice_mut(c as *mut TimeSpec, 1)
         ),
-        SYS_CLONE => format!(
-            "clone({:?})",
-            CloneFlags::from_bits(b)
-        ),
         SYS_EXIT => format!(
             "exit({})",
             b

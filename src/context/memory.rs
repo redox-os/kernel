@@ -70,7 +70,6 @@ pub struct AddrSpace {
 }
 impl AddrSpace {
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    // TODO: Actually use CoW!
     pub fn try_clone(&self) -> Result<(PtId, Arc<RwLock<Self>>)> {
         let (id, mut new) = new_addrspace()?;
 
@@ -87,20 +86,27 @@ impl AddrSpace {
         let mut new_mapper = unsafe { InactivePageTable::from_address(new.read().frame.utable.start_address().data()) };
 
         for grant in self.grants.iter() {
-            // TODO: Fail if there are borrowed grants, rather than simply ignoring them?
-            if !grant.is_owned() { continue; }
+            if grant.desc_opt.is_some() { continue; }
 
-            let new_grant = Grant::zeroed(Page::containing_address(grant.start_address()), grant.size() / PAGE_SIZE, grant.flags(), &mut new_mapper.mapper(), ())?;
+            let new_grant;
 
-            for page in new_grant.pages() {
-                // FIXME: ENOMEM is wrong here, it cannot fail.
-                let current_frame = unsafe { RmmA::phys_to_virt(this_mapper.translate_page(page).ok_or(Error::new(ENOMEM))?.start_address()) }.data() as *const u8;
-                let new_frame = unsafe { RmmA::phys_to_virt(new_mapper.mapper().translate_page(page).ok_or(Error::new(ENOMEM))?.start_address()) }.data() as *mut u8;
+            // TODO: Replace this with CoW
+            if grant.owned {
+                new_grant = Grant::zeroed(Page::containing_address(grant.start_address()), grant.size() / PAGE_SIZE, grant.flags(), &mut new_mapper.mapper(), ())?;
 
-                // TODO: Replace this with CoW
-                unsafe {
-                    new_frame.copy_from_nonoverlapping(current_frame, PAGE_SIZE);
+                for page in new_grant.pages() {
+                    let current_frame = unsafe { RmmA::phys_to_virt(this_mapper.translate_page(page).expect("grant containing unmapped pages").start_address()) }.data() as *const u8;
+                    let new_frame = unsafe { RmmA::phys_to_virt(new_mapper.mapper().translate_page(page).expect("grant containing unmapped pages").start_address()) }.data() as *mut u8;
+
+                    unsafe {
+                        new_frame.copy_from_nonoverlapping(current_frame, PAGE_SIZE);
+                    }
                 }
+            } else {
+                // TODO: Remove reborrow? In that case, physmapped memory will need to either be
+                // remapped when cloning, or be backed by a file descriptor (like
+                // `memory:physical`).
+                new_grant = Grant::reborrow(&grant, Page::containing_address(grant.start_address()), &mut this_mapper, &mut new_mapper.mapper(), ());
             }
 
             new.write().grants.insert(new_grant);
@@ -508,35 +514,54 @@ impl Grant {
         }
         Ok(Grant { region: Region { start: dst.start_address(), size: page_count * PAGE_SIZE }, flags, mapped: true, owned: true, desc_opt: None })
     }
+    pub fn borrow(src_base: Page, dst_base: Page, page_count: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, src_mapper: &mut Mapper, dst_mapper: &mut Mapper, dst_flusher: impl Flusher<RmmA>) -> Grant {
+        Self::copy_inner(src_base, dst_base, page_count, flags, desc_opt, src_mapper, dst_mapper, (), dst_flusher, false, false)
+    }
+    pub fn reborrow(src_grant: &Grant, dst_base: Page, src_mapper: &mut Mapper, dst_mapper: &mut Mapper, dst_flusher: impl Flusher<RmmA>) -> Grant {
+        Self::borrow(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), src_grant.desc_opt.clone(), src_mapper, dst_mapper, dst_flusher)
+    }
+    pub fn transfer(mut src_grant: Grant, dst_base: Page, src_mapper: &mut Mapper, dst_mapper: &mut Mapper, src_flusher: impl Flusher<RmmA>, dst_flusher: impl Flusher<RmmA>) -> Grant {
+        assert!(core::mem::replace(&mut src_grant.mapped, false));
+        let desc_opt = src_grant.desc_opt.take();
 
-    pub fn map_inactive(src: VirtualAddress, dst: VirtualAddress, size: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, inactive_table: &mut InactivePageTable) -> Grant {
-        let active_table = unsafe { ActivePageTable::new(src.kind()) };
-        let mut inactive_mapper = inactive_table.mapper();
+        Self::copy_inner(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.owned, true)
+    }
 
-        let src_start_page = Page::containing_address(src);
-        let src_end_page = Page::containing_address(VirtualAddress::new(src.data() + size - 1));
-        let src_range = Page::range_inclusive(src_start_page, src_end_page);
+    fn copy_inner(
+        src_base: Page,
+        dst_base: Page,
+        page_count: usize,
+        flags: PageFlags<RmmA>,
+        desc_opt: Option<GrantFileRef>,
+        src_mapper: &mut Mapper,
+        dst_mapper: &mut Mapper,
+        mut src_flusher: impl Flusher<RmmA>,
+        mut dst_flusher: impl Flusher<RmmA>,
+        owned: bool,
+        unmap: bool,
+    ) -> Grant {
+        for index in 0..page_count {
+            let src_page = src_base.next_by(index);
+            let frame = if unmap {
+                let (flush, frame) = src_mapper.unmap_return(src_page, false);
+                src_flusher.consume(flush);
+                frame
+            } else {
+                src_mapper.translate_page(src_page).expect("grant references unmapped memory")
+            };
 
-        let dst_start_page = Page::containing_address(dst);
-        let dst_end_page = Page::containing_address(VirtualAddress::new(dst.data() + size - 1));
-        let dst_range = Page::range_inclusive(dst_start_page, dst_end_page);
-
-        for (src_page, dst_page) in src_range.zip(dst_range) {
-            let frame = active_table.translate_page(src_page).expect("grant references unmapped memory");
-
-            let inactive_flush = inactive_mapper.map_to(dst_page, frame, flags);
-            // Ignore result due to mapping on inactive table
-            unsafe { inactive_flush.ignore(); }
+            let flush = dst_mapper.map_to(dst_base.next_by(index), frame, flags);
+            dst_flusher.consume(flush);
         }
 
         Grant {
             region: Region {
-                start: dst,
-                size,
+                start: dst_base.start_address(),
+                size: page_count * PAGE_SIZE,
             },
             flags,
-            mapped: true,
-            owned: false,
+            mapped: !unmap,
+            owned,
             desc_opt,
         }
     }

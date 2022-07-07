@@ -8,9 +8,9 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{DANGLING, page_flags, round_down_pages, Grant, Region, GrantFileRef};
+use crate::context::memory::{DANGLING, page_flags, round_down_pages, round_up_pages, Grant, Region, GrantFileRef};
 use crate::event;
-use crate::paging::{PAGE_SIZE, InactivePageTable, VirtualAddress};
+use crate::paging::{ActivePageTable, PAGE_SIZE, InactivePageTable, mapper::InactiveFlusher, Page, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
@@ -123,6 +123,9 @@ impl UserInner {
         ).map(|addr| addr.data())
     }
 
+    // TODO: Use an address space Arc over a context Arc. While contexts which share address spaces
+    // still can access borrowed scheme pages, it would both be cleaner and would handle the case
+    // where the initial context is closed.
     fn capture_inner(context_weak: &Weak<RwLock<Context>>, dst_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<GrantFileRef>)
                      -> Result<VirtualAddress> {
         // TODO: More abstractions over grant creation!
@@ -148,18 +151,21 @@ impl UserInner {
         let mut addr_space = context.addr_space()?.write();
 
         let src_address = round_down_pages(address);
+        let dst_address = round_down_pages(dst_address);
         let offset = address - src_address;
-        let src_region = Region::new(VirtualAddress::new(src_address), offset + size).round();
-        let dst_region = addr_space.grants.find_free_at(VirtualAddress::new(dst_address), src_region.size(), flags)?;
+        let aligned_size = round_up_pages(offset + size);
+        let dst_region = addr_space.grants.find_free_at(VirtualAddress::new(dst_address), aligned_size, flags)?;
 
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
-        addr_space.grants.insert(Grant::map_inactive(
-            src_region.start_address(),
-            dst_region.start_address(),
-            src_region.size(),
+        addr_space.grants.insert(Grant::borrow(
+            Page::containing_address(VirtualAddress::new(src_address)),
+            Page::containing_address(dst_region.start_address()),
+            aligned_size / PAGE_SIZE,
             page_flags(flags),
             desc_opt,
-            &mut new_table,
+            &mut *unsafe { ActivePageTable::new(rmm::TableKind::User) },
+            &mut new_table.mapper(),
+            InactiveFlusher::new(),
         ));
 
         Ok(VirtualAddress::new(dst_region.start_address().data() + offset))

@@ -1,6 +1,6 @@
 use crate::{
     arch::paging::{ActivePageTable, Flusher, InactivePageTable, mapper::{InactiveFlusher, Mapper, PageFlushAll}, Page, RmmA, VirtualAddress},
-    context::{self, Context, ContextId, Status, file::FileDescriptor, memory::{AddrSpace, Grant, new_addrspace, PtId, page_flags, Region}},
+    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, PtId, page_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, AtomicSchemeId, FileHandle, KernelScheme, SchemeId},
@@ -121,8 +121,14 @@ enum Operation {
     AddrSpace { addrspace: Arc<RwLock<AddrSpace>> },
     CurrentAddrSpace,
     CurrentFiletable,
-    // TODO: Any better interface to access newly created contexts? Openat?
+    // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
+    // directory.
     OpenViaDup,
+    // Allows calling fmap directly on a FileDescriptor (as opposed to a FileDescriptor).
+    //
+    // TODO: Remove this once cross-scheme links are merged. That would allow acquiring a new
+    // FD to access the file descriptor behind grants.
+    GrantHandle { description: Arc<RwLock<FileDescription>> },
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -166,6 +172,7 @@ enum OperationData {
     Memory(MemData),
     Trace(TraceData),
     Static(StaticData),
+    Offset(usize),
     Other,
 }
 impl OperationData {
@@ -298,6 +305,7 @@ impl ProcScheme {
                 Operation::Static(_) => OperationData::Static(StaticData::new(
                     target.name.read().clone().into()
                 )),
+                Operation::AddrSpace { .. } => OperationData::Offset(0),
                 _ => OperationData::Other,
             };
 
@@ -426,12 +434,19 @@ impl Scheme for ProcScheme {
                 }
             }
             Operation::AddrSpace { addrspace } => {
-                let (new_addrspace, is_mem) = match buf {
+                let (operation, is_mem) = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
-                    b"empty" => (new_addrspace()?.1, false),
-                    b"exclusive" => (addrspace.read().try_clone()?.1, false),
-                    b"mem" => (Arc::clone(&addrspace), true),
+                    b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()?.1 }, false),
+                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.read().try_clone()?.1 }, false),
+                    b"mem" => (Operation::Memory { addrspace: Arc::clone(&addrspace) }, true),
+
+                    grant_handle if grant_handle.starts_with(b"grant-") => {
+                        let start_addr = usize::from_str_radix(core::str::from_utf8(&grant_handle[6..]).map_err(|_| Error::new(EINVAL))?, 16).map_err(|_| Error::new(EINVAL))?;
+                        (Operation::GrantHandle {
+                            description: Arc::clone(&addrspace.read().grants.contains(VirtualAddress::new(start_addr)).ok_or(Error::new(EINVAL))?.desc_opt.as_ref().ok_or(Error::new(EINVAL))?.desc.description)
+                        }, false)
+                    }
 
                     _ => return Err(Error::new(EINVAL)),
                 };
@@ -439,9 +454,9 @@ impl Scheme for ProcScheme {
                     info: Info {
                         flags: 0,
                         pid: info.pid,
-                        operation: if is_mem { Operation::Memory { addrspace: new_addrspace } } else { Operation::AddrSpace { addrspace: new_addrspace } },
+                        operation,
                     },
-                    data: if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Other },
+                    data: if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Offset(0) },
                 }
             }
             _ => return Err(Error::new(EINVAL)),
@@ -504,8 +519,35 @@ impl Scheme for ProcScheme {
                 data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
                 Ok(bytes_read)
             },
-            // TODO: Support querying which grants exist and where
-            Operation::AddrSpace { .. } => return Err(Error::new(EBADF)),
+            // TODO: Support reading only a specific address range. Maybe using seek?
+            Operation::AddrSpace { addrspace } => {
+                let mut handles = self.handles.write();
+                let offset = if let OperationData::Offset(ref mut offset) = handles.get_mut(&id).ok_or(Error::new(EBADF))?.data {
+                    offset
+                } else {
+                    return Err(Error::new(EBADFD));
+                };
+
+                // TODO: Define a struct somewhere?
+                const RECORD_SIZE: usize = mem::size_of::<usize>() * 4;
+                let start = core::cmp::min(buf.len(), *offset);
+                let records = buf[start..].array_chunks_mut::<RECORD_SIZE>();
+
+                let addrspace = addrspace.read();
+                let mut bytes_read = 0;
+
+                for (record_bytes, grant) in records.zip(addrspace.grants.iter()).skip(*offset / RECORD_SIZE) {
+                    let mut qwords = record_bytes.array_chunks_mut::<{mem::size_of::<usize>()}>();
+                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.start_address().data()));
+                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.size()));
+                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.flags().data() | if grant.desc_opt.is_some() { 0x8000_0000 } else { 0 }));
+                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.desc_opt.as_ref().map_or(0, |d| d.offset)));
+                    bytes_read += RECORD_SIZE;
+                }
+
+                *offset += bytes_read;
+                Ok(bytes_read)
+            }
 
             Operation::Regs(kind) => {
                 union Output {
@@ -641,7 +683,7 @@ impl Scheme for ProcScheme {
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
             // with `<pid>/ctx`
             Operation::CurrentAddrSpace | Operation::CurrentFiletable => return Err(Error::new(EBADF)),
-            Operation::OpenViaDup => return Err(Error::new(EBADF)),
+            Operation::OpenViaDup | Operation::GrantHandle { .. } => return Err(Error::new(EBADF)),
         }
     }
 
@@ -695,7 +737,7 @@ impl Scheme for ProcScheme {
                 let base = chunks.next().ok_or(Error::new(EINVAL))?;
                 let size = chunks.next().ok_or(Error::new(EINVAL))?;
                 let flags = chunks.next().and_then(|f| MapFlags::from_bits(f)).ok_or(Error::new(EINVAL))?;
-                let region = Region::new(VirtualAddress::new(base), size);
+                let src_address = chunks.next();
 
                 if base % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || base.saturating_add(size) > crate::USER_END_OFFSET {
                     return Err(Error::new(EINVAL));
@@ -707,8 +749,6 @@ impl Scheme for ProcScheme {
                 let callback = |addr_space: &mut AddrSpace| {
                     let (mut inactive, mut active);
 
-                    //let mut addr_space = context.addr_space()?.write();
-
                     let (mut mapper, mut flusher) = if is_active {
                         active = (unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new());
                         (active.0.mapper(), &mut active.1 as &mut dyn Flusher<RmmA>)
@@ -717,6 +757,34 @@ impl Scheme for ProcScheme {
                         (inactive.0.mapper(), &mut inactive.1 as &mut dyn Flusher<RmmA>)
                     };
 
+                    if let Some(src_address) = src_address {
+                        // Forbid transferring grants to the same address space!
+                        if is_active { return Err(Error::new(EBUSY)); }
+
+                        let src_grant = current_addrspace()?.write().grants.take(&Region::new(VirtualAddress::new(src_address), size)).ok_or(Error::new(EINVAL))?;
+
+                        if src_address % PAGE_SIZE != 0 || src_address.saturating_add(size) > crate::USER_END_OFFSET {
+                            return Err(Error::new(EINVAL));
+                        }
+
+                        // TODO: Allow downgrading flags?
+
+                        if let Some(grant) = addr_space.grants.conflicts(Region::new(VirtualAddress::new(base), size)).next() {
+                            return Err(Error::new(EEXIST));
+                        }
+
+                        addr_space.grants.insert(Grant::transfer(
+                            src_grant,
+                            Page::containing_address(VirtualAddress::new(base)),
+                            &mut *unsafe { ActivePageTable::new(rmm::TableKind::User) },
+                            &mut mapper,
+                            PageFlushAll::new(),
+                            flusher,
+                        ));
+                        return Ok(());
+                    }
+
+                    let region = Region::new(VirtualAddress::new(base), size);
                     let conflicting = addr_space.grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
                     for conflicting_region in conflicting {
                         let whole_grant = addr_space.grants.take(&conflicting_region).ok_or(Error::new(EBADFD))?;
@@ -939,15 +1007,15 @@ impl Scheme for ProcScheme {
 
                 let mut filetable = hopefully_this_scheme.as_filetable(number)?;
 
-                try_stop_context(info.pid, |context| {
+                let stopper = if info.pid == context::context_id() { with_context_mut } else { try_stop_context };
+
+                stopper(info.pid, |context: &mut Context| {
                     context.files = filetable;
                     Ok(())
                 })?;
                 Ok(mem::size_of::<usize>())
             }
             Operation::CurrentAddrSpace { .. } => {
-                println!("Setting current address space! ({} {})", info.pid.into(), context::context_id().into());
-
                 let mut iter = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
                 let addrspace_fd = iter.next().ok_or(Error::new(EINVAL))?;
                 let sp = iter.next().ok_or(Error::new(EINVAL))?;
@@ -974,7 +1042,7 @@ impl Scheme for ProcScheme {
                 }
                 Ok(3 * mem::size_of::<usize>())
             }
-            Operation::OpenViaDup => return Err(Error::new(EBADF)),
+            Operation::OpenViaDup | Operation::GrantHandle { .. } => return Err(Error::new(EBADF)),
         }
     }
 
@@ -1022,6 +1090,8 @@ impl Scheme for ProcScheme {
             Operation::CurrentAddrSpace => "current-addrspace",
             Operation::CurrentFiletable => "current-filetable",
             Operation::OpenViaDup => "open-via-dup",
+
+            Operation::GrantHandle { .. } => return Err(Error::new(EOPNOTSUPP)),
         });
 
         read_from(buf, &path.as_bytes(), &mut 0)
@@ -1067,6 +1137,20 @@ impl Scheme for ProcScheme {
         }
         Ok(0)
     }
+    // TODO: Support borrowing someone else's memory.
+    fn fmap(&self, id: usize, map: &syscall::data::Map) -> Result<usize> {
+        let description_lock = match self.handles.read().get(&id) {
+            Some(Handle { info: Info { operation: Operation::GrantHandle { ref description }, .. }, .. }) => Arc::clone(description),
+            _ => return Err(Error::new(EBADF)),
+        };
+        let (scheme_id, number) = {
+            let description = description_lock.read();
+
+            (description.scheme, description.number)
+        };
+        let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(EBADFD))?);
+        scheme.fmap(number, map)
+    }
 }
 impl KernelScheme for ProcScheme {
     fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
@@ -1077,10 +1161,11 @@ impl KernelScheme for ProcScheme {
         }
     }
     fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
-        if !matches!(self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation, Operation::Filetable { .. }) {
-            return Err(Error::new(EBADF));
+        if let Operation::Filetable { ref filetable } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
+            Ok(Arc::clone(filetable))
+        } else {
+            Err(Error::new(EBADF))
         }
-        Ok(Arc::clone(&context::contexts().current().ok_or(Error::new(ESRCH))?.read().files))
     }
 }
 extern "C" fn clone_handler() {

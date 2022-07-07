@@ -652,7 +652,6 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
             .expect("expected bootstrap context to have an address space")
             .write().grants.insert(grant);
     }
-    log::info!("Usermode bootstrap");
 
     drop(data);
 
