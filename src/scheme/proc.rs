@@ -746,77 +746,66 @@ impl Scheme for ProcScheme {
                 let mut addrspace = addrspace.write();
                 let is_active = addrspace.is_current();
 
-                let callback = |addr_space: &mut AddrSpace| {
-                    let (mut inactive, mut active);
+                let (mut inactive, mut active);
 
-                    let (mut mapper, mut flusher) = if is_active {
-                        active = (unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new());
-                        (active.0.mapper(), &mut active.1 as &mut dyn Flusher<RmmA>)
-                    } else {
-                        inactive = (unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) }, InactiveFlusher::new());
-                        (inactive.0.mapper(), &mut inactive.1 as &mut dyn Flusher<RmmA>)
-                    };
-
-                    if let Some(src_address) = src_address {
-                        // Forbid transferring grants to the same address space!
-                        if is_active { return Err(Error::new(EBUSY)); }
-
-                        let src_grant = current_addrspace()?.write().grants.take(&Region::new(VirtualAddress::new(src_address), size)).ok_or(Error::new(EINVAL))?;
-
-                        if src_address % PAGE_SIZE != 0 || src_address.saturating_add(size) > crate::USER_END_OFFSET {
-                            return Err(Error::new(EINVAL));
-                        }
-
-                        // TODO: Allow downgrading flags?
-
-                        if let Some(grant) = addr_space.grants.conflicts(Region::new(VirtualAddress::new(base), size)).next() {
-                            return Err(Error::new(EEXIST));
-                        }
-
-                        addr_space.grants.insert(Grant::transfer(
-                            src_grant,
-                            Page::containing_address(VirtualAddress::new(base)),
-                            &mut *unsafe { ActivePageTable::new(rmm::TableKind::User) },
-                            &mut mapper,
-                            PageFlushAll::new(),
-                            flusher,
-                        ));
-                        return Ok(());
-                    }
-
-                    let region = Region::new(VirtualAddress::new(base), size);
-                    let conflicting = addr_space.grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
-                    for conflicting_region in conflicting {
-                        let whole_grant = addr_space.grants.take(&conflicting_region).ok_or(Error::new(EBADFD))?;
-                        let (before_opt, current, after_opt) = whole_grant.extract(region.intersect(conflicting_region)).ok_or(Error::new(EBADFD))?;
-
-                        if let Some(before) = before_opt {
-                            addr_space.grants.insert(before);
-                        }
-                        if let Some(after) = after_opt {
-                            addr_space.grants.insert(after);
-                        }
-
-                        let res = current.unmap(&mut mapper, &mut flusher);
-
-                        if res.file_desc.is_some() {
-                            return Err(Error::new(EBUSY));
-                        }
-
-                        // TODO: Partial free if grant is mapped externally, or fail and force
-                        // userspace to do it.
-                    }
-
-                    if flags.intersects(MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::PROT_WRITE) {
-                        let base = Page::containing_address(VirtualAddress::new(base));
-
-                        addr_space.grants.insert(Grant::zeroed(base, size / PAGE_SIZE, page_flags(flags), &mut mapper, flusher)?);
-                    }
-                    Ok(())
+                let (mut mapper, mut flusher) = if is_active {
+                    active = (unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new());
+                    (active.0.mapper(), &mut active.1 as &mut dyn Flusher<RmmA>)
+                } else {
+                    inactive = (unsafe { InactivePageTable::from_address(addrspace.frame.utable.start_address().data()) }, InactiveFlusher::new());
+                    (inactive.0.mapper(), &mut inactive.1 as &mut dyn Flusher<RmmA>)
                 };
-                callback(&mut *addrspace)?;
 
-                // TODO: Set some "in use" flag every time an address space is switched to. This
+                let region = Region::new(VirtualAddress::new(base), size);
+                let conflicting = addrspace.grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
+                for conflicting_region in conflicting {
+                    let whole_grant = addrspace.grants.take(&conflicting_region).ok_or(Error::new(EBADFD))?;
+                    let (before_opt, current, after_opt) = whole_grant.extract(region.intersect(conflicting_region)).ok_or(Error::new(EBADFD))?;
+
+                    if let Some(before) = before_opt {
+                        addrspace.grants.insert(before);
+                    }
+                    if let Some(after) = after_opt {
+                        addrspace.grants.insert(after);
+                    }
+
+                    let res = current.unmap(&mut mapper, &mut flusher);
+
+                    if res.file_desc.is_some() {
+                        // We prefer avoiding file operations from within the kernel. If userspace
+                        // updates grants that overlap, it might as well enumerate grants and call
+                        // partial funmap on its own.
+                        return Err(Error::new(EBUSY));
+                    }
+                }
+
+                let base_page = Page::containing_address(VirtualAddress::new(base));
+
+                if let Some(src_address) = src_address {
+                    // Forbid transferring grants to the same address space!
+                    if is_active { return Err(Error::new(EBUSY)); }
+
+                    let src_grant = current_addrspace()?.write().grants.take(&Region::new(VirtualAddress::new(src_address), size)).ok_or(Error::new(EINVAL))?;
+
+                    if src_address % PAGE_SIZE != 0 || src_address.saturating_add(size) > crate::USER_END_OFFSET {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    // TODO: Allow downgrading flags?
+
+                    addrspace.grants.insert(Grant::transfer(
+                        src_grant,
+                        base_page,
+                        &mut *unsafe { ActivePageTable::new(rmm::TableKind::User) },
+                        &mut mapper,
+                        PageFlushAll::new(),
+                        flusher,
+                    ));
+                } else if flags.intersects(MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::PROT_WRITE) {
+                    addrspace.grants.insert(Grant::zeroed(base_page, size / PAGE_SIZE, page_flags(flags), &mut mapper, flusher)?);
+                }
+
+                // TODO: Set some "in use" flag every time an address space is switched to? This
                 // way, we know what hardware threads are using any given page table, which we need
                 // to know while doing TLB shootdown.
 
