@@ -279,9 +279,13 @@ impl UserInner {
         Ok(0)
     }
 
-    fn fmap_inner(&self, file: usize, map: &Map, context_lock: &Arc<RwLock<Context>>) -> Result<usize> {
+    fn fmap_inner(&self, file: usize, map: &Map) -> Result<usize> {
         let (pid, uid, gid, context_weak, desc) = {
+            let context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
             let context = context_lock.read();
+            if map.size % PAGE_SIZE != 0 {
+                log::warn!("Unaligned map size for context {:?}", context.name.try_read().as_deref());
+            }
             // TODO: Faster, cleaner mechanism to get descriptor
             let scheme = self.scheme_id.load(Ordering::SeqCst);
             let mut desc_res = Err(Error::new(EBADF));
@@ -298,9 +302,8 @@ impl UserInner {
                 }
             }
             let desc = desc_res?;
-            (context.id, context.euid, context.egid, Arc::downgrade(context_lock), desc)
+            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
         };
-        drop(context_lock);
 
         let address = self.capture(map)?;
 
@@ -433,7 +436,7 @@ impl Scheme for UserScheme {
     fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        inner.fmap_inner(file, map, &Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?))
+        inner.fmap_inner(file, map)
     }
 
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
@@ -535,9 +538,4 @@ impl Scheme for UserScheme {
         inner.call(SYS_CLOSE, file, 0, 0)
     }
 }
-impl crate::scheme::KernelScheme for UserScheme {
-    fn kfmap(&self, number: usize, map: &Map, target_context: &Arc<RwLock<Context>>) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.fmap_inner(number, map, target_context)
-    }
-}
+impl crate::scheme::KernelScheme for UserScheme {}

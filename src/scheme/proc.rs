@@ -120,7 +120,20 @@ enum Operation {
     Filetable { filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>> },
     AddrSpace { addrspace: Arc<RwLock<AddrSpace>> },
     CurrentAddrSpace,
+
+    // "operations CAN change". The reason we split changing the address space into two handle
+    // types, is that we would rather want the actual switch to occur when closing, as opposed to
+    // when writing. This is so that we can actually guarantee that no file descriptors are leaked.
+    AwaitingAddrSpaceChange {
+        new: Arc<RwLock<AddrSpace>>,
+        new_sp: usize,
+        new_ip: usize,
+    },
+
     CurrentFiletable,
+
+    AwaitingFiletableChange(Arc<RwLock<Vec<Option<FileDescriptor>>>>),
+
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
     // directory.
     OpenViaDup,
@@ -530,8 +543,7 @@ impl Scheme for ProcScheme {
 
                 // TODO: Define a struct somewhere?
                 const RECORD_SIZE: usize = mem::size_of::<usize>() * 4;
-                let start = core::cmp::min(buf.len(), *offset);
-                let records = buf[start..].array_chunks_mut::<RECORD_SIZE>();
+                let records = buf.array_chunks_mut::<RECORD_SIZE>();
 
                 let addrspace = addrspace.read();
                 let mut bytes_read = 0;
@@ -682,8 +694,7 @@ impl Scheme for ProcScheme {
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
             // with `<pid>/ctx`
-            Operation::CurrentAddrSpace | Operation::CurrentFiletable => return Err(Error::new(EBADF)),
-            Operation::OpenViaDup | Operation::GrantHandle { .. } => return Err(Error::new(EBADF)),
+            _ => return Err(Error::new(EBADF)),
         }
     }
 
@@ -996,12 +1007,8 @@ impl Scheme for ProcScheme {
 
                 let mut filetable = hopefully_this_scheme.as_filetable(number)?;
 
-                let stopper = if info.pid == context::context_id() { with_context_mut } else { try_stop_context };
+                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(filetable);
 
-                stopper(info.pid, |context: &mut Context| {
-                    context.files = filetable;
-                    Ok(())
-                })?;
                 Ok(mem::size_of::<usize>())
             }
             Operation::CurrentAddrSpace { .. } => {
@@ -1013,25 +1020,11 @@ impl Scheme for ProcScheme {
                 let (hopefully_this_scheme, number) = extract_scheme_number(addrspace_fd)?;
                 let space = hopefully_this_scheme.as_addrspace(number)?;
 
-                let callback = |context: &mut Context| unsafe {
-                    if let Some(saved_regs) = ptrace::regs_for_mut(context) {
-                        saved_regs.iret.rip = ip;
-                        saved_regs.iret.rsp = sp;
-                    } else {
-                        context.clone_entry = Some([ip, sp]);
-                    }
+                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: space, new_sp: sp, new_ip: ip };
 
-                    context.set_addr_space(space);
-                    Ok(())
-                };
-                if info.pid == context::context_id() {
-                    with_context_mut(info.pid, callback)?;
-                } else {
-                    try_stop_context(info.pid, callback)?;
-                }
                 Ok(3 * mem::size_of::<usize>())
             }
-            Operation::OpenViaDup | Operation::GrantHandle { .. } => return Err(Error::new(EBADF)),
+            _ => return Err(Error::new(EBADF)),
         }
     }
 
@@ -1080,7 +1073,7 @@ impl Scheme for ProcScheme {
             Operation::CurrentFiletable => "current-filetable",
             Operation::OpenViaDup => "open-via-dup",
 
-            Operation::GrantHandle { .. } => return Err(Error::new(EOPNOTSUPP)),
+            _ => return Err(Error::new(EOPNOTSUPP)),
         });
 
         read_from(buf, &path.as_bytes(), &mut 0)
@@ -1111,18 +1104,38 @@ impl Scheme for ProcScheme {
         let mut handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
         handle.continue_ignored_children();
 
-        if let Operation::Trace = handle.info.operation {
-            ptrace::close_session(handle.info.pid);
+        let stop_context = if handle.info.pid == context::context_id() { with_context_mut } else { try_stop_context };
 
-            if handle.info.flags & O_EXCL == O_EXCL {
-                syscall::kill(handle.info.pid, SIGKILL)?;
-            }
+        match handle.info.operation {
+            Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => stop_context(handle.info.pid, |context: &mut Context| unsafe {
+                if let Some(saved_regs) = ptrace::regs_for_mut(context) {
+                    saved_regs.iret.rip = new_ip;
+                    saved_regs.iret.rsp = new_sp;
+                } else {
+                    context.clone_entry = Some([new_ip, new_sp]);
+                }
 
-            let contexts = context::contexts();
-            if let Some(context) = contexts.get(handle.info.pid) {
-                let mut context = context.write();
-                context.ptrace_stop = false;
+                context.set_addr_space(new);
+                Ok(())
+            })?,
+            Operation::AwaitingFiletableChange(new) => with_context_mut(handle.info.pid, |context: &mut Context| {
+                context.files = new;
+                Ok(())
+            })?,
+            Operation::Trace => {
+                ptrace::close_session(handle.info.pid);
+
+                if handle.info.flags & O_EXCL == O_EXCL {
+                    syscall::kill(handle.info.pid, SIGKILL)?;
+                }
+
+                let contexts = context::contexts();
+                if let Some(context) = contexts.get(handle.info.pid) {
+                    let mut context = context.write();
+                    context.ptrace_stop = false;
+                }
             }
+            _ => (),
         }
         Ok(0)
     }
