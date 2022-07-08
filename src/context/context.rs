@@ -535,7 +535,7 @@ impl Context {
     }
     pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) {
         let physaddr = addr_space.read().frame.utable.start_address();
-        if self.running {
+        if self.id == super::context_id() {
             unsafe {
                 RmmA::set_table(physaddr);
             }
