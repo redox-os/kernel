@@ -251,8 +251,8 @@ impl UserGrants {
         let exactly_after_size = holes.remove(&grant.end_address());
 
         // There was a range that began exactly prior to the to-be-freed region, so simply
-        // increment the size such that it occupies the grant too. If in additional there was a
-        // grant directly after the grant, include it too in the size.
+        // increment the size such that it occupies the grant too. If in addition there was a grant
+        // directly after the grant, include it too in the size.
         if let Some((hole_offset, hole_size)) = holes.range_mut(..grant.start_address()).next_back().filter(|(offset, size)| offset.data() + **size == grant.start_address().data()) {
             *hole_size = grant.end_address().data() - hole_offset.data() + exactly_after_size.unwrap_or(0);
         } else {

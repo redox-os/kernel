@@ -435,7 +435,7 @@ impl Scheme for ProcScheme {
                 if buf != b"copy" {
                     return Err(Error::new(EINVAL));
                 }
-                let new_filetable = Arc::try_new(RwLock::new(filetable.read().iter().cloned().collect::<Vec<_>>())).map_err(|_| Error::new(ENOMEM))?;
+                let new_filetable = Arc::try_new(RwLock::new(filetable.read().clone())).map_err(|_| Error::new(ENOMEM))?;
 
                 Handle {
                     info: Info {
