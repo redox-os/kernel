@@ -8,7 +8,7 @@ use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::Region;
 use crate::context;
 use crate::memory::PAGE_SIZE;
-use crate::paging::VirtualAddress;
+use crate::paging::{ActivePageTable, mapper::PageFlushAll, TableKind, VirtualAddress};
 use crate::scheme::{self, FileHandle};
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
@@ -479,6 +479,7 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
 
     let virtual_address = VirtualAddress::new(virtual_address);
     let requested = Region::new(virtual_address, length);
+    let mut flusher = PageFlushAll::new();
 
     {
         let context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
@@ -506,10 +507,9 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
             if let Some(after) = after {
                 grants.insert(after);
             }
-            use crate::paging::{ActivePageTable, mapper::PageFlushAll, TableKind};
 
             // Remove irrelevant region
-            grant.unmap(&mut *unsafe { ActivePageTable::new(TableKind::User) }, PageFlushAll::new());
+            grant.unmap(&mut *unsafe { ActivePageTable::new(TableKind::User) }, &mut flusher);
         }
     }
 
