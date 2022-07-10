@@ -820,12 +820,7 @@ impl Scheme for ProcScheme {
                 // way, we know what hardware threads are using any given page table, which we need
                 // to know while doing TLB shootdown.
 
-                /*if is_active {
-                    with_context_mut(pid, callback)?;
-                } else {
-                    try_stop_context(pid, callback)?;
-                }*/
-                Ok(3 * mem::size_of::<usize>())
+                Ok((3 + usize::from(src_address.is_some())) * mem::size_of::<usize>())
             }
             Operation::Regs(kind) => match kind {
                 RegsKind::Float => {
