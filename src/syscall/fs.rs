@@ -471,7 +471,7 @@ pub fn fstat(fd: FileHandle, stat: &mut Stat) -> Result<usize> {
 pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     if virtual_address == 0 || length == 0 {
         return Ok(0);
-    } else if virtual_address % PAGE_SIZE != 0 {
+    } else if virtual_address % PAGE_SIZE != 0 || length % PAGE_SIZE != 0 {
         return Err(Error::new(EINVAL));
     }
 
