@@ -146,9 +146,9 @@ impl UserInner {
         let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
 
-        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
-
         let mut addr_space = context.addr_space()?.write();
+
+        let mut new_table = unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) };
 
         let src_address = round_down_pages(address);
         let dst_address = round_down_pages(dst_address);
@@ -178,14 +178,14 @@ impl UserInner {
         let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
 
-        let mut other_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
         let mut addr_space = context.addr_space()?.write();
+        let mut other_table = unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) };
 
         let region = match addr_space.grants.contains(VirtualAddress::new(address)).map(Region::from) {
             Some(region) => region,
             None => return Err(Error::new(EFAULT)),
         };
-        addr_space.grants.take(&region).unwrap().unmap(&mut other_table.mapper(), crate::paging::mapper::InactiveFlusher::new());
+        addr_space.grants.take(&region).unwrap().unmap(&mut other_table.mapper(), InactiveFlusher::new());
         Ok(())
     }
 

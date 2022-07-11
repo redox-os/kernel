@@ -35,6 +35,14 @@ pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
         .write(flags.contains(MapFlags::PROT_WRITE))
         //TODO: PROT_READ
 }
+pub fn map_flags(page_flags: PageFlags<RmmA>) -> MapFlags {
+    let mut flags = MapFlags::PROT_READ;
+    if page_flags.has_write() { flags |= MapFlags::PROT_WRITE; }
+    if page_flags.has_execute() { flags |= MapFlags::PROT_EXEC; }
+    // TODO: MAP_SHARED/MAP_PRIVATE (requires that grants keep track of what they borrow and if
+    // they borrow shared or CoW).
+    flags
+}
 
 pub struct UnmapResult {
     pub file_desc: Option<GrantFileRef>,
@@ -47,31 +55,19 @@ impl Drop for UnmapResult {
     }
 }
 
-int_like!(PtId, usize);
-
-static ADDRSPACES: RwLock<BTreeMap<PtId, Arc<RwLock<AddrSpace>>>> = RwLock::new(BTreeMap::new());
-static NEXT_PTID: atomic::AtomicUsize = atomic::AtomicUsize::new(1);
-
-pub fn new_addrspace() -> Result<(PtId, Arc<RwLock<AddrSpace>>)> {
-    let id = PtId::from(NEXT_PTID.fetch_add(1, atomic::Ordering::Relaxed));
-    let arc = Arc::try_new(RwLock::new(AddrSpace::new(id)?)).map_err(|_| Error::new(ENOMEM))?;
-    ADDRSPACES.write().insert(id, Arc::clone(&arc));
-    Ok((id, arc))
-}
-pub fn addrspace(id: PtId) -> Option<Arc<RwLock<AddrSpace>>> {
-    ADDRSPACES.read().get(&id).map(Arc::clone)
+pub fn new_addrspace() -> Result<Arc<RwLock<AddrSpace>>> {
+    Arc::try_new(RwLock::new(AddrSpace::new()?)).map_err(|_| Error::new(ENOMEM))
 }
 
 #[derive(Debug)]
 pub struct AddrSpace {
     pub frame: Tables,
     pub grants: UserGrants,
-    pub id: PtId,
 }
 impl AddrSpace {
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    pub fn try_clone(&self) -> Result<(PtId, Arc<RwLock<Self>>)> {
-        let (id, mut new) = new_addrspace()?;
+    pub fn try_clone(&self) -> Result<Arc<RwLock<Self>>> {
+        let mut new = new_addrspace()?;
 
         // TODO: Abstract away this.
         let (mut inactive, mut active);
@@ -111,13 +107,12 @@ impl AddrSpace {
 
             new.write().grants.insert(new_grant);
         }
-        Ok((id, new))
+        Ok(new)
     }
-    pub fn new(id: PtId) -> Result<Self> {
+    pub fn new() -> Result<Self> {
         Ok(Self {
             grants: UserGrants::new(),
             frame: setup_new_utable()?,
-            id,
         })
     }
     pub fn is_current(&self) -> bool {
@@ -271,7 +266,7 @@ impl UserGrants {
     }
     pub fn take(&mut self, region: &Region) -> Option<Grant> {
         let grant = self.inner.take(region)?;
-        Self::unreserve(&mut self.holes, region);
+        Self::unreserve(&mut self.holes, grant.region());
         Some(grant)
     }
     pub fn iter(&self) -> impl Iterator<Item = &Grant> + '_ {
@@ -560,7 +555,7 @@ impl Grant {
                 size: page_count * PAGE_SIZE,
             },
             flags,
-            mapped: !unmap,
+            mapped: true,
             owned,
             desc_opt,
         }

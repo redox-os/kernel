@@ -1,6 +1,6 @@
 use crate::{
     arch::paging::{ActivePageTable, Flusher, InactivePageTable, mapper::{InactiveFlusher, Mapper, PageFlushAll}, Page, RmmA, VirtualAddress},
-    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, PtId, page_flags, Region}},
+    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, page_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, AtomicSchemeId, FileHandle, KernelScheme, SchemeId},
@@ -8,7 +8,7 @@ use crate::{
         FloatRegisters,
         IntRegisters,
         EnvRegisters,
-        data::{PtraceEvent, Stat},
+        data::{Map, PtraceEvent, Stat},
         error::*,
         flag::*,
         scheme::{calc_seek_offset_usize, Scheme},
@@ -450,8 +450,8 @@ impl Scheme for ProcScheme {
                 let (operation, is_mem) = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
-                    b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()?.1 }, false),
-                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.read().try_clone()?.1 }, false),
+                    b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
+                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.read().try_clone()? }, false),
                     b"mem" => (Operation::Memory { addrspace: Arc::clone(&addrspace) }, true),
 
                     grant_handle if grant_handle.starts_with(b"grant-") => {
@@ -552,7 +552,7 @@ impl Scheme for ProcScheme {
                     let mut qwords = record_bytes.array_chunks_mut::<{mem::size_of::<usize>()}>();
                     qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.start_address().data()));
                     qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.size()));
-                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.flags().data() | if grant.desc_opt.is_some() { 0x8000_0000 } else { 0 }));
+                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(map_flags(grant.flags()).bits() | if grant.desc_opt.is_some() { 0x8000_0000 } else { 0 }));
                     qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.desc_opt.as_ref().map_or(0, |d| d.offset)));
                     bytes_read += RECORD_SIZE;
                 }
@@ -738,10 +738,6 @@ impl Scheme for ProcScheme {
             },
             Operation::AddrSpace { addrspace } => {
                 // FIXME: Forbid upgrading external mappings.
-
-                let pid = self.handles.read()
-                    .get(&id).ok_or(Error::new(EBADF))?
-                    .info.pid;
 
                 let mut chunks = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
                 // Update grant mappings, like mprotect but allowed to target other contexts.
@@ -1110,7 +1106,21 @@ impl Scheme for ProcScheme {
                     context.clone_entry = Some([new_ip, new_sp]);
                 }
 
-                context.set_addr_space(new);
+                let prev_addr_space = context.set_addr_space(new);
+
+                if let Some(prev) = prev_addr_space.and_then(|a| Arc::try_unwrap(a).ok()).map(RwLock::into_inner) {
+                    // We are the last reference to the address space; therefore it must be
+                    // unmapped.
+
+                    let mut table = unsafe { InactivePageTable::from_address(prev.frame.utable.start_address().data()) };
+
+                    // TODO: Optimize away clearing of page tables? In that case, what about memory
+                    // deallocation?
+                    for grant in prev.grants.into_iter() {
+                        grant.unmap(&mut table.mapper(), ());
+                    }
+                }
+
                 Ok(())
             })?,
             Operation::AwaitingFiletableChange(new) => with_context_mut(handle.info.pid, |context: &mut Context| {
@@ -1135,7 +1145,7 @@ impl Scheme for ProcScheme {
         Ok(0)
     }
     // TODO: Support borrowing someone else's memory.
-    fn fmap(&self, id: usize, map: &syscall::data::Map) -> Result<usize> {
+    fn fmap(&self, id: usize, map: &Map) -> Result<usize> {
         let description_lock = match self.handles.read().get(&id) {
             Some(Handle { info: Info { operation: Operation::GrantHandle { ref description }, .. }, .. }) => Arc::clone(description),
             _ => return Err(Error::new(EBADF)),

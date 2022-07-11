@@ -359,7 +359,7 @@ impl Context {
             sigstack: None,
             clone_entry: None,
         };
-        this.set_addr_space(new_addrspace()?.1);
+        let _ = this.set_addr_space(new_addrspace()?);
         Ok(this)
     }
 
@@ -533,7 +533,8 @@ impl Context {
     pub fn addr_space(&self) -> Result<&Arc<RwLock<AddrSpace>>> {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
-    pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) {
+    #[must_use = "grants must be manually unmapped, otherwise it WILL panic!"]
+    pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) -> Option<Arc<RwLock<AddrSpace>>> {
         let physaddr = addr_space.read().frame.utable.start_address();
         if self.id == super::context_id() {
             unsafe {
@@ -542,6 +543,6 @@ impl Context {
         }
 
         self.arch.set_page_utable(physaddr.data());
-        self.addr_space = Some(addr_space);
+        self.addr_space.replace(addr_space)
     }
 }
