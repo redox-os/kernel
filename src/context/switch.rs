@@ -30,13 +30,13 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
         context.arch = ksig.0;
 
         if let Some(ref mut kfx) = context.kfx {
-            kfx.clone_from_slice(&ksig.1.expect("context::switch: ksig kfx not set with ksig_restore"));
+            kfx.copy_from_slice(&*ksig.1.expect("context::switch: ksig kfx not set with ksig_restore"));
         } else {
             panic!("context::switch: kfx not set with ksig_restore");
         }
 
         if let Some(ref mut kstack) = context.kstack {
-            kstack.clone_from_slice(&ksig.2.expect("context::switch: ksig kstack not set with ksig_restore"));
+            kstack.copy_from_slice(&ksig.2.expect("context::switch: ksig kstack not set with ksig_restore"));
         } else {
             panic!("context::switch: kstack not set with ksig_restore");
         }

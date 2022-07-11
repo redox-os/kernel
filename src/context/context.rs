@@ -18,6 +18,7 @@ use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::{AddrSpace, new_addrspace, UserGrants};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::memory::Enomem;
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 
@@ -219,11 +220,11 @@ pub struct Context {
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
-    pub kfx: Option<Box<[u8]>>,
+    pub kfx: Option<AlignedBox<[u8; {arch::KFX_SIZE}], {arch::KFX_ALIGN}>>,
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
     /// Kernel signal backup: Registers, Kernel FX, Kernel Stack, Signal number
-    pub ksig: Option<(arch::Context, Option<Box<[u8]>>, Option<Box<[u8]>>, u8)>,
+    pub ksig: Option<(arch::Context, Option<AlignedBox<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>>, Option<Box<[u8]>>, u8)>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
@@ -278,14 +279,14 @@ impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
         }
     };
     #[inline(always)]
-    pub fn try_zeroed() -> Result<Self>
+    pub fn try_zeroed() -> Result<Self, Enomem>
     where
         T: ValidForZero,
     {
         Ok(unsafe {
             let ptr = crate::ALLOCATOR.alloc_zeroed(Self::LAYOUT);
             if ptr.is_null() {
-                return Err(Error::new(ENOMEM))?;
+                return Err(Enomem)?;
             }
             Self {
                 inner: Unique::new_unchecked(ptr.cast()),
@@ -305,6 +306,25 @@ impl<T, const ALIGN: usize> Drop for AlignedBox<T, ALIGN> {
             core::ptr::drop_in_place(self.inner.as_ptr());
             crate::ALLOCATOR.dealloc(self.inner.as_ptr().cast(), Self::LAYOUT);
         }
+    }
+}
+impl<T, const ALIGN: usize> core::ops::Deref for AlignedBox<T, ALIGN> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.inner.as_ptr() }
+    }
+}
+impl<T, const ALIGN: usize> core::ops::DerefMut for AlignedBox<T, ALIGN> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.inner.as_ptr() }
+    }
+}
+impl<T: Clone + ValidForZero, const ALIGN: usize> Clone for AlignedBox<T, ALIGN> {
+    fn clone(&self) -> Self {
+        let mut new = Self::try_zeroed().unwrap_or_else(|_| alloc::alloc::handle_alloc_error(Self::LAYOUT));
+        T::clone_from(&mut new, self);
+        new
     }
 }
 
@@ -544,5 +564,12 @@ impl Context {
 
         self.arch.set_page_utable(physaddr.data());
         self.addr_space.replace(addr_space)
+    }
+
+    pub fn init_fx(&mut self) -> Result<(), Enomem> {
+        let mut fx = AlignedBox::<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>::try_zeroed()?;
+        self.arch.set_fx(fx.as_mut_ptr() as usize);
+        self.kfx = Some(fx);
+        Ok(())
     }
 }

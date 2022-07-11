@@ -79,12 +79,8 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let mut fx = unsafe {
-                // TODO: Alignment must match, the following can be UB. Use AlignedBox.
-                let ptr = crate::ALLOCATOR.alloc_zeroed(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024];
-                if ptr.is_null() { return Err(Error::new(ENOMEM)); }
-                Box::from_raw(ptr)
-            };
+            context.init_fx()?;
+
             let mut stack = vec![0; 65_536].into_boxed_slice();
             let offset = stack.len() - mem::size_of::<usize>();
 
@@ -102,9 +98,7 @@ impl ContextList {
                 context.arch.set_context_handle();
             }
 
-            context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
-            context.kfx = Some(fx);
             context.kstack = Some(stack);
         }
         Ok(context_lock)

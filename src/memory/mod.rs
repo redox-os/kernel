@@ -10,7 +10,8 @@ use rmm::{
     FrameAllocator,
     FrameCount,
 };
-use syscall::{PartialAllocStrategy, PhysallocFlags};
+use crate::syscall::flag::{PartialAllocStrategy, PhysallocFlags};
+use crate::syscall::error::{ENOMEM, Error};
 
 /// A memory map area
 #[derive(Copy, Clone, Debug, Default)]
@@ -125,3 +126,9 @@ impl Iterator for FrameIter {
 
 #[derive(Debug)]
 pub struct Enomem;
+
+impl From<Enomem> for Error {
+    fn from(_: Enomem) -> Self {
+        Self::new(ENOMEM)
+    }
+}

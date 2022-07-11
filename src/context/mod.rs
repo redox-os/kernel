@@ -57,15 +57,8 @@ pub fn init() {
     let mut contexts = contexts_mut();
     let context_lock = contexts.new_context().expect("could not initialize first context");
     let mut context = context_lock.write();
-    let fx = unsafe {
-        // TODO: Alignment must match, the following can be UB. Use AlignedBox.
-        let ptr = crate::ALLOCATOR.alloc_zeroed(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024];
-        assert!(!ptr.is_null(), "failed to allocate FX to kmain!");
-        Box::from_raw(ptr)
-    };
+    context.init_fx().expect("failed to allocate FX for first context");
 
-    context.arch.set_fx(fx.as_ptr() as usize);
-    context.kfx = Some(fx);
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());

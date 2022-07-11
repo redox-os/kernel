@@ -13,6 +13,9 @@ pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 
 const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
+pub const KFX_SIZE: usize = 512;
+pub const KFX_ALIGN: usize = 16;
+
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Context {
@@ -46,21 +49,11 @@ pub struct Context {
     /// running. With fsgsbase, this is neither saved nor restored upon every syscall (there is no
     /// need to!), and thus it must be re-read from the register before copying this struct.
     pub(crate) gsbase: usize,
-    /// FX valid?
-    loadable: AbiCompatBool,
-}
-
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AbiCompatBool {
-    False,
-    True,
 }
 
 impl Context {
     pub fn new() -> Context {
         Context {
-            loadable: AbiCompatBool::False,
             fx: 0,
             cr3: 0,
             rflags: 0,
@@ -80,10 +73,7 @@ impl Context {
         self.cr3
     }
 
-    pub fn get_fx_regs(&self) -> Option<FloatRegisters> {
-        if self.loadable == AbiCompatBool::False {
-            return None;
-        }
+    pub fn get_fx_regs(&self) -> FloatRegisters {
         let mut regs = unsafe { *(self.fx as *const FloatRegisters) };
         regs._reserved = 0;
         let mut new_st = regs.st_space;
@@ -92,14 +82,10 @@ impl Context {
             *st &= !ST_RESERVED;
         }
         regs.st_space = new_st;
-        Some(regs)
+        regs
     }
 
-    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) -> bool {
-        if self.loadable == AbiCompatBool::False {
-            return false;
-        }
-
+    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) {
         {
             let old = unsafe { &*(self.fx as *const FloatRegisters) };
             new._reserved = old._reserved;
@@ -117,7 +103,6 @@ impl Context {
         unsafe {
             *(self.fx as *mut FloatRegisters) = new;
         }
-        true
     }
 
     pub fn set_fx(&mut self, address: usize) {
@@ -220,20 +205,12 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         // save processor SSE/FPU/AVX state in `prev.fx` pointee
         fxsave64 [rax]
 
-        // set `prev.loadable` to true
-        mov BYTE PTR [rdi + {off_loadable}], {true}
-        // compare `next.loadable` with true
-        cmp BYTE PTR [rsi + {off_loadable}], {true}
-        je 3f
-
-        fninit
-        jmp 3f
-
-2:
+        // load `next.fx`
         mov rax, [rsi + {off_fx}]
+
+        // load processor SSE/FPU/AVX state from `next.fx` pointee
         fxrstor64 [rax]
 
-3:
         // Save the current CR3, and load the next CR3 if not identical
         mov rcx, cr3
         mov [rdi + {off_cr3}], rcx
@@ -292,7 +269,6 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         off_fx = const(offset_of!(Cx, fx)),
         off_cr3 = const(offset_of!(Cx, cr3)),
         off_rflags = const(offset_of!(Cx, rflags)),
-        off_loadable = const(offset_of!(Cx, loadable)),
 
         off_rbx = const(offset_of!(Cx, rbx)),
         off_r12 = const(offset_of!(Cx, r12)),
@@ -308,7 +284,6 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         MSR_FSBASE = const(x86::msr::IA32_FS_BASE),
         MSR_KERNELGSBASE = const(x86::msr::IA32_KERNEL_GSBASE),
 
-        true = const(AbiCompatBool::True as u8),
         switch_hook = sym crate::context::switch_finish_hook,
         options(noreturn),
     );
