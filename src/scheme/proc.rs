@@ -1202,6 +1202,9 @@ fn inherit_context() -> Result<ContextId> {
     new_context.ens = current_context.ens;
     new_context.rns = current_context.rns;
     new_context.ppid = current_context.id;
+    new_context.pgid = current_context.pgid;
+    new_context.umask = current_context.umask;
+    new_context.sigmask = current_context.sigmask;
 
     // TODO: More to copy?
 
