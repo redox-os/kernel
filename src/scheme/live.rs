@@ -37,7 +37,7 @@ impl DiskScheme {
         let mut phys = 0;
         let mut size = 0;
 
-        for line in str::from_utf8(unsafe { crate::INIT_ENV }).unwrap_or("").lines() {
+        for line in str::from_utf8(crate::init_env()).unwrap_or("").lines() {
             let mut parts = line.splitn(2, '=');
             let name = parts.next().unwrap_or("");
             let value = parts.next().unwrap_or("");

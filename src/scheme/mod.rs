@@ -25,7 +25,6 @@ use self::acpi::AcpiScheme;
 
 use self::debug::DebugScheme;
 use self::event::EventScheme;
-use self::initfs::InitFsScheme;
 use self::irq::IrqScheme;
 use self::itimer::ITimerScheme;
 use self::memory::MemoryScheme;
@@ -45,9 +44,6 @@ pub mod debug;
 
 /// `event:` - allows reading of `Event`s which are registered using `fevent`
 pub mod event;
-
-/// `initfs:` - a readonly filesystem used for initializing the system
-pub mod initfs;
 
 /// `irq:` - allows userspace handling of IRQs
 pub mod irq;
@@ -166,7 +162,6 @@ impl SchemeList {
             self.insert(ns, "kernel/acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
         }
         self.insert(ns, "debug", |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();
-        self.insert(ns, "initfs", |_| Arc::new(InitFsScheme)).unwrap();
         self.insert(ns, "irq", |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();
         self.insert(ns, "proc", |scheme_id| Arc::new(ProcScheme::new(scheme_id))).unwrap();
         self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();

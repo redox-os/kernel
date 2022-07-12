@@ -9,6 +9,7 @@ use spin::{RwLock, RwLockWriteGuard};
 
 use crate::context::{Context, ContextId, memory, WaitpidKey};
 
+use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
@@ -624,28 +625,17 @@ pub fn waitpid(pid: ContextId, status_ptr: usize, flags: WaitFlags) -> Result<Co
     }
 }
 
-pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
-    assert!(!data.is_empty());
-
-    const LOAD_BASE: usize = 0;
+pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
+    assert_ne!(bootstrap.page_count, 0);
 
     {
-        let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
+        let grant = context::memory::Grant::physmap(
+            bootstrap.base.start_address(),
+            VirtualAddress::new(0),
+            bootstrap.page_count * PAGE_SIZE,
+            PageFlags::new().user(true).write(true).execute(true),
+        );
 
-        let grant = context::memory::Grant::zeroed(Page::containing_address(VirtualAddress::new(LOAD_BASE)), (data.len()+PAGE_SIZE-1)/PAGE_SIZE, PageFlags::new().user(true).write(true).execute(true), &mut active_table, PageFlushAll::new()).expect("failed to allocate memory for bootstrap");
-
-
-        for (index, page) in grant.pages().enumerate() {
-            let len = if data.len() - index * PAGE_SIZE < PAGE_SIZE { data.len() % PAGE_SIZE } else { PAGE_SIZE };
-
-            let physaddr = active_table.translate_page(page)
-                .expect("expected mapped init memory to have a corresponding frame")
-                .start_address();
-
-            unsafe {
-                (RmmA::phys_to_virt(physaddr).data() as *mut u8).copy_from_nonoverlapping(data.as_ptr().add(index * PAGE_SIZE), len);
-            }
-        }
         context::contexts().current()
             .expect("expected a context to exist when executing init")
             .read().addr_space()
@@ -653,12 +643,7 @@ pub fn usermode_bootstrap(mut data: Box<[u8]>) -> ! {
             .write().grants.insert(grant);
     }
 
-    drop(data);
-
     #[cfg(target_arch = "x86_64")]
-    unsafe {
-        let start = ((LOAD_BASE + 0x18) as *mut usize).read();
-        // Start with the (probably) ELF executable loaded, without any stack.
-        usermode(start, 0, 0, 0);
-    }
+    // Start in a minimal environment without any stack.
+    usermode(bootstrap.entry, 0, 0, 0);
 }

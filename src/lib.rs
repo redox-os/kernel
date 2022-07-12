@@ -74,7 +74,6 @@ extern crate spin;
 #[cfg(feature = "slab")]
 extern crate slab_allocator;
 
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::scheme::{FileHandle, SchemeNamespace};
@@ -169,48 +168,36 @@ pub fn cpu_count() -> usize {
     CPU_COUNT.load(Ordering::Relaxed)
 }
 
-static mut INIT_ENV: &[u8] = &[];
-
-/// Initialize userspace by running the initfs:bin/init process
-/// This function will also set the CWD to initfs:bin and open debug: as stdio
-pub extern fn userspace_init() {
-    let path = "initfs:/bin/bootstrap";
-
-    if let Err(err) = syscall::chdir("initfs:") {
-        info!("Failed to enter initfs ({}).", err);
-        panic!("Unexpected error while trying to enter initfs:.");
-    }
-
-    let fd = syscall::open(path, syscall::flag::O_RDONLY).expect("failed to open init");
-
-    let mut total_bytes_read = 0;
-    let mut data = Vec::new();
-
-    loop {
-        data.resize(total_bytes_read + 4096, 0);
-        let bytes_read = syscall::file_op_mut_slice(syscall::number::SYS_READ, fd, &mut data[total_bytes_read..]).expect("failed to read init");
-        if bytes_read == 0 { break }
-        total_bytes_read += bytes_read;
-    }
-    data.truncate(total_bytes_read);
-
-    let _ = syscall::close(fd);
-
-    crate::syscall::process::usermode_bootstrap(data.into_boxed_slice());
+pub fn init_env() -> &'static [u8] {
+    crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set").env
 }
 
+pub extern "C" fn userspace_init() {
+    let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
+    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap) }
+}
+
+pub struct Bootstrap {
+    pub base: crate::memory::Frame,
+    pub page_count: usize,
+    pub entry: usize,
+    pub env: &'static [u8],
+}
+static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
+
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-pub fn kmain(cpus: usize, env: &'static [u8]) -> ! {
+pub fn kmain(cpus: usize, bootstrap: Bootstrap) -> ! {
     CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
-    unsafe { INIT_ENV = env };
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
 
     let pid = syscall::getpid();
     info!("BSP: {:?} {}", pid, cpus);
-    info!("Env: {:?}", ::core::str::from_utf8(unsafe { INIT_ENV }));
+    info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
+
+    BOOTSTRAP.call_once(|| bootstrap);
 
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {
