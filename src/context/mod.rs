@@ -6,6 +6,8 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::paging::{RmmA, RmmArch};
+
 pub use self::context::{Context, ContextId, ContextSnapshot, Status, WaitpidKey};
 pub use self::list::ContextList;
 pub use self::switch::switch;
@@ -53,21 +55,19 @@ static CONTEXTS: RwLock<ContextList> = RwLock::new(ContextList::new());
 #[thread_local]
 static CONTEXT_ID: context::AtomicContextId = context::AtomicContextId::default();
 
+pub use self::arch::empty_cr3;
+
 pub fn init() {
     let mut contexts = contexts_mut();
     let context_lock = contexts.new_context().expect("could not initialize first context");
     let mut context = context_lock.write();
-    context.init_fx().expect("failed to allocate FX for first context");
+
+    self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table() });
 
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
     CONTEXT_ID.store(context.id, Ordering::SeqCst);
-}
-
-/// Initialize contexts, called if needed
-fn init_contexts() -> RwLock<ContextList> {
-    RwLock::new(ContextList::new())
 }
 
 /// Get the global schemes list, const

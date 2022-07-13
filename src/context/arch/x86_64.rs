@@ -1,9 +1,13 @@
 use core::mem;
 use core::sync::atomic::AtomicBool;
 
+use alloc::sync::Arc;
+
+use crate::paging::{RmmA, RmmArch};
 use crate::syscall::FloatRegisters;
 
 use memoffset::offset_of;
+use spin::Once;
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
@@ -19,10 +23,6 @@ pub const KFX_ALIGN: usize = 16;
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Context {
-    /// FX location
-    fx: usize,
-    /// Page table pointer
-    cr3: usize,
     /// RFLAGS register
     rflags: usize,
     /// RBX register
@@ -54,8 +54,6 @@ pub struct Context {
 impl Context {
     pub fn new() -> Context {
         Context {
-            fx: 0,
-            cr3: 0,
             rflags: 0,
             rbx: 0,
             r12: 0,
@@ -67,50 +65,6 @@ impl Context {
             fsbase: 0,
             gsbase: 0,
         }
-    }
-
-    pub fn get_page_utable(&self) -> usize {
-        self.cr3
-    }
-
-    pub fn get_fx_regs(&self) -> FloatRegisters {
-        let mut regs = unsafe { *(self.fx as *const FloatRegisters) };
-        regs._reserved = 0;
-        let mut new_st = regs.st_space;
-        for st in &mut new_st {
-            // Only allow access to the 80 lowest bits
-            *st &= !ST_RESERVED;
-        }
-        regs.st_space = new_st;
-        regs
-    }
-
-    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) {
-        {
-            let old = unsafe { &*(self.fx as *const FloatRegisters) };
-            new._reserved = old._reserved;
-            let old_st = new.st_space;
-            let mut new_st = new.st_space;
-            for (new_st, old_st) in new_st.iter_mut().zip(&old_st) {
-                *new_st &= !ST_RESERVED;
-                *new_st |= old_st & ST_RESERVED;
-            }
-            new.st_space = new_st;
-
-            // Make sure we don't use `old` from now on
-        }
-
-        unsafe {
-            *(self.fx as *mut FloatRegisters) = new;
-        }
-    }
-
-    pub fn set_fx(&mut self, address: usize) {
-        self.fx = address;
-    }
-
-    pub fn set_page_utable(&mut self, address: usize) {
-        self.cr3 = address;
     }
 
     pub fn set_stack(&mut self, address: usize) {
@@ -134,61 +88,103 @@ impl Context {
         value
     }
 }
-
-macro_rules! load_msr(
-    ($name:literal, $offset:literal) => {
-        concat!("
-            mov ecx, {", $name, "}
-            mov rdx, [rsi + {", $offset, "}]
-            mov eax, edx
-            shr rdx, 32
-
-            // MSR <= EDX:EAX
-            wrmsr
-        ")
+impl super::Context {
+    pub fn get_fx_regs(&self) -> FloatRegisters {
+        let mut regs = unsafe { self.kfx.as_ptr().cast::<FloatRegisters>().read() };
+        regs._reserved = 0;
+        let mut new_st = regs.st_space;
+        for st in &mut new_st {
+            // Only allow access to the 80 lowest bits
+            *st &= !ST_RESERVED;
+        }
+        regs.st_space = new_st;
+        regs
     }
-);
 
-// NOTE: RAX is a scratch register and can be set to whatever. There is also no return
-// value in switch_to, to it will also never be read. The same goes for RDX, and RCX.
-// TODO: Use runtime code patching (perhaps in the bootloader) by pushing alternative code
-// sequences into a specialized section, with some macro resembling Linux's `.ALTERNATIVE`.
-#[cfg(feature = "x86_fsgsbase")]
-macro_rules! switch_fsgsbase(
-    () => {
-        "
-            // placeholder: {MSR_FSBASE} {MSR_KERNELGSBASE}
+    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) {
+        {
+            let old = unsafe { &*(self.kfx.as_ptr().cast::<FloatRegisters>()) };
+            new._reserved = old._reserved;
+            let old_st = new.st_space;
+            let mut new_st = new.st_space;
+            for (new_st, old_st) in new_st.iter_mut().zip(&old_st) {
+                *new_st &= !ST_RESERVED;
+                *new_st |= old_st & ST_RESERVED;
+            }
+            new.st_space = new_st;
 
-            rdfsbase rax
-            mov [rdi + {off_fsbase}], rax
-            mov rax, [rsi + {off_fsbase}]
-            wrfsbase rax
+            // Make sure we don't use `old` from now on
+        }
 
-            swapgs
-            rdgsbase rax
-            mov [rdi + {off_gsbase}], rax
-            mov rax, [rsi + {off_gsbase}]
-            wrgsbase rax
-            swapgs
-        "
+        unsafe {
+            self.kfx.as_mut_ptr().cast::<FloatRegisters>().write(new);
+        }
     }
-);
+}
 
-#[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! switch_fsgsbase(
-    () => {
-        concat!(
-            load_msr!("MSR_FSBASE", "off_fsbase"),
-            load_msr!("MSR_KERNELGSBASE", "off_gsbase"),
-        )
-    }
-);
+pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
 
+// SAFETY: EMPTY_CR3 must be initialized.
+pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
+    debug_assert!(EMPTY_CR3.poll().is_some());
+    *EMPTY_CR3.get_unchecked()
+}
 
 /// Switch to the next context by restoring its stack and registers
-/// Check disassembly!
+pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
+    core::arch::asm!("
+        fxsave64 [{prev_fx}]
+        fxrstor64 [{next_fx}]
+        ", prev_fx = in(reg) prev.kfx.as_mut_ptr(),
+        next_fx = in(reg) next.kfx.as_ptr(),
+    );
+
+    {
+        use x86::{bits64::segmentation::*, msr};
+
+        // This is so much shorter in Rust!
+
+        if cfg!(feature = "x86_fsgsbase") {
+            prev.arch.fsbase = rdfsbase() as usize;
+            wrfsbase(next.arch.fsbase as u64);
+            swapgs();
+            prev.arch.gsbase = rdgsbase() as usize;
+            wrgsbase(next.arch.gsbase as u64);
+            swapgs();
+        } else {
+            prev.arch.fsbase = msr::rdmsr(msr::IA32_FS_BASE) as usize;
+            msr::wrmsr(msr::IA32_FS_BASE, next.arch.fsbase as u64);
+            prev.arch.gsbase = msr::rdmsr(msr::IA32_KERNEL_GSBASE) as usize;
+            msr::wrmsr(msr::IA32_KERNEL_GSBASE, next.arch.gsbase as u64);
+        }
+    }
+
+    match next.addr_space {
+        // Since Arc is essentially just wraps a pointer, in this case a regular pointer (as
+        // opposed to dyn or slice fat pointers), and NonNull optimization exists, map_or will
+        // hopefully be optimized down to checking prev and next pointers, as next cannot be null.
+        Some(ref next_space) => if prev.addr_space.as_ref().map_or(true, |prev_space| !Arc::ptr_eq(&prev_space, &next_space)) {
+            // Suppose we have two sibling threads A and B. A runs on CPU 0 and B on CPU 1. A
+            // recently called yield and is now here about to switch back. Meanwhile, B is
+            // currently creating a new mapping in their shared address space, for example a
+            // message on a channel.
+            //
+            // Unless we acquire this lock, it may be possible that the TLB will not contain new
+            // entries. While this can be caught and corrected in a page fault handler, this is not
+            // true when entries are removed from a page table!
+            let next_space = next_space.read();
+            RmmA::set_table(next_space.frame.utable.start_address());
+        }
+        None => {
+            RmmA::set_table(empty_cr3());
+        }
+    }
+    switch_to_inner(&mut prev.arch, &mut next.arch)
+}
+
+// Check disassembly!
 #[naked]
-pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
+unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
     use Context as Cx;
 
     core::arch::asm!(
@@ -199,28 +195,6 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
         //   store them here in the first place.
         concat!("
-        // load `prev.fx`
-        mov rax, [rdi + {off_fx}]
-
-        // save processor SSE/FPU/AVX state in `prev.fx` pointee
-        fxsave64 [rax]
-
-        // load `next.fx`
-        mov rax, [rsi + {off_fx}]
-
-        // load processor SSE/FPU/AVX state from `next.fx` pointee
-        fxrstor64 [rax]
-
-        // Save the current CR3, and load the next CR3 if not identical
-        mov rcx, cr3
-        mov [rdi + {off_cr3}], rcx
-        mov rax, [rsi + {off_cr3}]
-        cmp rax, rcx
-
-        je 4f
-        mov cr3, rax
-
-4:
         // Save old registers, and load new ones
         mov [rdi + {off_rbx}], rbx
         mov rbx, [rsi + {off_rbx}]
@@ -243,10 +217,6 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         mov [rdi + {off_rsp}], rsp
         mov rsp, [rsi + {off_rsp}]
 
-        ",
-        switch_fsgsbase!(),
-        "
-
         // push RFLAGS (can only be modified via stack)
         pushfq
         // pop RFLAGS into `self.rflags`
@@ -266,8 +236,6 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
 
         "),
 
-        off_fx = const(offset_of!(Cx, fx)),
-        off_cr3 = const(offset_of!(Cx, cr3)),
         off_rflags = const(offset_of!(Cx, rflags)),
 
         off_rbx = const(offset_of!(Cx, rbx)),
@@ -277,12 +245,6 @@ pub unsafe extern "C" fn switch_to(_prev: &mut Context, _next: &mut Context) {
         off_r15 = const(offset_of!(Cx, r15)),
         off_rbp = const(offset_of!(Cx, rbp)),
         off_rsp = const(offset_of!(Cx, rsp)),
-
-        off_fsbase = const(offset_of!(Cx, fsbase)),
-        off_gsbase = const(offset_of!(Cx, gsbase)),
-
-        MSR_FSBASE = const(x86::msr::IA32_FS_BASE),
-        MSR_KERNELGSBASE = const(x86::msr::IA32_KERNEL_GSBASE),
 
         switch_hook = sym crate::context::switch_finish_hook,
         options(noreturn),

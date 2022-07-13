@@ -258,6 +258,7 @@ impl UserGrants {
         }
     }
     pub fn insert(&mut self, grant: Grant) {
+        assert!(self.conflicts(*grant).next().is_none());
         self.reserve(&grant);
         self.inner.insert(grant);
     }
@@ -663,9 +664,6 @@ pub const DANGLING: usize = 1 << (usize::BITS - 2);
 
 #[derive(Debug)]
 pub struct Tables {
-    #[cfg(target_arch = "aarch64")]
-    pub ktable: Frame,
-
     pub utable: Frame,
 }
 
@@ -673,9 +671,6 @@ impl Drop for Tables {
     fn drop(&mut self) {
         use crate::memory::deallocate_frames;
         deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.utable.start_address().data())), 1);
-
-        #[cfg(target_arch = "aarch64")]
-        deallocate_frames(Frame::containing_address(PhysicalAddress::new(self.ktable.start_address().data())), 1);
     }
 }
 
@@ -683,46 +678,37 @@ impl Drop for Tables {
 pub fn setup_new_utable() -> Result<Tables> {
     let mut new_utable = crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?;
 
-    // TODO: There is only supposed to be one ktable, right? Use a global variable to store the
-    // ktable (or access it from a control register) on architectures which have ktables, or obtain
-    // it from *any* utable on architectures which do not.
-    #[cfg(target_arch = "aarch64")]
-    let new_ktable = crate::memory::allocate_frames(1).ok_or(Error::new(ENOMEM))?;
+    #[cfg(target_arch = "x86_64")]
+    {
+        let active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
+        let mut new_ktable = unsafe { InactivePageTable::from_address(new_utable.start_address().data()) };
 
-    let active_ktable = unsafe { ActivePageTable::new(TableKind::Kernel) };
+        let mut copy_mapping = |p4_no| {
+            let frame = active_ktable.p4()[p4_no].pointed_frame()
+                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
+            let flags = active_ktable.p4()[p4_no].flags();
 
-    #[cfg(target_arch = "aarch64")]
-    let ktable = &new_ktable;
+            new_ktable.mapper().p4_mut()[p4_no].set(frame, flags);
+        };
+        // TODO: Just copy all 256 mappings? Or copy KERNEL_PML4+KERNEL_PERCPU_PML4 (needed for
+        // paranoid ISRs which can occur anywhere; we don't want interrupts to triple fault!) and
+        // map lazily via page faults in the kernel.
 
-    #[cfg(not(target_arch = "aarch64"))]
-    let ktable = &new_utable;
+        // Copy kernel image mapping
+        copy_mapping(crate::KERNEL_PML4);
 
-    let mut new_mapper = unsafe { InactivePageTable::from_address(ktable.start_address().data()) };
+        // Copy kernel heap mapping
+        copy_mapping(crate::KERNEL_HEAP_PML4);
 
-    let mut copy_mapping = |p4_no| {
-        let frame = active_ktable.p4()[p4_no].pointed_frame().expect("kernel image not mapped");
-        let flags = active_ktable.p4()[p4_no].flags();
+        // Copy physmap mapping
+        copy_mapping(crate::PHYS_PML4);
 
-        new_mapper.mapper().p4_mut()[p4_no].set(frame, flags);
-    };
-    // TODO: Just copy all 256 mappings?
-
-    // Copy kernel image mapping
-    copy_mapping(crate::KERNEL_PML4);
-
-    // Copy kernel heap mapping
-    copy_mapping(crate::KERNEL_HEAP_PML4);
-
-    // Copy physmap mapping
-    copy_mapping(crate::PHYS_PML4);
-
-    // Copy kernel percpu (similar to TLS) mapping.
-    copy_mapping(crate::KERNEL_PERCPU_PML4);
+        // Copy kernel percpu (similar to TLS) mapping.
+        copy_mapping(crate::KERNEL_PERCPU_PML4);
+    }
 
     Ok(Tables {
         utable: new_utable,
-        #[cfg(target_arch = "aarch64")]
-        ktable: new_ktable,
     })
 }
 

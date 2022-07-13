@@ -7,13 +7,13 @@ use core::mem;
 
 use spin::{RwLock, RwLockWriteGuard};
 
-use crate::context::{Context, ContextId, memory, WaitpidKey};
+use crate::context::{Context, ContextId, WaitpidKey};
 
 use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
-use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, RmmA, RmmArch, TableKind, VirtualAddress, PAGE_SIZE};
+use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, RmmArch, TableKind, VirtualAddress, PAGE_SIZE};
 use crate::ptrace;
 use crate::start::usermode;
 use crate::syscall::data::SigAction;
@@ -43,7 +43,7 @@ fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGu
             let unmap_result = if reaping {
                 log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
-                let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
+                let mut new_table = unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) };
 
                 grant.unmap(&mut new_table.mapper(), &mut InactiveFlusher::new())
             } else {

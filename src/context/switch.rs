@@ -29,11 +29,7 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
         let ksig = context.ksig.take().expect("context::switch: ksig not set with ksig_restore");
         context.arch = ksig.0;
 
-        if let Some(ref mut kfx) = context.kfx {
-            kfx.copy_from_slice(&*ksig.1.expect("context::switch: ksig kfx not set with ksig_restore"));
-        } else {
-            panic!("context::switch: kfx not set with ksig_restore");
-        }
+        context.kfx.copy_from_slice(&*ksig.1);
 
         if let Some(ref mut kstack) = context.kstack {
             kstack.copy_from_slice(&ksig.2.expect("context::switch: ksig kstack not set with ksig_restore"));
@@ -194,11 +190,11 @@ pub unsafe fn switch() -> bool {
             to_context.arch.signal_stack(signal_handler, sig);
         }
 
-        let from_arch_ptr: *mut arch::Context = &mut from_context_guard.arch;
+        let from_ptr: *mut Context = &mut *from_context_guard;
         core::mem::forget(from_context_guard);
 
-        let prev_arch: &mut arch::Context = &mut *from_arch_ptr;
-        let next_arch: &mut arch::Context = &mut to_context.arch;
+        let prev: &mut Context = &mut *from_ptr;
+        let next: &mut Context = &mut *to_context;
 
         // to_context_guard only exists as a raw pointer, but is still locked
 
@@ -207,7 +203,7 @@ pub unsafe fn switch() -> bool {
             next_lock: to_context_lock,
         }));
 
-        arch::switch_to(prev_arch, next_arch);
+        arch::switch_to(prev, next);
 
         // NOTE: After switch_to is called, the return address can even be different from the
         // current return address, meaning that we cannot use local variables here, and that we

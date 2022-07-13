@@ -79,7 +79,7 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            context.init_fx()?;
+            let _ = context.set_addr_space(super::memory::new_addrspace()?);
 
             let mut stack = vec![0; 65_536].into_boxed_slice();
             let offset = stack.len() - mem::size_of::<usize>();

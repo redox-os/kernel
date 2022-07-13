@@ -220,15 +220,17 @@ pub struct Context {
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
-    pub kfx: Option<AlignedBox<[u8; {arch::KFX_SIZE}], {arch::KFX_ALIGN}>>,
+    pub kfx: AlignedBox<[u8; {arch::KFX_SIZE}], {arch::KFX_ALIGN}>,
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
     /// Kernel signal backup: Registers, Kernel FX, Kernel Stack, Signal number
-    pub ksig: Option<(arch::Context, Option<AlignedBox<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>>, Option<Box<[u8]>>, u8)>,
+    pub ksig: Option<(arch::Context, AlignedBox<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>, Option<Box<[u8]>>, u8)>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
-    /// but can be None while the context is being reaped.
+    /// but can be None while the context is being reaped or when a new context is created but has
+    /// not yet had its address space changed. Note that these are only for user mappings; kernel
+    /// mappings are universal and independent on address spaces or contexts.
     pub addr_space: Option<Arc<RwLock<AddrSpace>>>,
     /// The name of the context
     pub name: Arc<RwLock<Box<str>>>,
@@ -358,7 +360,7 @@ impl Context {
             pending: VecDeque::new(),
             wake: None,
             arch: arch::Context::new(),
-            kfx: None,
+            kfx: AlignedBox::<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>::try_zeroed()?,
             kstack: None,
             ksig: None,
             ksig_restore: false,
@@ -379,7 +381,6 @@ impl Context {
             sigstack: None,
             clone_entry: None,
         };
-        let _ = this.set_addr_space(new_addrspace()?);
         Ok(this)
     }
 
@@ -562,14 +563,6 @@ impl Context {
             }
         }
 
-        self.arch.set_page_utable(physaddr.data());
         self.addr_space.replace(addr_space)
-    }
-
-    pub fn init_fx(&mut self) -> Result<(), Enomem> {
-        let mut fx = AlignedBox::<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>::try_zeroed()?;
-        self.arch.set_fx(fx.as_mut_ptr() as usize);
-        self.kfx = Some(fx);
-        Ok(())
     }
 }

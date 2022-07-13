@@ -572,11 +572,7 @@ impl Scheme for ProcScheme {
                     RegsKind::Float => with_context(info.pid, |context| {
                         // NOTE: The kernel will never touch floats
 
-                        // In the rare case of not having floating
-                        // point registers uninitiated, return
-                        // empty everything.
-                        let fx = context.kfx.as_ref().map(|_| context.arch.get_fx_regs()).unwrap_or_default();
-                        Ok((Output { float: fx }, mem::size_of::<FloatRegisters>()))
+                        Ok((Output { float: context.get_fx_regs() }, mem::size_of::<FloatRegisters>()))
                     })?,
                     RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(&context) } {
                         None => {
@@ -835,7 +831,7 @@ impl Scheme for ProcScheme {
 
                         // Ignore the rare case of floating point
                         // registers being uninitiated
-                        let _ = context.arch.set_fx_regs(regs);
+                        let _ = context.set_fx_regs(regs);
 
                         Ok(mem::size_of::<FloatRegisters>())
                     })
