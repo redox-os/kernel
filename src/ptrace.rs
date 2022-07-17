@@ -7,10 +7,7 @@ use rmm::Arch;
 use crate::{
     arch::{
         interrupt::InterruptStack,
-        paging::{
-            mapper::PageFlushAll,
-            ActivePageTable, InactivePageTable, Page, PAGE_SIZE, TableKind, VirtualAddress
-        }
+        paging::{PAGE_SIZE, VirtualAddress},
     },
     common::unique::Unique,
     context::{self, signal, Context, ContextId, memory::AddrSpace},
@@ -34,12 +31,8 @@ use alloc::{
         btree_map::Entry
     },
     sync::Arc,
-    vec::Vec
 };
-use core::{
-    cmp,
-    sync::atomic::Ordering
-};
+use core::cmp;
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 //  ____                _
@@ -473,8 +466,6 @@ fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item =
 }
 
 pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<*mut [u8]>> + '_ {
-    let mut table = unsafe { InactivePageTable::from_address(addrspace.frame.utable.start_address().data()) };
-
     // TODO: Iterate over grants instead to avoid yielding None too many times. What if
     // context_memory is used for an entire process's address space, where the stack is at the very
     // end? Alternatively we can skip pages recursively, i.e. first skip unpopulated PML4s and then
@@ -485,8 +476,10 @@ pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: us
 
         //log::info!("ADDR {:p} LEN {:#0x}", page as *const u8, len);
 
-        let frame = table.mapper().translate_page(Page::containing_address(VirtualAddress::new(addr)))?;
-        let start = RmmA::phys_to_virt(frame.start_address()).data() + addr % crate::memory::PAGE_SIZE;
+        // FIXME: verify flags before giving out slice
+        let (address, _flags) = addrspace.table.utable.translate(VirtualAddress::new(addr))?;
+
+        let start = RmmA::phys_to_virt(address).data() + addr % crate::memory::PAGE_SIZE;
         Some(core::ptr::slice_from_raw_parts_mut(start as *mut u8, len))
     })
 }

@@ -3,7 +3,7 @@
 
 use core::cmp;
 
-use crate::arch::rmm::FRAME_ALLOCATOR;
+use crate::arch::rmm::LockedAllocator;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 
 use rmm::{
@@ -26,21 +26,21 @@ pub struct MemoryArea {
 /// Get the number of frames available
 pub fn free_frames() -> usize {
     unsafe {
-        FRAME_ALLOCATOR.usage().free().data()
+        LockedAllocator.usage().free().data()
     }
 }
 
 /// Get the number of frames used
 pub fn used_frames() -> usize {
     unsafe {
-        FRAME_ALLOCATOR.usage().used().data()
+        LockedAllocator.usage().used().data()
     }
 }
 
 /// Allocate a range of frames
 pub fn allocate_frames(count: usize) -> Option<Frame> {
     unsafe {
-        FRAME_ALLOCATOR.allocate(FrameCount::new(count)).map(|phys| {
+        LockedAllocator.allocate(FrameCount::new(count)).map(|phys| {
             Frame::containing_address(PhysicalAddress::new(phys.data()))
         })
     }
@@ -65,7 +65,7 @@ pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Op
 /// Deallocate a range of frames frame
 pub fn deallocate_frames(frame: Frame, count: usize) {
     unsafe {
-        FRAME_ALLOCATOR.free(
+        LockedAllocator.free(
             rmm::PhysicalAddress::new(frame.start_address().data()),
             FrameCount::new(count)
         );
@@ -102,6 +102,11 @@ impl Frame {
     //TODO: Set private
     pub fn range_inclusive(start: Frame, end: Frame) -> FrameIter {
         FrameIter { start, end }
+    }
+    pub fn next_by(&self, n: usize) -> Self {
+        Self {
+            number: self.number + n,
+        }
     }
 }
 
