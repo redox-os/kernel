@@ -1,11 +1,13 @@
 use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame, PAGE_SIZE};
-use crate::paging::{ActivePageTable, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::paging::{Page, PageFlags, PhysicalAddress, VirtualAddress, mapper::PageFlushAll};
 use crate::paging::entry::EntryFlags;
 use crate::context;
 use crate::context::memory::{DANGLING, Grant, Region};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
+
+use alloc::sync::Arc;
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -84,11 +86,13 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     }
     // TODO: Enforce size being a multiple of the page size, fail otherwise.
 
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
     let context = context_lock.read();
 
     let mut addr_space = context.addr_space()?.write();
+    let addr_space = &mut *addr_space;
 
     let dst_address = addr_space.grants.find_free(size).ok_or(Error::new(ENOMEM))?;
 
@@ -105,11 +109,13 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     }
 
     addr_space.grants.insert(Grant::physmap(
-        PhysicalAddress::new(physical_address),
-        dst_address.start_address(),
-        size,
+        Frame::containing_address(PhysicalAddress::new(physical_address)),
+        Page::containing_address(dst_address.start_address()),
+        size / PAGE_SIZE,
         page_flags,
-    ));
+        &mut addr_space.table.utable,
+        PageFlushAll::new(),
+    )?);
 
     Ok(dst_address.start_address().data())
 }
@@ -123,16 +129,12 @@ pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
     if virtual_address == 0 {
         Ok(0)
     } else {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        let mut addr_space = context.addr_space()?.write();
+        let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+        let mut addr_space = addr_space.write();
 
         if let Some(region) = addr_space.grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
-            use crate::paging::{ActivePageTable, mapper::PageFlushAll, TableKind};
 
-            addr_space.grants.take(&region).unwrap().unmap(&mut *unsafe { ActivePageTable::new(TableKind::User) }, PageFlushAll::new());
+            addr_space.grants.take(&region).unwrap().unmap(&mut addr_space.table.utable, PageFlushAll::new());
             return Ok(0);
         }
 
@@ -147,10 +149,11 @@ pub fn physunmap(virtual_address: usize) -> Result<usize> {
 pub fn virttophys(virtual_address: usize) -> Result<usize> {
     enforce_root()?;
 
-    let active_table = unsafe { ActivePageTable::new(VirtualAddress::new(virtual_address).kind()) };
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let addr_space = addr_space.read();
 
-    match active_table.translate(VirtualAddress::new(virtual_address)) {
-        Some(physical_address) => Ok(physical_address.data()),
+    match addr_space.table.utable.translate(VirtualAddress::new(virtual_address)) {
+        Some((physical_address, _)) => Ok(physical_address.data()),
         None => Err(Error::new(EFAULT))
     }
 }

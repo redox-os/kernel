@@ -1,5 +1,4 @@
 use alloc::{
-    boxed::Box,
     sync::Arc,
     vec::Vec,
 };
@@ -13,7 +12,7 @@ use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
-use crate::paging::{ActivePageTable, InactivePageTable, Page, PageFlags, RmmArch, TableKind, VirtualAddress, PAGE_SIZE};
+use crate::paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE};
 use crate::ptrace;
 use crate::start::usermode;
 use crate::syscall::data::SigAction;
@@ -38,16 +37,16 @@ fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGu
         None => return context,
     };
 
-    if let Ok(addr_space) = Arc::try_unwrap(addr_space_arc).map(RwLock::into_inner) {
+    if let Ok(mut addr_space) = Arc::try_unwrap(addr_space_arc).map(RwLock::into_inner) {
+        let mapper = &mut addr_space.table.utable;
+
         for grant in addr_space.grants.into_iter() {
             let unmap_result = if reaping {
                 log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
 
-                let mut new_table = unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) };
-
-                grant.unmap(&mut new_table.mapper(), &mut InactiveFlusher::new())
+                grant.unmap(mapper, &mut InactiveFlusher::new())
             } else {
-                grant.unmap(&mut *unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new())
+                grant.unmap(mapper, PageFlushAll::new())
             };
 
             if unmap_result.file_desc.is_some() {
@@ -294,20 +293,20 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
-    let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
-    let end_address = address.checked_add(end_offset).ok_or(Error::new(EFAULT))?;
+    let end_address = address.checked_add(size).ok_or(Error::new(EFAULT))?;
 
-    let mut active_table = unsafe { ActivePageTable::new(TableKind::User) };
+    let address_space = Arc::clone(context::current()?.read().addr_space()?);
+    let mut address_space = address_space.write();
 
     let mut flush_all = PageFlushAll::new();
 
     let start_page = Page::containing_address(VirtualAddress::new(address));
     let end_page = Page::containing_address(VirtualAddress::new(end_address));
-    for page in Page::range_inclusive(start_page, end_page) {
+    for page in Page::range_exclusive(start_page, end_page) {
         // Check if the page is actually mapped before trying to change the flags.
         // FIXME can other processes change if a page is mapped beneath our feet?
-        let mut page_flags = if let Some(page_flags) = active_table.translate_page_flags(page) {
-            page_flags
+        let mut page_flags = if let Some((_, flags)) = address_space.table.utable.translate(page.start_address()) {
+            flags
         } else {
             flush_all.flush();
             return Err(Error::new(EFAULT));
@@ -335,7 +334,7 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
             //TODO: No flags for readable pages
         }
 
-        let flush = active_table.remap(page, page_flags);
+        let flush = unsafe { address_space.table.utable.remap(page.start_address(), page_flags).expect("failed to remap page in mprotect") };
         flush_all.consume(flush);
     }
 
@@ -629,18 +628,22 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
     assert_ne!(bootstrap.page_count, 0);
 
     {
-        let grant = context::memory::Grant::physmap(
-            bootstrap.base.start_address(),
-            VirtualAddress::new(0),
-            bootstrap.page_count * PAGE_SIZE,
-            PageFlags::new().user(true).write(true).execute(true),
-        );
-
-        context::contexts().current()
+        let addr_space = Arc::clone(context::contexts().current()
             .expect("expected a context to exist when executing init")
             .read().addr_space()
-            .expect("expected bootstrap context to have an address space")
-            .write().grants.insert(grant);
+            .expect("expected bootstrap context to have an address space"));
+
+        let mut addr_space = addr_space.write();
+        let addr_space = &mut *addr_space;
+
+        addr_space.grants.insert(context::memory::Grant::physmap(
+            bootstrap.base.clone(),
+            Page::containing_address(VirtualAddress::new(0)),
+            bootstrap.page_count,
+            PageFlags::new().user(true).write(true).execute(true),
+            &mut addr_space.table.utable,
+            PageFlushAll::new(),
+        ).expect("failed to physmap bootstrap memory"));
     }
 
     #[cfg(target_arch = "x86_64")]

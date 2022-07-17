@@ -1,24 +1,36 @@
+// TODO: Maybe stop handing out slices and instead use a wrapper type that supports copying etc.
+// Invalid pages will cause page faults, which can be handled so that they are caught and EFAULT is
+// returned. This will also make SMAP much, much, easier. c.f. Linux's copy_from_user, copy_to_user
+// which are written in assembly and handle page faults.
 use core::{mem, slice, str};
 
-use crate::paging::{ActivePageTable, Page, VirtualAddress};
+use crate::context;
+use crate::paging::{Page, TableKind, VirtualAddress};
 use crate::syscall::error::*;
 
+use alloc::sync::Arc;
+
 fn validate(address: usize, size: usize, writable: bool) -> Result<()> {
+    if VirtualAddress::new(address.saturating_add(size)).kind() != TableKind::User {
+        return Err(Error::new(EFAULT));
+    }
+
     let end_offset = size.checked_sub(1).ok_or(Error::new(EFAULT))?;
     let end_address = address.checked_add(end_offset).ok_or(Error::new(EFAULT))?;
 
-    let active_table = unsafe { ActivePageTable::new(VirtualAddress::new(address).kind()) };
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let addr_space = addr_space.read();
 
     let start_page = Page::containing_address(VirtualAddress::new(address));
     let end_page = Page::containing_address(VirtualAddress::new(end_address));
     for page in Page::range_inclusive(start_page, end_page) {
-        if let Some(page_flags) = active_table.translate_page_flags(page) {
-            if ! page_flags.has_user() {
+        if let Some((_, flags)) = addr_space.table.utable.translate(page.start_address()) {
+            if !flags.has_user() {
                 // println!("{:X}: Not usermode", page.start_address().data());
                 return Err(Error::new(EFAULT));
             }
 
-            if writable && ! page_flags.has_write() {
+            if writable && !flags.has_write() {
                 // println!("{:X}: Not writable {}", page.start_address().data(), writable);
                 return Err(Error::new(EFAULT));
             }

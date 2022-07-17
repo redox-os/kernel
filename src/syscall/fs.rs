@@ -8,7 +8,7 @@ use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::Region;
 use crate::context;
 use crate::memory::PAGE_SIZE;
-use crate::paging::{ActivePageTable, mapper::PageFlushAll, TableKind, VirtualAddress};
+use crate::paging::{mapper::PageFlushAll, VirtualAddress};
 use crate::scheme::{self, FileHandle};
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
@@ -486,12 +486,12 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
         let context = context_lock.read();
 
         let mut addr_space = context.addr_space()?.write();
-        let grants = &mut addr_space.grants;
+        let addr_space = &mut *addr_space;
 
-        let conflicting: Vec<Region> = grants.conflicts(requested).map(Region::from).collect();
+        let conflicting: Vec<Region> = addr_space.grants.conflicts(requested).map(Region::from).collect();
 
         for conflict in conflicting {
-            let grant = grants.take(&conflict).expect("conflicting region didn't exist");
+            let grant = addr_space.grants.take(&conflict).expect("conflicting region didn't exist");
             let intersection = grant.intersect(requested);
             let (before, mut grant, after) = grant.extract(intersection.round()).expect("conflicting region shared no common parts");
 
@@ -502,14 +502,14 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
 
             // Keep untouched regions
             if let Some(before) = before {
-                grants.insert(before);
+                addr_space.grants.insert(before);
             }
             if let Some(after) = after {
-                grants.insert(after);
+                addr_space.grants.insert(after);
             }
 
             // Remove irrelevant region
-            grant.unmap(&mut *unsafe { ActivePageTable::new(TableKind::User) }, &mut flusher);
+            grant.unmap(&mut addr_space.table.utable, &mut flusher);
         }
     }
 
