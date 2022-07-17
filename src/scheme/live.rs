@@ -13,7 +13,7 @@ use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::scheme::{calc_seek_offset_usize, Scheme};
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress};
 use crate::paging::mapper::PageFlushAll;
 
 static mut LIST: [u8; 2] = [b'0', b'\n'];
@@ -55,15 +55,16 @@ impl DiskScheme {
             // Ensure live disk pages are mapped
             let virt = phys + crate::PHYS_OFFSET;
             unsafe {
-                let mut active_table = ActivePageTable::new(TableKind::Kernel);
+                let mut mapper = KernelMapper::lock();
+
                 let mut flush_all = PageFlushAll::new();
                 let start_page = Page::containing_address(VirtualAddress::new(virt));
                 let end_page = Page::containing_address(VirtualAddress::new(virt + size - 1));
                 for page in Page::range_inclusive(start_page, end_page) {
-                    if active_table.translate_page(page).is_none() {
+                    if mapper.translate(page.start_address()).is_none() {
                         let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data() - crate::PHYS_OFFSET));
                         let flags = PageFlags::new().write(true);
-                        let result = active_table.map_to(page, frame, flags);
+                        let result = mapper.get_mut().expect("expected KernelMapper not to be in use while initializing live scheme").map_phys(page.start_address(), frame.start_address(), flags).expect("failed to map live page");
                         flush_all.consume(result);
                     }
                 }

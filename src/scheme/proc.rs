@@ -1,9 +1,9 @@
 use crate::{
-    arch::paging::{ActivePageTable, Flusher, InactivePageTable, mapper::{InactiveFlusher, Mapper, PageFlushAll}, Page, RmmA, VirtualAddress},
+    arch::paging::{Flusher, mapper::{InactiveFlusher, PageFlushAll}, Page, RmmA, VirtualAddress},
     context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, page_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
-    scheme::{self, AtomicSchemeId, FileHandle, KernelScheme, SchemeId},
+    scheme::{self, FileHandle, KernelScheme, SchemeId},
     syscall::{
         FloatRegisters,
         IntRegisters,
@@ -13,7 +13,6 @@ use crate::{
         flag::*,
         scheme::{calc_seek_offset_usize, Scheme},
         self,
-        validate,
     },
 };
 
@@ -279,7 +278,7 @@ impl ProcScheme {
 }
 
 fn current_addrspace() -> Result<Arc<RwLock<AddrSpace>>> {
-    Ok(Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?.read().addr_space()?))
+    Ok(Arc::clone(context::current()?.read().addr_space()?))
 }
 
 impl ProcScheme {
@@ -451,7 +450,7 @@ impl Scheme for ProcScheme {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
                     b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
-                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.read().try_clone()? }, false),
+                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone()? }, false),
                     b"mem" => (Operation::Memory { addrspace: Arc::clone(&addrspace) }, true),
 
                     grant_handle if grant_handle.starts_with(b"grant-") => {
@@ -747,16 +746,17 @@ impl Scheme for ProcScheme {
                 }
 
                 let mut addrspace = addrspace.write();
+                let addrspace = &mut *addrspace;
                 let is_active = addrspace.is_current();
 
                 let (mut inactive, mut active);
 
-                let (mut mapper, mut flusher) = if is_active {
-                    active = (unsafe { ActivePageTable::new(rmm::TableKind::User) }, PageFlushAll::new());
-                    (active.0.mapper(), &mut active.1 as &mut dyn Flusher<RmmA>)
+                let mut flusher = if is_active {
+                    active = PageFlushAll::new();
+                    &mut active as &mut dyn Flusher<RmmA>
                 } else {
-                    inactive = (unsafe { InactivePageTable::from_address(addrspace.frame.utable.start_address().data()) }, InactiveFlusher::new());
-                    (inactive.0.mapper(), &mut inactive.1 as &mut dyn Flusher<RmmA>)
+                    inactive = InactiveFlusher::new();
+                    &mut inactive as &mut dyn Flusher<RmmA>
                 };
 
                 let region = Region::new(VirtualAddress::new(base), size);
@@ -772,7 +772,7 @@ impl Scheme for ProcScheme {
                         addrspace.grants.insert(after);
                     }
 
-                    let res = current.unmap(&mut mapper, &mut flusher);
+                    let res = current.unmap(&mut addrspace.table.utable, &mut flusher);
 
                     if res.file_desc.is_some() {
                         // We prefer avoiding file operations from within the kernel. If userspace
@@ -788,7 +788,10 @@ impl Scheme for ProcScheme {
                     // Forbid transferring grants to the same address space!
                     if is_active { return Err(Error::new(EBUSY)); }
 
-                    let src_grant = current_addrspace()?.write().grants.take(&Region::new(VirtualAddress::new(src_address), size)).ok_or(Error::new(EINVAL))?;
+                    let current_addrspace = current_addrspace()?;
+                    let mut current_addrspace = current_addrspace.write();
+                    let current_addrspace = &mut *current_addrspace;
+                    let src_grant = current_addrspace.grants.take(&Region::new(VirtualAddress::new(src_address), size)).ok_or(Error::new(EINVAL))?;
 
                     if src_address % PAGE_SIZE != 0 || src_address.saturating_add(size) > crate::USER_END_OFFSET {
                         return Err(Error::new(EINVAL));
@@ -799,13 +802,13 @@ impl Scheme for ProcScheme {
                     addrspace.grants.insert(Grant::transfer(
                         src_grant,
                         base_page,
-                        &mut *unsafe { ActivePageTable::new(rmm::TableKind::User) },
-                        &mut mapper,
+                        &mut current_addrspace.table.utable,
+                        &mut addrspace.table.utable,
                         PageFlushAll::new(),
                         flusher,
-                    ));
+                    )?);
                 } else if flags.intersects(MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::PROT_WRITE) {
-                    addrspace.grants.insert(Grant::zeroed(base_page, size / PAGE_SIZE, page_flags(flags), &mut mapper, flusher)?);
+                    addrspace.grants.insert(Grant::zeroed(base_page, size / PAGE_SIZE, page_flags(flags), &mut addrspace.table.utable, flusher)?);
                 }
 
                 // TODO: Set some "in use" flag every time an address space is switched to? This
@@ -1104,16 +1107,14 @@ impl Scheme for ProcScheme {
 
                 let prev_addr_space = context.set_addr_space(new);
 
-                if let Some(prev) = prev_addr_space.and_then(|a| Arc::try_unwrap(a).ok()).map(RwLock::into_inner) {
+                if let Some(mut prev) = prev_addr_space.and_then(|a| Arc::try_unwrap(a).ok()).map(RwLock::into_inner) {
                     // We are the last reference to the address space; therefore it must be
                     // unmapped.
-
-                    let mut table = unsafe { InactivePageTable::from_address(prev.frame.utable.start_address().data()) };
 
                     // TODO: Optimize away clearing of page tables? In that case, what about memory
                     // deallocation?
                     for grant in prev.grants.into_iter() {
-                        grant.unmap(&mut table.mapper(), ());
+                        grant.unmap(&mut prev.table.utable, ());
                     }
                 }
 

@@ -16,7 +16,7 @@ use alloc::{
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::context::{Context, memory::AddrSpace, file::FileDescriptor};
+use crate::context::{memory::AddrSpace, file::FileDescriptor};
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
 

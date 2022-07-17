@@ -8,9 +8,9 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{DANGLING, page_flags, round_down_pages, round_up_pages, Grant, Region, GrantFileRef};
+use crate::context::memory::{DANGLING, page_flags, Grant, Region, GrantFileRef};
 use crate::event;
-use crate::paging::{ActivePageTable, PAGE_SIZE, InactivePageTable, mapper::InactiveFlusher, Page, VirtualAddress};
+use crate::paging::{PAGE_SIZE, mapper::InactiveFlusher, Page, round_down_pages, round_up_pages, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
@@ -147,14 +147,18 @@ impl UserInner {
         let mut context = context_lock.write();
 
         let mut addr_space = context.addr_space()?.write();
-
-        let mut new_table = unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) };
+        let addr_space = &mut *addr_space;
 
         let src_address = round_down_pages(address);
         let dst_address = round_down_pages(dst_address);
         let offset = address - src_address;
         let aligned_size = round_up_pages(offset + size);
         let dst_region = addr_space.grants.find_free_at(VirtualAddress::new(dst_address), aligned_size, flags)?;
+
+        let current_addrspace = Arc::clone(
+            context::contexts().current().ok_or(Error::new(ESRCH))?
+                .read().addr_space()?
+        );
 
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
         addr_space.grants.insert(Grant::borrow(
@@ -163,10 +167,10 @@ impl UserInner {
             aligned_size / PAGE_SIZE,
             page_flags(flags),
             desc_opt,
-            &mut *unsafe { ActivePageTable::new(rmm::TableKind::User) },
-            &mut new_table.mapper(),
+            &mut current_addrspace.write().table.utable,
+            &mut addr_space.table.utable,
             InactiveFlusher::new(),
-        ));
+        )?);
 
         Ok(VirtualAddress::new(dst_region.start_address().data() + offset))
     }
@@ -176,16 +180,15 @@ impl UserInner {
             return Ok(());
         }
         let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
+        let context = context_lock.write();
 
         let mut addr_space = context.addr_space()?.write();
-        let mut other_table = unsafe { InactivePageTable::from_address(addr_space.frame.utable.start_address().data()) };
 
         let region = match addr_space.grants.contains(VirtualAddress::new(address)).map(Region::from) {
             Some(region) => region,
             None => return Err(Error::new(EFAULT)),
         };
-        addr_space.grants.take(&region).unwrap().unmap(&mut other_table.mapper(), InactiveFlusher::new());
+        addr_space.grants.take(&region).unwrap().unmap(&mut addr_space.table.utable, InactiveFlusher::new());
         Ok(())
     }
 

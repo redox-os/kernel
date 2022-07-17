@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::collections::{BTreeMap, VecDeque};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::{Mutex, Once, RwLock};
 
 use crate::event;
 use crate::scheme::SchemeId;
