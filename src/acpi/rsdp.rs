@@ -2,7 +2,7 @@ use core::convert::TryFrom;
 use core::mem;
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
@@ -71,16 +71,16 @@ impl RSDP {
 
         None
     }
-    pub fn get_rsdp(active_table: &mut ActivePageTable, already_supplied_rsdps: Option<(u64, u64)>) -> Option<RSDP> {
+    pub fn get_rsdp(mapper: &mut KernelMapper, already_supplied_rsdps: Option<(u64, u64)>) -> Option<RSDP> {
         if let Some((base, size)) = already_supplied_rsdps {
             let area = unsafe { core::slice::from_raw_parts(base as usize as *const u8, size as usize) };
-            Self::get_already_supplied_rsdps(area).or_else(|| Self::get_rsdp_by_searching(active_table))
+            Self::get_already_supplied_rsdps(area).or_else(|| Self::get_rsdp_by_searching(mapper))
         } else {
-            Self::get_rsdp_by_searching(active_table)
+            Self::get_rsdp_by_searching(mapper)
         }
     }
     /// Search for the RSDP
-    pub fn get_rsdp_by_searching(active_table: &mut ActivePageTable) -> Option<RSDP> {
+    pub fn get_rsdp_by_searching(mapper: &mut KernelMapper) -> Option<RSDP> {
         let start_addr = 0xE_0000;
         let end_addr = 0xF_FFFF;
 
@@ -90,7 +90,9 @@ impl RSDP {
             let end_frame = Frame::containing_address(PhysicalAddress::new(end_addr));
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 let page = Page::containing_address(VirtualAddress::new(frame.start_address().data()));
-                let result = active_table.map_to(page, frame, PageFlags::new());
+                let result = unsafe {
+                    mapper.get_mut().expect("KernelMapper locked re-entrant while locating RSDPs").map_phys(page.start_address(), frame.start_address(), PageFlags::new()).expect("failed to map page while searching for RSDP")
+                };
                 result.flush();
             }
         }
