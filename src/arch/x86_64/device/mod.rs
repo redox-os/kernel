@@ -1,5 +1,3 @@
-use crate::paging::ActivePageTable;
-
 pub mod cpu;
 pub mod ioapic;
 pub mod local_apic;
@@ -12,13 +10,15 @@ pub mod hpet;
 #[cfg(feature = "system76_ec_debug")]
 pub mod system76_ec;
 
-pub unsafe fn init(active_table: &mut ActivePageTable) {
+use crate::paging::KernelMapper;
+
+pub unsafe fn init() {
     pic::init();
-    local_apic::init(active_table);
+    local_apic::init(&mut KernelMapper::lock());
 }
-pub unsafe fn init_after_acpi(_active_table: &mut ActivePageTable)  {
+pub unsafe fn init_after_acpi()  {
     // this will disable the IOAPIC if needed.
-    //ioapic::init(active_table);
+    //ioapic::init(mapper);
 }
 
 #[cfg(feature = "acpi")]

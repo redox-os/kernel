@@ -18,7 +18,7 @@ use crate::gdt;
 use crate::idt;
 use crate::interrupt;
 use crate::log::{self, info};
-use crate::paging;
+use crate::paging::{self, KernelMapper};
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -131,7 +131,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         );
 
         // Initialize paging
-        let (mut active_table, tcb_offset) = paging::init(0);
+        let tcb_offset = paging::init(0);
 
         // Set up GDT after paging with TLS
         gdt::init_paging(0, tcb_offset, args.stack_base + args.stack_size);
@@ -158,7 +158,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(false, Ordering::SeqCst);
 
         // Setup kernel heap
-        allocator::init(&mut active_table);
+        allocator::init();
 
         // Set up double buffer for grpahical debug now that heap is available
         #[cfg(feature = "graphical_debug")]
@@ -170,17 +170,17 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         log::init();
 
         // Initialize devices
-        device::init(&mut active_table);
+        device::init();
 
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
         {
-            acpi::init(&mut active_table, if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
+            acpi::init(if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
                 Some(((args.acpi_rsdps_base + crate::PHYS_OFFSET) as u64, args.acpi_rsdps_size as u64))
             } else {
                 None
             });
-            device::init_after_acpi(&mut active_table);
+            device::init_after_acpi();
         }
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
@@ -230,7 +230,13 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         idt::init();
 
         // Initialize paging
-        let tcb_offset = paging::init_ap(cpu_id, bsp_table);
+        let tcb_offset = {
+            use crate::paging::{PageMapper, PhysicalAddress};
+            use crate::rmm::FRAME_ALLOCATOR;
+
+            let mut mapper = KernelMapper::lock_for_manual_mapper(cpu_id, PageMapper::new(PhysicalAddress::new(bsp_table), FRAME_ALLOCATOR));
+            paging::init_ap(cpu_id, &mut mapper)
+        };
 
         // Set up GDT with TLS
         gdt::init_paging(cpu_id as u32, tcb_offset, stack_end);

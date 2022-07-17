@@ -1,8 +1,9 @@
 use core::{mem, str};
+
 use goblin::elf::sym;
 use rustc_demangle::demangle;
 
-use crate::paging::{ActivePageTable, TableKind, VirtualAddress};
+use crate::{context, paging::{KernelMapper, VirtualAddress}};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
@@ -13,12 +14,14 @@ pub unsafe fn stack_trace() {
 
     println!("TRACE: {:>016X}", rbp);
     //Maximum 64 frames
-    let active_table = ActivePageTable::new(TableKind::User);
+
+    let mapper = KernelMapper::lock();
+
     for _frame in 0..64 {
         if let Some(rip_rbp) = rbp.checked_add(mem::size_of::<usize>()) {
             let rbp_virt = VirtualAddress::new(rbp);
             let rip_rbp_virt = VirtualAddress::new(rip_rbp);
-            if rbp_virt.is_canonical() && rip_rbp_virt.is_canonical() && active_table.translate(rbp_virt).is_some() && active_table.translate(rip_rbp_virt).is_some() {
+            if rbp_virt.is_canonical() && rip_rbp_virt.is_canonical() && mapper.translate(rbp_virt).is_some() && mapper.translate(rip_rbp_virt).is_some() {
                 let rip = *(rip_rbp as *const usize);
                 if rip == 0 {
                     println!(" {:>016X}: EMPTY RETURN", rbp);
