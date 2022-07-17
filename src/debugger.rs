@@ -1,16 +1,23 @@
+use crate::paging::{RmmA, RmmArch};
+
 // Super unsafe due to page table switching and raw pointers!
-pub unsafe fn debugger() {
+pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     println!("DEBUGGER START");
     println!();
 
-    let mut active_table = crate::paging::ActivePageTable::new(crate::paging::TableKind::User);
+    let old_table = RmmA::table();
+
     for (id, context_lock) in crate::context::contexts().iter() {
+        if target_id.map_or(false, |target_id| *id != target_id) { continue; }
         let context = context_lock.read();
         println!("{}: {}", (*id).into(), context.name.read());
 
         // Switch to context page table to ensure syscall debug and stack dump will work
-        let new_table = crate::paging::InactivePageTable::from_address(context.arch.get_page_utable());
-        let old_table = active_table.switch(new_table);
+        if let Some(ref space) = context.addr_space {
+            RmmA::set_table(space.read().table.utable.table().phys());
+        }
+
+        check_consistency(&mut context.addr_space.as_ref().unwrap().write());
 
         println!("status: {:?}", context.status);
         if ! context.status_reason.is_empty() {
@@ -41,7 +48,7 @@ pub unsafe fn debugger() {
             println!("stack: {:>016x}", rsp);
             //Maximum 64 qwords
             for i in 0..64 {
-                if active_table.translate(crate::paging::VirtualAddress::new(rsp)).is_some() {
+                if context.addr_space.as_ref().map_or(false, |space| space.read().table.utable.translate(crate::paging::VirtualAddress::new(rsp)).is_some()) {
                     let value = *(rsp as *const usize);
                     println!("    {:>016x}: {:>016x}", rsp, value);
                     if let Some(next_rsp) = rsp.checked_add(core::mem::size_of::<usize>()) {
@@ -58,10 +65,73 @@ pub unsafe fn debugger() {
         }
 
         // Switch to original page table
-        active_table.switch(old_table);
+        RmmA::set_table(old_table);
 
         println!();
     }
 
     println!("DEBUGGER END");
+}
+
+pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace) {
+    use crate::paging::*;
+
+    let p4 = addr_space.table.utable.table();
+
+    for p4i in 0..256 {
+        let p3 = match p4.next(p4i) {
+            Some(p3) => p3,
+            None => continue,
+        };
+
+        for p3i in 0..512 {
+            let p2 = match p3.next(p3i) {
+                Some(p2) => p2,
+                None => continue,
+            };
+
+            for p2i in 0..512 {
+                let p1 = match p2.next(p2i) {
+                    Some(p1) => p1,
+                    None => continue,
+                };
+
+                for p1i in 0..512 {
+                    let (physaddr, flags) = match p1.entry(p1i) {
+                        Some(e) => if let Ok(address) = e.address() {
+                            (address, e.flags())
+                        } else {
+                            continue;
+                        }
+                        _ => continue,
+                    };
+                    let address = VirtualAddress::new((p1i << 12) | (p2i << 21) | (p3i << 30) | (p4i << 39));
+
+                    let grant = match addr_space.grants.contains(address) {
+                        Some(g) => g,
+                        None => {
+                            log::error!("ADDRESS {:p} LACKING GRANT BUT MAPPED TO {:#0x} FLAGS {:?}!", address.data() as *const u8, physaddr.data(), flags);
+                            continue;
+                        }
+                    };
+                    const STICKY: usize = (1 << 5) | (1 << 6); // accessed+dirty
+                    if grant.flags().data() & !STICKY != flags.data() & !STICKY {
+                        log::error!("FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}", grant.flags(), flags, address.data() as *const u8, grant.region());
+                    }
+                }
+            }
+        }
+    }
+
+    for grant in addr_space.grants.iter() {
+        for page in grant.pages() {
+            let entry = match addr_space.table.utable.translate(page.start_address()) {
+                Some(e) => e,
+                None => {
+                    log::error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", grant.region(), page.start_address().data() as *const u8);
+                    continue;
+                }
+            };
+        }
+    }
 }
