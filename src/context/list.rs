@@ -1,13 +1,11 @@
 use alloc::sync::Arc;
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use core::alloc::{GlobalAlloc, Layout};
 use core::{iter, mem};
 use core::sync::atomic::Ordering;
-use crate::paging::{ActivePageTable, TableKind};
+
 use spin::RwLock;
 
-use crate::syscall::error::{Result, Error, EAGAIN, ENOMEM};
+use crate::syscall::error::{Result, Error, EAGAIN};
 use super::context::{Context, ContextId};
 
 /// Context list type

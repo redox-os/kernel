@@ -172,8 +172,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             // Unless we acquire this lock, it may be possible that the TLB will not contain new
             // entries. While this can be caught and corrected in a page fault handler, this is not
             // true when entries are removed from a page table!
-            let next_space = next_space.read();
-            RmmA::set_table(next_space.frame.utable.start_address());
+            next_space.read().table.utable.make_current();
         }
         None => {
             RmmA::set_table(empty_cr3());

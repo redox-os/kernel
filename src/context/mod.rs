@@ -1,12 +1,14 @@
 //! # Context management
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
-use alloc::boxed::Box;
-use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+use alloc::sync::Arc;
+
+use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::paging::{RmmA, RmmArch};
+use crate::syscall::error::{Error, ESRCH, Result};
 
 pub use self::context::{Context, ContextId, ContextSnapshot, Status, WaitpidKey};
 pub use self::list::ContextList;
@@ -88,4 +90,8 @@ pub fn context_id() -> ContextId {
     // Prevent the compiler from reordering subsequent loads and stores to before this load.
     core::sync::atomic::compiler_fence(Ordering::Acquire);
     id
+}
+
+pub fn current() -> Result<Arc<RwLock<Context>>> {
+    contexts().current().ok_or(Error::new(ESRCH)).map(Arc::clone)
 }

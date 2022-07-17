@@ -12,18 +12,18 @@ use core::{
 };
 use spin::RwLock;
 
-use crate::arch::{interrupt::InterruptStack, paging::{PAGE_SIZE, RmmA, RmmArch}};
+use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
 use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::{AddrSpace, new_addrspace, UserGrants};
+use crate::context::memory::AddrSpace;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::memory::Enomem;
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 
 use crate::syscall::data::SigAction;
-use crate::syscall::error::{Result, Error, ENOMEM, ESRCH};
+use crate::syscall::error::{Result, Error, ESRCH};
 use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
@@ -556,11 +556,8 @@ impl Context {
     }
     #[must_use = "grants must be manually unmapped, otherwise it WILL panic!"]
     pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) -> Option<Arc<RwLock<AddrSpace>>> {
-        let physaddr = addr_space.read().frame.utable.start_address();
         if self.id == super::context_id() {
-            unsafe {
-                RmmA::set_table(physaddr);
-            }
+            unsafe { addr_space.read().table.utable.make_current(); }
         }
 
         self.addr_space.replace(addr_space)
