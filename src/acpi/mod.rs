@@ -86,7 +86,6 @@ pub unsafe fn init(already_supplied_rsdps: Option<(u64, u64)>) {
     if let Some(rsdp) = rsdp_opt {
         info!("RSDP: {:?}", rsdp);
         let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock());
-        dbg!();
 
         for &c in rxsdt.signature.iter() {
             print!("{}", c as char);

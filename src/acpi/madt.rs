@@ -53,17 +53,20 @@ impl Madt {
             }
 
             if cfg!(feature = "multi_core") {
-                let mut mapper = KernelMapper::lock();
                 // Map trampoline
                 let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
-                let result = unsafe {
+                let (result, page_table_physaddr) = unsafe {
                     //TODO: do not have writable and executable!
-                    mapper
+                    let mut mapper = KernelMapper::lock();
+
+                    let result = mapper
                         .get_mut()
                         .expect("expected kernel page table not to be recursively locked while initializing MADT")
                         .map_phys(trampoline_page.start_address(), trampoline_frame.start_address(), PageFlags::new().execute(true).write(true))
-                        .expect("failed to map trampoline")
+                        .expect("failed to map trampoline");
+
+                    (result, mapper.table().phys().data())
                 };
                 result.flush();
 
@@ -98,7 +101,7 @@ impl Madt {
                                 // Set the ap_ready to 0, volatile
                                 unsafe { atomic_store(ap_ready, 0) };
                                 unsafe { atomic_store(ap_cpu_id, ap_local_apic.id as u64) };
-                                unsafe { atomic_store(ap_page_table, mapper.table().phys().data() as u64) };
+                                unsafe { atomic_store(ap_page_table, page_table_physaddr as u64) };
                                 unsafe { atomic_store(ap_stack_start, stack_start as u64) };
                                 unsafe { atomic_store(ap_stack_end, stack_end as u64) };
                                 unsafe { atomic_store(ap_code, kstart_ap as u64) };
@@ -156,7 +159,7 @@ impl Madt {
 
                 // Unmap trampoline
                 let (_frame, _, flush) = unsafe {
-                    mapper
+                    KernelMapper::lock()
                         .get_mut()
                         .expect("expected kernel page table not to be recursively locked while initializing MADT")
                         .unmap_phys(trampoline_page.start_address())
