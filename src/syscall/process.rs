@@ -65,11 +65,7 @@ pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(PTRACE_STOP_EXIT, Some(ptrace_event!(PTRACE_STOP_EXIT, status)));
 
     {
-        let context_lock = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH)).expect("exit failed to find context");
-            Arc::clone(&context_lock)
-        };
+        let context_lock = context::current().expect("exit failed to find context");
 
         let mut close_files;
         let pid = {

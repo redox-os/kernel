@@ -8,7 +8,7 @@ use crate::{
         FloatRegisters,
         IntRegisters,
         EnvRegisters,
-        data::{Map, PtraceEvent, Stat},
+        data::{Map, PtraceEvent, SigAction, Stat},
         error::*,
         flag::*,
         scheme::{calc_seek_offset_usize, Scheme},
@@ -141,6 +141,10 @@ enum Operation {
     // TODO: Remove this once cross-scheme links are merged. That would allow acquiring a new
     // FD to access the file descriptor behind grants.
     GrantHandle { description: Arc<RwLock<FileDescription>> },
+
+    Sigactions(Arc<RwLock<Vec<(SigAction, usize)>>>),
+    CurrentSigactions,
+    AwaitingSigactionsChange(Arc<RwLock<Vec<(SigAction, usize)>>>),
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -150,7 +154,7 @@ enum Attr {
 }
 impl Operation {
     fn needs_child_process(&self) -> bool {
-        matches!(self, Self::Memory { .. } | Self::Regs(_) | Self::Trace | Self::Filetable { .. } | Self::AddrSpace { .. } | Self::CurrentAddrSpace | Self::CurrentFiletable)
+        matches!(self, Self::Memory { .. } | Self::Regs(_) | Self::Trace | Self::Filetable { .. } | Self::AddrSpace { .. } | Self::CurrentAddrSpace | Self::CurrentFiletable | Self::Sigactions(_) | Self::CurrentSigactions | Self::AwaitingSigactionsChange(_))
     }
     fn needs_root(&self) -> bool {
         matches!(self, Self::Attr(_))
@@ -286,7 +290,7 @@ impl ProcScheme {
         let operation = match operation_str {
             Some("mem") => Operation::Memory { addrspace: current_addrspace()? },
             Some("addrspace") => Operation::AddrSpace { addrspace: current_addrspace()? },
-            Some("filetable") => Operation::Filetable { filetable: Arc::clone(&context::contexts().current().ok_or(Error::new(ESRCH))?.read().files) },
+            Some("filetable") => Operation::Filetable { filetable: Arc::clone(&context::current()?.read().files) },
             Some("current-addrspace") => Operation::CurrentAddrSpace,
             Some("current-filetable") => Operation::CurrentFiletable,
             Some("regs/float") => Operation::Regs(RegsKind::Float),
@@ -300,6 +304,8 @@ impl ProcScheme {
             Some("uid") => Operation::Attr(Attr::Uid),
             Some("gid") => Operation::Attr(Attr::Gid),
             Some("open_via_dup") => Operation::OpenViaDup,
+            Some("sigactions") => Operation::Sigactions(Arc::clone(&context::current()?.read().actions)),
+            Some("current-sigactions") => Operation::CurrentSigactions,
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -420,6 +426,15 @@ impl Scheme for ProcScheme {
             handle.info.clone()
         };
 
+        let handle = |operation, data| Handle {
+            info: Info {
+                flags: 0,
+                pid: info.pid,
+                operation,
+            },
+            data,
+        };
+
         self.new_handle(match info.operation {
             Operation::OpenViaDup => {
                 let (uid, gid) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read() {
@@ -428,7 +443,7 @@ impl Scheme for ProcScheme {
                 return self.open_inner(info.pid, Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?).filter(|s| !s.is_empty()), O_RDWR | O_CLOEXEC, uid, gid);
             },
 
-            Operation::Filetable { filetable } => {
+            Operation::Filetable { ref filetable } => {
                 // TODO: Maybe allow userspace to either copy or transfer recently dupped file
                 // descriptors between file tables.
                 if buf != b"copy" {
@@ -436,16 +451,9 @@ impl Scheme for ProcScheme {
                 }
                 let new_filetable = Arc::try_new(RwLock::new(filetable.read().clone())).map_err(|_| Error::new(ENOMEM))?;
 
-                Handle {
-                    info: Info {
-                        flags: 0,
-                        pid: info.pid,
-                        operation: Operation::Filetable { filetable: new_filetable },
-                    },
-                    data: OperationData::Other,
-                }
+                handle(Operation::Filetable { filetable: new_filetable }, OperationData::Other)
             }
-            Operation::AddrSpace { addrspace } => {
+            Operation::AddrSpace { ref addrspace } => {
                 let (operation, is_mem) = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
@@ -462,14 +470,16 @@ impl Scheme for ProcScheme {
 
                     _ => return Err(Error::new(EINVAL)),
                 };
-                Handle {
-                    info: Info {
-                        flags: 0,
-                        pid: info.pid,
-                        operation,
-                    },
-                    data: if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Offset(0) },
-                }
+
+                handle(operation, if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Offset(0) })
+            }
+            Operation::Sigactions(ref sigactions) => {
+                let new = match buf {
+                    b"empty" => Context::empty_actions(),
+                    b"copy" => Arc::new(RwLock::new(sigactions.read().clone())),
+                    _ => return Err(Error::new(EINVAL)),
+                };
+                handle(Operation::Sigactions(new), OperationData::Other)
             }
             _ => return Err(Error::new(EINVAL)),
         })
@@ -991,6 +1001,7 @@ impl Scheme for ProcScheme {
                 Ok(buf.len())
             }
             Operation::Filetable { .. } => return Err(Error::new(EBADF)),
+
             Operation::CurrentFiletable => {
                 let filetable_fd = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
                 let (hopefully_this_scheme, number) = extract_scheme_number(filetable_fd)?;
@@ -1013,6 +1024,13 @@ impl Scheme for ProcScheme {
                 self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: space, new_sp: sp, new_ip: ip };
 
                 Ok(3 * mem::size_of::<usize>())
+            }
+            Operation::CurrentSigactions => {
+                let sigactions_fd = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
+                let (hopefully_this_scheme, number) = extract_scheme_number(sigactions_fd)?;
+                let sigactions = hopefully_this_scheme.as_sigactions(number)?;
+                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
+                Ok(mem::size_of::<usize>())
             }
             _ => return Err(Error::new(EBADF)),
         }
@@ -1059,8 +1077,10 @@ impl Scheme for ProcScheme {
             Operation::Attr(Attr::Gid) => "gid",
             Operation::Filetable { .. } => "filetable",
             Operation::AddrSpace { .. } => "addrspace",
+            Operation::Sigactions(_) => "sigactions",
             Operation::CurrentAddrSpace => "current-addrspace",
             Operation::CurrentFiletable => "current-filetable",
+            Operation::CurrentSigactions => "current-sigactions",
             Operation::OpenViaDup => "open-via-dup",
 
             _ => return Err(Error::new(EOPNOTSUPP)),
@@ -1124,6 +1144,10 @@ impl Scheme for ProcScheme {
                 context.files = new;
                 Ok(())
             })?,
+            Operation::AwaitingSigactionsChange(new) => with_context_mut(handle.info.pid, |context: &mut Context| {
+                context.actions = new;
+                Ok(())
+            })?,
             Operation::Trace => {
                 ptrace::close_session(handle.info.pid);
 
@@ -1167,6 +1191,13 @@ impl KernelScheme for ProcScheme {
     fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
         if let Operation::Filetable { ref filetable } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
             Ok(Arc::clone(filetable))
+        } else {
+            Err(Error::new(EBADF))
+        }
+    }
+    fn as_sigactions(&self, number: usize) -> Result<Arc<RwLock<Vec<(crate::syscall::data::SigAction, usize)>>>> {
+        if let Operation::Sigactions(ref sigactions) = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
+            Ok(Arc::clone(sigactions))
         } else {
             Err(Error::new(EBADF))
         }

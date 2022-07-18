@@ -303,4 +303,7 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
         Err(Error::new(EBADF))
     }
+    fn as_sigactions(&self, number: usize) -> Result<Arc<RwLock<Vec<(crate::syscall::data::SigAction, usize)>>>> {
+        Err(Error::new(EBADF))
+    }
 }

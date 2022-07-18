@@ -368,14 +368,7 @@ impl Context {
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(String::new())),
             files: Arc::new(RwLock::new(Vec::new())),
-            actions: Arc::new(RwLock::new(vec![(
-                SigAction {
-                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                    sa_mask: [0; 2],
-                    sa_flags: SigActionFlags::empty(),
-                },
-                0
-            ); 128])),
+            actions: Self::empty_actions(),
             regs: None,
             ptrace_stop: false,
             sigstack: None,
@@ -561,5 +554,15 @@ impl Context {
         }
 
         self.addr_space.replace(addr_space)
+    }
+    pub fn empty_actions() -> Arc<RwLock<Vec<(SigAction, usize)>>> {
+        Arc::new(RwLock::new(vec![(
+            SigAction {
+                sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                sa_mask: [0; 2],
+                sa_flags: SigActionFlags::empty(),
+            },
+            0
+        ); 128]))
     }
 }
