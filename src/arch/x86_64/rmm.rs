@@ -321,7 +321,7 @@ impl core::ops::Deref for KernelMapper {
 }
 impl Drop for KernelMapper {
     fn drop(&mut self) {
-        if LOCK_COUNT.fetch_sub(1, Ordering::Relaxed) == 0 {
+        if LOCK_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
             LOCK_OWNER.store(NO_PROCESSOR, Ordering::Release);
         }
         atomic::compiler_fence(Ordering::Release);
