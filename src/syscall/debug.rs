@@ -174,15 +174,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "exit({})",
             b
         ),
-        SYS_EXEC => format!(
-            "exec({:#x?}, {:p}, {:p})",
-            validate_slice(
-                b as *const crate::syscall::data::ExecMemRange,
-                c,
-            ),
-            d as *const u8,
-            e as *const u8,
-        ),
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,
