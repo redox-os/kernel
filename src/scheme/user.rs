@@ -153,7 +153,7 @@ impl UserInner {
         let dst_address = round_down_pages(dst_address);
         let offset = address - src_address;
         let aligned_size = round_up_pages(offset + size);
-        let dst_region = addr_space.grants.find_free_at(VirtualAddress::new(dst_address), aligned_size, flags)?;
+        let dst_region = addr_space.grants.find_free_at(context.mmap_min, VirtualAddress::new(dst_address), aligned_size, flags)?;
 
         let current_addrspace = Arc::clone(
             context::contexts().current().ok_or(Error::new(ESRCH))?

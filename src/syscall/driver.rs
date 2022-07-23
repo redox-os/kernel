@@ -94,7 +94,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     let mut addr_space = context.addr_space()?.write();
     let addr_space = &mut *addr_space;
 
-    let dst_address = addr_space.grants.find_free(size).ok_or(Error::new(ENOMEM))?;
+    let dst_address = addr_space.grants.find_free(context.mmap_min, size).ok_or(Error::new(ENOMEM))?;
 
     let mut page_flags = PageFlags::new().user(true);
     if flags.contains(PHYSMAP_WRITE) {

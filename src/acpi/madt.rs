@@ -162,7 +162,7 @@ impl Madt {
                     KernelMapper::lock()
                         .get_mut()
                         .expect("expected kernel page table not to be recursively locked while initializing MADT")
-                        .unmap_phys(trampoline_page.start_address())
+                        .unmap_phys(trampoline_page.start_address(), true)
                         .expect("failed to unmap trampoline page")
                 };
                 flush.flush();

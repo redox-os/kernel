@@ -1,5 +1,5 @@
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use core::borrow::Borrow;
 use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
 use core::fmt::{self, Debug};
@@ -14,7 +14,7 @@ use rmm::Arch as _;
 use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
 use crate::memory::{Enomem, Frame};
-use crate::paging::mapper::{Flusher, PageFlushAll};
+use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{KernelMapper, Page, PageFlags, PageIter, PageMapper, PhysicalAddress, RmmA, round_up_pages, VirtualAddress};
 
 pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
@@ -54,6 +54,10 @@ pub struct AddrSpace {
     pub grants: UserGrants,
 }
 impl AddrSpace {
+    pub fn current() -> Result<Arc<RwLock<Self>>> {
+        Ok(Arc::clone(super::current()?.read().addr_space()?))
+    }
+
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
     pub fn try_clone(&mut self) -> Result<Arc<RwLock<Self>>> {
         let mut new = new_addrspace()?;
@@ -102,6 +106,50 @@ impl AddrSpace {
     pub fn is_current(&self) -> bool {
         self.table.utable.is_current()
     }
+    pub fn mprotect(&mut self, base: Page, page_count: usize, flags: MapFlags) -> Result<()> {
+        let (mut active, mut inactive);
+        let mut flusher = if self.is_current() {
+            active = PageFlushAll::new();
+            &mut active as &mut dyn Flusher<RmmA>
+        } else {
+            inactive = InactiveFlusher::new();
+            &mut inactive as &mut dyn Flusher<RmmA>
+        };
+        let mut mapper = &mut self.table.utable;
+
+        let region = Region::new(base.start_address(), page_count * PAGE_SIZE);
+
+        // TODO: Remove allocation
+        let regions = self.grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
+
+        for grant_region in regions {
+            let grant = self.grants.take(&grant_region).expect("grant cannot magically disappear while we hold the lock!");
+            let intersection = grant_region.intersect(region);
+
+            let (before, mut grant, after) = grant.extract(intersection).expect("failed to extract grant");
+
+            if let Some(before) = before { self.grants.insert(before); }
+            if let Some(after) = after { self.grants.insert(after); }
+
+            if !grant.is_owned() && flags.contains(MapFlags::PROT_WRITE) && !grant.flags().has_write() {
+                self.grants.insert(grant);
+                return Err(Error::new(EACCES));
+            }
+
+            let new_flags = grant.flags()
+                // TODO: Require a capability in order to map executable memory?
+                .execute(flags.contains(MapFlags::PROT_EXEC))
+                .write(flags.contains(MapFlags::PROT_WRITE));
+
+            // TODO: Allow enabling/disabling read access on architectures which allow it. On
+            // x86_64 with protection keys (although only enforced by userspace), and AArch64 (I
+            // think), execute-only memory is also supported.
+
+            grant.remap(mapper, &mut flusher, new_flags);
+            self.grants.insert(grant);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -149,22 +197,31 @@ impl UserGrants {
     }
     /// Return a free region with the specified size
     // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
-    pub fn find_free(&self, size: usize) -> Option<Region> {
+    pub fn find_free(&self, min: usize, size: usize) -> Option<Region> {
         // Get first available hole, but do reserve the page starting from zero as most compiled
         // languages cannot handle null pointers safely even if they point to valid memory. If an
         // application absolutely needs to map the 0th page, they will have to do so explicitly via
         // MAP_FIXED/MAP_FIXED_NOREPLACE.
         // TODO: Allow explicitly allocating guard pages?
 
-        let (hole_start, hole_size) = self.holes.iter().find(|(hole_offset, hole_size)| size <= if hole_offset.data() == 0 { hole_size.saturating_sub(PAGE_SIZE) } else { **hole_size })?;
+        let (hole_start, hole_size) = self.holes.iter()
+            .skip_while(|(hole_offset, hole_size)| hole_offset.data() + **hole_size <= min)
+            .find(|(hole_offset, hole_size)| {
+                let avail_size = if hole_offset.data() <= min && min <= hole_offset.data() + **hole_size {
+                    **hole_size - (min - hole_offset.data())
+                } else {
+                    **hole_size
+                };
+                size <= avail_size
+            })?;
         // Create new region
-        Some(Region::new(VirtualAddress::new(cmp::max(hole_start.data(), PAGE_SIZE)), size))
+        Some(Region::new(VirtualAddress::new(cmp::max(hole_start.data(), min)), size))
     }
     /// Return a free region, respecting the user's hinted address and flags. Address may be null.
-    pub fn find_free_at(&mut self, address: VirtualAddress, size: usize, flags: MapFlags) -> Result<Region> {
+    pub fn find_free_at(&mut self, min: usize, address: VirtualAddress, size: usize, flags: MapFlags) -> Result<Region> {
         if address == VirtualAddress::new(0) {
             // Free hands!
-            return self.find_free(size).ok_or(Error::new(ENOMEM));
+            return self.find_free(min, size).ok_or(Error::new(ENOMEM));
         }
 
         // The user wished to have this region...
@@ -178,18 +235,18 @@ impl UserGrants {
             return Err(Error::new(EINVAL));
         }
 
-        if let Some(grant) = self.contains(requested.start_address()) {
+
+        if let Some(grant) = self.conflicts(requested).next() {
             // ... but it already exists
 
             if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) {
-                println!("grant: {:#x} conflicts with: {:#x} - {:#x}", address.data(), grant.start_address().data(), grant.end_address().data());
                 return Err(Error::new(EEXIST));
-            } else if flags.contains(MapFlags::MAP_FIXED) {
-                // TODO: Overwrite existing grant
+            }
+            if flags.contains(MapFlags::MAP_FIXED) {
                 return Err(Error::new(EOPNOTSUPP));
             } else {
                 // TODO: Find grant close to requested address?
-                requested = self.find_free(requested.size()).ok_or(Error::new(ENOMEM))?;
+                requested = self.find_free(min, requested.size()).ok_or(Error::new(ENOMEM))?;
             }
         }
 
@@ -241,9 +298,36 @@ impl UserGrants {
             holes.insert(grant.start_address(), grant.size() + exactly_after_size.unwrap_or(0));
         }
     }
-    pub fn insert(&mut self, grant: Grant) {
+    pub fn insert(&mut self, mut grant: Grant) {
         assert!(self.conflicts(*grant).next().is_none());
         self.reserve(&grant);
+
+        // FIXME: This currently causes issues, mostly caused by old code that unmaps only based on
+        // offsets. For instance, the scheme code does not specify any length, and would thus unmap
+        // memory outside of what it intended to.
+
+        /*
+        let before_region = self.inner
+            .range(..grant.region).next_back()
+            .filter(|b| b.end_address() == grant.start_address() && b.can_be_merged_if_adjacent(&grant)).map(|g| g.region);
+
+        let after_region = self.inner
+            .range(Region::new(grant.end_address(), 1)..).next()
+            .filter(|a| a.start_address() == grant.end_address() && a.can_be_merged_if_adjacent(&grant)).map(|g| g.region);
+
+        if let Some(before) = before_region {
+            grant.region.start = before.start;
+            grant.region.size += before.size;
+
+            core::mem::forget(self.inner.take(&before));
+        }
+        if let Some(after) = after_region {
+            grant.region.size += after.size;
+
+            core::mem::forget(self.inner.take(&after));
+        }
+        */
+
         self.inner.insert(grant);
     }
     pub fn remove(&mut self, region: &Region) -> bool {
@@ -493,14 +577,14 @@ impl Grant {
     pub fn borrow(src_base: Page, dst_base: Page, page_count: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
         Self::copy_inner(src_base, dst_base, page_count, flags, desc_opt, src_mapper, dst_mapper, (), dst_flusher, false, false)
     }
-    pub fn reborrow(src_grant: &Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
-        Self::borrow(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), src_grant.desc_opt.clone(), src_mapper, dst_mapper, dst_flusher)
+    pub fn reborrow(src_grant: &Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
+        Self::borrow(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), src_grant.desc_opt.clone(), src_mapper, dst_mapper, dst_flusher).map_err(Into::into)
     }
-    pub fn transfer(mut src_grant: Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, src_flusher: impl Flusher<RmmA>, dst_flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
+    pub fn transfer(mut src_grant: Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, src_flusher: impl Flusher<RmmA>, dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
         assert!(core::mem::replace(&mut src_grant.mapped, false));
         let desc_opt = src_grant.desc_opt.take();
 
-        Self::copy_inner(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.owned, true)
+        Self::copy_inner(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.owned, true).map_err(Into::into)
     }
 
     fn copy_inner(
@@ -521,7 +605,7 @@ impl Grant {
         for index in 0..page_count {
             let src_page = src_base.next_by(index);
             let (address, entry_flags) = if unmap {
-                let (entry, entry_flags, flush) = unsafe { src_mapper.unmap_phys(src_page.start_address()).expect("grant references unmapped memory") };
+                let (entry, entry_flags, flush) = unsafe { src_mapper.unmap_phys(src_page.start_address(), true).expect("grant references unmapped memory") };
                 src_flusher.consume(flush);
 
                 (entry, entry_flags)
@@ -543,7 +627,7 @@ impl Grant {
         if successful_count != page_count {
             // TODO: The grant will be lost in case of ENOMEM. Allow putting it back in source?
             for index in 0..successful_count {
-                let (frame, _, flush) = match unsafe { dst_mapper.unmap_phys(dst_base.next_by(index).start_address()) } {
+                let (frame, _, flush) = match unsafe { dst_mapper.unmap_phys(dst_base.next_by(index).start_address(), true) } {
                     Some(f) => f,
                     None => unreachable!("grant unmapped by someone else in the meantime despite having a &mut PageMapper"),
                 };
@@ -572,11 +656,24 @@ impl Grant {
         self.flags
     }
 
+    pub fn remap(&mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, flags: PageFlags<RmmA>) {
+        assert!(self.mapped);
+
+        for page in self.pages() {
+            unsafe {
+                let result = mapper.remap(page.start_address(), flags).expect("grant contained unmap address");
+                flusher.consume(result);
+            }
+        }
+
+        self.flags = flags;
+    }
+
     pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
         assert!(self.mapped);
 
         for page in self.pages() {
-            let (entry, _, flush) = unsafe { mapper.unmap_phys(page.start_address()) }
+            let (entry, _, flush) = unsafe { mapper.unmap_phys(page.start_address(), true) }
                 .unwrap_or_else(|| panic!("missing page at {:#0x} for grant {:?}", page.start_address().data(), self));
 
             if self.owned {
@@ -643,6 +740,18 @@ impl Grant {
 
         Some((before_grant, self, after_grant))
     }
+    // FIXME
+    /*
+    pub fn can_be_merged_if_adjacent(&self, with: &Self) -> bool {
+        match (&self.desc_opt, &with.desc_opt) {
+            (None, None) => (),
+            (Some(ref a), Some(ref b)) if Arc::ptr_eq(&a.desc.description, &b.desc.description) => (),
+
+            _ => return false,
+        }
+        self.owned == with.owned && self.mapped == with.mapped && self.flags.data() == with.flags.data()
+    }
+    */
 }
 
 impl Deref for Grant {

@@ -4,6 +4,7 @@ use crate::memory::{free_frames, used_frames, PAGE_SIZE};
 use crate::paging::{mapper::PageFlushAll, Page, VirtualAddress};
 use crate::syscall::data::{Map, StatVfs};
 use crate::syscall::error::*;
+use crate::syscall::flag::MapFlags;
 use crate::syscall::scheme::Scheme;
 
 pub struct MemoryScheme;
@@ -25,7 +26,7 @@ impl MemoryScheme {
         let mut addr_space = context.addr_space()?.write();
         let addr_space = &mut *addr_space;
 
-        let region = addr_space.grants.find_free_at(VirtualAddress::new(map.address), map.size, map.flags)?.round();
+        let region = addr_space.grants.find_free_at(context.mmap_min, VirtualAddress::new(map.address), map.size, map.flags)?.round();
 
         addr_space.grants.insert(Grant::zeroed(Page::containing_address(region.start_address()), map.size / PAGE_SIZE, page_flags(map.flags), &mut addr_space.table.utable, PageFlushAll::new())?);
 

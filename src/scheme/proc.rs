@@ -145,6 +145,8 @@ enum Operation {
     Sigactions(Arc<RwLock<Vec<(SigAction, usize)>>>),
     CurrentSigactions,
     AwaitingSigactionsChange(Arc<RwLock<Vec<(SigAction, usize)>>>),
+
+    MmapMinAddr,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -281,15 +283,11 @@ impl ProcScheme {
     }
 }
 
-fn current_addrspace() -> Result<Arc<RwLock<AddrSpace>>> {
-    Ok(Arc::clone(context::current()?.read().addr_space()?))
-}
-
 impl ProcScheme {
     fn open_inner(&self, pid: ContextId, operation_str: Option<&str>, flags: usize, uid: u32, gid: u32) -> Result<usize> {
         let operation = match operation_str {
-            Some("mem") => Operation::Memory { addrspace: current_addrspace()? },
-            Some("addrspace") => Operation::AddrSpace { addrspace: current_addrspace()? },
+            Some("mem") => Operation::Memory { addrspace: AddrSpace::current()? },
+            Some("addrspace") => Operation::AddrSpace { addrspace: AddrSpace::current()? },
             Some("filetable") => Operation::Filetable { filetable: Arc::clone(&context::current()?.read().files) },
             Some("current-addrspace") => Operation::CurrentAddrSpace,
             Some("current-filetable") => Operation::CurrentFiletable,
@@ -306,6 +304,7 @@ impl ProcScheme {
             Some("open_via_dup") => Operation::OpenViaDup,
             Some("sigactions") => Operation::Sigactions(Arc::clone(&context::current()?.read().actions)),
             Some("current-sigactions") => Operation::CurrentSigactions,
+            Some("mmap-min-addr") => Operation::MmapMinAddr,
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -695,6 +694,11 @@ impl Scheme for ProcScheme {
 
                 read_from(buf, &data.buf, &mut data.offset)
             }
+            Operation::MmapMinAddr => {
+                let val = with_context(info.pid, |context| Ok(context.mmap_min))?;
+                *buf.array_chunks_mut::<{mem::size_of::<usize>()}>().next().unwrap() = usize::to_ne_bytes(val);
+                Ok(mem::size_of::<usize>())
+            }
             // TODO: Replace write() with SYS_DUP_FORWARD.
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
@@ -798,7 +802,7 @@ impl Scheme for ProcScheme {
                     // Forbid transferring grants to the same address space!
                     if is_active { return Err(Error::new(EBUSY)); }
 
-                    let current_addrspace = current_addrspace()?;
+                    let current_addrspace = AddrSpace::current()?;
                     let mut current_addrspace = current_addrspace.write();
                     let current_addrspace = &mut *current_addrspace;
                     let src_grant = current_addrspace.grants.take(&Region::new(VirtualAddress::new(src_address), size)).ok_or(Error::new(EINVAL))?;
@@ -1032,6 +1036,11 @@ impl Scheme for ProcScheme {
                 self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
                 Ok(mem::size_of::<usize>())
             }
+            Operation::MmapMinAddr => {
+                let val = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
+                with_context_mut(info.pid, |context| { context.mmap_min = val; Ok(()) })?;
+                Ok(mem::size_of::<usize>())
+            }
             _ => return Err(Error::new(EBADF)),
         }
     }
@@ -1082,6 +1091,7 @@ impl Scheme for ProcScheme {
             Operation::CurrentFiletable => "current-filetable",
             Operation::CurrentSigactions => "current-sigactions",
             Operation::OpenViaDup => "open-via-dup",
+            Operation::MmapMinAddr => "mmap-min-addr",
 
             _ => return Err(Error::new(EOPNOTSUPP)),
         });
@@ -1117,29 +1127,32 @@ impl Scheme for ProcScheme {
         let stop_context = if handle.info.pid == context::context_id() { with_context_mut } else { try_stop_context };
 
         match handle.info.operation {
-            Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => stop_context(handle.info.pid, |context: &mut Context| unsafe {
-                if let Some(saved_regs) = ptrace::regs_for_mut(context) {
-                    saved_regs.iret.rip = new_ip;
-                    saved_regs.iret.rsp = new_sp;
-                } else {
-                    context.clone_entry = Some([new_ip, new_sp]);
-                }
-
-                let prev_addr_space = context.set_addr_space(new);
-
-                if let Some(mut prev) = prev_addr_space.and_then(|a| Arc::try_unwrap(a).ok()).map(RwLock::into_inner) {
-                    // We are the last reference to the address space; therefore it must be
-                    // unmapped.
-
-                    // TODO: Optimize away clearing of page tables? In that case, what about memory
-                    // deallocation?
-                    for grant in prev.grants.into_iter() {
-                        grant.unmap(&mut prev.table.utable, ());
+            Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => {
+                stop_context(handle.info.pid, |context: &mut Context| unsafe {
+                    if let Some(saved_regs) = ptrace::regs_for_mut(context) {
+                        saved_regs.iret.rip = new_ip;
+                        saved_regs.iret.rsp = new_sp;
+                    } else {
+                        context.clone_entry = Some([new_ip, new_sp]);
                     }
-                }
 
-                Ok(())
-            })?,
+                    let prev_addr_space = context.set_addr_space(new);
+
+                    if let Some(mut prev) = prev_addr_space.and_then(|a| Arc::try_unwrap(a).ok()).map(RwLock::into_inner) {
+                        // We are the last reference to the address space; therefore it must be
+                        // unmapped.
+
+                        // TODO: Optimize away clearing of page tables? In that case, what about memory
+                        // deallocation?
+                        for grant in prev.grants.into_iter() {
+                            grant.unmap(&mut prev.table.utable, ());
+                        }
+                    }
+
+                    Ok(())
+                })?;
+                let _ = ptrace::send_event(crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0));
+            }
             Operation::AwaitingFiletableChange(new) => with_context_mut(handle.info.pid, |context: &mut Context| {
                 context.files = new;
                 Ok(())
@@ -1216,27 +1229,41 @@ extern "C" fn clone_handler() {
 }
 
 fn inherit_context() -> Result<ContextId> {
-    let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
-    let new_context_lock = Arc::clone(context::contexts_mut().spawn(clone_handler)?);
+    let new_id = {
+        let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
+        let new_context_lock = Arc::clone(context::contexts_mut().spawn(clone_handler)?);
 
-    let current_context = current_context_lock.read();
-    let mut new_context = new_context_lock.write();
+        let current_context = current_context_lock.read();
+        let mut new_context = new_context_lock.write();
 
-    new_context.status = Status::Stopped(SIGSTOP);
-    new_context.euid = current_context.euid;
-    new_context.egid = current_context.egid;
-    new_context.ruid = current_context.ruid;
-    new_context.rgid = current_context.rgid;
-    new_context.ens = current_context.ens;
-    new_context.rns = current_context.rns;
-    new_context.ppid = current_context.id;
-    new_context.pgid = current_context.pgid;
-    new_context.umask = current_context.umask;
-    new_context.sigmask = current_context.sigmask;
+        new_context.status = Status::Stopped(SIGSTOP);
+        new_context.euid = current_context.euid;
+        new_context.egid = current_context.egid;
+        new_context.ruid = current_context.ruid;
+        new_context.rgid = current_context.rgid;
+        new_context.ens = current_context.ens;
+        new_context.rns = current_context.rns;
+        new_context.ppid = current_context.id;
+        new_context.pgid = current_context.pgid;
+        new_context.umask = current_context.umask;
+        new_context.sigmask = current_context.sigmask;
+        new_context.cpu_id = current_context.cpu_id;
 
-    // TODO: More to copy?
+        // TODO: More to copy?
 
-    Ok(new_context.id)
+        new_context.id
+    };
+
+    if ptrace::send_event(crate::syscall::ptrace_event!(PTRACE_EVENT_CLONE, new_id.into())).is_some() {
+        // Freeze the clone, allow ptrace to put breakpoints
+        // to it before it starts
+        let contexts = context::contexts();
+        let context = contexts.get(new_id).expect("Newly created context doesn't exist??");
+        let mut context = context.write();
+        context.ptrace_stop = true;
+    }
+
+    Ok(new_id)
 }
 fn extract_scheme_number(fd: usize) -> Result<(Arc<dyn KernelScheme>, usize)> {
     let (scheme_id, number) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read().get_file(FileHandle::from(fd)).ok_or(Error::new(EBADF))?.description.read() {

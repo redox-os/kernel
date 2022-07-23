@@ -51,7 +51,7 @@ impl LocalApic {
 
         if ! self.x2 {
             log::info!("Detected xAPIC at {:#x}", physaddr.data());
-            if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr) {
+            if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr, true) {
                 // Unmap xAPIC page if already mapped
                 flush.flush();
             }

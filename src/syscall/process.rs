@@ -6,7 +6,7 @@ use core::mem;
 
 use spin::{RwLock, RwLockWriteGuard};
 
-use crate::context::{Context, ContextId, WaitpidKey};
+use crate::context::{Context, ContextId, memory::AddrSpace, WaitpidKey};
 
 use crate::Bootstrap;
 use crate::context;
@@ -289,54 +289,10 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
-    let end_address = address.checked_add(size).ok_or(Error::new(EFAULT))?;
+    if address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 { return Err(Error::new(EINVAL)); }
+    if address.saturating_add(size) > crate::USER_END_OFFSET { return Err(Error::new(EFAULT)); }
 
-    let address_space = Arc::clone(context::current()?.read().addr_space()?);
-    let mut address_space = address_space.write();
-
-    let mut flush_all = PageFlushAll::new();
-
-    let start_page = Page::containing_address(VirtualAddress::new(address));
-    let end_page = Page::containing_address(VirtualAddress::new(end_address));
-    for page in Page::range_exclusive(start_page, end_page) {
-        // Check if the page is actually mapped before trying to change the flags.
-        // FIXME can other processes change if a page is mapped beneath our feet?
-        let mut page_flags = if let Some((_, flags)) = address_space.table.utable.translate(page.start_address()) {
-            flags
-        } else {
-            flush_all.flush();
-            return Err(Error::new(EFAULT));
-        };
-        if !page_flags.has_present() {
-            flush_all.flush();
-            return Err(Error::new(EFAULT));
-        }
-
-        if flags.contains(PROT_EXEC) {
-            page_flags = page_flags.execute(true);
-        } else {
-            page_flags = page_flags.execute(false);
-        }
-
-        if flags.contains(PROT_WRITE) {
-            //TODO: Not allowing gain of write privileges
-        } else {
-            page_flags = page_flags.write(false);
-        }
-
-        if flags.contains(PROT_READ) {
-            //TODO: No flags for readable pages
-        } else {
-            //TODO: No flags for readable pages
-        }
-
-        let flush = unsafe { address_space.table.utable.remap(page.start_address(), page_flags).expect("failed to remap page in mprotect") };
-        flush_all.consume(flush);
-    }
-
-    flush_all.flush();
-
-    Ok(0)
+    AddrSpace::current()?.write().mprotect(Page::containing_address(VirtualAddress::new(address)), size / PAGE_SIZE, flags).map(|()| 0)
 }
 
 pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {

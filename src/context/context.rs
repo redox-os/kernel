@@ -258,6 +258,11 @@ pub struct Context {
     /// set since there is no interrupt stack (unless the kernel stack is copied, but that is in my
     /// opinion hackier and less efficient than this (and UB to do in Rust)).
     pub clone_entry: Option<[usize; 2]>,
+    /// Lowest offset for mmap invocations where the user has not already specified the offset
+    /// (using MAP_FIXED/MAP_FIXED_NOREPLACE). Cf. Linux's `/proc/sys/vm/mmap_min_addr`, but with
+    /// the exception that we have a memory safe kernel which doesn't have to protect itself
+    /// against null pointers, so fixed mmaps are still allowed.
+    pub mmap_min: usize,
 }
 
 // Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
@@ -373,6 +378,7 @@ impl Context {
             ptrace_stop: false,
             sigstack: None,
             clone_entry: None,
+            mmap_min: MMAP_MIN_DEFAULT,
         };
         Ok(this)
     }
@@ -566,3 +572,5 @@ impl Context {
         ); 128]))
     }
 }
+
+pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
