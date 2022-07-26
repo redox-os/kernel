@@ -4,7 +4,7 @@ use core::borrow::Borrow;
 use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
 use core::fmt::{self, Debug};
 use core::ops::Deref;
-use spin::RwLock;
+use spin::{RwLock, RwLockWriteGuard};
 use syscall::{
     flag::MapFlags,
     error::*,
@@ -16,6 +16,8 @@ use crate::context::file::FileDescriptor;
 use crate::memory::{Enomem, Frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{KernelMapper, Page, PageFlags, PageIter, PageMapper, PhysicalAddress, RmmA, round_up_pages, VirtualAddress};
+
+pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
 pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
     PageFlags::new()
@@ -52,6 +54,11 @@ pub fn new_addrspace() -> Result<Arc<RwLock<AddrSpace>>> {
 pub struct AddrSpace {
     pub table: Table,
     pub grants: UserGrants,
+    /// Lowest offset for mmap invocations where the user has not already specified the offset
+    /// (using MAP_FIXED/MAP_FIXED_NOREPLACE). Cf. Linux's `/proc/sys/vm/mmap_min_addr`, but with
+    /// the exception that we have a memory safe kernel which doesn't have to protect itself
+    /// against null pointers, so fixed mmaps to address zero are still allowed.
+    pub mmap_min: usize,
 }
 impl AddrSpace {
     pub fn current() -> Result<Arc<RwLock<Self>>> {
@@ -101,6 +108,7 @@ impl AddrSpace {
         Ok(Self {
             grants: UserGrants::new(),
             table: setup_new_utable()?,
+            mmap_min: MMAP_MIN_DEFAULT,
         })
     }
     pub fn is_current(&self) -> bool {
@@ -131,7 +139,7 @@ impl AddrSpace {
             if let Some(before) = before { self.grants.insert(before); }
             if let Some(after) = after { self.grants.insert(after); }
 
-            if !grant.is_owned() && flags.contains(MapFlags::PROT_WRITE) && !grant.flags().has_write() {
+            if !grant.can_have_flags(flags) {
                 self.grants.insert(grant);
                 return Err(Error::new(EACCES));
             }
@@ -149,6 +157,75 @@ impl AddrSpace {
             self.grants.insert(grant);
         }
         Ok(())
+    }
+    pub fn munmap(mut self: RwLockWriteGuard<'_, Self>, page: Page, page_count: usize) {
+        let mut notify_files = Vec::new();
+
+        let requested = Region::new(page.start_address(), page_count * PAGE_SIZE);
+        let mut flusher = PageFlushAll::new();
+
+        let conflicting: Vec<Region> = self.grants.conflicts(requested).map(Region::from).collect();
+
+        for conflict in conflicting {
+            let grant = self.grants.take(&conflict).expect("conflicting region didn't exist");
+            let intersection = grant.intersect(requested);
+            let (before, mut grant, after) = grant.extract(intersection.round()).expect("conflicting region shared no common parts");
+
+            // Notify scheme that holds grant
+            if let Some(file_desc) = grant.desc_opt.take() {
+                notify_files.push((file_desc, intersection));
+            }
+
+            // Keep untouched regions
+            if let Some(before) = before {
+                self.grants.insert(before);
+            }
+            if let Some(after) = after {
+                self.grants.insert(after);
+            }
+
+            // Remove irrelevant region
+            grant.unmap(&mut self.table.utable, &mut flusher);
+        }
+        drop(self);
+
+        for (file_ref, intersection) in notify_files {
+            let scheme_id = { file_ref.desc.description.read().scheme };
+
+            let scheme = match crate::scheme::schemes().get(scheme_id) {
+                Some(scheme) => Arc::clone(scheme),
+                // One could argue that EBADFD could be returned here, but we have already unmapped
+                // the memory.
+                None => continue,
+            };
+            // Same here, we don't really care about errors when schemes respond to unmap events.
+            // The caller wants the memory to be unmapped, period. When already unmapped, what
+            // would we do with error codes anyway?
+            let _ = scheme.funmap(intersection.start_address().data(), intersection.size());
+
+            let _ = file_ref.desc.close();
+        }
+    }
+    pub fn mmap(&mut self, page: Option<Page>, page_count: usize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
+        // Finally, the end of all "T0DO: Abstract with other grant creation"!
+
+        let region = match page {
+            Some(page) => self.grants.find_free_at(self.mmap_min, page.start_address(), page_count * PAGE_SIZE, flags)?,
+            None => self.grants.find_free(self.mmap_min, page_count * PAGE_SIZE).ok_or(Error::new(ENOMEM))?,
+        };
+        let page = Page::containing_address(region.start_address());
+
+        let (mut active, mut inactive);
+        let flusher = if self.is_current() {
+            active = PageFlushAll::new();
+            &mut active as &mut dyn Flusher<RmmA>
+        } else {
+            inactive = InactiveFlusher::new();
+            &mut inactive as &mut dyn Flusher<RmmA>
+        };
+
+        self.grants.insert(map(page, page_flags(flags), &mut self.table.utable, flusher)?);
+        Ok(page)
     }
 }
 
@@ -667,6 +744,9 @@ impl Grant {
         }
 
         self.flags = flags;
+    }
+    pub fn can_have_flags(&self, flags: MapFlags) -> bool {
+        self.owned || ((self.flags.has_write() || !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() || !flags.contains(MapFlags::PROT_EXEC)))
     }
 
     pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {

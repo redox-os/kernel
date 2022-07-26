@@ -43,9 +43,11 @@
 #![deny(unused_must_use)]
 
 #![feature(allocator_api)]
+#![feature(arbitrary_self_types)]
 #![feature(array_chunks)]
 #![feature(asm_const, asm_sym)] // TODO: Relax requirements of most asm invocations
 #![cfg_attr(target_arch = "aarch64", feature(llvm_asm))] // TODO: Rewrite using asm!
+#![feature(bool_to_option)]
 #![feature(concat_idents)]
 #![feature(const_btree_new)]
 #![feature(const_ptr_offset_from)]

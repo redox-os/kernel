@@ -306,4 +306,8 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn as_sigactions(&self, number: usize) -> Result<Arc<RwLock<Vec<(crate::syscall::data::SigAction, usize)>>>> {
         Err(Error::new(EBADF))
     }
+
+    fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
 }

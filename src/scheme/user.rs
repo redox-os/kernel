@@ -8,7 +8,7 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{DANGLING, page_flags, Grant, Region, GrantFileRef};
+use crate::context::memory::{AddrSpace, DANGLING, page_flags, Grant, Region, GrantFileRef};
 use crate::event;
 use crate::paging::{PAGE_SIZE, mapper::InactiveFlusher, Page, round_down_pages, round_up_pages, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
@@ -128,8 +128,6 @@ impl UserInner {
     // where the initial context is closed.
     fn capture_inner(context_weak: &Weak<RwLock<Context>>, dst_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<GrantFileRef>)
                      -> Result<VirtualAddress> {
-        // TODO: More abstractions over grant creation!
-
         if size == 0 {
             // NOTE: Rather than returning NULL, we return a dummy dangling address, that is also
             // non-canonical on x86. This means that scheme handlers do not need to check the
@@ -143,36 +141,23 @@ impl UserInner {
             return Ok(VirtualAddress::new(DANGLING));
         }
 
-        let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
+        let dst_addr_space = Arc::clone(context_weak.upgrade().ok_or(Error::new(ESRCH))?.read().addr_space()?);
+        let mut dst_addr_space = dst_addr_space.write();
 
-        let mut addr_space = context.addr_space()?.write();
-        let addr_space = &mut *addr_space;
+        let src_page = Page::containing_address(VirtualAddress::new(round_down_pages(address)));
+        let offset = address - src_page.start_address().data();
+        let page_count = round_up_pages(offset + size) / PAGE_SIZE;
+        let requested_dst_page = (dst_address != 0).then_some(Page::containing_address(VirtualAddress::new(round_down_pages(dst_address))));
 
-        let src_address = round_down_pages(address);
-        let dst_address = round_down_pages(dst_address);
-        let offset = address - src_address;
-        let aligned_size = round_up_pages(offset + size);
-        let dst_region = addr_space.grants.find_free_at(context.mmap_min, VirtualAddress::new(dst_address), aligned_size, flags)?;
-
-        let current_addrspace = Arc::clone(
-            context::contexts().current().ok_or(Error::new(ESRCH))?
-                .read().addr_space()?
-        );
+        let current_addrspace = AddrSpace::current()?;
+        let mut current_addrspace = current_addrspace.write();
 
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
-        addr_space.grants.insert(Grant::borrow(
-            Page::containing_address(VirtualAddress::new(src_address)),
-            Page::containing_address(dst_region.start_address()),
-            aligned_size / PAGE_SIZE,
-            page_flags(flags),
-            desc_opt,
-            &mut current_addrspace.write().table.utable,
-            &mut addr_space.table.utable,
-            InactiveFlusher::new(),
-        )?);
+        let dst_page = dst_addr_space.mmap(requested_dst_page, page_count, flags, |dst_page, page_flags, mapper, flusher| {
+            Ok(Grant::borrow(src_page, dst_page, page_count, page_flags, desc_opt, &mut current_addrspace.table.utable, mapper, flusher)?)
+        })?;
 
-        Ok(VirtualAddress::new(dst_region.start_address().data() + offset))
+        Ok(dst_page.start_address().add(offset))
     }
 
     pub fn release(&self, address: usize) -> Result<()> {

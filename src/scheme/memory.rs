@@ -1,7 +1,11 @@
+use alloc::sync::Arc;
+use spin::RwLock;
+
 use crate::context;
-use crate::context::memory::{page_flags, Grant};
+use crate::context::memory::{AddrSpace, page_flags, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
 use crate::paging::{mapper::PageFlushAll, Page, VirtualAddress};
+
 use crate::syscall::data::{Map, StatVfs};
 use crate::syscall::error::*;
 use crate::syscall::flag::MapFlags;
@@ -14,23 +18,16 @@ impl MemoryScheme {
         MemoryScheme
     }
 
-    pub fn fmap_anonymous(map: &Map) -> Result<usize> {
-        //TODO: Abstract with other grant creation
-        if map.size == 0 {
-            return Ok(0);
-        }
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
+    pub fn fmap_anonymous(addr_space: &Arc<RwLock<AddrSpace>>, map: &Map) -> Result<usize> {
+        let (requested_page, page_count) = crate::syscall::validate::validate_region(map.address, map.size)?;
 
-        let mut addr_space = context.addr_space()?.write();
-        let addr_space = &mut *addr_space;
+        let page = addr_space
+            .write()
+            .mmap((map.address != 0).then_some(requested_page), page_count, map.flags, |page, flags, mapper, flusher| {
+                Ok(Grant::zeroed(page, page_count, flags, mapper, flusher)?)
+            })?;
 
-        let region = addr_space.grants.find_free_at(context.mmap_min, VirtualAddress::new(map.address), map.size, map.flags)?.round();
-
-        addr_space.grants.insert(Grant::zeroed(Page::containing_address(region.start_address()), map.size / PAGE_SIZE, page_flags(map.flags), &mut addr_space.table.utable, PageFlushAll::new())?);
-
-        Ok(region.start_address().data())
+        Ok(page.start_address().data())
     }
 }
 impl Scheme for MemoryScheme {
@@ -51,7 +48,7 @@ impl Scheme for MemoryScheme {
     }
 
     fn fmap(&self, _id: usize, map: &Map) -> Result<usize> {
-        Self::fmap_anonymous(map)
+        Self::fmap_anonymous(&Arc::clone(context::current()?.read().addr_space()?), map)
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -72,4 +69,8 @@ impl Scheme for MemoryScheme {
         Ok(0)
     }
 }
-impl crate::scheme::KernelScheme for MemoryScheme {}
+impl crate::scheme::KernelScheme for MemoryScheme {
+    fn kfmap(&self, _number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
+        Self::fmap_anonymous(addr_space, map)
+    }
+}

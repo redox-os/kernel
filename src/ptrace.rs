@@ -465,7 +465,10 @@ fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item =
     first.into_iter().chain((start..start + len).step_by(PAGE_SIZE).map(|off| (off, PAGE_SIZE))).chain(last)
 }
 
-pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<*mut [u8]>> + '_ {
+pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<(*mut [u8], bool)>> + '_ {
+    let end = core::cmp::min(offset.data().saturating_add(len), crate::USER_END_OFFSET);
+    let len = end - offset.data();
+
     // TODO: Iterate over grants instead to avoid yielding None too many times. What if
     // context_memory is used for an entire process's address space, where the stack is at the very
     // end? Alternatively we can skip pages recursively, i.e. first skip unpopulated PML4s and then
@@ -474,12 +477,9 @@ pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: us
         // [addr,addr+len) is a continuous page starting and/or ending at page boundaries, with the
         // possible exception of an unaligned head/tail.
 
-        //log::info!("ADDR {:p} LEN {:#0x}", page as *const u8, len);
-
-        // FIXME: verify flags before giving out slice
-        let (address, _flags) = addrspace.table.utable.translate(VirtualAddress::new(addr))?;
+        let (address, flags) = addrspace.table.utable.translate(VirtualAddress::new(addr))?;
 
         let start = RmmA::phys_to_virt(address).data() + addr % crate::memory::PAGE_SIZE;
-        Some(core::ptr::slice_from_raw_parts_mut(start as *mut u8, len))
+        Some((core::ptr::slice_from_raw_parts_mut(start as *mut u8, len), flags.has_write()))
     })
 }

@@ -25,6 +25,8 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::validate::*;
 
+use self::scheme::Scheme as _;
+
 use self::data::{Map, SigAction, Stat, TimeSpec};
 use self::error::{Error, Result, ENOSYS, EINVAL};
 use self::flag::{MapFlags, PhysmapFlags, WaitFlags};
@@ -70,7 +72,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 match a & SYS_ARG {
                     SYS_ARG_SLICE => match a {
                         SYS_FMAP if b == !0 => {
-                            MemoryScheme::fmap_anonymous(unsafe { validate_ref(c as *const Map, d)? })
+                            MemoryScheme.fmap(!0, unsafe { validate_ref(c as *const Map, d)? })
                         },
                         _ => file_op_slice(a, fd, validate_slice(c as *const u8, d)?),
                     }

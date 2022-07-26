@@ -146,7 +146,7 @@ enum Operation {
     CurrentSigactions,
     AwaitingSigactionsChange(Arc<RwLock<Vec<(SigAction, usize)>>>),
 
-    MmapMinAddr,
+    MmapMinAddr(Arc<RwLock<AddrSpace>>),
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -283,12 +283,16 @@ impl ProcScheme {
     }
 }
 
+fn get_context(id: ContextId) -> Result<Arc<RwLock<Context>>> {
+    context::contexts().get(id).ok_or(Error::new(ENOENT)).map(Arc::clone)
+}
+
 impl ProcScheme {
     fn open_inner(&self, pid: ContextId, operation_str: Option<&str>, flags: usize, uid: u32, gid: u32) -> Result<usize> {
         let operation = match operation_str {
-            Some("mem") => Operation::Memory { addrspace: AddrSpace::current()? },
-            Some("addrspace") => Operation::AddrSpace { addrspace: AddrSpace::current()? },
-            Some("filetable") => Operation::Filetable { filetable: Arc::clone(&context::current()?.read().files) },
+            Some("mem") => Operation::Memory { addrspace: Arc::clone(get_context(pid)?.read().addr_space().map_err(|_| Error::new(ENOENT))?) },
+            Some("addrspace") => Operation::AddrSpace { addrspace: Arc::clone(get_context(pid)?.read().addr_space().map_err(|_| Error::new(ENOENT))?) },
+            Some("filetable") => Operation::Filetable { filetable: Arc::clone(&get_context(pid)?.read().files) },
             Some("current-addrspace") => Operation::CurrentAddrSpace,
             Some("current-filetable") => Operation::CurrentFiletable,
             Some("regs/float") => Operation::Regs(RegsKind::Float),
@@ -302,9 +306,9 @@ impl ProcScheme {
             Some("uid") => Operation::Attr(Attr::Uid),
             Some("gid") => Operation::Attr(Attr::Gid),
             Some("open_via_dup") => Operation::OpenViaDup,
-            Some("sigactions") => Operation::Sigactions(Arc::clone(&context::current()?.read().actions)),
+            Some("sigactions") => Operation::Sigactions(Arc::clone(&get_context(pid)?.read().actions)),
             Some("current-sigactions") => Operation::CurrentSigactions,
-            Some("mmap-min-addr") => Operation::MmapMinAddr,
+            Some("mmap-min-addr") => Operation::MmapMinAddr(Arc::clone(get_context(pid)?.read().addr_space().map_err(|_| Error::new(ENOENT))?)),
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -459,6 +463,7 @@ impl Scheme for ProcScheme {
                     b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
                     b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone()? }, false),
                     b"mem" => (Operation::Memory { addrspace: Arc::clone(&addrspace) }, true),
+                    b"mmap-min-addr" => (Operation::MmapMinAddr(Arc::clone(&addrspace)), false),
 
                     grant_handle if grant_handle.starts_with(b"grant-") => {
                         let start_addr = usize::from_str_radix(core::str::from_utf8(&grant_handle[6..]).map_err(|_| Error::new(EINVAL))?, 16).map_err(|_| Error::new(EINVAL))?;
@@ -529,7 +534,7 @@ impl Scheme for ProcScheme {
                 let mut bytes_read = 0;
 
                 for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
-                    let chunk = chunk_opt.ok_or(Error::new(EFAULT))?;
+                    let (chunk, _writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
                     let dst_slice = &mut buf[bytes_read..bytes_read + chunk.len()];
                     unsafe {
                         chunk.as_mut_ptr().copy_to_nonoverlapping(dst_slice.as_mut_ptr(), dst_slice.len());
@@ -694,8 +699,8 @@ impl Scheme for ProcScheme {
 
                 read_from(buf, &data.buf, &mut data.offset)
             }
-            Operation::MmapMinAddr => {
-                let val = with_context(info.pid, |context| Ok(context.mmap_min))?;
+            Operation::MmapMinAddr(ref addrspace) => {
+                let val = addrspace.read().mmap_min;
                 *buf.array_chunks_mut::<{mem::size_of::<usize>()}>().next().unwrap() = usize::to_ne_bytes(val);
                 Ok(mem::size_of::<usize>())
             }
@@ -734,7 +739,10 @@ impl Scheme for ProcScheme {
                 let mut bytes_written = 0;
 
                 for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
-                    let chunk = chunk_opt.ok_or(Error::new(EFAULT))?;
+                    let (chunk, writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
+
+                    if !writable { return Err(Error::new(EACCES)); }
+
                     let src_slice = &buf[bytes_written..bytes_written + chunk.len()];
                     unsafe {
                         chunk.as_mut_ptr().copy_from_nonoverlapping(src_slice.as_ptr(), src_slice.len());
@@ -742,94 +750,42 @@ impl Scheme for ProcScheme {
                     bytes_written += chunk.len();
                 }
 
-                data.offset = VirtualAddress::new(data.offset.data() + bytes_written);
+                data.offset = data.offset.add(bytes_written);
                 Ok(bytes_written)
             },
             Operation::AddrSpace { addrspace } => {
-                // FIXME: Forbid upgrading external mappings.
-
                 let mut chunks = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
-                // Update grant mappings, like mprotect but allowed to target other contexts.
-                let base = chunks.next().ok_or(Error::new(EINVAL))?;
-                let size = chunks.next().ok_or(Error::new(EINVAL))?;
-                let flags = chunks.next().and_then(|f| MapFlags::from_bits(f)).ok_or(Error::new(EINVAL))?;
-                let src_address = chunks.next();
+                let mut next = || chunks.next().ok_or(Error::new(EINVAL));
 
-                if base % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || base.saturating_add(size) > crate::USER_END_OFFSET {
-                    return Err(Error::new(EINVAL));
+                match next()? {
+                    op @ ADDRSPACE_OP_MMAP | op @ ADDRSPACE_OP_TRANSFER => {
+                        let fd = next()?;
+                        let offset = next()?;
+                        let (page, page_count) = crate::syscall::validate_region(next()?, next()?)?;
+                        let flags = MapFlags::from_bits(next()?).ok_or(Error::new(EINVAL))?;
+
+                        if !flags.contains(MapFlags::MAP_FIXED) {
+                            return Err(Error::new(EOPNOTSUPP));
+                        }
+
+                        let (scheme, number) = extract_scheme_number(fd)?;
+
+                        return scheme.kfmap(number, &addrspace, &Map { offset, size: page_count * PAGE_SIZE, address: page.start_address().data(), flags }, op == ADDRSPACE_OP_TRANSFER);
+                    }
+                    ADDRSPACE_OP_MUNMAP => {
+                        let (page, page_count) = crate::syscall::validate_region(next()?, next()?)?;
+
+                        addrspace.write().munmap(page, page_count);
+                    }
+                    ADDRSPACE_OP_MPROTECT => {
+                        let (page, page_count) = crate::syscall::validate_region(next()?, next()?)?;
+                        let flags = MapFlags::from_bits(next()?).ok_or(Error::new(EINVAL))?;
+
+                        addrspace.write().mprotect(page, page_count, flags)?;
+                    }
+                    _ => return Err(Error::new(EINVAL)),
                 }
-
-                let mut addrspace = addrspace.write();
-                let addrspace = &mut *addrspace;
-                let is_active = addrspace.is_current();
-
-                let (mut inactive, mut active);
-
-                let mut flusher = if is_active {
-                    active = PageFlushAll::new();
-                    &mut active as &mut dyn Flusher<RmmA>
-                } else {
-                    inactive = InactiveFlusher::new();
-                    &mut inactive as &mut dyn Flusher<RmmA>
-                };
-
-                let region = Region::new(VirtualAddress::new(base), size);
-                let conflicting = addrspace.grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
-                for conflicting_region in conflicting {
-                    let whole_grant = addrspace.grants.take(&conflicting_region).ok_or(Error::new(EBADFD))?;
-                    let (before_opt, current, after_opt) = whole_grant.extract(region.intersect(conflicting_region)).ok_or(Error::new(EBADFD))?;
-
-                    if let Some(before) = before_opt {
-                        addrspace.grants.insert(before);
-                    }
-                    if let Some(after) = after_opt {
-                        addrspace.grants.insert(after);
-                    }
-
-                    let res = current.unmap(&mut addrspace.table.utable, &mut flusher);
-
-                    if res.file_desc.is_some() {
-                        // We prefer avoiding file operations from within the kernel. If userspace
-                        // updates grants that overlap, it might as well enumerate grants and call
-                        // partial funmap on its own.
-                        return Err(Error::new(EBUSY));
-                    }
-                }
-
-                let base_page = Page::containing_address(VirtualAddress::new(base));
-
-                if let Some(src_address) = src_address {
-                    // Forbid transferring grants to the same address space!
-                    if is_active { return Err(Error::new(EBUSY)); }
-
-                    let current_addrspace = AddrSpace::current()?;
-                    let mut current_addrspace = current_addrspace.write();
-                    let current_addrspace = &mut *current_addrspace;
-                    let src_grant = current_addrspace.grants.take(&Region::new(VirtualAddress::new(src_address), size)).ok_or(Error::new(EINVAL))?;
-
-                    if src_address % PAGE_SIZE != 0 || src_address.saturating_add(size) > crate::USER_END_OFFSET {
-                        return Err(Error::new(EINVAL));
-                    }
-
-                    // TODO: Allow downgrading flags?
-
-                    addrspace.grants.insert(Grant::transfer(
-                        src_grant,
-                        base_page,
-                        &mut current_addrspace.table.utable,
-                        &mut addrspace.table.utable,
-                        PageFlushAll::new(),
-                        flusher,
-                    )?);
-                } else if flags.intersects(MapFlags::PROT_READ | MapFlags::PROT_EXEC | MapFlags::PROT_WRITE) {
-                    addrspace.grants.insert(Grant::zeroed(base_page, size / PAGE_SIZE, page_flags(flags), &mut addrspace.table.utable, flusher)?);
-                }
-
-                // TODO: Set some "in use" flag every time an address space is switched to? This
-                // way, we know what hardware threads are using any given page table, which we need
-                // to know while doing TLB shootdown.
-
-                Ok((3 + usize::from(src_address.is_some())) * mem::size_of::<usize>())
+                Ok(0)
             }
             Operation::Regs(kind) => match kind {
                 RegsKind::Float => {
@@ -1036,9 +992,10 @@ impl Scheme for ProcScheme {
                 self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
                 Ok(mem::size_of::<usize>())
             }
-            Operation::MmapMinAddr => {
+            Operation::MmapMinAddr(ref addrspace) => {
                 let val = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
-                with_context_mut(info.pid, |context| { context.mmap_min = val; Ok(()) })?;
+                if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET { return Err(Error::new(EINVAL)); }
+                addrspace.write().mmap_min = val;
                 Ok(mem::size_of::<usize>())
             }
             _ => return Err(Error::new(EBADF)),
@@ -1091,7 +1048,7 @@ impl Scheme for ProcScheme {
             Operation::CurrentFiletable => "current-filetable",
             Operation::CurrentSigactions => "current-sigactions",
             Operation::OpenViaDup => "open-via-dup",
-            Operation::MmapMinAddr => "mmap-min-addr",
+            Operation::MmapMinAddr(_) => "mmap-min-addr",
 
             _ => return Err(Error::new(EOPNOTSUPP)),
         });
@@ -1138,21 +1095,16 @@ impl Scheme for ProcScheme {
 
                     let prev_addr_space = context.set_addr_space(new);
 
-                    if let Some(mut prev) = prev_addr_space.and_then(|a| Arc::try_unwrap(a).ok()).map(RwLock::into_inner) {
-                        // We are the last reference to the address space; therefore it must be
-                        // unmapped.
-
-                        // TODO: Optimize away clearing of page tables? In that case, what about memory
-                        // deallocation?
-                        for grant in prev.grants.into_iter() {
-                            grant.unmap(&mut prev.table.utable, ());
-                        }
+                    if let Some(prev_addr_space) = prev_addr_space {
+                        maybe_cleanup_addr_space(prev_addr_space);
                     }
 
                     Ok(())
                 })?;
                 let _ = ptrace::send_event(crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0));
             }
+            Operation::AddrSpace { addrspace } | Operation::Memory { addrspace } | Operation::MmapMinAddr(addrspace) => maybe_cleanup_addr_space(addrspace),
+
             Operation::AwaitingFiletableChange(new) => with_context_mut(handle.info.pid, |context: &mut Context| {
                 context.files = new;
                 Ok(())
@@ -1178,19 +1130,8 @@ impl Scheme for ProcScheme {
         }
         Ok(0)
     }
-    // TODO: Support borrowing someone else's memory.
     fn fmap(&self, id: usize, map: &Map) -> Result<usize> {
-        let description_lock = match self.handles.read().get(&id) {
-            Some(Handle { info: Info { operation: Operation::GrantHandle { ref description }, .. }, .. }) => Arc::clone(description),
-            _ => return Err(Error::new(EBADF)),
-        };
-        let (scheme_id, number) = {
-            let description = description_lock.read();
-
-            (description.scheme, description.number)
-        };
-        let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(EBADFD))?);
-        scheme.fmap(number, map)
+        self.kfmap(id, &AddrSpace::current()?, map, false)
     }
 }
 impl KernelScheme for ProcScheme {
@@ -1213,6 +1154,71 @@ impl KernelScheme for ProcScheme {
             Ok(Arc::clone(sigactions))
         } else {
             Err(Error::new(EBADF))
+        }
+    }
+    fn kfmap(&self, id: usize, dst_addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
+        let info = self.handles.read().get(&id).ok_or(Error::new(EBADF))?.info.clone();
+
+        match info.operation {
+            Operation::GrantHandle { ref description } => {
+                let (scheme_id, number) = {
+                    let description = description.read();
+
+                    (description.scheme, description.number)
+                };
+                let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(EBADFD))?);
+                scheme.fmap(number, map)
+            }
+            Operation::AddrSpace { ref addrspace } => {
+                if Arc::ptr_eq(addrspace, dst_addr_space) {
+                    return Err(Error::new(EBUSY));
+                }
+                // Limit to transferring/borrowing at most one grant, or part of a grant (splitting
+                // will be mandatory if grants are coalesced).
+
+                let (requested_dst_page, page_count) = crate::syscall::validate_region(map.address, map.size)?;
+                let (src_page, _) = crate::syscall::validate_region(map.offset, map.size)?;
+
+                let requested_dst_page = (map.address != 0).then_some(requested_dst_page);
+
+                let mut src_addr_space = addrspace.write();
+                let src_addr_space = &mut *src_addr_space;
+                let mut dst_addr_space = dst_addr_space.write();
+
+                let src_grant_region = {
+                    let src_region = Region::new(src_page.start_address(), page_count * PAGE_SIZE);
+                    let mut conflicts = src_addr_space.grants.conflicts(src_region);
+                    let first = conflicts.next().ok_or(Error::new(EINVAL))?;
+                    if conflicts.next().is_some() {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    if !first.can_have_flags(map.flags) {
+                        return Err(Error::new(EACCES));
+                    }
+
+                    first.region().intersect(src_region)
+                };
+
+                let grant_page_count = src_grant_region.size() / PAGE_SIZE;
+
+                let src_mapper = &mut src_addr_space.table.utable;
+
+                let result_page = if consume {
+                    let grant = src_addr_space.grants.take(&src_grant_region).expect("grant cannot disappear");
+                    let (before, middle, after) = grant.extract(src_grant_region).expect("called intersect(), must succeed");
+
+                    if let Some(before) = before { src_addr_space.grants.insert(before); }
+                    if let Some(after) = after { src_addr_space.grants.insert(after); }
+
+                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, flags, dst_mapper, dst_flusher| Ok(Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher)?))?
+                } else {
+                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Page::containing_address(src_grant_region.start_address()), dst_page, grant_page_count, flags, None, src_mapper, dst_mapper, flusher)?))?
+                };
+
+                Ok(result_page.start_address().data())
+            }
+            _ => return Err(Error::new(EBADF)),
         }
     }
 }
@@ -1272,4 +1278,17 @@ fn extract_scheme_number(fd: usize) -> Result<(Arc<dyn KernelScheme>, usize)> {
     let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(ENODEV))?);
 
     Ok((scheme, number))
+}
+fn maybe_cleanup_addr_space(addr_space: Arc<RwLock<AddrSpace>>) {
+    if let Ok(mut space) = Arc::try_unwrap(addr_space).map(RwLock::into_inner) {
+        // We are the last reference to the address space; therefore it must be
+        // unmapped.
+
+        // TODO: Optimize away clearing of page tables? In that case, what about memory
+        // deallocation?
+        for grant in space.grants.into_iter() {
+            grant.unmap(&mut space.table.utable, ());
+        }
+    }
+
 }

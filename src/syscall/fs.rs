@@ -1,14 +1,10 @@
 //! Filesystem syscalls
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::str;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::Region;
 use crate::context;
-use crate::memory::PAGE_SIZE;
-use crate::paging::{mapper::PageFlushAll, VirtualAddress};
 use crate::scheme::{self, FileHandle};
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
@@ -469,64 +465,10 @@ pub fn fstat(fd: FileHandle, stat: &mut Stat) -> Result<usize> {
 }
 
 pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
-    if virtual_address == 0 || length == 0 {
-        return Ok(0);
-    } else if virtual_address % PAGE_SIZE != 0 || length % PAGE_SIZE != 0 {
-        return Err(Error::new(EINVAL));
-    }
+    let (page, page_count) = crate::syscall::validate::validate_region(virtual_address, length)?;
 
-    let mut notify_files = Vec::new();
-
-    let virtual_address = VirtualAddress::new(virtual_address);
-    let requested = Region::new(virtual_address, length);
-    let mut flusher = PageFlushAll::new();
-
-    {
-        let context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
-        let context = context_lock.read();
-
-        let mut addr_space = context.addr_space()?.write();
-        let addr_space = &mut *addr_space;
-
-        let conflicting: Vec<Region> = addr_space.grants.conflicts(requested).map(Region::from).collect();
-
-        for conflict in conflicting {
-            let grant = addr_space.grants.take(&conflict).expect("conflicting region didn't exist");
-            let intersection = grant.intersect(requested);
-            let (before, mut grant, after) = grant.extract(intersection.round()).expect("conflicting region shared no common parts");
-
-            // Notify scheme that holds grant
-            if let Some(file_desc) = grant.desc_opt.take() {
-                notify_files.push((file_desc, intersection));
-            }
-
-            // Keep untouched regions
-            if let Some(before) = before {
-                addr_space.grants.insert(before);
-            }
-            if let Some(after) = after {
-                addr_space.grants.insert(after);
-            }
-
-            // Remove irrelevant region
-            grant.unmap(&mut addr_space.table.utable, &mut flusher);
-        }
-    }
-
-    for (file_ref, intersection) in notify_files {
-        let scheme_id = { file_ref.desc.description.read().scheme };
-
-        let scheme = {
-            let schemes = scheme::schemes();
-            let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
-            scheme.clone()
-        };
-        let res = scheme.funmap(intersection.start_address().data(), intersection.size());
-
-        let _ = file_ref.desc.close();
-
-        res?;
-    }
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    addr_space.write().munmap(page, page_count);
 
     Ok(0)
 }

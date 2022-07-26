@@ -77,47 +77,38 @@ pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
 // `physaddr` to `address` (optional) will map that physical address. We would have to find out
 // some way to pass flags such as WRITE_COMBINE/NO_CACHE however.
 pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
-    //TODO: Abstract with other grant creation
-    if size == 0 {
-        return Ok(DANGLING);
-    }
-    if size % PAGE_SIZE != 0 || physical_address % PAGE_SIZE != 0 {
+    // TODO: Check physical_address against MAXPHYADDR.
+
+    let end = 1 << 52;
+    if physical_address.saturating_add(size) > end || physical_address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 {
         return Err(Error::new(EINVAL));
     }
-    // TODO: Enforce size being a multiple of the page size, fail otherwise.
 
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
+    let mut addr_space = addr_space.write();
 
-    let mut addr_space = context.addr_space()?.write();
-    let addr_space = &mut *addr_space;
+    addr_space.mmap(None, size / PAGE_SIZE, Default::default(), |dst_page, _, dst_mapper, dst_flusher| {
+        let mut page_flags = PageFlags::new().user(true);
+        if flags.contains(PHYSMAP_WRITE) {
+            page_flags = page_flags.write(true);
+        }
+        if flags.contains(PHYSMAP_WRITE_COMBINE) {
+            page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
+        }
+        #[cfg(target_arch = "x86_64")] // TODO: AARCH64
+        if flags.contains(PHYSMAP_NO_CACHE) {
+            page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
+        }
+        Grant::physmap(
+            Frame::containing_address(PhysicalAddress::new(physical_address)),
+            dst_page,
+            size / PAGE_SIZE,
+            page_flags,
+            dst_mapper,
+            dst_flusher,
+        )
+    }).map(|page| page.start_address().data())
 
-    let dst_address = addr_space.grants.find_free(context.mmap_min, size).ok_or(Error::new(ENOMEM))?;
-
-    let mut page_flags = PageFlags::new().user(true);
-    if flags.contains(PHYSMAP_WRITE) {
-        page_flags = page_flags.write(true);
-    }
-    if flags.contains(PHYSMAP_WRITE_COMBINE) {
-        page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
-    }
-    #[cfg(target_arch = "x86_64")] // TODO: AARCH64
-    if flags.contains(PHYSMAP_NO_CACHE) {
-        page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
-    }
-
-    addr_space.grants.insert(Grant::physmap(
-        Frame::containing_address(PhysicalAddress::new(physical_address)),
-        Page::containing_address(dst_address.start_address()),
-        size / PAGE_SIZE,
-        page_flags,
-        &mut addr_space.table.utable,
-        PageFlushAll::new(),
-    )?);
-
-    Ok(dst_address.start_address().data())
 }
 // TODO: Remove this syscall, funmap makes it redundant.
 pub fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
