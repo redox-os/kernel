@@ -5,6 +5,7 @@
 use core::{mem, slice, str};
 
 use crate::context;
+use crate::memory::PAGE_SIZE;
 use crate::paging::{Page, TableKind, VirtualAddress};
 use crate::syscall::error::*;
 
@@ -107,4 +108,14 @@ pub fn validate_slice_mut<T>(ptr: *mut T, len: usize) -> Result<&'static mut [T]
 pub fn validate_str(ptr: *const u8, len: usize) -> Result<&'static str> {
     let slice = validate_slice(ptr, len)?;
     str::from_utf8(slice).map_err(|_| Error::new(EINVAL))
+}
+
+pub fn validate_region(address: usize, size: usize) -> Result<(Page, usize)> {
+    if address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || size == 0 {
+        return Err(Error::new(EINVAL));
+    }
+    if address.saturating_add(size) > crate::USER_END_OFFSET {
+        return Err(Error::new(EFAULT));
+    }
+    Ok((Page::containing_address(VirtualAddress::new(address)), size / PAGE_SIZE))
 }
