@@ -37,51 +37,6 @@
 
     /// Offset to user image
     pub const USER_OFFSET: usize = 0;
-    pub const USER_PML4: usize = (USER_OFFSET & PML4_MASK)/PML4_SIZE;
 
-    /// Offset to user arguments
-    pub const USER_ARG_OFFSET: usize = USER_OFFSET + PML4_SIZE/2;
-
-    /// Offset to user heap
-    pub const USER_HEAP_OFFSET: usize = USER_OFFSET + PML4_SIZE;
-    pub const USER_HEAP_PML4: usize = (USER_HEAP_OFFSET & PML4_MASK)/PML4_SIZE;
-
-    /// Offset to user grants
-    pub const USER_GRANT_OFFSET: usize = USER_HEAP_OFFSET + PML4_SIZE;
-    pub const USER_GRANT_PML4: usize = (USER_GRANT_OFFSET & PML4_MASK)/PML4_SIZE;
-
-    /// Offset to user stack
-    pub const USER_STACK_OFFSET: usize = USER_GRANT_OFFSET + PML4_SIZE;
-    pub const USER_STACK_PML4: usize = (USER_STACK_OFFSET & PML4_MASK)/PML4_SIZE;
-    /// Size of user stack
-    pub const USER_STACK_SIZE: usize = 1024 * 1024; // 1 MB
-
-    /// Offset to user sigstack
-    pub const USER_SIGSTACK_OFFSET: usize = USER_STACK_OFFSET + PML4_SIZE;
-    pub const USER_SIGSTACK_PML4: usize = (USER_SIGSTACK_OFFSET & PML4_MASK)/PML4_SIZE;
-    /// Size of user sigstack
-    pub const USER_SIGSTACK_SIZE: usize = 256 * 1024; // 256 KB
-
-    /// Offset to user temporary image (used when cloning)
-    pub const USER_TMP_OFFSET: usize = USER_SIGSTACK_OFFSET + PML4_SIZE;
-    pub const USER_TMP_PML4: usize = (USER_TMP_OFFSET & PML4_MASK)/PML4_SIZE;
-
-    /// Offset to user temporary heap (used when cloning)
-    pub const USER_TMP_HEAP_OFFSET: usize = USER_TMP_OFFSET + PML4_SIZE;
-    pub const USER_TMP_HEAP_PML4: usize = (USER_TMP_HEAP_OFFSET & PML4_MASK)/PML4_SIZE;
-
-    /// Offset to user temporary page for grants
-    pub const USER_TMP_GRANT_OFFSET: usize = USER_TMP_HEAP_OFFSET + PML4_SIZE;
-    pub const USER_TMP_GRANT_PML4: usize = (USER_TMP_GRANT_OFFSET & PML4_MASK)/PML4_SIZE;
-
-    /// Offset to user temporary stack (used when cloning)
-    pub const USER_TMP_STACK_OFFSET: usize = USER_TMP_GRANT_OFFSET + PML4_SIZE;
-    pub const USER_TMP_STACK_PML4: usize = (USER_TMP_STACK_OFFSET & PML4_MASK)/PML4_SIZE;
-
-    /// Offset to user temporary sigstack (used when cloning)
-    pub const USER_TMP_SIGSTACK_OFFSET: usize = USER_TMP_STACK_OFFSET + PML4_SIZE;
-    pub const USER_TMP_SIGSTACK_PML4: usize = (USER_TMP_SIGSTACK_OFFSET & PML4_MASK)/PML4_SIZE;
-
-    /// Offset for usage in other temporary pages
-    pub const USER_TMP_MISC_OFFSET: usize = USER_TMP_SIGSTACK_OFFSET + PML4_SIZE;
-    pub const USER_TMP_MISC_PML4: usize = (USER_TMP_MISC_OFFSET & PML4_MASK)/PML4_SIZE;
+    /// End offset of the user image, i.e. kernel start
+    pub const USER_END_OFFSET: usize = 256 * PML4_SIZE;

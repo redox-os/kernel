@@ -3,7 +3,7 @@ use core::ptr::{self, NonNull};
 use linked_list_allocator::Heap;
 use spin::Mutex;
 
-use crate::paging::{ActivePageTable, TableKind};
+use crate::paging::KernelMapper;
 
 static HEAP: Mutex<Option<Heap>> = Mutex::new(None);
 
@@ -21,7 +21,7 @@ unsafe impl GlobalAlloc for Allocator {
             match heap.allocate_first_fit(layout) {
                 Err(()) => {
                     let size = heap.size();
-                    super::map_heap(&mut ActivePageTable::new(TableKind::Kernel), crate::KERNEL_HEAP_OFFSET + size, crate::KERNEL_HEAP_SIZE);
+                    super::map_heap(&mut KernelMapper::lock(), crate::KERNEL_HEAP_OFFSET + size, crate::KERNEL_HEAP_SIZE);
                     heap.extend(crate::KERNEL_HEAP_SIZE);
                 },
                 other => return other.ok().map_or(ptr::null_mut(), |allocation| allocation.as_ptr()),

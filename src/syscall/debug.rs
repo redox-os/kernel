@@ -1,8 +1,7 @@
 use core::{ascii, mem};
 use alloc::string::String;
-use alloc::vec::Vec;
 
-use super::data::{OldMap, Map, Stat, TimeSpec};
+use super::data::{Map, Stat, TimeSpec};
 use super::flag::*;
 use super::number::*;
 use super::validate::*;
@@ -106,14 +105,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             d
         ),
-        SYS_FMAP_OLD => format!(
-            "fmap_old({}, {:?})",
-            b,
-            validate_slice(
-                c as *const OldMap,
-                d/mem::size_of::<OldMap>()
-            ),
-        ),
         SYS_FMAP => format!(
             "fmap({}, {:?})",
             b,
@@ -121,10 +112,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
                 c as *const Map,
                 d/mem::size_of::<Map>()
             ),
-        ),
-        SYS_FUNMAP_OLD => format!(
-            "funmap_old({:#X})",
-            b
         ),
         SYS_FUNMAP => format!(
             "funmap({:#X}, {:#X})",
@@ -183,36 +170,9 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b,
             validate_slice_mut(c as *mut TimeSpec, 1)
         ),
-        SYS_CLONE => format!(
-            "clone({:?})",
-            CloneFlags::from_bits(b)
-        ),
         SYS_EXIT => format!(
             "exit({})",
             b
-        ),
-        //TODO: Cleanup, do not allocate
-        SYS_FEXEC => format!(
-            "fexec({}, {:?}, {:?})",
-            b,
-            validate_slice(
-                c as *const [usize; 2],
-                d
-            ).map(|slice| {
-                slice.iter().map(|a|
-                    validate_slice(a[0] as *const u8, a[1]).ok()
-                    .and_then(|s| ::core::str::from_utf8(s).ok())
-                ).collect::<Vec<Option<&str>>>()
-            }),
-            validate_slice(
-                e as *const [usize; 2],
-                f
-            ).map(|slice| {
-                slice.iter().map(|a|
-                    validate_slice(a[0] as *const u8, a[1]).ok()
-                    .and_then(|s| ::core::str::from_utf8(s).ok())
-                ).collect::<Vec<Option<&str>>>()
-            })
         ),
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",

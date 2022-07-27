@@ -1,7 +1,7 @@
 use core::mem;
 
 use crate::memory::{allocate_frames, Frame};
-use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
 
 use super::sdt::Sdt;
 use super::find_sdt;
@@ -28,7 +28,7 @@ pub static mut MADT: Option<Madt> = None;
 pub const FLAG_PCAT: u32 = 1;
 
 impl Madt {
-    pub fn init(active_table: &mut ActivePageTable) {
+    pub fn init() {
         let madt_sdt = find_sdt("APIC");
         let madt = if madt_sdt.len() == 1 {
             Madt::new(madt_sdt[0])
@@ -56,7 +56,18 @@ impl Madt {
                 // Map trampoline
                 let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
-                let result = active_table.map_to(trampoline_page, trampoline_frame, PageFlags::new().execute(true).write(true)); //TODO: do not have writable and executable!
+                let (result, page_table_physaddr) = unsafe {
+                    //TODO: do not have writable and executable!
+                    let mut mapper = KernelMapper::lock();
+
+                    let result = mapper
+                        .get_mut()
+                        .expect("expected kernel page table not to be recursively locked while initializing MADT")
+                        .map_phys(trampoline_page.start_address(), trampoline_frame.start_address(), PageFlags::new().execute(true).write(true))
+                        .expect("failed to map trampoline");
+
+                    (result, mapper.table().phys().data())
+                };
                 result.flush();
 
                 // Write trampoline, make sure TRAMPOLINE page is free for use
@@ -90,7 +101,7 @@ impl Madt {
                                 // Set the ap_ready to 0, volatile
                                 unsafe { atomic_store(ap_ready, 0) };
                                 unsafe { atomic_store(ap_cpu_id, ap_local_apic.id as u64) };
-                                unsafe { atomic_store(ap_page_table, active_table.address() as u64) };
+                                unsafe { atomic_store(ap_page_table, page_table_physaddr as u64) };
                                 unsafe { atomic_store(ap_stack_start, stack_start as u64) };
                                 unsafe { atomic_store(ap_stack_end, stack_end as u64) };
                                 unsafe { atomic_store(ap_code, kstart_ap as u64) };
@@ -137,7 +148,7 @@ impl Madt {
                                 }
                                 println!(" Ready");
 
-                                active_table.flush_all();
+                                unsafe { RmmA::invalidate_all(); }
                             } else {
                                 println!("        CPU Disabled");
                             }
@@ -147,8 +158,14 @@ impl Madt {
                 }
 
                 // Unmap trampoline
-                let (result, _frame) = active_table.unmap_return(trampoline_page, false);
-                result.flush();
+                let (_frame, _, flush) = unsafe {
+                    KernelMapper::lock()
+                        .get_mut()
+                        .expect("expected kernel page table not to be recursively locked while initializing MADT")
+                        .unmap_phys(trampoline_page.start_address(), true)
+                        .expect("failed to unmap trampoline page")
+                };
+                flush.flush();
             }
         }
     }

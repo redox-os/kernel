@@ -52,6 +52,7 @@ impl SysScheme {
         files.insert("scheme_num", Box::new(scheme_num::resource));
         files.insert("syscall", Box::new(syscall::resource));
         files.insert("uname", Box::new(uname::resource));
+        files.insert("env", Box::new(|| Ok(Vec::from(crate::init_env()))));
         #[cfg(target_arch = "x86_64")]
         files.insert("spurious_irq", Box::new(irq::spurious_irq_resource));
 
@@ -169,3 +170,4 @@ impl Scheme for SysScheme {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }
+impl crate::scheme::KernelScheme for SysScheme {}

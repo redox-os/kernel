@@ -43,8 +43,11 @@
 #![deny(unused_must_use)]
 
 #![feature(allocator_api)]
+#![feature(arbitrary_self_types)]
+#![feature(array_chunks)]
 #![feature(asm_const, asm_sym)] // TODO: Relax requirements of most asm invocations
 #![cfg_attr(target_arch = "aarch64", feature(llvm_asm))] // TODO: Rewrite using asm!
+#![feature(bool_to_option)]
 #![feature(concat_idents)]
 #![feature(const_btree_new)]
 #![feature(const_ptr_offset_from)]
@@ -53,6 +56,7 @@
 #![feature(lang_items)]
 #![feature(naked_functions)]
 #![feature(ptr_internals)]
+#![feature(slice_ptr_get, slice_ptr_len)]
 #![feature(thread_local)]
 #![no_std]
 
@@ -72,7 +76,6 @@ extern crate spin;
 #[cfg(feature = "slab")]
 extern crate slab_allocator;
 
-use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::scheme::{FileHandle, SchemeNamespace};
@@ -167,52 +170,36 @@ pub fn cpu_count() -> usize {
     CPU_COUNT.load(Ordering::Relaxed)
 }
 
-static mut INIT_ENV: &[u8] = &[];
-
-/// Initialize userspace by running the initfs:bin/init process
-/// This function will also set the CWD to initfs:bin and open debug: as stdio
-pub extern fn userspace_init() {
-    let path = "initfs:/bin/init";
-    let env = unsafe { INIT_ENV };
-
-    if let Err(err) = syscall::chdir("initfs:") {
-        info!("Failed to enter initfs ({}).", err);
-        panic!("Unexpected error while trying to enter initfs:.");
-    }
-
-    assert_eq!(syscall::open("debug:", syscall::flag::O_RDONLY).map(FileHandle::into), Ok(0));
-    assert_eq!(syscall::open("debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(1));
-    assert_eq!(syscall::open("debug:", syscall::flag::O_WRONLY).map(FileHandle::into), Ok(2));
-
-    let fd = syscall::open(path, syscall::flag::O_RDONLY).expect("failed to open init");
-
-    let mut args = Vec::new();
-    args.push(path.as_bytes().to_vec().into_boxed_slice());
-
-    let mut vars = Vec::new();
-    for var in env.split(|b| *b == b'\n') {
-        if ! var.is_empty() {
-            vars.push(var.to_vec().into_boxed_slice());
-        }
-    }
-
-    syscall::fexec_kernel(fd, args.into_boxed_slice(), vars.into_boxed_slice(), None, None).expect("failed to execute init");
-
-    panic!("init returned");
+pub fn init_env() -> &'static [u8] {
+    crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set").env
 }
 
+pub extern "C" fn userspace_init() {
+    let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
+    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap) }
+}
+
+pub struct Bootstrap {
+    pub base: crate::memory::Frame,
+    pub page_count: usize,
+    pub entry: usize,
+    pub env: &'static [u8],
+}
+static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
+
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-pub fn kmain(cpus: usize, env: &'static [u8]) -> ! {
+pub fn kmain(cpus: usize, bootstrap: Bootstrap) -> ! {
     CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
-    unsafe { INIT_ENV = env };
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
 
     let pid = syscall::getpid();
     info!("BSP: {:?} {}", pid, cpus);
-    info!("Env: {:?}", ::core::str::from_utf8(unsafe { INIT_ENV }));
+    info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
+
+    BOOTSTRAP.call_once(|| bootstrap);
 
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {

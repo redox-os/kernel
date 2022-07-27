@@ -16,6 +16,7 @@ use alloc::{
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::context::{memory::AddrSpace, file::FileDescriptor};
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
 
@@ -24,7 +25,6 @@ use self::acpi::AcpiScheme;
 
 use self::debug::DebugScheme;
 use self::event::EventScheme;
-use self::initfs::InitFsScheme;
 use self::irq::IrqScheme;
 use self::itimer::ITimerScheme;
 use self::memory::MemoryScheme;
@@ -44,9 +44,6 @@ pub mod debug;
 
 /// `event:` - allows reading of `Event`s which are registered using `fevent`
 pub mod event;
-
-/// `initfs:` - a readonly filesystem used for initializing the system
-pub mod initfs;
 
 /// `irq:` - allows userspace handling of IRQs
 pub mod irq;
@@ -107,7 +104,7 @@ impl<'a> Iterator for SchemeIter<'a> {
 
 /// Scheme list type
 pub struct SchemeList {
-    map: BTreeMap<SchemeId, Arc<dyn Scheme + Send + Sync>>,
+    map: BTreeMap<SchemeId, Arc<dyn KernelScheme + Send + Sync>>,
     names: BTreeMap<SchemeNamespace, BTreeMap<Box<str>, SchemeId>>,
     next_ns: usize,
     next_id: usize
@@ -165,7 +162,6 @@ impl SchemeList {
             self.insert(ns, "kernel/acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
         }
         self.insert(ns, "debug", |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();
-        self.insert(ns, "initfs", |_| Arc::new(InitFsScheme)).unwrap();
         self.insert(ns, "irq", |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();
         self.insert(ns, "proc", |scheme_id| Arc::new(ProcScheme::new(scheme_id))).unwrap();
         self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();
@@ -201,7 +197,7 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<dyn Scheme + Send + Sync>> {
+    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<dyn KernelScheme + Send + Sync>> {
         self.map.iter()
     }
 
@@ -212,11 +208,11 @@ impl SchemeList {
     }
 
     /// Get the nth scheme.
-    pub fn get(&self, id: SchemeId) -> Option<&Arc<dyn Scheme + Send + Sync>> {
+    pub fn get(&self, id: SchemeId) -> Option<&Arc<dyn KernelScheme + Send + Sync>> {
         self.map.get(&id)
     }
 
-    pub fn get_name(&self, ns: SchemeNamespace, name: &str) -> Option<(SchemeId, &Arc<dyn Scheme + Send + Sync>)> {
+    pub fn get_name(&self, ns: SchemeNamespace, name: &str) -> Option<(SchemeId, &Arc<dyn KernelScheme + Send + Sync>)> {
         if let Some(names) = self.names.get(&ns) {
             if let Some(&id) = names.get(name) {
                 return self.get(id).map(|scheme| (id, scheme));
@@ -227,7 +223,7 @@ impl SchemeList {
 
     /// Create a new scheme.
     pub fn insert<F>(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: F) -> Result<SchemeId>
-        where F: Fn(SchemeId) -> Arc<dyn Scheme + Send + Sync>
+        where F: Fn(SchemeId) -> Arc<dyn KernelScheme + Send + Sync>
     {
         if let Some(names) = self.names.get(&ns) {
             if names.contains_key(name) {
@@ -297,4 +293,21 @@ pub fn schemes() -> RwLockReadGuard<'static, SchemeList> {
 /// Get the global schemes list, mutable
 pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
     SCHEMES.call_once(init_schemes).write()
+}
+
+#[allow(unused_variables)]
+pub trait KernelScheme: Scheme + Send + Sync + 'static {
+    fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
+        Err(Error::new(EBADF))
+    }
+    fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
+        Err(Error::new(EBADF))
+    }
+    fn as_sigactions(&self, number: usize) -> Result<Arc<RwLock<Vec<(crate::syscall::data::SigAction, usize)>>>> {
+        Err(Error::new(EBADF))
+    }
+
+    fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
 }

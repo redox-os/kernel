@@ -8,12 +8,12 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{DANGLING, page_flags, round_down_pages, Grant, Region, GrantFileRef};
+use crate::context::memory::{AddrSpace, DANGLING, page_flags, Grant, Region, GrantFileRef};
 use crate::event;
-use crate::paging::{PAGE_SIZE, InactivePageTable, VirtualAddress};
+use crate::paging::{PAGE_SIZE, mapper::InactiveFlusher, Page, round_down_pages, round_up_pages, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
-use crate::syscall::data::{Map, OldMap, Packet, Stat, StatVfs, TimeSpec};
+use crate::syscall::data::{Map, Packet, Stat, StatVfs, TimeSpec};
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_READ, PROT_WRITE};
 use crate::syscall::number::*;
@@ -123,10 +123,11 @@ impl UserInner {
         ).map(|addr| addr.data())
     }
 
+    // TODO: Use an address space Arc over a context Arc. While contexts which share address spaces
+    // still can access borrowed scheme pages, it would both be cleaner and would handle the case
+    // where the initial context is closed.
     fn capture_inner(context_weak: &Weak<RwLock<Context>>, dst_address: usize, address: usize, size: usize, flags: MapFlags, desc_opt: Option<GrantFileRef>)
                      -> Result<VirtualAddress> {
-        // TODO: More abstractions over grant creation!
-
         if size == 0 {
             // NOTE: Rather than returning NULL, we return a dummy dangling address, that is also
             // non-canonical on x86. This means that scheme handlers do not need to check the
@@ -140,29 +141,23 @@ impl UserInner {
             return Ok(VirtualAddress::new(DANGLING));
         }
 
-        let context_lock = context_weak.upgrade().ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
+        let dst_addr_space = Arc::clone(context_weak.upgrade().ok_or(Error::new(ESRCH))?.read().addr_space()?);
+        let mut dst_addr_space = dst_addr_space.write();
 
-        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
+        let src_page = Page::containing_address(VirtualAddress::new(round_down_pages(address)));
+        let offset = address - src_page.start_address().data();
+        let page_count = round_up_pages(offset + size) / PAGE_SIZE;
+        let requested_dst_page = (dst_address != 0).then_some(Page::containing_address(VirtualAddress::new(round_down_pages(dst_address))));
 
-        let mut grants = context.grants.write();
-
-        let src_address = round_down_pages(address);
-        let offset = address - src_address;
-        let src_region = Region::new(VirtualAddress::new(src_address), offset + size).round();
-        let dst_region = grants.find_free_at(VirtualAddress::new(dst_address), src_region.size(), flags)?;
+        let current_addrspace = AddrSpace::current()?;
+        let mut current_addrspace = current_addrspace.write();
 
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
-        grants.insert(Grant::map_inactive(
-            src_region.start_address(),
-            dst_region.start_address(),
-            src_region.size(),
-            page_flags(flags),
-            desc_opt,
-            &mut new_table,
-        ));
+        let dst_page = dst_addr_space.mmap(requested_dst_page, page_count, flags, |dst_page, page_flags, mapper, flusher| {
+            Ok(Grant::borrow(src_page, dst_page, page_count, page_flags, desc_opt, &mut current_addrspace.table.utable, mapper, flusher)?)
+        })?;
 
-        Ok(VirtualAddress::new(dst_region.start_address().data() + offset))
+        Ok(dst_page.start_address().add(offset))
     }
 
     pub fn release(&self, address: usize) -> Result<()> {
@@ -170,16 +165,15 @@ impl UserInner {
             return Ok(());
         }
         let context_lock = self.context.upgrade().ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
+        let context = context_lock.write();
 
-        let mut new_table = unsafe { InactivePageTable::from_address(context.arch.get_page_utable()) };
-        let mut grants = context.grants.write();
+        let mut addr_space = context.addr_space()?.write();
 
-        let region = match grants.contains(VirtualAddress::new(address)).map(Region::from) {
+        let region = match addr_space.grants.contains(VirtualAddress::new(address)).map(Region::from) {
             Some(region) => region,
-            None => return  Err(Error::new(EFAULT)),
+            None => return Err(Error::new(EFAULT)),
         };
-        grants.take(&region).unwrap().unmap_inactive(&mut new_table);
+        addr_space.grants.take(&region).unwrap().unmap(&mut addr_space.table.utable, InactiveFlusher::new());
         Ok(())
     }
 
@@ -228,6 +222,9 @@ impl UserInner {
                     _ => println!("Unknown scheme -> kernel message {}", packet.a)
                 }
             } else {
+                // The motivation of doing this here instead of within the fmap handler, is that we
+                // can operate on an inactive table. This reduces the number of page table reloads
+                // from two (context switch + active TLB flush) to one (context switch).
                 if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
                         if address % PAGE_SIZE > 0 {
@@ -238,8 +235,8 @@ impl UserInner {
                         if let Ok(grant_address) = res {
                             if let Some(context_lock) = context_weak.upgrade() {
                                 let context = context_lock.read();
-                                let mut grants = context.grants.write();
-                                grants.funmap.insert(
+                                let mut addr_space = context.addr_space()?.write();
+                                addr_space.grants.funmap.insert(
                                     Region::new(grant_address, map.size),
                                     VirtualAddress::new(address)
                                 );
@@ -268,6 +265,54 @@ impl UserInner {
 
     pub fn fsync(&self) -> Result<usize> {
         Ok(0)
+    }
+
+    fn fmap_inner(&self, file: usize, map: &Map) -> Result<usize> {
+        let (pid, uid, gid, context_weak, desc) = {
+            let context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
+            let context = context_lock.read();
+            if map.size % PAGE_SIZE != 0 {
+                log::warn!("Unaligned map size for context {:?}", context.name.try_read().as_deref());
+            }
+            // TODO: Faster, cleaner mechanism to get descriptor
+            let scheme = self.scheme_id.load(Ordering::SeqCst);
+            let mut desc_res = Err(Error::new(EBADF));
+            for context_file_opt in context.files.read().iter() {
+                if let Some(context_file) = context_file_opt {
+                    let (context_scheme, context_number) = {
+                        let desc = context_file.description.read();
+                        (desc.scheme, desc.number)
+                    };
+                    if context_scheme == scheme && context_number == file {
+                        desc_res = Ok(context_file.clone());
+                        break;
+                    }
+                }
+            }
+            let desc = desc_res?;
+            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
+        };
+
+        let address = self.capture(map)?;
+
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        self.fmap.lock().insert(id, (context_weak, desc, *map));
+
+        let result = self.call_inner(Packet {
+            id,
+            pid: pid.into(),
+            uid,
+            gid,
+            a: SYS_FMAP,
+            b: file,
+            c: address,
+            d: mem::size_of::<Map>()
+        });
+
+        let _ = self.release(address);
+
+        result
     }
 }
 
@@ -376,135 +421,10 @@ impl Scheme for UserScheme {
         inner.call(SYS_FEVENT, file, flags.bits(), 0).map(EventFlags::from_bits_truncate)
     }
 
-    fn fmap_old(&self, file: usize, map: &OldMap) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-
-        let (pid, uid, gid, context_lock, desc) = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            // TODO: Faster, cleaner mechanism to get descriptor
-            let scheme = inner.scheme_id.load(Ordering::SeqCst);
-            let mut desc_res = Err(Error::new(EBADF));
-            for context_file_opt in context.files.read().iter() {
-                if let Some(context_file) = context_file_opt {
-                    let (context_scheme, context_number) = {
-                        let desc = context_file.description.read();
-                        (desc.scheme, desc.number)
-                    };
-                    if context_scheme == scheme && context_number == file {
-                        desc_res = Ok(context_file.clone());
-                        break;
-                    }
-                }
-            }
-            let desc = desc_res?;
-            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
-        };
-
-        let address = inner.capture(map)?;
-
-        let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
-
-        inner.fmap.lock().insert(id, (context_lock, desc, Map {
-            offset: map.offset,
-            size: map.size,
-            flags: map.flags,
-            address: 0,
-        }));
-
-        let result = inner.call_inner(Packet {
-            id,
-            pid: pid.into(),
-            uid,
-            gid,
-            a: SYS_FMAP_OLD,
-            b: file,
-            c: address,
-            d: mem::size_of::<OldMap>()
-        });
-
-        let _ = inner.release(address);
-
-        result
-    }
-
     fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let (pid, uid, gid, context_lock, desc) = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            // TODO: Faster, cleaner mechanism to get descriptor
-            let scheme = inner.scheme_id.load(Ordering::SeqCst);
-            let mut desc_res = Err(Error::new(EBADF));
-            for context_file_opt in context.files.read().iter() {
-                if let Some(context_file) = context_file_opt {
-                    let (context_scheme, context_number) = {
-                        let desc = context_file.description.read();
-                        (desc.scheme, desc.number)
-                    };
-                    if context_scheme == scheme && context_number == file {
-                        desc_res = Ok(context_file.clone());
-                        break;
-                    }
-                }
-            }
-            let desc = desc_res?;
-            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
-        };
-
-        let address = inner.capture(map)?;
-
-        let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
-
-        inner.fmap.lock().insert(id, (context_lock, desc, *map));
-
-        let result = inner.call_inner(Packet {
-            id,
-            pid: pid.into(),
-            uid,
-            gid,
-            a: SYS_FMAP,
-            b: file,
-            c: address,
-            d: mem::size_of::<Map>()
-        });
-
-        let _ = inner.release(address);
-
-        result
-    }
-
-    fn funmap_old(&self, grant_address: usize) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address_opt = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            let mut grants = context.grants.write();
-            let funmap = &mut grants.funmap;
-            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
-
-            let grant_address = VirtualAddress::new(grant_address);
-
-            if let Some((&grant, &user_base)) = entry {
-                if grant_address >= grant.end_address() {
-                    return Err(Error::new(EINVAL));
-                }
-                funmap.remove(&grant);
-                let user = Region::new(user_base, grant.size());
-                Some(grant.rebase(user, grant_address).data())
-            } else {
-                None
-            }
-        };
-        if let Some(user_address) = address_opt {
-            inner.call(SYS_FUNMAP_OLD, user_address, 0, 0)
-        } else {
-            Err(Error::new(EINVAL))
-        }
+        inner.fmap_inner(file, map)
     }
 
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
@@ -513,8 +433,8 @@ impl Scheme for UserScheme {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
-            let mut grants = context.grants.write();
-            let funmap = &mut grants.funmap;
+            let mut addr_space = context.addr_space()?.write();
+            let funmap = &mut addr_space.grants.funmap;
             let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
 
             let grant_address = VirtualAddress::new(grant_address);
@@ -606,3 +526,4 @@ impl Scheme for UserScheme {
         inner.call(SYS_CLOSE, file, 0, 0)
     }
 }
+impl crate::scheme::KernelScheme for UserScheme {}

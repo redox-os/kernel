@@ -288,3 +288,4 @@ impl Scheme for AcpiScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for AcpiScheme {}

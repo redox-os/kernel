@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 
-use crate::paging::ActivePageTable;
+use crate::paging::KernelMapper;
 
 use super::sdt::Sdt;
 use super::get_sdt;
@@ -8,9 +8,12 @@ use super::get_sdt;
 pub trait Rxsdt {
     fn iter(&self) -> Box<dyn Iterator<Item = usize>>;
 
-    fn map_all(&self, active_table: &mut ActivePageTable) {
+    fn map_all(&self) {
+        let iter = self.iter();
+
+        let mut mapper = KernelMapper::lock();
         for sdt in self.iter() {
-            get_sdt(sdt, active_table);
+            get_sdt(sdt, &mut mapper);
         }
     }
 

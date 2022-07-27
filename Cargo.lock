@@ -76,7 +76,6 @@ dependencies = [
  "log",
  "memoffset",
  "raw-cpuid",
- "redox-initfs",
  "redox_syscall",
  "rmm",
  "rustc-cfg",
@@ -116,9 +115,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.16"
+version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6389c490849ff5bc16be905ae24bc913a9c8892e19b2341dbc175e14c341c2b8"
+checksum = "abb12e687cfb44aa40f41fc3978ef76448f9b6038cad6aef4259d3c095a2382e"
 dependencies = [
  "cfg-if",
 ]
@@ -145,14 +144,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "738bc47119e3eeccc7e94c4a506901aea5e7b4944ecd0829cbebf4af04ceda12"
 dependencies = [
  "bitflags",
-]
-
-[[package]]
-name = "redox-initfs"
-version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/redox-os/redox-initfs.git#89b8fb8984cf96c418880b7dcd9ce3d6afc3f71c"
-dependencies = [
- "plain",
 ]
 
 [[package]]

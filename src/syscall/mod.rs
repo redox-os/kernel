@@ -25,9 +25,11 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::validate::*;
 
+use self::scheme::Scheme as _;
+
 use self::data::{Map, SigAction, Stat, TimeSpec};
-use self::error::{Error, Result, ENOSYS};
-use self::flag::{CloneFlags, MapFlags, PhysmapFlags, WaitFlags};
+use self::error::{Error, Result, ENOSYS, EINVAL};
+use self::flag::{MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
 
 use crate::context::ContextId;
@@ -70,7 +72,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 match a & SYS_ARG {
                     SYS_ARG_SLICE => match a {
                         SYS_FMAP if b == !0 => {
-                            MemoryScheme::fmap_anonymous(unsafe { validate_ref(c as *const Map, d)? })
+                            MemoryScheme.fmap(!0, unsafe { validate_ref(c as *const Map, d)? })
                         },
                         _ => file_op_slice(a, fd, validate_slice(c as *const u8, d)?),
                     }
@@ -83,27 +85,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                         SYS_DUP => dup(fd, validate_slice(c as *const u8, d)?).map(FileHandle::into),
                         SYS_DUP2 => dup2(fd, FileHandle::from(c), validate_slice(d as *const u8, e)?).map(FileHandle::into),
                         SYS_FCNTL => fcntl(fd, c, d),
-                        SYS_FEXEC => fexec(fd, validate_slice(c as *const [usize; 2], d)?, validate_slice(e as *const [usize; 2], f)?),
                         SYS_FRENAME => frename(fd, validate_str(c as *const u8, d)?),
                         SYS_FUNMAP => funmap(b, c),
-                        SYS_FMAP_OLD => {
-                            {
-                                let contexts = crate::context::contexts();
-                                let current = contexts.current().unwrap();
-                                let current = current.read();
-                                println!("{:?} using deprecated fmap(...) call", *current.name.read());
-                            }
-                            file_op(a, fd, c, d)
-                        },
-                        SYS_FUNMAP_OLD => {
-                            {
-                                let contexts = crate::context::contexts();
-                                let current = contexts.current().unwrap();
-                                let current = current.read();
-                                println!("{:?} using deprecated funmap(...) call", *current.name.read());
-                            }
-                            funmap_old(b)
-                        },
                         _ => file_op(a, fd, c, d)
                     }
                 }
@@ -130,27 +113,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 SYS_GETPID => getpid().map(ContextId::into),
                 SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
                 SYS_GETPPID => getppid().map(ContextId::into),
-                SYS_CLONE => {
-                    let b = CloneFlags::from_bits_truncate(b);
 
-                    #[cfg(not(target_arch = "x86_64"))]
-                    {
-                        //TODO: CLONE_STACK
-                        let ret = clone(b, bp).map(ContextId::into);
-                        ret
-                    }
-
-                    #[cfg(target_arch = "x86_64")]
-                    {
-                        let old_rsp = stack.iret.rsp;
-                        if b.contains(flag::CLONE_STACK) {
-                            stack.iret.rsp = c;
-                        }
-                        let ret = clone(b, bp).map(ContextId::into);
-                        stack.iret.rsp = old_rsp;
-                        ret
-                    }
-                },
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
                 SYS_WAITPID => waitpid(ContextId::from(b), c, WaitFlags::from_bits_truncate(d)).map(ContextId::into),
@@ -210,8 +173,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
-    /*
-    let debug = {
+    /*let debug = {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
@@ -240,8 +202,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
-    }
-    */
+    }*/
 
     // The next lines set the current syscall in the context struct, then once the inner() function
     // completes, we set the current syscall to none.
@@ -266,8 +227,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
-    /*
-    if debug {
+    /*if debug {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
@@ -284,8 +244,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
                 println!("Err({} ({:#X}))", err, err.errno);
             }
         }
-    }
-    */
+    }*/
 
     // errormux turns Result<usize> into -errno
     Error::mux(result)

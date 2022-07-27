@@ -371,3 +371,4 @@ impl Scheme for IrqScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for IrqScheme {}

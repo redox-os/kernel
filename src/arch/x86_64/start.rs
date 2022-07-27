@@ -18,7 +18,7 @@ use crate::gdt;
 use crate::idt;
 use crate::interrupt;
 use crate::log::{self, info};
-use crate::paging;
+use crate::paging::{self, KernelMapper};
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -39,12 +39,12 @@ static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 #[repr(packed)]
 pub struct KernelArgs {
-    kernel_base: u64,
-    kernel_size: u64,
-    stack_base: u64,
-    stack_size: u64,
-    env_base: u64,
-    env_size: u64,
+    kernel_base: usize,
+    kernel_size: usize,
+    stack_base: usize,
+    stack_size: usize,
+    env_base: usize,
+    env_size: usize,
 
     /// The base 64-bit pointer to an array of saved RSDPs. It's up to the kernel (and possibly
     /// userspace), to decide which RSDP to use. The buffer will be a linked list containing a
@@ -53,36 +53,26 @@ pub struct KernelArgs {
     /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
     /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
     /// memory instead. On UEFI systems, BIOS-like searching is not guaranteed to actually work though.
-    acpi_rsdps_base: u64,
+    acpi_rsdps_base: usize,
     /// The size of the RSDPs region.
-    acpi_rsdps_size: u64,
+    acpi_rsdps_size: usize,
 
-    areas_base: u64,
-    areas_size: u64,
+    areas_base: usize,
+    areas_size: usize,
 
-    /// The physical base 64-bit pointer to the contiguous initfs.
-    initfs_base: u64,
-    initfs_size: u64,
+    /// The physical base 64-bit pointer to the contiguous bootstrap/initfs.
+    bootstrap_base: usize,
+    /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
+    bootstrap_size: usize,
+    /// Entry point the kernel will jump to.
+    bootstrap_entry: usize,
 }
 
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
 pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
-    let env = {
-        let args = &*args_ptr;
-
-        let kernel_base = args.kernel_base as usize;
-        let kernel_size = args.kernel_size as usize;
-        let stack_base = args.stack_base as usize;
-        let stack_size = args.stack_size as usize;
-        let env_base = args.env_base as usize;
-        let env_size = args.env_size as usize;
-        let acpi_rsdps_base = args.acpi_rsdps_base;
-        let acpi_rsdps_size = args.acpi_rsdps_size;
-        let areas_base = args.areas_base as usize;
-        let areas_size = args.areas_size as usize;
-        let initfs_base = args.initfs_base as usize;
-        let initfs_size = args.initfs_size as usize;
+    let bootstrap = {
+        let args = args_ptr.read();
 
         // BSS should already be zero
         {
@@ -90,12 +80,11 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
         }
 
-        KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
-        KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
+        KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
+        KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
         // Convert env to slice
-        let env = slice::from_raw_parts((env_base + crate::PHYS_OFFSET) as *const u8, env_size);
-        let initfs = slice::from_raw_parts((initfs_base + crate::PHYS_OFFSET) as *const u8, initfs_size);
+        let env = slice::from_raw_parts((args.env_base + crate::PHYS_OFFSET) as *const u8, args.env_size);
 
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]
@@ -117,12 +106,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         });
 
         info!("Redox OS starting...");
-        info!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
-        info!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
-        info!("Env: {:X}:{:X}", env_base, env_base + env_size);
-        info!("RSDPs: {:X}:{:X}", acpi_rsdps_base, acpi_rsdps_base + acpi_rsdps_size);
-        info!("Areas: {:X}:{:X}", areas_base, areas_base + areas_size);
-        info!("Initfs: {:X}:{:X}", initfs_base, initfs_base + initfs_size);
+        info!("Kernel: {:X}:{:X}", args.kernel_base, args.kernel_base + args.kernel_size);
+        info!("Stack: {:X}:{:X}", args.stack_base, args.stack_base + args.stack_size);
+        info!("Env: {:X}:{:X}", args.env_base, args.env_base + args.env_size);
+        info!("RSDPs: {:X}:{:X}", args.acpi_rsdps_base, args.acpi_rsdps_base + args.acpi_rsdps_size);
+        info!("Areas: {:X}:{:X}", args.areas_base, args.areas_base + args.areas_size);
+        info!("Bootstrap: {:X}:{:X}", args.bootstrap_base, args.bootstrap_base + args.bootstrap_size);
+        info!("Bootstrap entry point: {:X}", args.bootstrap_entry);
 
         // Set up GDT before paging
         gdt::init();
@@ -132,19 +122,19 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize RMM
         crate::arch::rmm::init(
-            kernel_base, kernel_size,
-            stack_base, stack_size,
-            env_base, env_size,
-            acpi_rsdps_base as usize, acpi_rsdps_size as usize,
-            areas_base, areas_size,
-            initfs_base, initfs_size,
+            args.kernel_base, args.kernel_size,
+            args.stack_base, args.stack_size,
+            args.env_base, args.env_size,
+            args.acpi_rsdps_base, args.acpi_rsdps_size,
+            args.areas_base, args.areas_size,
+            args.bootstrap_base, args.bootstrap_size,
         );
 
         // Initialize paging
-        let (mut active_table, tcb_offset) = paging::init(0);
+        let tcb_offset = paging::init(0);
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(0, tcb_offset, stack_base + stack_size);
+        gdt::init_paging(0, tcb_offset, args.stack_base + args.stack_size);
 
         // Set up IDT
         idt::init_paging_bsp();
@@ -168,7 +158,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(false, Ordering::SeqCst);
 
         // Setup kernel heap
-        allocator::init(&mut active_table);
+        allocator::init();
 
         // Set up double buffer for grpahical debug now that heap is available
         #[cfg(feature = "graphical_debug")]
@@ -180,23 +170,21 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         log::init();
 
         // Initialize devices
-        device::init(&mut active_table);
+        device::init();
 
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
         {
-            acpi::init(&mut active_table, if acpi_rsdps_base != 0 && acpi_rsdps_size > 0 {
-                Some((acpi_rsdps_base + crate::PHYS_OFFSET as u64, acpi_rsdps_size))
+            acpi::init(if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
+                Some(((args.acpi_rsdps_base + crate::PHYS_OFFSET) as u64, args.acpi_rsdps_size as u64))
             } else {
                 None
             });
-            device::init_after_acpi(&mut active_table);
+            device::init_after_acpi();
         }
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
-
-        crate::scheme::initfs::init(initfs);
 
         // Stop graphical debug
         #[cfg(feature = "graphical_debug")]
@@ -204,10 +192,15 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         BSP_READY.store(true, Ordering::SeqCst);
 
-        env
+        crate::Bootstrap {
+            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(args.bootstrap_base)),
+            page_count: args.bootstrap_size / crate::memory::PAGE_SIZE,
+            entry: args.bootstrap_entry,
+            env,
+        }
     };
 
-    crate::kmain(CPU_COUNT.load(Ordering::SeqCst), env);
+    crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
 }
 
 #[repr(packed)]
@@ -237,7 +230,13 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         idt::init();
 
         // Initialize paging
-        let tcb_offset = paging::init_ap(cpu_id, bsp_table);
+        let tcb_offset = {
+            use crate::paging::{PageMapper, PhysicalAddress};
+            use crate::rmm::FRAME_ALLOCATOR;
+
+            let mut mapper = KernelMapper::lock_for_manual_mapper(cpu_id, PageMapper::new(PhysicalAddress::new(bsp_table), FRAME_ALLOCATOR));
+            paging::init_ap(cpu_id, &mut mapper)
+        };
 
         // Set up GDT with TLS
         gdt::init_paging(cpu_id as u32, tcb_offset, stack_end);

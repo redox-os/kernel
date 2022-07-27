@@ -12,7 +12,7 @@ use rmm::Arch;
 use crate::context::{self, Context};
 use crate::time;
 use crate::memory::PhysicalAddress;
-use crate::paging::{ActivePageTable, TableKind, VirtualAddress};
+use crate::paging::VirtualAddress;
 use crate::syscall::data::TimeSpec;
 use crate::syscall::error::{Error, Result, ESRCH, EAGAIN, EFAULT, EINVAL};
 use crate::syscall::flag::{FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE, FUTEX_REQUEUE};
@@ -44,8 +44,9 @@ pub fn futexes_mut() -> RwLockWriteGuard<'static, FutexList> {
 }
 
 pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> Result<usize> {
-    let target_physaddr = unsafe {
-        let active_table = ActivePageTable::new(TableKind::User);
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+
+    let (target_physaddr, _) = unsafe {
         let virtual_address = VirtualAddress::new(addr);
 
         if !crate::CurrentRmmArch::virt_is_valid(virtual_address) {
@@ -58,7 +59,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
             return Err(Error::new(EFAULT));
         }
 
-        active_table.translate(virtual_address).ok_or(Error::new(EFAULT))?
+        addr_space.read().table.utable.translate(virtual_address).ok_or(Error::new(EFAULT))?
     };
 
     match op {
@@ -162,7 +163,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
             Ok(woken)
         },
         FUTEX_REQUEUE => {
-            let addr2_physaddr = unsafe {
+            let (addr2_physaddr, _) = unsafe {
                 let addr2_virt = VirtualAddress::new(addr2);
 
                 if !crate::CurrentRmmArch::virt_is_valid(addr2_virt) {
@@ -175,8 +176,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                     return Err(Error::new(EFAULT));
                 }
 
-                let active_table = ActivePageTable::new(TableKind::User);
-                active_table.translate(addr2_virt).ok_or(Error::new(EFAULT))?
+                addr_space.read().table.utable.translate(addr2_virt).ok_or(Error::new(EFAULT))?
             };
 
             let mut woken = 0;

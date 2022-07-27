@@ -10,7 +10,7 @@ use spin::{Once, RwLock};
 
 use crate::log::info;
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
 
 use self::madt::Madt;
 use self::rsdt::Rsdt;
@@ -28,31 +28,33 @@ mod xsdt;
 mod rxsdt;
 mod rsdp;
 
-pub fn get_sdt(sdt_address: usize, active_table: &mut ActivePageTable) -> &'static Sdt {
-    {
-        let page = Page::containing_address(VirtualAddress::new(sdt_address));
-        if active_table.translate_page(page).is_none() {
-            let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
-            let result = active_table.map_to(page, frame, PageFlags::new());
-            result.flush();
-        }
+unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::paging::PageMapper) {
+    let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
+    let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
+
+    for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
+        let (_, flush) = mapper.map_linearly(base.add(page_idx * crate::memory::PAGE_SIZE), PageFlags::new()).expect("failed to linearly map SDT");
+        flush.flush();
     }
+}
 
-    let sdt = unsafe { &*(sdt_address as *const Sdt) };
+pub fn get_sdt(sdt_address: usize, mapper: &mut KernelMapper) -> &'static Sdt {
+    let mapper = mapper
+        .get_mut()
+        .expect("KernelMapper mapper locked re-entrant in get_sdt");
 
-    // Map extra SDT frames if required
-    {
-        let start_page = Page::containing_address(VirtualAddress::new(sdt_address + 4096));
-        let end_page = Page::containing_address(VirtualAddress::new(sdt_address + sdt.length as usize));
-        for page in Page::range_inclusive(start_page, end_page) {
-            if active_table.translate_page(page).is_none() {
-                let frame = Frame::containing_address(PhysicalAddress::new(page.start_address().data()));
-                let result = active_table.map_to(page, frame, PageFlags::new());
-                result.flush();
-            }
-        }
+    let physaddr = PhysicalAddress::new(sdt_address);
+
+    let sdt;
+
+    unsafe {
+        const SDT_SIZE: usize = core::mem::size_of::<Sdt>();
+        map_linearly(physaddr, SDT_SIZE, mapper);
+
+        sdt = unsafe { &*(RmmA::phys_to_virt(physaddr).data() as *const Sdt) };
+
+        map_linearly(physaddr.add(SDT_SIZE), sdt.length as usize - SDT_SIZE, mapper);
     }
-
     sdt
 }
 
@@ -72,16 +74,18 @@ impl Rxsdt for RxsdtEnum {
 pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: Option<(u64, u64)>) {
+pub unsafe fn init(already_supplied_rsdps: Option<(u64, u64)>) {
     {
         let mut sdt_ptrs = SDT_POINTERS.write();
         *sdt_ptrs = Some(BTreeMap::new());
     }
 
     // Search for RSDP
-    if let Some(rsdp) = RSDP::get_rsdp(active_table, already_supplied_rsdps) {
+    let rsdp_opt = RSDP::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdps);
+
+    if let Some(rsdp) = rsdp_opt {
         info!("RSDP: {:?}", rsdp);
-        let rxsdt = get_sdt(rsdp.sdt_address(), active_table);
+        let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock());
 
         for &c in rxsdt.signature.iter() {
             print!("{}", c as char);
@@ -122,10 +126,10 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
 
         // TODO: Don't touch ACPI tables in kernel?
 
-        rxsdt.map_all(active_table);
+        rxsdt.map_all();
 
         for sdt_address in rxsdt.iter() {
-            let sdt = &*(sdt_address as *const Sdt);
+            let sdt = &*((sdt_address + crate::PHYS_OFFSET) as *const Sdt);
 
             let signature = get_sdt_signature(sdt);
             if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
@@ -135,10 +139,10 @@ pub unsafe fn init(active_table: &mut ActivePageTable, already_supplied_rsdps: O
 
         // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
         // to initialize enumerated processors to userspace?
-        Madt::init(active_table);
+        Madt::init();
         // TODO: Let userspace setup HPET, and then provide an interface to specify which timer to
         // use?
-        Hpet::init(active_table);
+        Hpet::init();
     } else {
         println!("NO RSDP FOUND");
     }

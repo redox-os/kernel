@@ -1,10 +1,14 @@
 //! # Context management
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
-use alloc::boxed::Box;
-use core::alloc::{GlobalAlloc, Layout};
 use core::sync::atomic::Ordering;
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+use alloc::sync::Arc;
+
+use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+use crate::paging::{RmmA, RmmArch};
+use crate::syscall::error::{Error, ESRCH, Result};
 
 pub use self::context::{Context, ContextId, ContextSnapshot, Status, WaitpidKey};
 pub use self::list::ContextList;
@@ -53,26 +57,19 @@ static CONTEXTS: RwLock<ContextList> = RwLock::new(ContextList::new());
 #[thread_local]
 static CONTEXT_ID: context::AtomicContextId = context::AtomicContextId::default();
 
+pub use self::arch::empty_cr3;
+
 pub fn init() {
     let mut contexts = contexts_mut();
     let context_lock = contexts.new_context().expect("could not initialize first context");
     let mut context = context_lock.write();
-    let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024]) };
-    for b in fx.iter_mut() {
-        *b = 0;
-    }
 
-    context.arch.set_fx(fx.as_ptr() as usize);
-    context.kfx = Some(fx);
+    self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table() });
+
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
     CONTEXT_ID.store(context.id, Ordering::SeqCst);
-}
-
-/// Initialize contexts, called if needed
-fn init_contexts() -> RwLock<ContextList> {
-    RwLock::new(ContextList::new())
 }
 
 /// Get the global schemes list, const
@@ -93,4 +90,8 @@ pub fn context_id() -> ContextId {
     // Prevent the compiler from reordering subsequent loads and stores to before this load.
     core::sync::atomic::compiler_fence(Ordering::Acquire);
     id
+}
+
+pub fn current() -> Result<Arc<RwLock<Context>>> {
+    contexts().current().ok_or(Error::new(ESRCH)).map(Arc::clone)
 }

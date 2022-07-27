@@ -16,13 +16,14 @@ use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::unique::Unique;
 use crate::context::arch;
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::{UserGrants, Memory, SharedMemory};
+use crate::context::memory::AddrSpace;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::memory::Enomem;
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 
 use crate::syscall::data::SigAction;
-use crate::syscall::error::{Result, Error, ENOMEM};
+use crate::syscall::error::{Result, Error, ESRCH};
 use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
@@ -219,21 +220,18 @@ pub struct Context {
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
-    pub kfx: Option<Box<[u8]>>,
+    pub kfx: AlignedBox<[u8; {arch::KFX_SIZE}], {arch::KFX_ALIGN}>,
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
     /// Kernel signal backup: Registers, Kernel FX, Kernel Stack, Signal number
-    pub ksig: Option<(arch::Context, Option<Box<[u8]>>, Option<Box<[u8]>>, u8)>,
+    pub ksig: Option<(arch::Context, AlignedBox<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>, Option<Box<[u8]>>, u8)>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
-    /// Executable image
-    pub image: Vec<SharedMemory>,
-    /// User stack
-    pub stack: Option<SharedMemory>,
-    /// User signal stack
-    pub sigstack: Option<Memory>,
-    /// User grants
-    pub grants: Arc<RwLock<UserGrants>>,
+    /// Address space containing a page table lock, and grants. Normally this will have a value,
+    /// but can be None while the context is being reaped or when a new context is created but has
+    /// not yet had its address space changed. Note that these are only for user mappings; kernel
+    /// mappings are universal and independent on address spaces or contexts.
+    pub addr_space: Option<Arc<RwLock<AddrSpace>>>,
     /// The name of the context
     pub name: Arc<RwLock<Box<str>>>,
     /// The current working directory
@@ -250,7 +248,16 @@ pub struct Context {
     /// A somewhat hacky way to initially stop a context when creating
     /// a new instance of the proc: scheme, entirely separate from
     /// signals or any other way to restart a process.
-    pub ptrace_stop: bool
+    pub ptrace_stop: bool,
+    /// A pointer to the signal stack. If this is unset, none of the sigactions can be anything
+    /// else than SIG_DFL, otherwise signals will not be delivered. Userspace is responsible for
+    /// setting this.
+    pub sigstack: Option<usize>,
+    /// An even hackier way to pass the return entry point and stack pointer to new contexts while
+    /// implementing clone. Before a context has returned to userspace, its IntRegisters cannot be
+    /// set since there is no interrupt stack (unless the kernel stack is copied, but that is in my
+    /// opinion hackier and less efficient than this (and UB to do in Rust)).
+    pub clone_entry: Option<[usize; 2]>,
 }
 
 // Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
@@ -274,14 +281,14 @@ impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
         }
     };
     #[inline(always)]
-    pub fn try_zeroed() -> Result<Self>
+    pub fn try_zeroed() -> Result<Self, Enomem>
     where
         T: ValidForZero,
     {
         Ok(unsafe {
             let ptr = crate::ALLOCATOR.alloc_zeroed(Self::LAYOUT);
             if ptr.is_null() {
-                return Err(Error::new(ENOMEM))?;
+                return Err(Enomem)?;
             }
             Self {
                 inner: Unique::new_unchecked(ptr.cast()),
@@ -303,13 +310,32 @@ impl<T, const ALIGN: usize> Drop for AlignedBox<T, ALIGN> {
         }
     }
 }
+impl<T, const ALIGN: usize> core::ops::Deref for AlignedBox<T, ALIGN> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.inner.as_ptr() }
+    }
+}
+impl<T, const ALIGN: usize> core::ops::DerefMut for AlignedBox<T, ALIGN> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.inner.as_ptr() }
+    }
+}
+impl<T: Clone + ValidForZero, const ALIGN: usize> Clone for AlignedBox<T, ALIGN> {
+    fn clone(&self) -> Self {
+        let mut new = Self::try_zeroed().unwrap_or_else(|_| alloc::alloc::handle_alloc_error(Self::LAYOUT));
+        T::clone_from(&mut new, self);
+        new
+    }
+}
 
 impl Context {
     pub fn new(id: ContextId) -> Result<Context> {
         let syscall_head = AlignedBox::try_zeroed()?;
         let syscall_tail = AlignedBox::try_zeroed()?;
 
-        Ok(Context {
+        let mut this = Context {
             id,
             pgid: id,
             ppid: ContextId::from(0),
@@ -334,28 +360,21 @@ impl Context {
             pending: VecDeque::new(),
             wake: None,
             arch: arch::Context::new(),
-            kfx: None,
+            kfx: AlignedBox::<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>::try_zeroed()?,
             kstack: None,
             ksig: None,
             ksig_restore: false,
-            image: Vec::new(),
-            stack: None,
-            sigstack: None,
-            grants: Arc::new(RwLock::new(UserGrants::default())),
+            addr_space: None,
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
             cwd: Arc::new(RwLock::new(String::new())),
             files: Arc::new(RwLock::new(Vec::new())),
-            actions: Arc::new(RwLock::new(vec![(
-                SigAction {
-                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                    sa_mask: [0; 2],
-                    sa_flags: SigActionFlags::empty(),
-                },
-                0
-            ); 128])),
+            actions: Self::empty_actions(),
             regs: None,
-            ptrace_stop: false
-        })
+            ptrace_stop: false,
+            sigstack: None,
+            clone_entry: None,
+        };
+        Ok(this)
     }
 
     /// Make a relative path absolute
@@ -523,5 +542,27 @@ impl Context {
         } else {
             None
         }
+    }
+
+    pub fn addr_space(&self) -> Result<&Arc<RwLock<AddrSpace>>> {
+        self.addr_space.as_ref().ok_or(Error::new(ESRCH))
+    }
+    #[must_use = "grants must be manually unmapped, otherwise it WILL panic!"]
+    pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) -> Option<Arc<RwLock<AddrSpace>>> {
+        if self.id == super::context_id() {
+            unsafe { addr_space.read().table.utable.make_current(); }
+        }
+
+        self.addr_space.replace(addr_space)
+    }
+    pub fn empty_actions() -> Arc<RwLock<Vec<(SigAction, usize)>>> {
+        Arc::new(RwLock::new(vec![(
+            SigAction {
+                sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                sa_mask: [0; 2],
+                sa_flags: SigActionFlags::empty(),
+            },
+            0
+        ); 128]))
     }
 }

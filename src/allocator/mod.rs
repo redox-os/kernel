@@ -1,4 +1,5 @@
-use crate::paging::{ActivePageTable, Page, PageFlags, VirtualAddress, mapper::PageFlushAll, entry::EntryFlags};
+use rmm::Flusher;
+use crate::paging::{KernelMapper, Page, PageFlags, VirtualAddress, mapper::PageFlushAll, entry::EntryFlags};
 
 #[cfg(not(feature="slab"))]
 pub use self::linked_list::Allocator;
@@ -12,13 +13,14 @@ mod linked_list;
 #[cfg(feature="slab")]
 mod slab;
 
-unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usize) {
-    let flush_all = PageFlushAll::new();
+unsafe fn map_heap(mapper: &mut KernelMapper, offset: usize, size: usize) {
+    let mapper = mapper.get_mut().expect("failed to obtain exclusive access to KernelMapper while extending heap");
+    let mut flush_all = PageFlushAll::new();
 
     let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
     let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size-1));
     for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-        let result = active_table.map(page, PageFlags::new().write(true).custom_flag(EntryFlags::GLOBAL.bits(), cfg!(not(feature = "pti"))))
+        let result = mapper.map(page.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::GLOBAL.bits(), cfg!(not(feature = "pti"))))
             .expect("failed to map kernel heap");
         flush_all.consume(result);
     }
@@ -26,12 +28,12 @@ unsafe fn map_heap(active_table: &mut ActivePageTable, offset: usize, size: usiz
     flush_all.flush();
 }
 
-pub unsafe fn init(active_table: &mut ActivePageTable) {
+pub unsafe fn init() {
     let offset = crate::KERNEL_HEAP_OFFSET;
     let size = crate::KERNEL_HEAP_SIZE;
 
     // Map heap pages
-    map_heap(active_table, offset, size);
+    map_heap(&mut KernelMapper::lock(), offset, size);
 
     // Initialize global heap
     Allocator::init(offset, size);

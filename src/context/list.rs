@@ -1,10 +1,8 @@
 use alloc::sync::Arc;
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use core::alloc::{GlobalAlloc, Layout};
 use core::{iter, mem};
 use core::sync::atomic::Ordering;
-use crate::paging::{ActivePageTable, TableKind};
+
 use spin::RwLock;
 
 use crate::syscall::error::{Result, Error, EAGAIN};
@@ -79,10 +77,8 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let mut fx = unsafe { Box::from_raw(crate::ALLOCATOR.alloc(Layout::from_size_align_unchecked(1024, 16)) as *mut [u8; 1024]) };
-            for b in fx.iter_mut() {
-                *b = 0;
-            }
+            let _ = context.set_addr_space(super::memory::new_addrspace()?);
+
             let mut stack = vec![0; 65_536].into_boxed_slice();
             let offset = stack.len() - mem::size_of::<usize>();
 
@@ -100,12 +96,7 @@ impl ContextList {
                 context.arch.set_context_handle();
             }
 
-            context.arch.set_page_utable(unsafe { ActivePageTable::new(TableKind::User).address() });
-            #[cfg(target_arch = "aarch64")]
-            context.arch.set_page_ktable(unsafe { ActivePageTable::new(TableKind::Kernel).address() });
-            context.arch.set_fx(fx.as_ptr() as usize);
             context.arch.set_stack(stack.as_ptr() as usize + offset);
-            context.kfx = Some(fx);
             context.kstack = Some(stack);
         }
         Ok(context_lock)

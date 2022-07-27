@@ -1,19 +1,15 @@
 //! # Paging
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
-use core::ops::{Deref, DerefMut};
 use core::{mem, ptr};
-use spin::Mutex;
 use x86::msr;
 
-use crate::memory::Frame;
-
 use self::entry::EntryFlags;
-use self::mapper::{Mapper, PageFlushAll};
-use self::table::{Level4, Table};
+use self::mapper::PageFlushAll;
 
 pub use rmm::{
     Arch as RmmArch,
+    Flusher,
     PageFlags,
     PhysicalAddress,
     TableKind,
@@ -21,47 +17,17 @@ pub use rmm::{
     X8664Arch as RmmA,
 };
 
+pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
+pub use crate::rmm::KernelMapper;
+
 pub mod entry;
 pub mod mapper;
-pub mod table;
-pub mod temporary_page;
 
 /// Number of entries per page table
-pub const ENTRY_COUNT: usize = 512;
+pub const ENTRY_COUNT: usize = RmmA::PAGE_ENTRIES;
 
 /// Size of pages
-pub const PAGE_SIZE: usize = 4096;
-
-//TODO: This is a rudimentary recursive mutex used to naively fix multi_core issues, replace it!
-pub struct PageTableLock {
-    cpu_id: usize,
-    count: usize,
-}
-
-pub static PAGE_TABLE_LOCK: Mutex<PageTableLock> = Mutex::new(PageTableLock {
-    cpu_id: 0,
-    count: 0,
-});
-
-fn page_table_lock() {
-    let cpu_id = crate::cpu_id();
-    loop {
-        {
-            let mut lock = PAGE_TABLE_LOCK.lock();
-            if lock.count == 0 || lock.cpu_id == cpu_id {
-                lock.cpu_id = cpu_id;
-                lock.count += 1;
-                return;
-            }
-        }
-        crate::arch::interrupt::pause();
-    }
-}
-
-fn page_table_unlock() {
-    let mut lock = PAGE_TABLE_LOCK.lock();
-    lock.count -= 1;
-}
+pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
 
 /// Setup page attribute table
 unsafe fn init_pat() {
@@ -96,7 +62,7 @@ unsafe fn init_pat() {
 }
 
 /// Map percpu
-unsafe fn map_percpu(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
+unsafe fn map_percpu(cpu_id: usize, mapper: &mut PageMapper) -> PageFlushAll<RmmA> {
     extern "C" {
         /// The starting byte of the thread data segment
         static mut __tdata_start: u8;
@@ -112,12 +78,12 @@ unsafe fn map_percpu(cpu_id: usize, mapper: &mut Mapper) -> PageFlushAll<RmmA> {
     let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
     let end = start + size;
 
-    let flush_all = PageFlushAll::new();
+    let mut flush_all = PageFlushAll::new();
     let start_page = Page::containing_address(VirtualAddress::new(start));
     let end_page = Page::containing_address(VirtualAddress::new(end - 1));
     for page in Page::range_inclusive(start_page, end_page) {
         let result = mapper.map(
-            page,
+            page.start_address(),
             PageFlags::new().write(true).custom_flag(EntryFlags::GLOBAL.bits(), cfg!(not(feature = "pti"))),
         )
         .expect("failed to allocate page table frames while mapping percpu");
@@ -161,7 +127,7 @@ unsafe fn init_tcb(cpu_id: usize) -> usize {
 /// Returns page table and thread control block offset
 pub unsafe fn init(
     cpu_id: usize,
-) -> (ActivePageTable, usize) {
+) -> usize {
     extern "C" {
         /// The starting byte of the text (code) data segment.
         static mut __text_start: u8;
@@ -191,164 +157,28 @@ pub unsafe fn init(
 
     init_pat();
 
-    let mut active_table = ActivePageTable::new_unlocked(TableKind::User);
-
-    let flush_all = map_percpu(cpu_id, &mut active_table);
+    let flush_all = map_percpu(cpu_id, KernelMapper::lock_manually(cpu_id).get_mut().expect("expected KernelMapper not to be locked re-entrant in paging::init"));
     flush_all.flush();
 
-    return (active_table, init_tcb(cpu_id));
+    return init_tcb(cpu_id);
 }
 
 pub unsafe fn init_ap(
     cpu_id: usize,
-    bsp_table: usize,
+    bsp_table: &mut KernelMapper,
 ) -> usize {
     init_pat();
 
-    let mut active_table = ActivePageTable::new_unlocked(TableKind::User);
-
-    let mut new_table = InactivePageTable::from_address(bsp_table);
-
     {
-        let flush_all = map_percpu(cpu_id, &mut new_table.mapper());
-        // The flush can be ignored as this is not the active table. See later active_table.switch
+        let flush_all = map_percpu(cpu_id, bsp_table.get_mut().expect("KernelMapper locked re-entrant for AP"));
+
+        // The flush can be ignored as this is not the active table. See later make_current().
         flush_all.ignore();
     };
 
-    // This switches the active table, which is setup by the bootloader, to a correct table
-    // setup by the lambda above. This will also flush the TLB
-    active_table.switch(new_table);
+    bsp_table.make_current();
 
     init_tcb(cpu_id)
-}
-
-#[derive(Debug)]
-pub struct ActivePageTable {
-    mapper: Mapper<'static>,
-    locked: bool,
-}
-
-impl Deref for ActivePageTable {
-    type Target = Mapper<'static>;
-
-    fn deref(&self) -> &Mapper<'static> {
-        &self.mapper
-    }
-}
-
-impl DerefMut for ActivePageTable {
-    fn deref_mut(&mut self) -> &mut Mapper<'static> {
-        &mut self.mapper
-    }
-}
-
-impl ActivePageTable {
-    pub unsafe fn new(_table_kind: TableKind) -> ActivePageTable {
-        page_table_lock();
-        ActivePageTable {
-            mapper: Mapper::current(),
-            locked: true,
-        }
-    }
-
-    pub unsafe fn new_unlocked(_table_kind: TableKind) -> ActivePageTable {
-        ActivePageTable {
-            mapper: Mapper::current(),
-            locked: false,
-        }
-    }
-
-    pub fn switch(&mut self, new_table: InactivePageTable) -> InactivePageTable {
-        let old_table = InactivePageTable {
-            frame: Frame::containing_address(unsafe {
-                RmmA::table()
-            })
-        };
-        unsafe {
-            // Activate new page table
-            RmmA::set_table(new_table.frame.start_address());
-            // Update mapper to new page table
-            self.mapper = Mapper::current();
-        }
-        old_table
-    }
-
-    pub fn flush(&mut self, page: Page) {
-        unsafe {
-            RmmA::invalidate(page.start_address());
-        }
-    }
-
-    pub fn flush_all(&mut self) {
-        unsafe {
-            RmmA::invalidate_all();
-        }
-    }
-
-    pub unsafe fn address(&self) -> usize {
-        RmmA::table().data()
-    }
-}
-
-impl Drop for ActivePageTable {
-    fn drop(&mut self) {
-        if self.locked {
-            page_table_unlock();
-            self.locked = false;
-        }
-    }
-}
-
-pub struct InactivePageTable {
-    frame: Frame,
-}
-
-impl InactivePageTable {
-    /// Create a new inactive page table, located at a given frame.
-    ///
-    /// # Safety
-    ///
-    /// For this to be safe, the caller must have exclusive access to the corresponding virtual
-    /// address of the frame.
-    pub unsafe fn new(
-        _active_table: &mut ActivePageTable,
-        frame: Frame,
-    ) -> InactivePageTable {
-        // FIXME: Use active_table to ensure that the newly-allocated frame be linearly mapped, in
-        // case it is outside the pre-mapped physical address range, or if such a range is too
-        // large to fit the whole physical address space in the virtual address space.
-        {
-            let table = linear_phys_to_virt(frame.start_address())
-                .expect("cannot initialize InactivePageTable (currently) without the frame being linearly mapped");
-            // now we are able to zero the table
-
-            // SAFETY: The caller must ensure exclusive access to the pointed-to virtual address of
-            // the frame.
-            (&mut *(table.data() as *mut Table::<Level4>)).zero();
-        }
-
-        InactivePageTable { frame }
-    }
-
-    pub unsafe fn from_address(address: usize) -> InactivePageTable {
-        InactivePageTable {
-            frame: Frame::containing_address(PhysicalAddress::new(address)),
-        }
-    }
-
-    pub fn mapper<'inactive_table>(&'inactive_table mut self) -> Mapper<'inactive_table> {
-        unsafe { Mapper::from_p4_unchecked(&mut self.frame) }
-    }
-    pub unsafe fn address(&self) -> usize {
-        self.frame.start_address().data()
-    }
-}
-
-pub fn linear_phys_to_virt(physical: PhysicalAddress) -> Option<VirtualAddress> {
-    physical.data().checked_add(crate::PHYS_OFFSET).map(VirtualAddress::new)
-}
-pub fn linear_virt_to_phys(virt: VirtualAddress) -> Option<PhysicalAddress> {
-    virt.data().checked_sub(crate::PHYS_OFFSET).map(PhysicalAddress::new)
 }
 
 /// Page
@@ -386,13 +216,19 @@ impl Page {
         }
     }
 
-    pub fn range_inclusive(start: Page, end: Page) -> PageIter {
+    pub fn range_inclusive(start: Page, r#final: Page) -> PageIter {
+        PageIter { start, end: r#final.next() }
+    }
+    pub fn range_exclusive(start: Page, end: Page) -> PageIter {
         PageIter { start, end }
     }
 
     pub fn next(self) -> Page {
+        self.next_by(1)
+    }
+    pub fn next_by(self, n: usize) -> Page {
         Self {
-            number: self.number + 1,
+            number: self.number + n,
         }
     }
 }
@@ -406,7 +242,7 @@ impl Iterator for PageIter {
     type Item = Page;
 
     fn next(&mut self) -> Option<Page> {
-        if self.start <= self.end {
+        if self.start < self.end {
             let page = self.start;
             self.start = self.start.next();
             Some(page)
@@ -414,4 +250,13 @@ impl Iterator for PageIter {
             None
         }
     }
+}
+
+/// Round down to the nearest multiple of page size
+pub fn round_down_pages(number: usize) -> usize {
+    number - number % PAGE_SIZE
+}
+/// Round up to the nearest multiple of page size
+pub fn round_up_pages(number: usize) -> usize {
+    round_down_pages(number + PAGE_SIZE - 1)
 }

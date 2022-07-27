@@ -8,7 +8,7 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIoApic, MadtIntSrcOverride};
 
 use crate::arch::interrupt::irq;
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, Page, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch};
 use crate::paging::entry::EntryFlags;
 
 use super::pic;
@@ -229,16 +229,20 @@ pub fn src_overrides() -> &'static [Override] {
 }
 
 #[cfg(feature = "acpi")]
-pub unsafe fn handle_ioapic(active_table: &mut ActivePageTable, madt_ioapic: &'static MadtIoApic) {
+pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static MadtIoApic) {
     // map the I/O APIC registers
 
     let frame = Frame::containing_address(PhysicalAddress::new(madt_ioapic.address as usize));
-    let page = Page::containing_address(VirtualAddress::new(madt_ioapic.address as usize + crate::PHYS_OFFSET));
+    let page = Page::containing_address(RmmA::phys_to_virt(frame.start_address()));
 
-    assert_eq!(active_table.translate_page(page), None);
+    assert!(mapper.translate(page.start_address()).is_none());
 
-    let result = active_table.map_to(page, frame, PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true));
-    result.flush();
+    mapper
+        .get_mut()
+        .expect("expected KernelMapper not to be locked re-entrant while mapping I/O APIC memory")
+        .map_phys(page.start_address(), frame.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true))
+        .expect("failed to map I/O APIC")
+        .flush();
 
     let ioapic_registers = page.start_address().data() as *const u32;
     let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
@@ -280,7 +284,7 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
     SRC_OVERRIDES.get_or_insert_with(Vec::new).push(over);
 }
 
-pub unsafe fn init(active_table: &mut ActivePageTable) {
+pub unsafe fn init(active_table: &mut KernelMapper) {
     let bsp_apic_id = x86::cpuid::CpuId::new().get_feature_info().unwrap().initial_local_apic_id(); // TODO
 
     // search the madt for all IOAPICs.

@@ -344,3 +344,4 @@ impl Scheme for RootScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for RootScheme {}

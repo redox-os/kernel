@@ -165,3 +165,4 @@ impl Scheme for DebugScheme {
         Ok(0)
     }
 }
+impl crate::scheme::KernelScheme for DebugScheme {}

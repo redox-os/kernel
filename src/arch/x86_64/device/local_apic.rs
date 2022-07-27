@@ -3,15 +3,14 @@ use core::intrinsics::{volatile_load, volatile_store};
 use x86::cpuid::CpuId;
 use x86::msr::*;
 
-use crate::memory::Frame;
-use crate::paging::{ActivePageTable, PhysicalAddress, Page, PageFlags, VirtualAddress};
+use crate::paging::{KernelMapper, PhysicalAddress, PageFlags, RmmA, RmmArch};
 
 pub static mut LOCAL_APIC: LocalApic = LocalApic {
     address: 0,
     x2: false
 };
 
-pub unsafe fn init(active_table: &mut ActivePageTable) {
+pub unsafe fn init(active_table: &mut KernelMapper) {
     LOCAL_APIC.init(active_table);
 }
 
@@ -41,21 +40,25 @@ pub fn bsp_apic_id() -> Option<u32> {
 }
 
 impl LocalApic {
-    unsafe fn init(&mut self, active_table: &mut ActivePageTable) {
-        self.address = (rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000) + crate::PHYS_OFFSET;
+    unsafe fn init(&mut self, mapper: &mut KernelMapper) {
+        let mapper = mapper.get_mut().expect("expected KernelMapper not to be locked re-entrant while initializing LAPIC");
+
+        let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
+        let virtaddr = RmmA::phys_to_virt(physaddr);
+
+        self.address = virtaddr.data();
         self.x2 = CpuId::new().get_feature_info().unwrap().has_x2apic();
 
         if ! self.x2 {
-            let page = Page::containing_address(VirtualAddress::new(self.address));
-            let frame = Frame::containing_address(PhysicalAddress::new(self.address - crate::PHYS_OFFSET));
-            log::info!("Detected xAPIC at {:#x}", frame.start_address().data());
-            if active_table.translate_page(page).is_some() {
+            log::info!("Detected xAPIC at {:#x}", physaddr.data());
+            if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr, true) {
                 // Unmap xAPIC page if already mapped
-                let (result, _frame) = active_table.unmap_return(page, true);
-                result.flush();
+                flush.flush();
             }
-            let result = active_table.map_to(page, frame, PageFlags::new().write(true));
-            result.flush();
+            mapper
+                .map_phys(virtaddr, physaddr, PageFlags::new().write(true))
+                .expect("failed to map local APIC memory")
+                .flush();
         } else {
             log::info!("Detected x2APIC");
         }

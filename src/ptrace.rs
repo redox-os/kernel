@@ -2,16 +2,15 @@
 //! handling should go here, unless they closely depend on the design
 //! of the scheme.
 
+use rmm::Arch;
+
 use crate::{
     arch::{
         interrupt::InterruptStack,
-        paging::{
-            mapper::PageFlushAll,
-            ActivePageTable, InactivePageTable, Page, PAGE_SIZE, TableKind, VirtualAddress
-        }
+        paging::{PAGE_SIZE, VirtualAddress},
     },
     common::unique::Unique,
-    context::{self, signal, Context, ContextId},
+    context::{self, signal, Context, ContextId, memory::AddrSpace},
     event,
     scheme::proc,
     sync::WaitCondition,
@@ -21,6 +20,7 @@ use crate::{
         flag::*,
         ptrace_event
     },
+    CurrentRmmArch as RmmA,
 };
 
 use alloc::{
@@ -31,12 +31,8 @@ use alloc::{
         btree_map::Entry
     },
     sync::Arc,
-    vec::Vec
 };
-use core::{
-    cmp,
-    sync::atomic::Ordering
-};
+use core::cmp;
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 //  ____                _
@@ -187,7 +183,11 @@ pub fn is_traced(pid: ContextId) -> bool {
 
 /// Trigger a notification to the event: scheme
 fn proc_trigger_event(file_id: usize, flags: EventFlags) {
-    event::trigger(proc::PROC_SCHEME_ID.load(Ordering::SeqCst), file_id, flags);
+    if let Some(scheme_id) = proc::PROC_SCHEME_ID.get() {
+        event::trigger(*scheme_id, file_id, flags);
+    } else {
+        log::warn!("Failed to trigger proc event: scheme never initialized");
+    }
 }
 
 /// Dispatch an event to any tracer tracing `self`. This will cause
@@ -445,66 +445,41 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
 // |_|  |_|\___|_| |_| |_|\___/|_|   \__, |
 //                                   |___/
 
-pub fn with_context_memory<F>(context: &mut Context, offset: VirtualAddress, len: usize, f: F) -> Result<()>
-where F: FnOnce(*mut u8) -> Result<()>
-{
-    // As far as I understand, mapping any regions following
-    // USER_TMP_MISC_OFFSET is safe because no other memory location
-    // is used after it. In the future it might be necessary to define
-    // a maximum amount of pages that can be mapped in one batch,
-    // which could be used to either internally retry `read`/`write`
-    // in `proc:<pid>/mem`, or return a partial read/write.
-    let start = Page::containing_address(VirtualAddress::new(crate::USER_TMP_MISC_OFFSET));
-
-    let mut active_page_table = unsafe { ActivePageTable::new(TableKind::User) };
-    let mut target_page_table = unsafe {
-        InactivePageTable::from_address(context.arch.get_page_utable())
-    };
-
-    // Find the physical frames for all pages
-    let mut frames = Vec::new();
-
-    {
-        let mapper = target_page_table.mapper();
-
-        let mut inner = || -> Result<()> {
-            let start = Page::containing_address(offset);
-            let end = Page::containing_address(VirtualAddress::new(offset.data() + len - 1));
-            for page in Page::range_inclusive(start, end) {
-                frames.push((
-                    mapper.translate_page(page).ok_or(Error::new(EFAULT))?,
-                    mapper.translate_page_flags(page).ok_or(Error::new(EFAULT))?
-                ));
-            }
-            Ok(())
-        };
-        inner()?;
+// Returns an iterator which splits [start, start + len) into an iterator of possibly trimmed
+// pages.
+fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item = (usize, usize)> {
+    // Ensure no pages can overlap with kernel memory.
+    if start.saturating_add(len) > crate::USER_END_OFFSET {
+        len = crate::USER_END_OFFSET.saturating_sub(start);
     }
 
-    // Map all the physical frames into linear pages
-    let pages = frames.len();
-    let mut page = start;
-    let flush_all = PageFlushAll::new();
-    for (frame, mut flags) in frames {
-        flags = flags.execute(false).write(true);
-        flush_all.consume(active_page_table.map_to(page, frame, flags));
+    let first_len = core::cmp::min(len, PAGE_SIZE - start % PAGE_SIZE);
+    let first = Some((start, first_len)).filter(|(_, len)| *len > 0);
+    start += first_len;
+    len -= first_len;
 
-        page = page.next();
-    }
+    let last_len = len % PAGE_SIZE;
+    len -= last_len;
+    let last = Some((start + len, last_len)).filter(|(_, len)| *len > 0);
 
-    flush_all.flush();
+    first.into_iter().chain((start..start + len).step_by(PAGE_SIZE).map(|off| (off, PAGE_SIZE))).chain(last)
+}
 
-    let res = f((start.start_address().data() + offset.data() % PAGE_SIZE) as *mut u8);
+pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<(*mut [u8], bool)>> + '_ {
+    let end = core::cmp::min(offset.data().saturating_add(len), crate::USER_END_OFFSET);
+    let len = end - offset.data();
 
-    // Unmap all the pages (but allow no deallocation!)
-    let mut page = start;
-    let flush_all = PageFlushAll::new();
-    for _ in 0..pages {
-        flush_all.consume(active_page_table.unmap_return(page, true).0);
-        page = page.next();
-    }
+    // TODO: Iterate over grants instead to avoid yielding None too many times. What if
+    // context_memory is used for an entire process's address space, where the stack is at the very
+    // end? Alternatively we can skip pages recursively, i.e. first skip unpopulated PML4s and then
+    // onwards.
+    page_aligned_chunks(offset.data(), len).map(move |(addr, len)| unsafe {
+        // [addr,addr+len) is a continuous page starting and/or ending at page boundaries, with the
+        // possible exception of an unaligned head/tail.
 
-    flush_all.flush();
+        let (address, flags) = addrspace.table.utable.translate(VirtualAddress::new(addr))?;
 
-    res
+        let start = RmmA::phys_to_virt(address).data() + addr % crate::memory::PAGE_SIZE;
+        Some((core::ptr::slice_from_raw_parts_mut(start as *mut u8, len), flags.has_write()))
+    })
 }

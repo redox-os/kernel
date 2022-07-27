@@ -2,6 +2,7 @@ use core::{
     cmp,
     mem,
     slice,
+    sync::atomic::{self, AtomicUsize, Ordering},
 };
 use rmm::{
     KILOBYTE,
@@ -20,7 +21,7 @@ use rmm::{
     X8664Arch as RmmA,
 };
 
-use spin::Mutex;
+use spin::{Mutex, MutexGuard};
 
 extern "C" {
     /// The starting byte of the text (code) data segment.
@@ -210,21 +211,15 @@ unsafe fn inner<A: Arch>(
     BuddyAllocator::<A>::new(bump_allocator).expect("failed to create BuddyAllocator")
 }
 
-pub struct LockedAllocator {
-    inner: Mutex<Option<BuddyAllocator<RmmA>>>,
-}
+// There can only be one allocator (at the moment), so making this a ZST is great!
+#[derive(Clone, Copy)]
+pub struct LockedAllocator;
 
-impl LockedAllocator {
-    const fn new() -> Self {
-        Self {
-            inner: Mutex::new(None)
-        }
-    }
-}
+static INNER_ALLOCATOR: Mutex<Option<BuddyAllocator<RmmA>>> = Mutex::new(None);
 
 impl FrameAllocator for LockedAllocator {
     unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
-        if let Some(ref mut allocator) = *self.inner.lock() {
+        if let Some(ref mut allocator) = *INNER_ALLOCATOR.lock() {
             allocator.allocate(count)
         } else {
             None
@@ -232,16 +227,25 @@ impl FrameAllocator for LockedAllocator {
     }
 
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
-        if let Some(ref mut allocator) = *self.inner.lock() {
+        if let Some(ref mut allocator) = *INNER_ALLOCATOR.lock() {
             allocator.free(address, count)
         }
     }
 
     unsafe fn usage(&self) -> FrameUsage {
-        if let Some(ref allocator) = *self.inner.lock() {
+        if let Some(ref allocator) = *INNER_ALLOCATOR.lock() {
             allocator.usage()
         } else {
             FrameUsage::new(FrameCount::new(0), FrameCount::new(0))
+        }
+    }
+}
+impl core::fmt::Debug for LockedAllocator {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match INNER_ALLOCATOR.try_lock().as_deref() {
+            Some(Some(alloc)) => write!(f, "[locked allocator: {:?}]", unsafe { alloc.usage() }),
+            Some(None) => write!(f, "[uninitialized lock allocator]"),
+            None => write!(f, "[failed to lock]"),
         }
     }
 }
@@ -251,19 +255,77 @@ static mut AREAS: [MemoryArea; 512] = [MemoryArea {
     size: 0,
 }; 512];
 
-pub static mut FRAME_ALLOCATOR: LockedAllocator = LockedAllocator::new();
+pub static FRAME_ALLOCATOR: LockedAllocator = LockedAllocator;
 
-pub unsafe fn mapper_new(table_addr: PhysicalAddress) -> PageMapper<'static, RmmA, LockedAllocator> {
-    PageMapper::new(table_addr, &mut FRAME_ALLOCATOR)
+const NO_PROCESSOR: usize = !0;
+static LOCK_OWNER: AtomicUsize = AtomicUsize::new(NO_PROCESSOR);
+static LOCK_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// TODO: Support, perhaps via const generics, embedding address checking in PageMapper, thereby
+// statically enforcing that the kernel mapper can only map things in the kernel half, and vice
+// versa.
+/// A guard to the global lock protecting the upper 128 TiB of kernel address space.
+///
+/// NOTE: Use this with great care! Since heap allocations may also require this lock when the heap
+/// needs to be expended, it must not be held while memory allocations are done!
+// TODO: Make the lock finer-grained so that e.g. the heap part can be independent from e.g.
+// PHYS_PML4?
+pub struct KernelMapper {
+    mapper: crate::paging::PageMapper,
+    ro: bool,
 }
+impl KernelMapper {
+    fn lock_inner(current_processor: usize) -> bool {
+        loop {
+            match LOCK_OWNER.compare_exchange_weak(NO_PROCESSOR, current_processor, Ordering::Acquire, Ordering::Relaxed) {
+                Ok(_) => break,
+                // already owned by this hardware thread
+                Err(id) if id == current_processor => break,
+                // either CAS failed, or some other hardware thread holds the lock
+                Err(_) => core::hint::spin_loop(),
+            }
+        }
 
-//TODO: global paging lock?
-pub unsafe fn mapper_create() -> Option<PageMapper<'static, RmmA, LockedAllocator>> {
-    PageMapper::create(&mut FRAME_ALLOCATOR)
+        let prev_count = LOCK_COUNT.fetch_add(1, Ordering::Relaxed);
+        atomic::compiler_fence(Ordering::Acquire);
+
+        prev_count > 0
+    }
+    pub unsafe fn lock_for_manual_mapper(current_processor: usize, mapper: crate::paging::PageMapper) -> Self {
+        let ro = Self::lock_inner(current_processor);
+        Self {
+            mapper,
+            ro,
+        }
+    }
+    pub fn lock_manually(current_processor: usize) -> Self {
+        unsafe { Self::lock_for_manual_mapper(current_processor, PageMapper::new(RmmA::table(), FRAME_ALLOCATOR)) }
+    }
+    pub fn lock() -> Self {
+        Self::lock_manually(crate::cpu_id())
+    }
+    pub fn get_mut(&mut self) -> Option<&mut crate::paging::PageMapper> {
+        if self.ro {
+            None
+        } else {
+            Some(&mut self.mapper)
+        }
+    }
 }
+impl core::ops::Deref for KernelMapper {
+    type Target = crate::paging::PageMapper;
 
-pub unsafe fn mapper_current() -> PageMapper<'static, RmmA, LockedAllocator> {
-    PageMapper::current(&mut FRAME_ALLOCATOR)
+    fn deref(&self) -> &Self::Target {
+        &self.mapper
+    }
+}
+impl Drop for KernelMapper {
+    fn drop(&mut self) {
+        if LOCK_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
+            LOCK_OWNER.store(NO_PROCESSOR, Ordering::Release);
+        }
+        atomic::compiler_fence(Ordering::Release);
+    }
 }
 
 pub unsafe fn init(
@@ -388,5 +450,5 @@ pub unsafe fn init(
         acpi_base, acpi_size_aligned,
         initfs_base, initfs_size_aligned,
     );
-    *FRAME_ALLOCATOR.inner.lock() = Some(allocator);
+    *INNER_ALLOCATOR.lock() = Some(allocator);
 }

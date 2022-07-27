@@ -1,15 +1,10 @@
 //! Filesystem syscalls
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use core::str;
-use core::sync::atomic::Ordering;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::Region;
 use crate::context;
-use crate::memory::PAGE_SIZE;
-use crate::paging::VirtualAddress;
 use crate::scheme::{self, FileHandle};
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
@@ -469,103 +464,11 @@ pub fn fstat(fd: FileHandle, stat: &mut Stat) -> Result<usize> {
     scheme.fstat(description.number, stat)
 }
 
-pub fn funmap_old(virtual_address: usize) -> Result<usize> {
-    if virtual_address == 0 {
-        Ok(0)
-    } else {
-        let mut desc_opt = None;
-
-        {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            let mut grants = context.grants.write();
-
-            if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
-                let mut grant = grants.take(&region).unwrap();
-                desc_opt = grant.desc_opt.take();
-                grant.unmap();
-            }
-        }
-
-        if let Some(file_ref) = desc_opt {
-            let scheme_id = { file_ref.desc.description.read().scheme };
-
-            let scheme = {
-                let schemes = scheme::schemes();
-                let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
-                scheme.clone()
-            };
-            let res = scheme.funmap_old(virtual_address);
-
-            let _ = file_ref.desc.close();
-
-            res
-        } else {
-            Err(Error::new(EFAULT))
-        }
-    }
-}
-
 pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
-    if virtual_address == 0 || length == 0 {
-        return Ok(0);
-    } else if virtual_address % PAGE_SIZE != 0 {
-        return Err(Error::new(EINVAL));
-    }
+    let (page, page_count) = crate::syscall::validate::validate_region(virtual_address, length)?;
 
-    let mut notify_files = Vec::new();
-
-    let virtual_address = VirtualAddress::new(virtual_address);
-    let requested = Region::new(virtual_address, length);
-
-    {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-
-        let mut grants = context.grants.write();
-
-        let conflicting: Vec<Region> = grants.conflicts(requested).map(Region::from).collect();
-
-        for conflict in conflicting {
-            let grant = grants.take(&conflict).expect("conflicting region didn't exist");
-            let intersection = grant.intersect(requested);
-            let (before, mut grant, after) = grant.extract(intersection.round()).expect("conflicting region shared no common parts");
-
-            // Notify scheme that holds grant
-            if let Some(file_desc) = grant.desc_opt.take() {
-                notify_files.push((file_desc, intersection));
-            }
-
-            // Keep untouched regions
-            if let Some(before) = before {
-                grants.insert(before);
-            }
-            if let Some(after) = after {
-                grants.insert(after);
-            }
-
-            // Remove irrelevant region
-            grant.unmap();
-        }
-    }
-
-    for (file_ref, intersection) in notify_files {
-        let scheme_id = { file_ref.desc.description.read().scheme };
-
-        let scheme = {
-            let schemes = scheme::schemes();
-            let scheme = schemes.get(scheme_id).ok_or(Error::new(EBADF))?;
-            scheme.clone()
-        };
-        let res = scheme.funmap(intersection.start_address().data(), intersection.size());
-
-        let _ = file_ref.desc.close();
-
-        res?;
-    }
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    addr_space.write().munmap(page, page_count);
 
     Ok(0)
 }

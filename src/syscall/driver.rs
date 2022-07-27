@@ -1,11 +1,13 @@
 use crate::interrupt::InterruptStack;
-use crate::memory::{allocate_frames_complex, deallocate_frames, Frame};
-use crate::paging::{ActivePageTable, PageFlags, PhysicalAddress, VirtualAddress};
+use crate::memory::{allocate_frames_complex, deallocate_frames, Frame, PAGE_SIZE};
+use crate::paging::{Page, PageFlags, PhysicalAddress, VirtualAddress, mapper::PageFlushAll};
 use crate::paging::entry::EntryFlags;
 use crate::context;
-use crate::context::memory::{Grant, Region};
+use crate::context::memory::{DANGLING, Grant, Region};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
+
+use alloc::sync::Arc;
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -71,22 +73,21 @@ pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
 }
 
 //TODO: verify exlusive access to physical memory
+// TODO: Replace this completely with something such as `memory:physical`. Mmapping at offset
+// `physaddr` to `address` (optional) will map that physical address. We would have to find out
+// some way to pass flags such as WRITE_COMBINE/NO_CACHE however.
 pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
-    //TODO: Abstract with other grant creation
-    if size == 0 {
-        Ok(0)
-    } else {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
+    // TODO: Check physical_address against MAXPHYADDR.
 
-        let mut grants = context.grants.write();
+    let end = 1 << 52;
+    if physical_address.saturating_add(size) > end || physical_address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 {
+        return Err(Error::new(EINVAL));
+    }
 
-        let from_address = (physical_address/4096) * 4096;
-        let offset = physical_address - from_address;
-        let full_size = ((offset + size + 4095)/4096) * 4096;
-        let mut to_address = crate::USER_GRANT_OFFSET;
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let mut addr_space = addr_space.write();
 
+    addr_space.mmap(None, size / PAGE_SIZE, Default::default(), |dst_page, _, dst_mapper, dst_flusher| {
         let mut page_flags = PageFlags::new().user(true);
         if flags.contains(PHYSMAP_WRITE) {
             page_flags = page_flags.write(true);
@@ -98,30 +99,18 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         if flags.contains(PHYSMAP_NO_CACHE) {
             page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
         }
+        Grant::physmap(
+            Frame::containing_address(PhysicalAddress::new(physical_address)),
+            dst_page,
+            size / PAGE_SIZE,
+            page_flags,
+            dst_mapper,
+            dst_flusher,
+        )
+    }).map(|page| page.start_address().data())
 
-        // TODO: Make this faster than Sonic himself by using le superpowers of BTreeSet
-
-        for grant in grants.iter() {
-            let start = grant.start_address().data();
-            if to_address + full_size < start {
-                break;
-            }
-
-            let pages = (grant.size() + 4095) / 4096;
-            let end = start + pages * 4096;
-            to_address = end;
-        }
-
-        grants.insert(Grant::physmap(
-            PhysicalAddress::new(from_address),
-            VirtualAddress::new(to_address),
-            full_size,
-            page_flags
-        ));
-
-        Ok(to_address + offset)
-    }
 }
+// TODO: Remove this syscall, funmap makes it redundant.
 pub fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     enforce_root()?;
     inner_physmap(physical_address, size, flags)
@@ -131,14 +120,12 @@ pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
     if virtual_address == 0 {
         Ok(0)
     } else {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
+        let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+        let mut addr_space = addr_space.write();
 
-        let mut grants = context.grants.write();
+        if let Some(region) = addr_space.grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
 
-        if let Some(region) = grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
-            grants.take(&region).unwrap().unmap();
+            addr_space.grants.take(&region).unwrap().unmap(&mut addr_space.table.utable, PageFlushAll::new());
             return Ok(0);
         }
 
@@ -153,10 +140,11 @@ pub fn physunmap(virtual_address: usize) -> Result<usize> {
 pub fn virttophys(virtual_address: usize) -> Result<usize> {
     enforce_root()?;
 
-    let active_table = unsafe { ActivePageTable::new(VirtualAddress::new(virtual_address).kind()) };
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let addr_space = addr_space.read();
 
-    match active_table.translate(VirtualAddress::new(virtual_address)) {
-        Some(physical_address) => Ok(physical_address.data()),
+    match addr_space.table.utable.translate(VirtualAddress::new(virtual_address)) {
+        Some((physical_address, _)) => Ok(physical_address.data()),
         None => Err(Error::new(EFAULT))
     }
 }
