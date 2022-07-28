@@ -1,6 +1,13 @@
 use crate::paging::{RmmA, RmmArch};
 
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+    println!("DEBUGGER TODO");
+    println!();
+}
+
 // Super unsafe due to page table switching and raw pointers!
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     println!("DEBUGGER START");
     println!();
