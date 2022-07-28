@@ -755,7 +755,11 @@ impl Scheme for ProcScheme {
             },
             Operation::AddrSpace { addrspace } => {
                 let mut chunks = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
-                let mut next = || chunks.next().ok_or(Error::new(EINVAL));
+                let mut words_read = 0;
+                let mut next = || {
+                    words_read += 1;
+                    chunks.next().ok_or(Error::new(EINVAL))
+                };
 
                 match next()? {
                     op @ ADDRSPACE_OP_MMAP | op @ ADDRSPACE_OP_TRANSFER => {
@@ -770,7 +774,7 @@ impl Scheme for ProcScheme {
 
                         let (scheme, number) = extract_scheme_number(fd)?;
 
-                        return scheme.kfmap(number, &addrspace, &Map { offset, size: page_count * PAGE_SIZE, address: page.start_address().data(), flags }, op == ADDRSPACE_OP_TRANSFER);
+                        scheme.kfmap(number, &addrspace, &Map { offset, size: page_count * PAGE_SIZE, address: page.start_address().data(), flags }, op == ADDRSPACE_OP_TRANSFER)?;
                     }
                     ADDRSPACE_OP_MUNMAP => {
                         let (page, page_count) = crate::syscall::validate_region(next()?, next()?)?;
@@ -785,7 +789,7 @@ impl Scheme for ProcScheme {
                     }
                     _ => return Err(Error::new(EINVAL)),
                 }
-                Ok(0)
+                Ok(words_read * mem::size_of::<usize>())
             }
             Operation::Regs(kind) => match kind {
                 RegsKind::Float => {

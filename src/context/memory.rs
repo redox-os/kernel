@@ -594,7 +594,8 @@ pub struct Grant {
     region: Region,
     flags: PageFlags<RmmA>,
     mapped: bool,
-    owned: bool,
+    pub(crate) owned: bool,
+    pub(crate) allocator_owned: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
     pub desc_opt: Option<GrantFileRef>,
 }
@@ -640,6 +641,7 @@ impl Grant {
             flags,
             mapped: true,
             owned: false,
+            allocator_owned: false,
             desc_opt: None,
         })
     }
@@ -649,10 +651,10 @@ impl Grant {
             let flush = unsafe { mapper.map(page.start_address(), flags) }.ok_or(Enomem)?;
             flusher.consume(flush);
         }
-        Ok(Grant { region: Region { start: dst.start_address(), size: page_count * PAGE_SIZE }, flags, mapped: true, owned: true, desc_opt: None })
+        Ok(Grant { region: Region { start: dst.start_address(), size: page_count * PAGE_SIZE }, flags, mapped: true, owned: true, allocator_owned: true, desc_opt: None })
     }
     pub fn borrow(src_base: Page, dst_base: Page, page_count: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
-        Self::copy_inner(src_base, dst_base, page_count, flags, desc_opt, src_mapper, dst_mapper, (), dst_flusher, false, false)
+        Self::copy_inner(src_base, dst_base, page_count, flags, desc_opt, src_mapper, dst_mapper, (), dst_flusher, false, false, false)
     }
     pub fn reborrow(src_grant: &Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
         Self::borrow(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), src_grant.desc_opt.clone(), src_mapper, dst_mapper, dst_flusher).map_err(Into::into)
@@ -661,7 +663,7 @@ impl Grant {
         assert!(core::mem::replace(&mut src_grant.mapped, false));
         let desc_opt = src_grant.desc_opt.take();
 
-        Self::copy_inner(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.owned, true).map_err(Into::into)
+        Self::copy_inner(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.owned, src_grant.allocator_owned, true).map_err(Into::into)
     }
 
     fn copy_inner(
@@ -675,6 +677,7 @@ impl Grant {
         mut src_flusher: impl Flusher<RmmA>,
         mut dst_flusher: impl Flusher<RmmA>,
         owned: bool,
+        allocator_owned: bool,
         unmap: bool,
     ) -> Result<Grant, Enomem> {
         let mut successful_count = 0;
@@ -710,7 +713,7 @@ impl Grant {
                 };
                 dst_flusher.consume(flush);
 
-                if owned {
+                if owned && allocator_owned {
                     crate::memory::deallocate_frames(Frame::containing_address(frame), 1);
                 }
             }
@@ -725,6 +728,7 @@ impl Grant {
             flags,
             mapped: true,
             owned,
+            allocator_owned,
             desc_opt,
         })
     }
@@ -756,7 +760,7 @@ impl Grant {
             let (entry, _, flush) = unsafe { mapper.unmap_phys(page.start_address(), true) }
                 .unwrap_or_else(|| panic!("missing page at {:#0x} for grant {:?}", page.start_address().data(), self));
 
-            if self.owned {
+            if self.owned && self.allocator_owned {
                 // TODO: make sure this frame can be safely freed, physical use counter.
                 //
                 // Namely, we can either have MAP_PRIVATE or MAP_SHARED-style mappings. The former
@@ -804,6 +808,7 @@ impl Grant {
             flags: self.flags,
             mapped: self.mapped,
             owned: self.owned,
+            allocator_owned: self.allocator_owned,
             desc_opt: self.desc_opt.clone(),
         });
         let after_grant = self.after(region).map(|region| Grant {
@@ -811,6 +816,7 @@ impl Grant {
             flags: self.flags,
             mapped: self.mapped,
             owned: self.owned,
+            allocator_owned: self.allocator_owned,
             desc_opt: self.desc_opt.clone(),
         });
 
