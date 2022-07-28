@@ -20,7 +20,7 @@ use crate::context::{memory::AddrSpace, file::FileDescriptor};
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
 
-#[cfg(all(feature = "acpi", target_arch = "x86_64"))]
+#[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 use self::acpi::AcpiScheme;
 
 use self::debug::DebugScheme;
@@ -36,7 +36,7 @@ use self::sys::SysScheme;
 use self::time::TimeScheme;
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
-#[cfg(all(feature = "acpi", target_arch = "x86_64"))]
+#[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 pub mod acpi;
 
 /// `debug:` - provides access to serial console
@@ -158,7 +158,7 @@ impl SchemeList {
         let ns = self.new_ns();
 
         // These schemes should only be available on the root
-        #[cfg(all(feature = "acpi", target_arch = "x86_64"))] {
+        #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))] {
             self.insert(ns, "kernel/acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
         }
         self.insert(ns, "debug", |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();

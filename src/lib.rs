@@ -97,7 +97,7 @@ use crate::log::info;
 pub mod allocator;
 
 /// ACPI table parsing
-#[cfg(all(feature = "acpi", target_arch = "x86_64"))]
+#[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 mod acpi;
 
 /// Context management
