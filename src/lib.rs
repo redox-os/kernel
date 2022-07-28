@@ -60,7 +60,7 @@
 #![feature(thread_local)]
 #![no_std]
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub extern crate x86;
 
 #[macro_use]
