@@ -712,7 +712,7 @@ impl Scheme for ProcScheme {
         }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(not(target_arch = "x86_64"))]
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         //TODO
         Err(Error::new(EINVAL))
@@ -1081,6 +1081,13 @@ impl Scheme for ProcScheme {
         Ok(0)
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
+    fn close(&self, id: usize) -> Result<usize> {
+        //TODO
+        Err(Error::new(EINVAL))
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn close(&self, id: usize) -> Result<usize> {
         let mut handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
         handle.continue_ignored_children();
