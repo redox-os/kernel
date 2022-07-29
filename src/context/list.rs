@@ -82,7 +82,7 @@ impl ContextList {
             let mut stack = vec![0; 65_536].into_boxed_slice();
             let offset = stack.len() - mem::size_of::<usize>();
 
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             unsafe {
                 let offset = stack.len() - mem::size_of::<usize>();
                 let func_ptr = stack.as_mut_ptr().add(offset);
