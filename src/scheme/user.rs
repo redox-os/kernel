@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, slice, usize};
 use core::convert::TryFrom;
 use spin::{Mutex, RwLock};
@@ -25,7 +25,7 @@ pub struct UserInner {
     pub name: Box<str>,
     pub flags: usize,
     pub scheme_id: AtomicSchemeId,
-    next_id: AtomicU64,
+    next_id: Mutex<u64>,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
@@ -41,7 +41,7 @@ impl UserInner {
             name,
             flags,
             scheme_id: AtomicSchemeId::default(),
-            next_id: AtomicU64::new(1),
+            next_id: Mutex::new(1),
             context,
             todo: WaitQueue::new(),
             fmap: Mutex::new(BTreeMap::new()),
@@ -64,6 +64,13 @@ impl UserInner {
         Ok(0)
     }
 
+    fn next_id(&self) -> u64 {
+        let mut guard = self.next_id.lock();
+        let id = *guard;
+        *guard += 1;
+        id
+    }
+
     pub fn call(&self, a: usize, b: usize, c: usize, d: usize) -> Result<usize> {
         let (pid, uid, gid) = {
             let contexts = context::contexts();
@@ -72,8 +79,10 @@ impl UserInner {
             (context.id, context.euid, context.egid)
         };
 
+        let id = self.next_id();
+
         self.call_inner(Packet {
-            id: self.next_id.fetch_add(1, Ordering::SeqCst),
+            id,
             pid: pid.into(),
             uid,
             gid,
@@ -295,7 +304,7 @@ impl UserInner {
 
         let address = self.capture(map)?;
 
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = self.next_id();
 
         self.fmap.lock().insert(id, (context_weak, desc, *map));
 
