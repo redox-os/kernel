@@ -1,5 +1,5 @@
 use crate::{
-    arch::paging::{Flusher, mapper::{InactiveFlusher, PageFlushAll}, Page, RmmA, VirtualAddress},
+    arch::paging::{mapper::InactiveFlusher, Page, VirtualAddress},
     context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, page_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
@@ -970,7 +970,7 @@ impl Scheme for ProcScheme {
                 let filetable_fd = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
                 let (hopefully_this_scheme, number) = extract_scheme_number(filetable_fd)?;
 
-                let mut filetable = hopefully_this_scheme.as_filetable(number)?;
+                let filetable = hopefully_this_scheme.as_filetable(number)?;
 
                 self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(filetable);
 

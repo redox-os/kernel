@@ -28,7 +28,7 @@ pub use self::validate::*;
 use self::scheme::Scheme as _;
 
 use self::data::{Map, SigAction, Stat, TimeSpec};
-use self::error::{Error, Result, ENOSYS, EINVAL};
+use self::error::{Error, Result, ENOSYS};
 use self::flag::{MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
 
@@ -62,9 +62,9 @@ pub mod validate;
 
 /// This function is the syscall handler of the kernel, it is composed of an inner function that returns a `Result<usize>`. After the inner function runs, the syscall
 /// function calls [`Error::mux`] on it.
-pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut InterruptStack) -> usize {
+pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack: &mut InterruptStack) -> usize {
     #[inline(always)]
-    fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: usize, stack: &mut InterruptStack) -> Result<usize> {
+    fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack: &mut InterruptStack) -> Result<usize> {
         //SYS_* is declared in kernel/syscall/src/number.rs
         match a & SYS_CLASS {
             SYS_CLASS_FILE => {
@@ -217,7 +217,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, bp: u
         }
     }
 
-    let result = inner(a, b, c, d, e, f, bp, stack);
+    let result = inner(a, b, c, d, e, f, stack);
 
     {
         let contexts = crate::context::contexts();

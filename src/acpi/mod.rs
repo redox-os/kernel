@@ -9,8 +9,7 @@ use alloc::boxed::Box;
 use spin::{Once, RwLock};
 
 use crate::log::info;
-use crate::memory::Frame;
-use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
+use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch};
 
 use self::madt::Madt;
 use self::rsdt::Rsdt;

@@ -15,7 +15,7 @@ use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
 use crate::memory::{Enomem, Frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
-use crate::paging::{KernelMapper, Page, PageFlags, PageIter, PageMapper, PhysicalAddress, RmmA, round_up_pages, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PageIter, PageMapper, RmmA, round_up_pages, VirtualAddress};
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
@@ -123,7 +123,7 @@ impl AddrSpace {
             inactive = InactiveFlusher::new();
             &mut inactive as &mut dyn Flusher<RmmA>
         };
-        let mut mapper = &mut self.table.utable;
+        let mapper = &mut self.table.utable;
 
         let region = Region::new(base.start_address(), page_count * PAGE_SIZE);
 
@@ -375,7 +375,7 @@ impl UserGrants {
             holes.insert(grant.start_address(), grant.size() + exactly_after_size.unwrap_or(0));
         }
     }
-    pub fn insert(&mut self, mut grant: Grant) {
+    pub fn insert(&mut self, grant: Grant) {
         assert!(self.conflicts(*grant).next().is_none());
         self.reserve(&grant);
 
@@ -900,13 +900,13 @@ impl Drop for Table {
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
 pub fn setup_new_utable() -> Result<Table> {
-    let mut utable = unsafe { PageMapper::create(crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let utable = unsafe { PageMapper::create(crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
 
     #[cfg(target_arch = "x86_64")]
     {
         let active_ktable = KernelMapper::lock();
 
-        let mut copy_mapping = |p4_no| unsafe {
+        let copy_mapping = |p4_no| unsafe {
             let entry = active_ktable.table().entry(p4_no)
                 .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
 

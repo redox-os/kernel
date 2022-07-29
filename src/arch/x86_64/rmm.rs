@@ -21,7 +21,7 @@ use rmm::{
     X8664Arch as RmmA,
 };
 
-use spin::{Mutex, MutexGuard};
+use spin::Mutex;
 
 extern "C" {
     /// The starting byte of the text (code) data segment.
@@ -163,7 +163,7 @@ unsafe fn inner<A: Arch>(
         // Ensure graphical debug region remains paged
         #[cfg(feature = "graphical_debug")]
         {
-            use super::graphical_debug::DEBUG_DISPLAY;
+            use crate::devices::graphical_debug::DEBUG_DISPLAY;
             use super::paging::entry::EntryFlags;
 
             let (base, size) = if let Some(debug_display) = &*DEBUG_DISPLAY.lock() {

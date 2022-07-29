@@ -11,13 +11,13 @@ use crate::context::{Context, ContextId, memory::AddrSpace, WaitpidKey};
 use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
-use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
+use crate::paging::mapper::{InactiveFlusher, PageFlushAll};
 use crate::paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE};
 use crate::ptrace;
 use crate::start::usermode;
 use crate::syscall::data::SigAction;
 use crate::syscall::error::*;
-use crate::syscall::flag::{wifcontinued, wifstopped, MapFlags, PROT_EXEC, PROT_READ, PROT_WRITE,
+use crate::syscall::flag::{wifcontinued, wifstopped, MapFlags,
     PTRACE_STOP_EXIT, SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK,
     SIGCONT, SIGTERM, WaitFlags, WCONTINUED, WNOHANG, WUNTRACED};
 use crate::syscall::ptrace_event;

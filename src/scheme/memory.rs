@@ -2,13 +2,11 @@ use alloc::sync::Arc;
 use spin::RwLock;
 
 use crate::context;
-use crate::context::memory::{AddrSpace, page_flags, Grant};
+use crate::context::memory::{AddrSpace, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE};
-use crate::paging::{mapper::PageFlushAll, Page, VirtualAddress};
 
 use crate::syscall::data::{Map, StatVfs};
 use crate::syscall::error::*;
-use crate::syscall::flag::MapFlags;
 use crate::syscall::scheme::Scheme;
 
 pub struct MemoryScheme;

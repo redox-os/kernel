@@ -247,7 +247,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         current_idt[49].set_func(irq::lapic_error);
 
         // reserve bit 49
-        *current_reservations[0].get_mut() |= (1 << 49);
+        *current_reservations[0].get_mut() |= 1 << 49;
     }
 
     use_default_irqs!(current_idt);

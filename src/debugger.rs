@@ -54,7 +54,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             let mut rsp = regs.iret.rsp;
             println!("stack: {:>016x}", rsp);
             //Maximum 64 qwords
-            for i in 0..64 {
+            for _ in 0..64 {
                 if context.addr_space.as_ref().map_or(false, |space| space.read().table.utable.translate(crate::paging::VirtualAddress::new(rsp)).is_some()) {
                     let value = *(rsp as *const usize);
                     println!("    {:>016x}: {:>016x}", rsp, value);
@@ -132,7 +132,7 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
 
     for grant in addr_space.grants.iter() {
         for page in grant.pages() {
-            let entry = match addr_space.table.utable.translate(page.start_address()) {
+            let _entry = match addr_space.table.utable.translate(page.start_address()) {
                 Some(e) => e,
                 None => {
                     log::error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", grant.region(), page.start_address().data() as *const u8);

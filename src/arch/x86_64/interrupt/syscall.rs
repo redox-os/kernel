@@ -50,12 +50,8 @@ macro_rules! with_interrupt_stack {
 pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
     let _guard = ptrace::set_process_regs(stack);
     with_interrupt_stack!(|stack| {
-        // Set a restore point for clone
-        let rbp;
-        core::arch::asm!("mov {}, rbp", out(reg) rbp);
-
         let scratch = &stack.scratch;
-        syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, rbp, stack)
+        syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, stack)
     });
 }
 
@@ -152,11 +148,7 @@ interrupt_stack!(syscall, |stack| {
             }
         }
 
-        // Set a restore point for clone
-        let rbp;
-        core::arch::asm!("mov {}, rbp", out(reg) rbp);
-
         let scratch = &stack.scratch;
-        syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, rbp, stack)
+        syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, stack)
     })
 });

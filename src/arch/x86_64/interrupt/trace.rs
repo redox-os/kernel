@@ -3,7 +3,7 @@ use core::{mem, str};
 use goblin::elf::sym;
 use rustc_demangle::demangle;
 
-use crate::{context, paging::{KernelMapper, VirtualAddress}};
+use crate::{paging::{KernelMapper, VirtualAddress}};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing

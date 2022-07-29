@@ -220,7 +220,7 @@ pub struct Context {
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
-    pub kfx: AlignedBox<[u8; {arch::KFX_SIZE}], {arch::KFX_ALIGN}>,
+    pub kfx: AlignedBox<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>,
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
     /// Kernel signal backup: Registers, Kernel FX, Kernel Stack, Signal number
@@ -335,7 +335,7 @@ impl Context {
         let syscall_head = AlignedBox::try_zeroed()?;
         let syscall_tail = AlignedBox::try_zeroed()?;
 
-        let mut this = Context {
+        let this = Context {
             id,
             pgid: id,
             ppid: ContextId::from(0),

@@ -8,7 +8,7 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
 use crate::context::file::FileDescriptor;
-use crate::context::memory::{AddrSpace, DANGLING, page_flags, Grant, Region, GrantFileRef};
+use crate::context::memory::{AddrSpace, DANGLING, Grant, Region, GrantFileRef};
 use crate::event;
 use crate::paging::{PAGE_SIZE, mapper::InactiveFlusher, Page, round_down_pages, round_up_pages, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};

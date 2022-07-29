@@ -46,7 +46,7 @@ pub fn futexes_mut() -> RwLockWriteGuard<'static, FutexList> {
 pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> Result<usize> {
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
 
-    let (target_physaddr, _) = unsafe {
+    let (target_physaddr, _) = {
         let virtual_address = VirtualAddress::new(addr);
 
         if !crate::CurrentRmmArch::virt_is_valid(virtual_address) {

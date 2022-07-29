@@ -9,11 +9,11 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::allocator;
 #[cfg(feature = "acpi")]
 use crate::acpi;
-#[cfg(feature = "graphical_debug")]
-use crate::arch::x86_64::graphical_debug;
-use crate::arch::x86_64::pti;
-use crate::arch::x86_64::flags::*;
+use crate::arch::pti;
+use crate::arch::flags::*;
 use crate::device;
+#[cfg(feature = "graphical_debug")]
+use crate::devices::graphical_debug;
 use crate::gdt;
 use crate::idt;
 use crate::interrupt;

@@ -78,7 +78,7 @@ extern crate slab_allocator;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::scheme::{FileHandle, SchemeNamespace};
+use crate::scheme::SchemeNamespace;
 
 pub use crate::consts::*;
 

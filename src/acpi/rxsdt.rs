@@ -9,8 +9,6 @@ pub trait Rxsdt {
     fn iter(&self) -> Box<dyn Iterator<Item = usize>>;
 
     fn map_all(&self) {
-        let iter = self.iter();
-
         let mut mapper = KernelMapper::lock();
         for sdt in self.iter() {
             get_sdt(sdt, &mut mapper);
