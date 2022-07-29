@@ -80,7 +80,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     // TODO: Check physical_address against MAXPHYADDR.
 
     let end = 1 << 52;
-    if physical_address.saturating_add(size) > end || physical_address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 {
+    if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 {
         return Err(Error::new(EINVAL));
     }
 
