@@ -1,6 +1,6 @@
 use crate::{
     arch::paging::{mapper::InactiveFlusher, Page, VirtualAddress},
-    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, page_flags, Region}},
+    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme, SchemeId},
@@ -65,7 +65,7 @@ where
     }
     callback(&mut context)
 }
-fn try_stop_context<F, T>(pid: ContextId, mut callback: F) -> Result<T>
+fn try_stop_context<F, T>(pid: ContextId, callback: F) -> Result<T>
 where
     F: FnOnce(&mut Context) -> Result<T>,
 {
@@ -1222,7 +1222,7 @@ impl KernelScheme for ProcScheme {
                     if let Some(before) = before { src_addr_space.grants.insert(before); }
                     if let Some(after) = after { src_addr_space.grants.insert(after); }
 
-                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, flags, dst_mapper, dst_flusher| Ok(Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher)?))?
+                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, _flags, dst_mapper, dst_flusher| Ok(Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher)?))?
                 } else {
                     dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Page::containing_address(src_grant_region.start_address()), dst_page, grant_page_count, flags, None, src_mapper, dst_mapper, flusher)?))?
                 };

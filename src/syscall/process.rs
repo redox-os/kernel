@@ -420,8 +420,8 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     let mut contexts = context::contexts_mut();
     let context_lock = contexts.remove(pid).ok_or(Error::new(ESRCH))?;
     {
-        let mut context = context_lock.write();
-        context = empty(&context_lock, context, true);
+        let context = context_lock.write();
+        empty(&context_lock, context, true);
     }
     drop(context_lock);
 

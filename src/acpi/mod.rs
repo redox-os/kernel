@@ -50,7 +50,7 @@ pub fn get_sdt(sdt_address: usize, mapper: &mut KernelMapper) -> &'static Sdt {
         const SDT_SIZE: usize = core::mem::size_of::<Sdt>();
         map_linearly(physaddr, SDT_SIZE, mapper);
 
-        sdt = unsafe { &*(RmmA::phys_to_virt(physaddr).data() as *const Sdt) };
+        sdt = &*(RmmA::phys_to_virt(physaddr).data() as *const Sdt);
 
         map_linearly(physaddr.add(SDT_SIZE), sdt.length as usize - SDT_SIZE, mapper);
     }

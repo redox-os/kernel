@@ -47,7 +47,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
                 }
             }
         }
-        if let Some(regs) = unsafe { crate::ptrace::regs_for(&context) } {
+        if let Some(regs) = crate::ptrace::regs_for(&context) {
             println!("regs:");
             regs.dump();
 

@@ -11,10 +11,10 @@ use super::{ACPI_TABLE, find_sdt};
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GenericAddressStructure {
-    address_space: u8,
-    bit_width: u8,
-    bit_offset: u8,
-    access_size: u8,
+    _address_space: u8,
+    _bit_width: u8,
+    _bit_offset: u8,
+    _access_size: u8,
     pub address: u64,
 }
 

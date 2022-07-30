@@ -163,7 +163,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
             Ok(woken)
         },
         FUTEX_REQUEUE => {
-            let (addr2_physaddr, _) = unsafe {
+            let (addr2_physaddr, _) = {
                 let addr2_virt = VirtualAddress::new(addr2);
 
                 if !crate::CurrentRmmArch::virt_is_valid(addr2_virt) {

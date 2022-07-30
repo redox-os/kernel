@@ -9,14 +9,14 @@ use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddre
 #[repr(packed)]
 pub struct RSDP {
     signature: [u8; 8],
-    checksum: u8,
-    oemid: [u8; 6],
+    _checksum: u8,
+    _oemid: [u8; 6],
     revision: u8,
     rsdt_address: u32,
-    length: u32,
+    _length: u32,
     xsdt_address: u64,
-    extended_checksum: u8,
-    reserved: [u8; 3]
+    _extended_checksum: u8,
+    _reserved: [u8; 3]
 }
 
 impl RSDP {

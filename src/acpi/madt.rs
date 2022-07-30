@@ -212,7 +212,7 @@ pub struct MadtIoApic {
     /// I/O APIC ID
     pub id: u8,
     /// reserved
-    reserved: u8,
+    _reserved: u8,
     /// I/O APIC address
     pub address: u32,
     /// Global system interrupt base

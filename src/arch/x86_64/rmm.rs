@@ -140,8 +140,8 @@ unsafe fn inner<A: Arch>(
         }
 
         let mut identity_map = |base, size_aligned| {
-            // Map stack with identity mapping
-            for i in 0..size / A::PAGE_SIZE {
+            // Map with identity mapping
+            for i in 0..size_aligned / A::PAGE_SIZE {
                 let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
                 let flags = page_flags::<A>(virt);
@@ -153,7 +153,6 @@ unsafe fn inner<A: Arch>(
                 flush.ignore(); // Not the active table
             }
         };
-
 
         identity_map(stack_base, stack_size_aligned);
         identity_map(env_base, env_size_aligned);
@@ -365,7 +364,7 @@ pub unsafe fn init(
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
     for bootloader_area in bootloader_areas.iter() {
-        if bootloader_area.kind != BootloaderMemoryKind::Free {
+        if { bootloader_area.kind } != BootloaderMemoryKind::Free {
             // Not a free area
             continue;
         }

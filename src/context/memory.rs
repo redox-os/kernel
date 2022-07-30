@@ -281,7 +281,7 @@ impl UserGrants {
         // MAP_FIXED/MAP_FIXED_NOREPLACE.
         // TODO: Allow explicitly allocating guard pages?
 
-        let (hole_start, hole_size) = self.holes.iter()
+        let (hole_start, _hole_size) = self.holes.iter()
             .skip_while(|(hole_offset, hole_size)| hole_offset.data() + **hole_size <= min)
             .find(|(hole_offset, hole_size)| {
                 let avail_size = if hole_offset.data() <= min && min <= hole_offset.data() + **hole_size {
@@ -313,7 +313,7 @@ impl UserGrants {
         }
 
 
-        if let Some(grant) = self.conflicts(requested).next() {
+        if let Some(_grant) = self.conflicts(requested).next() {
             // ... but it already exists
 
             if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) {
@@ -684,7 +684,7 @@ impl Grant {
 
         for index in 0..page_count {
             let src_page = src_base.next_by(index);
-            let (address, entry_flags) = if unmap {
+            let (address, _entry_flags) = if unmap {
                 let (entry, entry_flags, flush) = unsafe { src_mapper.unmap_phys(src_page.start_address(), true).expect("grant references unmapped memory") };
                 src_flusher.consume(flush);
 

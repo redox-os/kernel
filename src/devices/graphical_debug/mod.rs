@@ -45,8 +45,6 @@ pub fn init(env: &[u8]) {
     println!("Framebuffer {}x{} at {:X}", width, height, physbaseptr);
 
     {
-        let size = width * height * 4;
-
         let virtbaseptr = physbaseptr + crate::PHYS_OFFSET;
 
         let display = Display::new(width, height, virtbaseptr as *mut u32);
