@@ -1,7 +1,7 @@
 use core::intrinsics::{volatile_load, volatile_store};
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, PhysicalAddress, Page, PageFlags, TableKind, VirtualAddress};
+use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, TableKind, VirtualAddress};
 
 static GICD_CTLR: u32 = 0x000;
 static GICD_TYPER: u32 = 0x004;
@@ -56,14 +56,18 @@ pub struct GicDistIf {
 impl GicDistIf {
     unsafe fn init(&mut self) {
         // Map in the Distributor interface
-        let mut active_table = ActivePageTable::new(TableKind::Kernel);
+        let mut mapper = KernelMapper::lock();
 
         let start_frame = Frame::containing_address(PhysicalAddress::new(0x08000000));
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x08000000 + 0x10000 - 1));
         for frame in Frame::range_inclusive(start_frame, end_frame) {
             let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::KERNEL_DEVMAP_OFFSET));
-            let result = active_table.map_to(page, frame, PageFlags::new().write(true));
-            result.flush();
+            mapper
+                .get_mut()
+                .expect("failed to access KernelMapper for mapping GIC distributor")
+                .map_phys(page.start_address(), frame.start_address(), PageFlags::new().write(true))
+                .expect("failed to map GIC distributor")
+                .flush();
         }
 
         self.address = crate::KERNEL_DEVMAP_OFFSET + 0x08000000;
@@ -73,8 +77,12 @@ impl GicDistIf {
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x08010000 + 0x10000 - 1));
         for frame in Frame::range_inclusive(start_frame, end_frame) {
             let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::KERNEL_DEVMAP_OFFSET));
-            let result = active_table.map_to(page, frame, PageFlags::new().write(true));
-            result.flush();
+            mapper
+                .get_mut()
+                .expect("failed to access KernelMapper for mapping GIC interface")
+                .map_phys(page.start_address(), frame.start_address(), PageFlags::new().write(true))
+                .expect("failed to map GIC interface")
+                .flush();
         }
 
         GIC_CPU_IF.address = crate::KERNEL_DEVMAP_OFFSET + 0x08010000;

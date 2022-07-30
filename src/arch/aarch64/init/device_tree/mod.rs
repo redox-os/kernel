@@ -23,7 +23,7 @@ fn root_cell_sz(dt: &fdt::DeviceTree) -> Option<(u32, u32)> {
 
 fn memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usize, ranges: &mut [(usize, usize); 10]) -> usize {
 
-    let memory_node = dt.find_node("/memory").unwrap();
+    let (memory_node, _memory_cells) = dt.find_node("/memory").unwrap();
     let reg = memory_node.properties().find(|p| p.name.contains("reg")).unwrap();
     let chunk_sz = (address_cells + size_cells) * 4;
     let chunk_count = (reg.data.len() / chunk_sz);
@@ -51,7 +51,7 @@ pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize
     let data = unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) };
     let dt = fdt::DeviceTree::new(data).unwrap();
 
-    let chosen_node = dt.find_node("/chosen").unwrap();
+    let (chosen_node, _chosen_cells) = dt.find_node("/chosen").unwrap();
     let stdout_path = chosen_node.properties().find(|p| p.name.contains("stdout-path")).unwrap();
     let uart_node_name = core::str::from_utf8(stdout_path.data).unwrap()
         .split('/')
@@ -92,7 +92,7 @@ pub fn fill_env_data(dtb_base: usize, dtb_size: usize, env_base: usize) -> usize
     let data = unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) };
     let dt = fdt::DeviceTree::new(data).unwrap();
 
-    let chosen_node = dt.find_node("/chosen").unwrap();
+    let (chosen_node, _chosen_cells) = dt.find_node("/chosen").unwrap();
     if let Some(bootargs) = chosen_node.properties().find(|p| p.name.contains("bootargs")) {
         let bootargs_len = bootargs.data.len();
 

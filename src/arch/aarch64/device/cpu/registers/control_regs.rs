@@ -1,5 +1,7 @@
 //! Functions to read and write control registers.
 
+use core::arch::asm;
+
 bitflags! {
     pub struct MairEl1: u64 {
         const DEVICE_MEMORY = 0x00;
@@ -10,76 +12,76 @@ bitflags! {
 
 pub unsafe fn ttbr0_el1() -> u64 {
     let ret: u64;
-    llvm_asm!("mrs $0, ttbr0_el1" : "=r" (ret));
+    asm!("mrs {}, ttbr0_el1", out(reg) ret);
     ret
 }
 
 pub unsafe fn ttbr0_el1_write(val: u64) {
-    llvm_asm!("msr ttbr0_el1, $0" :: "r" (val) : "memory");
+    asm!("msr ttbr0_el1, {}", in(reg) val);
 }
 
 pub unsafe fn ttbr1_el1() -> u64 {
     let ret: u64;
-    llvm_asm!("mrs $0, ttbr1_el1" : "=r" (ret));
+    asm!("mrs {}, ttbr1_el1", out(reg) ret);
     ret
 }
 
 pub unsafe fn ttbr1_el1_write(val: u64) {
-    llvm_asm!("msr ttbr1_el1, $0" :: "r" (val) : "memory");
+    asm!("msr ttbr1_el1, {}", in(reg) val);
 }
 
 pub unsafe fn mair_el1() -> MairEl1 {
     let ret: u64;
-    llvm_asm!("mrs $0, mair_el1" : "=r" (ret));
+    asm!("mrs {}, mair_el1", out(reg) ret);
     MairEl1::from_bits_truncate(ret)
 }
 
 pub unsafe fn mair_el1_write(val: MairEl1) {
-    llvm_asm!("msr mair_el1, $0" :: "r" (val.bits()) : "memory");
+    asm!("msr mair_el1, {}", in(reg) val.bits());
 }
 
 pub unsafe fn tpidr_el0_write(val: u64) {
-    llvm_asm!("msr tpidr_el0, $0" :: "r" (val) : "memory");
+    asm!("msr tpidr_el0, {}", in(reg) val);
 }
 
 pub unsafe fn tpidr_el1_write(val: u64) {
-    llvm_asm!("msr tpidr_el1, $0" :: "r" (val) : "memory");
+    asm!("msr tpidr_el1, {}", in(reg) val);
 }
 
 pub unsafe fn esr_el1() -> u32 {
     let ret: u32;
-    llvm_asm!("mrs $0, esr_el1" : "=r" (ret));
+    asm!("mrs {}, esr_el1", out(reg) ret);
     ret
 }
 
 pub unsafe fn cntfreq_el0() -> u32 {
     let ret: u32;
-    llvm_asm!("mrs $0, cntfrq_el0" : "=r" (ret));
+    asm!("mrs {}, cntfrq_el0", out(reg) ret);
     ret
 }
 
 pub unsafe fn tmr_ctrl() -> u32 {
     let ret: u32;
-    llvm_asm!("mrs $0, cntp_ctl_el0" : "=r" (ret));
+    asm!("mrs {}, cntp_ctl_el0", out(reg) ret);
     ret
 }
 
 pub unsafe fn tmr_ctrl_write(val: u32) {
-    llvm_asm!("msr cntp_ctl_el0, $0" :: "r" (val) : "memory");
+    asm!("msr cntp_ctl_el0, {}", in(reg) val);
 }
 
 pub unsafe fn tmr_tval() -> u32 {
     let ret: u32;
-    llvm_asm!("mrs $0, cntp_tval_el0" : "=r" (ret));
+    asm!("mrs {}, cntp_tval_el0", out(reg) ret);
     ret
 }
 
 pub unsafe fn tmr_tval_write(val: u32) {
-    llvm_asm!("msr cntp_tval_el0, $0" :: "r" (val) : "memory");
+    asm!("msr cntp_tval_el0, {}", in(reg) val);
 }
 
 pub unsafe fn midr() -> u32 {
     let ret: u32;
-    llvm_asm!("mrs $0, midr_el1" : "=r" (ret));
+    asm!("mrs {}, midr_el1", out(reg) ret);
     ret
 }

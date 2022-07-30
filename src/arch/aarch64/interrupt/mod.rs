@@ -1,5 +1,7 @@
 //! Interrupt instructions
 
+use core::arch::asm;
+
 #[macro_use]
 pub mod handler;
 
@@ -14,13 +16,13 @@ pub use self::trace::stack_trace;
 /// Clear interrupts
 #[inline(always)]
 pub unsafe fn disable() {
-    llvm_asm!("msr daifset, #2");
+    asm!("msr daifset, #2");
 }
 
 /// Set interrupts
 #[inline(always)]
 pub unsafe fn enable() {
-    llvm_asm!("msr daifclr, #2");
+    asm!("msr daifclr, #2");
 }
 
 /// Set interrupts and halt
@@ -28,8 +30,8 @@ pub unsafe fn enable() {
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
-    llvm_asm!("msr daifclr, #2");
-    llvm_asm!("wfi");
+    asm!("msr daifclr, #2");
+    asm!("wfi");
 }
 
 /// Set interrupts and nop
@@ -37,21 +39,21 @@ pub unsafe fn enable_and_halt() {
 /// Simply enabling interrupts does not gurantee that they will trigger, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_nop() {
-    llvm_asm!("msr daifclr, #2");
-    llvm_asm!("nop");
+    asm!("msr daifclr, #2");
+    asm!("nop");
 }
 
 /// Halt instruction
 #[inline(always)]
 pub unsafe fn halt() {
-    llvm_asm!("wfi");
+    asm!("wfi");
 }
 
 /// Pause instruction
 /// Safe because it is similar to a NOP, and has no memory effects
 #[inline(always)]
 pub fn pause() {
-    unsafe { llvm_asm!("nop") };
+    unsafe { asm!("nop") };
 }
 
 pub fn available_irqs_iter(cpu_id: usize) -> impl Iterator<Item = u8> + 'static {

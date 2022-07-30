@@ -1,6 +1,8 @@
 use core::convert::TryInto;
 
-use crate::syscall::io::{Io, Mmio, Pio, ReadOnly};
+use crate::syscall::io::{Io, Mmio, ReadOnly};
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::syscall::io::Pio;
 
 bitflags! {
     /// Interrupt enable flags
@@ -42,6 +44,7 @@ pub struct SerialPort<T: Io> {
     modem_sts: ReadOnly<T>,
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 impl SerialPort<Pio<u8>> {
     pub const fn new(base: u16) -> SerialPort<Pio<u8>> {
         SerialPort {

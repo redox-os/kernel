@@ -1,5 +1,6 @@
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
+use spin::Once;
 
 use crate::device::cpu::registers::{control_regs, tlb};
 use crate::syscall::FloatRegisters;
@@ -9,6 +10,10 @@ use crate::syscall::FloatRegisters;
 /// The `Context::switch_to` function will set it back to false, allowing other CPU's to switch
 /// This must be done, as no locks can be held on the stack during switch
 pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
+
+//TODO: find out ideal size
+pub const KFX_SIZE: usize = 512;
+pub const KFX_ALIGN: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct Context {
@@ -222,10 +227,17 @@ impl Context {
     }
 }
 
-#[cold]
-#[inline(never)]
-#[naked]
-pub unsafe extern "C" fn switch_to(prev: &mut Context, next: &mut Context) {
+pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
+
+// SAFETY: EMPTY_CR3 must be initialized.
+pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
+    debug_assert!(EMPTY_CR3.poll().is_some());
+    *EMPTY_CR3.get_unchecked()
+}
+
+pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
+    todo!("Context::switch_to");
+    /*TODO: update to use asm!
     let mut float_regs = &mut *(prev.fx_address as *mut FloatRegisters);
     asm!(
         "stp q0, q1, [{0}, #16 * 0]",
@@ -378,6 +390,7 @@ pub unsafe extern "C" fn switch_to(prev: &mut Context, next: &mut Context) {
 
     // Jump to switch hook
     asm!("b {switch_hook}", switch_hook = sym crate::context::switch_finish_hook);
+    */
 }
 
 #[allow(dead_code)]
@@ -419,6 +432,14 @@ pub struct SignalHandlerStack {
 
 #[naked]
 unsafe extern fn signal_handler_wrapper() {
+    core::arch::asm!(
+        "
+        1:
+            b 1f
+        ",
+        options(noreturn)
+    );
+    /*TODO: convert to asm!
     #[inline(never)]
     unsafe fn inner(stack: &SignalHandlerStack) {
         (stack.handler)(stack.sig);
@@ -498,4 +519,5 @@ unsafe extern fn signal_handler_wrapper() {
     : : : : "volatile");
 
     llvm_asm!("mov       x30, $0" : : "r"(final_lr) : "memory" : "volatile");
+    */
 }

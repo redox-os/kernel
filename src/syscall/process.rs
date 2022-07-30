@@ -602,7 +602,6 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
         addr_space.grants.insert(grant);
     }
 
-    #[cfg(target_arch = "x86_64")]
     // Start in a minimal environment without any stack.
     usermode(bootstrap.entry, 0, 0, 0);
 }

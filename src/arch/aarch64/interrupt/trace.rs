@@ -1,16 +1,18 @@
-use core::mem;
+use core::{arch::asm, mem};
 use goblin::elf::sym;
 
-use crate::paging::{ActivePageTable, TableKind, VirtualAddress};
+use crate::paging::{KernelMapper, TableKind, VirtualAddress};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
 #[inline(never)]
 pub unsafe fn stack_trace() {
     let mut fp: usize;
-    llvm_asm!("" : "={fp}"(fp) : : : "volatile");
+    asm!("mov {}, fp", out(reg) fp);
 
     println!("TRACE: {:>016x}", fp);
+
+    /*TODO: implement using rmm
     //Maximum 64 frames
     let active_ktable = ActivePageTable::new(TableKind::Kernel);
     let active_utable = ActivePageTable::new(TableKind::User);
@@ -37,6 +39,7 @@ pub unsafe fn stack_trace() {
             println!("  {:>016x}: fp OVERFLOW", fp);
         }
     }
+    */
 }
 ///
 /// Get a symbol

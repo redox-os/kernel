@@ -29,3 +29,5 @@ pub mod stop;
 
 /// Early init support
 pub mod init;
+
+pub use ::rmm::AArch64Arch as CurrentRmmArch;

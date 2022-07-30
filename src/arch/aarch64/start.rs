@@ -7,14 +7,16 @@ use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::memory::{Frame};
-use crate::paging::{ActivePageTable, Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
+use crate::paging::{Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
 
 use crate::allocator;
 use crate::device;
+#[cfg(feature = "graphical_debug")]
+use crate::devices::graphical_debug;
 use crate::init::device_tree;
 use crate::interrupt;
 use crate::log::{self, info};
-use crate::paging;
+use crate::paging::{self, KernelMapper};
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -35,20 +37,29 @@ static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 #[repr(packed)]
 pub struct KernelArgs {
-    kernel_base: u64,
-    kernel_size: u64,
-    stack_base: u64,
-    stack_size: u64,
-    env_base: u64,
-    env_size: u64,
-    dtb_base: u64,
-    dtb_size: u64,
+    kernel_base: usize,
+    kernel_size: usize,
+    stack_base: usize,
+    stack_size: usize,
+    env_base: usize,
+    env_size: usize,
+    dtb_base: usize,
+    dtb_size: usize,
+    areas_base: usize,
+    areas_size: usize,
+
+    /// The physical base 64-bit pointer to the contiguous bootstrap/initfs.
+    bootstrap_base: usize,
+    /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
+    bootstrap_size: usize,
+    /// Entry point the kernel will jump to.
+    bootstrap_entry: usize,
 }
 
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
 pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
-    let env = {
+    let bootstrap = {
         let args = &*args_ptr;
 
         let kernel_base = args.kernel_base as usize;
@@ -72,6 +83,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Try to find serial port prior to logging
         device::serial::init_early(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size);
 
+        // Convert env to slice
+        let env = slice::from_raw_parts((args.env_base + crate::PHYS_OFFSET) as *const u8, args.env_size);
+
+        // Set up graphical debug
+        #[cfg(feature = "graphical_debug")]
+        graphical_debug::init(env);
+
         // Initialize logger
         log::init_logger(|r| {
             use core::fmt::Write;
@@ -85,10 +103,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         });
 
         info!("Redox OS starting...");
-        info!("Kernel: {:X}:{:X}", kernel_base, kernel_base + kernel_size);
-        info!("Stack: {:X}:{:X}", stack_base, stack_base + stack_size);
-        info!("Env: {:X}:{:X}", env_base, env_base + env_size);
-        info!("DTB: {:X}:{:X}", dtb_base, dtb_base + dtb_size);
+        info!("Kernel: {:X}:{:X}", args.kernel_base, args.kernel_base + args.kernel_size);
+        info!("Stack: {:X}:{:X}", args.stack_base, args.stack_base + args.stack_size);
+        info!("Env: {:X}:{:X}", args.env_base, args.env_base + args.env_size);
+        info!("RSDPs: {:X}:{:X}", args.dtb_base, args.dtb_base + args.dtb_size);
+        info!("Areas: {:X}:{:X}", args.areas_base, args.areas_base + args.areas_size);
+        info!("Bootstrap: {:X}:{:X}", args.bootstrap_base, args.bootstrap_base + args.bootstrap_size);
+        info!("Bootstrap entry point: {:X}", args.bootstrap_entry);
 
         println!("FILL MEMORY MAP START");
         device_tree::fill_memory_map(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size);
@@ -100,12 +121,19 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize RMM
         println!("RMM INIT START");
-        crate::arch::rmm::init(kernel_base, kernel_size + stack_size);
+        crate::arch::rmm::init(
+            args.kernel_base, args.kernel_size,
+            args.stack_base, args.stack_size,
+            args.env_base, args.env_size,
+            args.dtb_base, args.dtb_size,
+            args.areas_base, args.areas_size,
+            args.bootstrap_base, args.bootstrap_size,
+        );
         println!("RMM INIT COMPLETE");
 
         // Initialize paging
         println!("PAGING INIT START");
-        let (mut active_table, _tcb_offset) = paging::init(0);
+        let tcb_offset = paging::init(0);
         println!("PAGING INIT COMPLETE");
 
         // Test tdata and tbss
@@ -125,7 +153,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Setup kernel heap
         println!("ALLOCATOR INIT START");
-        allocator::init(&mut active_table);
+        allocator::init();
         println!("ALLOCATOR INIT COMPLETE");
 
         // Activate memory logging
@@ -135,7 +163,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize devices
         println!("DEVICE INIT START");
-        device::init(&mut active_table);
+        device::init();
         println!("DEVICE INIT COMPLETE");
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
@@ -145,11 +173,16 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         BSP_READY.store(true, Ordering::SeqCst);
 
-        slice::from_raw_parts(env_base as *const u8, env_size)
+        crate::Bootstrap {
+            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(args.bootstrap_base)),
+            page_count: args.bootstrap_size / crate::memory::PAGE_SIZE,
+            entry: args.bootstrap_entry,
+            env,
+        }
     };
 
     println!("KMAIN");
-    crate::kmain(CPU_COUNT.load(Ordering::SeqCst), env);
+    crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
 }
 
 #[repr(packed)]
@@ -166,7 +199,15 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 }
 
 #[naked]
-pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, _singlestep: u32) -> ! {
+pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, _singlestep: usize) -> ! {
+    core::arch::asm!(
+        "
+        1:
+            b 1f
+        ",
+        options(noreturn)
+    );
+    /*TODO: update to asm
     let cpu_id: usize = 0;
     let spsr: u32 = 0;
 
@@ -178,4 +219,5 @@ pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, _singlestep: u32) -> ! 
     llvm_asm!("eret" : : : : "volatile");
 
     unreachable!();
+    */
 }

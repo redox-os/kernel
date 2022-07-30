@@ -4,7 +4,7 @@ use crate::device::cpu::registers::{control_regs};
 
 pub mod registers;
 
-bitfield! {
+bitfield::bitfield! {
     pub struct MachineId(u32);
     get_implementer, _: 31, 24;
     get_variant, _: 23, 20;

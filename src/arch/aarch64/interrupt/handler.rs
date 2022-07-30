@@ -174,7 +174,7 @@ impl InterruptStack {
 #[macro_export]
 macro_rules! aarch64_asm {
     ($($strings:expr,)+) => {
-        global_asm!(concat!(
+        core::arch::global_asm!(concat!(
             $($strings),+,
         ));
     };

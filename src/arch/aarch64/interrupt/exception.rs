@@ -1,3 +1,5 @@
+use core::arch::asm;
+
 use crate::{
     context,
     cpu_id,
@@ -25,9 +27,6 @@ exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
 
 exception_stack!(synchronous_exception_at_el0, |stack| {
     with_exception_stack!(|stack| {
-        let fp;
-        asm!("mov {}, fp", out(reg) fp);
-
         let exception_code = (stack.iret.esr_el1 & (0x3f << 26)) >> 26;
         if exception_code != 0b010101 {
             println!("FATAL: Not an SVC induced synchronous exception");
@@ -50,7 +49,7 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
         }
 
         let scratch = &stack.scratch;
-        syscall::syscall(scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, fp, stack)
+        syscall::syscall(scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, stack)
     });
 });
 

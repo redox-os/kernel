@@ -53,6 +53,9 @@
     pub const USER_OFFSET: usize = 0;
     pub const USER_PML4: usize = (USER_OFFSET & PML4_MASK)/PML4_SIZE;
 
+    /// End offset of the user image, i.e. kernel start
+    pub const USER_END_OFFSET: usize = 256 * PML4_SIZE;
+
     /// Offset to user TCB
     pub const USER_TCB_OFFSET: usize = 0xB000_0000;
 

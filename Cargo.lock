@@ -75,6 +75,7 @@ dependencies = [
  "linked_list_allocator 0.9.1",
  "log",
  "memoffset",
+ "paste",
  "raw-cpuid",
  "redox_syscall",
  "rmm",
@@ -130,6 +131,12 @@ checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
 dependencies = [
  "autocfg",
 ]
+
+[[package]]
+name = "paste"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c520e05135d6e763148b6426a837e239041653ba7becd2e538c076c738025fc"
 
 [[package]]
 name = "plain"

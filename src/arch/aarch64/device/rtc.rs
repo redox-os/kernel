@@ -1,7 +1,7 @@
 use core::intrinsics::{volatile_load, volatile_store};
 
 use crate::memory::Frame;
-use crate::paging::{ActivePageTable, PhysicalAddress, Page, PageFlags, TableKind, VirtualAddress};
+use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, TableKind, VirtualAddress};
 use crate::time;
 
 static RTC_DR: u32 = 0x000;
@@ -28,15 +28,19 @@ struct Pl031rtc {
 
 impl Pl031rtc {
     unsafe fn init(&mut self) {
-        let mut active_table = ActivePageTable::new(TableKind::Kernel);
+        let mut mapper = KernelMapper::lock();
 
         let start_frame = Frame::containing_address(PhysicalAddress::new(0x09010000));
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
 
         for frame in Frame::range_inclusive(start_frame, end_frame) {
             let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::KERNEL_DEVMAP_OFFSET));
-            let result = active_table.map_to(page, frame, PageFlags::new().write(true));
-            result.flush();
+            mapper
+                .get_mut()
+                .expect("failed to access KernelMapper for mapping RTC")
+                .map_phys(page.start_address(), frame.start_address(), PageFlags::new().write(true))
+                .expect("failed to map RTC")
+                .flush();
         }
 
         self.address = crate::KERNEL_DEVMAP_OFFSET + 0x09010000;
