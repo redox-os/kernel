@@ -18,10 +18,10 @@ use rmm::{
     PageMapper,
     PhysicalAddress,
     VirtualAddress,
-    X8664Arch as RmmA,
 };
-
 use spin::Mutex;
+
+use super::CurrentRmmArch as RmmA;
 
 extern "C" {
     /// The starting byte of the text (code) data segment.
@@ -191,7 +191,7 @@ unsafe fn inner<A: Arch>(
         }
 
         log::debug!("Table: {:X}", mapper.table().phys().data());
-        for i in 0..512 {
+        for i in 0..A::PAGE_ENTRIES {
             if let Some(entry) = mapper.table().entry(i) {
                 if entry.present() {
                     log::debug!("{}: {:X}", i, entry.data());

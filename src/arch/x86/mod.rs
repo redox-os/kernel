@@ -16,10 +16,6 @@ pub mod device;
 /// Global descriptor table
 pub mod gdt;
 
-/// Graphical debug
-#[cfg(feature = "graphical_debug")]
-mod graphical_debug;
-
 /// Interrupt instructions
 #[macro_use]
 pub mod interrupt;

@@ -323,7 +323,7 @@ impl IdtEntry {
         self.selector = selector;
         self.offsetl = base as u16;
         self.offsetm = (base >> 16) as u16;
-        self.offseth = (base >> 32) as u32;
+        self.offseth = ((base as u64) >> 32) as u32;
     }
 
     // A function to set the offset more easily

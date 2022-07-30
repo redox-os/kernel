@@ -296,7 +296,7 @@ pub struct IdtEntry {
     attribute: u8,
     offsetm: u16,
     offseth: u32,
-    zero2: u32
+    _zero2: u32
 }
 
 impl IdtEntry {
@@ -308,7 +308,7 @@ impl IdtEntry {
             attribute: 0,
             offsetm: 0,
             offseth: 0,
-            zero2: 0
+            _zero2: 0
         }
     }
 

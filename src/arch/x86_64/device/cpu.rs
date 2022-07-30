@@ -1,11 +1,15 @@
-extern crate raw_cpuid;
-
 use core::fmt::{Result, Write};
 
-use self::raw_cpuid::CpuId;
+use super::super::cpuid::cpuid;
 
 pub fn cpu_info<W: Write>(w: &mut W) -> Result {
-    let cpuid = CpuId::new();
+    let cpuid = match cpuid() {
+        Some(some) => some,
+        None => {
+            writeln!(w, "CPUID instruction not supported")?;
+            return Ok(());
+        }
+    };
 
     if let Some(info) = cpuid.get_vendor_info() {
         writeln!(w, "Vendor: {}", info.as_str())?;

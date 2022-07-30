@@ -1,9 +1,10 @@
 use core::sync::atomic::{self, AtomicU64};
 use core::intrinsics::{volatile_load, volatile_store};
-use x86::cpuid::CpuId;
 use x86::msr::*;
 
 use crate::paging::{KernelMapper, PhysicalAddress, PageFlags, RmmA, RmmArch};
+
+use super::super::cpuid::cpuid;
 
 pub static mut LOCAL_APIC: LocalApic = LocalApic {
     address: 0,
@@ -47,7 +48,11 @@ impl LocalApic {
         let virtaddr = RmmA::phys_to_virt(physaddr);
 
         self.address = virtaddr.data();
-        self.x2 = CpuId::new().get_feature_info().unwrap().has_x2apic();
+        self.x2 = cpuid().map_or(false, |cpuid| {
+            cpuid.get_feature_info().map_or(false, |feature_info| {
+                feature_info.has_x2apic()
+            })
+        });
 
         if ! self.x2 {
             log::info!("Detected xAPIC at {:#x}", physaddr.data());

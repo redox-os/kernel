@@ -23,13 +23,13 @@ use crate::paging::{self, KernelMapper};
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
-static DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
+static DATA_TEST_NONZERO: usize = usize::max_value();
 /// Test of zero values in thread BSS
 #[thread_local]
 static mut TBSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in thread data.
 #[thread_local]
-static mut TDATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
+static mut TDATA_TEST_NONZERO: usize = usize::max_value();
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -39,12 +39,12 @@ static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 #[repr(packed)]
 pub struct KernelArgs {
-    kernel_base: usize,
-    kernel_size: usize,
-    stack_base: usize,
-    stack_size: usize,
-    env_base: usize,
-    env_size: usize,
+    kernel_base: u64,
+    kernel_size: u64,
+    stack_base: u64,
+    stack_size: u64,
+    env_base: u64,
+    env_size: u64,
 
     /// The base 64-bit pointer to an array of saved RSDPs. It's up to the kernel (and possibly
     /// userspace), to decide which RSDP to use. The buffer will be a linked list containing a
@@ -53,19 +53,19 @@ pub struct KernelArgs {
     /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
     /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
     /// memory instead. On UEFI systems, BIOS-like searching is not guaranteed to actually work though.
-    acpi_rsdps_base: usize,
+    acpi_rsdps_base: u64,
     /// The size of the RSDPs region.
-    acpi_rsdps_size: usize,
+    acpi_rsdps_size: u64,
 
-    areas_base: usize,
-    areas_size: usize,
+    areas_base: u64,
+    areas_size: u64,
 
     /// The physical base 64-bit pointer to the contiguous bootstrap/initfs.
-    bootstrap_base: usize,
+    bootstrap_base: u64,
     /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
-    bootstrap_size: usize,
+    bootstrap_size: u64,
     /// Entry point the kernel will jump to.
-    bootstrap_entry: usize,
+    bootstrap_entry: u64,
 }
 
 /// The entry to Rust, all things must be initialized
@@ -77,14 +77,14 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
-            assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
+            assert_eq!(DATA_TEST_NONZERO, usize::max_value());
         }
 
-        KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
-        KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
+        KERNEL_BASE.store(args.kernel_base as usize, Ordering::SeqCst);
+        KERNEL_SIZE.store(args.kernel_size as usize, Ordering::SeqCst);
 
         // Convert env to slice
-        let env = slice::from_raw_parts((args.env_base + crate::PHYS_OFFSET) as *const u8, args.env_size);
+        let env = slice::from_raw_parts((args.env_base as usize + crate::PHYS_OFFSET) as *const u8, args.env_size as usize);
 
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]
@@ -97,7 +97,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         log::init_logger(|r| {
             use core::fmt::Write;
             let _ = write!(
-                crate::arch::x86_64::debug::Writer::new(),
+                super::debug::Writer::new(),
                 "{}:{} -- {}\n",
                 r.target(),
                 r.level(),
@@ -122,19 +122,19 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize RMM
         crate::arch::rmm::init(
-            args.kernel_base, args.kernel_size,
-            args.stack_base, args.stack_size,
-            args.env_base, args.env_size,
-            args.acpi_rsdps_base, args.acpi_rsdps_size,
-            args.areas_base, args.areas_size,
-            args.bootstrap_base, args.bootstrap_size,
+            args.kernel_base as usize, args.kernel_size as usize,
+            args.stack_base as usize, args.stack_size as usize,
+            args.env_base as usize, args.env_size as usize,
+            args.acpi_rsdps_base as usize, args.acpi_rsdps_size as usize,
+            args.areas_base as usize, args.areas_size as usize,
+            args.bootstrap_base as usize, args.bootstrap_size as usize,
         );
 
         // Initialize paging
         let tcb_offset = paging::init(0);
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(0, tcb_offset, args.stack_base + args.stack_size);
+        gdt::init_paging(0, tcb_offset, args.stack_base as usize + args.stack_size as usize);
 
         // Set up IDT
         idt::init_paging_bsp();
@@ -147,9 +147,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             assert_eq!(TBSS_TEST_ZERO, 0);
             TBSS_TEST_ZERO += 1;
             assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
+            assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
             TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFE);
+            assert_eq!(TDATA_TEST_NONZERO, usize::max_value() - 1);
         }
 
         // Reset AP variables
@@ -176,7 +176,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         #[cfg(feature = "acpi")]
         {
             acpi::init(if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
-                Some(((args.acpi_rsdps_base + crate::PHYS_OFFSET) as u64, args.acpi_rsdps_size as u64))
+                Some(((args.acpi_rsdps_base as usize + crate::PHYS_OFFSET) as u64, args.acpi_rsdps_size as u64))
             } else {
                 None
             });
@@ -193,9 +193,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(true, Ordering::SeqCst);
 
         crate::Bootstrap {
-            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(args.bootstrap_base)),
-            page_count: args.bootstrap_size / crate::memory::PAGE_SIZE,
-            entry: args.bootstrap_entry,
+            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(args.bootstrap_base as usize)),
+            page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
+            entry: args.bootstrap_entry as usize,
             env,
         }
     };
@@ -221,7 +221,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         let stack_end = args.stack_end as usize;
 
         assert_eq!(BSS_TEST_ZERO, 0);
-        assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
+        assert_eq!(DATA_TEST_NONZERO, usize::max_value());
 
         // Set up GDT before paging
         gdt::init();
@@ -252,9 +252,9 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             assert_eq!(TBSS_TEST_ZERO, 0);
             TBSS_TEST_ZERO += 1;
             assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
+            assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
             TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFE);
+            assert_eq!(TDATA_TEST_NONZERO, usize::max_value() - 1);
         }
 
         // Initialize devices (for AP)

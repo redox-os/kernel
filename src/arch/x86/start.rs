@@ -9,17 +9,16 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::allocator;
 #[cfg(feature = "acpi")]
 use crate::acpi;
+use crate::arch::pti;
+use crate::arch::flags::*;
 use crate::device;
+#[cfg(feature = "graphical_debug")]
+use crate::devices::graphical_debug;
 use crate::gdt;
 use crate::idt;
 use crate::interrupt;
 use crate::log::{self, info};
 use crate::paging::{self, KernelMapper};
-
-#[cfg(feature = "graphical_debug")]
-use super::graphical_debug;
-use super::pti;
-use super::flags::*;
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -107,13 +106,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         });
 
         info!("Redox OS starting...");
-        info!("Kernel: {:X}:{:X}", args.kernel_base, args.kernel_base + args.kernel_size);
-        info!("Stack: {:X}:{:X}", args.stack_base, args.stack_base + args.stack_size);
-        info!("Env: {:X}:{:X}", args.env_base, args.env_base + args.env_size);
-        info!("RSDPs: {:X}:{:X}", args.acpi_rsdps_base, args.acpi_rsdps_base + args.acpi_rsdps_size);
-        info!("Areas: {:X}:{:X}", args.areas_base, args.areas_base + args.areas_size);
-        info!("Bootstrap: {:X}:{:X}", args.bootstrap_base, args.bootstrap_base + args.bootstrap_size);
-        info!("Bootstrap entry point: {:X}", args.bootstrap_entry);
+        info!("Kernel: {:X}:{:X}", { args.kernel_base }, { args.kernel_base } + { args.kernel_size });
+        info!("Stack: {:X}:{:X}", { args.stack_base }, { args.stack_base } + { args.stack_size });
+        info!("Env: {:X}:{:X}", { args.env_base }, { args.env_base } + { args.env_size });
+        info!("RSDPs: {:X}:{:X}", { args.acpi_rsdps_base }, { args.acpi_rsdps_base } + { args.acpi_rsdps_size });
+        info!("Areas: {:X}:{:X}", { args.areas_base }, { args.areas_base } + { args.areas_size });
+        info!("Bootstrap: {:X}:{:X}", { args.bootstrap_base }, { args.bootstrap_base } + { args.bootstrap_size });
+        info!("Bootstrap entry point: {:X}", { args.bootstrap_entry });
 
         // Set up GDT before paging
         gdt::init();
@@ -255,7 +254,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             assert_eq!(TBSS_TEST_ZERO, 1);
             assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
             TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
+            assert_eq!(TDATA_TEST_NONZERO, usize::max_value() - 1);
         }
 
         // Initialize devices (for AP)

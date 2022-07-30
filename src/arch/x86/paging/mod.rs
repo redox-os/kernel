@@ -14,8 +14,8 @@ pub use rmm::{
     PhysicalAddress,
     TableKind,
     VirtualAddress,
-    X86Arch as RmmA,
 };
+pub use super::CurrentRmmArch as RmmA;
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
 pub use crate::rmm::KernelMapper;

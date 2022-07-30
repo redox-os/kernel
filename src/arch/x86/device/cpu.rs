@@ -12,7 +12,7 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     };
 
     if let Some(info) = cpuid.get_vendor_info() {
-        writeln!(w, "Vendor: {}", info.as_string())?;
+        writeln!(w, "Vendor: {}", info.as_str())?;
     }
 
     if let Some(brand) = cpuid.get_processor_brand_string() {

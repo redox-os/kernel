@@ -69,7 +69,7 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
 }
 
 pub unsafe fn debug(hpet: &mut Hpet) {
-    println!("HPET @ {:#x}", hpet.base_address.address);
+    println!("HPET @ {:#x}", { hpet.base_address.address });
 
     let capability = hpet.base_address.read_u64(CAPABILITY_OFFSET);
     {

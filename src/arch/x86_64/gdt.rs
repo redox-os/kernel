@@ -10,6 +10,8 @@ use x86::dtables::{self, DescriptorTablePointer};
 use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
 use x86::task;
 
+use super::cpuid::cpuid;
+
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;
@@ -210,9 +212,11 @@ pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
 
-    let has_fsgsbase = raw_cpuid::CpuId::new()
-        .get_extended_feature_info()
-        .map_or(false, |extended_features| extended_features.has_fsgsbase());
+    let has_fsgsbase = cpuid().map_or(false, |cpuid| {
+        cpuid.get_extended_feature_info().map_or(false, |extended_features| {
+            extended_features.has_fsgsbase()
+        })
+    });
 
     if cfg!(feature = "x86_fsgsbase") {
         assert!(has_fsgsbase, "running kernel with features not supported by the current CPU");

@@ -14,7 +14,7 @@ use crate::syscall::io::Mmio;
 use crate::devices::uart_16550::SerialPort;
 
 #[cfg(feature = "graphical_debug")]
-use super::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};
+use crate::devices::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};
 #[cfg(feature = "lpss_debug")]
 use super::device::serial::LPSS;
 #[cfg(feature = "serial_debug")]
