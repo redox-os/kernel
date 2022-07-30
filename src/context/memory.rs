@@ -898,6 +898,32 @@ impl Drop for Table {
     }
 }
 
+/// Allocates a new identically mapped ktable and empty utable
+#[cfg(target_arch = "aarch64")]
+pub fn setup_new_utable() -> Result<Table> {
+    let mut utable = unsafe { PageMapper::create(crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+
+    {
+        let active_ktable = KernelMapper::lock();
+
+        let mut copy_mapping = |p4_no| unsafe {
+            let entry = active_ktable.table().entry(p4_no)
+                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
+
+            utable.table().set_entry(p4_no, entry)
+        };
+
+        // Copy higher half (kernel) mappings
+        for i in 256..512 {
+            copy_mapping(i);
+        }
+    }
+
+    Ok(Table {
+        utable,
+    })
+}
+
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86)
 #[cfg(target_arch = "x86")]
 pub fn setup_new_utable() -> Result<Table> {
