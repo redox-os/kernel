@@ -7,7 +7,6 @@ use core::{
 use rmm::{
     KILOBYTE,
     MEGABYTE,
-    AArch64Arch as RmmA,
     Arch,
     BuddyAllocator,
     BumpAllocator,
@@ -20,8 +19,9 @@ use rmm::{
     PhysicalAddress,
     VirtualAddress,
 };
+use spin::Mutex;
 
-use spin::{Mutex, MutexGuard};
+use super::CurrentRmmArch as RmmA;
 
 extern "C" {
     /// The starting byte of the text (code) data segment.
@@ -140,8 +140,8 @@ unsafe fn inner<A: Arch>(
         }
 
         let mut identity_map = |base, size_aligned| {
-            // Map stack with identity mapping
-            for i in 0..size / A::PAGE_SIZE {
+            // Map with identity mapping
+            for i in 0..size_aligned / A::PAGE_SIZE {
                 let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
                 let flags = page_flags::<A>(virt);
@@ -154,12 +154,10 @@ unsafe fn inner<A: Arch>(
             }
         };
 
-
         identity_map(stack_base, stack_size_aligned);
         identity_map(env_base, env_size_aligned);
         identity_map(acpi_base, acpi_size_aligned);
         identity_map(initfs_base, initfs_size_aligned);
-
 
         //TODO: this is another hack to map our UART
         match crate::device::serial::COM1.lock().as_ref().map(|x| x.base()) {
@@ -174,8 +172,39 @@ unsafe fn inner<A: Arch>(
             None => (),
         }
 
+        // Ensure graphical debug region remains paged
+        #[cfg(feature = "graphical_debug")]
+        {
+            use crate::devices::graphical_debug::DEBUG_DISPLAY;
+            use super::paging::entry::EntryFlags;
+
+            let (base, size) = if let Some(debug_display) = &*DEBUG_DISPLAY.lock() {
+                let data = &debug_display.display.onscreen;
+                (
+                    data.as_ptr() as usize - crate::PHYS_OFFSET,
+                    data.len() * 4
+                )
+            } else {
+                (0, 0)
+            };
+
+            let pages = (size + A::PAGE_SIZE - 1) / A::PAGE_SIZE;
+            for i in 0..pages {
+                let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
+                let virt = A::phys_to_virt(phys);
+                let flags = PageFlags::new().write(true)
+                    .custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
+                let flush = mapper.map_phys(
+                    virt,
+                    phys,
+                    flags
+                ).expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        }
+
         log::debug!("Table: {:X}", mapper.table().phys().data());
-        for i in 0..512 {
+        for i in 0..A::PAGE_ENTRIES {
             if let Some(entry) = mapper.table().entry(i) {
                 if entry.present() {
                     log::debug!("{}: {:X}", i, entry.data());
@@ -348,7 +377,7 @@ pub unsafe fn init(
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
     for bootloader_area in bootloader_areas.iter() {
-        if bootloader_area.kind != BootloaderMemoryKind::Free {
+        if { bootloader_area.kind } != BootloaderMemoryKind::Free {
             // Not a free area
             continue;
         }

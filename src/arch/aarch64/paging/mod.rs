@@ -9,7 +9,6 @@ use self::entry::EntryFlags;
 use self::mapper::PageFlushAll;
 
 pub use rmm::{
-    AArch64Arch as RmmA,
     Arch as RmmArch,
     Flusher,
     PageFlags,
@@ -17,6 +16,7 @@ pub use rmm::{
     TableKind,
     VirtualAddress,
 };
+pub use super::CurrentRmmArch as RmmA;
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
 pub use crate::rmm::KernelMapper;
