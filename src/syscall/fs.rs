@@ -5,6 +5,7 @@ use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context;
+use crate::memory::PAGE_SIZE;
 use crate::scheme::{self, FileHandle};
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
@@ -465,7 +466,12 @@ pub fn fstat(fd: FileHandle, stat: &mut Stat) -> Result<usize> {
 }
 
 pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
-    let (page, page_count) = crate::syscall::validate::validate_region(virtual_address, length)?;
+    let length_aligned = ((length + (PAGE_SIZE - 1))/PAGE_SIZE) * PAGE_SIZE;
+    if length != length_aligned {
+        log::warn!("funmap passed length {:#x} instead of {:#x}", length, length_aligned);
+    }
+
+    let (page, page_count) = crate::syscall::validate::validate_region(virtual_address, length_aligned)?;
 
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
     addr_space.write().munmap(page, page_count);
