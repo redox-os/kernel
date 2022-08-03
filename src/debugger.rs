@@ -22,9 +22,8 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
             RmmA::set_table(space.read().table.utable.table().phys());
+            check_consistency(&mut space.write());
         }
-
-        check_consistency(&mut context.addr_space.as_ref().unwrap().write());
 
         println!("status: {:?}", context.status);
         if ! context.status_reason.is_empty() {
