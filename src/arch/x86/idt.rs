@@ -295,8 +295,6 @@ pub struct IdtEntry {
     zero: u8,
     attribute: u8,
     offsetm: u16,
-    offseth: u32,
-    _zero2: u32
 }
 
 impl IdtEntry {
@@ -307,8 +305,6 @@ impl IdtEntry {
             zero: 0,
             attribute: 0,
             offsetm: 0,
-            offseth: 0,
-            _zero2: 0
         }
     }
 
@@ -326,7 +322,6 @@ impl IdtEntry {
         self.selector = selector;
         self.offsetl = base as u16;
         self.offsetm = (base >> 16) as u16;
-        self.offseth = ((base as u64) >> 32) as u32;
     }
 
     // A function to set the offset more easily

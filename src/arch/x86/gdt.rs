@@ -20,8 +20,7 @@ pub const GDT_USER_CODE32_UNUSED: usize = 4;
 pub const GDT_USER_DATA: usize = 5;
 pub const GDT_USER_CODE: usize = 6;
 pub const GDT_TSS: usize = 7;
-pub const GDT_TSS_HIGH: usize = 8;
-pub const GDT_CPU_ID_CONTAINER: usize = 9;
+pub const GDT_CPU_ID_CONTAINER: usize = 8;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
@@ -53,7 +52,7 @@ static mut INIT_GDT: [GdtEntry; 4] = [
 ];
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 10] = [
+pub static mut GDT: [GdtEntry; 9] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -70,8 +69,6 @@ pub static mut GDT: [GdtEntry; 10] = [
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
-    // TSS must be 16 bytes long, twice the normal size
-    GdtEntry::new(0, 0, 0, 0),
     // Unused entry which stores the CPU ID. This is necessary for paranoid interrupts as they have
     // no other way of determining it.
     GdtEntry::new(0, 0, 0, 0),
@@ -99,12 +96,14 @@ pub static mut KPCR: ProcessorControlRegion = ProcessorControlRegion {
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
     use super::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
+    KPCR.tss.0.ss0 = (GDT_KERNEL_DATA << 3) as u16;
     KPCR.tss.0.esp0 = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32;
     PTI_CONTEXT_STACK = stack;
 }
 
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
+    KPCR.tss.0.ss0 = (GDT_KERNEL_DATA << 3) as u16;
     KPCR.tss.0.esp0 = stack as u32;
 }
 
@@ -168,14 +167,10 @@ pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
 
     {
         // We can now access our TSS, via the KPCR, which is a thread local
-        let tss = &kpcr.tss.0 as *const _ as usize as u64;
-        let tss_lo = (tss & 0xFFFF_FFFF) as u32;
-        let tss_hi = (tss >> 32) as u32;
+        let tss = &kpcr.tss.0 as *const _ as usize as u32;
 
-        GDT[GDT_TSS].set_offset(tss_lo);
+        GDT[GDT_TSS].set_offset(tss);
         GDT[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
-
-        (&mut GDT[GDT_TSS_HIGH] as *mut GdtEntry).cast::<u32>().write(tss_hi);
     }
 
     // And finally, populate the last GDT entry with the current CPU ID, to allow paranoid
