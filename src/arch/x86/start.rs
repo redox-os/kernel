@@ -362,86 +362,56 @@ macro_rules! restore_fsgsbase(
 #[naked]
 // TODO: AbiCompatBool
 pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singlestep: usize) -> ! {
-    core::arch::asm!("
-    1:
-        hlt
-        jmp 1f
-    ", options(noreturn));
-    /*TODO
-    // rdi, rsi, rdx, rcx
+    // edi, esi, edx, ecx
     core::arch::asm!(
         concat!("
-            shl rcx, {shift_singlestep}
-            or rcx, {flag_interrupts}
+            // Pop arguments into registers
+            pop eax // return address, ignored
+            pop edi // ip
+            pop esi // sp
+            pop edx // arg
+            pop ecx // is_singlestep
 
-            ", inner_pit_unmap!(), "
+            // Set up eflags
+            shl ecx, {shift_singlestep}
+            or ecx, {flag_interrupts}
 
-            // Save rdx for later
-            mov r12, rdx
+            // Set data selectors
+            mov eax, {user_data_seg_selector}
+            mov ds, eax
+            mov es, eax
+            mov fs, eax
+            mov gs, eax
 
-            // Target RFLAGS
-            mov r11, rcx
+            // Set up iret stack
+            push eax // stack selector
+            push esi // stack address
+            push ecx // eflags
+            mov eax, {user_code_seg_selector}
+            push eax // code selector
+            push edi // code address
+
+            // Clear general purpose registers
+            xor eax, eax
+            xor ebx, ebx
+            xor ecx, ecx
+            xor edx, edx
+            xor edi, edi
+            xor esi, esi
+            xor ebp, ebp
+
+            // Clear FPU registers
+            fninit
 
             // Go to usermode
-            swapgs
-
-            ", save_fsgsbase!(), "
-
-            mov r15, {user_data_seg_selector}
-            mov ds, r15d
-            mov es, r15d
-            mov fs, r15d
-            mov gs, r15d
-            ",
-
-            // SS and CS will later be set via sysretq.
-
-            restore_fsgsbase!(), "
-
-            // Target instruction pointer
-            mov rcx, rdi
-            // Target stack pointer
-            mov rsp, rsi
-            // Target argument
-            mov rdi, r12
-
-            xor rax, rax
-            xor rbx, rbx
-            // Don't zero rcx; it's used for `ip`.
-            xor rdx, rdx
-            // Don't zero rdi; it's used for `arg`.
-            xor rsi, rsi
-            xor rbp, rbp
-            // Don't zero rsp, obviously.
-            xor r8, r8
-            xor r9, r9
-            xor r10, r10
-            // Don't zero r11; it's used for `rflags`.
-            xor r12, r12
-            xor r13, r13
-            xor r14, r14
-            xor r15, r15
-
-            fninit
-            ",
-            // NOTE: Regarding the sysretq vulnerability, this is safe as we cannot modify RCX,
-            // even though the caller can give us the wrong address. But, it's marked unsafe, so
-            // the caller is responsible for this! (And, the likelihood of rcx being changed in the
-            // middle here, is minimal, unless the attacker already has partial control of kernel
-            // memory.)
-            "
-            sysretq
+            iretd
             "),
 
         flag_interrupts = const(FLAG_INTERRUPTS),
         shift_singlestep = const(SHIFT_SINGLESTEP),
-        pti_unmap = sym pti::unmap,
         user_data_seg_selector = const(gdt::GDT_USER_DATA << 3 | 3),
-
-        MSR_FSBASE = const(x86::msr::IA32_FS_BASE),
-        MSR_GSBASE = const(x86::msr::IA32_GS_BASE),
+        user_code_seg_selector = const(gdt::GDT_USER_CODE << 3 | 3),
 
         options(noreturn),
     );
-    */
 }
