@@ -183,7 +183,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         let address = base_address.data() + BACKUP_STACK_SIZE;
 
         // Put them in the 1st entry of the IST.
-        crate::gdt::KPCR.tss.0.ist[usize::from(index - 1)] = address as u64;
+        //TODO: x86: crate::gdt::KPCR.tss.0.ist[usize::from(index - 1)] = address as u64;
 
         index
     };

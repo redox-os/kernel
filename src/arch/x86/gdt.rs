@@ -4,7 +4,7 @@ use core::convert::TryInto;
 use core::mem;
 
 use x86::segmentation::load_cs;
-use x86::bits64::task::TaskStateSegment;
+use x86::bits32::task::TaskStateSegment;
 use x86::Ring;
 use x86::dtables::{self, DescriptorTablePointer};
 use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
@@ -93,27 +93,19 @@ pub struct TssWrapper(pub TaskStateSegment);
 pub static mut KPCR: ProcessorControlRegion = ProcessorControlRegion {
     tcb_end: 0,
     user_rsp_tmp: 0,
-    tss: TssWrapper(TaskStateSegment {
-        reserved: 0,
-        rsp: [0; 3],
-        reserved2: 0,
-        ist: [0; 7],
-        reserved3: 0,
-        reserved4: 0,
-        iomap_base: 0xFFFF
-    }),
+    tss: TssWrapper(TaskStateSegment::new()),
 };
 
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
     use super::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
-    KPCR.tss.0.rsp[0] = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64;
+    KPCR.tss.0.esp0 = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32;
     PTI_CONTEXT_STACK = stack;
 }
 
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
-    KPCR.tss.0.rsp[0] = stack as u64;
+    KPCR.tss.0.esp0 = stack as u32;
 }
 
 // Initialize GDT
