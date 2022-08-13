@@ -345,14 +345,6 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn chmod(&self, path: &str, mode: u16, _uid: u32, _gid: u32) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(path.as_bytes())?;
-        let result = inner.call(SYS_CHMOD, address, path.len(), mode as usize);
-        let _ = inner.release(address);
-        result
-    }
-
     fn rmdir(&self, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture(path.as_bytes())?;
