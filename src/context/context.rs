@@ -122,7 +122,6 @@ pub struct ContextSnapshot {
     //TODO: is there a faster way than allocation?
     pub name: Box<str>,
     pub files: Vec<Option<FileDescription>>,
-    // pub cwd: Box<[u8]>,
 }
 
 impl ContextSnapshot {
@@ -234,8 +233,6 @@ pub struct Context {
     pub addr_space: Option<Arc<RwLock<AddrSpace>>>,
     /// The name of the context
     pub name: Arc<RwLock<Box<str>>>,
-    /// The current working directory
-    pub cwd: Arc<RwLock<String>>,
     /// The open files in the scheme
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
@@ -366,7 +363,6 @@ impl Context {
             ksig_restore: false,
             addr_space: None,
             name: Arc::new(RwLock::new(String::new().into_boxed_str())),
-            cwd: Arc::new(RwLock::new(String::new())),
             files: Arc::new(RwLock::new(Vec::new())),
             actions: Self::empty_actions(),
             regs: None,
@@ -375,73 +371,6 @@ impl Context {
             clone_entry: None,
         };
         Ok(this)
-    }
-
-    /// Make a relative path absolute
-    /// Given a cwd of "scheme:/path"
-    /// This function will turn "foo" into "scheme:/path/foo"
-    /// "/foo" will turn into "scheme:/foo"
-    /// "bar:/foo" will be used directly, as it is already absolute
-    pub fn canonicalize(&self, path: &str) -> String {
-        let mut canon = if path.find(':').is_none() {
-            let cwd = self.cwd.read();
-
-            let mut canon = if !path.starts_with('/') {
-                let mut c = cwd.clone();
-                if ! c.ends_with('/') {
-                    c.push('/');
-                }
-                c
-            } else {
-                cwd[..cwd.find(':').map_or(1, |i| i + 1)].to_string()
-            };
-
-            canon.push_str(&path);
-            canon
-        } else {
-            path.to_string()
-        };
-
-        // NOTE: assumes the scheme does not include anything like "../" or "./"
-        let mut result = {
-            let parts = canon.split('/')
-                .rev()
-                .scan(0, |nskip, part| {
-                    if part == "." {
-                        Some(None)
-                    } else if part == ".." {
-                        *nskip += 1;
-                        Some(None)
-                    } else if *nskip > 0 {
-                            *nskip -= 1;
-                            Some(None)
-                    } else {
-                        Some(Some(part))
-                    }
-                })
-                .filter_map(|x| x)
-                .filter(|x| !x.is_empty())
-                .collect::<Vec<_>>();
-            parts
-                .iter()
-                .rev()
-                .fold(String::new(), |mut string, &part| {
-                    string.push_str(part);
-                    string.push('/');
-                    string
-                })
-        };
-        result.pop(); // remove extra '/'
-
-        // replace with the root of the scheme if it's empty
-        if result.is_empty() {
-            let pos = canon.find(':')
-                            .map_or(canon.len(), |p| p + 1);
-            canon.truncate(pos);
-            canon
-        } else {
-            result
-        }
     }
 
     /// Block the context, and return true if it was runnable before being blocked

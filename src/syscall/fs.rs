@@ -51,110 +51,41 @@ pub fn file_op_mut_slice(a: usize, fd: FileHandle, slice: &mut [u8]) -> Result<u
     file_op(a, fd, slice.as_mut_ptr() as usize, slice.len())
 }
 
-/// Change the current working directory
-pub fn chdir(path: &str) -> Result<usize> {
-    let fd = open(path, O_RDONLY | O_DIRECTORY)?;
-    let mut stat = Stat::default();
-    let stat_res = file_op_mut_slice(syscall::number::SYS_FSTAT, fd, &mut stat);
-    let _ = close(fd);
-    stat_res?;
-    if stat.st_mode & (MODE_FILE | MODE_DIR) == MODE_DIR {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        let canonical = context.canonicalize(path);
-        *context.cwd.write() = canonical;
-        Ok(0)
-    } else {
-        Err(Error::new(ENOTDIR))
-    }
-}
-
-/// Get the current working directory
-pub fn getcwd(buf: &mut [u8]) -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    let cwd = context.cwd.read();
-    let cwd_bytes = cwd.as_bytes();
-    let mut i = 0;
-    while i < buf.len() && i < cwd_bytes.len() {
-        buf[i] = cwd_bytes[i];
-        i += 1;
-    }
-    Ok(i)
-}
-
 /// Open syscall
 pub fn open(path: &str, flags: usize) -> Result<FileHandle> {
-    let (mut path_canon, uid, gid, scheme_ns, umask) = {
+    let (uid, gid, scheme_ns, umask) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.canonicalize(path), context.euid, context.egid, context.ens, context.umask)
+        (context.euid, context.egid, context.ens, context.umask)
     };
 
     let flags = (flags & (!0o777)) | ((flags & 0o777) & (!(umask & 0o777)));
 
-    //println!("open {}", unsafe { ::core::str::from_utf8_unchecked(&path_canon) });
 
-    for _level in 0..32 { // XXX What should the limit be?
-        //println!("  level {} = {:?}", _level, ::core::str::from_utf8(&path_canon));
+    let mut parts = path.splitn(2, ':');
+    let scheme_name = parts.next().ok_or(Error::new(EINVAL))?;
+    let reference = parts.next().unwrap_or("");
 
-        let mut parts = path_canon.splitn(2, ':');
-        let scheme_name_opt = parts.next();
-        let reference_opt = parts.next();
-
-        let (scheme_id, file_id) = {
-            let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
-            let (scheme_id, scheme) = {
-                let schemes = scheme::schemes();
-                let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-                (scheme_id, Arc::clone(&scheme))
-            };
-            let reference = reference_opt.unwrap_or("");
-            let file_id = match scheme.open(reference, flags, uid, gid) {
-                Ok(ok) => ok,
-                Err(err) => if err.errno == EXDEV {
-                    let resolve_flags = O_CLOEXEC | O_SYMLINK | O_RDONLY;
-                    let resolve_id = scheme.open(reference, resolve_flags, uid, gid)?;
-
-                    let mut buf = [0; 4096];
-                    let res = scheme.read(resolve_id, &mut buf);
-
-                    let _ = scheme.close(resolve_id);
-
-                    let count = res?;
-
-                    let buf_str = str::from_utf8(&buf[..count]).map_err(|_| Error::new(EINVAL))?;
-
-                    let contexts = context::contexts();
-                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    let context = context_lock.read();
-                    path_canon = context.canonicalize(buf_str);
-
-                    continue;
-                } else {
-                    return Err(err);
-                }
-            };
-            (scheme_id, file_id)
+    let (scheme_id, file_id) = {
+        let (scheme_id, scheme) = {
+            let schemes = scheme::schemes();
+            let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+            (scheme_id, Arc::clone(&scheme))
         };
 
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        return context.add_file(FileDescriptor {
-            description: Arc::new(RwLock::new(FileDescription {
-                namespace: scheme_ns,
-                scheme: scheme_id,
-                number: file_id,
-                flags: flags & !O_CLOEXEC,
-            })),
-            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-        }).ok_or(Error::new(EMFILE));
-    }
-    Err(Error::new(ELOOP))
+        (scheme_id, scheme.open(reference, flags, uid, gid)?)
+    };
+
+    context::current()?.read().add_file(FileDescriptor {
+        description: Arc::new(RwLock::new(FileDescription {
+            namespace: scheme_ns,
+            scheme: scheme_id,
+            number: file_id,
+            flags: flags & !O_CLOEXEC,
+        })),
+        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
+    }).ok_or(Error::new(EMFILE))
 }
 
 pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
@@ -195,70 +126,46 @@ pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
     Ok(0)
 }
 
-/// chmod syscall
-pub fn chmod(path: &str, mode: u16) -> Result<usize> {
-    let (path_canon, uid, gid, scheme_ns) = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        (context.canonicalize(path), context.euid, context.egid, context.ens)
-    };
-
-    let mut parts = path_canon.splitn(2, ':');
-    let scheme_name_opt = parts.next();
-    let reference_opt = parts.next();
-
-    let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
-    let scheme = {
-        let schemes = scheme::schemes();
-        let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        Arc::clone(&scheme)
-    };
-    scheme.chmod(reference_opt.unwrap_or(""), mode, uid, gid)
-}
-
 /// rmdir syscall
 pub fn rmdir(path: &str) -> Result<usize> {
-    let (path_canon, uid, gid, scheme_ns) = {
+    let (uid, gid, scheme_ns) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.canonicalize(path), context.euid, context.egid, context.ens)
+        (context.euid, context.egid, context.ens)
     };
 
-    let mut parts = path_canon.splitn(2, ':');
-    let scheme_name_opt = parts.next();
-    let reference_opt = parts.next();
+    let mut parts = path.splitn(2, ':');
+    let scheme_name = parts.next().ok_or(Error::new(EINVAL))?;
+    let reference = parts.next().unwrap_or("");
 
-    let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
         Arc::clone(&scheme)
     };
-    scheme.rmdir(reference_opt.unwrap_or(""), uid, gid)
+    scheme.rmdir(reference, uid, gid)
 }
 
 /// Unlink syscall
 pub fn unlink(path: &str) -> Result<usize> {
-    let (path_canon, uid, gid, scheme_ns) = {
+    let (uid, gid, scheme_ns) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.canonicalize(path), context.euid, context.egid, context.ens)
+        (context.euid, context.egid, context.ens)
     };
 
-    let mut parts = path_canon.splitn(2, ':');
-    let scheme_name_opt = parts.next();
-    let reference_opt = parts.next();
+    let mut parts = path.splitn(2, ':');
+    let scheme_name = parts.next().ok_or(Error::new(EINVAL))?;
+    let reference = parts.next().unwrap_or("");
 
-    let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
         Arc::clone(&scheme)
     };
-    scheme.unlink(reference_opt.unwrap_or(""), uid, gid)
+    scheme.unlink(reference, uid, gid)
 }
 
 /// Close syscall
@@ -410,25 +317,14 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 }
 
 pub fn frename(fd: FileHandle, path: &str) -> Result<usize> {
-    let file = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        context.get_file(fd).ok_or(Error::new(EBADF))?
+    let (file, uid, gid, scheme_ns) = match context::current()?.read() {
+        ref context => (context.get_file(fd).ok_or(Error::new(EBADF))?, context.euid, context.egid, context.ens),
     };
 
-    let (path_canon, uid, gid, scheme_ns) = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        (context.canonicalize(path), context.euid, context.egid, context.ens)
-    };
+    let mut parts = path.splitn(2, ':');
+    let scheme_name = parts.next().ok_or(Error::new(ENOENT))?;
+    let reference = parts.next().unwrap_or("");
 
-    let mut parts = path_canon.splitn(2, ':');
-    let scheme_name_opt = parts.next();
-    let reference_opt = parts.next();
-
-    let scheme_name = scheme_name_opt.ok_or(Error::new(ENODEV))?;
     let (scheme_id, scheme) = {
         let schemes = scheme::schemes();
         let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
@@ -438,7 +334,7 @@ pub fn frename(fd: FileHandle, path: &str) -> Result<usize> {
     let description = file.description.read();
 
     if scheme_id == description.scheme {
-        scheme.frename(description.number, reference_opt.unwrap_or(""), uid, gid)
+        scheme.frename(description.number, reference, uid, gid)
     } else {
         Err(Error::new(EXDEV))
     }

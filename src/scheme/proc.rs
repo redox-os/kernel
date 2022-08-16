@@ -113,7 +113,6 @@ enum Operation {
     Trace,
     Static(&'static str),
     Name,
-    Cwd,
     Sigstack,
     Attr(Attr),
     Filetable { filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>> },
@@ -301,7 +300,6 @@ impl ProcScheme {
             Some("trace") => Operation::Trace,
             Some("exe") => Operation::Static("exe"),
             Some("name") => Operation::Name,
-            Some("cwd") => Operation::Cwd,
             Some("sigstack") => Operation::Sigstack,
             Some("uid") => Operation::Attr(Attr::Uid),
             Some("gid") => Operation::Attr(Attr::Gid),
@@ -682,7 +680,6 @@ impl Scheme for ProcScheme {
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
             Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.read().as_bytes(), &mut 0),
-            Operation::Cwd => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().cwd.read().as_bytes(), &mut 0),
             Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
             Operation::Attr(attr) => {
                 let src_buf = match (attr, &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?).read()) {
@@ -937,15 +934,9 @@ impl Scheme for ProcScheme {
 
                 Ok(mem::size_of::<u64>())
             },
-            // TODO: Deduplicate name and cwd
             Operation::Name => {
                 let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?.into_boxed_str();
                 *context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.write() = utf8;
-                Ok(buf.len())
-            }
-            Operation::Cwd => {
-                let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?;
-                *context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().cwd.write() = utf8;
                 Ok(buf.len())
             }
             Operation::Sigstack => {
@@ -1041,7 +1032,6 @@ impl Scheme for ProcScheme {
             Operation::Trace => "trace",
             Operation::Static(path) => path,
             Operation::Name => "name",
-            Operation::Cwd => "cwd",
             Operation::Sigstack => "sigstack",
             Operation::Attr(Attr::Uid) => "uid",
             Operation::Attr(Attr::Gid) => "gid",

@@ -29,11 +29,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             validate_slice(b as *const u8, c).map(ByteStr),
             d
         ),
-        SYS_CHMOD => format!(
-            "chmod({:?}, {:#o})",
-            validate_slice(b as *const u8, c).map(ByteStr),
-            d
-        ),
         SYS_RMDIR => format!(
             "rmdir({:?})",
             validate_slice(b as *const u8, c).map(ByteStr)
@@ -161,10 +156,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             ),
         ),
 
-        SYS_CHDIR => format!(
-            "chdir({:?})",
-            validate_slice(b as *const u8, c).map(ByteStr)
-        ),
         SYS_CLOCK_GETTIME => format!(
             "clock_gettime({}, {:?})",
             b,
@@ -182,11 +173,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             d,
             e,
             f
-        ),
-        SYS_GETCWD => format!(
-            "getcwd({:#X}, {})",
-            b,
-            c
         ),
         SYS_GETEGID => format!("getegid()"),
         SYS_GETENS => format!("getens()"),
