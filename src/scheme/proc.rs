@@ -1213,7 +1213,7 @@ impl KernelScheme for ProcScheme {
 extern "C" fn clone_handler() {
     let context_lock = Arc::clone(context::contexts().current().expect("expected the current context to be set in a spawn closure"));
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     unsafe {
         let [ip, sp] = context_lock.read().clone_entry.expect("clone_entry must be set");
         let [arg, is_singlestep] = [0; 2];
