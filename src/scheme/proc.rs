@@ -1,5 +1,5 @@
 use crate::{
-    arch::paging::{mapper::InactiveFlusher, Page, VirtualAddress},
+    arch::paging::{mapper::InactiveFlusher, Page, RmmA, RmmArch, VirtualAddress},
     context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, Region}},
     memory::PAGE_SIZE,
     ptrace,
@@ -497,13 +497,6 @@ impl Scheme for ProcScheme {
         Ok(value)
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        //TODO
-        Err(Error::new(EINVAL))
-    }
-
-    #[cfg(target_arch = "x86_64")]
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
@@ -625,7 +618,7 @@ impl Scheme for ProcScheme {
                                 Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
                             })?
                         };
-                        (Output { env: EnvRegisters { fsbase, gsbase }}, mem::size_of::<EnvRegisters>())
+                        (Output { env: EnvRegisters { fsbase: fsbase as _, gsbase: gsbase as _ }}, mem::size_of::<EnvRegisters>())
                     }
                 };
 
@@ -709,13 +702,6 @@ impl Scheme for ProcScheme {
         }
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        //TODO
-        Err(Error::new(EINVAL))
-    }
-
-    #[cfg(target_arch = "x86_64")]
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
@@ -843,18 +829,17 @@ impl Scheme for ProcScheme {
                     let regs = unsafe {
                         *(buf as *const _ as *const EnvRegisters)
                     };
-                    use rmm::{Arch as _, X8664Arch};
-                    if !(X8664Arch::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && X8664Arch::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
+                    if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
                         return Err(Error::new(EINVAL));
                     }
 
                     if info.pid == context::context_id() {
                         #[cfg(not(feature = "x86_fsgsbase"))]
                         unsafe {
-                            x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase);
+                            x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
                             // We have to write to KERNEL_GSBASE, because when the kernel returns to
                             // userspace, it will have executed SWAPGS first.
-                            x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase);
+                            x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
 
                             match context::contexts().current().ok_or(Error::new(ESRCH))?.write().arch {
                                 ref mut arch => {
@@ -1071,13 +1056,6 @@ impl Scheme for ProcScheme {
         Ok(0)
     }
 
-    #[cfg(not(target_arch = "x86_64"))]
-    fn close(&self, id: usize) -> Result<usize> {
-        //TODO
-        Err(Error::new(EINVAL))
-    }
-
-    #[cfg(target_arch = "x86_64")]
     fn close(&self, id: usize) -> Result<usize> {
         let mut handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
         handle.continue_ignored_children();
@@ -1088,8 +1066,17 @@ impl Scheme for ProcScheme {
             Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => {
                 stop_context(handle.info.pid, |context: &mut Context| unsafe {
                     if let Some(saved_regs) = ptrace::regs_for_mut(context) {
-                        saved_regs.iret.rip = new_ip;
-                        saved_regs.iret.rsp = new_sp;
+                        #[cfg(target_arch = "x86")]
+                        {
+                            saved_regs.iret.eip = new_ip;
+                            saved_regs.iret.esp = new_sp;
+                        }
+
+                        #[cfg(target_arch = "x86_64")]
+                        {
+                            saved_regs.iret.rip = new_ip;
+                            saved_regs.iret.rsp = new_sp;
+                        }
                     } else {
                         context.clone_entry = Some([new_ip, new_sp]);
                     }
