@@ -77,6 +77,7 @@ extern crate spin;
 #[cfg(feature = "slab")]
 extern crate slab_allocator;
 
+use alloc::string::ToString;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::scheme::SchemeNamespace;
@@ -208,6 +209,7 @@ pub fn kmain(cpus: usize, bootstrap: Bootstrap) -> ! {
             context.rns = SchemeNamespace::from(1);
             context.ens = SchemeNamespace::from(1);
             context.status = context::Status::Runnable;
+            *context.name.write() = "bootstrap".to_string().into_boxed_str();
         },
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
