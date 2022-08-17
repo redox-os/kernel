@@ -301,64 +301,6 @@ macro_rules! inner_pit_unmap(
     }
 );
 
-#[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! save_fsgsbase(
-    () => {
-        "
-            mov ecx, {MSR_FSBASE}
-            rdmsr
-            shl rdx, 32
-            or rdx, rax
-            mov r14, rdx
-
-            mov ecx, {MSR_GSBASE}
-            rdmsr
-            shl rdx, 32
-            or rdx, rax
-            mov r13, rdx
-        "
-    }
-);
-#[cfg(feature = "x86_fsgsbase")]
-macro_rules! save_fsgsbase(
-    () => {
-        "
-        // placeholder: {MSR_FSBASE} {MSR_GSBASE}
-        rdfsbase r14
-        rdgsbase r13
-        "
-    }
-);
-
-#[cfg(feature = "x86_fsgsbase")]
-macro_rules! restore_fsgsbase(
-    () => {
-        "
-        wrfsbase r14
-        wrgsbase r13
-        "
-    }
-);
-
-#[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! restore_fsgsbase(
-    () => {
-        "
-        mov ecx, {MSR_FSBASE}
-        mov rdx, r14
-        mov eax, edx
-        shr rdx, 32
-        wrmsr
-
-        mov ecx, {MSR_GSBASE}
-        mov rdx, r13
-        mov eax, edx
-        shr rdx, 32
-        wrmsr
-        "
-    }
-);
-
 #[naked]
 // TODO: AbiCompatBool
 pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singlestep: usize) -> ! {
@@ -381,7 +323,7 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singl
             mov ds, eax
             mov es, eax
             mov fs, eax
-            mov gs, eax
+            // gs keeps kernel selector for simplicity
 
             // Set up iret stack
             push eax // stack selector

@@ -104,7 +104,8 @@ pub unsafe fn set_tss_stack(stack: usize) {
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
     KPCR.tss.0.ss0 = (GDT_KERNEL_DATA << 3) as u16;
-    KPCR.tss.0.esp0 = stack as u32;
+    //TODO: should PHYS_OFFSET be added on x86_64 as well?
+    KPCR.tss.0.esp0 = (stack + crate::PHYS_OFFSET) as u32;
 }
 
 // Initialize GDT
@@ -138,9 +139,6 @@ pub unsafe fn init() {
 
 /// Initialize GDT with TLS
 pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
-    // Set temporary TLS segment to the self-pointer of the Thread Control Block.
-    x86::msr::wrmsr(x86::msr::IA32_GS_BASE, tcb_offset as u64);
-
     //TODO: will this work with multicore?
     {
         INIT_GDT[GDT_KERNEL_KPCR].set_offset(tcb_offset as u32);
@@ -165,6 +163,8 @@ pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
     // Once we have fetched the real KPCR address, set the TLS segment to the TCB pointer there.
     kpcr.tcb_end = (tcb_offset as *const usize).read();
 
+    GDT[GDT_KERNEL_KPCR].set_offset(tcb_offset as u32);
+
     {
         // We can now access our TSS, via the KPCR, which is a thread local
         let tss = &kpcr.tss.0 as *const _ as usize as u32;
@@ -183,41 +183,16 @@ pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
     // Load the new GDT, which is correctly located in thread local storage.
     dtables::lgdt(&gdtr);
 
-    // Ensure that GS always points to the KPCR in kernel space.
-    x86::msr::wrmsr(x86::msr::IA32_GS_BASE, kpcr as *mut _ as usize as u64);
-    // Inside kernel space, GS should _always_ point to the TSS. When leaving userspace, `swapgs`
-    // is called again, making the userspace GS always point to user data.
-    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
-
-    // Set the User TLS segment to zero, before we create any contexts and start scheduling.
-    x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
-
     // Reload the segment descriptors
     load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
     segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_KPCR as u16, Ring::Ring0));
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-
-    // NOTE: FS has already been updated while calling set_tcb.
-    // NOTE: We do not want to load GS again, since it has already been loaded into
-    // GDT_KERNEL_KPCR. Instead, we use the base MSR to allow for a 64-bit offset.
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
-
-    let has_fsgsbase = cpuid().map_or(false, |cpuid| {
-        cpuid.get_extended_feature_info().map_or(false, |extended_features| {
-            extended_features.has_fsgsbase()
-        })
-    });
-
-    if cfg!(feature = "x86_fsgsbase") {
-        assert!(has_fsgsbase, "running kernel with features not supported by the current CPU");
-    }
-
-    if has_fsgsbase {
-        x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
-    }
 }
 
 #[derive(Copy, Clone, Debug)]

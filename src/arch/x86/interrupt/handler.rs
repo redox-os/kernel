@@ -64,12 +64,6 @@ impl IretRegisters {
             println!("ESP:   {:016x}", { self.esp });
             println!("SS:    {:016x}", { self.ss });
         }
-        unsafe {
-            let fsbase = x86::msr::rdmsr(x86::msr::IA32_FS_BASE);
-            let gsbase = x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE);
-            let kgsbase = x86::msr::rdmsr(x86::msr::IA32_GS_BASE);
-            println!("FSBASE  {:016x}\nGSBASE  {:016x}\nKGSBASE {:016x}", fsbase, gsbase, kgsbase);
-        }
     }
 }
 
@@ -209,111 +203,12 @@ macro_rules! pop_preserved {
         pop ebx
     " };
 }
-macro_rules! swapgs_iff_ring3_fast {
-    () => { "
-        // Check whether the last two bits ESP+8 (code segment) are equal to zero.
-        test DWORD PTR [esp + 8], 0x3
-        // Skip the SWAPGS instruction if CS & 0b11 == 0b00.
-        jz 1f
-        //TODO swapgs
-        1:
-    " };
-}
-macro_rules! swapgs_iff_ring3_fast_errorcode {
-    () => { "
-        test DWORD PTR [esp + 16], 0x3
-        jz 1f
-        //TODO swapgs
-        1:
-    " };
-}
-
-macro_rules! save_gsbase_paranoid {
-    () => { "
-        mov ecx, {IA32_GS_BASE}
-        rdmsr
-        shl edx, 32
-        or eax, edx
-
-        push eax
-    " }
-}
-
-macro_rules! restore_gsbase_paranoid {
-    () => { "
-        pop edx
-
-        mov ecx, {IA32_GS_BASE}
-        mov eax, edx
-        shr edx, 32
-        wrmsr
-    " }
-}
-
-macro_rules! set_gsbase_paranoid {
-    () => { "
-        mov ecx, {IA32_GS_BASE}
-        mov eax, edx
-        shr edx, 32
-        wrmsr
-    " }
-}
-
-macro_rules! save_and_set_gsbase_paranoid {
-    // For paranoid interrupt entries, we have to be extremely careful with how we use IA32_GS_BASE
-    // and IA32_KERNEL_GS_BASE. If FSGSBASE is enabled, then we have no way to differentiate these
-    // two, as paranoid interrupts (e.g. NMIs) can occur even in kernel mode. In fact, they can
-    // even occur within another IRQ, so we cannot check the the privilege level via the stack.
-    //
-    // What we do instead, is using a special entry in the GDT, since we know that the GDT will
-    // always be thread local, as it contains the TSS. This gives us more than 32 bits to work
-    // with, which already is the largest x2APIC ID that an x86 CPU can handle. Luckily we can also
-    // use the stack, even though there might be interrupts in between.
-    //
-    // TODO: Linux uses the Interrupt Stack Table to figure out which NMIs were nested. Perhaps
-    // this could be done here, because if nested (sp > initial_sp), that means the NMI could not
-    // have come from userspace. But then, knowing the initial sp would somehow have to involve
-    // percpu, which brings us back to square one. But it might be useful if we would allow faults
-    // in NMIs. If we do detect a nested interrupt, then we can perform the iretd procedure
-    // ourselves, so that the newly nested NMI still blocks additional interrupts while still
-    // returning to the previously (faulting) NMI. See https://lwn.net/Articles/484932/, although I
-    // think the solution becomes a bit simpler when we cannot longer rely on GSBASE anymore.
-
-    () => { concat!(
-        save_gsbase_paranoid!(),
-
-        // Allocate stack space for 8 bytes GDT base and 2 bytes size (ignored).
-        "sub esp, 16\n",
-        // Set it to the GDT base.
-        "sgdt [esp + 6]\n",
-        // Get the base pointer
-        "
-        mov eax, [esp + 8]
-        add esp, 16
-        ",
-        // Load the lower 32 bits of that GDT entry.
-        "mov edx, [eax + {gdt_cpu_id_offset}]\n",
-        // Calculate the percpu offset.
-        "
-        mov ebx, {KERNEL_PERCPU_OFFSET}
-        shl edx, {KERNEL_PERCPU_SHIFT}
-        add edx, ebx
-        ",
-        // Set GSBASE to EAX accordingly
-        set_gsbase_paranoid!(),
-    ) }
-}
-macro_rules! nop {
-    () => { "
-        // Unused: {IA32_GS_BASE} {KERNEL_PERCPU_OFFSET} {KERNEL_PERCPU_SHIFT} {gdt_cpu_id_offset}
-        " }
-}
 
 #[macro_export]
 macro_rules! interrupt_stack {
     // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
     // use idents directly instead.
-    ($name:ident, $save1:ident!, $save2:ident!, $rstor2:ident!, $rstor1:ident!, is_paranoid: $is_paranoid:expr, |$stack:ident| $code:block) => {
+    ($name:ident, is_paranoid: $is_paranoid:expr, |$stack:ident| $code:block) => {
         #[naked]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86::interrupt::InterruptStack) {
@@ -335,49 +230,39 @@ macro_rules! interrupt_stack {
             }
             core::arch::asm!(concat!(
                 // Backup all userspace registers to stack
-                $save1!(),
                 "push eax\n",
                 push_scratch!(),
                 push_preserved!(),
-
-                $save2!(),
 
                 // TODO: Map PTI
                 // $crate::arch::x86::pti::map();
 
                 // Call inner function with pointer to stack
                 "
-                mov edi, esp
+                push esp
                 call {inner}
+                pop esp
                 ",
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86::pti::unmap();
 
-                $rstor2!(),
-
                 // Restore all userspace registers
                 pop_preserved!(),
                 pop_scratch!(),
 
-                $rstor1!(),
                 "iretd\n",
             ),
 
             inner = sym inner,
-            IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
-            KERNEL_PERCPU_SHIFT = const(crate::KERNEL_PERCPU_SHIFT),
-            KERNEL_PERCPU_OFFSET = const(crate::KERNEL_PERCPU_OFFSET),
-
-            gdt_cpu_id_offset = const(crate::gdt::GDT_CPU_ID_CONTAINER * core::mem::size_of::<crate::gdt::GdtEntry>()),
 
             options(noreturn),
 
             );
         }
     };
-    ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, swapgs_iff_ring3_fast!, nop!, nop!, swapgs_iff_ring3_fast!, is_paranoid: false, |$stack| $code); };
-    ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, nop!, save_and_set_gsbase_paranoid!, restore_gsbase_paranoid!, nop!, is_paranoid: true, |$stack| $code); }
+    ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, is_paranoid: false, |$stack| $code); };
+    ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, is_paranoid: true, |$stack| $code); }
 }
 
 #[macro_export]
@@ -391,7 +276,6 @@ macro_rules! interrupt {
 
             core::arch::asm!(concat!(
                 // Backup all userspace registers to stack
-                swapgs_iff_ring3_fast!(),
                 "push eax\n",
                 push_scratch!(),
 
@@ -407,7 +291,6 @@ macro_rules! interrupt {
                 // Restore all userspace registers
                 pop_scratch!(),
 
-                swapgs_iff_ring3_fast!(),
                 "iretd\n",
             ),
 
@@ -445,7 +328,6 @@ macro_rules! interrupt_error {
             }
 
             core::arch::asm!(concat!(
-                swapgs_iff_ring3_fast_errorcode!(),
                 // Move eax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
                 "xchg [esp], eax\n",
@@ -462,8 +344,9 @@ macro_rules! interrupt_error {
 
                 // Call inner function with pointer to stack
                 "
-                mov edi, esp
+                push esp
                 call {inner}
+                pop esp
                 ",
 
                 // TODO: Unmap PTI
@@ -477,7 +360,6 @@ macro_rules! interrupt_error {
                 pop_scratch!(),
 
                 // The error code has already been popped, so use the regular macro.
-                swapgs_iff_ring3_fast!(),
                 "iretd\n",
             ),
 

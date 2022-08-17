@@ -258,8 +258,9 @@ unsafe extern fn signal_handler_wrapper() {
             push edi
             push esi
 
-            mov edi, esp
+            push esp
             call {inner}
+            pop esp
 
             pop esi
             pop edi
