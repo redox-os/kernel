@@ -161,12 +161,18 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             RmmA::set_table(empty_cr3());
         }
     }
-    switch_to_inner(&mut prev.arch, &mut next.arch)
+
+    core::arch::asm!(
+        "call {inner}",
+        inner = sym switch_to_inner,
+        in("ecx") &mut prev.arch,
+        in("edx") &mut next.arch,
+    );
 }
 
 // Check disassembly!
 #[naked]
-unsafe extern "cdecl" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
+unsafe extern "cdecl" fn switch_to_inner() {
     use Context as Cx;
 
     core::arch::asm!(
@@ -177,10 +183,7 @@ unsafe extern "cdecl" fn switch_to_inner(_prev: &mut Context, _next: &mut Contex
         // - we cannot change callee-preserved registers arbitrarily, e.g. ebx, which is why we
         //   store them here in the first place.
         concat!("
-        pop eax // Pop return address
-        pop ecx // Pop prev
-        pop edx // Pop next
-        push eax // Push return address
+        // ecx is prev, edx is next
 
         // Save old registers, and load new ones
         mov [ecx + {off_ebx}], ebx
