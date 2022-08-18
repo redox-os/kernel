@@ -104,8 +104,7 @@ pub unsafe fn set_tss_stack(stack: usize) {
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
     KPCR.tss.0.ss0 = (GDT_KERNEL_DATA << 3) as u16;
-    //TODO: should PHYS_OFFSET be added on x86_64 as well?
-    KPCR.tss.0.esp0 = (stack + crate::PHYS_OFFSET) as u32;
+    KPCR.tss.0.esp0 = stack as u32;
 }
 
 // Initialize GDT
