@@ -70,6 +70,7 @@ impl IretRegisters {
 #[derive(Default)]
 #[repr(packed)]
 pub struct InterruptStack {
+    pub gs: usize,
     pub preserved: PreservedRegisters,
     pub scratch: ScratchRegisters,
     pub iret: IretRegisters,
@@ -204,6 +205,22 @@ macro_rules! pop_preserved {
     " };
 }
 
+macro_rules! enter_gs {
+    () => { "
+        // Enter kernel GS segment
+        push gs
+        push 0x18
+        pop gs
+    " }
+}
+
+macro_rules! exit_gs {
+    () => { "
+        // Exit kernel GS segment
+        pop gs
+    " }
+}
+
 #[macro_export]
 macro_rules! interrupt_stack {
     // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
@@ -234,6 +251,9 @@ macro_rules! interrupt_stack {
                 push_scratch!(),
                 push_preserved!(),
 
+                // Enter kernel TLS segment
+                enter_gs!(),
+
                 // TODO: Map PTI
                 // $crate::arch::x86::pti::map();
 
@@ -246,6 +266,9 @@ macro_rules! interrupt_stack {
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86::pti::unmap();
+
+                // Exit kernel TLS segment
+                exit_gs!(),
 
                 // Restore all userspace registers
                 pop_preserved!(),
@@ -279,6 +302,9 @@ macro_rules! interrupt {
                 "push eax\n",
                 push_scratch!(),
 
+                // Enter kernel TLS segment
+                enter_gs!(),
+
                 // TODO: Map PTI
                 // $crate::arch::x86::pti::map();
 
@@ -287,6 +313,9 @@ macro_rules! interrupt {
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86::pti::unmap();
+
+                // Exit kernel TLS segment
+                exit_gs!(),
 
                 // Restore all userspace registers
                 pop_scratch!(),
@@ -336,6 +365,9 @@ macro_rules! interrupt_error {
                 push_scratch!(),
                 push_preserved!(),
 
+                // Enter kernel TLS segment
+                enter_gs!(),
+
                 // Put code in, it's now in eax
                 "push eax\n",
 
@@ -354,6 +386,9 @@ macro_rules! interrupt_error {
 
                 // Pop code
                 "add esp, 8\n",
+
+                // Exit kernel TLS segment
+                exit_gs!(),
 
                 // Restore all userspace registers
                 pop_preserved!(),

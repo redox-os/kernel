@@ -323,7 +323,7 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singl
             mov ds, eax
             mov es, eax
             mov fs, eax
-            // gs keeps kernel selector for simplicity
+            mov gs, eax
 
             // Set up iret stack
             push eax // stack selector
