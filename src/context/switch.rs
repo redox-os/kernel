@@ -8,7 +8,7 @@ use spin::RwLock;
 
 use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::gdt;
 use crate::interrupt::irq::PIT_TICKS;
 use crate::interrupt;
@@ -164,7 +164,7 @@ pub unsafe fn switch() -> bool {
 
         from_context_guard.running = false;
         to_context.running = true;
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if let Some(ref stack) = to_context.kstack {
                 gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());

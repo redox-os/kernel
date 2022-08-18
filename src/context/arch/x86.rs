@@ -3,6 +3,7 @@ use core::sync::atomic::AtomicBool;
 
 use alloc::sync::Arc;
 
+use crate::gdt::{GDT, GDT_TSS};
 use crate::paging::{RmmA, RmmArch};
 use crate::syscall::FloatRegisters;
 
@@ -134,12 +135,8 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     );
 
     {
-        use x86::{bits64::segmentation::*, msr};
-
-        prev.arch.fsbase = msr::rdmsr(msr::IA32_FS_BASE) as usize;
-        msr::wrmsr(msr::IA32_FS_BASE, next.arch.fsbase as u64);
-        prev.arch.gsbase = msr::rdmsr(msr::IA32_KERNEL_GSBASE) as usize;
-        msr::wrmsr(msr::IA32_KERNEL_GSBASE, next.arch.gsbase as u64);
+        prev.arch.gsbase = GDT[GDT_TSS].offset() as usize;
+        GDT[GDT_TSS].set_offset(next.arch.gsbase as u32);
     }
 
     match next.addr_space {
@@ -235,8 +232,6 @@ unsafe extern "cdecl" fn switch_to_inner() {
 #[allow(dead_code)]
 #[repr(packed)]
 pub struct SignalHandlerStack {
-    esi: usize,
-    edi: usize,
     edx: usize,
     ecx: usize,
     eax: usize,
@@ -246,7 +241,7 @@ pub struct SignalHandlerStack {
 }
 
 #[naked]
-unsafe extern fn signal_handler_wrapper() {
+unsafe extern "C" fn signal_handler_wrapper() {
     #[inline(never)]
     unsafe extern "C" fn inner(stack: &SignalHandlerStack) {
         (stack.handler)(stack.sig);
@@ -258,19 +253,15 @@ unsafe extern fn signal_handler_wrapper() {
             push eax
             push ecx
             push edx
-            push edi
-            push esi
 
             push esp
             call {inner}
             pop esp
 
-            pop esi
-            pop edi
             pop edx
             pop ecx
             pop eax
-            add esp, 16
+            add esp, 8
             ret
         ",
 

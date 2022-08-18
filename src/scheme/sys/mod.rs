@@ -53,7 +53,7 @@ impl SysScheme {
         files.insert("syscall", Box::new(syscall::resource));
         files.insert("uname", Box::new(uname::resource));
         files.insert("env", Box::new(|| Ok(Vec::from(crate::init_env()))));
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         files.insert("spurious_irq", Box::new(irq::spurious_irq_resource));
 
         SysScheme {

@@ -218,6 +218,12 @@ impl GdtEntry {
         }
     }
 
+    pub fn offset(&self) -> u32 {
+        (self.offsetl as u32) |
+        ((self.offsetm as u32) << 16) |
+        ((self.offseth as u32) << 24)
+    }
+
     pub fn set_offset(&mut self, offset: u32) {
         self.offsetl = offset as u16;
         self.offsetm = (offset >> 16) as u8;

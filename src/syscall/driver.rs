@@ -20,9 +20,22 @@ fn enforce_root() -> Result<()> {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
     Err(Error::new(syscall::error::ENOSYS))
+}
+
+#[cfg(target_arch = "x86")]
+pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
+    enforce_root()?;
+
+    if level > 3 {
+        return Err(Error::new(EINVAL));
+    }
+
+    stack.iret.eflags = (stack.iret.eflags & !(3 << 12)) | ((level & 3) << 12);
+
+    Ok(0)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -92,6 +105,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         if flags.contains(PHYSMAP_WRITE) {
             page_flags = page_flags.write(true);
         }
+        #[cfg(target_arch = "x86_64")] // TODO: AARCH64
         if flags.contains(PHYSMAP_WRITE_COMBINE) {
             page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
         }
