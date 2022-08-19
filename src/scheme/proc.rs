@@ -497,6 +497,13 @@ impl Scheme for ProcScheme {
         Ok(value)
     }
 
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
+        //TODO: support other archs
+        Err(Error::new(EINVAL))
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
@@ -702,6 +709,13 @@ impl Scheme for ProcScheme {
         }
     }
 
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
+        //TODO: support other archs
+        Err(Error::new(EINVAL))
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
