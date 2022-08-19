@@ -434,8 +434,7 @@ pub struct SignalHandlerStack {
 unsafe extern fn signal_handler_wrapper() {
     core::arch::asm!(
         "
-        1:
-            b 1f
+        udf #0
         ",
         options(noreturn)
     );

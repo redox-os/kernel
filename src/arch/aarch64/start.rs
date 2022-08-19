@@ -202,8 +202,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, _singlestep: usize) -> ! {
     core::arch::asm!(
         "
-        1:
-            b 1f
+        udf #0
         ",
         options(noreturn)
     );
