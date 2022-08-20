@@ -194,24 +194,17 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 }
 
 #[naked]
-pub unsafe fn usermode(ip: usize, sp: usize, arg: usize, _singlestep: usize) -> ! {
+//TODO: AbiCompatBool
+//TODO: clear all regs?
+pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singlestep: usize) -> ! {
     core::arch::asm!(
         "
-        udf #0
+        msr   spsr_el1, xzr // spsr
+        msr   elr_el1, x0 // ip
+        msr   sp_el0, x1 // sp
+        mov x0, x2 // arg
+        eret
         ",
-        options(noreturn)
+        options(noreturn),
     );
-    /*TODO: update to asm
-    let cpu_id: usize = 0;
-    let spsr: u32 = 0;
-
-    llvm_asm!("msr   spsr_el1, $0" : : "r"(spsr) : : "volatile");
-    llvm_asm!("msr   elr_el1, $0" : : "r"(ip) : : "volatile");
-    llvm_asm!("msr   sp_el0, $0" : : "r"(sp) : : "volatile");
-
-    llvm_asm!("mov   x0, $0" : : "r"(arg) : : "volatile");
-    llvm_asm!("eret" : : : : "volatile");
-
-    unreachable!();
-    */
 }
