@@ -170,12 +170,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     }
 
-    /*let debug = {
+    let debug = {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
             let name = context.name.read();
-            if name.contains("redoxfs") {
+            if name.contains("bootstrap") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
@@ -199,7 +199,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
-    }*/
+    }
 
     // The next lines set the current syscall in the context struct, then once the inner() function
     // completes, we set the current syscall to none.
@@ -224,7 +224,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     }
 
-    /*if debug {
+    if debug {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
@@ -241,7 +241,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                 println!("Err({} ({:#X}))", err, err.errno);
             }
         }
-    }*/
+    }
 
     // errormux turns Result<usize> into -errno
     Error::mux(result)

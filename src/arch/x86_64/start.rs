@@ -18,7 +18,7 @@ use crate::gdt;
 use crate::idt;
 use crate::interrupt;
 use crate::log::{self, info};
-use crate::paging::{self, KernelMapper};
+use crate::paging::{self, KernelMapper, TableKind};
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -234,7 +234,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             use crate::paging::{PageMapper, PhysicalAddress};
             use crate::rmm::FRAME_ALLOCATOR;
 
-            let mut mapper = KernelMapper::lock_for_manual_mapper(cpu_id, PageMapper::new(PhysicalAddress::new(bsp_table), FRAME_ALLOCATOR));
+            let mut mapper = KernelMapper::lock_for_manual_mapper(cpu_id, PageMapper::new(TableKind::Kernel, PhysicalAddress::new(bsp_table), FRAME_ALLOCATOR));
             paging::init_ap(cpu_id, &mut mapper)
         };
 

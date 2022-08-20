@@ -1,4 +1,4 @@
-use crate::paging::{RmmA, RmmArch};
+use crate::paging::{RmmA, RmmArch, TableKind};
 
 #[cfg(not(target_arch = "x86_64"))]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
@@ -12,7 +12,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     println!("DEBUGGER START");
     println!();
 
-    let old_table = RmmA::table();
+    let old_table = RmmA::table(TableKind::User);
 
     for (id, context_lock) in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| *id != target_id) { continue; }
@@ -21,7 +21,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
-            RmmA::set_table(space.read().table.utable.table().phys());
+            RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
             check_consistency(&mut space.write());
         }
 
@@ -71,7 +71,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         }
 
         // Switch to original page table
-        RmmA::set_table(old_table);
+        RmmA::set_table(TableKind::User, old_table);
 
         println!();
     }

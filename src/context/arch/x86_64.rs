@@ -3,7 +3,7 @@ use core::sync::atomic::AtomicBool;
 
 use alloc::sync::Arc;
 
-use crate::paging::{RmmA, RmmArch};
+use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
 
 use memoffset::offset_of;
@@ -175,7 +175,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             next_space.read().table.utable.make_current();
         }
         None => {
-            RmmA::set_table(empty_cr3());
+            RmmA::set_table(TableKind::User, empty_cr3());
         }
     }
     switch_to_inner(&mut prev.arch, &mut next.arch)
