@@ -399,13 +399,13 @@ impl ProcScheme {
     }
 
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    fn read_env_regs(&self) -> Result<EnvRegisters> {
+    fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
         //TODO: Support other archs
         Err(Error::new(EINVAL))
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    fn read_env_regs(&self) -> Result<EnvRegisters> {
+    fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
         let (fsbase, gsbase) = if info.pid == context::context_id() {
             #[cfg(not(feature = "x86_fsgsbase"))]
             unsafe {
@@ -437,13 +437,13 @@ impl ProcScheme {
     }
 
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    fn write_env_regs(&self, regs: EnvRegisters) -> Result<()> {
+    fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
         //TODO: Support other archs
         Err(Error::new(EINVAL))
     }
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    fn write_env_regs(&self, regs: EnvRegisters) -> Result<()> {
+    fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
         if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
             return Err(Error::new(EINVAL));
         }
@@ -678,7 +678,10 @@ impl Scheme for ProcScheme {
                         }
                     })?,
                     RegsKind::Env => {
-                        (Output { env: self.read_env_regs()? }, mem::size_of::<EnvRegisters>())
+                        (
+                            Output { env: self.read_env_regs(&info)? },
+                            mem::size_of::<EnvRegisters>()
+                        )
                     }
                 };
 
@@ -889,7 +892,7 @@ impl Scheme for ProcScheme {
                     let regs = unsafe {
                         *(buf as *const _ as *const EnvRegisters)
                     };
-                    self.write_env_regs(regs)?;
+                    self.write_env_regs(&info, regs)?;
                     Ok(mem::size_of::<EnvRegisters>())
                 }
             },
