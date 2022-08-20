@@ -1,9 +1,11 @@
+use alloc::sync::Arc;
 use core::arch::asm;
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Once;
 
 use crate::device::cpu::registers::{control_regs, tlb};
+use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
 
 /// This must be used by the kernel to ensure that context switches are done atomically
@@ -20,8 +22,6 @@ pub const KFX_ALIGN: usize = 16;
 pub struct Context {
     elr_el1: usize,
     sp_el0: usize,
-    ttbr0_el1: usize,   /* Pointer to U4 translation table for this Context     */
-    ttbr1_el1: usize,   /* Pointer to P4 translation table for this Context     */
     tpidr_el0: usize,   /* Pointer to TLS region for this Context               */
     tpidrro_el0: usize, /* Pointer to TLS (read-only) region for this Context   */
     spsr_el1: usize,
@@ -59,8 +59,6 @@ impl Context {
         Context {
             elr_el1: 0,
             sp_el0: 0,
-            ttbr0_el1: 0,
-            ttbr1_el1: 0,
             tpidr_el0: 0,
             tpidrro_el0: 0,
             spsr_el1: 0,
@@ -92,22 +90,6 @@ impl Context {
             x9: 0,
             x8: 0,
         }
-    }
-
-    pub fn get_page_utable(&self) -> usize {
-        self.ttbr0_el1
-    }
-
-    pub fn get_page_ktable(&self) -> usize {
-        self.ttbr1_el1
-    }
-
-    pub fn set_page_utable(&mut self, address: usize) {
-        self.ttbr0_el1 = address;
-    }
-
-    pub fn set_page_ktable(&mut self, address: usize) {
-        self.ttbr1_el1 = address;
     }
 
     pub fn set_stack(&mut self, address: usize) {
@@ -195,8 +177,6 @@ impl Context {
     pub fn dump(&self) {
         println!("elr_el1: 0x{:016x}", self.elr_el1);
         println!("sp_el0: 0x{:016x}", self.sp_el0);
-        println!("ttbr0_el1: 0x{:016x}", self.ttbr0_el1);
-        println!("ttbr1_el1: 0x{:016x}", self.ttbr1_el1);
         println!("tpidr_el0: 0x{:016x}", self.tpidr_el0);
         println!("tpidrro_el0: 0x{:016x}", self.tpidrro_el0);
         println!("spsr_el1: 0x{:016x}", self.spsr_el1);
@@ -295,10 +275,24 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         */
     }
 
-    prev.arch.ttbr0_el1 = control_regs::ttbr0_el1() as usize;
-    if next.arch.ttbr0_el1 != prev.arch.ttbr0_el1 {
-        control_regs::ttbr0_el1_write(next.arch.ttbr0_el1 as u64);
-        tlb::flush_all();
+    match next.addr_space {
+        // Since Arc is essentially just wraps a pointer, in this case a regular pointer (as
+        // opposed to dyn or slice fat pointers), and NonNull optimization exists, map_or will
+        // hopefully be optimized down to checking prev and next pointers, as next cannot be null.
+        Some(ref next_space) => if prev.addr_space.as_ref().map_or(true, |prev_space| !Arc::ptr_eq(&prev_space, &next_space)) {
+            // Suppose we have two sibling threads A and B. A runs on CPU 0 and B on CPU 1. A
+            // recently called yield and is now here about to switch back. Meanwhile, B is
+            // currently creating a new mapping in their shared address space, for example a
+            // message on a channel.
+            //
+            // Unless we acquire this lock, it may be possible that the TLB will not contain new
+            // entries. While this can be caught and corrected in a page fault handler, this is not
+            // true when entries are removed from a page table!
+            next_space.read().table.utable.make_current();
+        }
+        None => {
+            RmmA::set_table(TableKind::User, empty_cr3());
+        }
     }
 
     switch_to_inner(&mut prev.arch, &mut next.arch);
