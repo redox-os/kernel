@@ -16,7 +16,7 @@ pub unsafe fn init_early(dtb_base: usize, dtb_size: usize) {
     }
 
     if let Some((phys, size)) = device_tree::diag_uart_range(dtb_base, dtb_size) {
-        let virt = crate::KERNEL_DEVMAP_OFFSET + phys;
+        let virt = crate::PHYS_OFFSET + phys;
         {
             let mut serial_port = SerialPort::new(virt);
             serial_port.init(false);

@@ -164,7 +164,7 @@ unsafe fn inner<A: Arch>(
             Some(serial_base) => {
                 let flush = mapper.map_phys(
                     VirtualAddress::new(serial_base),
-                    PhysicalAddress::new(serial_base - crate::KERNEL_DEVMAP_OFFSET),
+                    PhysicalAddress::new(serial_base - crate::PHYS_OFFSET),
                     PageFlags::new().write(true)
                 ).expect("failed to map frame");
                 flush.ignore(); // Not the active table

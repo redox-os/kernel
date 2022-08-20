@@ -28,11 +28,8 @@
     /// Size of kernel heap
     pub const KERNEL_HEAP_SIZE: usize = 1 * 1024 * 1024; // 1 MB
 
-    /// Offset of device map region
-    pub const KERNEL_DEVMAP_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;
-
     /// Offset of environment region
-    pub const KERNEL_ENV_OFFSET: usize = KERNEL_DEVMAP_OFFSET - PML4_SIZE;
+    pub const KERNEL_ENV_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;
 
     /// Offset of temporary mapping for misc kernel bring-up actions
     pub const KERNEL_TMP_MISC_OFFSET: usize = KERNEL_ENV_OFFSET - PML4_SIZE;

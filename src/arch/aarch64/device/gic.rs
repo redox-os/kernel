@@ -61,7 +61,7 @@ impl GicDistIf {
         let start_frame = Frame::containing_address(PhysicalAddress::new(0x08000000));
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x08000000 + 0x10000 - 1));
         for frame in Frame::range_inclusive(start_frame, end_frame) {
-            let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::KERNEL_DEVMAP_OFFSET));
+            let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::PHYS_OFFSET));
             mapper
                 .get_mut()
                 .expect("failed to access KernelMapper for mapping GIC distributor")
@@ -70,13 +70,13 @@ impl GicDistIf {
                 .flush();
         }
 
-        self.address = crate::KERNEL_DEVMAP_OFFSET + 0x08000000;
+        self.address = crate::PHYS_OFFSET + 0x08000000;
 
         // Map in CPU0's interface
         let start_frame = Frame::containing_address(PhysicalAddress::new(0x08010000));
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x08010000 + 0x10000 - 1));
         for frame in Frame::range_inclusive(start_frame, end_frame) {
-            let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::KERNEL_DEVMAP_OFFSET));
+            let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::PHYS_OFFSET));
             mapper
                 .get_mut()
                 .expect("failed to access KernelMapper for mapping GIC interface")
@@ -85,7 +85,7 @@ impl GicDistIf {
                 .flush();
         }
 
-        GIC_CPU_IF.address = crate::KERNEL_DEVMAP_OFFSET + 0x08010000;
+        GIC_CPU_IF.address = crate::PHYS_OFFSET + 0x08010000;
 
         // Disable IRQ Distribution
         self.write(GICD_CTLR, 0);

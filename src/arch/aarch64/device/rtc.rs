@@ -34,7 +34,7 @@ impl Pl031rtc {
         let end_frame = Frame::containing_address(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
 
         for frame in Frame::range_inclusive(start_frame, end_frame) {
-            let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::KERNEL_DEVMAP_OFFSET));
+            let page = Page::containing_address(VirtualAddress::new(frame.start_address().data() + crate::PHYS_OFFSET));
             mapper
                 .get_mut()
                 .expect("failed to access KernelMapper for mapping RTC")
@@ -43,7 +43,7 @@ impl Pl031rtc {
                 .flush();
         }
 
-        self.address = crate::KERNEL_DEVMAP_OFFSET + 0x09010000;
+        self.address = crate::PHYS_OFFSET + 0x09010000;
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {

@@ -81,7 +81,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
 
         // Try to find serial port prior to logging
-        device::serial::init_early(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size);
+        device::serial::init_early(crate::PHYS_OFFSET + dtb_base, dtb_size);
 
         // Convert env to slice
         let env = slice::from_raw_parts((args.env_base + crate::PHYS_OFFSET) as *const u8, args.env_size);
@@ -112,11 +112,11 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Bootstrap entry point: {:X}", args.bootstrap_entry);
 
         println!("FILL MEMORY MAP START");
-        device_tree::fill_memory_map(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size);
+        device_tree::fill_memory_map(crate::PHYS_OFFSET + dtb_base, dtb_size);
         println!("FILL MEMORY MAP COMPLETE");
 
         println!("FILL ENV DATA START");
-        let env_size = device_tree::fill_env_data(crate::KERNEL_DEVMAP_OFFSET + dtb_base, dtb_size, env_base);
+        let env_size = device_tree::fill_env_data(crate::PHYS_OFFSET + dtb_base, dtb_size, env_base);
         println!("FILL ENV DATA COMPLETE");
 
         // Initialize RMM
