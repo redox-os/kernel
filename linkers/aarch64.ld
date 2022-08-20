@@ -1,4 +1,4 @@
-ENTRY(early_init)
+ENTRY(kstart)
 OUTPUT_FORMAT("elf64-littleaarch64", "elf64-littleaarch64", "elf64-littleaarch64")
 
 KERNEL_OFFSET = 0xFFFFFF0000000000;
