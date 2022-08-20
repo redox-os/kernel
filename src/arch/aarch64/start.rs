@@ -80,6 +80,16 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
 
+        //TODO: Remove hard-coded UART for QEMU virt machine
+        {
+            let mut serial_port = crate::device::uart_pl011::SerialPort::new(
+                crate::PHYS_OFFSET + 0x9000000
+            );
+            serial_port.init(false);
+            serial_port.write(b"UART\n");
+            *crate::device::serial::COM1.lock() = Some(serial_port);
+        }
+
         // Try to find serial port prior to logging
         device::serial::init_early(crate::PHYS_OFFSET + dtb_base, dtb_size);
 
@@ -111,16 +121,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Bootstrap: {:X}:{:X}", args.bootstrap_base, args.bootstrap_base + args.bootstrap_size);
         info!("Bootstrap entry point: {:X}", args.bootstrap_entry);
 
-        println!("FILL MEMORY MAP START");
+        /* NOT USED WITH UEFI
         device_tree::fill_memory_map(crate::PHYS_OFFSET + dtb_base, dtb_size);
-        println!("FILL MEMORY MAP COMPLETE");
 
-        println!("FILL ENV DATA START");
         let env_size = device_tree::fill_env_data(crate::PHYS_OFFSET + dtb_base, dtb_size, env_base);
-        println!("FILL ENV DATA COMPLETE");
+        */
 
         // Initialize RMM
-        println!("RMM INIT START");
         crate::arch::rmm::init(
             args.kernel_base, args.kernel_size,
             args.stack_base, args.stack_size,
@@ -129,12 +136,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             args.areas_base, args.areas_size,
             args.bootstrap_base, args.bootstrap_size,
         );
-        println!("RMM INIT COMPLETE");
 
         // Initialize paging
-        println!("PAGING INIT START");
         let tcb_offset = paging::init(0);
-        println!("PAGING INIT COMPLETE");
 
         // Test tdata and tbss
         {
@@ -152,24 +156,16 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(false, Ordering::SeqCst);
 
         // Setup kernel heap
-        println!("ALLOCATOR INIT START");
         allocator::init();
-        println!("ALLOCATOR INIT COMPLETE");
 
         // Activate memory logging
-        println!("LOG INIT START");
         log::init();
-        println!("LOG INIT COMPLETE");
 
         // Initialize devices
-        println!("DEVICE INIT START");
         device::init();
-        println!("DEVICE INIT COMPLETE");
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
-        println!("DEVICE INIT NONCORE START");
         device::init_noncore();
-        println!("DEVICE INIT NONCORE COMPLETE");
 
         BSP_READY.store(true, Ordering::SeqCst);
 
@@ -181,7 +177,6 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         }
     };
 
-    println!("KMAIN");
     crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
 }
 
