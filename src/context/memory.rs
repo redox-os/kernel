@@ -15,7 +15,7 @@ use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
 use crate::memory::{Enomem, Frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
-use crate::paging::{KernelMapper, Page, PageFlags, PageIter, PageMapper, RmmA, round_up_pages, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PageIter, PageMapper, RmmA, round_up_pages, TableKind, VirtualAddress};
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
@@ -891,7 +891,7 @@ impl Drop for Table {
             // before it waits for interrupts. Or maybe not, depends on what future benchmarks will
             // indicate.
             unsafe {
-                RmmA::set_table(super::empty_cr3());
+                RmmA::set_table(TableKind::User, super::empty_cr3());
             }
         }
         crate::memory::deallocate_frames(Frame::containing_address(self.utable.table().phys()), 1);
@@ -901,7 +901,7 @@ impl Drop for Table {
 /// Allocates a new identically mapped ktable and empty utable
 #[cfg(target_arch = "aarch64")]
 pub fn setup_new_utable() -> Result<Table> {
-    let mut utable = unsafe { PageMapper::create(crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let mut utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
 
     {
         let active_ktable = KernelMapper::lock();
@@ -927,7 +927,7 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86)
 #[cfg(target_arch = "x86")]
 pub fn setup_new_utable() -> Result<Table> {
-    let mut utable = unsafe { PageMapper::create(crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let mut utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
 
     {
         let active_ktable = KernelMapper::lock();
@@ -953,7 +953,7 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
 #[cfg(target_arch = "x86_64")]
 pub fn setup_new_utable() -> Result<Table> {
-    let utable = unsafe { PageMapper::create(crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
 
     {
         let active_ktable = KernelMapper::lock();

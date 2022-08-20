@@ -199,9 +199,9 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singlestep: usize) -> ! {
     core::arch::asm!(
         "
-        msr   spsr_el1, xzr // spsr
-        msr   elr_el1, x0 // ip
-        msr   sp_el0, x1 // sp
+        msr spsr_el1, xzr // spsr
+        msr elr_el1, x0 // ip
+        msr sp_el0, x1 // sp
         mov x0, x2 // arg
         eret
         ",

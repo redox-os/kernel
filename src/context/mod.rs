@@ -7,7 +7,7 @@ use alloc::sync::Arc;
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::paging::{RmmA, RmmArch};
+use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::error::{Error, ESRCH, Result};
 
 pub use self::context::{Context, ContextId, ContextSnapshot, Status, WaitpidKey};
@@ -68,7 +68,7 @@ pub fn init() {
     let context_lock = contexts.new_context().expect("could not initialize first context");
     let mut context = context_lock.write();
 
-    self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table() });
+    self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
 
     context.status = Status::Runnable;
     context.running = true;
