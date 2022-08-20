@@ -397,6 +397,93 @@ impl ProcScheme {
 
         Ok(id)
     }
+
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    fn read_env_regs(&self) -> Result<EnvRegisters> {
+        //TODO: Support other archs
+        Err(Error::new(EINVAL))
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    fn read_env_regs(&self) -> Result<EnvRegisters> {
+        let (fsbase, gsbase) = if info.pid == context::context_id() {
+            #[cfg(not(feature = "x86_fsgsbase"))]
+            unsafe {
+                (
+                    x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
+                    x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE),
+                )
+            }
+            #[cfg(feature = "x86_fsgsbase")]
+            unsafe {
+                use x86::bits64::segmentation::*;
+
+                (
+                    rdfsbase(),
+                    {
+                        swapgs();
+                        let gsbase = rdgsbase();
+                        swapgs();
+                        gsbase
+                    }
+                )
+            }
+        } else {
+            try_stop_context(info.pid, |context| {
+                Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
+            })?
+        };
+        Ok(EnvRegisters { fsbase: fsbase as _, gsbase: gsbase as _ })
+    }
+
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    fn write_env_regs(&self, regs: EnvRegisters) -> Result<()> {
+        //TODO: Support other archs
+        Err(Error::new(EINVAL))
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    fn write_env_regs(&self, regs: EnvRegisters) -> Result<()> {
+        if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
+            return Err(Error::new(EINVAL));
+        }
+
+        if info.pid == context::context_id() {
+            #[cfg(not(feature = "x86_fsgsbase"))]
+            unsafe {
+                x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
+                // We have to write to KERNEL_GSBASE, because when the kernel returns to
+                // userspace, it will have executed SWAPGS first.
+                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
+
+                match context::contexts().current().ok_or(Error::new(ESRCH))?.write().arch {
+                    ref mut arch => {
+                        arch.fsbase = regs.fsbase as usize;
+                        arch.gsbase = regs.gsbase as usize;
+                    }
+                }
+            }
+            #[cfg(feature = "x86_fsgsbase")]
+            unsafe {
+                use x86::bits64::segmentation::*;
+
+                wrfsbase(regs.fsbase);
+                swapgs();
+                wrgsbase(regs.gsbase);
+                swapgs();
+
+                // No need to update the current context; with fsgsbase enabled, these
+                // registers are automatically saved and restored.
+            }
+        } else {
+            try_stop_context(info.pid, |context| {
+                context.arch.fsbase = regs.fsbase as usize;
+                context.arch.gsbase = regs.gsbase as usize;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl Scheme for ProcScheme {
@@ -497,13 +584,6 @@ impl Scheme for ProcScheme {
         Ok(value)
     }
 
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        //TODO: support other archs
-        Err(Error::new(EINVAL))
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
@@ -598,34 +678,7 @@ impl Scheme for ProcScheme {
                         }
                     })?,
                     RegsKind::Env => {
-                        let (fsbase, gsbase) = if info.pid == context::context_id() {
-                            #[cfg(not(feature = "x86_fsgsbase"))]
-                            unsafe {
-                                (
-                                    x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
-                                    x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE),
-                                )
-                            }
-                            #[cfg(feature = "x86_fsgsbase")]
-                            unsafe {
-                                use x86::bits64::segmentation::*;
-
-                                (
-                                    rdfsbase(),
-                                    {
-                                        swapgs();
-                                        let gsbase = rdgsbase();
-                                        swapgs();
-                                        gsbase
-                                    }
-                                )
-                            }
-                        } else {
-                            try_stop_context(info.pid, |context| {
-                                Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
-                            })?
-                        };
-                        (Output { env: EnvRegisters { fsbase: fsbase as _, gsbase: gsbase as _ }}, mem::size_of::<EnvRegisters>())
+                        (Output { env: self.read_env_regs()? }, mem::size_of::<EnvRegisters>())
                     }
                 };
 
@@ -709,13 +762,6 @@ impl Scheme for ProcScheme {
         }
     }
 
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        //TODO: support other archs
-        Err(Error::new(EINVAL))
-    }
-
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
@@ -843,44 +889,7 @@ impl Scheme for ProcScheme {
                     let regs = unsafe {
                         *(buf as *const _ as *const EnvRegisters)
                     };
-                    if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
-                        return Err(Error::new(EINVAL));
-                    }
-
-                    if info.pid == context::context_id() {
-                        #[cfg(not(feature = "x86_fsgsbase"))]
-                        unsafe {
-                            x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
-                            // We have to write to KERNEL_GSBASE, because when the kernel returns to
-                            // userspace, it will have executed SWAPGS first.
-                            x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
-
-                            match context::contexts().current().ok_or(Error::new(ESRCH))?.write().arch {
-                                ref mut arch => {
-                                    arch.fsbase = regs.fsbase as usize;
-                                    arch.gsbase = regs.gsbase as usize;
-                                }
-                            }
-                        }
-                        #[cfg(feature = "x86_fsgsbase")]
-                        unsafe {
-                            use x86::bits64::segmentation::*;
-
-                            wrfsbase(regs.fsbase);
-                            swapgs();
-                            wrgsbase(regs.gsbase);
-                            swapgs();
-
-                            // No need to update the current context; with fsgsbase enabled, these
-                            // registers are automatically saved and restored.
-                        }
-                    } else {
-                        try_stop_context(info.pid, |context| {
-                            context.arch.fsbase = regs.fsbase as usize;
-                            context.arch.gsbase = regs.gsbase as usize;
-                            Ok(())
-                        })?;
-                    }
+                    self.write_env_regs(regs)?;
                     Ok(mem::size_of::<EnvRegisters>())
                 }
             },

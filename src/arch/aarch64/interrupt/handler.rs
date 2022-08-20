@@ -165,6 +165,48 @@ impl InterruptStack {
         all.x1 = self.scratch.x1;
         all.x0 = self.scratch.x0;
     }
+    
+    /// Loads all registers from a struct used by the proc:
+    /// scheme to read/write registers.
+    pub fn load(&mut self, all: &IntRegisters) {
+        self.iret.elr_el1 = all.elr_el1;
+        self.iret.tpidr_el0 = all.tpidr_el0;
+        self.iret.tpidrro_el0 = all.tpidrro_el0;
+        self.iret.spsr_el1 = all.spsr_el1;
+        self.iret.esr_el1 = all.esr_el1;
+        self.iret.sp_el0 = all.sp_el0;
+        self.preserved.x30 = all.x30;
+        self.preserved.x29 = all.x29;
+        self.preserved.x28 = all.x28;
+        self.preserved.x27 = all.x27;
+        self.preserved.x26 = all.x26;
+        self.preserved.x25 = all.x25;
+        self.preserved.x24 = all.x24;
+        self.preserved.x23 = all.x23;
+        self.preserved.x22 = all.x22;
+        self.preserved.x21 = all.x21;
+        self.preserved.x20 = all.x20;
+        self.preserved.x19 = all.x19;
+        self.scratch.x18 = all.x18;
+        self.scratch.x17 = all.x17;
+        self.scratch.x16 = all.x16;
+        self.scratch.x15 = all.x15;
+        self.scratch.x14 = all.x14;
+        self.scratch.x13 = all.x13;
+        self.scratch.x12 = all.x12;
+        self.scratch.x11 = all.x11;
+        self.scratch.x10 = all.x10;
+        self.scratch.x9 = all.x9;
+        self.scratch.x8 = all.x8;
+        self.scratch.x7 = all.x7;
+        self.scratch.x6 = all.x6;
+        self.scratch.x5 = all.x5;
+        self.scratch.x4 = all.x4;
+        self.scratch.x3 = all.x3;
+        self.scratch.x2 = all.x2;
+        self.scratch.x1 = all.x1;
+        self.scratch.x0 = all.x0;
+    }
 
     //TODO
     pub fn is_singlestep(&self) -> bool { false }

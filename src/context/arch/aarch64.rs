@@ -208,6 +208,16 @@ impl Context {
     }
 }
 
+impl super::Context {
+    pub fn get_fx_regs(&self) -> FloatRegisters {
+        self.arch.get_fx_regs().expect("TODO: make get_fx_regs always valid")
+    }
+
+    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) {
+        assert!(self.arch.set_fx_regs(new), "TODO: make set_fx_regs always valid")
+    }
+}
+
 pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
 
 // SAFETY: EMPTY_CR3 must be initialized.
