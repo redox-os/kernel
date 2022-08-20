@@ -1,3 +1,4 @@
+use core::arch::asm;
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Once;
@@ -236,9 +237,8 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 }
 
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    todo!("Context::switch_to");
-    /*TODO: update to use asm!
-    let mut float_regs = &mut *(prev.fx_address as *mut FloatRegisters);
+    let mut float_regs = &mut *(prev.arch.fx_address as *mut FloatRegisters);
+    /*TODO: save float regs
     asm!(
         "stp q0, q1, [{0}, #16 * 0]",
         "stp q2, q3, [{0}, #16 * 2]",
@@ -262,11 +262,13 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         out(reg) float_regs.fpcr,
         out(reg) float_regs.fpsr
     );
+    */
 
-    prev.fx_loadable = true;
+    prev.arch.fx_loadable = true;
 
-    if next.fx_loadable {
-        let mut float_regs = &mut *(next.fx_address as *mut FloatRegisters);
+    if next.arch.fx_loadable {
+        let mut float_regs = &mut *(next.arch.fx_address as *mut FloatRegisters);
+        /*TODO: restore float registers
         asm!(
             "ldp q0, q1, [{0}, #16 * 0]",
             "ldp q2, q3, [{0}, #16 * 2]",
@@ -290,107 +292,112 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             in(reg) float_regs.fpcr,
             in(reg) float_regs.fpsr
         );
+        */
     }
 
-    prev.ttbr0_el1 = control_regs::ttbr0_el1() as usize;
-    if next.ttbr0_el1 != prev.ttbr0_el1 {
-        control_regs::ttbr0_el1_write(next.ttbr0_el1 as u64);
+    prev.arch.ttbr0_el1 = control_regs::ttbr0_el1() as usize;
+    if next.arch.ttbr0_el1 != prev.arch.ttbr0_el1 {
+        control_regs::ttbr0_el1_write(next.arch.ttbr0_el1 as u64);
         tlb::flush_all();
     }
 
-    llvm_asm!("mov   $0, x8" : "=r"(prev.x8) : : "memory" : "volatile");
-    llvm_asm!("mov   x8, $0" : :  "r"(next.x8) :"memory" : "volatile");
+    switch_to_inner(&mut prev.arch, &mut next.arch);
+}
 
-    llvm_asm!("mov   $0, x9" : "=r"(prev.x9) : : "memory" : "volatile");
-    llvm_asm!("mov   x9, $0" : :  "r"(next.x9) :"memory" : "volatile");
+unsafe fn switch_to_inner(prev: &mut Context, next: &mut Context) {
+    //TODO: use one asm block like x86
+    asm!("mov   {0}, x8", out(reg) prev.x8);
+    asm!("mov   x8, {0}", in(reg) next.x8);
 
-    llvm_asm!("mov   $0, x10" : "=r"(prev.x10) : : "memory" : "volatile");
-    llvm_asm!("mov   x10, $0" : :  "r"(next.x10) :"memory" : "volatile");
+    asm!("mov   {0}, x9", out(reg) prev.x9);
+    asm!("mov   x9, {0}", in(reg) next.x9);
 
-    llvm_asm!("mov   $0, x11" : "=r"(prev.x11) : : "memory" : "volatile");
-    llvm_asm!("mov   x11, $0" : :  "r"(next.x11) :"memory" : "volatile");
+    asm!("mov   {0}, x10", out(reg) prev.x10);
+    asm!("mov   x10, {0}", in(reg) next.x10);
 
-    llvm_asm!("mov   $0, x12" : "=r"(prev.x12) : : "memory" : "volatile");
-    llvm_asm!("mov   x12, $0" : :  "r"(next.x12) :"memory" : "volatile");
+    asm!("mov   {0}, x11", out(reg) prev.x11);
+    asm!("mov   x11, {0}", in(reg) next.x11);
 
-    llvm_asm!("mov   $0, x13" : "=r"(prev.x13) : : "memory" : "volatile");
-    llvm_asm!("mov   x13, $0" : :  "r"(next.x13) :"memory" : "volatile");
+    asm!("mov   {0}, x12", out(reg) prev.x12);
+    asm!("mov   x12, {0}", in(reg) next.x12);
 
-    llvm_asm!("mov   $0, x14" : "=r"(prev.x14) : : "memory" : "volatile");
-    llvm_asm!("mov   x14, $0" : :  "r"(next.x14) :"memory" : "volatile");
+    asm!("mov   {0}, x13", out(reg) prev.x13);
+    asm!("mov   x13, {0}", in(reg) next.x13);
 
-    llvm_asm!("mov   $0, x15" : "=r"(prev.x15) : : "memory" : "volatile");
-    llvm_asm!("mov   x15, $0" : :  "r"(next.x15) :"memory" : "volatile");
+    asm!("mov   {0}, x14", out(reg) prev.x14);
+    asm!("mov   x14, {0}", in(reg) next.x14);
 
-    llvm_asm!("mov   $0, x16" : "=r"(prev.x16) : : "memory" : "volatile");
-    llvm_asm!("mov   x16, $0" : :  "r"(next.x16) :"memory" : "volatile");
+    asm!("mov   {0}, x15", out(reg) prev.x15);
+    asm!("mov   x15, {0}", in(reg) next.x15);
 
-    llvm_asm!("mov   $0, x17" : "=r"(prev.x17) : : "memory" : "volatile");
-    llvm_asm!("mov   x17, $0" : :  "r"(next.x17) :"memory" : "volatile");
+    asm!("mov   {0}, x16", out(reg) prev.x16);
+    asm!("mov   x16, {0}", in(reg) next.x16);
 
-    llvm_asm!("mov   $0, x18" : "=r"(prev.x18) : : "memory" : "volatile");
-    llvm_asm!("mov   x18, $0" : :  "r"(next.x18) :"memory" : "volatile");
+    asm!("mov   {0}, x17", out(reg) prev.x17);
+    asm!("mov   x17, {0}", in(reg) next.x17);
 
-    llvm_asm!("mov   $0, x19" : "=r"(prev.x19) : : "memory" : "volatile");
-    llvm_asm!("mov   x19, $0" : :  "r"(next.x19) :"memory" : "volatile");
+    asm!("mov   {0}, x18", out(reg) prev.x18);
+    asm!("mov   x18, {0}", in(reg) next.x18);
 
-    llvm_asm!("mov   $0, x20" : "=r"(prev.x20) : : "memory" : "volatile");
-    llvm_asm!("mov   x20, $0" : :  "r"(next.x20) :"memory" : "volatile");
+    asm!("mov   {0}, x19", out(reg) prev.x19);
+    asm!("mov   x19, {0}", in(reg) next.x19);
 
-    llvm_asm!("mov   $0, x21" : "=r"(prev.x21) : : "memory" : "volatile");
-    llvm_asm!("mov   x21, $0" : :  "r"(next.x21) :"memory" : "volatile");
+    asm!("mov   {0}, x20", out(reg) prev.x20);
+    asm!("mov   x20, {0}", in(reg) next.x20);
 
-    llvm_asm!("mov   $0, x22" : "=r"(prev.x22) : : "memory" : "volatile");
-    llvm_asm!("mov   x22, $0" : :  "r"(next.x22) :"memory" : "volatile");
+    asm!("mov   {0}, x21", out(reg) prev.x21);
+    asm!("mov   x21, {0}", in(reg) next.x21);
 
-    llvm_asm!("mov   $0, x23" : "=r"(prev.x23) : : "memory" : "volatile");
-    llvm_asm!("mov   x23, $0" : :  "r"(next.x23) :"memory" : "volatile");
+    asm!("mov   {0}, x22", out(reg) prev.x22);
+    asm!("mov   x22, {0}", in(reg) next.x22);
 
-    llvm_asm!("mov   $0, x24" : "=r"(prev.x24) : : "memory" : "volatile");
-    llvm_asm!("mov   x24, $0" : :  "r"(next.x24) :"memory" : "volatile");
+    asm!("mov   {0}, x23", out(reg) prev.x23);
+    asm!("mov   x23, {0}", in(reg) next.x23);
 
-    llvm_asm!("mov   $0, x25" : "=r"(prev.x25) : : "memory" : "volatile");
-    llvm_asm!("mov   x25, $0" : :  "r"(next.x25) :"memory" : "volatile");
+    asm!("mov   {0}, x24", out(reg) prev.x24);
+    asm!("mov   x24, {0}", in(reg) next.x24);
 
-    llvm_asm!("mov   $0, x26" : "=r"(prev.x26) : : "memory" : "volatile");
-    llvm_asm!("mov   x26, $0" : :  "r"(next.x26) :"memory" : "volatile");
+    asm!("mov   {0}, x25", out(reg) prev.x25);
+    asm!("mov   x25, {0}", in(reg) next.x25);
 
-    llvm_asm!("mov   $0, x27" : "=r"(prev.x27) : : "memory" : "volatile");
-    llvm_asm!("mov   x27, $0" : :  "r"(next.x27) :"memory" : "volatile");
+    asm!("mov   {0}, x26", out(reg) prev.x26);
+    asm!("mov   x26, {0}", in(reg) next.x26);
 
-    llvm_asm!("mov   $0, x28" : "=r"(prev.x28) : : "memory" : "volatile");
-    llvm_asm!("mov   x28, $0" : :  "r"(next.x28) :"memory" : "volatile");
+    asm!("mov   {0}, x27", out(reg) prev.x27);
+    asm!("mov   x27, {0}", in(reg) next.x27);
 
-    llvm_asm!("mov   $0, x29" : "=r"(prev.fp) : : "memory" : "volatile");
-    llvm_asm!("mov   x29, $0" : :  "r"(next.fp) :"memory" : "volatile");
+    asm!("mov   {0}, x28", out(reg) prev.x28);
+    asm!("mov   x28, {0}", in(reg) next.x28);
 
-    llvm_asm!("mov   $0, x30" : "=r"(prev.lr) : : "memory" : "volatile");
-    llvm_asm!("mov   x30, $0" : :  "r"(next.lr) :"memory" : "volatile");
+    asm!("mov   {0}, x29", out(reg) prev.fp);
+    asm!("mov   x29, {0}", in(reg) next.fp);
 
-    llvm_asm!("mrs   $0, elr_el1" : "=r"(prev.elr_el1) : : "memory" : "volatile");
-    llvm_asm!("msr   elr_el1, $0" : : "r"(next.elr_el1) : "memory" : "volatile");
+    asm!("mov   {0}, x30", out(reg) prev.lr);
+    asm!("mov   x30, {0}", in(reg) next.lr);
 
-    llvm_asm!("mrs   $0, sp_el0" : "=r"(prev.sp_el0) : : "memory" : "volatile");
-    llvm_asm!("msr   sp_el0, $0" : : "r"(next.sp_el0) : "memory" : "volatile");
+    asm!("mrs   {0}, elr_el1", out(reg) prev.elr_el1);
+    asm!("msr   elr_el1, {0}", in(reg) next.elr_el1);
 
-    llvm_asm!("mrs   $0, tpidr_el0" : "=r"(prev.tpidr_el0) : : "memory" : "volatile");
-    llvm_asm!("msr   tpidr_el0, $0" : : "r"(next.tpidr_el0) : "memory" : "volatile");
+    asm!("mrs   {0}, sp_el0", out(reg) prev.sp_el0);
+    asm!("msr   sp_el0, {0}", in(reg) next.sp_el0);
 
-    llvm_asm!("mrs   $0, tpidrro_el0" : "=r"(prev.tpidrro_el0) : : "memory" : "volatile");
-    llvm_asm!("msr   tpidrro_el0, $0" : : "r"(next.tpidrro_el0) : "memory" : "volatile");
+    asm!("mrs   {0}, tpidr_el0", out(reg) prev.tpidr_el0);
+    asm!("msr   tpidr_el0, {0}", in(reg) next.tpidr_el0);
 
-    llvm_asm!("mrs   $0, spsr_el1" : "=r"(prev.spsr_el1) : : "memory" : "volatile");
-    llvm_asm!("msr   spsr_el1, $0" : : "r"(next.spsr_el1) : "memory" : "volatile");
+    asm!("mrs   {0}, tpidrro_el0", out(reg) prev.tpidrro_el0);
+    asm!("msr   tpidrro_el0, {0}", in(reg) next.tpidrro_el0);
 
-    llvm_asm!("mrs   $0, esr_el1" : "=r"(prev.esr_el1) : : "memory" : "volatile");
-    llvm_asm!("msr   esr_el1, $0" : : "r"(next.esr_el1) : "memory" : "volatile");
+    asm!("mrs   {0}, spsr_el1", out(reg) prev.spsr_el1);
+    asm!("msr   spsr_el1, {0}", in(reg) next.spsr_el1);
 
-    llvm_asm!("mov   $0, sp" : "=r"(prev.sp) : : "memory" : "volatile");
-    llvm_asm!("mov   sp, $0" : : "r"(next.sp) : "memory" : "volatile");
+    asm!("mrs   {0}, esr_el1", out(reg) prev.esr_el1);
+    asm!("msr   esr_el1, {0}", in(reg) next.esr_el1);
+
+    asm!("mov   {0}, sp", out(reg) prev.sp);
+    asm!("mov   sp, {0}", in(reg) next.sp);
 
     // Jump to switch hook
     asm!("b {switch_hook}", switch_hook = sym crate::context::switch_finish_hook);
-    */
 }
 
 #[allow(dead_code)]
