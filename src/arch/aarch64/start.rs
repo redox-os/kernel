@@ -121,6 +121,18 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Bootstrap: {:X}:{:X}", args.bootstrap_base, args.bootstrap_base + args.bootstrap_size);
         info!("Bootstrap entry point: {:X}", args.bootstrap_entry);
 
+        // Setup interrupt handlers
+        extern "C" {
+            fn exception_vector_base();
+        }
+        core::arch::asm!(
+            "
+            ldr x0, =exception_vector_base
+            msr vbar_el1, x0
+            ",
+            out("x0") _,
+        );
+
         /* NOT USED WITH UEFI
         device_tree::fill_memory_map(crate::PHYS_OFFSET + dtb_base, dtb_size);
 

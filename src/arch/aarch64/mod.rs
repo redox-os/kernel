@@ -27,6 +27,9 @@ pub mod start;
 /// Stop function
 pub mod stop;
 
+// Interrupt vectors
+pub mod vectors;
+
 /// Early init support
 pub mod init;
 
