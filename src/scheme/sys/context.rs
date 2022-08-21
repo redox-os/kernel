@@ -76,10 +76,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{}", ticks)
             };
 
-            let mut memory = 0;
-            if let Some(ref kfx) = context.kstack {
-                memory += kfx.len();
-            }
+            let mut memory = context.kfx.len();
             if let Some(ref kstack) = context.kstack {
                 memory += kstack.len();
             }

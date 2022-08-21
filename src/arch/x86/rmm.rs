@@ -14,6 +14,7 @@ use rmm::{
     FrameCount,
     FrameUsage,
     MemoryArea,
+    PageEntry,
     PageFlags,
     PageMapper,
     PhysicalAddress,
@@ -104,6 +105,14 @@ unsafe fn inner<A: Arch>(
             TableKind::Kernel,
             &mut bump_allocator
         ).expect("failed to create Mapper");
+
+        // Pre-allocate all kernel PD entries so that when the page table is copied,
+        // these entries are synced between processes
+        for i in 512..1024 {
+            let phys = mapper.allocator_mut().allocate_one().expect("failed to map page table");
+            let flags = A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_DEFAULT_TABLE;
+            mapper.table().set_entry(i, PageEntry::new(phys.data() | flags));
+        }
 
         // Map all physical areas at PHYS_OFFSET
         for area in areas.iter() {
