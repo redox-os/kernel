@@ -17,6 +17,7 @@ use rmm::{
     PageFlags,
     PageMapper,
     PhysicalAddress,
+    TableKind,
     VirtualAddress,
 };
 use spin::Mutex;
@@ -100,6 +101,7 @@ unsafe fn inner<A: Arch>(
 
     {
         let mut mapper = PageMapper::<A, _>::create(
+            TableKind::Kernel,
             &mut bump_allocator
         ).expect("failed to create Mapper");
 
@@ -298,7 +300,7 @@ impl KernelMapper {
         }
     }
     pub fn lock_manually(current_processor: usize) -> Self {
-        unsafe { Self::lock_for_manual_mapper(current_processor, PageMapper::new(RmmA::table(), FRAME_ALLOCATOR)) }
+        unsafe { Self::lock_for_manual_mapper(current_processor, PageMapper::current(TableKind::Kernel, FRAME_ALLOCATOR)) }
     }
     pub fn lock() -> Self {
         Self::lock_manually(crate::cpu_id())

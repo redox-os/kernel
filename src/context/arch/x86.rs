@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicBool;
 use alloc::sync::Arc;
 
 use crate::gdt::{GDT, GDT_TSS};
-use crate::paging::{RmmA, RmmArch};
+use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
 
 use memoffset::offset_of;
