@@ -404,7 +404,24 @@ impl ProcScheme {
         Err(Error::new(EINVAL))
     }
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86")]
+    fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
+        let (fsbase, gsbase) = if info.pid == context::context_id() {
+            unsafe {
+                (
+                    crate::gdt::GDT[crate::gdt::GDT_USER_FS].offset() as u64,
+                    crate::gdt::GDT[crate::gdt::GDT_USER_GS].offset() as u64
+                )
+            }
+        } else {
+            try_stop_context(info.pid, |context| {
+                Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
+            })?
+        };
+        Ok(EnvRegisters { fsbase: fsbase as _, gsbase: gsbase as _ })
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
         let (fsbase, gsbase) = if info.pid == context::context_id() {
             #[cfg(not(feature = "x86_fsgsbase"))]
@@ -442,7 +459,37 @@ impl ProcScheme {
         Err(Error::new(EINVAL))
     }
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86")]
+    fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
+        println!("{:?}", regs);
+
+        if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
+            return Err(Error::new(EINVAL));
+        }
+
+        if info.pid == context::context_id() {
+            unsafe {
+                crate::gdt::GDT[crate::gdt::GDT_USER_FS].set_offset(regs.fsbase);
+                crate::gdt::GDT[crate::gdt::GDT_USER_GS].set_offset(regs.gsbase);
+
+                match context::contexts().current().ok_or(Error::new(ESRCH))?.write().arch {
+                    ref mut arch => {
+                        arch.fsbase = regs.fsbase as usize;
+                        arch.gsbase = regs.gsbase as usize;
+                    }
+                }
+            }
+        } else {
+            try_stop_context(info.pid, |context| {
+                context.arch.fsbase = regs.fsbase as usize;
+                context.arch.gsbase = regs.gsbase as usize;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
         if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
             return Err(Error::new(EINVAL));

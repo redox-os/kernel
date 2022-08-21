@@ -322,7 +322,9 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singl
             mov eax, {user_data_seg_selector}
             mov ds, eax
             mov es, eax
+            mov eax, {user_fs_seg_selector}
             mov fs, eax
+            mov eax, {user_gs_seg_selector}
             mov gs, eax
 
             // Set up iret stack
@@ -353,6 +355,8 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singl
         shift_singlestep = const(SHIFT_SINGLESTEP),
         user_data_seg_selector = const(gdt::GDT_USER_DATA << 3 | 3),
         user_code_seg_selector = const(gdt::GDT_USER_CODE << 3 | 3),
+        user_fs_seg_selector = const(gdt::GDT_USER_FS << 3 | 3),
+        user_gs_seg_selector = const(gdt::GDT_USER_GS << 3 | 3),
 
         options(noreturn),
     );

@@ -16,11 +16,12 @@ pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;
 pub const GDT_KERNEL_KPCR: usize = 3;
-pub const GDT_USER_CODE32_UNUSED: usize = 4;
+pub const GDT_USER_CODE: usize = 4;
 pub const GDT_USER_DATA: usize = 5;
-pub const GDT_USER_CODE: usize = 6;
-pub const GDT_TSS: usize = 7;
-pub const GDT_CPU_ID_CONTAINER: usize = 8;
+pub const GDT_USER_FS: usize = 6;
+pub const GDT_USER_GS: usize = 7;
+pub const GDT_TSS: usize = 8;
+pub const GDT_CPU_ID_CONTAINER: usize = 9;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
@@ -52,7 +53,7 @@ static mut INIT_GDT: [GdtEntry; 4] = [
 ];
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 9] = [
+pub static mut GDT: [GdtEntry; 10] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -61,12 +62,14 @@ pub static mut GDT: [GdtEntry; 9] = [
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
     // Kernel TLS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
-    // Dummy 32-bit user code - apparently necessary for SYSEXIT. We restrict it to ring 0 anyway.
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
+    // User (32-bit) code
+    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
     // User data
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
-    // User (64-bit) code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
+    // User FS (for TLS)
+    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
+    // User GS (for TLS)
+    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
     // Unused entry which stores the CPU ID. This is necessary for paranoid interrupts as they have
