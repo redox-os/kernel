@@ -461,8 +461,6 @@ impl ProcScheme {
 
     #[cfg(target_arch = "x86")]
     fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
-        println!("{:?}", regs);
-
         if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize)) && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))) {
             return Err(Error::new(EINVAL));
         }
