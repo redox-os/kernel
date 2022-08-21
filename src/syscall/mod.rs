@@ -170,6 +170,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     }
 
+    /*
     let debug = {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
@@ -200,6 +201,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
     }
+    */
 
     // The next lines set the current syscall in the context struct, then once the inner() function
     // completes, we set the current syscall to none.
@@ -224,6 +226,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     }
 
+    /*
     if debug {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
@@ -242,6 +245,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
             }
         }
     }
+    */
 
     // errormux turns Result<usize> into -errno
     Error::mux(result)
