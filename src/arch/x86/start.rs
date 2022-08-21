@@ -328,6 +328,7 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singl
             mov gs, eax
 
             // Set up iret stack
+            mov eax, {user_data_seg_selector}
             push eax // stack selector
             push esi // stack address
             push ecx // eflags
