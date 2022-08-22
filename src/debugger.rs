@@ -1,9 +1,82 @@
 use crate::paging::{RmmA, RmmArch, TableKind};
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     println!("DEBUGGER TODO");
     println!();
+}
+
+// Super unsafe due to page table switching and raw pointers!
+#[cfg(target_arch = "x86")]
+pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+    println!("DEBUGGER START");
+    println!();
+
+    let old_table = RmmA::table(TableKind::User);
+
+    for (id, context_lock) in crate::context::contexts().iter() {
+        if target_id.map_or(false, |target_id| *id != target_id) { continue; }
+        let context = context_lock.read();
+        println!("{}: {}", (*id).into(), context.name.read());
+
+        // Switch to context page table to ensure syscall debug and stack dump will work
+        if let Some(ref space) = context.addr_space {
+            RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
+            //TODO check_consistency(&mut space.write());
+        }
+
+        println!("status: {:?}", context.status);
+        if ! context.status_reason.is_empty() {
+            println!("reason: {}", context.status_reason);
+        }
+        if let Some((a, b, c, d, e, f)) = context.syscall {
+            println!("syscall: {}", crate::syscall::debug::format_call(a, b, c, d, e, f));
+        }
+        if let Some(ref addr_space) = context.addr_space {
+            let addr_space = addr_space.read();
+            if ! addr_space.grants.is_empty() {
+                println!("grants:");
+                for grant in addr_space.grants.iter() {
+                    let region = grant.region();
+                    println!(
+                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {}",
+                        region.start_address().data(), region.final_address().data(), region.size(),
+                        if grant.is_owned() { "owned" } else { "borrowed" },
+                    );
+                }
+            }
+        }
+        if let Some(regs) = crate::ptrace::regs_for(&context) {
+            println!("regs:");
+            regs.dump();
+
+            let mut sp = regs.iret.esp;
+            println!("stack: {:>08x}", sp);
+            //Maximum 64 dwords
+            for _ in 0..64 {
+                if context.addr_space.as_ref().map_or(false, |space| space.read().table.utable.translate(crate::paging::VirtualAddress::new(sp)).is_some()) {
+                    let value = *(sp as *const usize);
+                    println!("    {:>08x}: {:>08x}", sp, value);
+                    if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
+                        sp = next_sp;
+                    } else {
+                        println!("    {:>08x}: OVERFLOW", sp);
+                        break;
+                    }
+                } else {
+                    println!("    {:>08x}: GUARD PAGE", sp);
+                    break;
+                }
+            }
+        }
+
+        // Switch to original page table
+        RmmA::set_table(TableKind::User, old_table);
+
+        println!();
+    }
+
+    println!("DEBUGGER END");
 }
 
 // Super unsafe due to page table switching and raw pointers!
@@ -79,6 +152,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     println!("DEBUGGER END");
 }
 
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace) {
     use crate::paging::*;
 
