@@ -429,6 +429,8 @@ pub unsafe fn init(
             log::warn!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
             new_base = cmp::max(new_base, acpi_end);
         }
+
+        // Ensure initfs areas are not used
         if base < initfs_end && base + size > initfs_base {
             log::warn!("{:X}:{:X} overlaps with initfs {:X}:{:X}", base, size, initfs_base, initfs_size);
             new_base = cmp::max(new_base, initfs_end);
@@ -442,8 +444,35 @@ pub unsafe fn init(
             size = new_size;
         }
 
+        // Ensure area fits within physmap (1GiB)
+        //TODO: let memory areas >1GiB be used
+        let physmap_size = 0x40000000;
+        if base >= physmap_size {
+            log::warn!("{:X}:{:X} outside of physmap, ignoring", base, size);
+            size = 0; // Skip area
+        } else if base + size > physmap_size {
+            let new_size = physmap_size.checked_sub(base).unwrap_or(0);
+            log::warn!("{:X}:{:X} outside of physmap, moved to {:X}:{:X}", base, size, base, new_size);
+            size = new_size;
+        }
+
+        // Combine areas that overlap
+        for other_i in 0..area_i {
+            let other = &AREAS[other_i];
+            let other_base = other.base.data();
+            let other_end = other_base + other.size;
+            if base < other_end && base + size > other_base {
+                let new_base = cmp::min(base, other_base);
+                let new_size = cmp::max(base + size, other_end).checked_sub(new_base).unwrap_or(0);
+                log::warn!("{:X}:{:X} overlaps with area {:X}:{:X}, combining into {:X}:{:X}", base, size, other_base, other.size, new_base, new_size);
+                AREAS[other_i].base = PhysicalAddress::new(new_base);
+                AREAS[other_i].size = new_size;
+                size = 0; // Skip area
+            }
+        }
+
         if size == 0 {
-            // Area is zero sized
+            // Area is zero sized, skip
             continue;
         }
 
