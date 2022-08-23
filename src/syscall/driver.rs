@@ -105,11 +105,11 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         if flags.contains(PHYSMAP_WRITE) {
             page_flags = page_flags.write(true);
         }
-        #[cfg(target_arch = "x86_64")] // TODO: AARCH64
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
         if flags.contains(PHYSMAP_WRITE_COMBINE) {
             page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
         }
-        #[cfg(target_arch = "x86_64")] // TODO: AARCH64
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
         if flags.contains(PHYSMAP_NO_CACHE) {
             page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
         }
