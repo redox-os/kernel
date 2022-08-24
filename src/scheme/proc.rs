@@ -398,10 +398,13 @@ impl ProcScheme {
         Ok(id)
     }
 
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(target_arch = "aarch64")]
     fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
-        //TODO: Support other archs
-        Err(Error::new(EINVAL))
+        //TODO: aarch64 EnvRegisters
+        Ok(EnvRegisters {
+            tpidr_el0: 0,
+            tpidrro_el0: 0,
+        })
     }
 
     #[cfg(target_arch = "x86")]
@@ -453,10 +456,10 @@ impl ProcScheme {
         Ok(EnvRegisters { fsbase: fsbase as _, gsbase: gsbase as _ })
     }
 
-    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(target_arch = "aarch64")]
     fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
-        //TODO: Support other archs
-        Err(Error::new(EINVAL))
+        //TODO: aarch64 EnvRegisters
+        Ok(())
     }
 
     #[cfg(target_arch = "x86")]
