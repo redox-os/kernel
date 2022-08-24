@@ -3,6 +3,8 @@ use core::sync::atomic::AtomicBool;
 
 use alloc::sync::Arc;
 
+use crate::{push_scratch, pop_scratch};
+use crate::interrupt::handler::ScratchRegisters;
 use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
 
@@ -252,15 +254,7 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
 #[allow(dead_code)]
 #[repr(packed)]
 pub struct SignalHandlerStack {
-    r11: usize,
-    r10: usize,
-    r9: usize,
-    r8: usize,
-    rsi: usize,
-    rdi: usize,
-    rdx: usize,
-    rcx: usize,
-    rax: usize,
+    scratch: ScratchRegisters,
     handler: extern fn(usize),
     sig: usize,
     rip: usize,
@@ -275,34 +269,20 @@ unsafe extern fn signal_handler_wrapper() {
 
     // Push scratch registers
     core::arch::asm!(
-        "
-            push rax
-            push rcx
-            push rdx
-            push rdi
-            push rsi
-            push r8
-            push r9
-            push r10
-            push r11
-
+        concat!(
+            "push rax",
+            push_scratch!(),
+            "
             mov rdi, rsp
             call {inner}
-
-            pop r11
-            pop r10
-            pop r9
-            pop r8
-            pop rsi
-            pop rdi
-            pop rdx
-            pop rcx
-            pop rax
+            ",
+            pop_scratch!(),
+            "
             add rsp, 16
             ret
-        ",
-
+            "
+        ),
         inner = sym inner,
-        options(noreturn),
+        options(noreturn)
     );
 }
