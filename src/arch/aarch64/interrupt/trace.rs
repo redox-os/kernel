@@ -12,17 +12,13 @@ pub unsafe fn stack_trace() {
 
     println!("TRACE: {:>016x}", fp);
 
-    /*TODO: implement using rmm
+    let mapper = KernelMapper::lock();
+
     //Maximum 64 frames
-    let active_ktable = ActivePageTable::new(TableKind::Kernel);
-    let active_utable = ActivePageTable::new(TableKind::User);
-    let in_kernel_or_user_table = |ptr| {
-        active_ktable.translate(VirtualAddress::new(ptr)).is_some() ||
-        active_utable.translate(VirtualAddress::new(ptr)).is_some()
-    };
     for _frame in 0..64 {
         if let Some(pc_fp) = fp.checked_add(mem::size_of::<usize>()) {
-            if in_kernel_or_user_table(fp) && in_kernel_or_user_table(pc_fp) {
+            if mapper.translate(VirtualAddress::new(fp)).is_some()
+            && mapper.translate(VirtualAddress::new(pc_fp)).is_some() {
                 let pc = *(pc_fp as *const usize);
                 if pc == 0 {
                     println!(" {:>016x}: EMPTY RETURN", fp);
@@ -39,7 +35,6 @@ pub unsafe fn stack_trace() {
             println!("  {:>016x}: fp OVERFLOW", fp);
         }
     }
-    */
 }
 ///
 /// Get a symbol
