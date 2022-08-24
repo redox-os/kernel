@@ -4,6 +4,8 @@ use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Once;
 
+use crate::{push_scratch, pop_scratch};
+use crate::interrupt::handler::ScratchRegisters;
 use crate::device::cpu::registers::{control_regs, tlb};
 use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
@@ -118,10 +120,10 @@ impl Context {
     }
 
     pub unsafe fn signal_stack(&mut self, handler: extern fn(usize), sig: u8) {
-        self.push_stack(sig as usize);
-        self.push_stack(handler as usize);
         let lr = self.lr.clone();
         self.push_stack(lr);
+        self.push_stack(sig as usize);
+        self.push_stack(handler as usize);
         self.set_lr(signal_handler_wrapper as usize);
     }
 
@@ -408,127 +410,37 @@ unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
 #[allow(dead_code)]
 #[repr(packed)]
 pub struct SignalHandlerStack {
-    x28: usize,         /* Callee saved Register                                */
-    x27: usize,         /* Callee saved Register                                */
-    x26: usize,         /* Callee saved Register                                */
-    x25: usize,         /* Callee saved Register                                */
-    x24: usize,         /* Callee saved Register                                */
-    x23: usize,         /* Callee saved Register                                */
-    x22: usize,         /* Callee saved Register                                */
-    x21: usize,         /* Callee saved Register                                */
-    x20: usize,         /* Callee saved Register                                */
-    x19: usize,         /* Callee saved Register                                */
-    x18: usize,
-    x17: usize,
-    x16: usize,
-    x15: usize,         /* Temporary Register                                   */
-    x14: usize,         /* Temporary Register                                   */
-    x13: usize,         /* Temporary Register                                   */
-    x12: usize,         /* Temporary Register                                   */
-    x11: usize,         /* Temporary Register                                   */
-    x10: usize,         /* Temporary Register                                   */
-    x9: usize,          /* Temporary Register                                   */
-    x8: usize,          /* Indirect location Register                           */
-    x7: usize,
-    x6: usize,
-    x5: usize,
-    x4: usize,
-    x3: usize,
-    x2: usize,
-    x1: usize,
-    x0: usize,
-    lr: usize,
+    scratch: ScratchRegisters,
+    padding: usize,
     handler: extern fn(usize),
     sig: usize,
+    lr: usize,
 }
 
 #[naked]
 unsafe extern fn signal_handler_wrapper() {
-    core::arch::asm!(
-        "
-        udf #0
-        ",
-        options(noreturn)
-    );
-    /*TODO: convert to asm!
     #[inline(never)]
-    unsafe fn inner(stack: &SignalHandlerStack) {
+    unsafe extern "C" fn inner(stack: &SignalHandlerStack) {
         (stack.handler)(stack.sig);
     }
 
     // Push scratch registers
-    llvm_asm!("str	    x0, [sp, #-8]!
-          str	    x1, [sp, #-8]!
-          str	    x2, [sp, #-8]!
-          str	    x3, [sp, #-8]!
-          str	    x4, [sp, #-8]!
-          str	    x5, [sp, #-8]!
-          str	    x6, [sp, #-8]!
-          str	    x7, [sp, #-8]!
-          str	    x8, [sp, #-8]!
-          str	    x9, [sp, #-8]!
-          str	    x10, [sp, #-8]!
-          str	    x11, [sp, #-8]!
-          str	    x12, [sp, #-8]!
-          str	    x13, [sp, #-8]!
-          str	    x14, [sp, #-8]!
-          str	    x15, [sp, #-8]!
-          str	    x16, [sp, #-8]!
-          str	    x17, [sp, #-8]!
-          str	    x18, [sp, #-8]!
-          str	    x19, [sp, #-8]!
-          str	    x20, [sp, #-8]!
-          str	    x21, [sp, #-8]!
-          str	    x22, [sp, #-8]!
-          str	    x23, [sp, #-8]!
-          str	    x24, [sp, #-8]!
-          str	    x25, [sp, #-8]!
-          str	    x26, [sp, #-8]!
-          str	    x27, [sp, #-8]!
-          str	    x28, [sp, #-8]!"
-    : : : : "volatile");
-
-    // Get reference to stack variables
-    let sp: usize;
-    llvm_asm!("" : "={sp}"(sp) : : : "volatile");
-
-    let ptr = sp as *const SignalHandlerStack;
-    let final_lr = (*ptr).lr;
-
-    // Call inner rust function
-    inner(&*(sp as *const SignalHandlerStack));
-
-    // Pop scratch registers, error code, and return
-    llvm_asm!("ldr	    x28, [sp], #8
-          ldr	    x27, [sp], #8
-          ldr	    x26, [sp], #8
-          ldr	    x25, [sp], #8
-          ldr	    x24, [sp], #8
-          ldr	    x23, [sp], #8
-          ldr	    x22, [sp], #8
-          ldr	    x21, [sp], #8
-          ldr	    x20, [sp], #8
-          ldr	    x19, [sp], #8
-          ldr	    x18, [sp], #8
-          ldr	    x17, [sp], #8
-          ldr	    x16, [sp], #8
-          ldr	    x15, [sp], #8
-          ldr	    x14, [sp], #8
-          ldr	    x13, [sp], #8
-          ldr	    x12, [sp], #8
-          ldr	    x11, [sp], #8
-          ldr	    x10, [sp], #8
-          ldr	    x9, [sp], #8
-          ldr	    x8, [sp], #8
-          ldr	    x7, [sp], #8
-          ldr	    x6, [sp], #8
-          ldr	    x5, [sp], #8
-          ldr	    x4, [sp], #8
-          ldr	    x3, [sp], #8
-          ldr	    x2, [sp], #8
-          ldr	    x1, [sp], #8"
-    : : : : "volatile");
-
-    llvm_asm!("mov       x30, $0" : : "r"(final_lr) : "memory" : "volatile");
-    */
+    core::arch::asm!(
+        concat!(
+            "sub sp, sp, 8",
+            push_scratch!(),
+            "
+            mov x0, sp
+            bl {inner}
+            ",
+            pop_scratch!(),
+            "
+            add sp, sp, 24
+            ldr x30, [sp], #8
+            ret
+            "
+        ),
+        inner = sym inner,
+        options(noreturn),
+    );
 }
