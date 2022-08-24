@@ -11,12 +11,15 @@ pub static FONT: &'static [u8] = include_bytes!("../../../res/unifont.font");
 
 pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
 
+pub static FRAMEBUFFER: Mutex<(usize, usize, usize)> = Mutex::new((0, 0, 0));
+
 pub fn init(env: &[u8]) {
     println!("Starting graphical debug");
 
+    let mut phys = 0;
+    let mut virt = 0;
     let mut width = 0;
     let mut height = 0;
-    let mut physbaseptr = 0;
 
     //TODO: should errors be reported?
     for line in str::from_utf8(env).unwrap_or("").lines() {
@@ -25,7 +28,11 @@ pub fn init(env: &[u8]) {
         let value = parts.next().unwrap_or("");
 
         if name == "FRAMEBUFFER_ADDR" {
-            physbaseptr = usize::from_str_radix(value, 16).unwrap_or(0);
+            phys = usize::from_str_radix(value, 16).unwrap_or(0);
+        }
+
+        if name == "FRAMEBUFFER_VIRT" {
+            virt = usize::from_str_radix(value, 16).unwrap_or(0);
         }
 
         if name == "FRAMEBUFFER_WIDTH" {
@@ -37,17 +44,17 @@ pub fn init(env: &[u8]) {
         }
     }
 
-    if physbaseptr == 0 || width == 0 || height == 0 {
+    *FRAMEBUFFER.lock() = (phys, virt, width * height * 4);
+
+    if phys == 0 || virt == 0 || width == 0 || height == 0 {
         println!("Framebuffer not found");
         return;
     }
 
-    println!("Framebuffer {}x{} at {:X}", width, height, physbaseptr);
+    println!("Framebuffer {}x{} at {:X} mapped to {:X}", width, height, phys, virt);
 
     {
-        let virtbaseptr = physbaseptr + crate::PHYS_OFFSET;
-
-        let display = Display::new(width, height, virtbaseptr as *mut u32);
+        let display = Display::new(width, height, virt as *mut u32);
         let debug_display = DebugDisplay::new(display);
         *DEBUG_DISPLAY.lock() = Some(debug_display);
     }

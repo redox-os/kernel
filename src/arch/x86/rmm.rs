@@ -173,24 +173,17 @@ unsafe fn inner<A: Arch>(
         // Ensure graphical debug region remains paged
         #[cfg(feature = "graphical_debug")]
         {
-            use crate::devices::graphical_debug::DEBUG_DISPLAY;
+            use crate::devices::graphical_debug::FRAMEBUFFER;
             use super::paging::entry::EntryFlags;
 
-            let (base, size) = if let Some(debug_display) = &*DEBUG_DISPLAY.lock() {
-                let data = &debug_display.display.onscreen;
-                (
-                    data.as_ptr() as usize - crate::PHYS_OFFSET,
-                    data.len() * 4
-                )
-            } else {
-                (0, 0)
-            };
+            let (phys, virt, size) = *FRAMEBUFFER.lock();
 
             let pages = (size + A::PAGE_SIZE - 1) / A::PAGE_SIZE;
             for i in 0..pages {
-                let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
-                let virt = A::phys_to_virt(phys);
+                let phys = PhysicalAddress::new(phys + i * A::PAGE_SIZE);
+                let virt = VirtualAddress::new(virt + i * A::PAGE_SIZE);
                 let flags = PageFlags::new().write(true)
+                    // Write combining flag
                     .custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
                 let flush = mapper.map_phys(
                     virt,
