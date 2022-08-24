@@ -180,6 +180,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             RmmA::set_table(TableKind::User, empty_cr3());
         }
     }
+
     switch_to_inner(&mut prev.arch, &mut next.arch)
 }
 

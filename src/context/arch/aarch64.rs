@@ -2,6 +2,7 @@ use alloc::sync::Arc;
 use core::arch::asm;
 use core::mem;
 use core::sync::atomic::{AtomicBool, Ordering};
+use memoffset::offset_of;
 use spin::Once;
 
 use crate::{push_scratch, pop_scratch};
@@ -307,104 +308,153 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         }
     }
 
-    switch_to_inner(&mut prev.arch, &mut next.arch);
+    switch_to_inner(&mut prev.arch, &mut next.arch)
 }
 
-#[inline(never)]
-unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
-    //TODO: use one asm block like x86
-    asm!("mov   {0}, x8", out(reg) prev.x8);
-    asm!("mov   x8, {0}", in(reg) next.x8);
+#[naked]
+unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
+    core::arch::asm!(
+        "
+        str x8, [x0, #{off_x8}]
+        ldr x8, [x1, #{off_x8}]
 
-    asm!("mov   {0}, x9", out(reg) prev.x9);
-    asm!("mov   x9, {0}", in(reg) next.x9);
+        str x9, [x0, #{off_x9}]
+        ldr x9, [x1, #{off_x9}]
 
-    asm!("mov   {0}, x10", out(reg) prev.x10);
-    asm!("mov   x10, {0}", in(reg) next.x10);
+        str x10, [x0, #{off_x10}]
+        ldr x10, [x1, #{off_x10}]
 
-    asm!("mov   {0}, x11", out(reg) prev.x11);
-    asm!("mov   x11, {0}", in(reg) next.x11);
+        str x11, [x0, #{off_x11}]
+        ldr x11, [x1, #{off_x11}]
 
-    asm!("mov   {0}, x12", out(reg) prev.x12);
-    asm!("mov   x12, {0}", in(reg) next.x12);
+        str x12, [x0, #{off_x12}]
+        ldr x12, [x1, #{off_x12}]
 
-    asm!("mov   {0}, x13", out(reg) prev.x13);
-    asm!("mov   x13, {0}", in(reg) next.x13);
+        str x13, [x0, #{off_x13}]
+        ldr x13, [x1, #{off_x13}]
 
-    asm!("mov   {0}, x14", out(reg) prev.x14);
-    asm!("mov   x14, {0}", in(reg) next.x14);
+        str x14, [x0, #{off_x14}]
+        ldr x14, [x1, #{off_x14}]
 
-    asm!("mov   {0}, x15", out(reg) prev.x15);
-    asm!("mov   x15, {0}", in(reg) next.x15);
+        str x15, [x0, #{off_x15}]
+        ldr x15, [x1, #{off_x15}]
 
-    asm!("mov   {0}, x16", out(reg) prev.x16);
-    asm!("mov   x16, {0}", in(reg) next.x16);
+        str x16, [x0, #{off_x16}]
+        ldr x16, [x1, #{off_x16}]
 
-    asm!("mov   {0}, x17", out(reg) prev.x17);
-    asm!("mov   x17, {0}", in(reg) next.x17);
+        str x17, [x0, #{off_x17}]
+        ldr x17, [x1, #{off_x17}]
 
-    asm!("mov   {0}, x18", out(reg) prev.x18);
-    asm!("mov   x18, {0}", in(reg) next.x18);
+        str x18, [x0, #{off_x18}]
+        ldr x18, [x1, #{off_x18}]
 
-    asm!("mov   {0}, x19", out(reg) prev.x19);
-    asm!("mov   x19, {0}", in(reg) next.x19);
+        str x19, [x0, #{off_x19}]
+        ldr x19, [x1, #{off_x19}]
 
-    asm!("mov   {0}, x20", out(reg) prev.x20);
-    asm!("mov   x20, {0}", in(reg) next.x20);
+        str x20, [x0, #{off_x20}]
+        ldr x20, [x1, #{off_x20}]
 
-    asm!("mov   {0}, x21", out(reg) prev.x21);
-    asm!("mov   x21, {0}", in(reg) next.x21);
+        str x21, [x0, #{off_x21}]
+        ldr x21, [x1, #{off_x21}]
 
-    asm!("mov   {0}, x22", out(reg) prev.x22);
-    asm!("mov   x22, {0}", in(reg) next.x22);
+        str x22, [x0, #{off_x22}]
+        ldr x22, [x1, #{off_x22}]
 
-    asm!("mov   {0}, x23", out(reg) prev.x23);
-    asm!("mov   x23, {0}", in(reg) next.x23);
+        str x23, [x0, #{off_x23}]
+        ldr x23, [x1, #{off_x23}]
 
-    asm!("mov   {0}, x24", out(reg) prev.x24);
-    asm!("mov   x24, {0}", in(reg) next.x24);
+        str x24, [x0, #{off_x24}]
+        ldr x24, [x1, #{off_x24}]
 
-    asm!("mov   {0}, x25", out(reg) prev.x25);
-    asm!("mov   x25, {0}", in(reg) next.x25);
+        str x25, [x0, #{off_x25}]
+        ldr x25, [x1, #{off_x25}]
 
-    asm!("mov   {0}, x26", out(reg) prev.x26);
-    asm!("mov   x26, {0}", in(reg) next.x26);
+        str x26, [x0, #{off_x26}]
+        ldr x26, [x1, #{off_x26}]
 
-    asm!("mov   {0}, x27", out(reg) prev.x27);
-    asm!("mov   x27, {0}", in(reg) next.x27);
+        str x27, [x0, #{off_x27}]
+        ldr x27, [x1, #{off_x27}]
 
-    asm!("mov   {0}, x28", out(reg) prev.x28);
-    asm!("mov   x28, {0}", in(reg) next.x28);
+        str x28, [x0, #{off_x28}]
+        ldr x28, [x1, #{off_x28}]
 
-    asm!("mov   {0}, x29", out(reg) prev.fp);
-    asm!("mov   x29, {0}", in(reg) next.fp);
+        str x29, [x0, #{off_x29}]
+        ldr x29, [x1, #{off_x29}]
 
-    asm!("mov   {0}, x30", out(reg) prev.lr);
-    asm!("mov   x30, {0}", in(reg) next.lr);
+        str x30, [x0, #{off_x30}]
+        ldr x30, [x1, #{off_x30}]
 
-    asm!("mrs   {0}, elr_el1", out(reg) prev.elr_el1);
-    asm!("msr   elr_el1, {0}", in(reg) next.elr_el1);
+        mrs x2, elr_el1
+        str x2, [x0, #{off_elr_el1}]
+        ldr x2, [x1, #{off_elr_el1}]
+        msr elr_el1, x2
 
-    asm!("mrs   {0}, sp_el0", out(reg) prev.sp_el0);
-    asm!("msr   sp_el0, {0}", in(reg) next.sp_el0);
+        mrs x2, sp_el0
+        str x2, [x0, #{off_sp_el0}]
+        ldr x2, [x1, #{off_sp_el0}]
+        msr sp_el0, x2
 
-    asm!("mrs   {0}, tpidr_el0", out(reg) prev.tpidr_el0);
-    asm!("msr   tpidr_el0, {0}", in(reg) next.tpidr_el0);
+        mrs x2, tpidr_el0
+        str x2, [x0, #{off_tpidr_el0}]
+        ldr x2, [x1, #{off_tpidr_el0}]
+        msr tpidr_el0, x2
 
-    asm!("mrs   {0}, tpidrro_el0", out(reg) prev.tpidrro_el0);
-    asm!("msr   tpidrro_el0, {0}", in(reg) next.tpidrro_el0);
+        mrs x2, tpidrro_el0
+        str x2, [x0, #{off_tpidrro_el0}]
+        ldr x2, [x1, #{off_tpidrro_el0}]
+        msr tpidrro_el0, x2
 
-    asm!("mrs   {0}, spsr_el1", out(reg) prev.spsr_el1);
-    asm!("msr   spsr_el1, {0}", in(reg) next.spsr_el1);
+        mrs x2, spsr_el1
+        str x2, [x0, #{off_spsr_el1}]
+        ldr x2, [x1, #{off_spsr_el1}]
+        msr spsr_el1, x2
 
-    asm!("mrs   {0}, esr_el1", out(reg) prev.esr_el1);
-    asm!("msr   esr_el1, {0}", in(reg) next.esr_el1);
+        mrs x2, esr_el1
+        str x2, [x0, #{off_esr_el1}]
+        ldr x2, [x1, #{off_esr_el1}]
+        msr esr_el1, x2
 
-    asm!("mov   {0}, sp", out(reg) prev.sp);
-    asm!("mov   sp, {0}", in(reg) next.sp);
+        mov x2, sp
+        str x2, [x0, #{off_sp}]
+        ldr x2, [x1, #{off_sp}]
+        mov sp, x2
 
-    // Jump to switch hook
-    asm!("b {switch_hook}", switch_hook = sym crate::context::switch_finish_hook);
+        b {switch_hook}
+        ",
+        off_x8 = const(offset_of!(Context, x8)),
+        off_x9 = const(offset_of!(Context, x9)),
+        off_x10 = const(offset_of!(Context, x10)),
+        off_x11 = const(offset_of!(Context, x11)),
+        off_x12 = const(offset_of!(Context, x12)),
+        off_x13 = const(offset_of!(Context, x13)),
+        off_x14 = const(offset_of!(Context, x14)),
+        off_x15 = const(offset_of!(Context, x15)),
+        off_x16 = const(offset_of!(Context, x16)),
+        off_x17 = const(offset_of!(Context, x17)),
+        off_x18 = const(offset_of!(Context, x18)),
+        off_x19 = const(offset_of!(Context, x19)),
+        off_x20 = const(offset_of!(Context, x20)),
+        off_x21 = const(offset_of!(Context, x21)),
+        off_x22 = const(offset_of!(Context, x22)),
+        off_x23 = const(offset_of!(Context, x23)),
+        off_x24 = const(offset_of!(Context, x24)),
+        off_x25 = const(offset_of!(Context, x25)),
+        off_x26 = const(offset_of!(Context, x26)),
+        off_x27 = const(offset_of!(Context, x27)),
+        off_x28 = const(offset_of!(Context, x28)),
+        off_x29 = const(offset_of!(Context, fp)),
+        off_x30 = const(offset_of!(Context, lr)),
+        off_elr_el1 = const(offset_of!(Context, elr_el1)),
+        off_sp_el0 = const(offset_of!(Context, sp_el0)),
+        off_tpidr_el0 = const(offset_of!(Context, tpidr_el0)),
+        off_tpidrro_el0 = const(offset_of!(Context, tpidrro_el0)),
+        off_spsr_el1 = const(offset_of!(Context, spsr_el1)),
+        off_esr_el1 = const(offset_of!(Context, esr_el1)),
+        off_sp = const(offset_of!(Context, sp)),
+
+        switch_hook = sym crate::context::switch_finish_hook,
+        options(noreturn),
+    );
 }
 
 #[allow(dead_code)]
