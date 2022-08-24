@@ -3,7 +3,9 @@ use core::sync::atomic::AtomicBool;
 
 use alloc::sync::Arc;
 
+use crate::{push_scratch, pop_scratch};
 use crate::gdt::{GDT, GDT_USER_FS, GDT_USER_GS};
+use crate::interrupt::handler::ScratchRegisters;
 use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
 
@@ -234,9 +236,7 @@ unsafe extern "cdecl" fn switch_to_inner() {
 #[allow(dead_code)]
 #[repr(packed)]
 pub struct SignalHandlerStack {
-    edx: usize,
-    ecx: usize,
-    eax: usize,
+    scratch: ScratchRegisters,
     handler: extern fn(usize),
     sig: usize,
     eip: usize,
@@ -251,22 +251,20 @@ unsafe extern "C" fn signal_handler_wrapper() {
 
     // Push scratch registers
     core::arch::asm!(
-        "
-            push eax
-            push ecx
-            push edx
-
+        concat!(
+            "push eax",
+            push_scratch!(),
+            "
             push esp
             call {inner}
             pop esp
-
-            pop edx
-            pop ecx
-            pop eax
+            ",
+            pop_scratch!(),
+            "
             add esp, 8
             ret
-        ",
-
+            ",
+        ),
         inner = sym inner,
         options(noreturn),
     );
