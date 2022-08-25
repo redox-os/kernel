@@ -1,6 +1,7 @@
 use alloc::sync::Arc;
 use core::arch::asm;
 use core::mem;
+use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 use memoffset::offset_of;
 use spin::Once;
@@ -30,7 +31,6 @@ pub struct Context {
     spsr_el1: usize,
     esr_el1: usize,
     fx_loadable: bool,
-    fx_address: usize,
     sp: usize,          /* Stack Pointer (x31)                                  */
     lr: usize,          /* Link Register (x30)                                  */
     fp: usize,          /* Frame pointer Register (x29)                         */
@@ -67,7 +67,6 @@ impl Context {
             spsr_el1: 0,
             esr_el1: 0,
             fx_loadable: false,
-            fx_address: 0,
             sp: 0,
             lr: 0,
             fp: 0,
@@ -135,44 +134,6 @@ impl Context {
         value
     }
 
-    pub fn get_fx_regs(&self) -> Option<FloatRegisters> {
-        if !self.fx_loadable {
-            return None;
-        }
-        let mut regs = unsafe { *(self.fx_address as *const FloatRegisters) };
-        let mut new_st = regs.fp_simd_regs;
-        regs.fp_simd_regs = new_st;
-        Some(regs)
-    }
-
-    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) -> bool {
-        if !self.fx_loadable {
-            return false;
-        }
-
-        {
-            let old = unsafe { &*(self.fx_address as *const FloatRegisters) };
-            let old_st = new.fp_simd_regs;
-            let mut new_st = new.fp_simd_regs;
-            for (new_st, old_st) in new_st.iter_mut().zip(&old_st) {
-                *new_st = *old_st;
-            }
-            new.fp_simd_regs = new_st;
-
-            // Make sure we don't use `old` from now on
-        }
-
-        unsafe {
-            *(self.fx_address as *mut FloatRegisters) = new;
-        }
-        true
-    }
-
-    pub fn set_fx(&mut self, address: usize) {
-        self.fx_address = address;
-    }
-
-
     pub fn dump(&self) {
         println!("elr_el1: 0x{:016x}", self.elr_el1);
         println!("sp_el0: 0x{:016x}", self.sp_el0);
@@ -209,11 +170,23 @@ impl Context {
 
 impl super::Context {
     pub fn get_fx_regs(&self) -> FloatRegisters {
-        self.arch.get_fx_regs().expect("TODO: make get_fx_regs always valid")
+        if !self.arch.fx_loadable {
+            panic!("TODO: make get_fx_regs always work");
+        }
+
+        unsafe {
+            ptr::read(self.kfx.as_ptr() as *const FloatRegisters)
+        }
     }
 
     pub fn set_fx_regs(&mut self, mut new: FloatRegisters) {
-        assert!(self.arch.set_fx_regs(new), "TODO: make set_fx_regs always valid")
+        if !self.arch.fx_loadable {
+            panic!("TODO: make set_fx_regs always work");
+        }
+
+        unsafe {
+            ptr::write(self.kfx.as_mut_ptr() as *mut FloatRegisters, new);
+        }
     }
 }
 
@@ -226,8 +199,7 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 }
 
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    let mut float_regs = &mut *(prev.arch.fx_address as *mut FloatRegisters);
-    /*TODO: save float regs
+    let mut float_regs = &mut *(prev.kfx.as_mut_ptr() as *mut FloatRegisters);
     asm!(
         "stp q0, q1, [{0}, #16 * 0]",
         "stp q2, q3, [{0}, #16 * 2]",
@@ -251,13 +223,11 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         out(reg) float_regs.fpcr,
         out(reg) float_regs.fpsr
     );
-    */
 
     prev.arch.fx_loadable = true;
 
     if next.arch.fx_loadable {
-        let mut float_regs = &mut *(next.arch.fx_address as *mut FloatRegisters);
-        /*TODO: restore float registers
+        let mut float_regs = &mut *(next.kfx.as_mut_ptr() as *mut FloatRegisters);
         asm!(
             "ldp q0, q1, [{0}, #16 * 0]",
             "ldp q2, q3, [{0}, #16 * 2]",
@@ -281,7 +251,6 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             in(reg) float_regs.fpcr,
             in(reg) float_regs.fpsr
         );
-        */
     }
 
     match next.addr_space {
