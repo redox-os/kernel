@@ -92,16 +92,12 @@ pub struct IretRegisters {
     pub sp_el0: usize,      // Shouldn't be used if interrupt occurred at EL1
     pub esr_el1: usize,
     pub spsr_el1: usize,
-    pub tpidrro_el0: usize,
-    pub tpidr_el0: usize,
     pub elr_el1: usize,
 }
 
 impl IretRegisters {
     pub fn dump(&self) {
         println!("ELR_EL1: {:>016X}", { self.elr_el1 });
-        println!("TPIDR_EL0: {:>016X}", { self.tpidr_el0 });
-        println!("TPIDRRO_EL0: {:>016X}", { self.tpidrro_el0 });
         println!("SPSR_EL1: {:>016X}", { self.spsr_el1 });
         println!("ESR_EL1: {:>016X}", { self.esr_el1 });
         println!("SP_EL0: {:>016X}", { self.sp_el0 });
@@ -128,8 +124,6 @@ impl InterruptStack {
     pub fn save(&self, all: &mut IntRegisters) {
         /*TODO: aarch64 registers
         all.elr_el1 = self.iret.elr_el1;
-        all.tpidr_el0 = self.iret.tpidr_el0;
-        all.tpidrro_el0 = self.iret.tpidrro_el0;
         all.spsr_el1 = self.iret.spsr_el1;
         all.esr_el1 = self.iret.esr_el1;
         all.sp_el0 = self.iret.sp_el0;
@@ -173,8 +167,6 @@ impl InterruptStack {
     pub fn load(&mut self, all: &IntRegisters) {
         /*TODO: aarch64 registers
         self.iret.elr_el1 = all.elr_el1;
-        self.iret.tpidr_el0 = all.tpidr_el0;
-        self.iret.tpidrro_el0 = all.tpidrro_el0;
         self.iret.spsr_el1 = all.spsr_el1;
         self.iret.esr_el1 = all.esr_el1;
         self.iret.sp_el0 = all.sp_el0;
@@ -307,12 +299,8 @@ macro_rules! pop_preserved {
 #[macro_export]
 macro_rules! push_special {
     () => { "
-        mrs     x14, tpidr_el0
-        mrs     x15, elr_el1
-        stp     x14, x15, [sp, #-16]!
-
         mrs     x14, spsr_el1
-        mrs     x15, tpidrro_el0
+        mrs     x15, elr_el1
         stp     x14, x15, [sp, #-16]!
 
         mrs     x14, sp_el0
@@ -329,12 +317,8 @@ macro_rules! pop_special {
         msr     sp_el0, x14
 
         ldp     x14, x15, [sp], 16
-        msr     tpidrro_el0, x15
-        msr     spsr_el1, x14
-
-        ldp     x14, x15, [sp], 16
         msr     elr_el1, x15
-        msr     tpidr_el0, x14
+        msr     spsr_el1, x14
     " };
 }
 

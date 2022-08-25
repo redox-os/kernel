@@ -413,7 +413,7 @@ impl ProcScheme {
             try_stop_context(info.pid, |context| {
                 Ok((
                     context.arch.tpidr_el0,
-                    context.arch.tpidrro_el0
+                    context.arch.tpidrro_el0,
                 ))
             })?
         };
