@@ -25,8 +25,8 @@ pub const KFX_ALIGN: usize = 16;
 pub struct Context {
     elr_el1: usize,
     sp_el0: usize,
-    tpidr_el0: usize,   /* Pointer to TLS region for this Context               */
-    tpidrro_el0: usize, /* Pointer to TLS (read-only) region for this Context   */
+    pub(crate) tpidr_el0: usize,   /* Pointer to TLS region for this Context               */
+    pub(crate) tpidrro_el0: usize, /* Pointer to TLS (read-only) region for this Context   */
     spsr_el1: usize,
     esr_el1: usize,
     fx_loadable: bool,

@@ -400,10 +400,26 @@ impl ProcScheme {
 
     #[cfg(target_arch = "aarch64")]
     fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
-        //TODO: aarch64 EnvRegisters
+        use crate::device::cpu::registers::control_regs;
+
+        let (tpidr_el0, tpidrro_el0) = if info.pid == context::context_id() {
+            unsafe {
+                (
+                    control_regs::tpidr_el0() as usize,
+                    control_regs::tpidrro_el0() as usize,
+                )
+            }
+        } else {
+            try_stop_context(info.pid, |context| {
+                Ok((
+                    context.arch.tpidr_el0,
+                    context.arch.tpidrro_el0
+                ))
+            })?
+        };
         Ok(EnvRegisters {
-            tpidr_el0: 0,
-            tpidrro_el0: 0,
+            tpidr_el0,
+            tpidrro_el0,
         })
     }
 
@@ -458,7 +474,20 @@ impl ProcScheme {
 
     #[cfg(target_arch = "aarch64")]
     fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
-        //TODO: aarch64 EnvRegisters
+        use crate::device::cpu::registers::control_regs;
+
+        if info.pid == context::context_id() {
+            unsafe {
+                control_regs::tpidr_el0_write(regs.tpidr_el0 as u64);
+                control_regs::tpidrro_el0_write(regs.tpidrro_el0 as u64);
+            }
+        } else {
+            try_stop_context(info.pid, |context| {
+                context.arch.tpidr_el0 = regs.tpidr_el0;
+                context.arch.tpidrro_el0 = regs.tpidrro_el0;
+                Ok(())
+            })?;
+        }
         Ok(())
     }
 

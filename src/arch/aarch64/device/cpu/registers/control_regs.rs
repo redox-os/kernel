@@ -40,12 +40,28 @@ pub unsafe fn mair_el1_write(val: MairEl1) {
     asm!("msr mair_el1, {}", in(reg) val.bits());
 }
 
+pub unsafe fn tpidr_el0() -> u64 {
+    let ret: u64;
+    asm!("mrs {}, tpidr_el0", out(reg) ret);
+    ret
+}
+
 pub unsafe fn tpidr_el0_write(val: u64) {
     asm!("msr tpidr_el0, {}", in(reg) val);
 }
 
 pub unsafe fn tpidr_el1_write(val: u64) {
     asm!("msr tpidr_el1, {}", in(reg) val);
+}
+
+pub unsafe fn tpidrro_el0() -> u64 {
+    let ret: u64;
+    asm!("mrs {}, tpidrro_el0", out(reg) ret);
+    ret
+}
+
+pub unsafe fn tpidrro_el0_write(val: u64) {
+    asm!("msr tpidrro_el0, {}", in(reg) val);
 }
 
 pub unsafe fn esr_el1() -> u32 {
