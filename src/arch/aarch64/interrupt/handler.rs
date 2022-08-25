@@ -348,6 +348,8 @@ macro_rules! exception_stack {
                 // https://github.com/dtolnay/paste/issues/7
                 #[inline(always)]
                 unsafe fn inner($stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
+                    let _guard = $crate::ptrace::set_process_regs($stack);
+
                     $code
                 }
                 inner(&mut *stack);
