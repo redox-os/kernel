@@ -3,6 +3,8 @@ use spin::MutexGuard;
 
 use crate::log::{LOG, Log};
 
+#[cfg(feature = "graphical_debug")]
+use crate::devices::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};
 #[cfg(feature = "serial_debug")]
 use super::device::{
     serial::COM1,
@@ -11,6 +13,8 @@ use super::device::{
 
 pub struct Writer<'a> {
     log: MutexGuard<'a, Option<Log>>,
+    #[cfg(feature = "graphical_debug")]
+    display: MutexGuard<'a, Option<DebugDisplay>>,
     #[cfg(feature = "serial_debug")]
     serial: MutexGuard<'a, Option<SerialPort>>,
 }
@@ -19,6 +23,8 @@ impl<'a> Writer<'a> {
     pub fn new() -> Writer<'a> {
         Writer {
             log: LOG.lock(),
+            #[cfg(feature = "graphical_debug")]
+            display: DEBUG_DISPLAY.lock(),
             #[cfg(feature = "serial_debug")]
             serial: COM1.lock(),
         }
@@ -28,6 +34,13 @@ impl<'a> Writer<'a> {
         {
             if let Some(ref mut log) = *self.log {
                 log.write(buf);
+            }
+        }
+
+        #[cfg(feature = "graphical_debug")]
+        {
+            if let Some(ref mut display) = *self.display {
+                let _ = display.write(buf);
             }
         }
 

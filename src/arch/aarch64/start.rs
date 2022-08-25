@@ -62,23 +62,14 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
     let bootstrap = {
         let args = &*args_ptr;
 
-        let kernel_base = args.kernel_base as usize;
-        let kernel_size = args.kernel_size as usize;
-        let stack_base = args.stack_base as usize;
-        let stack_size = args.stack_size as usize;
-        let env_base = args.env_base as usize;
-        let env_size = args.env_size as usize;
-        let dtb_base = args.dtb_base as usize;
-        let dtb_size = args.dtb_size as usize;
-
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
             assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
         }
 
-        KERNEL_BASE.store(kernel_base, Ordering::SeqCst);
-        KERNEL_SIZE.store(kernel_size, Ordering::SeqCst);
+        KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
+        KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
         //TODO: Remove hard-coded UART for QEMU virt machine
         {
@@ -91,7 +82,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         }
 
         // Try to find serial port prior to logging
-        device::serial::init_early(crate::PHYS_OFFSET + dtb_base, dtb_size);
+        device::serial::init_early(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
 
         // Convert env to slice
         let env = slice::from_raw_parts((args.env_base + crate::PHYS_OFFSET) as *const u8, args.env_size);
@@ -170,6 +161,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init();
 
+        // Set up double buffer for grpahical debug now that heap is available
+        #[cfg(feature = "graphical_debug")]
+        graphical_debug::init_heap();
+
         // Activate memory logging
         log::init();
 
@@ -178,6 +173,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
+
+        // Stop graphical debug
+        #[cfg(feature = "graphical_debug")]
+        graphical_debug::fini();
 
         BSP_READY.store(true, Ordering::SeqCst);
 
