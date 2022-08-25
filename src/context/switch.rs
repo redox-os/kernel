@@ -170,11 +170,6 @@ pub unsafe fn switch() -> bool {
                 gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
             }
         }
-        #[cfg(target_arch = "aarch64")]
-        {
-            let pid = to_context.id.into();
-            to_context.arch.set_tcb(pid);
-        }
         CONTEXT_ID.store(to_context.id, Ordering::SeqCst);
 
         if let Some(sig) = to_sig {

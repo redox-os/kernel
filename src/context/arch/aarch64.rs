@@ -103,10 +103,6 @@ impl Context {
         self.lr = address;
     }
 
-    pub fn set_tcb(&mut self, pid: usize) {
-        self.tpidr_el0 = (crate::USER_TCB_OFFSET + pid * crate::PAGE_SIZE);
-    }
-
     pub fn set_fp(&mut self, address: usize) {
         self.fp = address;
     }
