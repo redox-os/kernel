@@ -1140,6 +1140,12 @@ impl Scheme for ProcScheme {
             Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => {
                 stop_context(handle.info.pid, |context: &mut Context| unsafe {
                     if let Some(saved_regs) = ptrace::regs_for_mut(context) {
+                        #[cfg(target_arch = "aarch64")]
+                        {
+                            saved_regs.iret.elr_el1 = new_ip;
+                            saved_regs.iret.sp_el0 = new_sp;
+                        }
+
                         #[cfg(target_arch = "x86")]
                         {
                             saved_regs.iret.eip = new_ip;
