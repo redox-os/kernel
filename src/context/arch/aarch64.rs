@@ -18,8 +18,8 @@ use crate::syscall::FloatRegisters;
 /// This must be done, as no locks can be held on the stack during switch
 pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 
-//TODO: find out ideal size
-pub const KFX_SIZE: usize = 512;
+// 512 bytes for registers, extra bytes for fpcr and fpsr
+pub const KFX_SIZE: usize = 1024;
 pub const KFX_ALIGN: usize = 16;
 
 #[derive(Clone, Debug)]
