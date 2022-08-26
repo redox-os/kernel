@@ -136,7 +136,10 @@ impl SerialPort {
 
     pub fn receive(&mut self) {
         while self.line_sts().contains(UartFrFlags::RXFF) {
-            debug_input(self.read_reg(self.data_reg) as u8);
+            let c = self.read_reg(self.data_reg) as u8;
+            if c != 0 {
+                debug_input(c);
+            }
         }
         debug_notify();
     }
