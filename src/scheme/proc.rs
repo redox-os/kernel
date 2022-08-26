@@ -141,6 +141,7 @@ enum Operation {
     // FD to access the file descriptor behind grants.
     GrantHandle { description: Arc<RwLock<FileDescription>> },
 
+    SchedAffinity,
     Sigactions(Arc<RwLock<Vec<(SigAction, usize)>>>),
     CurrentSigactions,
     AwaitingSigactionsChange(Arc<RwLock<Vec<(SigAction, usize)>>>),
@@ -307,6 +308,7 @@ impl ProcScheme {
             Some("sigactions") => Operation::Sigactions(Arc::clone(&get_context(pid)?.read().actions)),
             Some("current-sigactions") => Operation::CurrentSigactions,
             Some("mmap-min-addr") => Operation::MmapMinAddr(Arc::clone(get_context(pid)?.read().addr_space().map_err(|_| Error::new(ENOENT))?)),
+            Some("sched-affinity") => Operation::SchedAffinity,
             _ => return Err(Error::new(EINVAL))
         };
 
@@ -834,6 +836,12 @@ impl Scheme for ProcScheme {
                 *buf.array_chunks_mut::<{mem::size_of::<usize>()}>().next().unwrap() = usize::to_ne_bytes(val);
                 Ok(mem::size_of::<usize>())
             }
+            Operation::SchedAffinity => {
+                // TODO: Deduplicate code
+                let val = context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.read().sched_affinity.map_or(usize::MAX, |a| a % crate::cpu_count());
+                *buf.array_chunks_mut::<{mem::size_of::<usize>()}>().next().unwrap() = usize::to_ne_bytes(val);
+                Ok(mem::size_of::<usize>())
+            }
             // TODO: Replace write() with SYS_DUP_FORWARD.
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
@@ -1081,6 +1089,13 @@ impl Scheme for ProcScheme {
                 addrspace.write().mmap_min = val;
                 Ok(mem::size_of::<usize>())
             }
+            // TODO: Deduplicate code.
+            Operation::SchedAffinity => {
+                let val = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
+                context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.write().sched_affinity = if val == usize::MAX { None } else { Some(val % crate::cpu_count()) };
+                Ok(mem::size_of::<usize>())
+            }
+
             _ => Err(Error::new(EBADF)),
         }
     }
@@ -1131,6 +1146,7 @@ impl Scheme for ProcScheme {
             Operation::CurrentSigactions => "current-sigactions",
             Operation::OpenViaDup => "open-via-dup",
             Operation::MmapMinAddr(_) => "mmap-min-addr",
+            Operation::SchedAffinity => "sched-affinity",
 
             _ => return Err(Error::new(EOPNOTSUPP)),
         });
@@ -1359,6 +1375,9 @@ fn inherit_context() -> Result<ContextId> {
         let mut new_context = new_context_lock.write();
 
         new_context.status = Status::Stopped(SIGSTOP);
+
+        // TODO: Move all of these IDs into somewhere in userspace. Processes as an abstraction
+        // needs not be in the kernel; contexts are sufficient.
         new_context.euid = current_context.euid;
         new_context.egid = current_context.egid;
         new_context.ruid = current_context.ruid;
@@ -1368,10 +1387,9 @@ fn inherit_context() -> Result<ContextId> {
         new_context.ppid = current_context.id;
         new_context.pgid = current_context.pgid;
         new_context.umask = current_context.umask;
-        new_context.sigmask = current_context.sigmask;
-        new_context.cpu_id = current_context.cpu_id;
 
-        // TODO: More to copy?
+        // TODO: Force userspace to copy sigmask. Start with "all signals blocked".
+        new_context.sigmask = current_context.sigmask;
 
         new_context.id
     };
