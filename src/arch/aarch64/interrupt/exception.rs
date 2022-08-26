@@ -32,24 +32,12 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
             println!("FATAL: Not an SVC induced synchronous exception");
             stack.dump();
             stack_trace();
-
-            println!("CPU {}, PID {:?}", cpu_id(), context::context_id());
-
-            // This could deadlock, but at this point we are going to halt anyways
-            {
-                let contexts = context::contexts();
-                if let Some(context_lock) = contexts.current() {
-                    let context = context_lock.read();
-                    println!("NAME: {}", *context.name.read());
-                }
-            }
-
-            // Halt
-            loop {}
+            crate::ksignal(SIGSEGV);
+            stack.scratch.x0
+        } else {
+            let scratch = &stack.scratch;
+            syscall::syscall(scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, stack)
         }
-
-        let scratch = &stack.scratch;
-        syscall::syscall(scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, stack)
     });
 });
 
