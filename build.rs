@@ -28,6 +28,7 @@ fn main() {
     asm(&out_dir);
 
     // Build pre kstart init asm code for aarch64
+    /*TODO: do we need any of this?
     let cfg = Cfg::new(env::var_os("TARGET").unwrap()).unwrap();
     if cfg.target_arch == "aarch64" {
         println!("cargo:rerun-if-changed=src/arch/aarch64/init/pre_kstart/early_init.S");
@@ -36,4 +37,5 @@ fn main() {
             .target("aarch64-unknown-redox")
             .compile("early_init");
     }
+    */
 }
