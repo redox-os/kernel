@@ -3,7 +3,8 @@ use core::{mem, ptr};
 use core::intrinsics::{volatile_load, volatile_store};
 
 use crate::memory::Frame;
-use crate::paging::{KernelMapper, PhysicalAddress, PageFlags};
+use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, VirtualAddress};
+use crate::paging::entry::EntryFlags;
 
 use super::sdt::Sdt;
 use super::{ACPI_TABLE, find_sdt};
@@ -63,13 +64,38 @@ impl Hpet {
     }
 }
 
+//TODO: x86 use assumes only one HPET and only one GenericAddressStructure
+#[cfg(target_arch = "x86")]
+impl GenericAddressStructure {
+    pub unsafe fn init(&self, mapper: &mut KernelMapper) {
+        let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
+        let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
+
+        mapper
+            .get_mut()
+            .expect("KernelMapper locked re-entrant while mapping memory for GenericAddressStructure")
+            .map_phys(page.start_address(), frame.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true))
+            .expect("failed to map memory for GenericAddressStructure")
+            .flush();
+    }
+
+    pub unsafe fn read_u64(&self, offset: usize) -> u64{
+        volatile_load((crate::HPET_OFFSET + offset) as *const u64)
+    }
+
+    pub unsafe fn write_u64(&mut self, offset: usize, value: u64) {
+        volatile_store((crate::HPET_OFFSET + offset) as *mut u64, value);
+    }
+}
+
+#[cfg(not(target_arch = "x86"))]
 impl GenericAddressStructure {
     pub unsafe fn init(&self, mapper: &mut KernelMapper) {
         let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
         let (_, result) = mapper
             .get_mut()
             .expect("KernelMapper locked re-entrant while mapping memory for GenericAddressStructure")
-            .map_linearly(frame.start_address(), PageFlags::new().write(true))
+            .map_linearly(frame.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true))
             .expect("failed to map memory for GenericAddressStructure");
         result.flush();
     }

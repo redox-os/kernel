@@ -2,7 +2,7 @@ use core::sync::atomic::{self, AtomicU32};
 use core::intrinsics::{volatile_load, volatile_store};
 use x86::msr::*;
 
-use crate::paging::{KernelMapper, PhysicalAddress, PageFlags, RmmA, RmmArch};
+use crate::paging::{KernelMapper, PhysicalAddress, PageFlags, RmmA, RmmArch, VirtualAddress};
 
 use super::super::cpuid::cpuid;
 
@@ -45,7 +45,7 @@ impl LocalApic {
         let mapper = mapper.get_mut().expect("expected KernelMapper not to be locked re-entrant while initializing LAPIC");
 
         let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
-        let virtaddr = RmmA::phys_to_virt(physaddr);
+        let virtaddr = VirtualAddress::new(crate::LAPIC_OFFSET);
 
         self.address = virtaddr.data();
         self.x2 = cpuid().map_or(false, |cpuid| {

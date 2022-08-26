@@ -8,7 +8,7 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIoApic, MadtIntSrcOverride};
 
 use crate::arch::interrupt::irq;
 use crate::memory::Frame;
-use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch};
+use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
 use crate::paging::entry::EntryFlags;
 
 use super::super::cpuid::cpuid;
@@ -234,7 +234,7 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static Mad
     // map the I/O APIC registers
 
     let frame = Frame::containing_address(PhysicalAddress::new(madt_ioapic.address as usize));
-    let page = Page::containing_address(RmmA::phys_to_virt(frame.start_address()));
+    let page = Page::containing_address(VirtualAddress::new(crate::IOAPIC_OFFSET));
 
     assert!(mapper.translate(page.start_address()).is_none());
 
