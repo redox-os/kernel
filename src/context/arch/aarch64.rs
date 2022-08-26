@@ -44,17 +44,6 @@ pub struct Context {
     x21: usize,         /* Callee saved Register                                */
     x20: usize,         /* Callee saved Register                                */
     x19: usize,         /* Callee saved Register                                */
-    x18: usize,
-    x17: usize,
-    x16: usize,
-    x15: usize,         /* Temporary Register                                   */
-    x14: usize,         /* Temporary Register                                   */
-    x13: usize,         /* Temporary Register                                   */
-    x12: usize,         /* Temporary Register                                   */
-    x11: usize,         /* Temporary Register                                   */
-    x10: usize,         /* Temporary Register                                   */
-    x9: usize,          /* Temporary Register                                   */
-    x8: usize,          /* Indirect location Register                           */
 }
 
 impl Context {
@@ -80,17 +69,6 @@ impl Context {
             x21: 0,
             x20: 0,
             x19: 0,
-            x18: 0,
-            x17: 0,
-            x16: 0,
-            x15: 0,
-            x14: 0,
-            x13: 0,
-            x12: 0,
-            x11: 0,
-            x10: 0,
-            x9: 0,
-            x8: 0,
         }
     }
 
@@ -154,17 +132,6 @@ impl Context {
         println!("x21: 0x{:016x}", self.x21);
         println!("x20: 0x{:016x}", self.x20);
         println!("x19: 0x{:016x}", self.x19);
-        println!("x18: 0x{:016x}", self.x18);
-        println!("x17: 0x{:016x}", self.x17);
-        println!("x16: 0x{:016x}", self.x16);
-        println!("x15: 0x{:016x}", self.x15);
-        println!("x14: 0x{:016x}", self.x14);
-        println!("x13: 0x{:016x}", self.x13);
-        println!("x12: 0x{:016x}", self.x12);
-        println!("x11: 0x{:016x}", self.x11);
-        println!("x10: 0x{:016x}", self.x10);
-        println!("x9: 0x{:016x}", self.x9);
-        println!("x8: 0x{:016x}", self.x8);
     }
 }
 
@@ -280,39 +247,6 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
     core::arch::asm!(
         "
-        str x8, [x0, #{off_x8}]
-        ldr x8, [x1, #{off_x8}]
-
-        str x9, [x0, #{off_x9}]
-        ldr x9, [x1, #{off_x9}]
-
-        str x10, [x0, #{off_x10}]
-        ldr x10, [x1, #{off_x10}]
-
-        str x11, [x0, #{off_x11}]
-        ldr x11, [x1, #{off_x11}]
-
-        str x12, [x0, #{off_x12}]
-        ldr x12, [x1, #{off_x12}]
-
-        str x13, [x0, #{off_x13}]
-        ldr x13, [x1, #{off_x13}]
-
-        str x14, [x0, #{off_x14}]
-        ldr x14, [x1, #{off_x14}]
-
-        str x15, [x0, #{off_x15}]
-        ldr x15, [x1, #{off_x15}]
-
-        str x16, [x0, #{off_x16}]
-        ldr x16, [x1, #{off_x16}]
-
-        str x17, [x0, #{off_x17}]
-        ldr x17, [x1, #{off_x17}]
-
-        str x18, [x0, #{off_x18}]
-        ldr x18, [x1, #{off_x18}]
-
         str x19, [x0, #{off_x19}]
         ldr x19, [x1, #{off_x19}]
 
@@ -386,17 +320,6 @@ unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
 
         b {switch_hook}
         ",
-        off_x8 = const(offset_of!(Context, x8)),
-        off_x9 = const(offset_of!(Context, x9)),
-        off_x10 = const(offset_of!(Context, x10)),
-        off_x11 = const(offset_of!(Context, x11)),
-        off_x12 = const(offset_of!(Context, x12)),
-        off_x13 = const(offset_of!(Context, x13)),
-        off_x14 = const(offset_of!(Context, x14)),
-        off_x15 = const(offset_of!(Context, x15)),
-        off_x16 = const(offset_of!(Context, x16)),
-        off_x17 = const(offset_of!(Context, x17)),
-        off_x18 = const(offset_of!(Context, x18)),
         off_x19 = const(offset_of!(Context, x19)),
         off_x20 = const(offset_of!(Context, x20)),
         off_x21 = const(offset_of!(Context, x21)),
