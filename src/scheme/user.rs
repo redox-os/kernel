@@ -150,21 +150,33 @@ impl UserInner {
             return Ok(VirtualAddress::new(DANGLING));
         }
 
-        let dst_addr_space = Arc::clone(context_weak.upgrade().ok_or(Error::new(ESRCH))?.read().addr_space()?);
-        let mut dst_addr_space = dst_addr_space.write();
-
         let src_page = Page::containing_address(VirtualAddress::new(round_down_pages(address)));
         let offset = address - src_page.start_address().data();
         let page_count = round_up_pages(offset + size) / PAGE_SIZE;
         let requested_dst_page = (dst_address != 0).then_some(Page::containing_address(VirtualAddress::new(round_down_pages(dst_address))));
 
-        let current_addrspace = AddrSpace::current()?;
-        let mut current_addrspace = current_addrspace.write();
+        let dst_space_lock = Arc::clone(context_weak.upgrade().ok_or(Error::new(ESRCH))?.read().addr_space()?);
+        let cur_space_lock = AddrSpace::current()?;
 
         //TODO: Use syscall_head and syscall_tail to avoid leaking data
-        let dst_page = dst_addr_space.mmap(requested_dst_page, page_count, flags, |dst_page, page_flags, mapper, flusher| {
-            Ok(Grant::borrow(src_page, dst_page, page_count, page_flags, desc_opt, &mut current_addrspace.table.utable, mapper, flusher)?)
-        })?;
+        let dst_page = if Arc::ptr_eq(
+            &dst_space_lock,
+            &cur_space_lock,
+        ) {
+            let mut dst_space = dst_space_lock.write();
+            dst_space.mmap(requested_dst_page, page_count, flags, |dst_page, page_flags, mapper, flusher| {
+                //TODO: remove hack to use same mapper for borrow
+                let src_mapper = unsafe { &mut *(mapper as *mut _) };
+                let dst_mapper = unsafe { &mut *(mapper as *mut _) };
+                Ok(Grant::borrow(src_page, dst_page, page_count, page_flags, desc_opt, src_mapper, dst_mapper, flusher)?)
+            })?
+        } else {
+            let mut dst_space = dst_space_lock.write();
+            dst_space.mmap(requested_dst_page, page_count, flags, move |dst_page, page_flags, mapper, flusher| {
+                let mut cur_space = cur_space_lock.write();
+                Ok(Grant::borrow(src_page, dst_page, page_count, page_flags, desc_opt, &mut cur_space.table.utable, mapper, flusher)?)
+            })?
+        };
 
         Ok(dst_page.start_address().add(offset))
     }
