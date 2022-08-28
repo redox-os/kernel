@@ -1,9 +1,80 @@
 use crate::paging::{RmmA, RmmArch, TableKind};
 
-#[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+//TODO: combine arches into one function (aarch64 one is newest)
+
+// Super unsafe due to page table switching and raw pointers!
+#[cfg(target_arch = "aarch64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
-    println!("DEBUGGER TODO");
+    println!("DEBUGGER START");
     println!();
+
+    let old_table = RmmA::table(TableKind::User);
+
+    for (id, context_lock) in crate::context::contexts().iter() {
+        if target_id.map_or(false, |target_id| *id != target_id) { continue; }
+        let context = context_lock.read();
+        println!("{}: {}", (*id).into(), context.name.read());
+
+        println!("status: {:?}", context.status);
+        if ! context.status_reason.is_empty() {
+            println!("reason: {}", context.status_reason);
+        }
+
+        // Switch to context page table to ensure syscall debug and stack dump will work
+        if let Some(ref space) = context.addr_space {
+            RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
+
+            if let Some((a, b, c, d, e, f)) = context.syscall {
+                println!("syscall: {}", crate::syscall::debug::format_call(a, b, c, d, e, f));
+            }
+
+            {
+                let space = space.read();
+                if ! space.grants.is_empty() {
+                    println!("grants:");
+                    for grant in space.grants.iter() {
+                        let region = grant.region();
+                        println!(
+                            "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {}",
+                            region.start_address().data(), region.final_address().data(), region.size(),
+                            if grant.is_owned() { "owned" } else { "borrowed" },
+                        );
+                    }
+                }
+            }
+
+            if let Some(regs) = crate::ptrace::regs_for(&context) {
+                println!("regs:");
+                regs.dump();
+
+                let mut sp = regs.iret.sp_el0;
+                println!("stack: {:>016x}", sp);
+                //Maximum 64 usizes
+                for _ in 0..64 {
+                    if context.addr_space.as_ref().map_or(false, |space| space.read().table.utable.translate(crate::paging::VirtualAddress::new(sp)).is_some()) {
+                        let value = *(sp as *const usize);
+                        println!("    {:>016x}: {:>016x}", sp, value);
+                        if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
+                            sp = next_sp;
+                        } else {
+                            println!("    {:>016x}: OVERFLOW", sp);
+                            break;
+                        }
+                    } else {
+                        println!("    {:>016x}: GUARD PAGE", sp);
+                        break;
+                    }
+                }
+            }
+
+            // Switch to original page table
+            RmmA::set_table(TableKind::User, old_table);
+        }
+
+        println!();
+    }
+
+    println!("DEBUGGER END");
 }
 
 // Super unsafe due to page table switching and raw pointers!
