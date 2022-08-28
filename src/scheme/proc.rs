@@ -1258,16 +1258,18 @@ impl KernelScheme for ProcScheme {
 
         match info.operation {
             Operation::GrantHandle { ref description } => {
+                let current_space = AddrSpace::current()?;
+
                 // Copy Map to user memory
                 let page_count = 1; // TODO: find size required to store Map
-                let page = dst_addr_space
+                let page = current_space
                     .write()
                     .mmap(None, page_count, MapFlags::PROT_READ, |page, flags, mapper, flusher| {
                         Ok(Grant::zeroed(page, page_count, flags, mapper, flusher)?)
                     })?;
-                
+
                 // Write Map using kernel's physmap
-                let (phys, _flags) = dst_addr_space.read().table.utable.translate(page.start_address()).expect("could not find mapping that was just made");
+                let (phys, _flags) = current_space.read().table.utable.translate(page.start_address()).expect("could not find mapping that was just made");
                 unsafe { core::ptr::write(RmmA::phys_to_virt(phys).data() as *mut Map, *map); }
 
                 // Scheme fmap with Map in user memory
@@ -1280,7 +1282,7 @@ impl KernelScheme for ProcScheme {
                 let res = scheme.fmap(number, unsafe { &*(page.start_address().data() as *const Map) });
 
                 // Unmap Map user memory
-                dst_addr_space.write().munmap(page, page_count);
+                current_space.write().munmap(page, page_count);
 
                 res
             }
