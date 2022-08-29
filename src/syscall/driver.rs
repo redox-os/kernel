@@ -93,14 +93,19 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     // TODO: Check physical_address against MAXPHYADDR.
 
     let end = 1 << 52;
-    if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 {
+    if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0 {
         return Err(Error::new(EINVAL));
     }
+
+    if size % PAGE_SIZE != 0 {
+        log::warn!("physmap size {} is not multiple of PAGE_SIZE {}", size, PAGE_SIZE);
+    }
+    let pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
 
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
     let mut addr_space = addr_space.write();
 
-    addr_space.mmap(None, size / PAGE_SIZE, Default::default(), |dst_page, _, dst_mapper, dst_flusher| {
+    addr_space.mmap(None, pages, Default::default(), |dst_page, _, dst_mapper, dst_flusher| {
         let mut page_flags = PageFlags::new().user(true);
         if flags.contains(PHYSMAP_WRITE) {
             page_flags = page_flags.write(true);
@@ -116,7 +121,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
         Grant::physmap(
             Frame::containing_address(PhysicalAddress::new(physical_address)),
             dst_page,
-            size / PAGE_SIZE,
+            pages,
             page_flags,
             dst_mapper,
             dst_flusher,
