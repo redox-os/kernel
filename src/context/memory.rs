@@ -208,6 +208,9 @@ impl AddrSpace {
     }
     pub fn mmap(&mut self, page: Option<Page>, page_count: usize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
         // Finally, the end of all "T0DO: Abstract with other grant creation"!
+        if page_count == 0 {
+            return Err(Error::new(EINVAL));
+        }
 
         let region = match page {
             Some(page) => self.grants.find_free_at(self.mmap_min, page.start_address(), page_count * PAGE_SIZE, flags)?,
@@ -872,7 +875,7 @@ impl Borrow<Region> for Grant {
 
 impl Drop for Grant {
     fn drop(&mut self) {
-        assert!(!self.mapped, "Grant dropped while still mapped");
+        assert!(!self.mapped, "Grant dropped while still mapped: {:#x?}", self);
     }
 }
 
