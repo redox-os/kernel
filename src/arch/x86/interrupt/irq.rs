@@ -8,47 +8,12 @@ use crate::device::{local_apic, ioapic, pic};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::{debug_input, debug_notify};
+use crate::scheme::serio::serio_input;
 use crate::{context, time};
 
 //resets to 0 in context::switch()
 #[thread_local]
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
-
-// The only way to read PS2 data without race conditions is to allow a keyboard interrupt to happen
-// and then read data while reading mouse data, since keyboard data overrides mouse data and
-// reading the status register is not done atomically with reading the data. This is not possible
-// from userspace, so we do this minimal part of the PS2 driver in the kernel.
-#[inline(always)]
-unsafe fn ps2_interrupt(_index: usize) {
-    use crate::scheme::serio::serio_input;
-
-    let data: u8;
-    let status: u8;
-    core::arch::asm!("
-        sti
-        nop
-        cli
-        in al, 0x64
-        mov ah, al
-        in al, 0x60
-        mov {}, al
-        mov {}, ah
-        ",
-         out(reg_byte) data,
-         out(reg_byte) status,
-    );
-
-    if status & 1 != 0 {
-        let status_index = if status & (1 << 5) == 0 {
-            // Keyboard, according to status
-            0
-        } else {
-            // Mouse, according to status
-            1
-        };
-        serio_input(status_index, data);
-    }
-}
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -196,8 +161,12 @@ interrupt_stack!(pit_stack, |_stack| {
 });
 
 interrupt!(keyboard, || {
-    ps2_interrupt(0);
+    let data: u8;
+    core::arch::asm!("in al, 0x60", out("al") data);
+
     eoi(1);
+
+    serio_input(0, data);
 });
 
 interrupt!(cascade, || {
@@ -262,8 +231,12 @@ interrupt!(pci3, || {
 });
 
 interrupt!(mouse, || {
-    ps2_interrupt(1);
+    let data: u8;
+    core::arch::asm!("in al, 0x60", out("al") data);
+
     eoi(12);
+
+    serio_input(1, data);
 });
 
 interrupt!(fpu, || {
