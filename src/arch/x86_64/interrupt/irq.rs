@@ -189,7 +189,8 @@ interrupt_stack!(pit_stack, |_stack| {
     // Any better way of doing this?
     timeout::trigger();
 
-    if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 10 {
+    // Switch after 3 ticks (about 6.75 ms)
+    if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 2 {
         let _ = context::switch();
     }
 });
