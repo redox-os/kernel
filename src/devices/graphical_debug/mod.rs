@@ -20,6 +20,7 @@ pub fn init(env: &[u8]) {
     let mut virt = 0;
     let mut width = 0;
     let mut height = 0;
+    let mut stride = 0;
 
     //TODO: should errors be reported?
     for line in str::from_utf8(env).unwrap_or("").lines() {
@@ -42,19 +43,23 @@ pub fn init(env: &[u8]) {
         if name == "FRAMEBUFFER_HEIGHT" {
             height = usize::from_str_radix(value, 16).unwrap_or(0);
         }
+
+        if name == "FRAMEBUFFER_STRIDE" {
+            stride = usize::from_str_radix(value, 16).unwrap_or(0);
+        }
     }
 
-    *FRAMEBUFFER.lock() = (phys, virt, width * height * 4);
+    *FRAMEBUFFER.lock() = (phys, virt, stride * height * 4);
 
-    if phys == 0 || virt == 0 || width == 0 || height == 0 {
+    if phys == 0 || virt == 0 || width == 0 || height == 0 || stride == 0 {
         println!("Framebuffer not found");
         return;
     }
 
-    println!("Framebuffer {}x{} at {:X} mapped to {:X}", width, height, phys, virt);
+    println!("Framebuffer {}x{} stride {} at {:X} mapped to {:X}", width, height, stride, phys, virt);
 
     {
-        let display = Display::new(width, height, virt as *mut u32);
+        let display = Display::new(width, height, stride, virt as *mut u32);
         let debug_display = DebugDisplay::new(display);
         *DEBUG_DISPLAY.lock() = Some(debug_display);
     }
