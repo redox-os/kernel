@@ -153,7 +153,7 @@ pub fn sync(reg_key: RegKey) -> Result<EventFlags> {
     let scheme = {
         let schemes = scheme::schemes();
         let scheme = schemes.get(reg_key.scheme).ok_or(Error::new(EBADF))?;
-        Arc::clone(&scheme)
+        Arc::clone(scheme)
     };
 
     scheme.fevent(reg_key.number, flags)

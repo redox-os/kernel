@@ -93,7 +93,7 @@ impl Scheme for SysScheme {
                     let data = entry.1()?;
                     self.handles.write().insert(id, Handle {
                         path: entry.0,
-                        data: data,
+                        data,
                         mode: MODE_FILE | 0o444,
                         seek: 0
                     });

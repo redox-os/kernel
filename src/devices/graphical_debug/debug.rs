@@ -16,8 +16,8 @@ impl DebugDisplay {
             display,
             x: 0,
             y: 0,
-            w: w,
-            h: h,
+            w,
+            h,
         }
     }
 

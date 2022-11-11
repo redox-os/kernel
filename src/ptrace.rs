@@ -242,7 +242,7 @@ pub fn wait(pid: ContextId) -> Result<()> {
             let sessions = sessions();
 
             match sessions.get(&pid) {
-                Some(session) => Arc::clone(&session),
+                Some(session) => Arc::clone(session),
                 _ => return Ok(())
             }
         };
@@ -283,7 +283,7 @@ pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>)
             let sessions = sessions();
             let session = sessions.get(&context.id)?;
 
-            Arc::clone(&session)
+            Arc::clone(session)
         };
 
         let mut data = session.data.lock();

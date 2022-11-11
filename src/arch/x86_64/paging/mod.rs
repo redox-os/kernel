@@ -160,7 +160,7 @@ pub unsafe fn init(
     let flush_all = map_percpu(cpu_id, KernelMapper::lock_manually(cpu_id).get_mut().expect("expected KernelMapper not to be locked re-entrant in paging::init"));
     flush_all.flush();
 
-    return init_tcb(cpu_id);
+    init_tcb(cpu_id)
 }
 
 pub unsafe fn init_ap(

@@ -96,9 +96,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Initialize logger
         log::init_logger(|r| {
             use core::fmt::Write;
-            let _ = write!(
+            let _ = writeln!(
                 super::debug::Writer::new(),
-                "{}:{} -- {}\n",
+                "{}:{} -- {}",
                 r.target(),
                 r.level(),
                 r.args()

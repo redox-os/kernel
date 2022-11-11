@@ -79,7 +79,7 @@ impl Scheme for RootScheme {
                 let context = {
                     let contexts = context::contexts();
                     let context = contexts.current().ok_or(Error::new(ESRCH))?;
-                    Arc::downgrade(&context)
+                    Arc::downgrade(context)
                 };
 
                 let id = self.next_id.fetch_add(1, Ordering::SeqCst);

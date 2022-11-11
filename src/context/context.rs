@@ -285,7 +285,7 @@ impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
         Ok(unsafe {
             let ptr = crate::ALLOCATOR.alloc_zeroed(Self::LAYOUT);
             if ptr.is_null() {
-                return Err(Enomem)?;
+                return Err(Enomem);
             }
             Self {
                 inner: Unique::new_unchecked(ptr.cast()),

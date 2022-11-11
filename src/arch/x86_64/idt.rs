@@ -131,7 +131,7 @@ const fn new_idt_reservations() -> [AtomicU64; 4] {
 /// Initialize the IDT for a
 pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: usize) {
     let mut idts_guard = IDTS.write();
-    let idts_btree = idts_guard.get_or_insert_with(|| BTreeMap::new());
+    let idts_btree = idts_guard.get_or_insert_with(BTreeMap::new);
 
     if is_bsp {
         idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);

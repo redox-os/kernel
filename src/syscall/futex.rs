@@ -80,7 +80,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                 let context_lock = {
                     let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    Arc::clone(&context_lock)
+                    Arc::clone(context_lock)
                 };
 
                 // TODO: Is the implicit SeqCst ordering too strong here?
@@ -127,7 +127,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                 let context_lock = {
                     let contexts = context::contexts();
                     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    Arc::clone(&context_lock)
+                    Arc::clone(context_lock)
                 };
 
                 {

@@ -24,7 +24,7 @@ pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let scheme = schemes.get(file.description.read().scheme).ok_or(Error::new(EBADF))?;
-        Arc::clone(&scheme)
+        Arc::clone(scheme)
     };
 
     let mut packet = Packet {
@@ -71,7 +71,7 @@ pub fn open(path: &str, flags: usize) -> Result<FileHandle> {
         let (scheme_id, scheme) = {
             let schemes = scheme::schemes();
             let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-            (scheme_id, Arc::clone(&scheme))
+            (scheme_id, Arc::clone(scheme))
         };
 
         (scheme_id, scheme.open(reference, flags, uid, gid)?)
@@ -142,7 +142,7 @@ pub fn rmdir(path: &str) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        Arc::clone(&scheme)
+        Arc::clone(scheme)
     };
     scheme.rmdir(reference, uid, gid)
 }
@@ -163,7 +163,7 @@ pub fn unlink(path: &str) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        Arc::clone(&scheme)
+        Arc::clone(scheme)
     };
     scheme.unlink(reference, uid, gid)
 }
@@ -200,7 +200,7 @@ fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
             let scheme = {
                 let schemes = scheme::schemes();
                 let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-                Arc::clone(&scheme)
+                Arc::clone(scheme)
             };
             scheme.dup(description.number, buf)?
         };
@@ -260,7 +260,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let scheme = {
             let schemes = scheme::schemes();
             let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-            Arc::clone(&scheme)
+            Arc::clone(scheme)
         };
         scheme.fcntl(description.number, cmd, arg)?;
     };
@@ -354,7 +354,7 @@ pub fn fstat(fd: FileHandle, stat: &mut Stat) -> Result<usize> {
     let scheme = {
         let schemes = scheme::schemes();
         let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-        Arc::clone(&scheme)
+        Arc::clone(scheme)
     };
     // Fill in scheme number as device number
     stat.st_dev = description.scheme.into() as u64;

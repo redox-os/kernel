@@ -45,7 +45,7 @@ impl ::log::Log for RedoxLogger {
         false
     }
     fn log(&self, record: &log::Record<'_>) {
-        (self.log_func)(&record)
+        (self.log_func)(record)
     }
     fn flush(&self) {}
 }

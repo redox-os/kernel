@@ -176,9 +176,9 @@ impl Madt {
             let flags = unsafe { *(sdt.data_address() as *const u32).offset(1) };
 
             Some(Madt {
-                sdt: sdt,
-                local_address: local_address,
-                flags: flags
+                sdt,
+                local_address,
+                flags
             })
         } else {
             None

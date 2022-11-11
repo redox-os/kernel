@@ -189,7 +189,7 @@ impl Scheme for IrqScheme {
                     }
 
                     Handle::Avail(cpu_id, data.into_bytes(), AtomicUsize::new(0))
-                } else if path_str.chars().next() == Some('/') {
+                } else if path_str.starts_with('/') {
                     let path_str = &path_str[1..];
                     Self::open_ext_irq(flags, cpu_id, path_str)?
                 } else {
@@ -227,7 +227,7 @@ impl Scheme for IrqScheme {
                     Ok(0)
                 }
             } else {
-                return Err(Error::new(EINVAL));
+                Err(Error::new(EINVAL))
             }
             &Handle::Bsp => {
                 if buffer.len() < mem::size_of::<usize>() {
@@ -237,7 +237,7 @@ impl Scheme for IrqScheme {
                     unsafe { *(buffer.as_mut_ptr() as *mut usize) = bsp_apic_id as usize; }
                     Ok(mem::size_of::<usize>())
                 } else {
-                    return Err(Error::new(EBADFD));
+                    Err(Error::new(EBADFD))
                 }
             }
             &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
@@ -262,7 +262,7 @@ impl Scheme for IrqScheme {
                 offset.store(new_offset as usize, Ordering::SeqCst);
                 Ok(new_offset)
             }
-            _ => return Err(Error::new(ESPIPE)),
+            _ => Err(Error::new(ESPIPE)),
         }
     }
 
@@ -285,9 +285,9 @@ impl Scheme for IrqScheme {
                     Ok(0)
                 }
             } else {
-                return Err(Error::new(EINVAL));
+                Err(Error::new(EINVAL))
             }
-            _ => return Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
 
@@ -295,8 +295,8 @@ impl Scheme for IrqScheme {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
 
-        match handle {
-            &Handle::Irq { irq: handle_irq, .. } => {
+        match *handle {
+            Handle::Irq { irq: handle_irq, .. } => {
                 stat.st_mode = MODE_CHR | 0o600;
                 stat.st_size = mem::size_of::<usize>() as u64;
                 stat.st_blocks = 1;
@@ -304,7 +304,7 @@ impl Scheme for IrqScheme {
                 stat.st_ino = handle_irq.into();
                 stat.st_nlink = 1;
             }
-            &Handle::Bsp => {
+            Handle::Bsp => {
                 stat.st_mode = MODE_CHR | 0o400;
                 stat.st_size = mem::size_of::<usize>() as u64;
                 stat.st_blocks = 1;
@@ -312,13 +312,13 @@ impl Scheme for IrqScheme {
                 stat.st_ino = INO_BSP;
                 stat.st_nlink = 1;
             }
-            &Handle::Avail(cpu_id, ref buf, _) => {
+            Handle::Avail(cpu_id, ref buf, _) => {
                 stat.st_mode = MODE_DIR | 0o700;
                 stat.st_size = buf.len() as u64;
                 stat.st_ino = INO_AVAIL | u64::from(cpu_id) << 32;
                 stat.st_nlink = 2;
             }
-            &Handle::TopLevel(ref buf, _) => {
+            Handle::TopLevel(ref buf, _) => {
                 stat.st_mode = MODE_DIR | 0o500;
                 stat.st_size = buf.len() as u64;
                 stat.st_ino = INO_TOPLEVEL;
@@ -341,10 +341,10 @@ impl Scheme for IrqScheme {
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
 
         let scheme_path = match handle {
-            &Handle::Irq { irq, .. } => format!("irq:{}", irq),
-            &Handle::Bsp => format!("irq:bsp"),
-            &Handle::Avail(cpu_id, _, _) => format!("irq:cpu-{:2x}", cpu_id),
-            &Handle::TopLevel(_, _) => format!("irq:"),
+            Handle::Irq { irq, .. } => format!("irq:{}", irq),
+            Handle::Bsp => format!("irq:bsp"),
+            Handle::Avail(cpu_id, _, _) => format!("irq:cpu-{:2x}", cpu_id),
+            Handle::TopLevel(_, _) => format!("irq:"),
         }.into_bytes();
 
         let mut i = 0;

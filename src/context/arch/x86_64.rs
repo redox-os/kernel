@@ -165,7 +165,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         // Since Arc is essentially just wraps a pointer, in this case a regular pointer (as
         // opposed to dyn or slice fat pointers), and NonNull optimization exists, map_or will
         // hopefully be optimized down to checking prev and next pointers, as next cannot be null.
-        Some(ref next_space) => if prev.addr_space.as_ref().map_or(true, |prev_space| !Arc::ptr_eq(&prev_space, &next_space)) {
+        Some(ref next_space) => if prev.addr_space.as_ref().map_or(true, |prev_space| !Arc::ptr_eq(prev_space, next_space)) {
             // Suppose we have two sibling threads A and B. A runs on CPU 0 and B on CPU 1. A
             // recently called yield and is now here about to switch back. Meanwhile, B is
             // currently creating a new mapping in their shared address space, for example a

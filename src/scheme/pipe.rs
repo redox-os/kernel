@@ -53,7 +53,7 @@ impl Scheme for PipeScheme {
         // Clone to prevent deadlocks
         let pipe = {
             let pipes = PIPES.read();
-            pipes.0.get(&id).map(|pipe| pipe.clone()).ok_or(Error::new(EBADF))?
+            pipes.0.get(&id).cloned().ok_or(Error::new(EBADF))?
         };
 
         pipe.read(buf)
@@ -63,7 +63,7 @@ impl Scheme for PipeScheme {
         // Clone to prevent deadlocks
         let pipe = {
             let pipes = PIPES.read();
-            pipes.1.get(&id).map(|pipe| pipe.clone()).ok_or(Error::new(EBADF))?
+            pipes.1.get(&id).cloned().ok_or(Error::new(EBADF))?
         };
 
         pipe.write(buf)

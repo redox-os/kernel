@@ -67,7 +67,7 @@ pub fn exit(status: usize) -> ! {
     {
         let context_lock = context::current().expect("exit failed to find context");
 
-        let mut close_files;
+        let close_files;
         let pid = {
             let mut context = context_lock.write();
             close_files = Arc::try_unwrap(mem::take(&mut context.files)).map_or_else(|_| Vec::new(), RwLock::into_inner);
@@ -91,7 +91,7 @@ pub fn exit(status: usize) -> ! {
         }
 
         // Files must be closed while context is valid so that messages can be passed
-        for (_fd, file_opt) in close_files.drain(..).enumerate() {
+        for (_fd, file_opt) in close_files.into_iter().enumerate() {
             if let Some(file) = file_opt {
                 let _ = file.close();
             }

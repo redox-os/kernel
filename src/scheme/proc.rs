@@ -366,7 +366,7 @@ impl ProcScheme {
 
                     let mut data = String::new();
                     for index in target.files.read().iter().enumerate().filter_map(|(idx, val)| val.as_ref().map(|_| idx)) {
-                        write!(data, "{}\n", index).unwrap();
+                        writeln!(data, "{}", index).unwrap();
                     }
                     data.into_bytes().into_boxed_slice()
                 }));
@@ -624,8 +624,8 @@ impl Scheme for ProcScheme {
                     // in that case, what scheme?
                     b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
                     b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone()? }, false),
-                    b"mem" => (Operation::Memory { addrspace: Arc::clone(&addrspace) }, true),
-                    b"mmap-min-addr" => (Operation::MmapMinAddr(Arc::clone(&addrspace)), false),
+                    b"mem" => (Operation::Memory { addrspace: Arc::clone(addrspace) }, true),
+                    b"mmap-min-addr" => (Operation::MmapMinAddr(Arc::clone(addrspace)), false),
 
                     grant_handle if grant_handle.starts_with(b"grant-") => {
                         let start_addr = usize::from_str_radix(core::str::from_utf8(&grant_handle[6..]).map_err(|_| Error::new(EINVAL))?, 16).map_err(|_| Error::new(EINVAL))?;
@@ -742,7 +742,7 @@ impl Scheme for ProcScheme {
 
                         Ok((Output { float: context.get_fx_regs() }, mem::size_of::<FloatRegisters>()))
                     })?,
-                    RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(&context) } {
+                    RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(context) } {
                         None => {
                             assert!(!context.running, "try_stop_context is broken, clearly");
                             println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
@@ -838,7 +838,7 @@ impl Scheme for ProcScheme {
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
             // with `<pid>/ctx`
-            _ => return Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
 
@@ -1043,7 +1043,7 @@ impl Scheme for ProcScheme {
                 }
                 Ok(buf.len())
             }
-            Operation::Filetable { .. } => return Err(Error::new(EBADF)),
+            Operation::Filetable { .. } => Err(Error::new(EBADF)),
 
             Operation::CurrentFiletable => {
                 let filetable_fd = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
@@ -1081,7 +1081,7 @@ impl Scheme for ProcScheme {
                 addrspace.write().mmap_min = val;
                 Ok(mem::size_of::<usize>())
             }
-            _ => return Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
 
@@ -1135,7 +1135,7 @@ impl Scheme for ProcScheme {
             _ => return Err(Error::new(EOPNOTSUPP)),
         });
 
-        read_from(buf, &path.as_bytes(), &mut 0)
+        read_from(buf, path.as_bytes(), &mut 0)
     }
 
     fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
@@ -1328,14 +1328,14 @@ impl KernelScheme for ProcScheme {
                     if let Some(before) = before { src_addr_space.grants.insert(before); }
                     if let Some(after) = after { src_addr_space.grants.insert(after); }
 
-                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, _flags, dst_mapper, dst_flusher| Ok(Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher)?))?
+                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, _flags, dst_mapper, dst_flusher| Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher))?
                 } else {
                     dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Page::containing_address(src_grant_region.start_address()), dst_page, grant_page_count, flags, None, src_mapper, dst_mapper, flusher)?))?
                 };
 
                 Ok(result_page.start_address().data())
             }
-            _ => return Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
 }

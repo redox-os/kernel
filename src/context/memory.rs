@@ -97,7 +97,7 @@ impl AddrSpace {
                 // TODO: Remove reborrow? In that case, physmapped memory will need to either be
                 // remapped when cloning, or be backed by a file descriptor (like
                 // `memory:physical`).
-                new_grant = Grant::reborrow(&grant, Page::containing_address(grant.start_address()), this_mapper, new_mapper, ())?;
+                new_grant = Grant::reborrow(grant, Page::containing_address(grant.start_address()), this_mapper, new_mapper, ())?;
             }
 
             new_guard.grants.insert(new_grant);

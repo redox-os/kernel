@@ -194,12 +194,12 @@ impl CpuInfo {
 pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     let cpuinfo = CpuInfo::new();
 
-    write!(w, "Implementer: {}\n", cpuinfo.implementer)?;
-    write!(w, "Variant: {}\n", cpuinfo.variant)?;
-    write!(w, "Architecture version: {}\n", cpuinfo.architecture)?;
-    write!(w, "Part Number: {}\n", cpuinfo.part_number)?;
-    write!(w, "Revision: {}\n", cpuinfo.revision)?;
-    write!(w, "\n")?;
+    writeln!(w, "Implementer: {}", cpuinfo.implementer)?;
+    writeln!(w, "Variant: {}", cpuinfo.variant)?;
+    writeln!(w, "Architecture version: {}", cpuinfo.architecture)?;
+    writeln!(w, "Part Number: {}", cpuinfo.part_number)?;
+    writeln!(w, "Revision: {}", cpuinfo.revision)?;
+    writeln!(w)?;
 
     Ok(())
 }

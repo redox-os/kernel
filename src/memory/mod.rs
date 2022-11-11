@@ -59,7 +59,7 @@ pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Op
         strategy,
         min
     );
-    return None;
+    None
 }
 
 /// Deallocate a range of frames frame
