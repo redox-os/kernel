@@ -68,6 +68,8 @@ impl Hpet {
 #[cfg(target_arch = "x86")]
 impl GenericAddressStructure {
     pub unsafe fn init(&self, mapper: &mut KernelMapper) {
+        use crate::paging::{Page, VirtualAddress};
+
         let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
         let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
 
