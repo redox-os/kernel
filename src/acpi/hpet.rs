@@ -3,7 +3,7 @@ use core::{mem, ptr};
 use core::intrinsics::{volatile_load, volatile_store};
 
 use crate::memory::Frame;
-use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, VirtualAddress};
+use crate::paging::{KernelMapper, PhysicalAddress, PageFlags};
 use crate::paging::entry::EntryFlags;
 
 use super::sdt::Sdt;

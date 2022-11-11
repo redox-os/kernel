@@ -10,7 +10,7 @@ use crate::scheme::{self, FileHandle};
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::*;
-use crate::syscall;
+
 
 pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
     let (file, pid, uid, gid) = {
