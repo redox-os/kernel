@@ -40,6 +40,8 @@ pub mod start;
 /// Stop function
 pub mod stop;
 
+pub mod time;
+
 pub use ::rmm::X8664Arch as CurrentRmmArch;
 
 // Flags

@@ -33,4 +33,6 @@ pub mod vectors;
 /// Early init support
 pub mod init;
 
+pub mod time;
+
 pub use ::rmm::AArch64Arch as CurrentRmmArch;

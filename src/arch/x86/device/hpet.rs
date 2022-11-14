@@ -1,22 +1,22 @@
 use crate::acpi::hpet::Hpet;
 
-static LEG_RT_CNF: u64 = 2;
-static ENABLE_CNF: u64 = 1;
+const LEG_RT_CNF: u64 = 2;
+const ENABLE_CNF: u64 = 1;
 
-static TN_VAL_SET_CNF: u64 = 0x40;
-static TN_TYPE_CNF: u64 = 0x08;
-static TN_INT_ENB_CNF: u64 = 0x04;
+const TN_VAL_SET_CNF: u64 = 0x40;
+const TN_TYPE_CNF: u64 = 0x08;
+const TN_INT_ENB_CNF: u64 = 0x04;
 
-static CAPABILITY_OFFSET: usize = 0x00;
-static GENERAL_CONFIG_OFFSET: usize = 0x10;
-static GENERAL_INTERRUPT_OFFSET: usize = 0x20;
-static MAIN_COUNTER_OFFSET: usize = 0xF0;
-// static NUM_TIMER_CAP_MASK: u64 = 0x0f00;
-static LEG_RT_CAP: u64 = 0x8000;
-static T0_CONFIG_CAPABILITY_OFFSET: usize = 0x100;
-static T0_COMPARATOR_OFFSET: usize = 0x108;
+pub(crate) const CAPABILITY_OFFSET: usize = 0x00;
+const GENERAL_CONFIG_OFFSET: usize = 0x10;
+const GENERAL_INTERRUPT_OFFSET: usize = 0x20;
+pub(crate) const MAIN_COUNTER_OFFSET: usize = 0xF0;
+// const NUM_TIMER_CAP_MASK: u64 = 0x0f00;
+const LEG_RT_CAP: u64 = 0x8000;
+const T0_CONFIG_CAPABILITY_OFFSET: usize = 0x100;
+const T0_COMPARATOR_OFFSET: usize = 0x108;
 
-static PER_INT_CAP: u64 = 0x10;
+const PER_INT_CAP: u64 = 0x10;
 
 pub unsafe fn init(hpet: &mut Hpet) -> bool {
     println!("HPET Before Init");

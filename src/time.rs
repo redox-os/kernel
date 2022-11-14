@@ -8,7 +8,7 @@ pub static START: Mutex<u128> = Mutex::new(0);
 pub static OFFSET: Mutex<u128> = Mutex::new(0);
 
 pub fn monotonic() -> u128 {
-    *OFFSET.lock()
+    *OFFSET.lock() + crate::arch::time::counter()
 }
 
 pub fn realtime() -> u128 {
