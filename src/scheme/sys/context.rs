@@ -63,18 +63,13 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("?")
             };
 
-            let ticks = context.ticks;
-            let ticks_string = if ticks >= 1000 * 1000 * 1000 * 1000 {
-                format!("{} T", ticks / 1000 / 1000 / 1000 / 1000)
-            } else if ticks >= 1000 * 1000 * 1000 {
-                format!("{} G", ticks / 1000 / 1000 / 1000)
-            } else if ticks >= 1000 * 1000 {
-                format!("{} M", ticks / 1000 / 1000)
-            } else if ticks >= 1000 {
-                format!("{} K", ticks / 1000)
-            } else {
-                format!("{}", ticks)
-            };
+            let cpu_time = context.cpu_time / crate::time::NANOS_PER_SEC;
+            let cpu_time_string = format!(
+                "{:02}:{:02}:{:02}",
+                cpu_time / 3600,
+                (cpu_time / 60) % 60,
+                cpu_time % 60
+            );
 
             let mut memory = context.kfx.len();
             if let Some(ref kstack) = context.kstack {
@@ -98,7 +93,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<8}{}\n",
+            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<9}{:<8}{}\n",
                                context.id.into(),
                                context.pgid.into(),
                                context.ppid.into(),
@@ -110,7 +105,7 @@ pub fn resource() -> Result<Vec<u8>> {
                                context.ens.into(),
                                stat_string,
                                cpu_string,
-                               ticks_string,
+                               cpu_time_string,
                                memory_string,
                                *context.name.read()));
         }

@@ -12,7 +12,7 @@ struct Timeout {
     pub scheme_id: SchemeId,
     pub event_id: usize,
     pub clock: usize,
-    pub time: (u64, u64),
+    pub time: u128,
 }
 
 type Registry = VecDeque<Timeout>;
@@ -35,7 +35,7 @@ pub fn register(scheme_id: SchemeId, event_id: usize, clock: usize, time: TimeSp
         scheme_id,
         event_id,
         clock,
-        time: (time.tv_sec as u64, time.tv_nsec as u64)
+        time: (time.tv_sec as u128 * time::NANOS_PER_SEC) + (time.tv_nsec as u128)
     });
 }
 
@@ -50,11 +50,11 @@ pub fn trigger() {
         let trigger = match registry[i].clock {
             CLOCK_MONOTONIC => {
                 let time = registry[i].time;
-                mono.0 > time.0 || (mono.0 == time.0 && mono.1 >= time.1)
+                mono >= time
             },
             CLOCK_REALTIME => {
                 let time = registry[i].time;
-                real.0 > time.0 || (real.0 == time.0 && real.1 >= time.1)
+                real >= time
             },
             clock => {
                 println!("timeout::trigger: unknown clock {}", clock);

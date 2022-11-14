@@ -116,7 +116,7 @@ pub struct ContextSnapshot {
     pub status_reason: &'static str,
     pub running: bool,
     pub cpu_id: Option<usize>,
-    pub ticks: u64,
+    pub cpu_time: u128,
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     // Clone fields
     //TODO: is there a faster way than allocation?
@@ -160,7 +160,7 @@ impl ContextSnapshot {
             status_reason: context.status_reason,
             running: context.running,
             cpu_id: context.cpu_id,
-            ticks: context.ticks,
+            cpu_time: context.cpu_time,
             syscall: context.syscall,
             name,
             files,
@@ -200,8 +200,10 @@ pub struct Context {
     pub running: bool,
     /// CPU ID, if locked
     pub cpu_id: Option<usize>,
-    /// Number of timer ticks executed
-    pub ticks: u64,
+    /// Time this context was switched to
+    pub switch_time: u128,
+    /// Amount of CPU time used
+    pub cpu_time: u128,
     /// Current system call
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
@@ -215,7 +217,7 @@ pub struct Context {
     /// Context should handle pending signals
     pub pending: VecDeque<u8>,
     /// Context should wake up at specified time
-    pub wake: Option<(u64, u64)>,
+    pub wake: Option<u128>,
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
@@ -348,7 +350,8 @@ impl Context {
             status_reason: "",
             running: false,
             cpu_id: None,
-            ticks: 0,
+            switch_time: 0,
+            cpu_time: 0,
             syscall: None,
             syscall_head,
             syscall_tail,

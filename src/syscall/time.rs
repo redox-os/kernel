@@ -11,8 +11,8 @@ pub fn clock_gettime(clock: usize, time: &mut TimeSpec) -> Result<usize> {
         _ => return Err(Error::new(EINVAL))
     };
 
-    time.tv_sec = arch_time.0 as i64;
-    time.tv_nsec = arch_time.1 as i32;
+    time.tv_sec = (arch_time / time::NANOS_PER_SEC) as i64;
+    time.tv_nsec = (arch_time % time::NANOS_PER_SEC) as i32;
     Ok(0)
 }
 
@@ -20,8 +20,7 @@ pub fn clock_gettime(clock: usize, time: &mut TimeSpec) -> Result<usize> {
 pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize> {
     //start is a tuple of (seconds, nanoseconds)
     let start = time::monotonic();
-    let sum = start.1 + req.tv_nsec as u64;
-    let mut end = (start.0 + req.tv_sec as u64 + sum / 1_000_000_000, sum % 1_000_000_000);
+    let end = start + (req.tv_sec as u128 * time::NANOS_PER_SEC) + (req.tv_nsec as u128);
 
     {
         let contexts = context::contexts();
@@ -49,14 +48,10 @@ pub fn nanosleep(req: &TimeSpec, rem_opt: Option<&mut TimeSpec>) -> Result<usize
     if let Some(rem) = rem_opt {
         let current = time::monotonic();
 
-        if current.0 < end.0 || (current.0 == end.0 && current.1 < end.1) {
-            if end.1 < current.1 {
-                end.0 -= 1;
-                end.1 += 1_000_000_000;
-            }
-
-            rem.tv_sec = (end.0 - current.0) as i64;
-            rem.tv_nsec = (end.1 - current.1) as i32;
+        if current < end {
+            let diff = end - current;
+            rem.tv_sec = (diff / time::NANOS_PER_SEC) as i64;
+            rem.tv_nsec = (diff % time::NANOS_PER_SEC) as i32;
         } else {
             rem.tv_sec = 0;
             rem.tv_nsec = 0;

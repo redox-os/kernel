@@ -15,3 +15,10 @@ pub unsafe fn init() {
     CHAN0.write((CHAN0_DIVISOR & 0xFF) as u8);
     CHAN0.write((CHAN0_DIVISOR >> 8) as u8);
 }
+
+pub unsafe fn read() -> u16 {
+    COMMAND.write(SELECT_CHAN0 | 0);
+    let low = CHAN0.read();
+    let high = CHAN0.read();
+    ((high as u16) << 8) | (low as u16)
+}

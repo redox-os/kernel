@@ -19,7 +19,7 @@ static mut PL031_RTC: Pl031rtc = Pl031rtc {
 
 pub unsafe fn init() {
     PL031_RTC.init();
-    time::START.lock().0 = PL031_RTC.time();
+    *time::START.lock() = (PL031_RTC.time() as u128) * time::NANOS_PER_SEC;
 }
 
 struct Pl031rtc {

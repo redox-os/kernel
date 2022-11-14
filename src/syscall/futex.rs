@@ -107,8 +107,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
 
                     if let Some(timeout) = timeout_opt {
                         let start = time::monotonic();
-                        let sum = start.1 + timeout.tv_nsec as u64;
-                        let end = (start.0 + timeout.tv_sec as u64 + sum / 1_000_000_000, sum % 1_000_000_000);
+                        let end = start + (timeout.tv_sec as u128 * time::NANOS_PER_SEC) + (timeout.tv_nsec as u128);
                         context.wake = Some(end);
                     }
 

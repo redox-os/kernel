@@ -11,6 +11,8 @@ use crate::scheme::debug::{debug_input, debug_notify};
 use crate::scheme::serio::serio_input;
 use crate::{context, time};
 
+pub const PIT_RATE: u128 = 2_250_286;
+
 //resets to 0 in context::switch()
 #[thread_local]
 pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
@@ -137,13 +139,8 @@ unsafe fn ioapic_unmask(irq: usize) {
 interrupt_stack!(pit_stack, |_stack| {
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
-    const PIT_RATE: u64 = 2_250_286;
-
     {
-        let mut offset = time::OFFSET.lock();
-        let sum = offset.1 + PIT_RATE;
-        offset.1 = sum % 1_000_000_000;
-        offset.0 += sum / 1_000_000_000;
+        *time::OFFSET.lock() += PIT_RATE;
     }
 
     eoi(0);
@@ -270,13 +267,8 @@ interrupt!(lapic_error, || {
 });
 
 interrupt!(calib_pit, || {
-    const PIT_RATE: u64 = 2_250_286;
-
     {
-        let mut offset = time::OFFSET.lock();
-        let sum = offset.1 + PIT_RATE;
-        offset.1 = sum % 1_000_000_000;
-        offset.0 += sum / 1_000_000_000;
+        *time::OFFSET.lock() += PIT_RATE;
     }
 
     eoi(0);

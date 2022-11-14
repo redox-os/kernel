@@ -58,8 +58,8 @@ impl Scheme for TimeScheme {
                 CLOCK_MONOTONIC => time::monotonic(),
                 _ => return Err(Error::new(EINVAL))
             };
-            time_buf[i].tv_sec = arch_time.0 as i64;
-            time_buf[i].tv_nsec = arch_time.1 as i32;
+            time_buf[i].tv_sec = (arch_time / time::NANOS_PER_SEC) as i64;
+            time_buf[i].tv_nsec = (arch_time % time::NANOS_PER_SEC) as i32;
             i += 1;
         }
 

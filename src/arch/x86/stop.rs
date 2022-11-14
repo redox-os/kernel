@@ -40,7 +40,7 @@ fn userspace_acpi_shutdown() {
         return;
     }
     log::info!("Waiting one second for ACPI driver to run the shutdown sequence.");
-    let (initial_s, initial_ns) = time::monotonic();
+    let initial = time::monotonic();
 
     // Since this driver is a userspace process, and we do not use any magic like directly
     // context switching, we have to wait for the userspace driver to complete, with a timeout.
@@ -51,13 +51,9 @@ fn userspace_acpi_shutdown() {
         // event flag like EVENT_DIRECT, which has already been suggested for IRQs.
         // TODO: Waitpid with timeout? Because, what if the ACPI driver would crash?
         let _ = unsafe { context::switch() };
-        let (current_s, current_ns) = time::monotonic();
 
-        let diff_s = current_s - initial_s;
-        let diff_part_ns = current_ns - initial_ns;
-        let diff_ns = diff_s * 1_000_000_000 + diff_part_ns;
-
-        if diff_ns > 1_000_000_000 {
+        let current = time::monotonic();
+        if current - initial > time::NANOS_PER_SEC {
             log::info!("Timeout reached, thus falling back to other shutdown methods.");
             return;
         }

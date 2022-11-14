@@ -3,7 +3,7 @@ use crate::time;
 
 pub fn init() {
     let mut rtc = Rtc::new();
-    time::START.lock().0 = rtc.time();
+    *time::START.lock() = (rtc.time() as u128) * time::NANOS_PER_SEC;
 }
 
 fn cvt_bcd(value: usize) -> usize {

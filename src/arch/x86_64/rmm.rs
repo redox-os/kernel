@@ -413,6 +413,8 @@ pub unsafe fn init(
             log::warn!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
             new_base = cmp::max(new_base, acpi_end);
         }
+
+        // Ensure initfs areas are not used
         if base < initfs_end && base + size > initfs_base {
             log::warn!("{:X}:{:X} overlaps with initfs {:X}:{:X}", base, size, initfs_base, initfs_size);
             new_base = cmp::max(new_base, initfs_end);
@@ -427,7 +429,7 @@ pub unsafe fn init(
         }
 
         if size == 0 {
-            // Area is zero sized
+            // Area is zero sized, skip
             continue;
         }
 

@@ -57,7 +57,7 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
         let wake = context.wake.expect("context::switch: wake not set");
 
         let current = time::monotonic();
-        if current.0 > wake.0 || (current.0 == wake.0 && current.1 >= wake.1) {
+        if current >= wake {
             context.wake = None;
             context.unblock();
         }
@@ -96,7 +96,7 @@ unsafe fn runnable(context: &Context, cpu_id: usize) -> bool {
 pub unsafe fn switch() -> bool {
     // TODO: Better memory orderings?
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
-    let ticks = PIT_TICKS.swap(0, Ordering::SeqCst);
+    let _ticks = PIT_TICKS.swap(0, Ordering::SeqCst);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
     while arch::CONTEXT_SWITCH_LOCK.compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
@@ -104,6 +104,7 @@ pub unsafe fn switch() -> bool {
     }
 
     let cpu_id = crate::cpu_id();
+    let switch_time = crate::time::monotonic();
 
     let from_context_lock;
     let mut from_context_guard;
@@ -116,7 +117,6 @@ pub unsafe fn switch() -> bool {
                 .current()
                 .expect("context::switch: not inside of context"));
             from_context_guard = from_context_lock.write();
-            from_context_guard.ticks += ticks as u64 + 1; // Always round ticks up
         }
 
         for (pid, context_lock) in contexts.iter() {
@@ -162,8 +162,14 @@ pub unsafe fn switch() -> bool {
     if let Some((to_context_lock, to_ptr)) = to_context_lock {
         let to_context: &mut Context = &mut *to_ptr;
 
+        // Set old context as not running and update CPU time
         from_context_guard.running = false;
+        from_context_guard.cpu_time += switch_time - from_context_guard.switch_time;
+
+        // Set new context as running and set switch time
         to_context.running = true;
+        to_context.switch_time = switch_time;
+
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if let Some(ref stack) = to_context.kstack {

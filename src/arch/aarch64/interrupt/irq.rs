@@ -51,10 +51,7 @@ pub unsafe fn irq_handler_com1(irq: u32) {
 pub unsafe fn irq_handler_gentimer(irq: u32) {
     GENTIMER.clear_irq();
     {
-        let mut offset = time::OFFSET.lock();
-        let sum = offset.1 + GENTIMER.clk_freq as u64;
-        offset.1 = sum % 1_000_000_000;
-        offset.0 += sum / 1_000_000_000;
+        *time::OFFSET.lock() += GENTIMER.clk_freq as u128;
     }
 
     timeout::trigger();
