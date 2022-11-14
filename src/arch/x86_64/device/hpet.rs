@@ -1,4 +1,5 @@
 use crate::acpi::hpet::Hpet;
+use super::pit;
 
 const LEG_RT_CNF: u64 = 2;
 const ENABLE_CNF: u64 = 1;
@@ -14,7 +15,7 @@ pub(crate) const MAIN_COUNTER_OFFSET: usize = 0xF0;
 // const NUM_TIMER_CAP_MASK: u64 = 0x0f00;
 const LEG_RT_CAP: u64 = 0x8000;
 const T0_CONFIG_CAPABILITY_OFFSET: usize = 0x100;
-const T0_COMPARATOR_OFFSET: usize = 0x108;
+pub(crate) const T0_COMPARATOR_OFFSET: usize = 0x108;
 
 const PER_INT_CAP: u64 = 0x10;
 
@@ -35,10 +36,8 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
         return false;
     }
 
-    let counter_clk_period_fs = capability >> 32;
-    let desired_fs_period: u64 = 2_250_286 * 1_000_000;
-
-    let clk_periods_per_kernel_tick: u64 = desired_fs_period / counter_clk_period_fs;
+    let period_fs = capability >> 32;
+    let divisor = (pit::RATE as u64 * 1_000_000) / period_fs;
 
     let t0_capabilities = hpet.base_address.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
     if t0_capabilities & PER_INT_CAP == 0 {
@@ -51,9 +50,9 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
     let t0_config_word: u64 = TN_VAL_SET_CNF | TN_TYPE_CNF | TN_INT_ENB_CNF;
     hpet.base_address.write_u64(T0_CONFIG_CAPABILITY_OFFSET, t0_config_word);
     // set accumulator value
-    hpet.base_address.write_u64(T0_COMPARATOR_OFFSET, counter + clk_periods_per_kernel_tick);
+    hpet.base_address.write_u64(T0_COMPARATOR_OFFSET, counter + divisor);
     // set interval
-    hpet.base_address.write_u64(T0_COMPARATOR_OFFSET, clk_periods_per_kernel_tick);
+    hpet.base_address.write_u64(T0_COMPARATOR_OFFSET, divisor);
 
     // Enable interrupts from the HPET
     {

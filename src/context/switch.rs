@@ -164,7 +164,7 @@ pub unsafe fn switch() -> bool {
 
         // Set old context as not running and update CPU time
         from_context_guard.running = false;
-        from_context_guard.cpu_time += switch_time - from_context_guard.switch_time;
+        from_context_guard.cpu_time += switch_time.saturating_sub(from_context_guard.switch_time);
 
         // Set new context as running and set switch time
         to_context.running = true;

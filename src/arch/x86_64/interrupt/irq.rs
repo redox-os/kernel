@@ -4,14 +4,12 @@ use alloc::vec::Vec;
 
 use crate::{interrupt, interrupt_stack};
 use crate::context::timeout;
-use crate::device::{local_apic, ioapic, pic};
+use crate::device::{local_apic, ioapic, pic, pit};
 use crate::device::serial::{COM1, COM2};
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::scheme::debug::{debug_input, debug_notify};
 use crate::scheme::serio::serio_input;
 use crate::{context, time};
-
-pub const PIT_RATE: u128 = 2_250_286;
 
 //resets to 0 in context::switch()
 #[thread_local]
@@ -140,7 +138,7 @@ interrupt_stack!(pit_stack, |_stack| {
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
     {
-        *time::OFFSET.lock() += PIT_RATE;
+        *time::OFFSET.lock() += pit::RATE;
     }
 
     eoi(0);
@@ -268,7 +266,7 @@ interrupt!(lapic_error, || {
 
 interrupt!(calib_pit, || {
     {
-        *time::OFFSET.lock() += PIT_RATE;
+        *time::OFFSET.lock() += pit::RATE;
     }
 
     eoi(0);

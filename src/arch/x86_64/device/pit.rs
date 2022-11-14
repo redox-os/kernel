@@ -10,7 +10,14 @@ const ACCESS_LATCH: u8 = 0b00 << 4;
 const ACCESS_LOHI: u8 = 0b11 << 4;
 const MODE_2: u8 = 0b010 << 1;
 
-const CHAN0_DIVISOR: u16 = 2685;
+// 1 / (1.193182 MHz) = 838,095,110 femtoseconds ~= 838.095 ns
+pub const PERIOD_FS: u128 = 838_095_110;
+
+// 461 / (1.193182 MHz) = 3863618.00071 ns ~= 386 us or 2.588 kHz
+pub const CHAN0_DIVISOR: u16 = 461;
+
+// Calculated interrupt period in nanoseconds based on divisor and period
+pub const RATE: u128 = (CHAN0_DIVISOR as u128 * PERIOD_FS) / 1_000_000;
 
 pub unsafe fn init() {
     COMMAND.write(SELECT_CHAN0 | ACCESS_LOHI | MODE_2);
