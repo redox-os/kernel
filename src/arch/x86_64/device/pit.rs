@@ -13,8 +13,8 @@ const MODE_2: u8 = 0b010 << 1;
 // 1 / (1.193182 MHz) = 838,095,110 femtoseconds ~= 838.095 ns
 pub const PERIOD_FS: u128 = 838_095_110;
 
-// 461 / (1.193182 MHz) = 3863618.00071 ns ~= 386 us or 2.588 kHz
-pub const CHAN0_DIVISOR: u16 = 461;
+// 4847 / (1.193182 MHz) = 4,062,247 ns ~= 4.1 ms or 246 Hz
+pub const CHAN0_DIVISOR: u16 = 4847;
 
 // Calculated interrupt period in nanoseconds based on divisor and period
 pub const RATE: u128 = (CHAN0_DIVISOR as u128 * PERIOD_FS) / 1_000_000;
