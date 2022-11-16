@@ -1,8 +1,10 @@
-use crate::acpi::ACPI_TABLE;
-use super::device::{hpet, pit};
+#[cfg(feature = "acpi")]
+use super::device::hpet;
+use super::device::pit;
 
 pub fn counter() -> u128 {
-    if let Some(ref hpet) = *ACPI_TABLE.hpet.read() {
+    #[cfg(feature = "acpi")]
+    if let Some(ref hpet) = *crate::acpi::ACPI_TABLE.hpet.read() {
         //TODO: handle rollover?
         //TODO: improve performance
 
@@ -20,11 +22,11 @@ pub fn counter() -> u128 {
         // Calculate ticks since last interrupt
         let elapsed = counter.saturating_sub(last_interrupt);
         // Calculate nanoseconds since last interrupt
-        (elapsed as u128 * period_fs as u128) / 1_000_000
-    } else {
-        // Read ticks since last interrupt
-        let elapsed = unsafe { pit::read() };
-        // Calculate nanoseconds since last interrupt
-        (elapsed as u128 * pit::PERIOD_FS) / 1_000_000
+        return (elapsed as u128 * period_fs as u128) / 1_000_000;
     }
+
+    // Read ticks since last interrupt
+    let elapsed = unsafe { pit::read() };
+    // Calculate nanoseconds since last interrupt
+    (elapsed as u128 * pit::PERIOD_FS) / 1_000_000
 }
