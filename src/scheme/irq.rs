@@ -20,7 +20,7 @@ use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 pub static IRQ_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 
 /// IRQ queues
-static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
+pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
 static HANDLES: RwLock<Option<BTreeMap<usize, Handle>>> = RwLock::new(None);
 
 /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the

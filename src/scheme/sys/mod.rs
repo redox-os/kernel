@@ -9,13 +9,14 @@ use crate::syscall::data::Stat;
 use crate::syscall::error::{Error, EBADF, ENOENT, Result};
 use crate::syscall::flag::{MODE_DIR, MODE_FILE};
 use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
-use crate::arch::interrupt::irq;
+use crate::arch::interrupt;
 
 mod block;
 mod context;
 mod cpu;
 mod exe;
 mod iostat;
+mod irq;
 mod log;
 mod scheme;
 mod scheme_num;
@@ -47,6 +48,7 @@ impl SysScheme {
         files.insert("cpu", Box::new(cpu::resource));
         files.insert("exe", Box::new(exe::resource));
         files.insert("iostat", Box::new(iostat::resource));
+        files.insert("irq", Box::new(irq::resource));
         files.insert("log", Box::new(log::resource));
         files.insert("scheme", Box::new(scheme::resource));
         files.insert("scheme_num", Box::new(scheme_num::resource));
@@ -54,7 +56,7 @@ impl SysScheme {
         files.insert("uname", Box::new(uname::resource));
         files.insert("env", Box::new(|| Ok(Vec::from(crate::init_env()))));
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        files.insert("spurious_irq", Box::new(irq::spurious_irq_resource));
+        files.insert("spurious_irq", Box::new(interrupt::irq::spurious_irq_resource));
 
         SysScheme {
             next_id: AtomicUsize::new(0),
