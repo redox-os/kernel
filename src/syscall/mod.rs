@@ -192,7 +192,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     };
 
-    if debug {
+    let debug_start = if debug {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
@@ -200,7 +200,11 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
 
         println!("{}", debug::format_call(a, b, c, d, e, f));
-    }
+
+        crate::time::monotonic()
+    } else {
+        0
+    };
     */
 
     // The next lines set the current syscall in the context struct, then once the inner() function
@@ -228,6 +232,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
 
     /*
     if debug {
+        let debug_duration = crate::time::monotonic() - debug_start;
+
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
@@ -238,12 +244,14 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
 
         match result {
             Ok(ref ok) => {
-                println!("Ok({} ({:#X}))", ok, ok);
+                print!("Ok({} ({:#X}))", ok, ok);
             },
             Err(ref err) => {
-                println!("Err({} ({:#X}))", err, err.errno);
+                print!("Err({} ({:#X}))", err, err.errno);
             }
         }
+
+        println!(" in {} ns", debug_duration);
     }
     */
 
