@@ -249,7 +249,7 @@ impl UserInner {
                 if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
                     if let Ok(address) = Error::demux(packet.a) {
                         if address % PAGE_SIZE > 0 {
-                            println!("scheme returned unaligned address, causing extra frame to be allocated");
+                            log::warn!("scheme returned unaligned address, causing extra frame to be allocated");
                         }
                         let file_ref = GrantFileRef { desc, offset: map.offset, flags: map.flags };
                         let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(file_ref));
@@ -257,8 +257,10 @@ impl UserInner {
                             if let Some(context_lock) = context_weak.upgrade() {
                                 let context = context_lock.read();
                                 let mut addr_space = context.addr_space()?.write();
+                                //TODO: ensure all mappings are aligned!
+                                let map_pages = (map.size + PAGE_SIZE - 1) / PAGE_SIZE;
                                 addr_space.grants.funmap.insert(
-                                    Region::new(grant_address, map.size),
+                                    Region::new(grant_address, map_pages * PAGE_SIZE),
                                     VirtualAddress::new(address)
                                 );
                             } else {
