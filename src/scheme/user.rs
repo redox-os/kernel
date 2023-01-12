@@ -207,13 +207,12 @@ impl UserInner {
         // If O_NONBLOCK is used, do not block
         let nonblock = self.flags & O_NONBLOCK == O_NONBLOCK;
         // If unmounting, do not block so that EOF can be returned immediately
-        let unmounting = self.unmounting.load(Ordering::SeqCst);
-        let block = !(nonblock || unmounting);
+        let block = !(nonblock || self.unmounting.load(Ordering::SeqCst));
         if let Some(count) = self.todo.receive_into(packet_buf, block, "UserInner::read") {
             if count > 0 {
                 // If we received requests, return them to the scheme handler
                 Ok(count * mem::size_of::<Packet>())
-            } else if unmounting {
+            } else if self.unmounting.load(Ordering::SeqCst) {
                 // If there were no requests and we were unmounting, return EOF
                 Ok(0)
             } else {
