@@ -5,7 +5,7 @@ use crate::context;
 use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<8}{:<8}{}\n",
+    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
                              "PID",
                              "PGID",
                              "PPID",
@@ -17,7 +17,7 @@ pub fn resource() -> Result<Vec<u8>> {
                              "ENS",
                              "STAT",
                              "CPU",
-                             "TICKS",
+                             "TIME",
                              "MEM",
                              "NAME");
     {
@@ -63,12 +63,14 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("?")
             };
 
-            let cpu_time = context.cpu_time / crate::time::NANOS_PER_SEC;
+            let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;
+            let cpu_time_ns = context.cpu_time % crate::time::NANOS_PER_SEC;
             let cpu_time_string = format!(
-                "{:02}:{:02}:{:02}",
-                cpu_time / 3600,
-                (cpu_time / 60) % 60,
-                cpu_time % 60
+                "{:02}:{:02}:{:02}.{:02}",
+                cpu_time_s / 3600,
+                (cpu_time_s / 60) % 60,
+                cpu_time_s % 60,
+                cpu_time_ns / 10_000_000
             );
 
             let mut memory = context.kfx.len();
@@ -93,7 +95,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<9}{:<8}{}\n",
+            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
                                context.id.into(),
                                context.pgid.into(),
                                context.ppid.into(),
