@@ -44,6 +44,7 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 
+#![feature(alloc_error_handler)]
 #![feature(allocator_api)]
 #![feature(arbitrary_self_types)]
 #![feature(array_chunks)]

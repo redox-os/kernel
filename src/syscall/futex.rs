@@ -90,13 +90,13 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                     if addr % 4 != 0 {
                         return Err(Error::new(EINVAL));
                     }
-                    (u64::from(unsafe { intrinsics::atomic_load::<u32>(addr as *const u32) }), u64::from(val as u32))
+                    (u64::from(unsafe { intrinsics::atomic_load_seqcst::<u32>(addr as *const u32) }), u64::from(val as u32))
                 } else {
                     // op == FUTEX_WAIT64
                     if addr % 8 != 0 {
                         return Err(Error::new(EINVAL));
                     }
-                    (unsafe { intrinsics::atomic_load::<u64>(addr as *const u64) }, val as u64)
+                    (unsafe { intrinsics::atomic_load_seqcst::<u64>(addr as *const u64) }, val as u64)
                 };
                 if fetched != expected {
                     return Err(Error::new(EAGAIN));
