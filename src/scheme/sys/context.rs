@@ -5,7 +5,7 @@ use crate::context;
 use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
                              "PID",
                              "PGID",
                              "PPID",
@@ -17,6 +17,7 @@ pub fn resource() -> Result<Vec<u8>> {
                              "ENS",
                              "STAT",
                              "CPU",
+                             "AFF",
                              "TIME",
                              "MEM",
                              "NAME");
@@ -62,6 +63,11 @@ pub fn resource() -> Result<Vec<u8>> {
             } else {
                 format!("?")
             };
+            let affinity = if let Some(aff) = context.sched_affinity {
+                format!("{}", aff)
+            } else {
+                format!("?")
+            };
 
             let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;
             let cpu_time_ns = context.cpu_time % crate::time::NANOS_PER_SEC;
@@ -95,7 +101,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
                                context.id.into(),
                                context.pgid.into(),
                                context.ppid.into(),
@@ -107,6 +113,7 @@ pub fn resource() -> Result<Vec<u8>> {
                                context.ens.into(),
                                stat_string,
                                cpu_string,
+                               affinity,
                                cpu_time_string,
                                memory_string,
                                *context.name.read()));

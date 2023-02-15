@@ -117,6 +117,7 @@ pub struct ContextSnapshot {
     pub running: bool,
     pub cpu_id: Option<usize>,
     pub cpu_time: u128,
+    pub sched_affinity: Option<usize>,
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     // Clone fields
     //TODO: is there a faster way than allocation?
@@ -161,6 +162,7 @@ impl ContextSnapshot {
             running: context.running,
             cpu_id: context.cpu_id,
             cpu_time: context.cpu_time,
+            sched_affinity: context.sched_affinity,
             syscall: context.syscall,
             name,
             files,
@@ -198,12 +200,16 @@ pub struct Context {
     pub status_reason: &'static str,
     /// Context running or not
     pub running: bool,
-    /// CPU ID, if locked
+    /// Current CPU ID
     pub cpu_id: Option<usize>,
     /// Time this context was switched to
     pub switch_time: u128,
     /// Amount of CPU time used
     pub cpu_time: u128,
+    /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything else than
+    /// this value.
+    // TODO: bitmask (selection of multiple allowed CPUs)?
+    pub sched_affinity: Option<usize>,
     /// Current system call
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
@@ -352,6 +358,7 @@ impl Context {
             cpu_id: None,
             switch_time: 0,
             cpu_time: 0,
+            sched_affinity: None,
             syscall: None,
             syscall_head,
             syscall_tail,

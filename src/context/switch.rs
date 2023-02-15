@@ -17,7 +17,8 @@ use crate::time;
 
 unsafe fn update(context: &mut Context, cpu_id: usize) {
     // Take ownership if not already owned
-    if context.cpu_id == None {
+    // TODO: Support unclaiming context, while still respecting the CPU affinity.
+    if context.cpu_id == None && context.sched_affinity.map_or(true, |id| id == crate::cpu_id()) {
         context.cpu_id = Some(cpu_id);
         // println!("{}: take {} {}", cpu_id, context.id, *context.name.read());
     }
