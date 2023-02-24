@@ -48,11 +48,8 @@
 #![feature(allocator_api)]
 #![feature(arbitrary_self_types)]
 #![feature(array_chunks)]
-#![feature(asm_const, asm_sym)] // TODO: Relax requirements of most asm invocations
-#![feature(bool_to_option)]
+#![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(concat_idents)]
-#![feature(const_btree_new)]
-#![feature(const_ptr_offset_from)]
 #![feature(core_intrinsics)]
 #![feature(integer_atomics)]
 #![feature(lang_items)]
