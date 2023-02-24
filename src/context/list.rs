@@ -50,10 +50,23 @@ impl ContextList {
         self.map.range(range)
     }
 
+    pub(crate) fn insert_context_raw(&mut self, id: ContextId) -> Result<&Arc<RwLock<Context>>> {
+        assert!(self.map.insert(id, Arc::new(RwLock::new(Context::new(id)?))).is_none());
+
+        Ok(self.map.get(&id).expect("Failed to insert new context. ID is out of bounds."))
+    }
+
     /// Create a new context.
     pub fn new_context(&mut self) -> Result<&Arc<RwLock<Context>>> {
+        // Zero is not a valid context ID, therefore add 1.
+        //
+        // FIXME: Ensure the number of CPUs can't switch between new_context calls.
+        let min = crate::cpu_count() + 1;
+
+        self.next_id = core::cmp::max(self.next_id, min);
+
         if self.next_id >= super::CONTEXT_MAX_CONTEXTS {
-            self.next_id = 1;
+            self.next_id = min;
         }
 
         while self.map.contains_key(&ContextId::from(self.next_id)) {
@@ -67,9 +80,7 @@ impl ContextList {
         let id = ContextId::from(self.next_id);
         self.next_id += 1;
 
-        assert!(self.map.insert(id, Arc::new(RwLock::new(Context::new(id)?))).is_none());
-
-        Ok(self.map.get(&id).expect("Failed to insert new context. ID is out of bounds."))
+        self.insert_context_raw(id)
     }
 
     /// Spawn a context from a function.

@@ -65,8 +65,10 @@ pub use self::arch::empty_cr3;
 
 pub fn init() {
     let mut contexts = contexts_mut();
-    let context_lock = contexts.new_context().expect("could not initialize first context");
+    let id = ContextId::from(crate::cpu_id() + 1);
+    let context_lock = contexts.insert_context_raw(id).expect("could not initialize first context");
     let mut context = context_lock.write();
+    context.sched_affinity = Some(crate::cpu_id());
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
 
