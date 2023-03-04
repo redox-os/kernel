@@ -87,13 +87,13 @@ impl AcpiScheme {
         DATA.call_once(|| {
             data_init = true;
 
-            let rsdt_or_xsdt = RXSDT_ENUM
-                .get()
-                .expect("expected RXSDT_ENUM to be initialized before AcpiScheme");
-
-            let table = match rsdt_or_xsdt {
-                RxsdtEnum::Rsdt(rsdt) => rsdt.as_slice(),
-                RxsdtEnum::Xsdt(xsdt) => xsdt.as_slice(),
+            let table = match RXSDT_ENUM.get() {
+                Some(RxsdtEnum::Rsdt(rsdt)) => rsdt.as_slice(),
+                Some(RxsdtEnum::Xsdt(xsdt)) => xsdt.as_slice(),
+                None => {
+                    log::warn!("expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?");
+                    &[]
+                }
             };
 
             Box::from(table)

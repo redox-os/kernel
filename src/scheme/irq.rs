@@ -87,12 +87,18 @@ impl IrqScheme {
         let cpus = {
             use crate::acpi::madt::*;
 
-            let madt: &Madt = unsafe { MADT.as_ref().unwrap() };
-
-            madt.iter().filter_map(|entry| match entry {
-                MadtEntry::LocalApic(apic) => Some(apic.id),
-                _ => None,
-            }).collect::<Vec<_>>()
+            match unsafe { MADT.as_ref() } {
+                Some(madt) => {
+                    madt.iter().filter_map(|entry| match entry {
+                        MadtEntry::LocalApic(apic) => Some(apic.id),
+                        _ => None,
+                    }).collect::<Vec<_>>()
+                },
+                None => {
+                    log::warn!("no MADT found, defaulting to 1 CPU");
+                    vec!(0)
+                }
+            }
         };
         #[cfg(not(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64"))))]
         let cpus = vec!(0);
