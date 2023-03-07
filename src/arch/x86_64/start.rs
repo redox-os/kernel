@@ -1,3 +1,8 @@
+/// This function is where the kernel sets up IRQ handlers
+/// It is increcibly unsafe, and should be minimal in nature
+/// It must create the IDT with the correct entries, those entries are
+/// defined in other files inside of the `arch` module
+
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
