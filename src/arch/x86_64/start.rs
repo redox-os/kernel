@@ -23,13 +23,13 @@ use crate::paging::{self, KernelMapper, TableKind};
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
-static DATA_TEST_NONZERO: usize = usize::max_value();
+static DATA_TEST_NONZERO: usize = usize::MAX;
 /// Test of zero values in thread BSS
 #[thread_local]
 static mut TBSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in thread data.
 #[thread_local]
-static mut TDATA_TEST_NONZERO: usize = usize::max_value();
+static mut TDATA_TEST_NONZERO: usize = usize::MAX;
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -77,7 +77,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
-            assert_eq!(DATA_TEST_NONZERO, usize::max_value());
+            assert_eq!(DATA_TEST_NONZERO, usize::MAX);
         }
 
         KERNEL_BASE.store(args.kernel_base as usize, Ordering::SeqCst);
@@ -142,15 +142,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Set up syscall instruction
         interrupt::syscall::init();
 
-        // Test tdata and tbss
-        {
-            assert_eq!(TBSS_TEST_ZERO, 0);
-            TBSS_TEST_ZERO += 1;
-            assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
-            TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value() - 1);
-        }
+        // Test TDATA and TBSS
+        test_tdata_tbss();
 
         // Reset AP variables
         CPU_COUNT.store(1, Ordering::SeqCst);
@@ -160,7 +153,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init();
 
-        // Set up double buffer for grpahical debug now that heap is available
+        // Set up double buffer for graphical debug now that heap is available
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init_heap();
 
@@ -193,7 +186,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(true, Ordering::SeqCst);
 
         crate::Bootstrap {
-            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(args.bootstrap_base as usize)),
+            base: crate::memory::Frame::containing_address(paging::PhysicalAddress::new(args.bootstrap_base as usize)),
             page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
             entry: args.bootstrap_entry as usize,
             env,
@@ -221,7 +214,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         let stack_end = args.stack_end as usize;
 
         assert_eq!(BSS_TEST_ZERO, 0);
-        assert_eq!(DATA_TEST_NONZERO, usize::max_value());
+        assert_eq!(DATA_TEST_NONZERO, usize::MAX);
 
         // Set up GDT before paging
         gdt::init();
@@ -247,15 +240,8 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         // Set up syscall instruction
         interrupt::syscall::init();
 
-        // Test tdata and tbss
-        {
-            assert_eq!(TBSS_TEST_ZERO, 0);
-            TBSS_TEST_ZERO += 1;
-            assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
-            TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value() - 1);
-        }
+        // Test TDATA and TBSS
+        test_tdata_tbss();
 
         // Initialize devices (for AP)
         device::init_ap();
@@ -265,15 +251,24 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         cpu_id
     };
 
-    while ! BSP_READY.load(Ordering::SeqCst) {
+    while !BSP_READY.load(Ordering::SeqCst) {
         interrupt::pause();
     }
 
     crate::kmain_ap(cpu_id);
 }
 
+pub unsafe fn test_tdata_tbss() {
+    assert_eq!(TBSS_TEST_ZERO, 0);
+    TBSS_TEST_ZERO += 1;
+    assert_eq!(TBSS_TEST_ZERO, 1);
+    assert_eq!(TDATA_TEST_NONZERO, usize::MAX);
+    TDATA_TEST_NONZERO -= 1;
+    assert_eq!(TDATA_TEST_NONZERO, usize::MAX - 1);
+}
+
 #[cfg(not(feature = "pit"))]
-macro_rules! inner_pit_unmap(
+macro_rules! inner_pit_unmap (
     () => {
         "
             // unused: {pti_unmap}
@@ -281,7 +276,7 @@ macro_rules! inner_pit_unmap(
     }
 );
 #[cfg(feature = "pit")]
-macro_rules! inner_pit_unmap(
+macro_rules! inner_pit_unmap (
     () => {
         "
             push rdi
@@ -302,7 +297,7 @@ macro_rules! inner_pit_unmap(
 );
 
 #[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! save_fsgsbase(
+macro_rules! save_fsgsbase (
     () => {
         "
             mov ecx, {MSR_FSBASE}
@@ -320,7 +315,7 @@ macro_rules! save_fsgsbase(
     }
 );
 #[cfg(feature = "x86_fsgsbase")]
-macro_rules! save_fsgsbase(
+macro_rules! save_fsgsbase (
     () => {
         "
         // placeholder: {MSR_FSBASE} {MSR_GSBASE}
@@ -331,7 +326,7 @@ macro_rules! save_fsgsbase(
 );
 
 #[cfg(feature = "x86_fsgsbase")]
-macro_rules! restore_fsgsbase(
+macro_rules! restore_fsgsbase (
     () => {
         "
         wrfsbase r14
@@ -341,7 +336,7 @@ macro_rules! restore_fsgsbase(
 );
 
 #[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! restore_fsgsbase(
+macro_rules! restore_fsgsbase (
     () => {
         "
         mov ecx, {MSR_FSBASE}
@@ -436,5 +431,5 @@ pub unsafe extern "C" fn usermode(_ip: usize, _sp: usize, _arg: usize, _is_singl
         MSR_GSBASE = const(x86::msr::IA32_GS_BASE),
 
         options(noreturn),
-    );
+    )
 }
