@@ -4,7 +4,7 @@ use core::sync::atomic::Ordering;
 
 use alloc::sync::Arc;
 
-use spin::RwLock;
+use spin::{RwLock, RwLockWriteGuard};
 
 use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
@@ -15,7 +15,17 @@ use crate::interrupt;
 use crate::ptrace;
 use crate::time;
 
-unsafe fn update(context: &mut Context, cpu_id: usize) {
+unsafe fn update_runnable(context: &mut Context, cpu_id: usize) -> bool {
+    // Ignore already running contexts
+    if context.running {
+        return false;
+    }
+
+    // Ignore contexts stopped by ptrace
+    if context.ptrace_stop {
+        return false;
+    }
+
     // Take ownership if not already owned
     // TODO: Support unclaiming context, while still respecting the CPU affinity.
     if context.cpu_id == None && context.sched_affinity.map_or(true, |id| id == crate::cpu_id()) {
@@ -23,8 +33,13 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
         // println!("{}: take {} {}", cpu_id, context.id, *context.name.read());
     }
 
+    // Do not update anything else and return not runnable if this is owned by another CPU
+    if context.cpu_id != Some(cpu_id) {
+        return false;
+    }
+
     // Restore from signal, must only be done from another context to avoid overwriting the stack!
-    if context.ksig_restore && ! context.running {
+    if context.ksig_restore {
         let was_singlestep = ptrace::regs_for(context).map(|s| s.is_singlestep()).unwrap_or(false);
 
         let ksig = context.ksig.take().expect("context::switch: ksig not set with ksig_restore");
@@ -63,12 +78,18 @@ unsafe fn update(context: &mut Context, cpu_id: usize) {
             context.unblock();
         }
     }
+
+    // Switch to context if it needs to run
+    context.status == Status::Runnable
 }
 
 struct SwitchResult {
     prev_lock: Arc<RwLock<Context>>,
     next_lock: Arc<RwLock<Context>>,
 }
+
+#[thread_local]
+static SWITCH_RESULT: Cell<Option<SwitchResult>> = Cell::new(None);
 
 pub unsafe extern "C" fn switch_finish_hook() {
     if let Some(SwitchResult { prev_lock, next_lock }) = SWITCH_RESULT.take() {
@@ -79,14 +100,6 @@ pub unsafe extern "C" fn switch_finish_hook() {
         core::intrinsics::abort();
     }
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-}
-
-#[thread_local]
-static SWITCH_RESULT: Cell<Option<SwitchResult>> = Cell::new(None);
-
-unsafe fn runnable(context: &Context, cpu_id: usize) -> bool {
-    // Switch to context if it needs to run, is not currently running, and is owned by the current CPU
-    !context.running && !context.ptrace_stop && context.status == Status::Runnable && context.cpu_id == Some(cpu_id)
 }
 
 /// Switch to the next context
@@ -107,51 +120,38 @@ pub unsafe fn switch() -> bool {
     let cpu_id = crate::cpu_id();
     let switch_time = crate::time::monotonic();
 
-    let from_context_lock;
-    let mut from_context_guard;
-    let mut to_context_lock: Option<(Arc<spin::RwLock<Context>>, *mut Context)> = None;
-    let mut to_sig = None;
+    let mut switch_context_opt = None;
     {
         let contexts = contexts();
-        {
-            from_context_lock = Arc::clone(contexts
-                .current()
-                .expect("context::switch: not inside of context"));
-            from_context_guard = from_context_lock.write();
-        }
 
-        for (pid, context_lock) in contexts.iter() {
-            let mut context;
-            let context_ref = if *pid == from_context_guard.id {
-                &mut *from_context_guard
-            } else {
-                context = context_lock.write();
-                &mut *context
-            };
-            update(context_ref, cpu_id);
-        }
+        // Lock previous context
+        let prev_context_lock = contexts.current().expect("context::switch: not inside of context");
+        let prev_context_guard = prev_context_lock.write();
 
-        for (_pid, context_lock) in contexts
+        // Locate next context
+        for (_pid, next_context_lock) in contexts
             // Include all contexts with IDs greater than the current...
             .range(
-                (Bound::Excluded(from_context_guard.id), Bound::Unbounded)
+                (Bound::Excluded(prev_context_guard.id), Bound::Unbounded)
             )
             .chain(contexts
                 // ... and all contexts with IDs less than the current...
-                .range((Bound::Unbounded, Bound::Excluded(from_context_guard.id)))
+                .range((Bound::Unbounded, Bound::Excluded(prev_context_guard.id)))
             )
             // ... but not the current context, which is already locked
         {
-            let context_lock = Arc::clone(context_lock);
-            let mut to_context_guard = context_lock.write();
+            // Lock next context
+            let mut next_context_guard = next_context_lock.write();
 
-            if runnable(&*to_context_guard, cpu_id) {
-                if to_context_guard.ksig.is_none() {
-                    to_sig = to_context_guard.pending.pop_front();
-                }
-                let ptr: *mut Context = &mut *to_context_guard;
-                core::mem::forget(to_context_guard);
-                to_context_lock = Some((context_lock, ptr));
+            // Update state of next context and check if runnable
+            if update_runnable(&mut *next_context_guard, cpu_id) {
+                // Store locks for previous and next context
+                switch_context_opt = Some((
+                    Arc::clone(prev_context_lock),
+                    RwLockWriteGuard::leak(prev_context_guard) as *mut Context,
+                    Arc::clone(next_context_lock),
+                    RwLockWriteGuard::leak(next_context_guard) as *mut Context,
+                ));
                 break;
             } else {
                 continue;
@@ -160,52 +160,43 @@ pub unsafe fn switch() -> bool {
     };
 
     // Switch process states, TSS stack pointer, and store new context ID
-    if let Some((to_context_lock, to_ptr)) = to_context_lock {
-        let to_context: &mut Context = &mut *to_ptr;
-
+    if let Some((prev_context_lock, prev_context_ptr, next_context_lock, next_context_ptr)) = switch_context_opt {
         // Set old context as not running and update CPU time
-        from_context_guard.running = false;
-        from_context_guard.cpu_time += switch_time.saturating_sub(from_context_guard.switch_time);
+        let prev_context = &mut *prev_context_ptr;
+        prev_context.running = false;
+        prev_context.cpu_time += switch_time.saturating_sub(prev_context.switch_time);
 
         // Set new context as running and set switch time
-        to_context.running = true;
-        to_context.switch_time = switch_time;
+        let next_context = &mut *next_context_ptr;
+        next_context.running = true;
+        next_context.switch_time = switch_time;
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
-            if let Some(ref stack) = to_context.kstack {
+            if let Some(ref stack) = next_context.kstack {
                 gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
             }
         }
-        CONTEXT_ID.store(to_context.id, Ordering::SeqCst);
+        CONTEXT_ID.store(next_context.id, Ordering::SeqCst);
 
-        if let Some(sig) = to_sig {
-            // Signal was found, run signal handler
-
+        if next_context.ksig.is_none() {
             //TODO: Allow nested signals
-            assert!(to_context.ksig.is_none());
-
-            let arch = to_context.arch.clone();
-            let kfx = to_context.kfx.clone();
-            let kstack = to_context.kstack.clone();
-            to_context.ksig = Some((arch, kfx, kstack, sig));
-            to_context.arch.signal_stack(signal_handler, sig);
+            if let Some(sig) = next_context.pending.pop_front() {
+                // Signal was found, run signal handler
+                let arch = next_context.arch.clone();
+                let kfx = next_context.kfx.clone();
+                let kstack = next_context.kstack.clone();
+                next_context.ksig = Some((arch, kfx, kstack, sig));
+                next_context.arch.signal_stack(signal_handler, sig);
+            }
         }
 
-        let from_ptr: *mut Context = &mut *from_context_guard;
-        core::mem::forget(from_context_guard);
-
-        let prev: &mut Context = &mut *from_ptr;
-        let next: &mut Context = &mut *to_context;
-
-        // to_context_guard only exists as a raw pointer, but is still locked
-
         SWITCH_RESULT.set(Some(SwitchResult {
-            prev_lock: from_context_lock,
-            next_lock: to_context_lock,
+            prev_lock: prev_context_lock,
+            next_lock: next_context_lock,
         }));
 
-        arch::switch_to(prev, next);
+        arch::switch_to(prev_context, next_context);
 
         // NOTE: After switch_to is called, the return address can even be different from the
         // current return address, meaning that we cannot use local variables here, and that we
