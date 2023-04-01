@@ -9,23 +9,34 @@ const WORD_SIZE: usize = mem::size_of::<usize>();
 /// This faster implementation works by copying bytes not one-by-one, but in
 /// groups of 8 bytes (or 4 bytes in the case of 32-bit architectures).
 #[no_mangle]
-pub unsafe extern fn memcpy(dest: *mut u8, src: *const u8,
-                            n: usize) -> *mut u8 {
+pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, len: usize) -> *mut u8 {
+    // TODO: Alignment? Some sources claim that even on relatively modern µ-arches, unaligned
+    // accesses spanning two pages, can take dozens of cycles. That means chunk-based memcpy can
+    // even be slower for small lengths if alignment is not taken into account.
+    //
+    // TODO: Optimize out smaller loops by first checking if len < WORD_SIZE, and possibly if
+    // dest + WORD_SIZE spans two pages, then doing one unaligned copy, then aligning up, and then
+    // doing one last unaligned copy?
+    //
+    // TODO: While we use the -fno-builtin equivalent, can we guarantee LLVM won't insert memcpy
+    // call inside here? Maybe write it in assembly?
 
-    let n_usize: usize = n/WORD_SIZE; // Number of word sized groups
-    let mut i: usize = 0;
+    let mut i = 0_usize;
 
-    // Copy `WORD_SIZE` bytes at a time
-    let n_fast = n_usize*WORD_SIZE;
-    while i < n_fast {
-        *((dest as usize + i) as *mut usize) =
-            *((src as usize + i) as *const usize);
+    // First we copy len / WORD_SIZE chunks...
+
+    let chunks = len / WORD_SIZE;
+
+    while i < chunks * WORD_SIZE {
+        dest.add(i)
+            .cast::<usize>()
+            .write_unaligned(src.add(i).cast::<usize>().read_unaligned());
         i += WORD_SIZE;
     }
 
-    // Copy 1 byte at a time
-    while i < n {
-        *((dest as usize + i) as *mut u8) = *((src as usize + i) as *const u8);
+    // .. then we copy len % WORD_SIZE bytes
+    while i < len {
+        dest.add(i).write(src.add(i).read());
         i += 1;
     }
 
@@ -39,43 +50,42 @@ pub unsafe extern fn memcpy(dest: *mut u8, src: *const u8,
 /// This faster implementation works by copying bytes not one-by-one, but in
 /// groups of 8 bytes (or 4 bytes in the case of 32-bit architectures).
 #[no_mangle]
-pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
-                             n: usize) -> *mut u8 {
-    if src < dest as *const u8 {
-        let n_usize: usize = n/WORD_SIZE; // Number of word sized groups
-        let mut i: usize = n_usize*WORD_SIZE;
+pub unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, len: usize) -> *mut u8 {
+    let chunks = len / WORD_SIZE;
 
-        // Copy `WORD_SIZE` bytes at a time
-        while i != 0 {
-            i -= WORD_SIZE;
-            *((dest as usize + i) as *mut usize) =
-                *((src as usize + i) as *const usize);
+    // TODO: also require dest - src < len before choosing to copy backwards?
+    if src < dest as *const u8 {
+        // We have to copy backwards if copying upwards.
+
+        let mut i = len;
+
+        while i != chunks * WORD_SIZE {
+            i -= 1;
+            dest.add(i).write(src.add(i).read());
         }
 
-        let mut i: usize = n;
+        while i > 0 {
+            i -= WORD_SIZE;
 
-        // Copy 1 byte at a time
-        while i != n_usize*WORD_SIZE {
-            i -= 1;
-            *((dest as usize + i) as *mut u8) =
-                *((src as usize + i) as *const u8);
+            dest.add(i)
+                .cast::<usize>()
+                .write_unaligned(src.add(i).cast::<usize>().read_unaligned());
         }
     } else {
-        let n_usize: usize = n/WORD_SIZE; // Number of word sized groups
-        let mut i: usize = 0;
+        // We have to copy forward if copying downwards.
 
-        // Copy `WORD_SIZE` bytes at a time
-        let n_fast = n_usize*WORD_SIZE;
-        while i < n_fast {
-            *((dest as usize + i) as *mut usize) =
-                *((src as usize + i) as *const usize);
+        let mut i = 0_usize;
+
+        while i < chunks * WORD_SIZE {
+            dest.add(i)
+                .cast::<usize>()
+                .write_unaligned(src.add(i).cast::<usize>().read_unaligned());
+
             i += WORD_SIZE;
         }
 
-        // Copy 1 byte at a time
-        while i < n {
-            *((dest as usize + i) as *mut u8) =
-                *((src as usize + i) as *const u8);
+        while i < len {
+            dest.add(i).write(src.add(i).read());
             i += 1;
         }
     }
@@ -90,23 +100,21 @@ pub unsafe extern fn memmove(dest: *mut u8, src: *const u8,
 /// This faster implementation works by setting bytes not one-by-one, but in
 /// groups of 8 bytes (or 4 bytes in the case of 32-bit architectures).
 #[no_mangle]
-pub unsafe extern fn memset(dest: *mut u8, c: i32, n: usize) -> *mut u8 {
-    let c: usize = mem::transmute([c as u8; WORD_SIZE]);
-    let n_usize: usize = n/WORD_SIZE;
-    let mut i: usize = 0;
+pub unsafe extern "C" fn memset(dest: *mut u8, byte: i32, len: usize) -> *mut u8 {
+    let byte = byte as u8;
 
-    // Set `WORD_SIZE` bytes at a time
-    let n_fast = n_usize*WORD_SIZE;
-    while i < n_fast {
-        *((dest as usize + i) as *mut usize) = c;
+    let mut i = 0;
+
+    let broadcasted = usize::from_ne_bytes([byte; WORD_SIZE]);
+    let chunks = len / WORD_SIZE;
+
+    while i < chunks * WORD_SIZE {
+        dest.add(i).cast::<usize>().write_unaligned(broadcasted);
         i += WORD_SIZE;
     }
 
-    let c = c as u8;
-
-    // Set 1 byte at a time
-    while i < n {
-        *((dest as usize + i) as *mut u8) = c;
+    while i < len {
+        dest.add(i).write(byte);
         i += 1;
     }
 
@@ -120,34 +128,34 @@ pub unsafe extern fn memset(dest: *mut u8, c: i32, n: usize) -> *mut u8 {
 /// This faster implementation works by comparing bytes not one-by-one, but in
 /// groups of 8 bytes (or 4 bytes in the case of 32-bit architectures).
 #[no_mangle]
-pub unsafe extern fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
-    let n_usize: usize = n/WORD_SIZE;
-    let mut i: usize = 0;
+pub unsafe extern "C" fn memcmp(s1: *const u8, s2: *const u8, len: usize) -> i32 {
+    let mut i = 0_usize;
 
-    let n_fast = n_usize*WORD_SIZE;
-    while i < n_fast {
-        let a = *((s1 as usize + i) as *const usize);
-        let b = *((s2 as usize + i) as *const usize);
+    // First compare WORD_SIZE chunks...
+    let chunks = len / WORD_SIZE;
+
+    while i < chunks * WORD_SIZE {
+        let a = s1.add(i).cast::<usize>().read_unaligned();
+        let b = s2.add(i).cast::<usize>().read_unaligned();
+
         if a != b {
-            let n: usize = i + WORD_SIZE;
-            // Find the one byte that is not equal
-            while i < n {
-                let a = *((s1 as usize + i) as *const u8);
-                let b = *((s2 as usize + i) as *const u8);
-                if a != b {
-                    return a as i32 - b as i32;
-                }
-                i += 1;
-            }
+            // x86 has had bswap since the 80486, and the compiler will likely use the faster
+            // movbe. AArch64 has the REV instruction, which I think is universally available.
+            let diff = usize::from_be(a).wrapping_sub(usize::from_be(b)) as isize;
+
+            // TODO: If chunk size == 32 bits, diff can be returned directly.
+            return diff.signum() as i32;
         }
         i += WORD_SIZE;
     }
 
-    while i < n {
-        let a = *((s1 as usize + i) as *const u8);
-        let b = *((s2 as usize + i) as *const u8);
+    // ... and then compare bytes.
+    while i < len {
+        let a = s1.add(i).read();
+        let b = s2.add(i).read();
+
         if a != b {
-            return a as i32 - b as i32;
+            return i32::from(a) - i32::from(b);
         }
         i += 1;
     }
