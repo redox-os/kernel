@@ -1358,11 +1358,16 @@ impl KernelScheme for ProcScheme {
 extern "C" fn clone_handler() {
     let context_lock = Arc::clone(context::contexts().current().expect("expected the current context to be set in a spawn closure"));
 
-    unsafe {
-        let [ip, sp] = context_lock.read().clone_entry.expect("clone_entry must be set");
-        let [arg, is_singlestep] = [0; 2];
+    loop {
+        unsafe {
+            let Some([ip, sp]) = context_lock.read().clone_entry else {
+                context_lock.write().status = Status::Stopped(SIGSTOP);
+                continue;
+            };
+            let [arg, is_singlestep] = [0; 2];
 
-        crate::start::usermode(ip, sp, arg, is_singlestep);
+            crate::start::usermode(ip, sp, arg, is_singlestep);
+        }
     }
 }
 
