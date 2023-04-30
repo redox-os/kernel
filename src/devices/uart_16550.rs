@@ -1,4 +1,5 @@
 use core::convert::TryInto;
+use core::ptr::{addr_of, addr_of_mut};
 
 use crate::syscall::io::{Io, Mmio, ReadOnly};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -70,20 +71,23 @@ where
     T::Value: From<u8> + TryInto<u8>,
 {
     pub fn init(&mut self) {
-        //TODO: Cleanup
-        self.int_en.write(0x00.into());
-        self.line_ctrl.write(0x80.into());
-        self.data.write(0x01.into());
-        self.int_en.write(0x00.into());
-        self.line_ctrl.write(0x03.into());
-        self.fifo_ctrl.write(0xC7.into());
-        self.modem_ctrl.write(0x0B.into());
-        self.int_en.write(0x01.into());
+        unsafe {
+            //TODO: Cleanup
+            // FIXME: Fix UB if unaligned
+            (&mut *addr_of_mut!(self.int_en)).write(0x00.into());
+            (&mut *addr_of_mut!(self.line_ctrl)).write(0x80.into());
+            (&mut *addr_of_mut!(self.data)).write(0x01.into());
+            (&mut *addr_of_mut!(self.int_en)).write(0x00.into());
+            (&mut *addr_of_mut!(self.line_ctrl)).write(0x03.into());
+            (&mut *addr_of_mut!(self.fifo_ctrl)).write(0xC7.into());
+            (&mut *addr_of_mut!(self.modem_ctrl)).write(0x0B.into());
+            (&mut *addr_of_mut!(self.int_en)).write(0x01.into());
+        }
     }
 
     fn line_sts(&self) -> LineStsFlags {
         LineStsFlags::from_bits_truncate(
-            (self.line_sts.read() & 0xFF.into())
+            (unsafe { &*addr_of!(self.line_sts) }.read() & 0xFF.into())
                 .try_into()
                 .unwrap_or(0),
         )
@@ -92,7 +96,7 @@ where
     pub fn receive(&mut self) -> Option<u8> {
         if self.line_sts().contains(LineStsFlags::INPUT_FULL) {
             Some(
-                (self.data.read() & 0xFF.into())
+                (unsafe { &*addr_of!(self.data) }.read() & 0xFF.into())
                     .try_into()
                     .unwrap_or(0),
             )
@@ -103,7 +107,7 @@ where
 
     pub fn send(&mut self, data: u8) {
         while !self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-        self.data.write(data.into())
+        unsafe { &mut *addr_of_mut!(self.data) }.write(data.into())
     }
 
     pub fn write(&mut self, buf: &[u8]) {
