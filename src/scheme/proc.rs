@@ -1360,7 +1360,7 @@ extern "C" fn clone_handler() {
 
     loop {
         unsafe {
-            let Some([ip, sp]) = context_lock.read().clone_entry else {
+            let Some([ip, sp]) = ({ context_lock.read().clone_entry }) else {
                 context_lock.write().status = Status::Stopped(SIGSTOP);
                 continue;
             };
