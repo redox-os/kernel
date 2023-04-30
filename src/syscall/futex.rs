@@ -5,9 +5,7 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use core::intrinsics;
-use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use rmm::Arch;
+use spin::RwLock;
 
 use crate::context::{self, memory::AddrSpace, Context};
 use crate::memory::PhysicalAddress;
