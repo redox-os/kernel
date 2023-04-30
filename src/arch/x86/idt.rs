@@ -27,7 +27,7 @@ pub static mut IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointe
 pub type IdtEntries = [IdtEntry; 256];
 pub type IdtReservations = [AtomicU32; 8];
 
-#[repr(packed)]
+#[repr(C)]
 pub struct Idt {
     entries: IdtEntries,
     reservations: IdtReservations,
