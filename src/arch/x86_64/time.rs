@@ -14,7 +14,15 @@ pub fn counter() -> u128 {
         let comparator = unsafe { hpet.base_address.read_u64(hpet::T0_COMPARATOR_OFFSET) };
         // Get period in femtoseconds
         let capability = unsafe { hpet.base_address.read_u64(hpet::CAPABILITY_OFFSET) };
-        let period_fs = capability >> 32;
+
+        // There seems to be a bug in qemu on macos that causes the calculation to produce 0 for
+        // period_fs and hence a divide by zero calculating the divisor - workaround it while we
+        // try and get a fix from qemu: https://gitlab.com/qemu-project/qemu/-/issues/1570
+        let mut period_fs = capability >> 32;
+        if period_fs == 0 {
+            period_fs = 10_000_000;
+        }
+
         // Calculate divisor
         let divisor = (pit::RATE as u64 * 1_000_000) / period_fs;
         // Calculate last interrupt
