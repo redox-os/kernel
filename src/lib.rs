@@ -3,8 +3,6 @@
 //! The Redox OS Kernel is a microkernel that supports `x86_64` systems and
 //! provides Unix-like syscalls for primarily Rust applications
 
-//TODO: fix the need to generate references to packed fields
-#![allow(unaligned_references)]
 // Useful for adding comments about different branches
 #![allow(clippy::if_same_then_else)]
 // Useful in the syscall function
