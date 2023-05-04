@@ -381,8 +381,12 @@ pub fn sigreturn() -> Result<usize> {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
-        context.ksig_restore = true;
-        context.block("sigreturn");
+        if context.ksig.is_some() {
+            context.ksig_restore = true;
+            context.block("sigreturn");
+        } else {
+            return Err(Error::new(EINVAL));
+        }
     }
 
     let _ = unsafe { context::switch() };
