@@ -104,13 +104,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         });
 
         info!("Redox OS starting...");
-        info!("Kernel: {:X}:{:X}", args.kernel_base, args.kernel_base + args.kernel_size);
-        info!("Stack: {:X}:{:X}", args.stack_base, args.stack_base + args.stack_size);
-        info!("Env: {:X}:{:X}", args.env_base, args.env_base + args.env_size);
-        info!("RSDPs: {:X}:{:X}", args.dtb_base, args.dtb_base + args.dtb_size);
-        info!("Areas: {:X}:{:X}", args.areas_base, args.areas_base + args.areas_size);
-        info!("Bootstrap: {:X}:{:X}", args.bootstrap_base, args.bootstrap_base + args.bootstrap_size);
-        info!("Bootstrap entry point: {:X}", args.bootstrap_entry);
+        info!("Kernel: {:X}:{:X}", {args.kernel_base}, args.kernel_base + args.kernel_size);
+        info!("Stack: {:X}:{:X}", {args.stack_base}, args.stack_base + args.stack_size);
+        info!("Env: {:X}:{:X}", {args.env_base}, args.env_base + args.env_size);
+        info!("RSDPs: {:X}:{:X}", {args.dtb_base}, args.dtb_base + args.dtb_size);
+        info!("Areas: {:X}:{:X}", {args.areas_base}, args.areas_base + args.areas_size);
+        info!("Bootstrap: {:X}:{:X}", {args.bootstrap_base}, args.bootstrap_base + args.bootstrap_size);
+        info!("Bootstrap entry point: {:X}", {args.bootstrap_entry});
 
         // Setup interrupt handlers
         extern "C" {
