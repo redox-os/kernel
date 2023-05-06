@@ -186,7 +186,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         "stp q30, q31, [{0}, #16 * 30]",
         "mrs {1}, fpcr",
         "mrs {2}, fpsr",
-        in(reg) &mut float_regs.fp_simd_regs,
+        in(reg) core::ptr::addr_of_mut!(float_regs.fp_simd_regs),
         out(reg) float_regs.fpcr,
         out(reg) float_regs.fpsr
     );
@@ -214,7 +214,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             "ldp q30, q31, [{0}, #16 * 30]",
             "msr fpcr, {1}",
             "msr fpsr, {2}",
-            in(reg) &mut float_regs.fp_simd_regs,
+            in(reg) core::ptr::addr_of_mut!(float_regs.fp_simd_regs),
             in(reg) float_regs.fpcr,
             in(reg) float_regs.fpsr
         );
