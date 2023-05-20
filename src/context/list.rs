@@ -3,8 +3,10 @@ use core::{iter, mem};
 
 use spinning_top::RwSpinlock;
 
+use super::arch::KSTACK_SIZE;
 use super::context::{Context, ContextId};
 use super::memory::AddrSpaceWrapper;
+use crate::common::aligned_box::AlignedBox;
 use crate::syscall::error::{Error, Result, EAGAIN};
 
 /// Context list type
@@ -104,33 +106,41 @@ impl ContextList {
     }
 
     /// Spawn a context from a function.
-    pub fn spawn(&mut self, func: extern "C" fn()) -> Result<&Arc<RwSpinlock<Context>>> {
+    pub fn spawn(&mut self, userspace_allowed: bool, func: extern "C" fn()) -> Result<&Arc<RwSpinlock<Context>>> {
+        let mut stack = AlignedBox::<[u8; crate::context::arch::KSTACK_SIZE], {crate::context::arch::KSTACK_ALIGN}>::try_zeroed()?;
+
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
             let _ = context.set_addr_space(AddrSpaceWrapper::new()?);
 
-            let mut stack = vec![0; 65_536].into_boxed_slice();
-            let mut offset = stack.len();
+            let mut stack_top = unsafe { stack.as_mut_ptr().add(KSTACK_SIZE) };
 
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             unsafe {
-                // Space for return address on stack
-                offset -= mem::size_of::<usize>();
-                let func_ptr = stack.as_mut_ptr().add(offset);
-                *(func_ptr as *mut usize) = func as usize;
+                if userspace_allowed {
+                    // Zero-initialize InterruptStack registers.
+                    const INT_REGS_SIZE: usize = core::mem::size_of::<crate::interrupt::InterruptStack>();
+                    stack_top = stack_top.sub(INT_REGS_SIZE);
+                    stack_top.write_bytes(0_u8, INT_REGS_SIZE);
+
+                    stack_top = stack_top.sub(core::mem::size_of::<usize>());
+                    stack_top.cast::<usize>().write(crate::interrupt::syscall::enter_usermode as usize);
+                }
+
+                stack_top = stack_top.sub(core::mem::size_of::<usize>());
+                stack_top.cast::<usize>().write(func as usize);
             }
 
             #[cfg(target_arch = "aarch64")]
             {
                 context.arch.set_lr(func as usize);
                 context.arch.set_context_handle();
-                // Stack should be 16 byte aligned
-                offset -= (stack.as_ptr() as usize + offset) % 16;
             }
 
-            context.arch.set_stack(stack.as_ptr() as usize + offset);
+            context.arch.set_stack(stack_top as usize);
+
             context.kstack = Some(stack);
+            context.userspace = userspace_allowed;
         }
         Ok(context_lock)
     }

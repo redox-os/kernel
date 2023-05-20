@@ -4,8 +4,6 @@
 
 extern crate syscall;
 
-use syscall::{EventFlags, EOVERFLOW};
-
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
@@ -16,8 +14,8 @@ pub use self::{
 
 use self::{
     data::{Map, SigAction, TimeSpec},
-    error::{Error, Result, ENOSYS},
-    flag::{MapFlags, WaitFlags},
+    error::{Error, Result, EINTR, EOVERFLOW, ENOSYS},
+    flag::{EventFlags, MapFlags, WaitFlags},
     number::*,
 };
 
@@ -219,10 +217,9 @@ pub fn syscall(
                 .map(|()| 0),
                 SYS_SIGPROCMASK => sigprocmask(
                     b,
-                    UserSlice::ro(c, 16)?.none_if_null(),
-                    UserSlice::wo(d, 16)?.none_if_null(),
-                )
-                .map(|()| 0),
+                    UserSlice::ro(c, 8)?.none_if_null(),
+                    UserSlice::wo(d, 8)?.none_if_null(),
+                ).map(|()| 0),
                 SYS_SIGRETURN => sigreturn(),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
@@ -294,6 +291,10 @@ pub fn syscall(
             let mut context = context_lock.write();
             context.syscall = None;
         }
+    }
+
+    if result == Err(Error::new(EINTR)) {
+        crate::context::signal::signal_handler();
     }
 
     if debug {

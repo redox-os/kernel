@@ -289,7 +289,7 @@ interrupt!(lapic_error, || {
     lapic_eoi();
 });
 
-interrupt_error!(generic_irq, |stack, code| {
+interrupt_error!(generic_irq, |_stack, code| {
     // The reason why 128 is subtracted and added from the code, is that PUSH imm8 sign-extends the
     // value, and the longer PUSH imm32 would make the generic_interrupts table twice as large
     // (containing lots of useless NOPs).

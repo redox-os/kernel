@@ -13,9 +13,8 @@ use crate::{
     context, interrupt,
     paging::{mapper::PageFlushAll, Page, PageFlags, VirtualAddress, PAGE_SIZE},
     ptrace,
-    start::usermode,
     syscall::{
-        data::SigAction,
+        data::{SigAction, SignalStack},
         error::*,
         flag::{
             wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT, SIGTERM,
@@ -26,7 +25,7 @@ use crate::{
     Bootstrap, CurrentRmmArch,
 };
 
-use super::usercopy::{UserSliceRo, UserSliceWo};
+use super::usercopy::{UserSliceRo, UserSliceWo, UserSlice};
 
 pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(
@@ -165,92 +164,92 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         (context.ruid, context.euid, context.pgid)
     };
 
-    if sig < 0x7F {
-        let mut found = 0;
-        let mut sent = 0;
+    if sig >= 0x3F {
+        return Err(Error::new(EINVAL));
+    }
+    let mut found = 0;
+    let mut sent = 0;
 
-        {
-            let contexts = context::contexts();
+    {
+        let contexts = context::contexts();
 
-            let send = |context: &mut context::Context| -> bool {
-                if euid == 0 || euid == context.ruid || ruid == context.ruid {
-                    // If sig = 0, test that process exists and can be
-                    // signalled, but don't send any signal.
-                    if sig != 0 {
-                        //TODO: sigprocmask
-                        context.pending.push_back(sig as u8);
-                        // Convert stopped processes to blocked if sending SIGCONT
-                        if sig == SIGCONT {
-                            if let context::Status::Stopped(_sig) = context.status {
-                                context.status = context::Status::Blocked;
-                            }
-                        }
-                    }
-                    true
-                } else {
-                    false
+        let send = |context: &mut context::Context| -> bool {
+            // Non-root users cannot kill arbitrarily.
+            if euid != 0 && euid != context.ruid && ruid != context.ruid {
+                return false;
+            }
+            // If sig = 0, test that process exists and can be
+            // signalled, but don't send any signal.
+            if sig == 0 {
+                return true;
+            }
+
+            context.sig.pending |= 1_u64 << (sig - 1);
+
+            // Convert stopped processes to blocked if sending SIGCONT
+            if sig == SIGCONT {
+                if let context::Status::Stopped(_sig) = context.status {
+                    context.status = context::Status::Blocked;
                 }
-            };
+            }
 
-            if pid.get() as isize > 0 {
-                // Send to a single process
-                if let Some(context_lock) = contexts.get(pid) {
-                    let mut context = context_lock.write();
+            true
+        };
 
+        if pid.get() as isize > 0 {
+            // Send to a single process
+            if let Some(context_lock) = contexts.get(pid) {
+                let mut context = context_lock.write();
+
+                found += 1;
+                if send(&mut context) {
+                    sent += 1;
+                }
+            }
+        } else if pid.get() == 1_usize.wrapping_neg() {
+            // Send to every process with permission, except for init
+            for (_id, context_lock) in contexts.iter() {
+                let mut context = context_lock.write();
+
+                if context.id.get() > 2 {
                     found += 1;
+
                     if send(&mut context) {
                         sent += 1;
                     }
                 }
-            } else if pid.get() as isize == -1 {
-                // Send to every process with permission, except for init
-                for (_id, context_lock) in contexts.iter() {
-                    let mut context = context_lock.write();
-
-                    if context.id.get() > 2 {
-                        found += 1;
-
-                        if send(&mut context) {
-                            sent += 1;
-                        }
-                    }
-                }
-            } else {
-                let pgid = if pid.get() == 0 {
-                    current_pgid
-                } else {
-                    ContextId::from(-(pid.get() as isize) as usize)
-                };
-
-                // Send to every process in the process group whose ID
-                for (_id, context_lock) in contexts.iter() {
-                    let mut context = context_lock.write();
-
-                    if context.pgid == pgid {
-                        found += 1;
-
-                        if send(&mut context) {
-                            sent += 1;
-                        }
-                    }
-                }
             }
-        }
-
-        if found == 0 {
-            Err(Error::new(ESRCH))
-        } else if sent == 0 {
-            Err(Error::new(EPERM))
         } else {
-            // Switch to ensure delivery to self
-            unsafe {
-                context::switch();
-            }
+            let pgid = if pid.get() == 0 {
+                current_pgid
+            } else {
+                ContextId::from(pid.get().wrapping_neg())
+            };
 
-            Ok(0)
+            // Send to every process in the process group whose ID
+            for (_id, context_lock) in contexts.iter() {
+                let mut context = context_lock.write();
+
+                if context.pgid == pgid {
+                    found += 1;
+
+                    if send(&mut context) {
+                        sent += 1;
+                    }
+                }
+            }
         }
+    }
+
+    if found == 0 {
+        Err(Error::new(ESRCH))
+    } else if sent == 0 {
+        Err(Error::new(EPERM))
     } else {
-        Err(Error::new(EINVAL))
+        // Switch to ensure delivery to self
+        unsafe { context::switch(); }
+
+        Ok(0)
     }
 }
 
@@ -306,73 +305,61 @@ pub fn sigaction(
     let mut actions = context.actions.write();
 
     if let Some(oldact) = oldact_opt {
-        oldact.copy_exactly(&actions[sig].0)?;
+        oldact.copy_exactly(&actions[sig - 1].0)?;
     }
 
     if let Some(act) = act_opt {
-        actions[sig] = (unsafe { act.read_exact::<SigAction>()? }, restorer);
+        actions[sig - 1] = (unsafe { act.read_exact::<SigAction>()? }, restorer);
     }
 
     Ok(())
 }
 
-pub fn sigprocmask(
-    how: usize,
-    mask_opt: Option<UserSliceRo>,
-    oldmask_opt: Option<UserSliceWo>,
-) -> Result<()> {
+pub fn sigprocmask(how: usize, mask_ref_opt: Option<UserSliceRo>, oldmask_out_opt: Option<UserSliceWo>) -> Result<()> {
+    let mask_opt = mask_ref_opt.map(|m| m.read_u64()).transpose()?;
+
+    let old_sigmask;
+
     {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context_lock = context::current()?;
         let mut context = context_lock.write();
 
-        let [old_lo, old_hi] = context.sigmask;
+        old_sigmask = context.sig.procmask;
 
-        if let Some(oldmask) = oldmask_opt {
-            // TODO: sigprocmask should be u64
-            let (lo_dst, hi_dst) = oldmask
-                .split_at(core::mem::size_of::<u64>())
-                .ok_or(Error::new(EINVAL))?;
-            lo_dst.write_u64(old_lo)?;
-            hi_dst.write_u64(old_hi)?;
-        }
-
-        if let Some(mask) = mask_opt {
-            let (lo_src, hi_src) = mask
-                .split_at(core::mem::size_of::<u64>())
-                .ok_or(Error::new(EINVAL))?;
-            let lo_arg = lo_src.read_u64()?;
-            let hi_arg = hi_src.read_u64()?;
-
-            context.sigmask = match how {
-                SIG_BLOCK => [old_lo | lo_arg, old_hi | hi_arg],
-                SIG_UNBLOCK => [old_lo & !lo_arg, old_hi & !hi_arg],
-                SIG_SETMASK => [lo_arg, hi_arg],
+        if let Some(arg) = mask_opt {
+            match how {
+                SIG_BLOCK => context.sig.procmask |= arg,
+                SIG_UNBLOCK => context.sig.procmask &= !arg,
+                SIG_SETMASK => context.sig.procmask = arg,
                 _ => {
                     return Err(Error::new(EINVAL));
                 }
-            };
+            }
         }
+    };
+
+    if let Some(oldmask_out) = oldmask_out_opt {
+        oldmask_out.write_u64(old_sigmask)?;
     }
     Ok(())
 }
 
 pub fn sigreturn() -> Result<usize> {
-    {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
-        if context.ksig.is_some() {
-            context.ksig_restore = true;
-            context.block("sigreturn");
-        } else {
-            return Err(Error::new(EINVAL));
-        }
-    }
+    let context = context::current()?;
 
-    let _ = unsafe { context::switch() };
+    let mut stack = SignalStack::default();
 
-    unreachable!();
+    // Kernel-only contexts can't call sigreturn in the first place, so a panic would be
+    // acceptable, but handle it anyway.
+    let stack_ptr = context.read().regs().ok_or(Error::new(EINVAL))?.stack_pointer();
+
+    UserSlice::ro(stack_ptr, mem::size_of::<SignalStack>())?.copy_to_slice(&mut stack)?;
+
+    let mut context = context.write();
+    context.regs_mut().ok_or(Error::new(EINVAL))?.load(&stack.intregs);
+    context.sig.procmask = stack.old_procmask;
+
+    Ok(0)
 }
 
 pub fn umask(mask: usize) -> Result<usize> {
@@ -568,7 +555,7 @@ pub fn waitpid(
     }
 }
 
-pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
+pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
     assert_ne!(bootstrap.page_count, 0);
 
     {
@@ -593,7 +580,6 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
         });
     }
 
-    // TODO: Not all arches do linear mapping
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
     UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
@@ -605,7 +591,11 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
     assert_ne!(bootstrap_entry, 0);
 
     // Start in a minimal environment without any stack.
-    usermode(bootstrap_entry.try_into().unwrap(), 0, 0, 0);
+
+    context::current()
+        .expect("bootstrap was not running inside any context").write()
+        .regs_mut().expect("bootstrap needs registers to be available")
+        .setup_minimal(bootstrap_entry.try_into().unwrap(), false);
 }
 
 pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {

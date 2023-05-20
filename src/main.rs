@@ -43,6 +43,7 @@
 #![feature(array_methods)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(int_roundings)]
+#![feature(iter_next_chunk)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
 #![feature(new_uninit)]
@@ -194,7 +195,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    match context::contexts_mut().spawn(userspace_init) {
+    match context::contexts_mut().spawn(true, userspace_init) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
             context.rns = SchemeNamespace::from(1);
@@ -258,29 +259,18 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     }
 }
 
-/// Allow exception handlers to send signal to arch-independant kernel
-#[no_mangle]
-extern "C" fn ksignal(signal: usize) {
-    info!(
-        "SIGNAL {}, CPU {}, PID {:?}",
-        signal,
-        cpu_id(),
-        context::context_id()
-    );
+/// Allow exception handlers to send signal to arch-independent kernel
+pub fn ksignal(signal: usize) {
+    info!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
     {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
+            let mut context = context_lock.write();
             info!("NAME {}", context.name);
+            context.sig.pending |= 1 << (signal - 1);
         }
     }
-
-    // Try running kill(getpid(), signal), but fallback to exiting
-    syscall::getpid()
-        .and_then(|pid| syscall::kill(pid, signal).map(|_| ()))
-        .unwrap_or_else(|_| {
-            syscall::exit(signal & 0x7F);
-        });
+    crate::context::signal::signal_handler();
 }
 
 // TODO: Use this macro on aarch64 too.

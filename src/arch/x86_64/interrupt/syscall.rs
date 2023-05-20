@@ -66,10 +66,6 @@ macro_rules! with_interrupt_stack {
             .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
 
         if allowed.unwrap_or(true) {
-            // If the syscall is `clone`, the clone won't return here. Instead,
-            // it'll return early and leave any undropped values. This is
-            // actually GOOD, because any references are at that point UB
-            // anyway, because they are based on the wrong stack.
             let $stack = &mut *$stack;
             (*$stack).scratch.rax = $code;
         }
@@ -80,7 +76,6 @@ macro_rules! with_interrupt_stack {
 
 #[no_mangle]
 pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
-    let _guard = ptrace::set_process_regs(stack);
     with_interrupt_stack!(|stack| {
         let scratch = &stack.scratch;
         syscall::syscall(
@@ -96,6 +91,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
 }
 
 #[naked]
+#[allow(named_asm_labels)]
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::asm!(concat!(
     // Yes, this is magic. No, you don't need to understand
@@ -122,6 +118,11 @@ pub unsafe extern "C" fn syscall_instruction() {
 
     // TODO: Unmap PTI
     // $crate::arch::x86_64::pti::unmap();
+
+    "
+    .globl enter_usermode
+    enter_usermode:
+    ",
 
     // Pop context registers
     pop_preserved!(),
@@ -172,10 +173,10 @@ pub unsafe extern "C" fn syscall_instruction() {
     //
     // While we could also conditionally IRETQ here, an easier method is to simply sign-extend RCX:
 
-    // Shift away the upper 16 bits (0xBAAD_8000_0000_0000 => 0x8000_0000_0000_XXXX).
+    // Shift away the upper 16 bits (0xBAAD_8000_DEAD_BEEF => 0x8000_DEAD_BEEF_XXXX).
     "shl rcx, 16;",
     // Shift arithmetically right by 16 bits, effectively extending the 47th sign bit to bits
-    // 63:48 (0x8000_0000_0000_XXXX => 0xFFFF_8000_0000_0000).
+    // 63:48 (0x8000_DEAD_BEEF_XXXX => 0xFFFF_8000_DEAD_BEEF).
     "sar rcx, 16;",
 
     "add rsp, 8;",              // Pop fake userspace CS
@@ -199,6 +200,10 @@ pub unsafe extern "C" fn syscall_instruction() {
 
     options(noreturn),
     );
+}
+extern "C" {
+    // TODO: macro?
+    pub fn enter_usermode();
 }
 
 interrupt_stack!(syscall, |stack| {

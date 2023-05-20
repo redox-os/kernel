@@ -27,33 +27,23 @@ pub fn clock_gettime(clock: usize, buf: UserSliceWo) -> Result<()> {
 pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Result<()> {
     let req = unsafe { req_buf.read_exact::<TimeSpec>()? };
 
-    //start is a tuple of (seconds, nanoseconds)
     let start = time::monotonic();
     let end = start + (req.tv_sec as u128 * time::NANOS_PER_SEC) + (req.tv_nsec as u128);
 
+    let current_context = context::current()?;
     {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
+        let mut context = current_context.write();
 
         context.wake = Some(end);
         context.block("nanosleep");
     }
 
-    //TODO: Find out wake reason
-    loop {
-        unsafe {
-            context::switch();
-        }
+    // TODO: The previous wakeup reason was most likely signals, but is there any other possible
+    // reason?
+    unsafe { context::switch(); }
 
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let mut context = context_lock.write();
-        if context.wake.is_some() {
-            context.block("nanosleep spurious");
-        } else {
-            break;
-        }
+    if current_context.write().wake.take().is_some() {
+        return Err(Error::new(EINTR));
     }
 
     if let Some(rem_buf) = rem_buf_opt {

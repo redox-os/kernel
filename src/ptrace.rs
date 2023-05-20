@@ -3,9 +3,7 @@
 //! of the scheme.
 
 use crate::{
-    arch::interrupt::InterruptStack,
-    common::unique::Unique,
-    context::{self, signal, Context, ContextId},
+    context::{self, ContextId},
     event,
     scheme::GlobalSchemes,
     sync::WaitCondition,
@@ -307,115 +305,4 @@ pub fn next_breakpoint() -> Option<PtraceFlags> {
     let breakpoint = data.breakpoint?;
 
     Some(breakpoint.flags)
-}
-
-//  ____            _     _
-// |  _ \ ___  __ _(_)___| |_ ___ _ __ ___
-// | |_) / _ \/ _` | / __| __/ _ \ '__/ __|
-// |  _ <  __/ (_| | \__ \ ||  __/ |  \__ \
-// |_| \_\___|\__, |_|___/\__\___|_|  |___/
-//            |___/
-
-pub struct ProcessRegsGuard;
-
-/// Make all registers available to e.g. the proc: scheme
-/// ---
-/// For use inside arch-specific code to assign the pointer of the
-/// interupt stack to the current process. Meant to reduce the amount
-/// of ptrace-related code that has to lie in arch-specific bits.
-/// ```rust,ignore
-/// let _guard = ptrace::set_process_regs(pointer);
-/// ...
-/// // (_guard implicitly dropped)
-/// ```
-pub fn set_process_regs(pointer: *mut InterruptStack) -> Option<ProcessRegsGuard> {
-    let contexts = context::contexts();
-    let context = contexts.current()?;
-    let mut context = context.write();
-
-    let kstack = context.kstack.as_mut()?;
-
-    context.regs = Some((kstack.as_mut_ptr() as usize, Unique::new(pointer)));
-    Some(ProcessRegsGuard)
-}
-
-impl Drop for ProcessRegsGuard {
-    fn drop(&mut self) {
-        fn clear_process_regs() -> Option<()> {
-            let contexts = context::contexts();
-            let context = contexts.current()?;
-            let mut context = context.write();
-
-            context.regs = None;
-            Some(())
-        }
-        clear_process_regs();
-    }
-}
-
-/// Return the InterruptStack pointer, but relative to the specified
-/// stack instead of the original.
-pub unsafe fn rebase_regs_ptr(
-    regs: Option<(usize, Unique<InterruptStack>)>,
-    kstack: Option<&Box<[u8]>>,
-) -> Option<*const InterruptStack> {
-    let (old_base, ptr) = regs?;
-    let new_base = kstack?.as_ptr() as usize;
-    Some((ptr.as_ptr() as usize - old_base + new_base) as *const _)
-}
-/// Return the InterruptStack pointer, but relative to the specified
-/// stack instead of the original.
-pub unsafe fn rebase_regs_ptr_mut(
-    regs: Option<(usize, Unique<InterruptStack>)>,
-    kstack: Option<&mut Box<[u8]>>,
-) -> Option<*mut InterruptStack> {
-    let (old_base, ptr) = regs?;
-    let new_base = kstack?.as_mut_ptr() as usize;
-    Some((ptr.as_ptr() as usize - old_base + new_base) as *mut _)
-}
-
-/// Return a reference to the InterruptStack struct in memory. If the
-/// kernel stack has been backed up by a signal handler, this instead
-/// returns the struct inside that memory, as that will later be
-/// restored and otherwise undo all your changes. See `update(...)` in
-/// context/switch.rs.
-pub unsafe fn regs_for(context: &Context) -> Option<&InterruptStack> {
-    let signal_backup_regs = match context.ksig {
-        None => None,
-        Some((_, _, ref kstack, signum)) => {
-            let is_user_handled = {
-                let actions = context.actions.read();
-                signal::is_user_handled(actions[signum as usize].0.sa_handler)
-            };
-            if is_user_handled {
-                None
-            } else {
-                Some(rebase_regs_ptr(context.regs, kstack.as_ref())?)
-            }
-        }
-    };
-    signal_backup_regs
-        .or_else(|| context.regs.map(|regs| regs.1.as_ptr() as *const _))
-        .map(|ptr| &*ptr)
-}
-
-/// Mutable version of `regs_for`
-pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack> {
-    let signal_backup_regs = match context.ksig {
-        None => None,
-        Some((_, _, ref mut kstack, signum)) => {
-            let is_user_handled = {
-                let actions = context.actions.read();
-                signal::is_user_handled(actions[signum as usize].0.sa_handler)
-            };
-            if is_user_handled {
-                None
-            } else {
-                Some(rebase_regs_ptr_mut(context.regs, kstack.as_mut())?)
-            }
-        }
-    };
-    signal_backup_regs
-        .or_else(|| context.regs.map(|regs| regs.1.as_ptr()))
-        .map(|ptr| &mut *ptr)
 }

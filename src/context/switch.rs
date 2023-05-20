@@ -10,7 +10,7 @@ use crate::{
     ptrace, time,
 };
 
-use super::ContextId;
+use super::{ContextId, Status};
 
 unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
     // Ignore already running contexts
@@ -33,43 +33,9 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
         return false;
     }
 
-    // Restore from signal, must only be done from another context to avoid overwriting the stack!
-    if context.ksig_restore {
-        let was_singlestep = ptrace::regs_for(context)
-            .map(|s| s.is_singlestep())
-            .unwrap_or(false);
-
-        let ksig = context
-            .ksig
-            .take()
-            .expect("context::switch: ksig not set with ksig_restore");
-        context.arch = ksig.0;
-
-        context.kfx.copy_from_slice(&*ksig.1);
-
-        if let Some(ref mut kstack) = context.kstack {
-            kstack.copy_from_slice(
-                &ksig
-                    .2
-                    .expect("context::switch: ksig kstack not set with ksig_restore"),
-            );
-        } else {
-            panic!("context::switch: kstack not set with ksig_restore");
-        }
-
-        context.ksig_restore = false;
-
-        // Keep singlestep flag across jumps
-        if let Some(regs) = ptrace::regs_for_mut(context) {
-            regs.set_singlestep(was_singlestep);
-        }
-
-        context.unblock_no_ipi();
-    }
-
-    // Unblock when there are pending signals
-    if context.status.is_soft_blocked() && !context.pending.is_empty() {
-        context.unblock_no_ipi();
+    // Unblock when there are pending nonmasked signals.
+    if matches!(context.status, Status::Blocked) && context.sig.deliverable() != 0 {
+        context.unblock();
     }
 
     // Wake from sleep
@@ -203,18 +169,6 @@ pub unsafe fn switch() -> bool {
 
         let percpu = PercpuBlock::current();
         percpu.switch_internals.context_id.set(next_context.id);
-
-        if next_context.ksig.is_none() {
-            //TODO: Allow nested signals
-            if let Some(sig) = next_context.pending.pop_front() {
-                // Signal was found, run signal handler
-                let arch = next_context.arch.clone();
-                let kfx = next_context.kfx.clone();
-                let kstack = next_context.kstack.clone();
-                next_context.ksig = Some((arch, kfx, kstack, sig));
-                next_context.arch.signal_stack(signal_handler, sig);
-            }
-        }
 
         // FIXME set th switch result in arch::switch_to instead
         let prev_context =
