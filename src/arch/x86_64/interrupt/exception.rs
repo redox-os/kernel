@@ -99,44 +99,44 @@ interrupt_stack!(device_not_available, |stack| {
     ksignal(SIGILL);
 });
 
-interrupt_error!(double_fault, |stack| {
+interrupt_error!(double_fault, |stack, _code| {
     println!("Double fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error!(invalid_tss, |stack| {
+interrupt_error!(invalid_tss, |stack, _code| {
     println!("Invalid TSS fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error!(segment_not_present, |stack| {
+interrupt_error!(segment_not_present, |stack, _code| {
     println!("Segment not present fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error!(stack_segment, |stack| {
+interrupt_error!(stack_segment, |stack, _code| {
     println!("Stack segment fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error!(protection, |stack| {
+interrupt_error!(protection, |stack, _code| {
     println!("Protection fault");
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);
 });
 
-interrupt_error!(page, |stack| {
+interrupt_error!(page, |stack, code| {
     let cr2 = VirtualAddress::new(unsafe { x86::controlregs::cr2() });
-    let arch_flags = PageFaultError::from_bits_truncate(stack.code as u32);
+    let arch_flags = PageFaultError::from_bits_truncate(code as u32);
     let mut generic_flags = GenericPfFlags::empty();
 
     generic_flags.set(GenericPfFlags::PRESENT, arch_flags.contains(PageFaultError::P));
@@ -145,7 +145,7 @@ interrupt_error!(page, |stack| {
     generic_flags.set(GenericPfFlags::INVL, arch_flags.contains(PageFaultError::RSVD));
     generic_flags.set(GenericPfFlags::INSTR_NOT_DATA, arch_flags.contains(PageFaultError::ID));
 
-    if crate::memory::page_fault_handler(&mut stack.inner, generic_flags, cr2).is_err() {
+    if crate::memory::page_fault_handler(stack, generic_flags, cr2).is_err() {
         println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
         stack_trace();
@@ -160,7 +160,7 @@ interrupt_stack!(fpu_fault, |stack| {
     ksignal(SIGFPE);
 });
 
-interrupt_error!(alignment_check, |stack| {
+interrupt_error!(alignment_check, |stack, _code| {
     println!("Alignment check fault");
     stack.dump();
     stack_trace();
@@ -188,7 +188,7 @@ interrupt_stack!(virtualization, |stack| {
     ksignal(SIGBUS);
 });
 
-interrupt_error!(security, |stack| {
+interrupt_error!(security, |stack, _code| {
     println!("Security exception");
     stack.dump();
     stack_trace();

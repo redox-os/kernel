@@ -62,13 +62,12 @@ pub struct IretRegisters {
     pub cs: usize,
     pub rflags: usize,
 
-    // ----
-    // The following will only be present if interrupt is raised from another
-    // privilege ring. Otherwise, they are undefined values.
-    // ----
+    // In x86 Protected Mode, i.e. 32-bit kernels, the following two registers are conditionally
+    // pushed if the privilege ring changes. In x86 Long Mode however, i.e. 64-bit kernels, they
+    // are unconditionally pushed, mostly due to stack alignment requirements.
 
     pub rsp: usize,
-    pub ss: usize
+    pub ss: usize,
 }
 
 impl IretRegisters {
@@ -77,10 +76,9 @@ impl IretRegisters {
         println!("CS:    {:016x}", { self.cs });
         println!("RIP:   {:016x}", { self.rip });
 
-        if self.cs & 0b11 != 0b00 {
-            println!("RSP:   {:016x}", { self.rsp });
-            println!("SS:    {:016x}", { self.ss });
-        }
+        println!("RSP:   {:016x}", { self.rsp });
+        println!("SS:    {:016x}", { self.ss });
+
         unsafe {
             let fsbase = x86::msr::rdmsr(x86::msr::IA32_FS_BASE);
             let gsbase = x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE);
@@ -187,20 +185,6 @@ impl InterruptStack {
     /// Checks if the trap flag is enabled, see `set_singlestep`
     pub fn is_singlestep(&self) -> bool {
         self.iret.rflags & FLAG_SINGLESTEP == FLAG_SINGLESTEP
-    }
-}
-
-#[derive(Default)]
-#[repr(packed)]
-pub struct InterruptErrorStack {
-    pub code: usize,
-    pub inner: InterruptStack,
-}
-
-impl InterruptErrorStack {
-    pub fn dump(&self) {
-        println!("CODE:  {:016x}", { self.code });
-        self.inner.dump();
     }
 }
 
@@ -482,10 +466,10 @@ macro_rules! interrupt {
 
 #[macro_export]
 macro_rules! interrupt_error {
-    ($name:ident, |$stack:ident| $code:block) => {
+    ($name:ident, |$stack:ident, $error_code:ident| $code:block) => {
         #[naked]
         pub unsafe extern "C" fn $name() {
-            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptErrorStack) {
+            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptStack, $error_code: usize) {
                 let _guard;
 
                 // Only set_ptrace_process_regs if this error occured from userspace. If this fault
@@ -495,8 +479,8 @@ macro_rules! interrupt_error {
                 // anyway).
                 //
                 // Check the privilege level of CS against ring 3.
-                if $stack.inner.iret.cs & 0b11 == 0b11 {
-                    _guard = $crate::ptrace::set_process_regs(&mut $stack.inner);
+                if $stack.iret.cs & 0b11 == 0b11 {
+                    _guard = $crate::ptrace::set_process_regs($stack);
                 }
 
                 #[allow(unused_unsafe)]
@@ -510,31 +494,28 @@ macro_rules! interrupt_error {
                 "cld;",
 
                 swapgs_iff_ring3_fast_errorcode!(),
-                // Move rax into code's place, put code in last instead (to be
-                // compatible with InterruptStack)
-                "xchg [rsp], rax\n",
+
+                // Don't push RAX yet, as the error code is already stored in RAX's position.
 
                 // Push all userspace registers
                 push_scratch!(),
                 push_preserved!(),
 
-                // Put code in, it's now in rax
-                "push rax\n",
+                // Now that we have a couple of usable registers, put the error code in the second
+                // argument register for the inner function, and save RAX where it would normally
+                // be.
+                "mov rsi, [rsp + {rax_offset}];",
+                "mov [rsp + {rax_offset}], rax;",
 
                 // TODO: Map PTI
                 // $crate::arch::x86_64::pti::map();
 
-                // Call inner function with pointer to stack
-                "
-                mov rdi, rsp
-                call {inner}
-                ",
+                // Call inner function with pointer to stack, and error code.
+                "mov rdi, rsp;",
+                "call {inner};",
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86_64::pti::unmap();
-
-                // Pop code
-                "add rsp, 8\n",
 
                 // Restore all userspace registers
                 pop_preserved!(),
@@ -542,10 +523,11 @@ macro_rules! interrupt_error {
 
                 // The error code has already been popped, so use the regular macro.
                 swapgs_iff_ring3_fast!(),
-                "iretq\n",
+                "iretq;",
             ),
 
             inner = sym inner,
+            rax_offset = const(::core::mem::size_of::<$crate::interrupt::handler::PreservedRegisters>() + ::core::mem::size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
 
             options(noreturn));
         }
