@@ -116,7 +116,7 @@ pub fn resource() -> Result<Vec<u8>> {
                                affinity,
                                cpu_time_string,
                                memory_string,
-                               *context.name.read()));
+                               context.name));
         }
     }
 

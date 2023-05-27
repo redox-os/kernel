@@ -161,7 +161,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     for (id, context_lock) in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| *id != target_id) { continue; }
         let context = context_lock.read();
-        println!("{}: {}", (*id).into(), context.name.read());
+        println!("{}: {}", (*id).into(), context.name);
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {

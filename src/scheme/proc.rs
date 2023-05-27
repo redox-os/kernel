@@ -324,7 +324,7 @@ impl ProcScheme {
                 Operation::Memory { .. } => OperationData::Memory(MemData::default()),
                 Operation::Trace => OperationData::Trace(TraceData::default()),
                 Operation::Static(_) => OperationData::Static(StaticData::new(
-                    target.name.read().clone().into()
+                    target.name.clone().into_owned().into_bytes().into()
                 )),
                 Operation::AddrSpace { .. } => OperationData::Offset(0),
                 _ => OperationData::Other,
@@ -814,7 +814,7 @@ impl Scheme for ProcScheme {
                 // Return read events
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
-            Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.read().as_bytes(), &mut 0),
+            Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.as_bytes(), &mut 0),
             Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
             Operation::Attr(attr) => {
                 let src_buf = match (attr, &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?).read()) {
@@ -1031,8 +1031,8 @@ impl Scheme for ProcScheme {
                 Ok(mem::size_of::<u64>())
             },
             Operation::Name => {
-                let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?.into_boxed_str();
-                *context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.write() = utf8;
+                let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?;
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().name = utf8.into();
                 Ok(buf.len())
             }
             Operation::Sigstack => {

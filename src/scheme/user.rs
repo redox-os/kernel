@@ -294,7 +294,7 @@ impl UserInner {
             let context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
             let context = context_lock.read();
             if map.size % PAGE_SIZE != 0 {
-                log::warn!("Unaligned map size for context {:?}", context.name.try_read().as_deref());
+                log::warn!("Unaligned map size for context `{}`", context.name);
             }
             // TODO: Faster, cleaner mechanism to get descriptor
             let scheme = self.scheme_id.load(Ordering::SeqCst);

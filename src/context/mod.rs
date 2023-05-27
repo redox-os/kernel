@@ -3,6 +3,7 @@
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 use core::sync::atomic::Ordering;
 
+use alloc::borrow::Cow;
 use alloc::sync::Arc;
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -69,6 +70,7 @@ pub fn init() {
     let context_lock = contexts.insert_context_raw(id).expect("could not initialize first context");
     let mut context = context_lock.write();
     context.sched_affinity = Some(crate::cpu_id());
+    context.name = Cow::Borrowed("kmain");
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
 
