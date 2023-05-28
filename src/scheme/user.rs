@@ -270,7 +270,7 @@ impl UserInner {
                 SKMSG_FRETURNFD => {
                     let fd = packet.c;
 
-                    let desc = context::current()?.read().get_file(FileHandle::from(fd)).ok_or(Error::new(EINVAL))?.description;
+                    let desc = context::current()?.read().remove_file(FileHandle::from(fd)).ok_or(Error::new(EINVAL))?.description;
 
                     self.done.send(packet.id, Response::Fd(desc));
                 }
