@@ -1,13 +1,14 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use syscall::{SKMSG_FRETURNFD, CallerCtx};
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, slice, usize};
 use core::convert::TryFrom;
 use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context};
-use crate::context::file::FileDescriptor;
+use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::{AddrSpace, DANGLING, Grant, Region, GrantFileRef};
 use crate::event;
 use crate::paging::{PAGE_SIZE, mapper::InactiveFlusher, Page, round_down_pages, round_up_pages, VirtualAddress};
@@ -19,6 +20,8 @@ use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_RE
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
 
+use super::{FileHandle, OpenResult, KernelScheme};
+
 pub struct UserInner {
     root_id: SchemeId,
     handle_id: usize,
@@ -29,8 +32,12 @@ pub struct UserInner {
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
-    done: WaitMap<u64, usize>,
+    done: WaitMap<u64, Response>,
     unmounting: AtomicBool,
+}
+pub enum Response {
+    Regular(usize),
+    Fd(Arc<RwLock<FileDescription>>),
 }
 
 impl UserInner {
@@ -71,21 +78,31 @@ impl UserInner {
         id
     }
 
+    fn current_caller_ctx() -> Result<CallerCtx> {
+        match context::current()?.read() {
+            ref context => Ok(CallerCtx { pid: context.id.into(), uid: context.euid, gid: context.egid }),
+        }
+    }
+
     pub fn call(&self, a: usize, b: usize, c: usize, d: usize) -> Result<usize> {
-        let (pid, uid, gid) = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-            (context.id, context.euid, context.egid)
-        };
+        match self.call_extended(Self::current_caller_ctx()?, [a, b, c, d])? {
+            Response::Regular(code) => Error::demux(code),
+            Response::Fd(_) => {
+                if a & SYS_RET_FILE == SYS_RET_FILE {
+                    log::warn!("Kernel code using UserScheme::call wrongly, as an external file descriptor was returned.");
+                }
 
-        let id = self.next_id();
+                Err(Error::new(EIO))
+            }
+        }
+    }
 
-        self.call_inner(Packet {
-            id,
-            pid: pid.into(),
-            uid,
-            gid,
+    pub fn call_extended(&self, ctx: CallerCtx, [a, b, c, d]: [usize; 4]) -> Result<Response> {
+        self.call_extended_inner(Packet {
+            id: self.next_id(),
+            pid: ctx.pid,
+            uid: ctx.uid,
+            gid: ctx.gid,
             a,
             b,
             c,
@@ -93,7 +110,7 @@ impl UserInner {
         })
     }
 
-    fn call_inner(&self, packet: Packet) -> Result<usize> {
+    fn call_extended_inner(&self, packet: Packet) -> Result<Response> {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
         }
@@ -103,7 +120,7 @@ impl UserInner {
         self.todo.send(packet);
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
-        Error::demux(self.done.receive(&id, "UserInner::call_inner"))
+        Ok(self.done.receive(&id, "UserInner::call_inner"))
     }
 
     /// Map a readable structure to the scheme's userspace and return the
@@ -231,54 +248,78 @@ impl UserInner {
     }
 
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
-        let packet_size = mem::size_of::<Packet>();
-        let len = buf.len()/packet_size;
-        let mut i = 0;
-        while i < len {
-            let mut packet = unsafe { *(buf.as_ptr() as *const Packet).add(i) };
-            if packet.id == 0 {
-                match packet.a {
-                    SYS_FEVENT => event::trigger(self.scheme_id.load(Ordering::SeqCst), packet.b, EventFlags::from_bits_truncate(packet.c)),
-                    _ => println!("Unknown scheme -> kernel message {}", packet.a)
-                }
-            } else {
-                // The motivation of doing this here instead of within the fmap handler, is that we
-                // can operate on an inactive table. This reduces the number of page table reloads
-                // from two (context switch + active TLB flush) to one (context switch).
-                if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
-                    if let Ok(address) = Error::demux(packet.a) {
-                        if address % PAGE_SIZE > 0 {
-                            log::warn!("scheme returned unaligned address, causing extra frame to be allocated");
-                        }
-                        let file_ref = GrantFileRef { desc, offset: map.offset, flags: map.flags };
-                        let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(file_ref));
-                        if let Ok(grant_address) = res {
-                            if let Some(context_lock) = context_weak.upgrade() {
-                                let context = context_lock.read();
-                                let mut addr_space = context.addr_space()?.write();
-                                //TODO: ensure all mappings are aligned!
-                                let map_pages = (map.size + PAGE_SIZE - 1) / PAGE_SIZE;
-                                addr_space.grants.funmap.insert(
-                                    Region::new(grant_address, map_pages * PAGE_SIZE),
-                                    VirtualAddress::new(address)
-                                );
-                            } else {
-                                //TODO: packet.pid is an assumption
-                                println!("UserInner::write: failed to find context {} for fmap", packet.pid);
-                            }
-                        }
-                        packet.a = Error::mux(res.map(|addr| addr.data()));
-                    } else {
-                        let _ = desc.close();
-                    }
-                }
+        // TODO: Alignment
 
-                self.done.send(packet.id, packet.a);
+        let packets = unsafe { core::slice::from_raw_parts(buf.as_ptr().cast::<Packet>(), buf.len() / mem::size_of::<Packet>()) };
+        let mut packets_read = 0;
+
+        for packet in packets {
+            match self.handle_packet(packet) {
+                Ok(()) => packets_read += 1,
+                Err(_) if packets_read > 0 => break,
+                Err(error) => return Err(error),
             }
-            i += 1;
         }
 
-        Ok(i * packet_size)
+        Ok(packets_read * mem::size_of::<Packet>())
+    }
+    fn handle_packet(&self, packet: &Packet) -> Result<()> {
+        if packet.id == 0 {
+            match packet.a {
+                SYS_FEVENT => event::trigger(self.scheme_id.load(Ordering::SeqCst), packet.b, EventFlags::from_bits_truncate(packet.c)),
+                _ => log::warn!("Unknown scheme -> kernel message {}", packet.a)
+            }
+        } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
+            // The reason why the new ESKMSG mechanism was introduced, is that passing packet IDs
+            // in packet.id is much cleaner than having to convert it into 1 or 2 usizes etc.
+            match packet.b {
+                SKMSG_FRETURNFD => {
+                    let fd = packet.c;
+
+                    let desc = context::current()?.read().get_file(FileHandle::from(fd)).ok_or(Error::new(EINVAL))?.description;
+
+                    self.done.send(packet.id, Response::Fd(desc));
+                }
+                _ => return Err(Error::new(EINVAL)),
+            }
+        } else {
+            let mut retcode = packet.a;
+
+            // The motivation of doing this here instead of within the fmap handler, is that we
+            // can operate on an inactive table. This reduces the number of page table reloads
+            // from two (context switch + active TLB flush) to one (context switch).
+            if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
+                if let Ok(address) = Error::demux(packet.a) {
+                    if address % PAGE_SIZE > 0 {
+                        log::warn!("scheme returned unaligned address, causing extra frame to be allocated");
+                    }
+                    let file_ref = GrantFileRef { desc, offset: map.offset, flags: map.flags };
+                    let res = UserInner::capture_inner(&context_weak, map.address, address, map.size, map.flags, Some(file_ref));
+                    if let Ok(grant_address) = res {
+                        if let Some(context_lock) = context_weak.upgrade() {
+                            let context = context_lock.read();
+                            let mut addr_space = context.addr_space()?.write();
+                            //TODO: ensure all mappings are aligned!
+                            let map_pages = (map.size + PAGE_SIZE - 1) / PAGE_SIZE;
+                            addr_space.grants.funmap.insert(
+                                Region::new(grant_address, map_pages * PAGE_SIZE),
+                                VirtualAddress::new(address)
+                            );
+                        } else {
+                            //TODO: packet.pid is an assumption
+                            println!("UserInner::write: failed to find context {} for fmap", packet.pid);
+                        }
+                    }
+                    retcode = Error::mux(res.map(|addr| addr.data()));
+                } else {
+                    let _ = desc.close();
+                }
+            }
+
+            self.done.send(packet.id, Response::Regular(retcode));
+        }
+
+        Ok(())
     }
 
     pub fn fevent(&self, _flags: EventFlags) -> Result<EventFlags> {
@@ -319,7 +360,7 @@ impl UserInner {
 
         self.fmap.lock().insert(id, (context_weak, desc, *map));
 
-        let result = self.call_inner(Packet {
+        let result = self.call_extended_inner(Packet {
             id,
             pid: pid.into(),
             uid,
@@ -332,7 +373,14 @@ impl UserInner {
 
         let _ = self.release(address);
 
-        result
+        result.and_then(|response| match response {
+            Response::Regular(code) => Error::demux(code),
+            Response::Fd(_) => {
+                log::debug!("Scheme incorrectly returned an fd for fmap.");
+
+                Err(Error::new(EIO))
+            }
+        })
     }
 }
 
@@ -347,13 +395,19 @@ impl UserScheme {
     }
 }
 
+fn handle_open_res(res: OpenResult) -> Result<usize> {
+    match res {
+        OpenResult::SchemeLocal(num) => Ok(num),
+        OpenResult::External(_) => {
+            log::warn!("Used Scheme::open when forwarding fd!");
+            Err(Error::new(EIO))
+        }
+    }
+}
+
 impl Scheme for UserScheme {
-    fn open(&self, path: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(path.as_bytes())?;
-        let result = inner.call(SYS_OPEN, address, path.len(), flags);
-        let _ = inner.release(address);
-        result
+    fn open(&self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
+        self.kopen(path, flags, CallerCtx { uid, gid, pid: context::context_id().into() }).and_then(handle_open_res)
     }
 
     fn rmdir(&self, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
@@ -372,12 +426,8 @@ impl Scheme for UserScheme {
         result
     }
 
-    fn dup(&self, file: usize, buf: &[u8]) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture(buf)?;
-        let result = inner.call(SYS_DUP, file, address, buf.len());
-        let _ = inner.release(address);
-        result
+    fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
+        self.kdup(old_id, buf, UserInner::current_caller_ctx()?).and_then(handle_open_res)
     }
 
     fn read(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
@@ -538,4 +588,27 @@ impl Scheme for UserScheme {
         inner.call(SYS_CLOSE, file, 0, 0)
     }
 }
-impl crate::scheme::KernelScheme for UserScheme {}
+impl KernelScheme for UserScheme {
+    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let address = inner.capture(path.as_bytes())?;
+        let result = inner.call_extended(ctx, [SYS_OPEN, address, path.len(), flags]);
+        let _ = inner.release(address);
+
+        match result? {
+            Response::Regular(code) => Error::demux(code).map(OpenResult::SchemeLocal),
+            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+        }
+    }
+    fn kdup(&self, file: usize, buf: &[u8], ctx: CallerCtx) -> Result<OpenResult> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let address = inner.capture(buf)?;
+        let result = inner.call_extended(ctx, [SYS_DUP, file, address, buf.len()]);
+        let _ = inner.release(address);
+
+        match result? {
+            Response::Regular(code) => Error::demux(code).map(OpenResult::SchemeLocal),
+            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+        }
+    }
+}
