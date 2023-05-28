@@ -325,3 +325,9 @@ pub enum OpenResult {
     SchemeLocal(usize),
     External(Arc<RwLock<FileDescription>>),
 }
+
+pub fn current_caller_ctx() -> Result<CallerCtx> {
+    match crate::context::current()?.read() {
+        ref context => Ok(CallerCtx { pid: context.id.into(), uid: context.euid, gid: context.egid }),
+    }
+}

@@ -20,7 +20,7 @@ use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, MapFlags, PROT_RE
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
 
-use super::{FileHandle, OpenResult, KernelScheme};
+use super::{FileHandle, OpenResult, KernelScheme, current_caller_ctx};
 
 pub struct UserInner {
     root_id: SchemeId,
@@ -78,14 +78,8 @@ impl UserInner {
         id
     }
 
-    fn current_caller_ctx() -> Result<CallerCtx> {
-        match context::current()?.read() {
-            ref context => Ok(CallerCtx { pid: context.id.into(), uid: context.euid, gid: context.egid }),
-        }
-    }
-
     pub fn call(&self, a: usize, b: usize, c: usize, d: usize) -> Result<usize> {
-        match self.call_extended(Self::current_caller_ctx()?, [a, b, c, d])? {
+        match self.call_extended(current_caller_ctx()?, [a, b, c, d])? {
             Response::Regular(code) => Error::demux(code),
             Response::Fd(_) => {
                 if a & SYS_RET_FILE == SYS_RET_FILE {
@@ -427,7 +421,7 @@ impl Scheme for UserScheme {
     }
 
     fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
-        self.kdup(old_id, buf, UserInner::current_caller_ctx()?).and_then(handle_open_res)
+        self.kdup(old_id, buf, current_caller_ctx()?).and_then(handle_open_res)
     }
 
     fn read(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
