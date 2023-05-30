@@ -42,7 +42,7 @@ fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGu
 
         for grant in addr_space.grants.into_iter() {
             let unmap_result = if reaping {
-                log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), *context.name.read(), grant);
+                log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), context.name, grant);
 
                 grant.unmap(mapper, &mut InactiveFlusher::new())
             } else {

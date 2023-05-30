@@ -1,9 +1,8 @@
 use alloc::{
     boxed::Box,
     collections::VecDeque,
-    string::{String},
     sync::Arc,
-    vec::Vec,
+    vec::Vec, borrow::Cow,
 };
 use core::{
     alloc::GlobalAlloc,
@@ -128,7 +127,7 @@ pub struct ContextSnapshot {
 impl ContextSnapshot {
     //TODO: Should this accept &mut Context to ensure name/files will not change?
     pub fn new(context: &Context) -> Self {
-        let name = context.name.read().clone();
+        let name = context.name.clone().into_owned().into_boxed_str();
         let mut files = Vec::new();
         for descriptor_opt in context.files.read().iter() {
             let description = if let Some(descriptor) = descriptor_opt {
@@ -240,7 +239,8 @@ pub struct Context {
     /// mappings are universal and independent on address spaces or contexts.
     pub addr_space: Option<Arc<RwLock<AddrSpace>>>,
     /// The name of the context
-    pub name: Arc<RwLock<Box<str>>>,
+    // TODO: fixed size ArrayString?
+    pub name: Cow<'static, str>,
     /// The open files in the scheme
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
@@ -372,7 +372,7 @@ impl Context {
             ksig: None,
             ksig_restore: false,
             addr_space: None,
-            name: Arc::new(RwLock::new(String::new().into_boxed_str())),
+            name: Cow::Borrowed(""),
             files: Arc::new(RwLock::new(Vec::new())),
             actions: Self::empty_actions(),
             regs: None,

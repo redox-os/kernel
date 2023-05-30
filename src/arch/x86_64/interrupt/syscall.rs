@@ -142,7 +142,7 @@ interrupt_stack!(syscall, |stack| {
             let context = contexts.current();
             if let Some(current) = context {
                 let current = current.read();
-                println!("Warning: Context {} used deprecated `int 0x80` construct", *current.name.read());
+                println!("Warning: Context {} used deprecated `int 0x80` construct", current.name);
             } else {
                 println!("Warning: Unknown context used deprecated `int 0x80` construct");
             }

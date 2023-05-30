@@ -24,7 +24,7 @@ pub extern "C" fn rust_begin_unwind(info: &PanicInfo) -> ! {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            println!("NAME: {}", *context.name.read());
+            println!("NAME: {}", context.name);
 
             if let Some((a, b, c, d, e, f)) = context.syscall {
                 println!("SYSCALL: {}", syscall::debug::format_call(a, b, c, d, e, f));
