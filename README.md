@@ -6,6 +6,10 @@ Redox OS Microkernel
 [![docs](https://img.shields.io/badge/docs-master-blue.svg)](https://doc.redox-os.org/kernel/kernel/)
 [![](https://tokei.rs/b1/github/redox-os/kernel?category=code)](https://github.com/Aaronepower/tokei)
 
+## Building the documentation
+
+Try `cargo doc --open --target x86_64-unknown-none`.
+
 ## Debugging the redox kernel
 
 Running [qemu] with the `-s` flag will set up [qemu] to listen on port 1234 for
