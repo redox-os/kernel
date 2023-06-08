@@ -1,12 +1,13 @@
 //! Filesystem syscalls
 use alloc::sync::Arc;
+use syscall::CallerCtx;
 use core::str;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context;
 use crate::memory::PAGE_SIZE;
-use crate::scheme::{self, FileHandle};
+use crate::scheme::{self, FileHandle, OpenResult, current_caller_ctx};
 use crate::syscall::data::{Packet, Stat};
 use crate::syscall::error::*;
 use crate::syscall::flag::*;
@@ -53,11 +54,8 @@ pub fn file_op_mut_slice(a: usize, fd: FileHandle, slice: &mut [u8]) -> Result<u
 
 /// Open syscall
 pub fn open(path: &str, flags: usize) -> Result<FileHandle> {
-    let (uid, gid, scheme_ns, umask) = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        (context.euid, context.egid, context.ens, context.umask)
+    let (pid, uid, gid, scheme_ns, umask) = match context::current()?.read() {
+        ref context => (context.id.into(), context.euid, context.egid, context.ens, context.umask),
     };
 
     let flags = (flags & (!0o777)) | ((flags & 0o777) & (!(umask & 0o777)));
@@ -67,23 +65,26 @@ pub fn open(path: &str, flags: usize) -> Result<FileHandle> {
     let scheme_name = parts.next().ok_or(Error::new(EINVAL))?;
     let reference = parts.next().unwrap_or("");
 
-    let (scheme_id, file_id) = {
+    let description = {
         let (scheme_id, scheme) = {
             let schemes = scheme::schemes();
             let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
             (scheme_id, Arc::clone(scheme))
         };
 
-        (scheme_id, scheme.open(reference, flags, uid, gid)?)
+        match scheme.kopen(reference, flags, CallerCtx { uid, gid, pid })? {
+            OpenResult::SchemeLocal(number) => Arc::new(RwLock::new(FileDescription {
+                namespace: scheme_ns,
+                scheme: scheme_id,
+                number,
+                flags: flags & !O_CLOEXEC,
+            })),
+            OpenResult::External(desc) => desc,
+        }
     };
 
     context::current()?.read().add_file(FileDescriptor {
-        description: Arc::new(RwLock::new(FileDescription {
-            namespace: scheme_ns,
-            scheme: scheme_id,
-            number: file_id,
-            flags: flags & !O_CLOEXEC,
-        })),
+        description,
         cloexec: flags & O_CLOEXEC == O_CLOEXEC,
     }).ok_or(Error::new(EMFILE))
 }
@@ -196,22 +197,25 @@ fn duplicate_file(fd: FileHandle, buf: &[u8]) -> Result<FileDescriptor> {
     } else {
         let description = file.description.read();
 
-        let new_id = {
+        let new_description = {
             let scheme = {
                 let schemes = scheme::schemes();
                 let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
                 Arc::clone(scheme)
             };
-            scheme.dup(description.number, buf)?
+            match scheme.kdup(description.number, buf, current_caller_ctx()?)? {
+                OpenResult::SchemeLocal(number) => Arc::new(RwLock::new(FileDescription {
+                    namespace: description.namespace,
+                    scheme: description.scheme,
+                    number,
+                    flags: description.flags,
+                })),
+                OpenResult::External(desc) => desc,
+            }
         };
 
         Ok(FileDescriptor {
-            description: Arc::new(RwLock::new(FileDescription {
-                namespace: description.namespace,
-                scheme: description.scheme,
-                number: new_id,
-                flags: description.flags,
-            })),
+            description: new_description,
             cloexec: false,
         })
     }

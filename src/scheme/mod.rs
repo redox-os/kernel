@@ -13,9 +13,11 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
+use syscall::CallerCtx;
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::context::file::FileDescription;
 use crate::context::{memory::AddrSpace, file::FileDescriptor};
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
@@ -309,5 +311,23 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
 
     fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
+    }
+
+    fn kopen(&self, path: &str, flags: usize, caller: CallerCtx) -> Result<OpenResult> {
+        self.open(path, flags, caller.uid, caller.gid).map(OpenResult::SchemeLocal)
+    }
+    fn kdup(&self, old_id: usize, buf: &[u8], _caller: CallerCtx) -> Result<OpenResult> {
+        self.dup(old_id, buf).map(OpenResult::SchemeLocal)
+    }
+}
+
+pub enum OpenResult {
+    SchemeLocal(usize),
+    External(Arc<RwLock<FileDescription>>),
+}
+
+pub fn current_caller_ctx() -> Result<CallerCtx> {
+    match crate::context::current()?.read() {
+        ref context => Ok(CallerCtx { pid: context.id.into(), uid: context.euid, gid: context.egid }),
     }
 }
