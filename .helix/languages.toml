@@ -1,0 +1,13 @@
+[[language]]
+name = "rust"
+
+[[language.config.cargo]]
+extraEnv = ["RUST_TARGET_PATH=targets"]
+# Select one of targets to make lsp work for your confguration
+# Do not commit this change
+# TODO: find a better way to do this
+# target = "aarch64-unknown-kernel"
+
+[[language.config.check]]
+targets = ["x86_64-unknown-kernel", "i686-unknown-kernel", "aarch64-unknown-kernel"]
+
