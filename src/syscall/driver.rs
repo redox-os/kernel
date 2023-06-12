@@ -1,11 +1,13 @@
 use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame, PAGE_SIZE};
 use crate::paging::{PageFlags, PhysicalAddress, VirtualAddress, mapper::PageFlushAll};
-use crate::paging::entry::EntryFlags;
 use crate::context;
 use crate::context::memory::{Grant, Region};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
+
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::paging::entry::EntryFlags;
 
 use alloc::sync::Arc;
 

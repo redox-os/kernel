@@ -178,7 +178,6 @@ unsafe fn inner<A: Arch>(
         #[cfg(feature = "graphical_debug")]
         {
             use crate::devices::graphical_debug::FRAMEBUFFER;
-            use super::paging::entry::EntryFlags;
 
             let (phys, virt, size) = *FRAMEBUFFER.lock();
 

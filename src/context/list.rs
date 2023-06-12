@@ -91,11 +91,12 @@ impl ContextList {
             let _ = context.set_addr_space(super::memory::new_addrspace()?);
 
             let mut stack = vec![0; 65_536].into_boxed_slice();
-            let offset = stack.len() - mem::size_of::<usize>();
+            let mut offset = stack.len();
 
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             unsafe {
-                let offset = stack.len() - mem::size_of::<usize>();
+                // Space for return address on stack
+                offset -= mem::size_of::<usize>();
                 let func_ptr = stack.as_mut_ptr().add(offset);
                 *(func_ptr as *mut usize) = func as usize;
             }
@@ -105,6 +106,8 @@ impl ContextList {
                 let context_id = context.id.into();
                 context.arch.set_lr(func as usize);
                 context.arch.set_context_handle();
+                // Stack should be 16 byte aligned
+                offset -= (stack.as_ptr() as usize + offset) % 16;
             }
 
             context.arch.set_stack(stack.as_ptr() as usize + offset);

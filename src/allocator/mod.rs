@@ -1,5 +1,5 @@
 use rmm::Flusher;
-use crate::paging::{KernelMapper, Page, PageFlags, VirtualAddress, mapper::PageFlushAll, entry::EntryFlags};
+use crate::paging::{KernelMapper, Page, PageFlags, VirtualAddress, mapper::PageFlushAll};
 
 #[cfg(not(feature="slab"))]
 pub use self::linked_list::Allocator;
@@ -20,7 +20,7 @@ unsafe fn map_heap(mapper: &mut KernelMapper, offset: usize, size: usize) {
     let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
     let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size-1));
     for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-        let result = mapper.map(page.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::GLOBAL.bits(), cfg!(not(feature = "pti"))))
+        let result = mapper.map(page.start_address(), PageFlags::new().write(true).global(cfg!(not(feature = "pti"))))
             .expect("failed to map kernel heap");
         flush_all.consume(result);
     }

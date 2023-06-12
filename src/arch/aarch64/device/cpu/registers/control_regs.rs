@@ -4,9 +4,9 @@ use core::arch::asm;
 
 bitflags! {
     pub struct MairEl1: u64 {
-        const DEVICE_MEMORY = 0x00;
+        const DEVICE_MEMORY = 0x00 << 16;
         const NORMAL_UNCACHED_MEMORY = 0x44 << 8;
-        const NORMAL_WRITEBACK_MEMORY = 0xff << 16;
+        const NORMAL_WRITEBACK_MEMORY = 0xff;
     }
 }
 
