@@ -4,7 +4,6 @@
 use core::{mem, ptr};
 use x86::msr;
 
-use self::entry::EntryFlags;
 use self::mapper::PageFlushAll;
 
 pub use rmm::{
@@ -84,7 +83,7 @@ unsafe fn map_percpu(cpu_id: usize, mapper: &mut PageMapper) -> PageFlushAll<Rmm
     for page in Page::range_inclusive(start_page, end_page) {
         let result = mapper.map(
             page.start_address(),
-            PageFlags::new().write(true).custom_flag(EntryFlags::GLOBAL.bits(), cfg!(not(feature = "pti"))),
+            PageFlags::new().write(true).global(cfg!(not(feature = "pti"))),
         )
         .expect("failed to allocate page table frames while mapping percpu");
         flush_all.consume(result);

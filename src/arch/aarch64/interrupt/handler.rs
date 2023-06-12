@@ -240,7 +240,7 @@ macro_rules! function {
 macro_rules! push_scratch {
     () => { "
         // Push scratch registers
-        stp     x18, x18, [sp, #-16]!
+        str     x18,      [sp, #-16]!
         stp     x16, x17, [sp, #-16]!
         stp     x14, x15, [sp, #-16]!
         stp     x12, x13, [sp, #-16]!
@@ -266,7 +266,7 @@ macro_rules! pop_scratch {
         ldp     x12, x13, [sp], #16
         ldp     x14, x15, [sp], #16
         ldp     x16, x17, [sp], #16
-        ldp     x18, x18, [sp], #16
+        ldr     x18,      [sp], #16
     " };
 }
 

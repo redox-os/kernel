@@ -58,7 +58,7 @@ pub struct KernelArgs {
 
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
-pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
+pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
     let bootstrap = {
         let args = &*args_ptr;
 
@@ -113,15 +113,12 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         info!("Bootstrap entry point: {:X}", {args.bootstrap_entry});
 
         // Setup interrupt handlers
-        extern "C" {
-            fn exception_vector_base();
-        }
         core::arch::asm!(
             "
-            ldr x0, =exception_vector_base
-            msr vbar_el1, x0
+            ldr {tmp}, =exception_vector_base
+            msr vbar_el1, {tmp}
             ",
-            out("x0") _,
+            tmp = out(reg) _,
         );
 
         /* NOT USED WITH UEFI
