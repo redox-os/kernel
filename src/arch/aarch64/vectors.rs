@@ -42,6 +42,8 @@ __vec_03:
     // Synchronous
     .align 7
 __vec_04:
+    mov x18, sp
+    and sp, x18, #0xfffffffffffffff0   // Align sp.
     mov     x18, #0xb0b4
     b       synchronous_exception_at_el1_with_spx
     b       __vec_04
