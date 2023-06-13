@@ -95,21 +95,29 @@ impl Context {
 
     pub unsafe fn signal_stack(&mut self, handler: extern fn(usize), sig: u8) {
         let lr = self.lr.clone();
-        self.push_stack(lr);
-        self.push_stack(sig as usize);
-        self.push_stack(handler as usize);
+        self.push_pair((sig as usize, lr));
+        self.push_pair((0 as usize, handler as usize));
         self.set_lr(signal_handler_wrapper as usize);
     }
 
-    pub unsafe fn push_stack(&mut self, value: usize) {
+    // It isn't possible to implement "just push one value to stack" on aarch64
+    // https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/using-the-stack-in-aarch32-and-aarch64
+    // Looks like QEMU TCG doesn't care about it, so it works in it, but not on bare metal or kvm
+    // Reverese to be compatible with ldp and stp instructions
+    // TODO: optimize?
+    pub unsafe fn push_pair(&mut self, pair: (usize, usize)) {
         self.sp -= 1 * mem::size_of::<usize>();
-        *(self.sp as *mut usize) = value;
+        *(self.sp as *mut usize) = pair.1;
+        self.sp -= 1 * mem::size_of::<usize>();
+        *(self.sp as *mut usize) = pair.0;
     }
 
-    pub unsafe fn pop_stack(&mut self) -> usize {
-        let value = *(self.sp as *const usize);
+    pub unsafe fn pop_pair(&mut self) -> (usize, usize) {
+        let a = *(self.sp as *const usize);
         self.sp += 1 * mem::size_of::<usize>();
-        value
+        let b = *(self.sp as *const usize);
+        self.sp += 1 * mem::size_of::<usize>();
+        (a, b)
     }
 
     pub fn dump(&self) {
@@ -365,7 +373,6 @@ unsafe extern fn signal_handler_wrapper() {
     // Push scratch registers
     core::arch::asm!(
         concat!(
-            "sub sp, sp, 8",
             push_scratch!(),
             "
             mov x0, sp
@@ -373,8 +380,8 @@ unsafe extern fn signal_handler_wrapper() {
             ",
             pop_scratch!(),
             "
-            add sp, sp, 24
-            ldr x30, [sp], #8
+            add sp, sp, 32
+            ldr x30, [sp, #-8]
             ret
             "
         ),
