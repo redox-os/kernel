@@ -407,6 +407,9 @@ macro_rules! interrupt_stack {
                 }
             }
             core::arch::asm!(concat!(
+                // Clear direction flag, required by ABI when running any Rust code in the kernel.
+                "cld;",
+
                 // Backup all userspace registers to stack
                 $save1!(),
                 "push rax\n",
@@ -463,6 +466,9 @@ macro_rules! interrupt {
             }
 
             core::arch::asm!(concat!(
+                // Clear direction flag, required by ABI when running any Rust code in the kernel.
+                "cld;",
+
                 // Backup all userspace registers to stack
                 swapgs_iff_ring3_fast!(),
                 "push rax\n",
@@ -518,6 +524,9 @@ macro_rules! interrupt_error {
             }
 
             core::arch::asm!(concat!(
+                // Clear direction flag, required by ABI when running any Rust code in the kernel.
+                "cld;",
+
                 swapgs_iff_ring3_fast_errorcode!(),
                 // Move rax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
