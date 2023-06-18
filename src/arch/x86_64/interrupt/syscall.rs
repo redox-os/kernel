@@ -6,7 +6,7 @@ use crate::{
     syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
 };
 use memoffset::offset_of;
-use x86::{bits64::task::TaskStateSegment, msr, segmentation::SegmentSelector};
+use x86::{bits64::{rflags::RFlags, task::TaskStateSegment}, msr, segmentation::SegmentSelector};
 
 pub unsafe fn init() {
     // IA32_STAR[31:0] are reserved.
@@ -22,7 +22,32 @@ pub unsafe fn init() {
 
     msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
     msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
-    msr::wrmsr(msr::IA32_FMASK, 0x0300); // Clear trap flag and interrupt enable
+
+    // DF needs to be cleared, required by the compiler ABI. If DF were not part of FMASK,
+    // userspace would be able to reverse the direction of in-kernel REP MOVS/STOS/(CMPS/SCAS), and
+    // cause all sorts of memory corruption.
+    //
+    // IF needs to be cleared, as the kernel currently assumes interrupts are disabled except in
+    // usermode and in kmain.
+    //
+    // TF needs to be cleared, as enabling userspace-rflags-controlled singlestep in the kernel
+    // would be a bad idea.
+    //
+    // AC is not currently used, but when SMAP is enabled, it should always be cleared when
+    // entering the kernel (and never be set except in usercopy functions), if for some reason AC
+    // was set before entering userspace (AC can only be modified by kernel code).
+    //
+    // The other flags could indeed be preserved and excluded from FMASK, but since they are not
+    // used to pass data to the kernel, they might as well be masked with *marginal* security
+    // benefits.
+    //
+    // Flags not included here are IOPL (not relevant to the kernel at all), "CPUID flag" (not used
+    // at all in 64-bit mode), RF (not used yet, but DR breakpoints would remain enabled both in
+    // user and kernel mode), VM8086 (not used at all), and VIF/VIP (system-level status flags?).
+
+    let mask_critical = RFlags::FLAGS_DF | RFlags::FLAGS_IF | RFlags::FLAGS_TF | RFlags::FLAGS_AC;
+    let mask_other = RFlags::FLAGS_CF | RFlags::FLAGS_PF | RFlags::FLAGS_AF | RFlags::FLAGS_ZF | RFlags::FLAGS_SF | RFlags::FLAGS_OF;
+    msr::wrmsr(msr::IA32_FMASK, (mask_critical | mask_other).bits());
 
     let efer = msr::rdmsr(msr::IA32_EFER);
     msr::wrmsr(msr::IA32_EFER, efer | 1);
