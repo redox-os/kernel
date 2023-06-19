@@ -590,18 +590,16 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
         let mut addr_space = addr_space.write();
         let addr_space = &mut *addr_space;
 
-        let mut grant = context::memory::Grant::physmap(
+        // TODO: Mark as owned and then support reclaiming the memory to the allocator if
+        // deallocated?
+        addr_space.grants.insert(context::memory::Grant::physmap(
             bootstrap.base.clone(),
             Page::containing_address(VirtualAddress::new(0)),
             bootstrap.page_count,
             PageFlags::new().user(true).write(true).execute(true),
             &mut addr_space.table.utable,
             PageFlushAll::new(),
-        ).expect("failed to physmap bootstrap memory");
-        grant.allocator_owned = false;
-        grant.owned = true;
-
-        addr_space.grants.insert(grant);
+        ).expect("failed to physmap bootstrap memory"));
     }
 
     // Start in a minimal environment without any stack.
