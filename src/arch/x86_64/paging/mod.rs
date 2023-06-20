@@ -3,6 +3,7 @@
 
 use core::fmt::Debug;
 
+use x86::irq::PageFaultError;
 use x86::msr;
 
 pub use rmm::{
@@ -16,6 +17,8 @@ pub use rmm::{
 pub use super::CurrentRmmArch as RmmA;
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
+use crate::context::memory::AddrSpace;
+use crate::interrupt::InterruptStack;
 pub use crate::rmm::KernelMapper;
 
 pub mod entry;
@@ -136,4 +139,96 @@ pub fn round_down_pages(number: usize) -> usize {
 /// Round up to the nearest multiple of page size
 pub fn round_up_pages(number: usize) -> usize {
     number.next_multiple_of(PAGE_SIZE)
+}
+pub struct Segv;
+
+pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faulting_address: VirtualAddress) -> Result<(), Segv> {
+    let faulting_page = Page::containing_address(faulting_address);
+
+    extern "C" {
+        static __usercopy_start: u8;
+        static __usercopy_end: u8;
+    }
+    let usercopy_region = unsafe { (&__usercopy_start as *const u8 as usize)..(&__usercopy_end as *const u8 as usize) };
+
+    // TODO: Most likely not necessary, but maybe also check that cr2 is not too close to USER_END.
+    let address_is_user = faulting_address.kind() == TableKind::User;
+
+    let invalid_page_tables = code.contains(PageFaultError::RSVD);
+    let caused_by_user = code.contains(PageFaultError::US);
+    let caused_by_kernel = !caused_by_user;
+    let caused_by_write = code.contains(PageFaultError::WR);
+    let caused_by_instr_fetch = code.contains(PageFaultError::ID);
+
+    let mode = match (caused_by_write, caused_by_instr_fetch) {
+        (true, false) => AccessMode::Write,
+        (false, false) => AccessMode::Read,
+        (false, true) => AccessMode::InstrFetch,
+        (true, true) => unreachable!("page fault cannot be caused by both instruction fetch and write"),
+    };
+
+    if invalid_page_tables {
+        // TODO: Better error code than Segv?
+        return Err(Segv);
+    }
+
+    if address_is_user && caused_by_kernel && mode != AccessMode::InstrFetch && usercopy_region.contains(&{ stack.iret.rip }) {
+        // We were inside a usercopy function that failed. This is handled by setting rax to a
+        // nonzero value, and emulating the ret instruction.
+        stack.scratch.rax = 1;
+        let ret_addr = unsafe { (stack.iret.rsp as *const usize).read() };
+        stack.iret.rsp += 8;
+        stack.iret.rip = ret_addr;
+        stack.iret.rflags &= !(1 << 18);
+        return Ok(());
+    }
+
+    if address_is_user && caused_by_user {
+        if try_correcting_page_tables(faulting_page, mode) {
+            return Ok(());
+        }
+    }
+
+    Err(Segv)
+}
+#[derive(PartialEq)]
+enum AccessMode {
+    Read,
+    Write,
+    InstrFetch,
+}
+
+fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> bool {
+    let Ok(addr_space) = AddrSpace::current() else {
+        log::warn!("User page fault without address space being set.");
+        return false;
+    };
+
+    let mut addr_space = addr_space.write();
+
+    let Some((_, grant_info)) = addr_space.grants.contains(faulting_page) else {
+        return false;
+    };
+    let grant_flags = grant_info.flags();
+    match access {
+        // TODO: has_read
+        AccessMode::Read => (),
+
+        AccessMode::Write if !grant_flags.has_write() => return false,
+        AccessMode::InstrFetch if !grant_flags.has_execute() => return false,
+
+        _ => (),
+    }
+
+    // By now, the memory at the faulting page is actually valid, but simply not yet mapped.
+    // TODO: Readahead
+
+    let Some(flush) = (unsafe { addr_space.table.utable.map(faulting_page.start_address(), grant_flags) }) else {
+        // TODO
+        return false;
+    };
+
+    flush.flush();
+
+    true
 }

@@ -506,6 +506,7 @@ impl UserGrants {
 pub struct GrantInfo {
     page_count: usize,
     flags: PageFlags<RmmA>,
+    // TODO: Rename to unmapped?
     mapped: bool,
     pub(crate) owned: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
@@ -551,11 +552,6 @@ impl Grant {
         })
     }
     pub fn zeroed(dst: Page, page_count: usize, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
-        // TODO: Unmap partially in case of ENOMEM
-        for page in Page::range_exclusive(dst, dst.next_by(page_count)) {
-            let flush = unsafe { mapper.map(page.start_address(), flags) }.ok_or(Enomem)?;
-            flusher.consume(flush);
-        }
         Ok(Grant { base: dst, info: GrantInfo { page_count, flags, mapped: true, owned: true, desc_opt: None } })
     }
     pub fn borrow(src_base: Page, dst_base: Page, page_count: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
