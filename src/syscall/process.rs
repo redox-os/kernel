@@ -13,7 +13,7 @@ use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
 use crate::paging::mapper::{InactiveFlusher, PageFlushAll};
-use crate::paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE};
+use crate::paging::{Page, PageFlags, VirtualAddress};
 use crate::ptrace;
 use crate::start::usermode;
 use crate::syscall::data::SigAction;

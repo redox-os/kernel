@@ -269,7 +269,7 @@ impl PageSpan {
         self.intersects(Self::new(page, 1))
     }
     pub fn slice(&self, inner_span: PageSpan) -> (Option<PageSpan>, PageSpan, Option<PageSpan>) {
-        todo!()
+        (self.before(inner_span), inner_span, self.after(inner_span))
     }
     pub fn pages(self) -> impl Iterator<Item = Page> {
         (0..self.count).map(move |i| self.base.next_by(i))
@@ -349,12 +349,11 @@ impl UserGrants {
         self
             .inner
             .range(start_span.base..)
-            .take_while(move |(base, info)| !PageSpan::new(**base, info.page_count).intersects(span))
+            .take_while(move |(base, info)| PageSpan::new(**base, info.page_count).intersects(span))
             .map(|(base, info)| (*base, info))
     }
     /// Return a free region with the specified size
     // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
-    // TODO: size => page_count
     pub fn find_free(&self, min: usize, page_count: usize) -> Option<PageSpan> {
         // Get first available hole, but do reserve the page starting from zero as most compiled
         // languages cannot handle null pointers safely even if they point to valid memory. If an
@@ -728,8 +727,6 @@ impl Grant {
 
         Some((before_grant, self, after_grant))
     }
-    pub fn rebase(mut self) {
-    }
 }
 impl GrantInfo {
     pub fn flags(&self) -> PageFlags<RmmA> {
@@ -742,7 +739,7 @@ impl GrantInfo {
         self.page_count
     }
     pub fn can_have_flags(&self, flags: MapFlags) -> bool {
-        self.owned || ((self.flags.has_write() && !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() && !flags.contains(MapFlags::PROT_EXEC)))
+        self.owned || ((self.flags.has_write() || !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() || !flags.contains(MapFlags::PROT_EXEC)))
     }
 
     pub fn can_be_merged_if_adjacent(&self, with: &Self) -> bool {

@@ -5,8 +5,9 @@ use rmm::PhysicalAddress;
 use spin::RwLock;
 use syscall::MapFlags;
 
-use crate::context::memory::{AddrSpace, Grant};
+use crate::context::memory::{AddrSpace, Grant, PageSpan};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE, Frame};
+use crate::paging::VirtualAddress;
 
 use crate::paging::entry::EntryFlags;
 use crate::syscall::data::{Map, StatVfs};
@@ -55,12 +56,12 @@ impl MemoryScheme {
     }
 
     pub fn fmap_anonymous(addr_space: &Arc<RwLock<AddrSpace>>, map: &Map) -> Result<usize> {
-        let (requested_page, page_count) = crate::syscall::usercopy::validate_region(map.address, map.size)?;
-        let page_count = NonZeroUsize::new(page_count).ok_or(Error::new(EINVAL))?;
+        let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size).ok_or(Error::new(EINVAL))?;
+        let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;
 
         let page = addr_space
             .write()
-            .mmap((map.address != 0).then_some(requested_page), page_count, map.flags, |page, flags, mapper, flusher| {
+            .mmap((map.address != 0).then_some(span.base), page_count, map.flags, |page, flags, mapper, flusher| {
                 Ok(Grant::zeroed(page, page_count.get(), flags, mapper, flusher)?)
             })?;
 

@@ -85,7 +85,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 memory += kstack.len();
             }
             if let Ok(addr_space) = context.addr_space() {
-                for (base, info) in addr_space.read().grants.iter() {
+                for (_base, info) in addr_space.read().grants.iter() {
                     if info.is_owned() {
                         memory += info.page_count() * PAGE_SIZE;
                     }

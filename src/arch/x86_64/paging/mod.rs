@@ -1,6 +1,8 @@
 //! # Paging
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
+use core::fmt::Debug;
+
 use x86::msr;
 
 pub use rmm::{
@@ -65,7 +67,7 @@ pub unsafe fn init() {
 }
 
 /// Page
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Page {
     number: usize,
 }
@@ -100,6 +102,11 @@ impl Page {
     }
     pub fn offset_from(self, other: Self) -> usize {
         self.number - other.number
+    }
+}
+impl Debug for Page {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "[page at {:p}]", self.start_address().data() as *const u8)
     }
 }
 
