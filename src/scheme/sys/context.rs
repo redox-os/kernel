@@ -2,6 +2,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::context;
+use crate::paging::PAGE_SIZE;
 use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
@@ -84,9 +85,9 @@ pub fn resource() -> Result<Vec<u8>> {
                 memory += kstack.len();
             }
             if let Ok(addr_space) = context.addr_space() {
-                for grant in addr_space.read().grants.iter() {
-                    if grant.is_owned() {
-                        memory += grant.size();
+                for (base, info) in addr_space.read().grants.iter() {
+                    if info.is_owned() {
+                        memory += info.page_count() * PAGE_SIZE;
                     }
                 }
             }

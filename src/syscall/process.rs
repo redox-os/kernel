@@ -6,6 +6,7 @@ use core::mem;
 
 use spin::{RwLock, RwLockWriteGuard};
 
+use crate::context::memory::PageSpan;
 use crate::context::{Context, ContextId, memory::AddrSpace, WaitpidKey};
 
 use crate::Bootstrap;
@@ -290,10 +291,9 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
-    if address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 { return Err(Error::new(EINVAL)); }
-    if address.saturating_add(size) > crate::USER_END_OFFSET { return Err(Error::new(EFAULT)); }
+    let span = PageSpan::validate_nonempty(VirtualAddress::new(address), size).ok_or(Error::new(EINVAL))?;
 
-    AddrSpace::current()?.write().mprotect(Page::containing_address(VirtualAddress::new(address)), size / PAGE_SIZE, flags).map(|()| 0)
+    AddrSpace::current()?.write().mprotect(span, flags).map(|()| 0)
 }
 
 pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
@@ -587,6 +587,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
             .read().addr_space()
             .expect("expected bootstrap context to have an address space"));
 
+        // TODO: Use AddrSpace::mmap.
         let mut addr_space = addr_space.write();
         let addr_space = &mut *addr_space;
 

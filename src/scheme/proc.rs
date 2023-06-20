@@ -1,6 +1,6 @@
 use crate::{
     arch::paging::{mapper::InactiveFlusher, Page, RmmA, RmmArch, VirtualAddress},
-    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, Region}, BorrowedHtBuf},
+    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, PageSpan}, BorrowedHtBuf},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme, SchemeId},
@@ -28,7 +28,7 @@ use core::{
     mem,
     slice,
     str,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering}, num::NonZeroUsize,
 };
 use spin::{Once, RwLock};
 
@@ -751,35 +751,34 @@ impl KernelScheme for ProcScheme {
                 let src_addr_space = &mut *src_addr_space;
                 let mut dst_addr_space = dst_addr_space.write();
 
-                let src_grant_region = {
-                    let src_region = Region::new(src_page.start_address(), page_count * PAGE_SIZE);
-                    let mut conflicts = src_addr_space.grants.conflicts(src_region);
-                    let first = conflicts.next().ok_or(Error::new(EINVAL))?;
+                let src_grant_span = {
+                    let src_span = PageSpan::new(src_page, page_count);
+                    let mut conflicts = src_addr_space.grants.conflicts(src_span);
+                    let (first_base, first_info) = conflicts.next().ok_or(Error::new(EINVAL))?;
                     if conflicts.next().is_some() {
                         return Err(Error::new(EINVAL));
                     }
 
-                    if !first.can_have_flags(map.flags) {
+                    if !first_info.can_have_flags(map.flags) {
                         return Err(Error::new(EACCES));
                     }
 
-                    first.region().intersect(src_region)
+                    PageSpan::new(first_base, first_info.page_count()).intersection(src_span)
                 };
 
-                let grant_page_count = src_grant_region.size() / PAGE_SIZE;
-
                 let src_mapper = &mut src_addr_space.table.utable;
+                let src_page_count = NonZeroUsize::new(src_grant_span.count).ok_or(Error::new(EINVAL))?;
 
                 let result_page = if consume {
-                    let grant = src_addr_space.grants.take(&src_grant_region).expect("grant cannot disappear");
-                    let (before, middle, after) = grant.extract(src_grant_region).expect("called intersect(), must succeed");
+                    let grant = src_addr_space.grants.remove(src_grant_span.base).expect("grant cannot disappear");
+                    let (before, middle, after) = grant.extract(src_grant_span).expect("called intersect(), must succeed");
 
                     if let Some(before) = before { src_addr_space.grants.insert(before); }
                     if let Some(after) = after { src_addr_space.grants.insert(after); }
 
-                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, _flags, dst_mapper, dst_flusher| Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher))?
+                    dst_addr_space.mmap(requested_dst_page, src_page_count, map.flags, |dst_page, _flags, dst_mapper, dst_flusher| Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher))?
                 } else {
-                    dst_addr_space.mmap(requested_dst_page, grant_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Page::containing_address(src_grant_region.start_address()), dst_page, grant_page_count, flags, None, src_mapper, dst_mapper, flusher)?))?
+                    dst_addr_space.mmap(requested_dst_page, src_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(src_grant_span.base, dst_page, src_grant_span.count, flags, None, src_mapper, dst_mapper, flusher)?))?
                 };
 
                 Ok(result_page.start_address().data())
@@ -843,11 +842,11 @@ impl KernelScheme for ProcScheme {
                 let addrspace = addrspace.read();
                 let mut bytes_read = 0;
 
-                for ([r1, r2, r3, r4], grant) in records.zip(addrspace.grants.iter()).skip(*offset / RECORD_SIZE) {
-                    r1.write_usize(grant.start_address().data())?;
-                    r2.write_usize(grant.size())?;
-                    r3.write_usize(map_flags(grant.flags()).bits() | if grant.desc_opt.is_some() { 0x8000_0000 } else { 0 })?;
-                    r4.write_usize(grant.desc_opt.as_ref().map_or(0, |d| d.offset))?;
+                for ([r1, r2, r3, r4], (base, info)) in records.zip(addrspace.grants.iter()).skip(*offset / RECORD_SIZE) {
+                    r1.write_usize(base.start_address().data())?;
+                    r2.write_usize(info.page_count() * PAGE_SIZE)?;
+                    r3.write_usize(map_flags(info.flags()).bits() | if info.desc_opt.is_some() { 0x8000_0000 } else { 0 })?;
+                    r4.write_usize(info.desc_opt.as_ref().map_or(0, |d| d.offset))?;
                     bytes_read += RECORD_SIZE;
                 }
 
@@ -1030,13 +1029,13 @@ impl KernelScheme for ProcScheme {
                     ADDRSPACE_OP_MUNMAP => {
                         let (page, page_count) = crate::syscall::validate_region(next()??, next()??)?;
 
-                        AddrSpace::munmap(addrspace.write(), page, page_count);
+                        addrspace.write().munmap(PageSpan::new(page, page_count));
                     }
                     ADDRSPACE_OP_MPROTECT => {
                         let (page, page_count) = crate::syscall::validate_region(next()??, next()??)?;
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
-                        addrspace.write().mprotect(page, page_count, flags)?;
+                        addrspace.write().mprotect(PageSpan::new(page, page_count), flags)?;
                     }
                     _ => return Err(Error::new(EINVAL)),
                 }
@@ -1296,7 +1295,7 @@ impl KernelScheme for ProcScheme {
                     grant_handle if grant_handle.starts_with(b"grant-") => {
                         let start_addr = usize::from_str_radix(core::str::from_utf8(&grant_handle[6..]).map_err(|_| Error::new(EINVAL))?, 16).map_err(|_| Error::new(EINVAL))?;
                         (Operation::GrantHandle {
-                            description: Arc::clone(&addrspace.read().grants.contains(VirtualAddress::new(start_addr)).ok_or(Error::new(EINVAL))?.desc_opt.as_ref().ok_or(Error::new(EINVAL))?.desc.description)
+                            description: Arc::clone(&addrspace.read().grants.contains(Page::containing_address(VirtualAddress::new(start_addr))).ok_or(Error::new(EINVAL))?.1.desc_opt.as_ref().ok_or(Error::new(EINVAL))?.desc.description)
                         }, false)
                     }
 

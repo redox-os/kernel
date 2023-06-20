@@ -2,6 +2,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use syscall::{SKMSG_FRETURNFD, CallerCtx};
+use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
 use core::convert::TryFrom;
@@ -9,7 +10,7 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context, BorrowedHtBuf};
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::{AddrSpace, DANGLING, Grant, Region, GrantFileRef};
+use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan};
 use crate::event;
 use crate::paging::KernelMapper;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
@@ -41,6 +42,8 @@ pub enum Response {
     Regular(usize),
     Fd(Arc<RwLock<FileDescription>>),
 }
+
+const ONE: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 
 impl UserInner {
     pub fn new(root_id: SchemeId, handle_id: usize, name: Box<str>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
@@ -139,7 +142,7 @@ impl UserInner {
 
         let src_page = Page::containing_address(VirtualAddress::new(tail.buf_mut().as_ptr() as usize));
 
-        let dst_page = dst_addr_space.write().mmap(None, 1, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::borrow(src_page, dst_page, 1, flags, None, &mut KernelMapper::lock(), mapper, flusher)?))?;
+        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::borrow(src_page, dst_page, 1, flags, None, &mut KernelMapper::lock(), mapper, flusher)?))?;
 
         Ok(CaptureGuard {
             destroyed: false,
@@ -209,9 +212,7 @@ impl UserInner {
 
         let mut dst_space = dst_space_lock.write();
 
-        let free_region = dst_space.grants.find_free(dst_space.mmap_min, page_count * PAGE_SIZE).ok_or(Error::new(ENOMEM))?;
-
-        let first_dst_page = Page::containing_address(free_region.start_address());
+        let free_span = dst_space.grants.find_free(dst_space.mmap_min, page_count).ok_or(Error::new(ENOMEM))?;
 
         let head = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
@@ -235,7 +236,7 @@ impl UserInner {
             }
             let head_buf_page = Page::containing_address(VirtualAddress::new(array.buf_mut().as_mut_ptr() as usize));
 
-            dst_space.mmap(Some(first_dst_page), 1, map_flags, move |dst_page, page_flags, mapper, flusher| {
+            dst_space.mmap(Some(free_span.base), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
                 Ok(Grant::borrow(head_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
             })?;
 
@@ -251,17 +252,17 @@ impl UserInner {
                 dst: None,
             }
         };
-        let (first_middle_dst_page, first_middle_src_page) = if !head_part_of_buf.is_empty() { (first_dst_page.next(), src_page.next()) } else { (first_dst_page, src_page) };
+        let (first_middle_dst_page, first_middle_src_page) = if !head_part_of_buf.is_empty() { (free_span.base.next(), src_page.next()) } else { (free_span.base, src_page) };
 
         let middle_page_count = middle_tail_part_of_buf.len() / PAGE_SIZE;
         let tail_size = middle_tail_part_of_buf.len() % PAGE_SIZE;
 
         let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf.split_at(middle_page_count * PAGE_SIZE).expect("split must succeed");
 
-        if middle_page_count > 0 {
+        if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
             dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags, move |dst_page, page_flags, mapper, flusher| {
                 let mut cur_space = cur_space_lock.write();
-                Ok(Grant::borrow(first_middle_src_page, dst_page, middle_page_count, page_flags, None, &mut cur_space.table.utable, mapper, flusher)?)
+                Ok(Grant::borrow(first_middle_src_page, dst_page, middle_page_count.get(), page_flags, None, &mut cur_space.table.utable, mapper, flusher)?)
             })?;
         }
 
@@ -287,7 +288,7 @@ impl UserInner {
                 }
             }
 
-            dst_space.mmap(Some(tail_dst_page), 1, map_flags, move |dst_page, page_flags, mapper, flusher| {
+            dst_space.mmap(Some(tail_dst_page), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
                 Ok(Grant::borrow(tail_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
             })?;
 
@@ -306,7 +307,7 @@ impl UserInner {
 
         Ok(CaptureGuard {
             destroyed: false,
-            base: free_region.start_address().data() + offset,
+            base: free_span.base.start_address().data() + offset,
             len: user_buf.len(),
             space: Some(dst_space_lock),
             head,
@@ -389,14 +390,15 @@ impl UserInner {
 
                         // TODO: ensure all mappings are aligned!
                         let page_count = map.size.div_ceil(PAGE_SIZE);
+                        let nz_page_count = NonZeroUsize::new(page_count).ok_or(Error::new(EINVAL));
 
-                        let res = addr_space.mmap(dst_page, page_count, map.flags, move |dst_page, flags, mapper, flusher| {
-                            Ok(Grant::borrow(src_page, dst_page, page_count, flags, Some(file_ref), &mut AddrSpace::current()?.write().table.utable, mapper, flusher)?)
-                        });
+                        let res = nz_page_count.and_then(|page_count| addr_space.mmap(dst_page, page_count, map.flags, move |dst_page, flags, mapper, flusher| {
+                            Ok(Grant::borrow(src_page, dst_page, page_count.get(), flags, Some(file_ref), &mut AddrSpace::current()?.write().table.utable, mapper, flusher)?)
+                        }));
                         retcode = Error::mux(res.map(|grant_start_page| {
                             addr_space.grants.funmap.insert(
-                                Region::new(grant_start_page.start_address(), page_count * PAGE_SIZE),
-                                VirtualAddress::new(address),
+                                grant_start_page,
+                                (page_count, src_page),
                             );
                             grant_start_page.start_address().data()
                         }));
@@ -529,7 +531,7 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
 
-        AddrSpace::munmap(space.write(), first_page, page_count);
+        space.write().munmap(PageSpan::new(first_page, page_count));
 
         result
     }
@@ -632,40 +634,40 @@ impl Scheme for UserScheme {
     }
 
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
+        let requested_span = PageSpan::validate_nonempty(VirtualAddress::new(grant_address), size).ok_or(Error::new(EINVAL))?;
+
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
         let address_opt = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context_lock = context::current()?;
             let context = context_lock.read();
+
             let mut addr_space = context.addr_space()?.write();
             let funmap = &mut addr_space.grants.funmap;
-            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
+            let entry = funmap.range(..=Page::containing_address(VirtualAddress::new(grant_address))).next_back();
 
-            let grant_address = VirtualAddress::new(grant_address);
-
-            if let Some((&grant, &user_base)) = entry {
-                let grant_requested = Region::new(grant_address, size);
-                if grant_requested.end_address() > grant.end_address() {
+            if let Some((&grant_page, &(page_count, user_page))) = entry {
+                if requested_span.base.next_by(requested_span.count) > grant_page.next_by(page_count) {
                     return Err(Error::new(EINVAL));
                 }
 
-                funmap.remove(&grant);
+                funmap.remove(&grant_page);
 
-                let user = Region::new(user_base, grant.size());
+                let grant_span = PageSpan::new(grant_page, page_count);
+                let user_span = PageSpan::new(user_page, page_count);
 
-                if let Some(before) = grant.before(grant_requested) {
-                    funmap.insert(before, user_base);
+                if let Some(before) = grant_span.before(requested_span) {
+                    funmap.insert(before.base, (before.count, user_page));
                 }
-                if let Some(after) = grant.after(grant_requested) {
-                    let start = grant.rebase(user, after.start_address());
-                    funmap.insert(after, start);
+                if let Some(after) = grant_span.after(requested_span) {
+                    let start = grant_span.rebase(user_span, after.base);
+                    funmap.insert(after.base, (after.count, start));
                 }
 
-                Some(grant.rebase(user, grant_address).data())
+                Some(grant_span.rebase(user_span,grant_span.base).start_address().data())
             } else {
                 None
             }
-
         };
         if let Some(user_address) = address_opt {
             inner.call(SYS_FUNMAP, user_address, size, 0)

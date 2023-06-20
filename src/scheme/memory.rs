@@ -1,3 +1,5 @@
+use core::num::NonZeroUsize;
+
 use alloc::sync::Arc;
 use rmm::PhysicalAddress;
 use spin::RwLock;
@@ -54,11 +56,12 @@ impl MemoryScheme {
 
     pub fn fmap_anonymous(addr_space: &Arc<RwLock<AddrSpace>>, map: &Map) -> Result<usize> {
         let (requested_page, page_count) = crate::syscall::usercopy::validate_region(map.address, map.size)?;
+        let page_count = NonZeroUsize::new(page_count).ok_or(Error::new(EINVAL))?;
 
         let page = addr_space
             .write()
             .mmap((map.address != 0).then_some(requested_page), page_count, map.flags, |page, flags, mapper, flusher| {
-                Ok(Grant::zeroed(page, page_count, flags, mapper, flusher)?)
+                Ok(Grant::zeroed(page, page_count.get(), flags, mapper, flusher)?)
             })?;
 
         Ok(page.start_address().data())
@@ -76,7 +79,7 @@ impl MemoryScheme {
             log::warn!("physmap size {} is not multiple of PAGE_SIZE {}", size, PAGE_SIZE);
             return Err(Error::new(EINVAL));
         }
-        let page_count = size.div_ceil(PAGE_SIZE);
+        let page_count = NonZeroUsize::new(size.div_ceil(PAGE_SIZE)).ok_or(Error::new(EINVAL))?;
 
         AddrSpace::current()?.write().mmap(None, page_count, flags, |dst_page, mut page_flags, dst_mapper, dst_flusher| {
             match memory_type {
@@ -96,7 +99,7 @@ impl MemoryScheme {
             Grant::physmap(
                 Frame::containing_address(PhysicalAddress::new(physical_address)),
                 dst_page,
-                page_count,
+                page_count.get(),
                 page_flags,
                 dst_mapper,
                 dst_flusher,

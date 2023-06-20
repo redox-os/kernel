@@ -3,9 +3,9 @@ use alloc::sync::Arc;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::AddrSpace;
 use crate::context;
-use crate::memory::PAGE_SIZE;
+use crate::context::memory::PageSpan;
+use crate::paging::{PAGE_SIZE, VirtualAddress};
 use crate::scheme::{self, FileHandle, OpenResult, current_caller_ctx, KernelScheme, SchemeId};
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
@@ -392,10 +392,9 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
         log::warn!("funmap passed length {:#x} instead of {:#x}", length, length_aligned);
     }
 
-    let (page, page_count) = crate::syscall::validate_region(virtual_address, length_aligned)?;
-
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
-    AddrSpace::munmap(addr_space.write(), page, page_count);
+    let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned).ok_or(Error::new(EINVAL))?;
+    addr_space.write().munmap(span);
 
     Ok(0)
 }

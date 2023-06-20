@@ -1,9 +1,8 @@
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 use alloc::{sync::Arc, vec::Vec};
-use core::borrow::Borrow;
-use core::cmp::{self, Eq, Ordering, PartialEq, PartialOrd};
-use core::fmt::{self, Debug};
-use core::ops::Deref;
+use core::cmp;
+use core::fmt::Debug;
+use core::num::NonZeroUsize;
 use spin::{RwLock, RwLockWriteGuard};
 use syscall::{
     flag::MapFlags,
@@ -15,7 +14,7 @@ use crate::arch::paging::PAGE_SIZE;
 use crate::context::file::FileDescriptor;
 use crate::memory::{Enomem, Frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
-use crate::paging::{KernelMapper, Page, PageFlags, PageIter, PageMapper, RmmA, round_up_pages, TableKind, VirtualAddress};
+use crate::paging::{KernelMapper, Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
@@ -76,16 +75,16 @@ impl AddrSpace {
         let this_mapper = &mut self.table.utable;
         let new_mapper = &mut new_guard.table.utable;
 
-        for grant in self.grants.iter() {
-            if grant.desc_opt.is_some() { continue; }
+        for (grant_base, grant_info) in self.grants.iter() {
+            if grant_info.desc_opt.is_some() { continue; }
 
             let new_grant;
 
             // TODO: Replace this with CoW
-            if grant.owned {
-                new_grant = Grant::zeroed(Page::containing_address(grant.start_address()), grant.size() / PAGE_SIZE, grant.flags(), new_mapper, ())?;
+            if grant_info.owned {
+                new_grant = Grant::zeroed(grant_base, grant_info.page_count, grant_info.flags, new_mapper, ())?;
 
-                for page in new_grant.pages().map(Page::start_address) {
+                for page in new_grant.span().pages().map(Page::start_address) {
                     let current_frame = unsafe { RmmA::phys_to_virt(this_mapper.translate(page).expect("grant containing unmapped pages").0) }.data() as *const u8;
                     let new_frame = unsafe { RmmA::phys_to_virt(new_mapper.translate(page).expect("grant containing unmapped pages").0) }.data() as *mut u8;
 
@@ -97,7 +96,7 @@ impl AddrSpace {
                 // TODO: Remove reborrow? In that case, physmapped memory will need to either be
                 // remapped when cloning, or be backed by a file descriptor (like
                 // `memory:physical`).
-                new_grant = Grant::reborrow(grant, Page::containing_address(grant.start_address()), this_mapper, new_mapper, ())?;
+                new_grant = Grant::reborrow(grant_base, grant_info, grant_base, this_mapper, new_mapper, ())?;
             }
 
             new_guard.grants.insert(new_grant);
@@ -114,7 +113,7 @@ impl AddrSpace {
     pub fn is_current(&self) -> bool {
         self.table.utable.is_current()
     }
-    pub fn mprotect(&mut self, base: Page, page_count: usize, flags: MapFlags) -> Result<()> {
+    pub fn mprotect(&mut self, requested_span: PageSpan, flags: MapFlags) -> Result<()> {
         let (mut active, mut inactive);
         let mut flusher = if self.is_current() {
             active = PageFlushAll::new();
@@ -125,26 +124,24 @@ impl AddrSpace {
         };
         let mapper = &mut self.table.utable;
 
-        let region = Region::new(base.start_address(), page_count * PAGE_SIZE);
+        // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
+        let regions = self.grants.conflicts(requested_span).map(|(base, info)| PageSpan::new(base, info.page_count)).collect::<Vec<_>>();
 
-        // TODO: Remove allocation
-        let regions = self.grants.conflicts(region).map(|g| *g.region()).collect::<Vec<_>>();
-
-        for grant_region in regions {
-            let grant = self.grants.take(&grant_region).expect("grant cannot magically disappear while we hold the lock!");
-            let intersection = grant_region.intersect(region);
+        for grant_span in regions {
+            let grant = self.grants.remove(grant_span.base).expect("grant cannot magically disappear while we hold the lock!");
+            let intersection = grant_span.intersection(requested_span);
 
             let (before, mut grant, after) = grant.extract(intersection).expect("failed to extract grant");
 
             if let Some(before) = before { self.grants.insert(before); }
             if let Some(after) = after { self.grants.insert(after); }
 
-            if !grant.can_have_flags(flags) {
+            if !grant.info.can_have_flags(flags) {
                 self.grants.insert(grant);
                 return Err(Error::new(EACCES));
             }
 
-            let new_flags = grant.flags()
+            let new_flags = grant.info.flags()
                 // TODO: Require a capability in order to map executable memory?
                 .execute(flags.contains(MapFlags::PROT_EXEC))
                 .write(flags.contains(MapFlags::PROT_WRITE));
@@ -158,36 +155,36 @@ impl AddrSpace {
         }
         Ok(())
     }
-    pub fn munmap(mut this: RwLockWriteGuard<'_, Self>, page: Page, page_count: usize) {
+    pub fn munmap(mut self: RwLockWriteGuard<'_, Self>, requested_span: PageSpan) {
         let mut notify_files = Vec::new();
 
-        let requested = Region::new(page.start_address(), page_count * PAGE_SIZE);
         let mut flusher = PageFlushAll::new();
 
-        let conflicting: Vec<Region> = this.grants.conflicts(requested).map(Region::from).collect();
+        // TODO: Allocating may even be wrong!
+        let conflicting: Vec<PageSpan> = self.grants.conflicts(requested_span).map(|(base, info)| PageSpan::new(base, info.page_count)).collect();
 
         for conflict in conflicting {
-            let grant = this.grants.take(&conflict).expect("conflicting region didn't exist");
-            let intersection = grant.intersect(requested);
-            let (before, mut grant, after) = grant.extract(intersection.round()).expect("conflicting region shared no common parts");
+            let grant = self.grants.remove(conflict.base).expect("conflicting region didn't exist");
+            let intersection = conflict.intersection(requested_span);
+            let (before, mut grant, after) = grant.extract(intersection).expect("conflicting region shared no common parts");
 
             // Notify scheme that holds grant
-            if let Some(file_desc) = grant.desc_opt.take() {
+            if let Some(file_desc) = grant.info.desc_opt.take() {
                 notify_files.push((file_desc, intersection));
             }
 
             // Keep untouched regions
             if let Some(before) = before {
-                this.grants.insert(before);
+                self.grants.insert(before);
             }
             if let Some(after) = after {
-                this.grants.insert(after);
+                self.grants.insert(after);
             }
 
             // Remove irrelevant region
-            grant.unmap(&mut this.table.utable, &mut flusher);
+            grant.unmap(&mut self.table.utable, &mut flusher);
         }
-        drop(this);
+        drop(self);
 
         for (file_ref, intersection) in notify_files {
             let scheme_id = { file_ref.desc.description.read().scheme };
@@ -201,23 +198,17 @@ impl AddrSpace {
             // Same here, we don't really care about errors when schemes respond to unmap events.
             // The caller wants the memory to be unmapped, period. When already unmapped, what
             // would we do with error codes anyway?
-            let _ = scheme.funmap(intersection.start_address().data(), intersection.size());
+            let _ = scheme.funmap(intersection.base.start_address().data(), intersection.count * PAGE_SIZE);
 
             let _ = file_ref.desc.close();
         }
     }
-    pub fn mmap(&mut self, page: Option<Page>, page_count: usize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
+    pub fn mmap(&mut self, page: Option<Page>, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
         // Finally, the end of all "T0DO: Abstract with other grant creation"!
-        if page_count == 0 {
-            return Err(Error::new(EINVAL));
-        }
+        let selected_span = self.grants.find_free_at(self.mmap_min, page, page_count.get(), flags)?;
 
-        let region = match page {
-            Some(page) => self.grants.find_free_at(self.mmap_min, page.start_address(), page_count * PAGE_SIZE, flags)?,
-            None => self.grants.find_free(self.mmap_min, page_count * PAGE_SIZE).ok_or(Error::new(ENOMEM))?,
-        };
-        let page = Page::containing_address(region.start_address());
-
+        // TODO: Threads share address spaces, so not only the inactive flusher should be sending
+        // out IPIs.
         let (mut active, mut inactive);
         let flusher = if self.is_current() {
             active = PageFlushAll::new();
@@ -227,20 +218,96 @@ impl AddrSpace {
             &mut inactive as &mut dyn Flusher<RmmA>
         };
 
-        self.grants.insert(map(page, page_flags(flags), &mut self.table.utable, flusher)?);
-        Ok(page)
+        self.grants.insert(map(selected_span.base, page_flags(flags), &mut self.table.utable, flusher)?);
+
+        Ok(selected_span.base)
     }
 }
 
 #[derive(Debug)]
 pub struct UserGrants {
-    inner: BTreeSet<Grant>,
+    inner: BTreeMap<Page, GrantInfo>,
     holes: BTreeMap<VirtualAddress, usize>,
     // TODO: Would an additional map ordered by (size,start) to allow for O(log n) allocations be
     // beneficial?
 
     //TODO: technically VirtualAddress is from a scheme's context!
-    pub funmap: BTreeMap<Region, VirtualAddress>,
+    pub funmap: BTreeMap<Page, (usize, Page)>,
+}
+
+#[derive(Clone, Copy)]
+pub struct PageSpan {
+    pub base: Page,
+    pub count: usize,
+}
+impl PageSpan {
+    pub fn new(base: Page, count: usize) -> Self {
+        Self { base, count }
+    }
+    pub fn validate_nonempty(address: VirtualAddress, size: usize) -> Option<Self> {
+        Self::validate(address, size).filter(|this| !this.is_empty())
+    }
+    pub fn validate(address: VirtualAddress, size: usize) -> Option<Self> {
+        if address.data() % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 { return None; }
+        if address.data().saturating_add(size) > crate::USER_END_OFFSET { return None; }
+
+        Some(Self::new(Page::containing_address(address), size / PAGE_SIZE))
+    }
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+    pub fn intersection(&self, with: PageSpan) -> PageSpan {
+        Self::between(
+            cmp::max(self.base, with.base),
+            cmp::min(self.end(), with.end()),
+        )
+    }
+    pub fn intersects(&self, with: PageSpan) -> bool {
+        !self.intersection(with).is_empty()
+    }
+    pub fn contains(&self, page: Page) -> bool {
+        self.intersects(Self::new(page, 1))
+    }
+    pub fn slice(&self, inner_span: PageSpan) -> (Option<PageSpan>, PageSpan, Option<PageSpan>) {
+        todo!()
+    }
+    pub fn pages(self) -> impl Iterator<Item = Page> {
+        (0..self.count).map(move |i| self.base.next_by(i))
+    }
+
+    pub fn end(&self) -> Page {
+        self.base.next_by(self.count)
+    }
+
+    /// Returns the span from the start of self until the start of the specified span.
+    pub fn before(self, span: Self) -> Option<Self> {
+        assert!(self.base <= span.base);
+        Some(Self::between(
+            self.base,
+            span.base,
+        )).filter(|reg| !reg.is_empty())
+    }
+
+    /// Returns the span from the end of the given span until the end of self.
+    pub fn after(self, span: Self) -> Option<Self> {
+        assert!(span.end() <= self.end());
+        Some(Self::between(
+            span.end(),
+            self.end(),
+        )).filter(|reg| !reg.is_empty())
+    }
+    /// Returns the span between two pages, `[start, end)`, truncating to zero if end < start.
+    pub fn between(start: Page, end: Page) -> Self {
+        Self::new(
+            start,
+            end.start_address().data().saturating_sub(start.start_address().data()) / PAGE_SIZE,
+        )
+    }
+
+    pub fn rebase(self, new_base: Self, page: Page) -> Page {
+        let offset = page.offset_from(self.base);
+        new_base.base.next_by(offset)
+    }
 }
 
 impl Default for UserGrants {
@@ -248,41 +315,53 @@ impl Default for UserGrants {
         Self::new()
     }
 }
+impl Debug for PageSpan {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "[{:p}:{:p}, {} pages]", self.base.start_address().data() as *const u8, self.base.start_address().add(self.count * PAGE_SIZE - 1).data() as *const u8, self.count)
+    }
+}
 
 impl UserGrants {
     pub fn new() -> Self {
         Self {
-            inner: BTreeSet::new(),
+            inner: BTreeMap::new(),
             holes: core::iter::once((VirtualAddress::new(0), crate::USER_END_OFFSET)).collect::<BTreeMap<_, _>>(),
             funmap: BTreeMap::new(),
         }
     }
-    /// Returns the grant, if any, which occupies the specified address
-    pub fn contains(&self, address: VirtualAddress) -> Option<&Grant> {
-        let byte = Region::byte(address);
+    /// Returns the grant, if any, which occupies the specified page
+    pub fn contains(&self, page: Page) -> Option<(Page, &GrantInfo)> {
         self.inner
-            .range(..=byte)
+            .range(..=page)
             .next_back()
-            .filter(|existing| existing.occupies(byte))
+            .filter(|(base, info)| (**base..base.next_by(info.page_count)).contains(&page))
+            .map(|(base, info)| (*base, info))
     }
     /// Returns an iterator over all grants that occupy some part of the
     /// requested region
-    pub fn conflicts<'a>(&'a self, requested: Region) -> impl Iterator<Item = &'a Grant> + 'a {
-        let start = self.contains(requested.start_address());
-        let start_region = start.map(Region::from).unwrap_or(requested);
+    pub fn conflicts(&self, span: PageSpan) -> impl Iterator<Item = (Page, &'_ GrantInfo)> + '_ {
+        let start = self.contains(span.base);
+
+        // If there is a grant that contains the base page, start searching at the base of that
+        // grant, rather than the requested base here.
+        let start_span = start.map(|(base, info)| PageSpan::new(base, info.page_count)).unwrap_or(span);
+
         self
             .inner
-            .range(start_region..)
-            .take_while(move |region| !region.intersect(requested).is_empty())
+            .range(start_span.base..)
+            .take_while(move |(base, info)| !PageSpan::new(**base, info.page_count).intersects(span))
+            .map(|(base, info)| (*base, info))
     }
     /// Return a free region with the specified size
     // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
-    pub fn find_free(&self, min: usize, size: usize) -> Option<Region> {
+    // TODO: size => page_count
+    pub fn find_free(&self, min: usize, page_count: usize) -> Option<PageSpan> {
         // Get first available hole, but do reserve the page starting from zero as most compiled
         // languages cannot handle null pointers safely even if they point to valid memory. If an
         // application absolutely needs to map the 0th page, they will have to do so explicitly via
         // MAP_FIXED/MAP_FIXED_NOREPLACE.
-        // TODO: Allow explicitly allocating guard pages?
+        // TODO: Allow explicitly allocating guard pages? Perhaps using mprotect or mmap with
+        // PROT_NONE?
 
         let (hole_start, _hole_size) = self.holes.iter()
             .skip_while(|(hole_offset, hole_size)| hole_offset.data() + **hole_size <= min)
@@ -292,31 +371,22 @@ impl UserGrants {
                 } else {
                     **hole_size
                 };
-                size <= avail_size
+                page_count * PAGE_SIZE <= avail_size
             })?;
         // Create new region
-        Some(Region::new(VirtualAddress::new(cmp::max(hole_start.data(), min)), size))
+        Some(PageSpan::new(Page::containing_address(VirtualAddress::new(cmp::max(hole_start.data(), min))), page_count))
     }
     /// Return a free region, respecting the user's hinted address and flags. Address may be null.
-    pub fn find_free_at(&mut self, min: usize, address: VirtualAddress, size: usize, flags: MapFlags) -> Result<Region> {
-        if address == VirtualAddress::new(0) {
+    pub fn find_free_at(&mut self, min: usize, base: Option<Page>, page_count: usize, flags: MapFlags) -> Result<PageSpan> {
+        let Some(requested_base) = base else {
             // Free hands!
-            return self.find_free(min, size).ok_or(Error::new(ENOMEM));
-        }
+            return self.find_free(min, page_count).ok_or(Error::new(ENOMEM));
+        };
 
         // The user wished to have this region...
-        let mut requested = Region::new(address, size);
+        let requested_span = PageSpan::new(requested_base, page_count);
 
-        if
-            requested.end_address().data() > crate::USER_END_OFFSET
-            || address.data() % PAGE_SIZE != 0
-        {
-            // ... but it was invalid
-            return Err(Error::new(EINVAL));
-        }
-
-
-        if let Some(_grant) = self.conflicts(requested).next() {
+        if let Some(_grant) = self.conflicts(requested_span).next() {
             // ... but it already exists
 
             if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) {
@@ -326,61 +396,70 @@ impl UserGrants {
                 return Err(Error::new(EOPNOTSUPP));
             } else {
                 // TODO: Find grant close to requested address?
-                requested = self.find_free(min, requested.size()).ok_or(Error::new(ENOMEM))?;
+                return self.find_free(min, page_count).ok_or(Error::new(ENOMEM));
             }
         }
 
-        Ok(requested)
+        Ok(requested_span)
     }
-    fn reserve(&mut self, grant: &Region) {
-        let previous_hole = self.holes.range_mut(..grant.start_address()).next_back();
+    fn reserve(&mut self, base: Page, page_count: usize) {
+        let start_address = base.start_address();
+        let size = page_count * PAGE_SIZE;
+        let end_address = base.start_address().add(size);
+
+        let previous_hole = self.holes.range_mut(..start_address).next_back();
 
         if let Some((hole_offset, hole_size)) = previous_hole {
             let prev_hole_end = hole_offset.data() + *hole_size;
 
-            // Note that prev_hole_end cannot exactly equal grant.start_address, since that would
-            // imply there is another grant at that position already, as it would otherwise have
-            // been larger.
+            // Note that prev_hole_end cannot exactly equal start_address, since that would imply
+            // there is another grant at that position already, as it would otherwise have been
+            // larger.
 
-            if prev_hole_end > grant.start_address().data() {
+            if prev_hole_end > start_address.data() {
                 // hole_offset must be below (but never equal to) the start address due to the
-                // `..grant.start_address()` limit; hence, all we have to do is to shrink the
+                // `..start_address()` limit; hence, all we have to do is to shrink the
                 // previous offset.
-                *hole_size = grant.start_address().data() - hole_offset.data();
+                *hole_size = start_address.data() - hole_offset.data();
             }
-            if prev_hole_end > grant.end_address().data() {
+            if prev_hole_end > end_address.data() {
                 // The grant is splitting this hole in two, so insert the new one at the end.
-                self.holes.insert(grant.end_address(), prev_hole_end - grant.end_address().data());
+                self.holes.insert(end_address, prev_hole_end - end_address.data());
             }
         }
 
         // Next hole
-        if let Some(hole_size) = self.holes.remove(&grant.start_address()) {
-            let remainder = hole_size - grant.size();
+        if let Some(hole_size) = self.holes.remove(&start_address) {
+            let remainder = hole_size - size;
             if remainder > 0 {
-                self.holes.insert(grant.end_address(), remainder);
+                self.holes.insert(end_address, remainder);
             }
         }
     }
-    fn unreserve(holes: &mut BTreeMap<VirtualAddress, usize>, grant: &Region) {
+    fn unreserve(holes: &mut BTreeMap<VirtualAddress, usize>, base: Page, page_count: usize) {
+        // TODO
+        let start_address = base.start_address();
+        let size = page_count * PAGE_SIZE;
+        let end_address = base.start_address().add(size);
+
         // The size of any possible hole directly after the to-be-freed region.
-        let exactly_after_size = holes.remove(&grant.end_address());
+        let exactly_after_size = holes.remove(&end_address);
 
         // There was a range that began exactly prior to the to-be-freed region, so simply
         // increment the size such that it occupies the grant too. If in addition there was a grant
         // directly after the grant, include it too in the size.
-        if let Some((hole_offset, hole_size)) = holes.range_mut(..grant.start_address()).next_back().filter(|(offset, size)| offset.data() + **size == grant.start_address().data()) {
-            *hole_size = grant.end_address().data() - hole_offset.data() + exactly_after_size.unwrap_or(0);
+        if let Some((hole_offset, hole_size)) = holes.range_mut(..start_address).next_back().filter(|(offset, size)| offset.data() + **size == start_address.data()) {
+            *hole_size = end_address.data() - hole_offset.data() + exactly_after_size.unwrap_or(0);
         } else {
             // There was no free region directly before the to-be-freed region, however will
             // now unconditionally insert a new free region where the grant was, and add that extra
             // size if there was something after it.
-            holes.insert(grant.start_address(), grant.size() + exactly_after_size.unwrap_or(0));
+            holes.insert(start_address, size + exactly_after_size.unwrap_or(0));
         }
     }
     pub fn insert(&mut self, grant: Grant) {
-        assert!(self.conflicts(*grant).next().is_none());
-        self.reserve(&grant);
+        assert!(self.conflicts(PageSpan::new(grant.base, grant.info.page_count)).next().is_none());
+        self.reserve(grant.base, grant.info.page_count);
 
         // FIXME: This currently causes issues, mostly caused by old code that unmaps only based on
         // offsets. For instance, the scheme code does not specify any length, and would thus unmap
@@ -388,219 +467,57 @@ impl UserGrants {
 
         /*
         let before_region = self.inner
-            .range(..grant.region).next_back()
-            .filter(|b| b.end_address() == grant.start_address() && b.can_be_merged_if_adjacent(&grant)).map(|g| g.region);
+            .range(..grant.base).next_back()
+            .filter(|(base, info)| base.next_by(info.page_count) == grant.base && info.can_be_merged_if_adjacent(&grant.info)).map(|(base, info)| (*base, info.page_count));
 
         let after_region = self.inner
-            .range(Region::new(grant.end_address(), 1)..).next()
-            .filter(|a| a.start_address() == grant.end_address() && a.can_be_merged_if_adjacent(&grant)).map(|g| g.region);
+            .range(grant.span().end()..).next()
+            .filter(|(base, info)| **base == grant.base.next_by(grant.info.page_count) && info.can_be_merged_if_adjacent(&grant.info)).map(|(base, info)| (*base, info.page_count));
 
-        if let Some(before) = before_region {
-            grant.region.start = before.start;
-            grant.region.size += before.size;
+        if let Some((before_base, before_page_count)) = before_region {
+            grant.base = before_base;
+            grant.info.page_count += before_page_count;
 
-            core::mem::forget(self.inner.take(&before));
+            core::mem::forget(self.inner.remove(&before_base));
         }
-        if let Some(after) = after_region {
-            grant.region.size += after.size;
+        if let Some((after_base, after_page_count)) = after_region {
+            grant.info.page_count += after_page_count;
 
-            core::mem::forget(self.inner.take(&after));
+            core::mem::forget(self.inner.remove(&after_base));
         }
         */
 
-        self.inner.insert(grant);
+        self.inner.insert(grant.base, grant.info);
     }
-    pub fn remove(&mut self, region: &Region) -> bool {
-        self.take(region).is_some()
+    pub fn remove(&mut self, base: Page) -> Option<Grant> {
+        let info = self.inner.remove(&base)?;
+        Self::unreserve(&mut self.holes, base, info.page_count);
+        Some(Grant { base, info })
     }
-    pub fn take(&mut self, region: &Region) -> Option<Grant> {
-        let grant = self.inner.take(region)?;
-        Self::unreserve(&mut self.holes, grant.region());
-        Some(grant)
-    }
-    pub fn iter(&self) -> impl Iterator<Item = &Grant> + '_ {
-        self.inner.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (Page, &GrantInfo)> + '_ {
+        self.inner.iter().map(|(base, info)| (*base, info))
     }
     pub fn is_empty(&self) -> bool { self.inner.is_empty() }
     pub fn into_iter(self) -> impl Iterator<Item = Grant> {
-        self.inner.into_iter()
+        self.inner.into_iter().map(|(base, info)| Grant { base, info })
     }
 }
-
-#[derive(Clone, Copy)]
-pub struct Region {
-    start: VirtualAddress,
-    size: usize,
-}
-impl Region {
-    /// Create a new region with the given size
-    pub fn new(start: VirtualAddress, size: usize) -> Self {
-        Self { start, size }
-    }
-
-    /// Create a new region spanning exactly one byte
-    pub fn byte(address: VirtualAddress) -> Self {
-        Self::new(address, 1)
-    }
-
-    /// Create a new region spanning between the start and end address
-    /// (exclusive end)
-    pub fn between(start: VirtualAddress, end: VirtualAddress) -> Self {
-        Self::new(
-            start,
-            end.data().saturating_sub(start.data()),
-        )
-    }
-
-    /// Return the part of the specified region that intersects with self.
-    pub fn intersect(&self, other: Self) -> Self {
-        Self::between(
-            cmp::max(self.start_address(), other.start_address()),
-            cmp::min(self.end_address(), other.end_address()),
-        )
-    }
-
-    /// Get the start address of the region
-    pub fn start_address(&self) -> VirtualAddress {
-        self.start
-    }
-    /// Set the start address of the region
-    pub fn set_start_address(&mut self, start: VirtualAddress) {
-        self.start = start;
-    }
-
-    /// Get the last address in the region (inclusive end)
-    pub fn final_address(&self) -> VirtualAddress {
-        VirtualAddress::new(self.start.data() + self.size - 1)
-    }
-
-    /// Get the start address of the next region (exclusive end)
-    pub fn end_address(&self) -> VirtualAddress {
-        VirtualAddress::new(self.start.data() + self.size)
-    }
-
-    /// Return the exact size of the region
-    pub fn size(&self) -> usize {
-        self.size
-    }
-
-    /// Return true if the size of this region is zero. Grants with such a
-    /// region should never exist.
-    pub fn is_empty(&self) -> bool {
-        self.size == 0
-    }
-
-    /// Set the exact size of the region
-    pub fn set_size(&mut self, size: usize) {
-        self.size = size;
-    }
-
-    /// Round region up to nearest page size
-    pub fn round(self) -> Self {
-        Self {
-            size: round_up_pages(self.size),
-            ..self
-        }
-    }
-
-    /// Return the size of the grant in multiples of the page size
-    pub fn full_size(&self) -> usize {
-        self.round().size()
-    }
-
-    /// Returns true if the address is within the regions's requested range
-    pub fn collides(&self, other: Self) -> bool {
-        self.start_address() <= other.start_address() && other.end_address().data() - self.start_address().data() < self.size()
-    }
-    /// Returns true if the address is within the regions's actual range (so,
-    /// rounded up to the page size)
-    pub fn occupies(&self, other: Self) -> bool {
-        self.round().collides(other)
-    }
-
-    /// Return all pages containing a chunk of the region
-    pub fn pages(&self) -> PageIter {
-        Page::range_exclusive(
-            Page::containing_address(self.start_address()),
-            Page::containing_address(self.end_address())
-        )
-    }
-
-    /// Returns the region from the start of self until the start of the specified region.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the given region starts before self
-    pub fn before(self, region: Self) -> Option<Self> {
-        assert!(self.start_address() <= region.start_address());
-        Some(Self::between(
-            self.start_address(),
-            region.start_address(),
-        )).filter(|reg| !reg.is_empty())
-    }
-
-    /// Returns the region from the end of the given region until the end of self.
-    ///
-    /// # Panics
-    ///
-    /// Panics if self ends before the given region
-    pub fn after(self, region: Self) -> Option<Self> {
-        assert!(region.end_address() <= self.end_address());
-        Some(Self::between(
-            region.end_address(),
-            self.end_address(),
-        )).filter(|reg| !reg.is_empty())
-    }
-
-    /// Re-base address that lives inside this region, onto a new base region
-    pub fn rebase(self, new_base: Self, address: VirtualAddress) -> VirtualAddress {
-        let offset = address.data() - self.start_address().data();
-        let new_start = new_base.start_address().data() + offset;
-        VirtualAddress::new(new_start)
-    }
-}
-
-impl PartialEq for Region {
-    fn eq(&self, other: &Self) -> bool {
-        self.start.eq(&other.start)
-    }
-}
-impl Eq for Region {}
-
-impl PartialOrd for Region {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.start.partial_cmp(&other.start)
-    }
-}
-impl Ord for Region {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.start.cmp(&other.start)
-    }
-}
-
-impl Debug for Region {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:#x}..{:#x} ({:#x} long)", self.start_address().data(), self.end_address().data(), self.size())
-    }
-}
-
-
-impl<'a> From<&'a Grant> for Region {
-    fn from(source: &'a Grant) -> Self {
-        source.region
-    }
-}
-
 
 #[derive(Debug)]
-pub struct Grant {
-    region: Region,
+pub struct GrantInfo {
+    page_count: usize,
     flags: PageFlags<RmmA>,
     mapped: bool,
     pub(crate) owned: bool,
     //TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the context?
     pub desc_opt: Option<GrantFileRef>,
 }
+#[derive(Debug)]
+pub struct Grant {
+    pub(crate) base: Page,
+    pub(crate) info: GrantInfo,
+}
+
 #[derive(Clone, Debug)]
 pub struct GrantFileRef {
     pub desc: FileDescriptor,
@@ -611,19 +528,7 @@ pub struct GrantFileRef {
 }
 
 impl Grant {
-    pub fn is_owned(&self) -> bool {
-        self.owned
-    }
-
-    pub fn region(&self) -> &Region {
-        &self.region
-    }
-
-    /// Get a mutable reference to the region. This is unsafe, because a bad
-    /// region could lead to the wrong addresses being unmapped.
-    unsafe fn region_mut(&mut self) -> &mut Region {
-        &mut self.region
-    }
+    // TODO: PageCount newtype, to avoid confusion between bytes and pages?
 
     pub fn physmap(phys: Frame, dst: Page, page_count: usize, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant> {
         for index in 0..page_count {
@@ -636,14 +541,14 @@ impl Grant {
         }
 
         Ok(Grant {
-            region: Region {
-                start: dst.start_address(),
-                size: page_count * PAGE_SIZE,
+            base: dst,
+            info: GrantInfo {
+                page_count,
+                flags,
+                mapped: true,
+                owned: false,
+                desc_opt: None,
             },
-            flags,
-            mapped: true,
-            owned: false,
-            desc_opt: None,
         })
     }
     pub fn zeroed(dst: Page, page_count: usize, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
@@ -652,19 +557,19 @@ impl Grant {
             let flush = unsafe { mapper.map(page.start_address(), flags) }.ok_or(Enomem)?;
             flusher.consume(flush);
         }
-        Ok(Grant { region: Region { start: dst.start_address(), size: page_count * PAGE_SIZE }, flags, mapped: true, owned: true, desc_opt: None })
+        Ok(Grant { base: dst, info: GrantInfo { page_count, flags, mapped: true, owned: true, desc_opt: None } })
     }
     pub fn borrow(src_base: Page, dst_base: Page, page_count: usize, flags: PageFlags<RmmA>, desc_opt: Option<GrantFileRef>, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
         Self::copy_inner(src_base, dst_base, page_count, flags, desc_opt, src_mapper, dst_mapper, (), dst_flusher, false, false)
     }
-    pub fn reborrow(src_grant: &Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
-        Self::borrow(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), src_grant.desc_opt.clone(), src_mapper, dst_mapper, dst_flusher).map_err(Into::into)
+    pub fn reborrow(src_base: Page, src_info: &GrantInfo, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
+        Self::borrow(src_base, dst_base, src_info.page_count, src_info.flags, src_info.desc_opt.clone(), src_mapper, dst_mapper, dst_flusher).map_err(Into::into)
     }
     pub fn transfer(mut src_grant: Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, src_flusher: impl Flusher<RmmA>, dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
-        assert!(core::mem::replace(&mut src_grant.mapped, false));
-        let desc_opt = src_grant.desc_opt.take();
+        assert!(core::mem::replace(&mut src_grant.info.mapped, false));
+        let desc_opt = src_grant.info.desc_opt.take();
 
-        Self::copy_inner(Page::containing_address(src_grant.start_address()), dst_base, src_grant.size() / PAGE_SIZE, src_grant.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.owned, true).map_err(Into::into)
+        Self::copy_inner(src_grant.base, dst_base, src_grant.info.page_count, src_grant.info.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.info.owned, true).map_err(Into::into)
     }
 
     fn copy_inner(
@@ -721,45 +626,39 @@ impl Grant {
         }
 
         Ok(Grant {
-            region: Region {
-                start: dst_base.start_address(),
-                size: page_count * PAGE_SIZE,
+            base: dst_base,
+            info: GrantInfo {
+                page_count,
+                flags,
+                mapped: true,
+                owned,
+                desc_opt,
             },
-            flags,
-            mapped: true,
-            owned,
-            desc_opt,
         })
     }
 
-    pub fn flags(&self) -> PageFlags<RmmA> {
-        self.flags
-    }
-
     pub fn remap(&mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, flags: PageFlags<RmmA>) {
-        assert!(self.mapped);
+        assert!(self.info.mapped);
 
-        for page in self.pages() {
+        for page in self.span().pages() {
+            // TODO: PageMapper is unsafe because it can be used to modify kernel memory. Add a
+            // subset/wrapper that is safe but only for user mappings.
             unsafe {
                 let result = mapper.remap(page.start_address(), flags).expect("grant contained unmap address");
                 flusher.consume(result);
             }
         }
 
-        self.flags = flags;
+        self.info.flags = flags;
     }
-    pub fn can_have_flags(&self, flags: MapFlags) -> bool {
-        self.owned || ((self.flags.has_write() || !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() || !flags.contains(MapFlags::PROT_EXEC)))
-    }
-
     pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
-        assert!(self.mapped);
+        assert!(self.info.mapped);
 
-        for page in self.pages() {
+        for page in self.span().pages() {
             let (entry, _, flush) = unsafe { mapper.unmap_phys(page.start_address(), true) }
                 .unwrap_or_else(|| panic!("missing page at {:#0x} for grant {:?}", page.start_address().data(), self));
 
-            if self.owned {
+            if self.info.owned {
                 // TODO: make sure this frame can be safely freed, physical use counter.
                 //
                 // Namely, we can either have MAP_PRIVATE or MAP_SHARED-style mappings. The former
@@ -779,10 +678,10 @@ impl Grant {
             flusher.consume(flush);
         }
 
-        self.mapped = false;
+        self.info.mapped = false;
 
         // TODO: This imposes a large cost on unmapping, but that cost cannot be avoided without modifying fmap and funmap
-        UnmapResult { file_desc: self.desc_opt.take() }
+        UnmapResult { file_desc: self.info.desc_opt.take() }
     }
 
     /// Extract out a region into a separate grant. The return value is as
@@ -798,31 +697,54 @@ impl Grant {
     ///
     /// Also panics if the given region isn't completely contained within the
     /// grant. Use `grant.intersect` to find a sub-region that works.
-    pub fn extract(mut self, region: Region) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
-        assert_eq!(region.start_address().data() % PAGE_SIZE, 0, "split_out must be called on page-size aligned start address");
-        assert_eq!(region.size() % PAGE_SIZE, 0, "split_out must be called on page-size aligned end address");
+    pub fn span(&self) -> PageSpan {
+        PageSpan::new(self.base, self.info.page_count)
+    }
+    pub fn extract(mut self, span: PageSpan) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
+        let (before_span, this_span, after_span) = self.span().slice(span);
 
-        let before_grant = self.before(region).map(|region| Grant {
-            region,
-            flags: self.flags,
-            mapped: self.mapped,
-            owned: self.owned,
-            desc_opt: self.desc_opt.clone(),
+        let before_grant = before_span.map(|span| Grant {
+            base: span.base,
+            info: GrantInfo {
+                flags: self.info.flags,
+                mapped: self.info.mapped,
+                owned: self.info.owned,
+                desc_opt: self.info.desc_opt.clone(),
+                page_count: span.count,
+            },
         });
-        let after_grant = self.after(region).map(|region| Grant {
-            region,
-            flags: self.flags,
-            mapped: self.mapped,
-            owned: self.owned,
-            desc_opt: self.desc_opt.clone(),
+        let after_grant = after_span.map(|span| Grant {
+            base: span.base,
+            info: GrantInfo {
+                flags: self.info.flags,
+                mapped: self.info.mapped,
+                owned: self.info.owned,
+                desc_opt: self.info.desc_opt.clone(),
+                page_count: span.count,
+            },
         });
-
-        unsafe {
-            *self.region_mut() = region;
-        }
+        self.base = this_span.base;
+        self.info.page_count = this_span.count;
 
         Some((before_grant, self, after_grant))
     }
+    pub fn rebase(mut self) {
+    }
+}
+impl GrantInfo {
+    pub fn flags(&self) -> PageFlags<RmmA> {
+        self.flags
+    }
+    pub fn is_owned(&self) -> bool {
+        self.owned
+    }
+    pub fn page_count(&self) -> usize {
+        self.page_count
+    }
+    pub fn can_have_flags(&self, flags: MapFlags) -> bool {
+        self.owned || ((self.flags.has_write() && !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() && !flags.contains(MapFlags::PROT_EXEC)))
+    }
+
     pub fn can_be_merged_if_adjacent(&self, with: &Self) -> bool {
         match (&self.desc_opt, &with.desc_opt) {
             (None, None) => (),
@@ -834,38 +756,9 @@ impl Grant {
     }
 }
 
-impl Deref for Grant {
-    type Target = Region;
-    fn deref(&self) -> &Self::Target {
-        &self.region
-    }
-}
-
-impl PartialOrd for Grant {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.region.partial_cmp(&other.region)
-    }
-}
-impl Ord for Grant {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.region.cmp(&other.region)
-    }
-}
-impl PartialEq for Grant {
-    fn eq(&self, other: &Self) -> bool {
-        self.region.eq(&other.region)
-    }
-}
-impl Eq for Grant {}
-
-impl Borrow<Region> for Grant {
-    fn borrow(&self) -> &Region {
-        &self.region
-    }
-}
-
-impl Drop for Grant {
+impl Drop for GrantInfo {
     fn drop(&mut self) {
+        // XXX: This will not show the address...
         assert!(!self.mapped, "Grant dropped while still mapped: {:#x?}", self);
     }
 }

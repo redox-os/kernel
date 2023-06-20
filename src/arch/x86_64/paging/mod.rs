@@ -98,6 +98,9 @@ impl Page {
             number: self.number + n,
         }
     }
+    pub fn offset_from(self, other: Self) -> usize {
+        self.number - other.number
+    }
 }
 
 pub struct PageIter {
