@@ -142,7 +142,7 @@ impl UserInner {
 
         let src_page = Page::containing_address(VirtualAddress::new(tail.buf_mut().as_ptr() as usize));
 
-        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::borrow(src_page, dst_page, 1, flags, None, &mut KernelMapper::lock(), mapper, flusher)?))?;
+        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::physmap(todo!(), PageSpan::new(dst_page, 1), flags, mapper, flusher)?))?;
 
         Ok(CaptureGuard {
             destroyed: false,
@@ -237,7 +237,8 @@ impl UserInner {
             let head_buf_page = Page::containing_address(VirtualAddress::new(array.buf_mut().as_mut_ptr() as usize));
 
             dst_space.mmap(Some(free_span.base), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                Ok(Grant::borrow(head_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
+                //Ok(Grant::borrow(head_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
+                todo!()
             })?;
 
             let head = CopyInfo {
@@ -261,8 +262,7 @@ impl UserInner {
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
             dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                let mut cur_space = cur_space_lock.write();
-                Ok(Grant::borrow(first_middle_src_page, dst_page, middle_page_count.get(), page_flags, None, &mut cur_space.table.utable, mapper, flusher)?)
+                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), page_flags, mapper, flusher, true)?)
             })?;
         }
 
@@ -289,7 +289,8 @@ impl UserInner {
             }
 
             dst_space.mmap(Some(tail_dst_page), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                Ok(Grant::borrow(tail_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
+                todo!();
+                //Ok(Grant::borrow(tail_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
             })?;
 
             CopyInfo {
@@ -393,7 +394,8 @@ impl UserInner {
                         let nz_page_count = NonZeroUsize::new(page_count).ok_or(Error::new(EINVAL));
 
                         let res = nz_page_count.and_then(|page_count| addr_space.mmap(dst_page, page_count, map.flags, move |dst_page, flags, mapper, flusher| {
-                            Ok(Grant::borrow(src_page, dst_page, page_count.get(), flags, Some(file_ref), &mut AddrSpace::current()?.write().table.utable, mapper, flusher)?)
+                            todo!()
+                            //Ok(Grant::borrow(src_page, dst_page, page_count.get(), flags, Some(file_ref), &mut AddrSpace::current()?.write().table.utable, mapper, flusher)?)
                         }));
                         retcode = Error::mux(res.map(|grant_start_page| {
                             addr_space.grants.funmap.insert(

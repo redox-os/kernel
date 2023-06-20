@@ -86,7 +86,8 @@ pub fn resource() -> Result<Vec<u8>> {
             }
             if let Ok(addr_space) = context.addr_space() {
                 for (_base, info) in addr_space.read().grants.iter() {
-                    if info.is_owned() {
+                    // TODO: method
+                    if matches!(info.provider, context::memory::Provider::Allocated { .. }) {
                         memory += info.page_count() * PAGE_SIZE;
                     }
                 }

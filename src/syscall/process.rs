@@ -595,8 +595,10 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
         // deallocated?
         addr_space.grants.insert(context::memory::Grant::physmap(
             bootstrap.base.clone(),
-            Page::containing_address(VirtualAddress::new(0)),
-            bootstrap.page_count,
+            PageSpan::new(
+                Page::containing_address(VirtualAddress::new(0)),
+                bootstrap.page_count,
+            ),
             PageFlags::new().user(true).write(true).execute(true),
             &mut addr_space.table.utable,
             PageFlushAll::new(),

@@ -62,7 +62,7 @@ impl MemoryScheme {
         let page = addr_space
             .write()
             .mmap((map.address != 0).then_some(span.base), page_count, map.flags, |page, flags, mapper, flusher| {
-                Ok(Grant::zeroed(page, page_count.get(), flags, mapper, flusher)?)
+                Ok(Grant::zeroed(span, flags, mapper, flusher)?)
             })?;
 
         Ok(page.start_address().data())
@@ -99,8 +99,10 @@ impl MemoryScheme {
 
             Grant::physmap(
                 Frame::containing_address(PhysicalAddress::new(physical_address)),
-                dst_page,
-                page_count.get(),
+                PageSpan::new(
+                    dst_page,
+                    page_count.get(),
+                ),
                 page_flags,
                 dst_mapper,
                 dst_flusher,

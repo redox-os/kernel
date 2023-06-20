@@ -187,7 +187,9 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
                     println!(
                         "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {}",
                         base.start_address().data(), base.start_address().data() + size - 1, size,
-                        if info.is_owned() { "owned" } else { "borrowed" },
+                        //if info.is_owned() { "owned" } else { "borrowed" },
+                        // TODO
+                        "",
                     );
                 }
             }

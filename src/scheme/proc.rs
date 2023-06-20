@@ -135,11 +135,6 @@ enum Operation {
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
     // directory.
     OpenViaDup,
-    // Allows calling fmap directly on a FileDescriptor (as opposed to a FileDescriptor).
-    //
-    // TODO: Remove this once cross-scheme links are merged. That would allow acquiring a new
-    // FD to access the file descriptor behind grants.
-    GrantHandle { description: Arc<RwLock<FileDescription>> },
 
     SchedAffinity,
     Sigactions(Arc<RwLock<Vec<(SigAction, usize)>>>),
@@ -717,28 +712,11 @@ impl KernelScheme for ProcScheme {
         let info = self.handles.read().get(&id).ok_or(Error::new(EBADF))?.info.clone();
 
         match info.operation {
-            Operation::GrantHandle { ref description } => {
-                // The map struct will probably reside in kernel memory, on the stack, and for that
-                // it would be very insecure not to use the pinned head/tail buffer.
-                let mut buf = BorrowedHtBuf::head()?;
-                // TODO: This can be safe
-                let map_dst = unsafe { buf.use_for_struct()? };
-                *map_dst = *map;
-
-                let (scheme_id, number) = {
-                    let description = description.read();
-
-                    (description.scheme, description.number)
-                };
-                let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(EBADFD))?);
-                let res = scheme.fmap(number, map_dst);
-
-                res
-            }
             Operation::AddrSpace { ref addrspace } => {
                 if Arc::ptr_eq(addrspace, dst_addr_space) {
                     return Err(Error::new(EBUSY));
                 }
+                /*
                 // Limit to transferring/borrowing at most one grant, or part of a grant (splitting
                 // will be mandatory if grants are coalesced).
 
@@ -780,8 +758,10 @@ impl KernelScheme for ProcScheme {
                 } else {
                     dst_addr_space.mmap(requested_dst_page, src_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(src_grant_span.base, dst_page, src_grant_span.count, flags, None, src_mapper, dst_mapper, flusher)?))?
                 };
+                */
 
-                Ok(result_page.start_address().data())
+                //Ok(result_page.start_address().data())
+                todo!()
             }
             _ => Err(Error::new(EBADF)),
         }
@@ -828,32 +808,6 @@ impl KernelScheme for ProcScheme {
                 data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
                 Ok(bytes_read)
             },
-            // TODO: Support reading only a specific address range. Maybe using seek?
-            Operation::AddrSpace { addrspace } => {
-                let mut handles = self.handles.write();
-                let OperationData::Offset(ref mut offset) = handles.get_mut(&id).ok_or(Error::new(EBADF))?.data else {
-                    return Err(Error::new(EBADFD));
-                };
-
-                // TODO: Define a struct somewhere?
-                const RECORD_SIZE: usize = mem::size_of::<usize>() * 4;
-                let records = buf.in_exact_chunks(mem::size_of::<usize>()).array_chunks::<4>();
-
-                let addrspace = addrspace.read();
-                let mut bytes_read = 0;
-
-                for ([r1, r2, r3, r4], (base, info)) in records.zip(addrspace.grants.iter()).skip(*offset / RECORD_SIZE) {
-                    r1.write_usize(base.start_address().data())?;
-                    r2.write_usize(info.page_count() * PAGE_SIZE)?;
-                    r3.write_usize(map_flags(info.flags()).bits() | if info.desc_opt.is_some() { 0x8000_0000 } else { 0 })?;
-                    r4.write_usize(info.desc_opt.as_ref().map_or(0, |d| d.offset))?;
-                    bytes_read += RECORD_SIZE;
-                }
-
-                *offset += bytes_read;
-                Ok(bytes_read)
-            }
-
             Operation::Regs(kind) => {
                 union Output {
                     float: FloatRegisters,
@@ -1284,20 +1238,15 @@ impl KernelScheme for ProcScheme {
                 handle(Operation::Filetable { filetable: new_filetable }, OperationData::Other)
             }
             Operation::AddrSpace { ref addrspace } => {
+                let addrspace_clone = Arc::clone(addrspace);
+
                 let (operation, is_mem) = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
                     b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
-                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone()? }, false),
+                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone(addrspace_clone)? }, false),
                     b"mem" => (Operation::Memory { addrspace: Arc::clone(addrspace) }, true),
                     b"mmap-min-addr" => (Operation::MmapMinAddr(Arc::clone(addrspace)), false),
-
-                    grant_handle if grant_handle.starts_with(b"grant-") => {
-                        let start_addr = usize::from_str_radix(core::str::from_utf8(&grant_handle[6..]).map_err(|_| Error::new(EINVAL))?, 16).map_err(|_| Error::new(EINVAL))?;
-                        (Operation::GrantHandle {
-                            description: Arc::clone(&addrspace.read().grants.contains(Page::containing_address(VirtualAddress::new(start_addr))).ok_or(Error::new(EINVAL))?.1.desc_opt.as_ref().ok_or(Error::new(EINVAL))?.desc.description)
-                        }, false)
-                    }
 
                     _ => return Err(Error::new(EINVAL)),
                 };

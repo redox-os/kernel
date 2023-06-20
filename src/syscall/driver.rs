@@ -1,5 +1,3 @@
-use core::num::NonZeroUsize;
-
 use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame, PAGE_SIZE};
 use crate::paging::{PhysicalAddress, VirtualAddress};
