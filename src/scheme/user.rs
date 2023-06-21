@@ -135,6 +135,7 @@ impl UserInner {
         let dst_addr_space = Arc::clone(self.context.upgrade().ok_or(Error::new(ENODEV))?.read().addr_space()?);
 
         let mut tail = BorrowedHtBuf::tail()?;
+        let tail_frame = tail.frame();
         if buf.len() > tail.buf().len() {
             return Err(Error::new(EINVAL));
         }
@@ -142,7 +143,7 @@ impl UserInner {
 
         let src_page = Page::containing_address(VirtualAddress::new(tail.buf_mut().as_ptr() as usize));
 
-        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::physmap(todo!(), PageSpan::new(dst_page, 1), flags, mapper, flusher)?))?;
+        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::physmap(tail_frame, PageSpan::new(dst_page, 1), flags, mapper, flusher)?))?;
 
         Ok(CaptureGuard {
             destroyed: false,
@@ -217,6 +218,7 @@ impl UserInner {
         let head = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
             let mut array = BorrowedHtBuf::head()?;
+            let frame = array.frame();
 
             let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
 
@@ -234,11 +236,9 @@ impl UserInner {
                     array.buf_mut().fill(0_u8);
                 }
             }
-            let head_buf_page = Page::containing_address(VirtualAddress::new(array.buf_mut().as_mut_ptr() as usize));
 
             dst_space.mmap(Some(free_span.base), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                //Ok(Grant::borrow(head_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
-                todo!()
+                Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher)?)
             })?;
 
             let head = CopyInfo {
@@ -271,8 +271,7 @@ impl UserInner {
 
             // FIXME: Signal context can probably recursively use head/tail.
             let mut array = BorrowedHtBuf::tail()?;
-
-            let tail_buf_page = Page::containing_address(VirtualAddress::new(array.buf_mut().as_mut_ptr() as usize));
+            let frame = array.frame();
 
             match mode {
                 Mode::Ro => {
@@ -289,8 +288,7 @@ impl UserInner {
             }
 
             dst_space.mmap(Some(tail_dst_page), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                todo!();
-                //Ok(Grant::borrow(tail_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
+                Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher)?)
             })?;
 
             CopyInfo {

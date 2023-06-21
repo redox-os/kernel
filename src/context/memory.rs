@@ -17,7 +17,7 @@ use rmm::Arch as _;
 use crate::arch::paging::PAGE_SIZE;
 use crate::common::{try_box_slice_new, try_new_vec_with_exact_size};
 use crate::context::file::FileDescriptor;
-use crate::memory::{Enomem, Frame};
+use crate::memory::{Enomem, Frame, RaiiFrame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{KernelMapper, Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
 
@@ -554,19 +554,11 @@ impl PageInfo {
     pub fn try_new_exclusive() -> Result<Self, Enomem> {
         let frame = crate::memory::allocate_frames(1).ok_or(Enomem)?;
 
-        struct RaiiFrame(Option<Frame>);
-        impl Drop for RaiiFrame {
-            fn drop(&mut self) {
-                if let Some(frame) = self.0.take() {
-                    crate::memory::deallocate_frames(frame, 1);
-                }
-            }
-        }
-        let mut guard = RaiiFrame(Some(frame.clone()));
+        let mut guard = RaiiFrame::new(frame.clone());
 
         let this = Self::try_new_inner(PageInfoInner { phys: frame, cow_refcount: AtomicUsize::new(1) })?;
 
-        guard.0 = None;
+        let _ = guard.take_ownership();
 
         Ok(this)
     }
@@ -1223,7 +1215,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
     };
 
     if super::context_id().into() == 3 {
-        log::info!("Correcting {:?} => {:?} (base {:?} info {:?})", faulting_page, frame, grant_base, grant_info);
+        //log::info!("Correcting {:?} => {:?} (base {:?} info {:?})", faulting_page, frame, grant_base, grant_info);
     }
     let Some(flush) = (unsafe { addr_space.table.utable.map_phys(faulting_page.start_address(), frame.start_address(), grant_flags) }) else {
         // TODO

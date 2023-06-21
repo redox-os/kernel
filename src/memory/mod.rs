@@ -2,6 +2,7 @@
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
 use core::cmp;
+use core::num::NonZeroUsize;
 
 use crate::arch::rmm::LockedAllocator;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
@@ -63,6 +64,7 @@ pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Op
 }
 
 /// Deallocate a range of frames frame
+// TODO: Make unsafe
 pub fn deallocate_frames(frame: Frame, count: usize) {
     unsafe {
         LockedAllocator.free(
@@ -72,11 +74,13 @@ pub fn deallocate_frames(frame: Frame, count: usize) {
     }
 }
 
-/// A frame, allocated by the frame allocator.
-/// Do not add more derives, or make anything `pub`!
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Frame {
-    number: usize
+    // TODO: NonZeroUsize
+    //
+    // On x86/x86_64, all memory below 1 MiB is reserved, and although some frames in that range
+    // may end up in the paging code, it's very unlikely that frame 0x0 would.
+    number: NonZeroUsize,
 }
 impl core::fmt::Debug for Frame {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -87,7 +91,7 @@ impl core::fmt::Debug for Frame {
 impl Frame {
     /// Get the address of this frame
     pub fn start_address(&self) -> PhysicalAddress {
-        PhysicalAddress::new(self.number * PAGE_SIZE)
+        PhysicalAddress::new(self.number.get() * PAGE_SIZE)
     }
 
     //TODO: Set private
@@ -100,7 +104,7 @@ impl Frame {
     /// Create a frame containing `address`
     pub fn containing_address(address: PhysicalAddress) -> Frame {
         Frame {
-            number: address.data() / PAGE_SIZE
+            number: NonZeroUsize::new(address.data() / PAGE_SIZE).expect("frame 0x0 is reserved"),
         }
     }
 
@@ -110,7 +114,7 @@ impl Frame {
     }
     pub fn next_by(&self, n: usize) -> Self {
         Self {
-            number: self.number + n,
+            number: self.number.get().checked_add(n).and_then(NonZeroUsize::new).expect("overflow in Frame::next_by"),
         }
     }
 }
@@ -126,7 +130,7 @@ impl Iterator for FrameIter {
     fn next(&mut self) -> Option<Frame> {
         if self.start <= self.end {
             let frame = self.start.clone();
-            self.start.number += 1;
+            self.start = self.start.next_by(1);
             Some(frame)
         } else {
             None
@@ -140,5 +144,35 @@ pub struct Enomem;
 impl From<Enomem> for Error {
     fn from(_: Enomem) -> Self {
         Self::new(ENOMEM)
+    }
+}
+
+#[derive(Debug)]
+pub struct RaiiFrame {
+    inner: Frame,
+}
+impl RaiiFrame {
+    // TODO: Unsafe?
+    pub fn new(frame: Frame) -> Self {
+        Self {
+            inner: frame,
+        }
+    }
+    pub fn allocate() -> Result<Self, Enomem> {
+        allocate_frames(1).map(Self::new).ok_or(Enomem)
+    }
+    pub fn get(&self) -> Frame {
+        self.inner
+    }
+    pub fn take_ownership(self) -> Frame {
+        let frame = self.inner.clone();
+        core::mem::forget(self);
+        frame
+    }
+}
+
+impl Drop for RaiiFrame {
+    fn drop(&mut self) {
+        crate::memory::deallocate_frames(self.inner, 1);
     }
 }

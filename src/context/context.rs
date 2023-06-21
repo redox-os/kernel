@@ -17,6 +17,8 @@ use crate::context::{self, arch};
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::AddrSpace;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::paging::{RmmA, RmmArch};
+use crate::memory::{RaiiFrame, Frame};
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 
@@ -212,10 +214,10 @@ pub struct Context {
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_head: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
+    pub syscall_head: Option<RaiiFrame>,
     /// Tail buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_tail: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
+    pub syscall_tail: Option<RaiiFrame>,
     /// Context is halting parent
     pub vfork: bool,
     /// Context is being waited on
@@ -288,8 +290,8 @@ impl Context {
             cpu_time: 0,
             sched_affinity: None,
             syscall: None,
-            syscall_head: Some(AlignedBox::try_zeroed()?),
-            syscall_tail: Some(AlignedBox::try_zeroed()?),
+            syscall_head: Some(RaiiFrame::allocate()?),
+            syscall_tail: Some(RaiiFrame::allocate()?),
             vfork: false,
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),
@@ -437,7 +439,7 @@ impl Context {
 /// Wrapper struct for borrowing the syscall head or tail buf.
 #[derive(Debug)]
 pub struct BorrowedHtBuf {
-    inner: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
+    inner: Option<RaiiFrame>,
     head_and_not_tail: bool,
 }
 impl BorrowedHtBuf {
@@ -454,10 +456,13 @@ impl BorrowedHtBuf {
         })
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
-        self.inner.as_ref().expect("must succeed")
+        unsafe { &*(RmmA::phys_to_virt(self.inner.as_ref().expect("must succeed").get().start_address()).data() as *const [u8; PAGE_SIZE]) }
     }
     pub fn buf_mut(&mut self) -> &mut [u8; PAGE_SIZE] {
-        self.inner.as_mut().expect("must succeed")
+        unsafe { &mut *(RmmA::phys_to_virt(self.inner.as_mut().expect("must succeed").get().start_address()).data() as *mut [u8; PAGE_SIZE]) }
+    }
+    pub fn frame(&self) -> Frame {
+        self.inner.as_ref().expect("must succeed").get()
     }
     /*
     pub fn use_for_slice(&mut self, raw: UserSlice) -> Result<Option<&[u8]>> {
