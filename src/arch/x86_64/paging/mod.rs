@@ -17,7 +17,7 @@ pub use rmm::{
 pub use super::CurrentRmmArch as RmmA;
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
-use crate::context::memory::AddrSpace;
+use crate::context::memory::{AccessMode, try_correcting_page_tables, PfError};
 use crate::interrupt::InterruptStack;
 pub use crate::rmm::KernelMapper;
 
@@ -172,6 +172,15 @@ pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faul
         return Err(Segv);
     }
 
+    if address_is_user {
+        match try_correcting_page_tables(faulting_page, mode) {
+            Ok(()) => return Ok(()),
+            Err(PfError::Oom) => todo!("oom"),
+            Err(PfError::Segv) => (),
+            Err(PfError::NonfatalInternalError) => todo!(),
+        }
+    }
+
     if address_is_user && caused_by_kernel && mode != AccessMode::InstrFetch && usercopy_region.contains(&{ stack.iret.rip }) {
         // We were inside a usercopy function that failed. This is handled by setting rax to a
         // nonzero value, and emulating the ret instruction.
@@ -183,52 +192,5 @@ pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faul
         return Ok(());
     }
 
-    if address_is_user && caused_by_user {
-        if try_correcting_page_tables(faulting_page, mode) {
-            return Ok(());
-        }
-    }
-
     Err(Segv)
-}
-#[derive(PartialEq)]
-enum AccessMode {
-    Read,
-    Write,
-    InstrFetch,
-}
-
-fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> bool {
-    let Ok(addr_space) = AddrSpace::current() else {
-        log::warn!("User page fault without address space being set.");
-        return false;
-    };
-
-    let mut addr_space = addr_space.write();
-
-    let Some((_, grant_info)) = addr_space.grants.contains(faulting_page) else {
-        return false;
-    };
-    let grant_flags = grant_info.flags();
-    match access {
-        // TODO: has_read
-        AccessMode::Read => (),
-
-        AccessMode::Write if !grant_flags.has_write() => return false,
-        AccessMode::InstrFetch if !grant_flags.has_execute() => return false,
-
-        _ => (),
-    }
-
-    // By now, the memory at the faulting page is actually valid, but simply not yet mapped.
-    // TODO: Readahead
-
-    let Some(flush) = (unsafe { addr_space.table.utable.map(faulting_page.start_address(), grant_flags) }) else {
-        // TODO
-        return false;
-    };
-
-    flush.flush();
-
-    true
 }

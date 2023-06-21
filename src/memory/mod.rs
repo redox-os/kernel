@@ -74,9 +74,14 @@ pub fn deallocate_frames(frame: Frame, count: usize) {
 
 /// A frame, allocated by the frame allocator.
 /// Do not add more derives, or make anything `pub`!
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Frame {
     number: usize
+}
+impl core::fmt::Debug for Frame {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "[frame at {:p}]", self.start_address().data() as *const u8)
+    }
 }
 
 impl Frame {
