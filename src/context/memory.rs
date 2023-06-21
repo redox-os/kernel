@@ -3,7 +3,10 @@ use alloc::collections::BTreeMap;
 use alloc::{sync::Arc, vec::Vec};
 use core::cmp;
 use core::fmt::Debug;
+use core::mem::ManuallyDrop;
 use core::num::NonZeroUsize;
+use core::ops::Deref;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{RwLock, RwLockWriteGuard, Once, RwLockUpgradableGuard};
 use syscall::{
     flag::MapFlags,
@@ -527,7 +530,7 @@ pub enum Provider {
     // TODO: strong-count-only Arc?
     //
     // https://internals.rust-lang.org/t/pre-rfc-rc-and-arc-with-only-strong-count/5828
-    Allocated { pages: Box<[Option<Arc<PageInfo>>]> },
+    Allocated { pages: Box<[Option<PageInfo>]> },
     /// The grant is not owned, but borrowed from physical memory frames that do not belong to the
     /// frame allocator.
     PhysBorrowed { base: Frame },
@@ -535,17 +538,87 @@ pub enum Provider {
     ///
     /// All grants in the specified range must be of type Allocated.
     // TODO: Vec?
-    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, cow: bool, pages: Option<Box<[Option<Arc<PageInfo>>]>> },
+    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, cow: bool, pages: Option<Box<[Option<PageInfo>]>> },
     /// The memory is borrowed from another address space, but managed by a scheme via fmap.
     // TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the
     // ~~context~~ address space?
     // TODO: mmap CoW
     Fmap { desc: GrantFileRef },
 }
+
 #[derive(Debug)]
 pub struct PageInfo {
+    arc: ManuallyDrop<Arc<PageInfoInner>>,
+}
+impl PageInfo {
+    pub fn try_new_exclusive() -> Result<Self, Enomem> {
+        let frame = crate::memory::allocate_frames(1).ok_or(Enomem)?;
+
+        struct RaiiFrame(Option<Frame>);
+        impl Drop for RaiiFrame {
+            fn drop(&mut self) {
+                if let Some(frame) = self.0.take() {
+                    crate::memory::deallocate_frames(frame, 1);
+                }
+            }
+        }
+        let mut guard = RaiiFrame(Some(frame.clone()));
+
+        let this = Self::try_new_inner(PageInfoInner { phys: frame, cow_refcount: AtomicUsize::new(1) })?;
+
+        guard.0 = None;
+
+        Ok(this)
+    }
+    fn try_new_inner(inner: PageInfoInner) -> Result<Self, Enomem> {
+        Ok(Self {
+            arc: ManuallyDrop::new(Arc::try_new(inner).map_err(|_| Enomem)?),
+        })
+    }
+    pub fn ref_clone(&self, cow: bool) -> Self {
+        let new = Self {
+            arc: ManuallyDrop::new(Arc::clone(&self.arc)),
+        };
+        if cow {
+            self.cow_refcount.fetch_add(1, Ordering::Relaxed);
+        }
+        new
+    }
+    pub fn try_get_exclusively(&self) -> Option<&PageInfoInner> {
+        (self.cow_refcount.load(Ordering::Acquire) == 1).then_some(&*self.arc)
+    }
+
+    fn into_inner(mut self) -> Arc<PageInfoInner> {
+        let arc = unsafe { ManuallyDrop::take(&mut self.arc) };
+        core::mem::forget(self);
+        arc
+    }
+}
+impl Drop for PageInfo {
+    #[track_caller]
+    fn drop(&mut self) {
+        panic!("PageInfo must be destroyed manually!")
+    }
+}
+impl Deref for PageInfo {
+    type Target = PageInfoInner;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.arc
+    }
+}
+
+#[derive(Debug)]
+pub struct PageInfoInner {
     // refcount is already stored in the Arc that maps the page.
     phys: Frame,
+    cow_refcount: AtomicUsize,
+}
+impl Drop for PageInfoInner {
+    #[track_caller]
+    fn drop(&mut self) {
+        assert_eq!(*self.cow_refcount.get_mut(), 1);
+    }
 }
 
 #[derive(Debug)]
@@ -585,7 +658,7 @@ impl Grant {
         // TODO: O(n) readonly map with zeroed page, or O(1) no-op and then lazily map?
         // TODO: Use flush_all after a certain number of pages, otherwise no
 
-        let pages = try_box_slice_new(None, span.count)?;
+        let pages = try_box_slice_new(|| None, span.count)?;
 
         /*
         for page in span.pages() {
@@ -677,9 +750,10 @@ impl Grant {
         dst_mapper: &mut PageMapper,
         mut src_flusher: impl Flusher<RmmA>,
         mut dst_flusher: impl Flusher<RmmA>,
-        src_pages: &[Option<Arc<PageInfo>>],
+        src_pages: &[Option<PageInfo>],
     ) -> Result<Grant, Enomem> {
         let mut pages = try_new_vec_with_exact_size(page_count)?;
+        pages.resize_with(page_count, || None);
 
         /*
         for page_idx in 0..page_count {
@@ -737,7 +811,6 @@ impl Grant {
             unsafe {
                 // Lazy mappings don't require remapping, as info.flags will be updated.
                 let Some(result) = mapper.remap(page.start_address(), flags) else {
-                    log::info!("Skipping page {:?}", page);
                     continue;
                 };
                 log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing_address(mapper.translate(page.start_address()).unwrap().0));
@@ -750,21 +823,27 @@ impl Grant {
     pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
         assert!(self.info.mapped);
 
+        let is_cow = matches!(self.info.provider, Provider::External { cow: true, .. });
+
         for (page_idx, page) in self.span().pages().enumerate() {
+            match self.info.provider {
+                Provider::Allocated { ref mut pages } | Provider::External { pages: Some(ref mut pages), .. } => {
+                    let Some(page_info) = pages[page_idx].take().map(PageInfo::into_inner) else {
+                        continue;
+                    };
+                    if is_cow {
+                        // TODO: Ordering
+                        page_info.cow_refcount.fetch_sub(1, Ordering::Release);
+                    }
+                }
+                _ => (),
+            }
+
 
             // Lazy mappings do not need to be unmapped.
             let Some((entry, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address(), true) }) else {
                 continue;
             };
-
-            match self.info.provider {
-                Provider::Allocated { ref mut pages } => {
-                    if let Some(page_info) = pages[page_idx].take().and_then(|arc| Arc::try_unwrap(arc).ok()) {
-                        crate::memory::deallocate_frames(Frame::containing_address(entry), 1);
-                    }
-                }
-                _ => (),
-            }
 
             flusher.consume(flush);
         }
@@ -1039,15 +1118,28 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
 
     let frame = 'get_frame: {
         match grant_info.provider {
+            Provider::Allocated { ref mut pages } if access == AccessMode::Write => {
+                match pages[pages_from_grant_start].as_ref().and_then(PageInfo::try_get_exclusively) {
+                    Some(exclusively_owned) => exclusively_owned.phys.clone(),
+                    // TODO: Option::get_or_try_insert?
+                    None => {
+                        pages[pages_from_grant_start].insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?).phys.clone()
+                    }
+                }
+            }
+            // TODO: the zeroed page?
             Provider::Allocated { ref mut pages } => {
-                let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
-                pages[pages_from_grant_start] = Some(Arc::new(PageInfo { phys: new_frame.clone() }));
-                new_frame
+                match &pages[pages_from_grant_start] {
+                    Some(page_info) => page_info.phys.clone(),
+                    None => {
+                        pages[pages_from_grant_start].insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?).phys.clone()
+                    }
+                }
             }
             Provider::PhysBorrowed { ref base } => {
                 base.next_by(pages_from_grant_start)
             }
-            Provider::External { cow: false, address_space: ref foreign_address_space, ref src_base, ref mut pages } => {
+            Provider::External { cow, address_space: ref foreign_address_space, ref src_base, ref mut pages } => {
                 if let Some(page_info) = pages.as_ref().and_then(|pgs| pgs[pages_from_grant_start].as_ref()) {
                     break 'get_frame page_info.phys.clone();
                 }
@@ -1056,7 +1148,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                 let src_page = src_base.next_by(pages_from_grant_start);
 
                 let Some((_src_base, foreign_grant)) = guard.grants.contains(src_page) else {
-                    log::error!("Non-CoW foreign grant did not exist at specified offset.");
+                    log::error!("Foreign grant did not exist at specified offset.");
                     return Err(PfError::NonfatalInternalError);
                 };
 
@@ -1068,7 +1160,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                 };
 
                 let page_info = match &owner_pages[pages_from_grant_start] {
-                    Some(page) => Arc::clone(page),
+                    Some(page) => page.ref_clone(cow),
                     None => {
                         let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
@@ -1080,12 +1172,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                         };
                         let owner_pages_from_grant_start = src_page.offset_from(owner_base);
 
-                        // TODO: RaiiFrame?
-                        let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
-                        let page_info = Arc::try_new(PageInfo { phys: new_frame.clone() }).map_err(|_| PfError::Oom)?;
-                        owner_pages[owner_pages_from_grant_start] = Some(Arc::clone(&page_info));
-
-                        page_info
+                        owner_pages[owner_pages_from_grant_start].insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?).ref_clone(cow)
                     }
                 };
 
@@ -1093,13 +1180,12 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
 
                 (match pages {
                     Some(pgs) => pgs,
-                    None => pages.insert(try_box_slice_new(None, grant_info.page_count).map_err(|_| PfError::Oom)?),
+                    None => pages.insert(try_box_slice_new(|| None, grant_info.page_count).map_err(|_| PfError::Oom)?),
                 })[pages_from_grant_start] = Some(page_info);
 
                 frame
             }
             Provider::Fmap { ref desc } => todo!(),
-            Provider::External { cow: true, ref address_space, ref src_base, ref pages } => todo!(),
         }
     };
 

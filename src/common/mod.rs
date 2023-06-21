@@ -37,8 +37,8 @@ pub fn try_new_vec_with_exact_size<T>(len: usize) -> Result<Vec<T>, Enomem> {
     vec.try_reserve_exact(len).map_err(|_| Enomem)?;
     Ok(vec.into())
 }
-pub fn try_box_slice_new<T: Clone>(value: T, len: usize) -> Result<Box<[T]>, Enomem> {
+pub fn try_box_slice_new<T>(value: impl FnMut() -> T, len: usize) -> Result<Box<[T]>, Enomem> {
     let mut vec = try_new_vec_with_exact_size(len)?;
-    vec.resize(len, value);
+    vec.resize_with(len, value);
     Ok(vec.into())
 }
