@@ -126,11 +126,11 @@ impl AddrSpace {
 
         for grant_span in regions {
             let grant = self.grants.remove(grant_span.base).expect("grant cannot magically disappear while we hold the lock!");
-            log::info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
+            //log::info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
             let intersection = grant_span.intersection(requested_span);
 
             let (before, mut grant, after) = grant.extract(intersection).expect("failed to extract grant");
-            log::info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
+            //log::info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
 
             if let Some(before) = before { self.grants.insert(before); }
             if let Some(after) = after { self.grants.insert(after); }
@@ -150,7 +150,7 @@ impl AddrSpace {
             // think), execute-only memory is also supported.
 
             grant.remap(mapper, &mut flusher, new_flags);
-            log::info!("Mprotect grant become {:#?}", grant);
+            //log::info!("Mprotect grant became {:#?}", grant);
             self.grants.insert(grant);
         }
         Ok(())
@@ -588,6 +588,13 @@ impl PageInfo {
         (self.cow_refcount.load(Ordering::Acquire) == 1).then_some(&*self.arc)
     }
 
+    pub fn remove_ref(self, cow: bool) {
+        if cow {
+            self.cow_refcount.fetch_sub(1, Ordering::Release);
+        }
+        drop(self.into_inner());
+    }
+
     fn into_inner(mut self) -> Arc<PageInfoInner> {
         let arc = unsafe { ManuallyDrop::take(&mut self.arc) };
         core::mem::forget(self);
@@ -617,7 +624,7 @@ pub struct PageInfoInner {
 impl Drop for PageInfoInner {
     #[track_caller]
     fn drop(&mut self) {
-        assert_eq!(*self.cow_refcount.get_mut(), 1);
+        assert_eq!(*self.cow_refcount.get_mut(), 0);
     }
 }
 
@@ -739,7 +746,7 @@ impl Grant {
             },
         })
     }
-    // TODO: This is limited to one page. Should it be (if some magic new proc: API is introduced).
+    // TODO: This is limited to one page. Should it be (if some magic new proc: API is introduced)?
     pub fn cow(
         src_address_space: Arc<RwLock<AddrSpace>>,
         src_base: Page,
@@ -753,11 +760,9 @@ impl Grant {
         src_pages: &[Option<PageInfo>],
     ) -> Result<Grant, Enomem> {
         let mut pages = try_new_vec_with_exact_size(page_count)?;
-        pages.resize_with(page_count, || None);
 
-        /*
         for page_idx in 0..page_count {
-            let src_page_info = src_pages[page_idx].as_ref().map(Arc::clone);
+            let src_page_info = src_pages[page_idx].as_ref().map(|pg| pg.ref_clone(true));
             let phys = src_page_info.as_ref().map(|pg| pg.phys.start_address());
             pages.push(src_page_info);
 
@@ -780,7 +785,6 @@ impl Grant {
 
             dst_flusher.consume(map_result);
         }
-        */
 
         Ok(Grant {
             base: dst_base,
@@ -813,7 +817,7 @@ impl Grant {
                 let Some(result) = mapper.remap(page.start_address(), flags) else {
                     continue;
                 };
-                log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing_address(mapper.translate(page.start_address()).unwrap().0));
+                //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing_address(mapper.translate(page.start_address()).unwrap().0));
                 flusher.consume(result);
             }
         }
@@ -828,13 +832,11 @@ impl Grant {
         for (page_idx, page) in self.span().pages().enumerate() {
             match self.info.provider {
                 Provider::Allocated { ref mut pages } | Provider::External { pages: Some(ref mut pages), .. } => {
-                    let Some(page_info) = pages[page_idx].take().map(PageInfo::into_inner) else {
+                    let Some(page_info) = pages[page_idx].take() else {
                         continue;
                     };
-                    if is_cow {
-                        // TODO: Ordering
-                        page_info.cow_refcount.fetch_sub(1, Ordering::Release);
-                    }
+
+                    page_info.remove_ref(is_cow)
                 }
                 _ => (),
             }
@@ -1087,6 +1089,28 @@ pub enum PfError {
     NonfatalInternalError,
 }
 
+pub fn make_exclusive(page_slot: &mut Option<PageInfo>) -> Result<Frame, PfError> {
+    let old_page_opt = page_slot.take();
+    let new_page = page_slot.insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?);
+
+    if let Some(old_page) = old_page_opt {
+        unsafe { copy_frame_to_frame_directly(new_page.phys.clone(), old_page.phys.clone()); }
+        old_page.remove_ref(true);
+    }
+
+    Ok(new_page.phys.clone())
+}
+
+pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
+    // Optimized exact-page-size copy function?
+    let dst = unsafe { RmmA::phys_to_virt(dst.start_address()).data() as *mut u8 };
+    let src = unsafe { RmmA::phys_to_virt(src.start_address()).data() as *const u8 };
+
+    unsafe {
+        dst.copy_from_nonoverlapping(src, PAGE_SIZE);
+    }
+}
+
 pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Result<(), PfError> {
     let Ok(addr_space) = AddrSpace::current() else {
         log::warn!("User page fault without address space being set.");
@@ -1122,9 +1146,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                 match pages[pages_from_grant_start].as_ref().and_then(PageInfo::try_get_exclusively) {
                     Some(exclusively_owned) => exclusively_owned.phys.clone(),
                     // TODO: Option::get_or_try_insert?
-                    None => {
-                        pages[pages_from_grant_start].insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?).phys.clone()
-                    }
+                    None => make_exclusive(&mut pages[pages_from_grant_start])?,
                 }
             }
             // TODO: the zeroed page?
@@ -1140,37 +1162,51 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                 base.next_by(pages_from_grant_start)
             }
             Provider::External { cow, address_space: ref foreign_address_space, ref src_base, ref mut pages } => {
-                if let Some(page_info) = pages.as_ref().and_then(|pgs| pgs[pages_from_grant_start].as_ref()) {
-                    break 'get_frame page_info.phys.clone();
+                let pages = match pages {
+                    Some(pgs) => pgs,
+                    None => pages.insert(try_box_slice_new(|| None, grant_info.page_count).map_err(|_| PfError::Oom)?),
+                };
+
+                if let Some(page_info) = &pages[pages_from_grant_start] {
+                    // TODO: Deduplicate (kernel source) code?
+                    if !cow || access != AccessMode::Write {
+                        break 'get_frame page_info.phys.clone();
+                    } else {
+
+                        break 'get_frame make_exclusive(&mut pages[pages_from_grant_start])?;
+                    }
                 }
 
                 let guard = foreign_address_space.upgradeable_read();
                 let src_page = src_base.next_by(pages_from_grant_start);
 
-                let Some((_src_base, foreign_grant)) = guard.grants.contains(src_page) else {
+                let Some((owner_base, owner_grant)) = guard.grants.contains(src_page) else {
                     log::error!("Foreign grant did not exist at specified offset.");
                     return Err(PfError::NonfatalInternalError);
                 };
 
                 // TODO: Would nested grants provide any benefit?
                 // TODO: Use recursion?
-                let Provider::Allocated { pages: ref owner_pages } = foreign_grant.provider else {
+                let Provider::Allocated { pages: ref owner_pages } = owner_grant.provider else {
                     log::error!("Chained grants!");
                     return Err(PfError::NonfatalInternalError);
                 };
+                let owner_pages_from_grant_start = src_page.offset_from(owner_base);
 
-                let page_info = match &owner_pages[pages_from_grant_start] {
+                let page_info = match &owner_pages[owner_pages_from_grant_start] {
                     Some(page) => page.ref_clone(cow),
                     None => {
                         let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
-                        let (owner_base, owner_grant) = guard.grants.contains_mut(src_page)
+                        let (owner_base_again, owner_grant) = guard.grants.contains_mut(src_page)
                             .expect("grant cannot disappear without write lock having existed");
+
+                        debug_assert_eq!(owner_base, owner_base_again);
 
                         let Provider::Allocated { pages: ref mut owner_pages } = owner_grant.provider else {
                             unreachable!("cannot have changed in the meantime");
                         };
-                        let owner_pages_from_grant_start = src_page.offset_from(owner_base);
+                        debug_assert!(owner_pages[owner_pages_from_grant_start].is_none());
 
                         owner_pages[owner_pages_from_grant_start].insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?).ref_clone(cow)
                     }
@@ -1178,10 +1214,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
 
                 let frame = page_info.phys.clone();
 
-                (match pages {
-                    Some(pgs) => pgs,
-                    None => pages.insert(try_box_slice_new(|| None, grant_info.page_count).map_err(|_| PfError::Oom)?),
-                })[pages_from_grant_start] = Some(page_info);
+                pages[pages_from_grant_start] = Some(page_info);
 
                 frame
             }
@@ -1189,7 +1222,9 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
         }
     };
 
-    log::info!("Correcting {:?} => {:?} (base {:?} info {:?})", faulting_page, frame, grant_base, grant_info);
+    if super::context_id().into() == 3 {
+        log::info!("Correcting {:?} => {:?} (base {:?} info {:?})", faulting_page, frame, grant_base, grant_info);
+    }
     let Some(flush) = (unsafe { addr_space.table.utable.map_phys(faulting_page.start_address(), frame.start_address(), grant_flags) }) else {
         // TODO
         return Err(PfError::Oom);

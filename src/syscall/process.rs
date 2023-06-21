@@ -13,7 +13,7 @@ use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
 use crate::paging::mapper::{InactiveFlusher, PageFlushAll};
-use crate::paging::{Page, PageFlags, VirtualAddress};
+use crate::paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE};
 use crate::ptrace;
 use crate::start::usermode;
 use crate::syscall::data::SigAction;
@@ -593,8 +593,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
 
         // TODO: Mark as owned and then support reclaiming the memory to the allocator if
         // deallocated?
-        addr_space.grants.insert(context::memory::Grant::physmap(
-            bootstrap.base.clone(),
+        addr_space.grants.insert(context::memory::Grant::zeroed(
             PageSpan::new(
                 Page::containing_address(VirtualAddress::new(0)),
                 bootstrap.page_count,
@@ -603,7 +602,13 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
             &mut addr_space.table.utable,
             PageFlushAll::new(),
         ).expect("failed to physmap bootstrap memory"));
+
     }
+    // TODO: Not all arches do linear mapping
+    UserSliceWo::new(0, bootstrap.page_count * PAGE_SIZE)
+        .expect("failed to create bootstrap user slice")
+        .copy_from_slice(unsafe { crate::arch::bootstrap_mem(bootstrap) })
+        .expect("failed to copy memory to bootstrap");
 
     // Start in a minimal environment without any stack.
     usermode(bootstrap.entry, 0, 0, 0);

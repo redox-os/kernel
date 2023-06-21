@@ -159,6 +159,7 @@ pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faul
     let caused_by_kernel = !caused_by_user;
     let caused_by_write = code.contains(PageFaultError::WR);
     let caused_by_instr_fetch = code.contains(PageFaultError::ID);
+    let is_usercopy = usercopy_region.contains(&{ stack.iret.rip });
 
     let mode = match (caused_by_write, caused_by_instr_fetch) {
         (true, false) => AccessMode::Write,
@@ -172,7 +173,7 @@ pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faul
         return Err(Segv);
     }
 
-    if address_is_user {
+    if address_is_user && (caused_by_user || is_usercopy) {
         match try_correcting_page_tables(faulting_page, mode) {
             Ok(()) => return Ok(()),
             Err(PfError::Oom) => todo!("oom"),
@@ -181,7 +182,7 @@ pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faul
         }
     }
 
-    if address_is_user && caused_by_kernel && mode != AccessMode::InstrFetch && usercopy_region.contains(&{ stack.iret.rip }) {
+    if address_is_user && caused_by_kernel && mode != AccessMode::InstrFetch && is_usercopy {
         // We were inside a usercopy function that failed. This is handled by setting rax to a
         // nonzero value, and emulating the ret instruction.
         stack.scratch.rax = 1;
