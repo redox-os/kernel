@@ -108,7 +108,6 @@ enum RegsKind {
 }
 #[derive(Clone)]
 enum Operation {
-    Memory { addrspace: Arc<RwLock<AddrSpace>> },
     Regs(RegsKind),
     Trace,
     Static(&'static str),
@@ -151,18 +150,10 @@ enum Attr {
 }
 impl Operation {
     fn needs_child_process(&self) -> bool {
-        matches!(self, Self::Memory { .. } | Self::Regs(_) | Self::Trace | Self::Filetable { .. } | Self::AddrSpace { .. } | Self::CurrentAddrSpace | Self::CurrentFiletable | Self::Sigactions(_) | Self::CurrentSigactions | Self::AwaitingSigactionsChange(_))
+        matches!(self, Self::Regs(_) | Self::Trace | Self::Filetable { .. } | Self::AddrSpace { .. } | Self::CurrentAddrSpace | Self::CurrentFiletable | Self::Sigactions(_) | Self::CurrentSigactions | Self::AwaitingSigactionsChange(_))
     }
     fn needs_root(&self) -> bool {
         matches!(self, Self::Attr(_))
-    }
-}
-struct MemData {
-    offset: VirtualAddress,
-}
-impl Default for MemData {
-    fn default() -> Self {
-        Self { offset: VirtualAddress::new(0) }
     }
 }
 #[derive(Default)]
@@ -182,7 +173,6 @@ impl StaticData {
     }
 }
 enum OperationData {
-    Memory(MemData),
     Trace(TraceData),
     Static(StaticData),
     Offset(usize),
@@ -192,12 +182,6 @@ impl OperationData {
     fn trace_data(&mut self) -> Option<&mut TraceData> {
         match self {
             OperationData::Trace(data) => Some(data),
-            _ => None,
-        }
-    }
-    fn mem_data(&mut self) -> Option<&mut MemData> {
-        match self {
-            OperationData::Memory(data) => Some(data),
             _ => None,
         }
     }
@@ -285,7 +269,6 @@ fn get_context(id: ContextId) -> Result<Arc<RwLock<Context>>> {
 impl ProcScheme {
     fn open_inner(&self, pid: ContextId, operation_str: Option<&str>, flags: usize, uid: u32, gid: u32) -> Result<usize> {
         let operation = match operation_str {
-            Some("mem") => Operation::Memory { addrspace: Arc::clone(get_context(pid)?.read().addr_space().map_err(|_| Error::new(ENOENT))?) },
             Some("addrspace") => Operation::AddrSpace { addrspace: Arc::clone(get_context(pid)?.read().addr_space().map_err(|_| Error::new(ENOENT))?) },
             Some("filetable") => Operation::Filetable { filetable: Arc::clone(&get_context(pid)?.read().files) },
             Some("current-addrspace") => Operation::CurrentAddrSpace,
@@ -316,7 +299,6 @@ impl ProcScheme {
             let target = target.read();
 
             data = match operation {
-                Operation::Memory { .. } => OperationData::Memory(MemData::default()),
                 Operation::Trace => OperationData::Trace(TraceData::default()),
                 Operation::Static(_) => OperationData::Static(StaticData::new(
                     target.name.clone().into_owned().into_bytes().into()
@@ -579,17 +561,6 @@ impl Scheme for ProcScheme {
         self.open_inner(pid, parts.next(), flags, uid, gid)
     }
 
-
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
-        let mut handles = self.handles.write();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-        let mut memory = handle.data.mem_data().ok_or(Error::new(EBADF))?;
-
-        let value = calc_seek_offset_usize(memory.offset.data(), pos, whence, isize::max_value() as usize)?;
-        memory.offset = VirtualAddress::new(value as usize);
-        Ok(value)
-    }
-
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         let mut handles = self.handles.write();
         let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -655,7 +626,7 @@ impl Scheme for ProcScheme {
                 })?;
                 let _ = ptrace::send_event(crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0));
             }
-            Operation::AddrSpace { addrspace } | Operation::Memory { addrspace } | Operation::MmapMinAddr(addrspace) => maybe_cleanup_addr_space(addrspace),
+            Operation::AddrSpace { addrspace } | Operation::MmapMinAddr(addrspace) => maybe_cleanup_addr_space(addrspace),
 
             Operation::AwaitingFiletableChange(new) => with_context_mut(handle.info.pid, |context: &mut Context| {
                 context.files = new;
@@ -688,7 +659,7 @@ impl Scheme for ProcScheme {
 }
 impl KernelScheme for ProcScheme {
     fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
-        if let Operation::AddrSpace { ref addrspace } | Operation::Memory { ref addrspace } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
+        if let Operation::AddrSpace { ref addrspace } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
             Ok(Arc::clone(addrspace))
         } else {
             Err(Error::new(EBADF))
@@ -784,29 +755,6 @@ impl KernelScheme for ProcScheme {
                 let len = buf.copy_common_bytes_from_slice(src_buf)?;
                 data.offset += len;
                 Ok(len)
-            },
-            Operation::Memory { addrspace } => {
-                // Won't context switch, don't worry about the locks
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.mem_data().expect("operations can't change");
-
-                let mut bytes_read = 0;
-
-                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
-                    let (chunk, _writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
-                    buf.advance(bytes_read).and_then(|buf| buf.limit(chunk.len())).ok_or(Error::new(EINVAL))?.copy_from_slice(unsafe { &*chunk })?;
-                    /*
-                    let dst_slice = &mut buf[bytes_read..bytes_read + chunk.len()];
-                    unsafe {
-                        chunk.as_mut_ptr().copy_to_nonoverlapping(dst_slice.as_mut_ptr(), dst_slice.len());
-                    }
-                    */
-                    bytes_read += chunk.len();
-                }
-
-                data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
-                Ok(bytes_read)
             },
             Operation::Regs(kind) => {
                 union Output {
@@ -935,28 +883,6 @@ impl KernelScheme for ProcScheme {
 
         match info.operation {
             Operation::Static(_) => Err(Error::new(EBADF)),
-            Operation::Memory { addrspace } => {
-                // Won't context switch, don't worry about the locks
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.mem_data().expect("operations can't change");
-
-                let mut bytes_written = 0;
-
-                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
-                    let (chunk, writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
-
-                    if !writable { return Err(Error::new(EACCES)); }
-
-                    buf.advance(bytes_written).and_then(|buf| buf.limit(chunk.len())).ok_or(Error::new(EINVAL))?
-                        .copy_to_slice(unsafe { &mut *chunk })?;
-
-                    bytes_written += chunk.len();
-                }
-
-                data.offset = data.offset.add(bytes_written);
-                Ok(bytes_written)
-            },
             Operation::AddrSpace { addrspace } => {
                 let mut chunks = buf.usizes();
                 let mut words_read = 0;
@@ -1153,7 +1079,6 @@ impl KernelScheme for ProcScheme {
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.info.operation {
-            Operation::Memory { .. } => "mem",
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
             Operation::Regs(RegsKind::Env) => "regs/env",
@@ -1240,18 +1165,17 @@ impl KernelScheme for ProcScheme {
             Operation::AddrSpace { ref addrspace } => {
                 let addrspace_clone = Arc::clone(addrspace);
 
-                let (operation, is_mem) = match buf {
+                let operation = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
-                    b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
-                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone(addrspace_clone)? }, false),
-                    b"mem" => (Operation::Memory { addrspace: Arc::clone(addrspace) }, true),
-                    b"mmap-min-addr" => (Operation::MmapMinAddr(Arc::clone(addrspace)), false),
+                    b"empty" => Operation::AddrSpace { addrspace: new_addrspace()? },
+                    b"exclusive" => Operation::AddrSpace { addrspace: addrspace.write().try_clone(addrspace_clone)? },
+                    b"mmap-min-addr" => Operation::MmapMinAddr(Arc::clone(addrspace)),
 
                     _ => return Err(Error::new(EINVAL)),
                 };
 
-                handle(operation, if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Offset(0) })
+                handle(operation, OperationData::Offset(0))
             }
             Operation::Sigactions(ref sigactions) => {
                 let new = match buf {
