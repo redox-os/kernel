@@ -91,15 +91,16 @@ pub fn open(path: &str, flags: usize) -> Result<FileHandle> {
 
 pub fn pipe2(fds: &mut [usize], flags: usize) -> Result<usize> {
     if fds.len() < 2 {
-        return Err(Error::new(EFAULT));
+        return Err(Error::new(EINVAL));
     }
 
-    let scheme_id = crate::scheme::pipe::pipe_scheme_id().ok_or(Error::new(ENODEV))?;
-    let (read_id, write_id) = crate::scheme::pipe::pipe(flags);
+    let scheme_id = crate::scheme::pipe::pipe_scheme_id();
+    let (read_id, write_id) = crate::scheme::pipe::pipe(flags)?;
 
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+    let context_lock = context::current()?;
     let context = context_lock.read();
+
+    //log::warn!("Context {} used deprecated pipe2.", context.name);
 
     let read_fd = context.add_file(FileDescriptor {
         description: Arc::new(RwLock::new(FileDescription {

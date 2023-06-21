@@ -106,7 +106,7 @@ impl<'a> Iterator for SchemeIter<'a> {
 
 /// Scheme list type
 pub struct SchemeList {
-    map: BTreeMap<SchemeId, Arc<dyn KernelScheme + Send + Sync>>,
+    map: BTreeMap<SchemeId, Arc<dyn KernelScheme>>,
     names: BTreeMap<SchemeNamespace, BTreeMap<Box<str>, SchemeId>>,
     next_ns: usize,
     next_id: usize
@@ -136,6 +136,7 @@ impl SchemeList {
         //anonymous mmap's are implemented
         self.insert(ns, "memory", |_| Arc::new(MemoryScheme::new())).unwrap();
         self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();
+        self.insert(ns, "pipe", |scheme_id| PipeScheme::new(scheme_id)).unwrap();
     }
 
     /// Initialize a new namespace
@@ -148,6 +149,7 @@ impl SchemeList {
         self.insert(ns, "event", |_| Arc::new(EventScheme)).unwrap();
         self.insert(ns, "itimer", |_| Arc::new(ITimerScheme::new())).unwrap();
         self.insert(ns, "memory", |_| Arc::new(MemoryScheme::new())).unwrap();
+        self.insert(ns, "pipe", |scheme_id| PipeScheme::new(scheme_id)).unwrap();
         self.insert(ns, "sys", |_| Arc::new(SysScheme::new())).unwrap();
         self.insert(ns, "time", |scheme_id| Arc::new(TimeScheme::new(scheme_id))).unwrap();
 
@@ -172,9 +174,6 @@ impl SchemeList {
         if let Some(scheme) = self::live::DiskScheme::new().map(Arc::new) {
             self.insert(ns, "disk/live", move |_| scheme.clone()).unwrap();
         }
-
-        // Pipe is special and needs to be in the root namespace
-        self.insert(ns, "pipe", |scheme_id| Arc::new(PipeScheme::new(scheme_id))).unwrap();
     }
 
     pub fn make_ns(&mut self, from: SchemeNamespace, names: &[&str]) -> Result<SchemeNamespace> {
@@ -199,7 +198,7 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<dyn KernelScheme + Send + Sync>> {
+    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<dyn KernelScheme>> {
         self.map.iter()
     }
 
@@ -210,11 +209,11 @@ impl SchemeList {
     }
 
     /// Get the nth scheme.
-    pub fn get(&self, id: SchemeId) -> Option<&Arc<dyn KernelScheme + Send + Sync>> {
+    pub fn get(&self, id: SchemeId) -> Option<&Arc<dyn KernelScheme>> {
         self.map.get(&id)
     }
 
-    pub fn get_name(&self, ns: SchemeNamespace, name: &str) -> Option<(SchemeId, &Arc<dyn KernelScheme + Send + Sync>)> {
+    pub fn get_name(&self, ns: SchemeNamespace, name: &str) -> Option<(SchemeId, &Arc<dyn KernelScheme>)> {
         if let Some(names) = self.names.get(&ns) {
             if let Some(&id) = names.get(name) {
                 return self.get(id).map(|scheme| (id, scheme));
@@ -225,7 +224,7 @@ impl SchemeList {
 
     /// Create a new scheme.
     pub fn insert<F>(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: F) -> Result<SchemeId>
-        where F: Fn(SchemeId) -> Arc<dyn KernelScheme + Send + Sync>
+        where F: Fn(SchemeId) -> Arc<dyn KernelScheme>
     {
         if let Some(names) = self.names.get(&ns) {
             if names.contains_key(name) {
