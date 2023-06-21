@@ -123,9 +123,11 @@ impl AddrSpace {
 
         for grant_span in regions {
             let grant = self.grants.remove(grant_span.base).expect("grant cannot magically disappear while we hold the lock!");
+            log::info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
             let intersection = grant_span.intersection(requested_span);
 
             let (before, mut grant, after) = grant.extract(intersection).expect("failed to extract grant");
+            log::info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
 
             if let Some(before) = before { self.grants.insert(before); }
             if let Some(after) = after { self.grants.insert(after); }
@@ -145,6 +147,7 @@ impl AddrSpace {
             // think), execute-only memory is also supported.
 
             grant.remap(mapper, &mut flusher, new_flags);
+            log::info!("Mprotect grant become {:#?}", grant);
             self.grants.insert(grant);
         }
         Ok(())
@@ -678,6 +681,7 @@ impl Grant {
     ) -> Result<Grant, Enomem> {
         let mut pages = try_new_vec_with_exact_size(page_count)?;
 
+        /*
         for page_idx in 0..page_count {
             let src_page_info = src_pages[page_idx].as_ref().map(Arc::clone);
             let phys = src_page_info.as_ref().map(|pg| pg.phys.start_address());
@@ -702,6 +706,7 @@ impl Grant {
 
             dst_flusher.consume(map_result);
         }
+        */
 
         Ok(Grant {
             base: dst_base,
@@ -732,8 +737,10 @@ impl Grant {
             unsafe {
                 // Lazy mappings don't require remapping, as info.flags will be updated.
                 let Some(result) = mapper.remap(page.start_address(), flags) else {
+                    log::info!("Skipping page {:?}", page);
                     continue;
                 };
+                log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing_address(mapper.translate(page.start_address()).unwrap().0));
                 flusher.consume(result);
             }
         }
@@ -793,24 +800,63 @@ impl Grant {
     pub fn extract(mut self, span: PageSpan) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
         let (before_span, this_span, after_span) = self.span().slice(span);
 
+        let mut pages = match self.info.provider {
+            Provider::External { pages: Some(ref mut pages), .. } | Provider::Allocated { ref mut pages } => core::mem::take(pages).into(),
+            _ => Vec::new(),
+        };
+        let mut pages_iter = pages.drain(..);
+
         let before_grant = before_span.map(|span| Grant {
             base: span.base,
             info: GrantInfo {
                 flags: self.info.flags,
                 mapped: self.info.mapped,
                 page_count: span.count,
-                provider: todo!(),
+                provider: match self.info.provider {
+                    Provider::Fmap { .. } => todo!(),
+                    Provider::External { ref address_space, ref src_base, cow, pages: ref original_pages } => Provider::External {
+                        address_space: Arc::clone(address_space),
+                        src_base: src_base.clone(),
+                        cow,
+                        pages: original_pages.is_some().then(|| pages_iter.by_ref().take(span.count).collect::<Vec<_>>().into()),
+                    },
+                    Provider::Allocated { .. } => Provider::Allocated { pages: pages_iter.by_ref().take(span.count).collect::<Vec<_>>().into() },
+                    Provider::PhysBorrowed { ref base } => Provider::PhysBorrowed { base: base.clone() },
+                }
             },
         });
+
+        match self.info.provider {
+            Provider::Fmap { .. } => todo!(),
+
+            Provider::PhysBorrowed { ref mut base } => *base = base.next_by(before_grant.as_ref().map_or(0, |g| g.info.page_count)),
+            Provider::Allocated { ref mut pages } | Provider::External { pages: Some(ref mut pages), .. } => *pages = pages_iter.by_ref().take(this_span.count).collect::<Vec<_>>().into(),
+            Provider::External { pages: None, .. } => (),
+        }
+
+
         let after_grant = after_span.map(|span| Grant {
             base: span.base,
             info: GrantInfo {
                 flags: self.info.flags,
                 mapped: self.info.mapped,
                 page_count: span.count,
-                provider: todo!(),
+                provider: match self.info.provider {
+                    Provider::Fmap { .. } => todo!(),
+
+                    Provider::Allocated { ref mut pages } => Provider::Allocated { pages: pages_iter.collect::<Vec<_>>().into() },
+                    Provider::External { ref address_space, ref src_base, cow, pages: ref original_pages } => Provider::External {
+                        address_space: Arc::clone(address_space),
+                        src_base: src_base.clone(),
+                        cow,
+                        pages: original_pages.is_some().then(|| pages_iter.collect::<Vec<_>>().into()),
+                    },
+
+                    Provider::PhysBorrowed { ref base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
+                }
             },
         });
+
         self.base = this_span.base;
         self.info.page_count = this_span.count;
 
@@ -836,16 +882,19 @@ impl GrantInfo {
     }
 
     pub fn can_be_merged_if_adjacent(&self, with: &Self) -> bool {
-        /*
-        match (&self.desc_opt, &with.desc_opt) {
-            (None, None) => (),
-            (Some(ref a), Some(ref b)) if Arc::ptr_eq(&a.desc.description, &b.desc.description) => (),
-
-            _ => return false,
+        if self.mapped != with.mapped || self.flags.data() != with.flags.data() {
+            return false;
         }
-        self.owned == with.owned && self.mapped == with.mapped && self.flags.data() == with.flags.data()
-        */
-        todo!()
+
+        match (&self.provider, &with.provider) {
+            (Provider::Fmap { .. }, Provider::Fmap { .. }) => todo!(),
+            //(Provider::PhysBorrowed { base: ref lhs }, Provider::PhysBorrowed { base: ref rhs }) => lhs.next_by(self.page_count) == rhs.clone(),
+            // TODO: Add merge function that merges the page array.
+            //(Provider::Allocated { .. }, Provider::Allocated { .. }) => true,
+            //(Provider::External { address_space: ref lhs_space, src_base: ref lhs_base, cow: lhs_cow, .. }, Provider::External { address_space: ref rhs_space, src_base: ref rhs_base, cow: rhs_cow, .. }) => Arc::ptr_eq(lhs_space, rhs_space) && lhs_cow == rhs_cow && lhs_base.next_by(self.page_count) == rhs_base.clone(),
+
+            _ => false,
+        }
     }
 }
 
