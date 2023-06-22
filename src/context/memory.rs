@@ -205,11 +205,16 @@ impl AddrSpace {
         }
     }
     pub fn mmap(&mut self, page: Option<Page>, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
+        self.mmap_multiple(page, page_count, flags, move |page, flags, mapper, flusher| Ok(Some(map(page, flags, mapper, flusher)?)))
+    }
+    pub fn mmap_multiple<I: IntoIterator<Item = Grant>>(&mut self, page: Option<Page>, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<I>) -> Result<Page> {
         // Finally, the end of all "T0DO: Abstract with other grant creation"!
         let selected_span = self.grants.find_free_at(self.mmap_min, page, page_count.get(), flags)?;
 
         // TODO: Threads share address spaces, so not only the inactive flusher should be sending
-        // out IPIs.
+        // out IPIs. IPIs will only be sent when downgrading mappings (i.e. when a stale TLB entry
+        // will not be corrected by a page fault), and will furthermore require proper
+        // synchronization.
         let (mut active, mut inactive);
         let flusher = if self.is_current() {
             active = PageFlushAll::new();
@@ -219,7 +224,10 @@ impl AddrSpace {
             &mut inactive as &mut dyn Flusher<RmmA>
         };
 
-        self.grants.insert(map(selected_span.base, page_flags(flags), &mut self.table.utable, flusher)?);
+        let iter = map(selected_span.base, page_flags(flags), &mut self.table.utable, flusher)?;
+        for grant in iter {
+            self.grants.insert(grant);
+        }
 
         Ok(selected_span.base)
     }
@@ -401,6 +409,7 @@ impl UserGrants {
                 return Err(Error::new(EEXIST));
             }
             if flags.contains(MapFlags::MAP_FIXED) {
+                // TODO: find_free_at -> Result<(PageSpan, needs_to_unmap: PageSpan)>
                 return Err(Error::new(EOPNOTSUPP));
             } else {
                 // TODO: Find grant close to requested address?
@@ -703,7 +712,13 @@ impl Grant {
         })
     }
 
-    // TODO: Return multiple grants.
+    // TODO: Do not return Vec, return an iterator perhaps? Referencing the source address space?
+
+    /// Borrow all pages in the range `[src_base, src_base+page_count)` from `src_address_space`,
+    /// mapping them into `[dst_base, dst_base+page_count)`. While the pages are borrowed,
+    /// subsequent mappings/mprotects/etc. will not be visible in the destination address space;
+    /// the *pages present at that time* are borrowed, rather than the source range permanently, by
+    /// reference.
     pub fn borrow(
         src_address_space_lock: Arc<RwLock<AddrSpace>>,
         src_address_space: &AddrSpace,
@@ -714,7 +729,7 @@ impl Grant {
         dst_mapper: &mut PageMapper,
         dst_flusher: impl Flusher<RmmA>,
         eager: bool,
-    ) -> Result<Grant, Enomem> {
+    ) -> Result<Vec<Grant>, Enomem> {
         /*
         if eager {
             for page in PageSpan::new(src_base, page_count) {
@@ -723,20 +738,40 @@ impl Grant {
         }
         */
 
-        Ok(Grant {
-            base: dst_base,
-            info: GrantInfo {
-                page_count,
-                flags,
-                mapped: true,
-                provider: Provider::External {
-                    src_base,
-                    address_space: src_address_space_lock,
-                    cow: false,
-                    pages: None,
-                }
-            },
-        })
+        let mut dst_grants = Vec::with_capacity(1);
+
+        let src_span = PageSpan::new(src_base, page_count);
+
+        for (src_base, src_grant) in src_address_space.grants.conflicts(src_span) {
+            let grant_span = PageSpan::new(src_base, src_grant.page_count);
+
+            let common_span = src_span.intersection(grant_span);
+            let offset_from_src_base = common_span.base.offset_from(src_base);
+
+            dst_grants.push(Grant {
+                base: dst_base.next_by(offset_from_src_base),
+                info: GrantInfo {
+                    page_count: common_span.count,
+                    flags,
+                    mapped: true,
+                    provider: match src_grant.provider {
+                        Provider::Allocated { ref pages } => Provider::External {
+                            src_base,
+                            address_space: Arc::clone(&src_address_space_lock),
+                            cow: false,
+                            pages: None,
+                        },
+                        Provider::PhysBorrowed { base: src_phys_base } => Provider::PhysBorrowed {
+                            base: src_phys_base.next_by(offset_from_src_base),
+                        },
+                        Provider::Fmap { .. } => todo!(),
+                        Provider::External { ref address_space, src_base, cow, ref pages } => Provider::External { address_space: Arc::clone(address_space), src_base, cow, pages: pages.as_ref().map(|pages| pages.iter().map(|pg| pg.as_ref().map(|pg| pg.ref_clone(false))).collect::<Vec<_>>().into()) },
+                    }
+                },
+            });
+        }
+
+        Ok(dst_grants)
     }
     // TODO: This is limited to one page. Should it be (if some magic new proc: API is introduced)?
     pub fn cow(

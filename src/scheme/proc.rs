@@ -687,9 +687,6 @@ impl KernelScheme for ProcScheme {
                 if Arc::ptr_eq(addrspace, dst_addr_space) {
                     return Err(Error::new(EBUSY));
                 }
-                /*
-                // Limit to transferring/borrowing at most one grant, or part of a grant (splitting
-                // will be mandatory if grants are coalesced).
 
                 let (requested_dst_page, page_count) = crate::syscall::validate_region(map.address, map.size)?;
                 let (src_page, _) = crate::syscall::validate_region(map.offset, map.size)?;
@@ -718,7 +715,7 @@ impl KernelScheme for ProcScheme {
                 let src_mapper = &mut src_addr_space.table.utable;
                 let src_page_count = NonZeroUsize::new(src_grant_span.count).ok_or(Error::new(EINVAL))?;
 
-                let result_page = if consume {
+                let result_base = if consume {
                     let grant = src_addr_space.grants.remove(src_grant_span.base).expect("grant cannot disappear");
                     let (before, middle, after) = grant.extract(src_grant_span).expect("called intersect(), must succeed");
 
@@ -727,12 +724,10 @@ impl KernelScheme for ProcScheme {
 
                     dst_addr_space.mmap(requested_dst_page, src_page_count, map.flags, |dst_page, _flags, dst_mapper, dst_flusher| Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher))?
                 } else {
-                    dst_addr_space.mmap(requested_dst_page, src_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(src_grant_span.base, dst_page, src_grant_span.count, flags, None, src_mapper, dst_mapper, flusher)?))?
+                    dst_addr_space.mmap_multiple(requested_dst_page, src_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Arc::clone(addrspace), src_addr_space, src_grant_span.base, dst_page, src_grant_span.count, flags, dst_mapper, flusher, true)?))?
                 };
-                */
 
-                //Ok(result_page.start_address().data())
-                todo!()
+                Ok(result_base.start_address().data())
             }
             _ => Err(Error::new(EBADF)),
         }
