@@ -2,7 +2,7 @@ use core::{
     cmp,
     mem,
     slice,
-    sync::atomic::{self, AtomicUsize, Ordering},
+    sync::atomic::{self, AtomicUsize, Ordering}, cell::SyncUnsafeCell,
 };
 use rmm::{
     KILOBYTE,
@@ -102,7 +102,7 @@ unsafe fn inner<A: Arch>(
             }
         }
 
-        // Map kernel at KERNEL_OFFSET and identity map too
+        // Map kernel at KERNEL_OFFSET and map linearly too
         for i in 0..kernel_size_aligned / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(kernel_base + i * A::PAGE_SIZE);
             let virt = VirtualAddress::new(crate::KERNEL_OFFSET + i * A::PAGE_SIZE);
@@ -226,10 +226,18 @@ impl core::fmt::Debug for LockedAllocator {
     }
 }
 
-static mut AREAS: [MemoryArea; 512] = [MemoryArea {
+static AREAS: SyncUnsafeCell<[MemoryArea; 512]> = SyncUnsafeCell::new([MemoryArea {
     base: PhysicalAddress::new(0),
     size: 0,
-}; 512];
+}; 512]);
+static AREA_COUNT: SyncUnsafeCell<u16> = SyncUnsafeCell::new(0);
+
+pub fn areas() -> &'static [MemoryArea] {
+    // SAFETY: Both AREAS and AREA_COUNT are initialized once and then never changed.
+    //
+    // TODO: Memory hotplug?
+    unsafe { &(&*AREAS.get())[..AREA_COUNT.get().read().into()] }
+}
 
 pub static FRAME_ALLOCATOR: LockedAllocator = LockedAllocator;
 
@@ -420,13 +428,15 @@ pub unsafe fn init(
             continue;
         }
 
-        AREAS[area_i].base = PhysicalAddress::new(base);
-        AREAS[area_i].size = size;
+        let areas = &mut *AREAS.get();
+        areas[area_i].base = PhysicalAddress::new(base);
+        areas[area_i].size = size;
         area_i += 1;
     }
+    AREA_COUNT.get().write(area_i as u16);
 
     let allocator = inner::<A>(
-        &AREAS,
+        areas(),
         kernel_base, kernel_size_aligned,
         stack_base, stack_size_aligned,
         env_base, env_size_aligned,

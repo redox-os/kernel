@@ -7,7 +7,7 @@ use core::cell::Cell;
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::allocator;
+use crate::{allocator, memory};
 #[cfg(feature = "acpi")]
 use crate::acpi;
 use crate::arch::pti;
@@ -262,6 +262,8 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
         // Initialize devices (for AP)
         device::init_ap();
+
+        memory::init_mm();
 
         AP_READY.store(true, Ordering::SeqCst);
 

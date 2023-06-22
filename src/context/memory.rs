@@ -529,17 +529,11 @@ pub struct GrantInfo {
     pub(crate) provider: Provider,
 }
 
-/// The arch-specific user page tables are throwaway, and this enum contains all required
-/// information to update lazy mappings in the event of page faults.
 #[derive(Debug)]
 pub enum Provider {
     /// The grant was initialized with (lazy) zeroed memory, and any changes will make it owned by
     /// the frame allocator.
-    //
-    // TODO: strong-count-only Arc?
-    //
-    // https://internals.rust-lang.org/t/pre-rfc-rc-and-arc-with-only-strong-count/5828
-    Allocated { pages: Box<[Option<PageInfo>]> },
+    Allocated,
     /// The grant is not owned, but borrowed from physical memory frames that do not belong to the
     /// frame allocator.
     PhysBorrowed { base: Frame },
@@ -547,7 +541,7 @@ pub enum Provider {
     ///
     /// All grants in the specified range must be of type Allocated.
     // TODO: Vec?
-    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, cow: bool, pages: Option<Box<[Option<PageInfo>]>> },
+    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, cow: bool },
     /// The memory is borrowed from another address space, but managed by a scheme via fmap.
     // TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the
     // ~~context~~ address space?
