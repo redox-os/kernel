@@ -4,7 +4,7 @@
 use core::cmp;
 use core::num::NonZeroUsize;
 use core::ops::Deref;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
@@ -190,19 +190,23 @@ impl Drop for RaiiFrame {
 }
 
 pub struct PageInfo {
-    refcount: AtomicUsize,
-    cow_refcount: AtomicUsize,
-    flags: FrameFlags,
+    pub refcount: AtomicUsize,
+    pub cow_refcount: AtomicUsize,
+    // TODO: AtomicFlags?
+    pub flags: FrameFlags,
     _padding: usize,
 }
 bitflags::bitflags! {
-    struct FrameFlags: usize {
+    pub struct FrameFlags: usize {
         const NONE = 0;
     }
 }
 
 // TODO: Very read-heavy RwLock?
-pub static SECTIONS: RwLock<Box<[&'static Section]>> = RwLock::new(Box::new([]));
+//
+// XXX: Is it possible to safely initialize an empty boxed slice from a const context?
+//pub static SECTIONS: RwLock<Box<[&'static Section]>> = RwLock::new(Box::new([]));
+pub static SECTIONS: RwLock<Vec<&'static Section>> = RwLock::new(Vec::new());
 
 pub struct Section {
     base: Frame,
@@ -227,7 +231,7 @@ pub fn init_mm() {
 
             sections.push(Box::leak(Box::new(Section {
                 base,
-                // TODO: zeroed?
+                // TODO: zeroed rather than PageInfo::new()?
                 frames: try_box_slice_new(PageInfo::new, section_page_count).expect("failed to allocate pages array"),
             })) as &'static Section);
 
@@ -237,8 +241,9 @@ pub fn init_mm() {
     }
 
     sections.sort_unstable_by_key(|s| s.base);
+    sections.shrink_to_fit();
 
-    *guard = sections.into_boxed_slice();
+    *guard = sections;
 }
 impl PageInfo {
     pub fn new() -> Self {
@@ -249,8 +254,16 @@ impl PageInfo {
             _padding: 0,
         }
     }
+    pub fn remove_ref(&self, cow: bool) {
+        if cow {
+            self.cow_refcount.fetch_sub(1, Ordering::Relaxed);
+        }
+        self.refcount.fetch_sub(1, Ordering::Relaxed);
+
+        core::sync::atomic::fence(Ordering::Release);
+    }
 }
-pub fn get_page(frame: Frame) -> Option<&'static PageInfo> {
+pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
     let sections = SECTIONS.read();
 
     let idx = sections
