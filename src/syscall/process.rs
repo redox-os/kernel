@@ -112,24 +112,18 @@ pub fn exit(status: usize) -> ! {
                 let mut context = context_lock.write();
                 if context.ppid == pid {
                     context.ppid = ppid;
-                    context.vfork = false;
                 }
             }
         }
 
-        let (vfork, children) = {
+        let children = {
             let mut context = context_lock.write();
 
             context = empty(&context_lock, context, false);
 
-            let vfork = context.vfork;
-            context.vfork = false;
-
             context.status = context::Status::Exited(status);
 
-            let children = context.waitpid.receive_all();
-
-            (vfork, children)
+            context.waitpid.receive_all()
         };
 
         {
@@ -137,9 +131,6 @@ pub fn exit(status: usize) -> ! {
             if let Some(parent_lock) = contexts.get(ppid) {
                 let waitpid = {
                     let mut parent = parent_lock.write();
-                    if vfork && ! parent.unblock() {
-                        println!("{}: {} not blocked for exit vfork unblock", pid.into(), ppid.into());
-                    }
                     Arc::clone(&parent.waitpid)
                 };
 
@@ -151,8 +142,6 @@ pub fn exit(status: usize) -> ! {
                     pid: Some(pid),
                     pgid: Some(pgid)
                 }, (pid, status));
-            } else {
-                println!("{}: {} not found for exit vfork unblock", pid.into(), ppid.into());
             }
         }
 

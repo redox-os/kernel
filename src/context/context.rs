@@ -218,8 +218,6 @@ pub struct Context {
     /// Tail buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
     pub syscall_tail: Option<RaiiFrame>,
-    /// Context is halting parent
-    pub vfork: bool,
     /// Context is being waited on
     pub waitpid: Arc<WaitMap<WaitpidKey, (ContextId, usize)>>,
     /// Context should handle pending signals
@@ -292,7 +290,6 @@ impl Context {
             syscall: None,
             syscall_head: Some(RaiiFrame::allocate()?),
             syscall_tail: Some(RaiiFrame::allocate()?),
-            vfork: false,
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),
             wake: None,
