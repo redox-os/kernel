@@ -193,7 +193,7 @@ impl Drop for RaiiFrame {
 #[derive(Debug)]
 pub struct PageInfo {
     pub refcount: AtomicUsize,
-    pub cow_refcount: AtomicUsize,
+    pub borrowed_refcount: AtomicUsize,
     // TODO: AtomicFlags?
     pub flags: FrameFlags,
     pub _padding: usize,
@@ -252,26 +252,29 @@ impl PageInfo {
     pub fn new() -> Self {
         Self {
             refcount: AtomicUsize::new(0),
-            cow_refcount: AtomicUsize::new(0),
+            borrowed_refcount: AtomicUsize::new(0),
             flags: FrameFlags::NONE,
             _padding: 0,
         }
     }
     pub fn add_ref(&self, cow: bool) {
-        if cow {
-            self.cow_refcount.fetch_add(1, Ordering::Relaxed);
+        if !cow {
+            self.borrowed_refcount.fetch_add(1, Ordering::Relaxed);
         }
         self.refcount.fetch_add(1, Ordering::Relaxed);
 
         core::sync::atomic::fence(Ordering::Release);
     }
     pub fn remove_ref(&self, cow: bool) {
-        if cow {
-            self.cow_refcount.fetch_sub(1, Ordering::Relaxed);
+        if !cow {
+            self.borrowed_refcount.fetch_sub(1, Ordering::Relaxed);
         }
         self.refcount.fetch_sub(1, Ordering::Relaxed);
 
         core::sync::atomic::fence(Ordering::Release);
+    }
+    pub fn owned_refcount(&self) -> usize {
+        self.refcount.load(Ordering::SeqCst) - self.borrowed_refcount.load(Ordering::SeqCst)
     }
 }
 pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
