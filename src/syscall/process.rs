@@ -25,44 +25,6 @@ use crate::syscall::ptrace_event;
 
 use super::usercopy::{UserSliceWo, UserSliceRo};
 
-fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGuard<'lock, Context>, reaping: bool) -> RwLockWriteGuard<'lock, Context> {
-    // NOTE: If we do not replace the grants `Arc`, then a strange situation can appear where the
-    // main thread and another thread exit simultaneously before either one is reaped. If that
-    // happens, then the last context that runs exit will think that there is still are still
-    // remaining references to the grants, where there are in fact none. However, if either one is
-    // reaped before, then that reference will disappear, and no leak will occur.
-    //
-    // By removing the reference to the address space when the context will no longer be used, this
-    // problem will never occur.
-    let addr_space_arc = match context.addr_space.take() {
-        Some(a) => a,
-        None => return context,
-    };
-
-    if let Ok(mut addr_space) = Arc::try_unwrap(addr_space_arc).map(RwLock::into_inner) {
-        let mapper = &mut addr_space.table.utable;
-
-        for grant in addr_space.grants.into_iter() {
-            let unmap_result = if reaping {
-                log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), context.name, grant);
-
-                grant.unmap(mapper, &mut InactiveFlusher::new())
-            } else {
-                grant.unmap(mapper, PageFlushAll::new())
-            };
-
-            if unmap_result.file_desc.is_some() {
-                drop(context);
-
-                drop(unmap_result);
-
-                context = context_lock.write();
-            }
-        }
-    }
-    context
-}
-
 pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(PTRACE_STOP_EXIT, Some(ptrace_event!(PTRACE_STOP_EXIT, status)));
 
@@ -118,8 +80,6 @@ pub fn exit(status: usize) -> ! {
 
         let children = {
             let mut context = context_lock.write();
-
-            context = empty(&context_lock, context, false);
 
             context.status = context::Status::Exited(status);
 
@@ -407,6 +367,7 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     // Spin until not running
     let mut running = true;
     while running {
+        // TODO: exit WaitCondition?
         {
             let contexts = context::contexts();
             let context_lock = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -417,13 +378,8 @@ fn reap(pid: ContextId) -> Result<ContextId> {
         interrupt::pause();
     }
 
-    let mut contexts = context::contexts_mut();
-    let context_lock = contexts.remove(pid).ok_or(Error::new(ESRCH))?;
-    {
-        let context = context_lock.write();
-        empty(&context_lock, context, true);
-    }
-    drop(context_lock);
+    let _ = context::contexts_mut()
+        .remove(pid).ok_or(Error::new(ESRCH))?;
 
     Ok(pid)
 }

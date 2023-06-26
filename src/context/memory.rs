@@ -915,6 +915,18 @@ pub struct Table {
     pub utable: PageMapper,
 }
 
+impl Drop for AddrSpace {
+    fn drop(&mut self) {
+        for grant in core::mem::take(&mut self.grants).into_iter() {
+            // TODO: Optimize away clearing the actual page tables? Since this address space is no
+            // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
+            // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
+            // the underlying pages (and send some funmaps possibly).
+            grant.unmap(&mut self.table.utable, ());
+        }
+    }
+}
+
 impl Drop for Table {
     fn drop(&mut self) {
         if self.utable.is_current() {

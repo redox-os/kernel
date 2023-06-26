@@ -616,17 +616,13 @@ impl Scheme for ProcScheme {
                         context.clone_entry = Some([new_ip, new_sp]);
                     }
 
-                    let prev_addr_space = context.set_addr_space(new);
-
-                    if let Some(prev_addr_space) = prev_addr_space {
-                        maybe_cleanup_addr_space(prev_addr_space);
-                    }
+                    let _prev_addr_space = context.set_addr_space(new);
 
                     Ok(())
                 })?;
                 let _ = ptrace::send_event(crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0));
             }
-            Operation::AddrSpace { addrspace } | Operation::MmapMinAddr(addrspace) => maybe_cleanup_addr_space(addrspace),
+            Operation::AddrSpace { addrspace } | Operation::MmapMinAddr(addrspace) => drop(addrspace),
 
             Operation::AwaitingFiletableChange(new) => with_context_mut(handle.info.pid, |context: &mut Context| {
                 context.files = new;
@@ -1247,17 +1243,4 @@ fn extract_scheme_number(fd: usize) -> Result<(Arc<dyn KernelScheme>, usize)> {
     let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(ENODEV))?);
 
     Ok((scheme, number))
-}
-fn maybe_cleanup_addr_space(addr_space: Arc<RwLock<AddrSpace>>) {
-    if let Ok(mut space) = Arc::try_unwrap(addr_space).map(RwLock::into_inner) {
-        // We are the last reference to the address space; therefore it must be
-        // unmapped.
-
-        // TODO: Optimize away clearing of page tables? In that case, what about memory
-        // deallocation?
-        for grant in space.grants.into_iter() {
-            grant.unmap(&mut space.table.utable, ());
-        }
-    }
-
 }
