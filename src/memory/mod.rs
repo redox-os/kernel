@@ -8,12 +8,13 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
+use crate::context::memory::AddrSpace;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 use crate::rmm::areas;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use rmm::{
     FrameAllocator,
@@ -189,13 +190,15 @@ impl Drop for RaiiFrame {
     }
 }
 
+#[derive(Debug)]
 pub struct PageInfo {
     pub refcount: AtomicUsize,
     pub cow_refcount: AtomicUsize,
     // TODO: AtomicFlags?
     pub flags: FrameFlags,
-    _padding: usize,
+    pub _padding: usize,
 }
+
 bitflags::bitflags! {
     pub struct FrameFlags: usize {
         const NONE = 0;
@@ -253,6 +256,14 @@ impl PageInfo {
             flags: FrameFlags::NONE,
             _padding: 0,
         }
+    }
+    pub fn add_ref(&self, cow: bool) {
+        if cow {
+            self.cow_refcount.fetch_add(1, Ordering::Relaxed);
+        }
+        self.refcount.fetch_add(1, Ordering::Relaxed);
+
+        core::sync::atomic::fence(Ordering::Release);
     }
     pub fn remove_ref(&self, cow: bool) {
         if cow {

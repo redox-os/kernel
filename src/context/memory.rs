@@ -83,15 +83,12 @@ impl AddrSpace {
 
         for (grant_base, grant_info) in self.grants.iter() {
             let new_grant = match grant_info.provider {
-                Provider::PhysBorrowed { ref base } => Grant::physmap(base.clone(), PageSpan::new(grant_base, grant_info.page_count), grant_info.flags, new_mapper, ())?,
+                Provider::PhysBorrowed { base } => Grant::physmap(base.clone(), PageSpan::new(grant_base, grant_info.page_count), grant_info.flags, new_mapper, ())?,
                 Provider::Allocated => Grant::cow(Arc::clone(&self_arc), grant_base, grant_base, grant_info.page_count, grant_info.flags, this_mapper, new_mapper, &mut this_flusher, ())?,
 
                 // MAP_SHARED grants are retained by reference, across address space clones (across
                 // forks on monolithic kernels).
-                Provider::External { cow: false, ref address_space, ref src_base } => Grant::borrow_grant(Arc::clone(&address_space), grant_base, grant_base, grant_info, new_mapper, (), false)?,
-
-                // MAP_PRIVATE grants, in this case indirect ones, are CoW.
-                Provider::External { cow: true, ref address_space, ref src_base } => todo!(),
+                Provider::External { ref address_space, src_base } => Grant::borrow_grant(Arc::clone(&address_space), grant_base, grant_base, grant_info, new_mapper, (), false)?,
 
                 Provider::Fmap { ref desc } => todo!(),
             };
@@ -540,8 +537,7 @@ pub enum Provider {
     /// The memory is borrowed directly from another address space.
     ///
     /// All grants in the specified range must be of type Allocated.
-    // TODO: Vec?
-    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, cow: bool },
+    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page },
     /// The memory is borrowed from another address space, but managed by a scheme via fmap.
     // TODO: This is probably a very heavy way to keep track of fmap'd files, perhaps move to the
     // ~~context~~ address space?
@@ -622,7 +618,6 @@ impl Grant {
                 provider: Provider::External {
                     src_base,
                     address_space: src_address_space_lock,
-                    cow: false,
                 }
             },
         })
@@ -673,13 +668,12 @@ impl Grant {
                         Provider::Allocated => Provider::External {
                             src_base,
                             address_space: Arc::clone(&src_address_space_lock),
-                            cow: false,
                         },
                         Provider::PhysBorrowed { base: src_phys_base } => Provider::PhysBorrowed {
                             base: src_phys_base.next_by(offset_from_src_base),
                         },
                         Provider::Fmap { .. } => todo!(),
-                        Provider::External { ref address_space, src_base, cow } => Provider::External { address_space: Arc::clone(address_space), src_base, cow },
+                        Provider::External { ref address_space, src_base } => Provider::External { address_space: Arc::clone(address_space), src_base },
                     }
                 },
             });
@@ -705,14 +699,17 @@ impl Grant {
             let dst_page = dst_base.next_by(page_idx).start_address();
 
             let Some((_old_flags, src_phys, flush)) = (unsafe { src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false)) }) else {
-                // Page is not mapped, let the page fault handler take care of that.
+                // Page is not mapped, let the page fault handler take care of that (initializing
+                // it to zero).
+                //
                 // TODO: If eager, allocate zeroed page if writable, or use *the* zeroed page (also
-                // for read-only).
+                // for read-only)?
                 continue;
             };
             let src_frame = Frame::containing_address(src_phys);
 
             let src_page_info = get_page_info(src_frame).expect("allocated page was not present in the global page array");
+            src_page_info.add_ref(true);
 
             let Some(map_result) = (unsafe { dst_mapper.map_phys(dst_page, src_frame.start_address(), flags.write(false)) }) else {
                 break;
@@ -727,7 +724,7 @@ impl Grant {
                 page_count,
                 flags,
                 mapped: true,
-                provider: Provider::External { src_base, address_space: src_address_space_lock, cow: true },
+                provider: Provider::Allocated,
             },
         })
     }
@@ -762,8 +759,6 @@ impl Grant {
     pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
         assert!(self.info.mapped);
 
-        let is_cow = matches!(self.info.provider, Provider::External { cow: true, .. });
-
         for page in self.span().pages() {
             // Lazy mappings do not need to be unmapped.
             let Some((phys, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address(), true) }) else {
@@ -773,9 +768,9 @@ impl Grant {
 
             match self.info.provider {
                 Provider::Allocated | Provider::External { .. } => {
-                    get_page_info(frame)
+                    /*get_page_info(frame)
                         .expect("allocated frame did not have an associated PageInfo")
-                        .remove_ref(is_cow);
+                        .remove_ref(is_cow);*/
                 }
                 _ => (),
             }
@@ -823,10 +818,9 @@ impl Grant {
                 page_count: span.count,
                 provider: match self.info.provider {
                     Provider::Fmap { .. } => todo!(),
-                    Provider::External { ref address_space, ref src_base, cow } => Provider::External {
+                    Provider::External { ref address_space, src_base } => Provider::External {
                         address_space: Arc::clone(address_space),
-                        src_base: src_base.clone(),
-                        cow,
+                        src_base,
                     },
                     Provider::Allocated { .. } => Provider::Allocated,
                     Provider::PhysBorrowed { ref base } => Provider::PhysBorrowed { base: base.clone() },
@@ -852,13 +846,12 @@ impl Grant {
                     Provider::Fmap { .. } => todo!(),
 
                     Provider::Allocated => Provider::Allocated,
-                    Provider::External { ref address_space, ref src_base, cow } => Provider::External {
+                    Provider::External { ref address_space, src_base } => Provider::External {
                         address_space: Arc::clone(address_space),
-                        src_base: src_base.clone(),
-                        cow,
+                        src_base,
                     },
 
-                    Provider::PhysBorrowed { ref base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
                 }
             },
         });
@@ -881,9 +874,8 @@ impl GrantInfo {
         let is_downgrade = (self.flags.has_write() || !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() || !flags.contains(MapFlags::PROT_EXEC));
 
         match self.provider {
-            Provider::Allocated { .. } | Provider::External { cow: true, .. } => true,
-            Provider::PhysBorrowed { .. } | Provider::External { cow: false, .. } => is_downgrade,
-            Provider::Fmap { .. } => is_downgrade,
+            Provider::Allocated => true,
+            _ => is_downgrade,
         }
     }
 
@@ -1019,7 +1011,7 @@ fn cow(dst_mapper: &mut PageMapper, page: Page, old_frame: Frame, info: &PageInf
 
     unsafe { copy_frame_to_frame_directly(new_frame, old_frame); }
 
-    info.refcount.fetch_sub(1, Ordering::SeqCst);
+    info.remove_ref(true);
 
     Ok(new_frame)
 }
@@ -1028,6 +1020,7 @@ fn init_frame() -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).expect("all allocated frames need an associated page info");
     page_info.refcount.store(1, Ordering::Relaxed);
+    page_info.cow_refcount.store(1, Ordering::Relaxed);
 
     Ok(new_frame)
 }
@@ -1041,17 +1034,6 @@ fn map_zeroed(mapper: &mut PageMapper, page: Page, page_flags: PageFlags<RmmA>, 
 
     Ok(new_frame)
 }
-
-/*
-pub fn make_exclusive(mapper: &mut PageMapper, page: Page, old_frame_opt: Option<Frame>) -> Result<Frame, PfError> {
-    //let (_, _, flush) = mapper.remap_with_full(page.start_address(), |old_phys, old_flags| (new_phys, old_flags.write(true))).expect("TODO: handle error?");
-
-    let new_page = page_slot.insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?);
-
-
-    Ok(new_page.phys.clone())
-}
-*/
 
 pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
     // Optimized exact-page-size copy function?
@@ -1104,111 +1086,62 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
     // correct posix_madvise information, allocating 4 contiguous pages and mapping them together,
     // might be a useful future optimization.
 
-    let frame = {
-        match grant_info.provider {
-            Provider::Allocated if access == AccessMode::Write => {
-                /*match pages[pages_from_grant_start].as_ref().and_then(PageInfo::try_get_exclusively) {
-                    Some(exclusively_owned) => exclusively_owned.phys.clone(),
-                    // TODO: Option::get_or_try_insert?
-                    None => make_exclusive(&mut pages[pages_from_grant_start])?,
-                }*/
-                match faulting_pageinfo_opt {
-                    Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
-                    Some((frame, Some(info))) => if info.refcount.load(Ordering::SeqCst) == 1 {
-                        frame
-                    } else {
-                        cow(&mut addr_space.table.utable, faulting_page, frame, info, grant_flags)?
-                    },
-                    _ => map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, true)?,
-                }
-            }
-            // TODO: the zeroed page first, readonly?
-            Provider::Allocated => {
-                match faulting_pageinfo_opt {
-                    Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
-                    Some((frame, Some(page_info))) => frame,
-                    None => {
-                        map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, false)?
-                    }
-                }
-            }
-            Provider::PhysBorrowed { ref base } => {
-                base.next_by(pages_from_grant_start)
-            }
-            Provider::External { cow: external_is_cow, address_space: ref foreign_address_space, ref src_base } => {
-                /*
-                let pages = match pages {
-                    Some(pgs) => pgs,
-                    None => pages.insert(try_box_slice_new(|| None, grant_info.page_count).map_err(|_| PfError::Oom)?),
-                };
-                */
+    let mut allow_writable = true;
 
-                let guard = foreign_address_space.read();
-                let src_page = src_base.next_by(pages_from_grant_start);
-
-                //if let Some(page_info) = &pages[pages_from_grant_start] {
-                if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
-                    let src_frame = Frame::containing_address(phys);
-                    let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
-
-                    if external_is_cow && access == AccessMode::Write {
-                        cow(&mut addr_space.table.utable, src_page, src_frame, info, grant_flags)?
-                    } else {
-                        src_frame
-                    }
+    let frame = match grant_info.provider {
+        Provider::Allocated if access == AccessMode::Write => {
+            match faulting_pageinfo_opt {
+                Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
+                Some((frame, Some(info))) => if info.cow_refcount.load(Ordering::SeqCst) == 1 {
+                    frame
                 } else {
-                    map_zeroed(&mut addr_space.table.utable, src_page, grant_flags, access == AccessMode::Write)?
+                    cow(&mut addr_space.table.utable, faulting_page, frame, info, grant_flags)?
+                },
+                _ => map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, true)?,
+            }
+        }
+        Provider::Allocated => {
+            match faulting_pageinfo_opt {
+                Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
+                Some((frame, Some(page_info))) => {
+                    allow_writable = page_info.cow_refcount.load(Ordering::SeqCst) == 1;
+
+                    frame
                 }
 
-
-                /*
-                let Some((owner_base, owner_grant)) = guard.grants.contains(src_page) else {
-                    log::error!("Foreign grant did not exist at specified offset.");
-                    return Err(PfError::NonfatalInternalError);
-                };
-
-                // TODO: Would nested grants provide any benefit?
-                // TODO: Use recursion?
-                let Provider::Allocated = owner_grant.provider else {
-                    log::error!("Chained grants!");
-                    return Err(PfError::NonfatalInternalError);
-                };
-                let owner_pages_from_grant_start = src_page.offset_from(owner_base);
-
-                let page_info = match &owner_pages[owner_pages_from_grant_start] {
-                    Some(page) => page.ref_clone(cow),
-                    None => {
-                        let mut guard = RwLockUpgradableGuard::upgrade(guard);
-
-                        let (owner_base_again, owner_grant) = guard.grants.contains_mut(src_page)
-                            .expect("grant cannot disappear without write lock having existed");
-
-                        debug_assert_eq!(owner_base, owner_base_again);
-
-                        let Provider::Allocated = owner_grant.provider else {
-                            unreachable!("cannot have changed in the meantime");
-                        };
-                        debug_assert!(owner_pages[owner_pages_from_grant_start].is_none());
-
-                        owner_pages[owner_pages_from_grant_start].insert(PageInfo::try_new_exclusive().map_err(|_| PfError::Oom)?).ref_clone(cow)
-                    }
-                };
-
-                let frame = page_info.phys.clone();
-
-                pages[pages_from_grant_start] = Some(page_info);
-
-                frame
-                */
+                None => {
+                    // TODO: the zeroed page first, readonly?
+                    map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, false)?
+                }
             }
-            Provider::Fmap { ref desc } => todo!(),
         }
+        Provider::PhysBorrowed { base } => {
+            base.next_by(pages_from_grant_start)
+        }
+        Provider::External { address_space: ref foreign_address_space, src_base } => {
+            let guard = foreign_address_space.read();
+            let src_page = src_base.next_by(pages_from_grant_start);
+
+            if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
+                let src_frame = Frame::containing_address(phys);
+
+                let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
+                info.add_ref(false);
+
+                src_frame
+            } else {
+                // TODO: Should this be called?
+                map_zeroed(&mut addr_space.table.utable, src_page, grant_flags, access == AccessMode::Write)?
+            }
+        }
+        Provider::Fmap { ref desc } => todo!(),
     };
 
     if super::context_id().into() == 3 {
         //log::info!("Correcting {:?} => {:?} (base {:?} info {:?})", faulting_page, frame, grant_base, grant_info);
     }
-    let Some(flush) = (unsafe { addr_space.table.utable.map_phys(faulting_page.start_address(), frame.start_address(), grant_flags) }) else {
+    let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
+    let Some(flush) = (unsafe { addr_space.table.utable.map_phys(faulting_page.start_address(), frame.start_address(), new_flags) }) else {
         // TODO
         return Err(PfError::Oom);
     };
