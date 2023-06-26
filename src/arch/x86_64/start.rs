@@ -191,6 +191,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
 
+        // Initialize data structures used to track pages.
+        memory::init_mm();
+
         // Stop graphical debug
         #[cfg(feature = "graphical_debug")]
         graphical_debug::fini();
@@ -262,8 +265,6 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
         // Initialize devices (for AP)
         device::init_ap();
-
-        memory::init_mm();
 
         AP_READY.store(true, Ordering::SeqCst);
 
