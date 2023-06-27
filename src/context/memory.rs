@@ -777,11 +777,18 @@ impl Grant {
             };
             let frame = Frame::containing_address(phys);
 
-            let is_cow = !matches!(self.info.provider, Provider::External { .. });
+            let is_cow_opt = match self.info.provider {
+                Provider::Allocated => Some(true),
+                Provider::External { .. } => Some(false),
+                Provider::PhysBorrowed { .. } => None,
+                Provider::Fmap { .. } => todo!(),
+            };
 
-            get_page_info(frame)
-                .expect("allocated frame did not have an associated PageInfo")
-                .remove_ref(is_cow);
+            if let Some(is_cow) = is_cow_opt {
+                get_page_info(frame)
+                    .expect("allocated frame did not have an associated PageInfo")
+                    .remove_ref(is_cow);
+            }
 
 
             flusher.consume(flush);
