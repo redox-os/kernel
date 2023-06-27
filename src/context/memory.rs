@@ -1113,6 +1113,8 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
     // single TLB entry, thus emulating 16k pages albeit with higher page table overhead. With the
     // correct posix_madvise information, allocating 4 contiguous pages and mapping them together,
     // might be a useful future optimization.
+    //
+    // TODO: Readahead backwards, i.e. MAP_GROWSDOWN.
 
     let mut allow_writable = true;
 
@@ -1183,16 +1185,4 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
     flush.flush();
 
     Ok(())
-}
-
-#[cfg(tests)]
-mod tests {
-    // TODO: Get these tests working
-    #[test]
-    fn region_collides() {
-        assert!(Region::new(0, 2).collides(Region::new(0, 1)));
-        assert!(Region::new(0, 2).collides(Region::new(1, 1)));
-        assert!(!Region::new(0, 2).collides(Region::new(2, 1)));
-        assert!(!Region::new(0, 2).collides(Region::new(3, 1)));
-    }
 }

@@ -61,8 +61,8 @@ impl MemoryScheme {
 
         let page = addr_space
             .write()
-            .mmap((map.address != 0).then_some(span.base), page_count, map.flags, |page, flags, mapper, flusher| {
-                Ok(Grant::zeroed(span, flags, mapper, flusher)?)
+            .mmap((map.address != 0).then_some(span.base), page_count, map.flags, |dst_page, flags, mapper, flusher| {
+                Ok(Grant::zeroed(PageSpan::new(dst_page, page_count.get()), flags, mapper, flusher)?)
             })?;
 
         Ok(page.start_address().data())
