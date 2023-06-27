@@ -653,6 +653,10 @@ impl Grant {
         }
         */
 
+        // TODO: If grants are missing for certain ranges specified, fill with Provider::External
+        // grants anyway, which will in turn fill the host address space will zeroed grants. This
+        // is required before schemes can be safe.
+
         let mut dst_grants = Vec::with_capacity(1);
 
         let src_span = PageSpan::new(src_base, page_count);
