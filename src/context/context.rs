@@ -413,7 +413,6 @@ impl Context {
     pub fn addr_space(&self) -> Result<&Arc<RwLock<AddrSpace>>> {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
-    #[must_use = "grants must be manually unmapped, otherwise it WILL panic!"]
     pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) -> Option<Arc<RwLock<AddrSpace>>> {
         if self.id == super::context_id() {
             unsafe { addr_space.read().table.utable.make_current(); }
