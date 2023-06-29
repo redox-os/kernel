@@ -113,6 +113,7 @@ impl AddrSpace {
                     false,
                     fmap.as_ref().map(Arc::clone),
                 )?,
+                Provider::FmapBorrowed { ref fmap } => Grant::borrow_fmap(PageSpan::new(grant_base, grant_info.page_count), grant_info.flags(), Arc::clone(fmap)),
             };
 
             new_guard.grants.insert(new_grant);
@@ -559,7 +560,7 @@ pub struct GrantInfo {
 
 #[derive(Debug)]
 pub struct FmapCtxt {
-    file_ref: GrantFileRef,
+    pub file_ref: GrantFileRef,
 }
 
 #[derive(Debug)]
@@ -576,6 +577,8 @@ pub enum Provider {
     ///
     /// All grants in the specified range must be of type Allocated.
     External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, fmap: Option<Arc<FmapCtxt>> },
+
+    FmapBorrowed { fmap: Arc<FmapCtxt> },
 }
 
 #[derive(Debug)]
@@ -654,6 +657,18 @@ impl Grant {
         })
     }
 
+    pub fn borrow_fmap(span: PageSpan, flags: PageFlags<RmmA>, fmap: Arc<FmapCtxt>) -> Self {
+        Self {
+            base: span.base,
+            info: GrantInfo {
+                page_count: span.count,
+                mapped: true,
+                flags,
+                provider: Provider::FmapBorrowed { fmap }
+            }
+        }
+    }
+
     // TODO: Do not return Vec, return an iterator perhaps? Referencing the source address space?
 
     /// Borrow all pages in the range `[src_base, src_base+page_count)` from `src_address_space`,
@@ -717,6 +732,7 @@ impl Grant {
                             base: src_phys_base.next_by(offset_from_src_base),
                         },
                         Provider::External { ref address_space, src_base, ref fmap } => Provider::External { address_space: Arc::clone(address_space), src_base, fmap: fmap.as_ref().map(Arc::clone) },
+                        Provider::FmapBorrowed { ref fmap } => Provider::FmapBorrowed { fmap: Arc::clone(fmap) }
                     }
                 },
             });
@@ -822,6 +838,7 @@ impl Grant {
                 Provider::Allocated { .. } => Some(true),
                 Provider::External { .. } => Some(false),
                 Provider::PhysBorrowed { .. } => None,
+                Provider::FmapBorrowed { .. } => Some(false),
             };
 
             if let Some(is_cow) = is_cow_opt {
@@ -878,13 +895,14 @@ impl Grant {
                     },
                     Provider::Allocated { ref fmap } => Provider::Allocated { fmap: fmap.as_ref().map(Arc::clone) },
                     Provider::PhysBorrowed { ref base } => Provider::PhysBorrowed { base: base.clone() },
+                    Provider::FmapBorrowed { ref fmap } => Provider::FmapBorrowed { fmap: Arc::clone(fmap) }
                 }
             },
         });
 
         match self.info.provider {
             Provider::PhysBorrowed { ref mut base } => *base = base.next_by(before_grant.as_ref().map_or(0, |g| g.info.page_count)),
-            Provider::Allocated { .. } | Provider::External { .. } => (),
+            Provider::Allocated { .. } | Provider::External { .. } | Provider::FmapBorrowed { .. } => (),
         }
 
 
@@ -903,6 +921,7 @@ impl Grant {
                     },
 
                     Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
+                    Provider::FmapBorrowed { ref fmap } => Provider::FmapBorrowed { fmap: Arc::clone(fmap) }
                 }
             },
         });
@@ -1212,6 +1231,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                 map_zeroed(&mut guard.table.utable, src_page, grant_flags, access == AccessMode::Write)?
             }
         }
+        Provider::FmapBorrowed { ref fmap } => todo!(),
     };
 
     if super::context_id().into() == 3 && debug {
@@ -1226,4 +1246,10 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
     flush.flush();
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MmapMode {
+    Cow,
+    Shared,
 }

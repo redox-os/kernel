@@ -10,14 +10,14 @@ use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context, BorrowedHtBuf};
 use crate::context::file::FileDescription;
-use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan};
+use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, FmapCtxt};
 use crate::event;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet};
-use crate::syscall::{error::*, validate_region};
-use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE};
+use crate::syscall::error::*;
+use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE, MapFlags};
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::{UserSlice, UserSliceWo, UserSliceRo};
@@ -376,21 +376,34 @@ impl UserInner {
         Ok(0)
     }
 
-    fn fmap_inner(&self, file: usize, map: &Map) -> Result<usize> {
+    fn fmap_inner(&self, dst_addr_space: Arc<RwLock<AddrSpace>>, file: usize, map: &Map) -> Result<usize> {
         let aligned_size = map.size.next_multiple_of(PAGE_SIZE);
         if aligned_size != map.size {
             log::warn!("fmap passed length {:#0x} instead of {:#0x}", map.size, aligned_size);
         }
 
-        let requested_dst_span_opt = (map.address != 0)
-            .then(|| PageSpan::validate_nonempty(VirtualAddress::new(map.address), aligned_size).ok_or(Error::new(EINVAL)))
-            .transpose()?;
+        if aligned_size == 0 {
+            return Err(Error::new(EINVAL));
+        }
+
+        if map.address % PAGE_SIZE != 0 {
+            return Err(Error::new(EINVAL))
+        };
+        let dst_base = (map.address != 0).then_some(Page::containing_address(VirtualAddress::new(map.address)));
 
         if map.offset % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
 
-        let (pid, uid, gid, context_weak, desc) = {
+        let mode = if map.flags.contains(MapFlags::MAP_PRIVATE) {
+            MmapMode::Cow
+        } else if map.flags.contains(MapFlags::MAP_SHARED) {
+            MmapMode::Shared
+        } else {
+            return Err(Error::new(EINVAL));
+        };
+
+        let (pid, desc) = {
             let context_lock = context::current()?;
             let context = context_lock.read();
             // TODO: Faster, cleaner mechanism to get descriptor
@@ -407,31 +420,49 @@ impl UserInner {
                 }
             }
             let desc = desc_res?;
-            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
+            (context.id, desc.description)
         };
 
-        let id = self.next_id();
+        let page_count = aligned_size / PAGE_SIZE;
 
-        let result = self.call_extended_inner(Packet {
-            id,
+        let response = self.call_extended_inner(Packet {
+            id: self.next_id(),
             pid: pid.into(),
             a: KSMSG_MMAP_PREP,
             b: file,
             c: map.offset,
-            d: map.size / PAGE_SIZE,
+            d: page_count,
             // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
             uid: map.flags.bits() as u32,
             gid: (map.flags.bits() >> 32) as u32,
-        });
+        })?;
 
-        result.and_then(|response| match response {
-            Response::Regular(code) => Error::demux(code),
+        let _ = match response {
+            Response::Regular(code) => Error::demux(code)?,
             Response::Fd(_) => {
                 log::debug!("Scheme incorrectly returned an fd for fmap.");
 
-                Err(Error::new(EIO))
+                return Err(Error::new(EIO));
             }
-        })
+        };
+
+        let dst_base = match mode {
+            MmapMode::Cow => todo!("mmap CoW"),
+            MmapMode::Shared => {
+                let ctxt = Arc::new(FmapCtxt {
+                    file_ref: GrantFileRef {
+                        description: desc,
+                        base_offset: map.offset,
+                    },
+                });
+                let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
+                dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, |dst_base, flags, _mapper, _flusher| {
+                    Ok(Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), ctxt))
+                })?
+            }
+        };
+
+        Ok(dst_base.start_address().data())
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
@@ -579,7 +610,7 @@ impl Scheme for UserScheme {
     fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        inner.fmap_inner(file, map)
+        inner.fmap_inner(AddrSpace::current()?, file, map)
     }
 
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
@@ -710,6 +741,11 @@ impl KernelScheme for UserScheme {
         let result = inner.call(SYS_FSTATVFS, file, address.base(), address.len());
         address.release()?;
         result
+    }
+    fn kfmap(&self, file: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        inner.fmap_inner(Arc::clone(addr_space), file, map)
     }
 }
 
