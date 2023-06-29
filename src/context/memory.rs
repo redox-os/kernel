@@ -644,7 +644,7 @@ impl Grant {
         dst_mapper: &mut PageMapper,
         dst_flusher: impl Flusher<RmmA>,
         eager: bool,
-    ) -> Result<Vec<Grant>, Enomem> {
+    ) -> Result<Vec<Grant>> {
         /*
         if eager {
             for page in PageSpan::new(src_base, page_count) {
@@ -653,16 +653,22 @@ impl Grant {
         }
         */
 
-        // TODO: If grants are missing for certain ranges specified, fill with Provider::External
-        // grants anyway, which will in turn fill the host address space will zeroed grants. This
-        // is required before schemes can be safe.
-
         let mut dst_grants = Vec::with_capacity(1);
 
         let src_span = PageSpan::new(src_base, page_count);
+        let mut prev_span = None;
 
         for (src_grant_base, src_grant) in src_address_space.grants.conflicts(src_span) {
             let grant_span = PageSpan::new(src_grant_base, src_grant.page_count);
+            let prev_span = prev_span.replace(grant_span);
+
+            if prev_span.is_none() && src_grant_base > src_base {
+                log::warn!("Grant too far away, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}", prev_span, src_base, src_grant_base, src_grant);
+                return Err(Error::new(EINVAL));
+            } else if let Some(prev) = prev_span && prev.end() != src_grant_base {
+                log::warn!("Hole between grants, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}", prev_span, src_base, src_grant_base, src_grant);
+                return Err(Error::new(EINVAL));
+            }
 
             let common_span = src_span.intersection(grant_span);
             let offset_from_src_base = common_span.base.offset_from(src_base);
@@ -688,6 +694,16 @@ impl Grant {
                     }
                 },
             });
+        }
+
+        let Some(last_span) = prev_span else {
+            log::warn!("Called Grant::borrow, but no grants were there!");
+            return Err(Error::new(EINVAL));
+        };
+
+        if last_span.end() < src_span.end() {
+            log::warn!("Requested end page too far away from last grant");
+            return Err(Error::new(EINVAL));
         }
 
         Ok(dst_grants)

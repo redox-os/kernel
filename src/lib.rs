@@ -50,6 +50,7 @@
 #![feature(const_option)]
 #![feature(arbitrary_self_types)]
 #![feature(int_roundings)]
+#![feature(let_chains)]
 #![feature(naked_functions)]
 #![feature(slice_ptr_get, slice_ptr_len)]
 #![feature(sync_unsafe_cell)]
