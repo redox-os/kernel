@@ -9,15 +9,14 @@ use core::convert::TryFrom;
 use spin::{Mutex, RwLock};
 
 use crate::context::{self, Context, BorrowedHtBuf};
-use crate::context::file::{FileDescriptor, FileDescription};
+use crate::context::file::FileDescription;
 use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan};
 use crate::event;
-use crate::paging::KernelMapper;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet};
-use crate::syscall::error::*;
+use crate::syscall::{error::*, validate_region};
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE};
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
@@ -34,7 +33,6 @@ pub struct UserInner {
     next_id: Mutex<u64>,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
     done: WaitMap<u64, Response>,
     unmounting: AtomicBool,
 }
@@ -56,7 +54,6 @@ impl UserInner {
             next_id: Mutex::new(1),
             context,
             todo: WaitQueue::new(),
-            fmap: Mutex::new(BTreeMap::new()),
             done: WaitMap::new(),
             unmounting: AtomicBool::new(false),
         }
@@ -365,54 +362,7 @@ impl UserInner {
                 _ => return Err(Error::new(EINVAL)),
             }
         } else {
-            // TODO: Avoid having to check if fmap contains the packet ID, by forcing fmap to use
-            // SKMSG?
-
-            let mut retcode = packet.a;
-
-            // The motivation of doing this here instead of within the fmap handler, is that we
-            // can operate on an inactive table. This reduces the number of page table reloads
-            // from two (context switch + active TLB flush) to one (context switch).
-            if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
-                if let Ok(address) = Error::demux(packet.a) {
-                    if address % PAGE_SIZE > 0 || map.size % PAGE_SIZE > 0 {
-                        return Err(Error::new(EINVAL));
-                    }
-                    let src_page = Page::containing_address(VirtualAddress::new(address));
-                    let dst_page = Some(map.address).filter(|addr| *addr > 0).map(|addr| Page::containing_address(VirtualAddress::new(addr)));
-
-                    let file_ref = GrantFileRef { desc, offset: map.offset, flags: map.flags };
-
-                    if let Some(context_lock) = context_weak.upgrade() {
-                        let context = context_lock.read();
-                        let mut addr_space = context.addr_space()?.write();
-
-                        // TODO: ensure all mappings are aligned!
-                        let page_count = map.size.div_ceil(PAGE_SIZE);
-                        let nz_page_count = NonZeroUsize::new(page_count).ok_or(Error::new(EINVAL));
-
-                        let res = nz_page_count.and_then(|page_count| addr_space.mmap(dst_page, page_count, map.flags, move |dst_page, flags, mapper, flusher| {
-                            todo!()
-                            //Ok(Grant::borrow(src_page, dst_page, page_count.get(), flags, Some(file_ref), &mut AddrSpace::current()?.write().table.utable, mapper, flusher)?)
-                        }));
-                        retcode = Error::mux(res.map(|grant_start_page| {
-                            addr_space.grants.funmap.insert(
-                                grant_start_page,
-                                (page_count, src_page),
-                            );
-                            grant_start_page.start_address().data()
-                        }));
-
-                    } else {
-                        //TODO: packet.pid is an assumption
-                        log::warn!("UserInner::write: failed to find context {} for fmap", packet.pid);
-                    }
-                } else {
-                    let _ = desc.close();
-                }
-            }
-
-            self.done.send(packet.id, Response::Regular(retcode));
+            self.done.send(packet.id, Response::Regular(packet.a));
         }
 
         Ok(())
@@ -427,7 +377,16 @@ impl UserInner {
     }
 
     fn fmap_inner(&self, file: usize, map: &Map) -> Result<usize> {
-        if map.address % PAGE_SIZE != 0 {
+        let aligned_size = map.size.next_multiple_of(PAGE_SIZE);
+        if aligned_size != map.size {
+            log::warn!("fmap passed length {:#0x} instead of {:#0x}", map.size, aligned_size);
+        }
+
+        let requested_dst_span_opt = (map.address != 0)
+            .then(|| PageSpan::validate_nonempty(VirtualAddress::new(map.address), aligned_size).ok_or(Error::new(EINVAL)))
+            .transpose()?;
+
+        if map.offset % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
 
@@ -451,28 +410,18 @@ impl UserInner {
             (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
         };
 
-        let aligned_size_map = Map {
-            offset: map.offset,
-            size: map.size.next_multiple_of(PAGE_SIZE),
-            address: map.address,
-            flags: map.flags,
-        };
-
-        let address = self.copy_and_capture_tail(map)?;
-
         let id = self.next_id();
-
-        self.fmap.lock().insert(id, (context_weak, desc, aligned_size_map));
 
         let result = self.call_extended_inner(Packet {
             id,
             pid: pid.into(),
-            uid,
-            gid,
-            a: SYS_FMAP,
+            a: KSMSG_MMAP_PREP,
             b: file,
-            c: address.base(),
-            d: address.len(),
+            c: map.offset,
+            d: map.size / PAGE_SIZE,
+            // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
+            uid: map.flags.bits() as u32,
+            gid: (map.flags.bits() >> 32) as u32,
         });
 
         result.and_then(|response| match response {

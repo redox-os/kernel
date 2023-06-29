@@ -29,21 +29,26 @@ pub struct FileDescriptor {
     pub cloexec: bool,
 }
 
+impl FileDescription {
+    /// Try closing a file, although at this point the description will be destroyed anyway, if
+    /// doing so fails.
+    pub fn try_close(self) -> Result<usize> {
+        event::unregister_file(self.scheme, self.number);
+
+        let scheme = Arc::clone(
+            scheme::schemes()
+                .get(self.scheme).ok_or(Error::new(EBADF))?
+        );
+        scheme.close(self.number)
+    }
+}
+
 impl FileDescriptor {
     pub fn close(self) -> Result<usize> {
-        if let Ok(file) = Arc::try_unwrap(self.description) {
-            let file = file.into_inner();
+        let Ok(file) = Arc::try_unwrap(self.description) else {
+            return Ok(0);
+        };
 
-            event::unregister_file(file.scheme, file.number);
-
-            let scheme = {
-                let schemes = scheme::schemes();
-                let scheme = schemes.get(file.scheme).ok_or(Error::new(EBADF))?;
-                scheme.clone()
-            };
-            scheme.close(file.number)
-        } else {
-            Ok(0)
-        }
+        file.into_inner().try_close()
     }
 }

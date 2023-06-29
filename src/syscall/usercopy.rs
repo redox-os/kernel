@@ -184,6 +184,7 @@ fn is_kernel_mem(slice: &[u8]) -> bool {
 /// - the length is not page-aligned,
 /// - the region is empty (EINVAL), or
 /// - any byte in the region exceeds USER_END_OFFSET (EFAULT).
+// TODO: Return PageSpan
 pub fn validate_region(address: usize, size: usize) -> Result<(Page, usize)> {
     if address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || size == 0 {
         return Err(Error::new(EINVAL));
