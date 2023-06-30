@@ -8,10 +8,12 @@ use core::{mem, usize};
 use core::convert::TryFrom;
 use spin::{Mutex, RwLock};
 
-use crate::context::{self, Context, BorrowedHtBuf};
+use crate::context::context::HardBlockedReason;
+use crate::context::{self, Context, BorrowedHtBuf, Status};
 use crate::context::file::FileDescription;
 use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, FmapCtxt};
 use crate::event;
+use crate::memory::Frame;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
@@ -34,6 +36,7 @@ pub struct UserInner {
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
     done: WaitMap<u64, Response>,
+    fmap: Mutex<BTreeMap<u64, Weak<RwLock<Context>>>>,
     unmounting: AtomicBool,
 }
 pub enum Response {
@@ -56,6 +59,7 @@ impl UserInner {
             todo: WaitQueue::new(),
             done: WaitMap::new(),
             unmounting: AtomicBool::new(false),
+            fmap: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -341,6 +345,21 @@ impl UserInner {
 
         Ok(packets_read * mem::size_of::<Packet>())
     }
+    pub fn request_fmap(&self, id: usize, offset: u64, required_page_count: usize, flags: MapFlags) -> Result<()> {
+        self.todo.send(Packet {
+            id: self.next_id(),
+            pid: context::context_id().into(),
+            a: KSMSG_MMAP,
+            b: id,
+            c: flags.bits(),
+            d: required_page_count,
+            uid: offset as u32,
+            gid: (offset >> 32) as u32,
+        });
+        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+
+        Ok(())
+    }
     fn handle_packet(&self, packet: &Packet) -> Result<()> {
         if packet.id == 0 {
             // TODO: Simplify logic by using SKMSG with packet.id being ignored?
@@ -360,15 +379,31 @@ impl UserInner {
                     self.done.send(packet.id, Response::Fd(desc));
                 }
                 SKMSG_PROVIDE_MMAP => {
+                    log::info!("PROVIDE_MAP {:?}", packet);
                     let offset = u64::from(packet.uid) | (u64::from(packet.gid) << 32);
 
                     if offset % PAGE_SIZE as u64 != 0 {
-                        return Err(Error::new(EINVAL));
+                        return dbg!(Err(Error::new(EINVAL)));
                     }
 
-                    let page_count = packet.c;
+                    let base_addr = VirtualAddress::new(packet.c);
+                    if base_addr.data() % PAGE_SIZE != 0 {
+                        return dbg!(Err(Error::new(EINVAL)));
+                    }
 
-                    todo!("respond to SKMSG_PROVIDE_MMAP")
+                    let page_count = packet.d;
+
+                    if page_count != 1 { return dbg!(Err(Error::new(EINVAL))); }
+                    let context = self.fmap.lock().remove(&packet.id).ok_or(Error::new(EINVAL))?.upgrade().ok_or(Error::new(ESRCH))?;
+
+                    let (frame, _) = AddrSpace::current()?.read().table.utable.translate(base_addr).ok_or(Error::new(EFAULT))?;
+
+                    let mut context = context.write();
+                    match context.status {
+                        Status::HardBlocked { reason: HardBlockedReason::AwaitingMmap { ref mut finished, .. } } => *finished = Some(Frame::containing_address(frame)),
+                        _ => (),
+                    }
+
                 }
                 _ => return Err(Error::new(EINVAL)),
             }
@@ -751,6 +786,10 @@ impl KernelScheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         inner.fmap_inner(Arc::clone(addr_space), file, map)
+    }
+
+    fn as_user_inner(&self) -> Option<Result<Arc<UserInner>>> {
+        Some(self.inner.upgrade().ok_or(Error::new(ENODEV)))
     }
 }
 

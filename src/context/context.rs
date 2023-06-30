@@ -1,3 +1,4 @@
+use alloc::sync::Weak;
 use alloc::{
     boxed::Box,
     collections::VecDeque,
@@ -28,11 +29,13 @@ use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
+
+use super::memory::FmapCtxt;
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
 /// See `syscall::process::waitpid` and the `sync` module for examples of usage
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Status {
     Runnable,
 
@@ -49,9 +52,19 @@ pub enum Status {
     Stopped(usize),
     Exited(usize),
 }
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+
+impl Status {
+    pub fn is_runnable(&self) -> bool {
+        matches!(self, Self::Runnable)
+    }
+    pub fn is_soft_blocked(&self) -> bool {
+        matches!(self, Self::Blocked)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum HardBlockedReason {
-    AwaitingMmap,
+    AwaitingMmap { ctxt: Arc<FmapCtxt>, finished: Option<Frame> },
     // TODO: PageFaultOom?
     // TODO: NotYetStarted/ManuallyBlocked (when new contexts are created)
     // TODO: ptrace_stop?
@@ -174,7 +187,7 @@ impl ContextSnapshot {
             ens: context.ens,
             sigmask: context.sigmask,
             umask: context.umask,
-            status: context.status,
+            status: context.status.clone(),
             status_reason: context.status_reason,
             running: context.running,
             cpu_id: context.cpu_id,
@@ -329,7 +342,7 @@ impl Context {
 
     /// Block the context, and return true if it was runnable before being blocked
     pub fn block(&mut self, reason: &'static str) -> bool {
-        if self.status == Status::Runnable {
+        if self.status.is_runnable() {
             self.status = Status::Blocked;
             self.status_reason = reason;
             true
@@ -338,9 +351,19 @@ impl Context {
         }
     }
 
+    pub fn hard_block(&mut self, reason: HardBlockedReason) -> bool {
+        if self.status.is_runnable() {
+            self.status = Status::HardBlocked { reason };
+
+            true
+        } else {
+            false
+        }
+    }
+
     /// Unblock context, and return true if it was blocked before being marked runnable
     pub fn unblock(&mut self) -> bool {
-        if self.status == Status::Blocked {
+        if self.status.is_soft_blocked() {
             self.status = Status::Runnable;
             self.status_reason = "";
 

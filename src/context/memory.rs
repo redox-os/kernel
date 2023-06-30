@@ -15,7 +15,9 @@ use crate::arch::paging::PAGE_SIZE;
 use crate::memory::{Enomem, Frame, get_page_info, PageInfo};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{KernelMapper, Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
+use crate::scheme;
 
+use super::context::HardBlockedReason;
 use super::file::FileDescription;
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
@@ -1129,13 +1131,13 @@ pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
 }
 
 pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Result<(), PfError> {
-    let Ok(addr_space) = AddrSpace::current() else {
+    let Ok(addr_space_lock) = AddrSpace::current() else {
         log::debug!("User page fault without address space being set.");
         return Err(PfError::Segv);
     };
 
-    let mut addr_space = addr_space.write();
-    let addr_space = &mut *addr_space;
+    let mut addr_space_guard = addr_space_lock.write();
+    let mut addr_space = &mut *addr_space_guard;
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
         log::debug!("Lacks grant");
@@ -1232,7 +1234,35 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                 map_zeroed(&mut guard.table.utable, src_page, grant_flags, access == AccessMode::Write)?
             }
         }
-        Provider::FmapBorrowed { ref fmap } => todo!(),
+        Provider::FmapBorrowed { ref fmap } => {
+            let ctxt = Arc::clone(fmap);
+            let flags = map_flags(grant_info.flags());
+            drop(addr_space);
+
+            let (scheme_id, scheme_number) = match ctxt.file_ref.description.read() {
+                ref desc => (desc.scheme, desc.number),
+            };
+            let user_inner = scheme::schemes()
+                .get(scheme_id).and_then(|s| s.as_user_inner().transpose().ok().flatten())
+                .ok_or(PfError::Segv)?;
+
+            let offset = ctxt.file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
+            user_inner.request_fmap(scheme_number, offset, 1, flags).unwrap();
+
+            let context_lock = super::current().map_err(|_| PfError::NonfatalInternalError)?;
+            context_lock.write().hard_block(HardBlockedReason::AwaitingMmap { ctxt, finished: None });
+
+            unsafe { super::switch(); }
+
+            let super::Status::HardBlocked { reason: HardBlockedReason::AwaitingMmap { finished: Some(frame), .. } } = core::mem::replace(&mut context_lock.write().status, super::Status::Runnable) else {
+                return Err(PfError::NonfatalInternalError);
+            };
+
+            addr_space_guard = addr_space_lock.write();
+            addr_space = &mut *addr_space_guard;
+
+            frame
+        }
     };
 
     if super::context_id().into() == 3 && debug {

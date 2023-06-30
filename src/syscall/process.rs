@@ -487,7 +487,7 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
                     println!("TODO: Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
                     context.ppid = ppid;
                     //return Err(Error::new(ECHILD));
-                    Some(context.status)
+                    Some(context.status.clone())
                 } else {
                     None
                 }

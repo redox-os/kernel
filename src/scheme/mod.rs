@@ -37,6 +37,7 @@ use self::root::RootScheme;
 use self::serio::SerioScheme;
 use self::sys::SysScheme;
 use self::time::TimeScheme;
+use self::user::UserInner;
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
@@ -335,6 +336,9 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         Err(Error::new(EBADF))
     }
+
+    // TODO: This demonstrates why we need to transition away from a dyn trait.
+    fn as_user_inner(&self) -> Option<Result<Arc<UserInner>>> { None }
 }
 
 #[derive(Debug)]

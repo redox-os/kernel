@@ -64,12 +64,12 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: usize) -> bool {
     }
 
     // Unblock when there are pending signals
-    if context.status == Status::Blocked && !context.pending.is_empty() {
+    if context.status.is_soft_blocked() && !context.pending.is_empty() {
         context.unblock();
     }
 
     // Wake from sleep
-    if context.status == Status::Blocked && context.wake.is_some() {
+    if context.status.is_soft_blocked() && context.wake.is_some() {
         let wake = context.wake.expect("context::switch: wake not set");
 
         let current = time::monotonic();
@@ -80,7 +80,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: usize) -> bool {
     }
 
     // Switch to context if it needs to run
-    context.status == Status::Runnable
+    context.status.is_runnable()
 }
 
 struct SwitchResult {
