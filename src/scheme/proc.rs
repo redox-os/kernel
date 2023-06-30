@@ -649,9 +649,6 @@ impl Scheme for ProcScheme {
         }
         Ok(0)
     }
-    fn fmap(&self, id: usize, map: &Map) -> Result<usize> {
-        self.kfmap(id, &AddrSpace::current()?, map, false)
-    }
 }
 impl KernelScheme for ProcScheme {
     fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {

@@ -75,11 +75,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                     SYS_ARG_SLICE => match a {
                         SYS_WRITE => file_op_generic(fd, |scheme, _, number| scheme.kwrite(number, UserSlice::ro(c, d)?)),
                         SYS_FMAP => {
+                            let addrspace = AddrSpace::current()?;
                             let map = unsafe { UserSlice::ro(c, d)?.read_exact::<Map>()? };
                             if b == !0 {
-                                MemoryScheme::fmap_anonymous(&AddrSpace::current()?, &map)
+                                MemoryScheme::fmap_anonymous(&addrspace, &map)
                             } else {
-                                file_op_generic(fd, |scheme, _, number| scheme.fmap(number, &map))
+                                file_op_generic(fd, |scheme, _, number| scheme.kfmap(number, &addrspace, &map, false))
                             }
                         },
                         // SYS_FMAP_OLD is ignored
@@ -179,7 +180,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            if false && context.name.contains("bootstrap") {
+            if context.name.contains("orbital") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {

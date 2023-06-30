@@ -226,7 +226,8 @@ impl AddrSpace {
             // Same here, we don't really care about errors when schemes respond to unmap events.
             // The caller wants the memory to be unmapped, period. When already unmapped, what
             // would we do with error codes anyway?
-            let _ = scheme.funmap(intersection.base.start_address().data(), intersection.count * PAGE_SIZE);
+            // FIXME
+            //let _ = scheme.funmap(intersection.base.start_address().data(), intersection.count * PAGE_SIZE);
 
             if let Ok(desc) = Arc::try_unwrap(file_ref.description) {
                 let _ = desc.into_inner().try_close();
@@ -664,7 +665,7 @@ impl Grant {
                 page_count: span.count,
                 mapped: true,
                 flags,
-                provider: Provider::FmapBorrowed { fmap }
+                provider: Provider::FmapBorrowed { fmap },
             }
         }
     }

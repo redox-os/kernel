@@ -129,10 +129,6 @@ impl Scheme for MemoryScheme {
         Ok(intended_handle as usize)
     }
 
-    fn fmap(&self, id: usize, map: &Map) -> Result<usize> {
-        self.kfmap(id, &AddrSpace::current()?, map, false)
-    }
-
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)
     }

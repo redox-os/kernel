@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use syscall::{SKMSG_FRETURNFD, CallerCtx};
+use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
@@ -359,6 +359,17 @@ impl UserInner {
 
                     self.done.send(packet.id, Response::Fd(desc));
                 }
+                SKMSG_PROVIDE_MMAP => {
+                    let offset = u64::from(packet.uid) | (u64::from(packet.gid) << 32);
+
+                    if offset % PAGE_SIZE as u64 != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    let page_count = packet.c;
+
+                    todo!("respond to SKMSG_PROVIDE_MMAP")
+                }
                 _ => return Err(Error::new(EINVAL)),
             }
         } else {
@@ -395,12 +406,10 @@ impl UserInner {
             return Err(Error::new(EINVAL));
         }
 
-        let mode = if map.flags.contains(MapFlags::MAP_PRIVATE) {
-            MmapMode::Cow
-        } else if map.flags.contains(MapFlags::MAP_SHARED) {
+        let mode = if map.flags.contains(MapFlags::MAP_SHARED) {
             MmapMode::Shared
         } else {
-            return Err(Error::new(EINVAL));
+            MmapMode::Cow
         };
 
         let (pid, desc) = {
@@ -430,11 +439,11 @@ impl UserInner {
             pid: pid.into(),
             a: KSMSG_MMAP_PREP,
             b: file,
-            c: map.offset,
+            c: map.flags.bits(),
             d: page_count,
             // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
-            uid: map.flags.bits() as u32,
-            gid: (map.flags.bits() >> 32) as u32,
+            uid: map.offset as u32,
+            gid: (map.offset >> 32) as u32,
         })?;
 
         let _ = match response {
@@ -607,12 +616,7 @@ impl Scheme for UserScheme {
         inner.call(SYS_FEVENT, file, flags.bits(), 0).map(EventFlags::from_bits_truncate)
     }
 
-    fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-
-        inner.fmap_inner(AddrSpace::current()?, file, map)
-    }
-
+    /*
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
         let requested_span = PageSpan::validate_nonempty(VirtualAddress::new(grant_address), size).ok_or(Error::new(EINVAL))?;
 
@@ -655,6 +659,7 @@ impl Scheme for UserScheme {
             Err(Error::new(EINVAL))
         }
     }
+    */
 
     fn frename(&self, file: usize, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
