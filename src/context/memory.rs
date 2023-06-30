@@ -1237,7 +1237,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
         Provider::FmapBorrowed { ref fmap } => {
             let ctxt = Arc::clone(fmap);
             let flags = map_flags(grant_info.flags());
-            drop(addr_space);
+            drop(addr_space_guard);
 
             let (scheme_id, scheme_number) = match ctxt.file_ref.description.read() {
                 ref desc => (desc.scheme, desc.number),
@@ -1260,6 +1260,8 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
 
             addr_space_guard = addr_space_lock.write();
             addr_space = &mut *addr_space_guard;
+
+            log::info!("Got frame {:?} from external fmap", frame);
 
             frame
         }
