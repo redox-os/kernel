@@ -43,7 +43,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 context::Status::Runnable => {
                     stat_string.push('R');
                 },
-                context::Status::Blocked => if context.wake.is_some() {
+                context::Status::Blocked | context::Status::HardBlocked { .. } => if context.wake.is_some() {
                     stat_string.push('S');
                 } else {
                     stat_string.push('B');

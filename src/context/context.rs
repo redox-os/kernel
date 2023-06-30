@@ -35,9 +35,26 @@ int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Status {
     Runnable,
+
+    // TODO: Rename to SoftBlocked and move status_reason to this variant.
+
+    /// Not currently runnable, typically due to some blocking syscall, but it can be trivially
+    /// unblocked by e.g. signals.
     Blocked,
+
+    /// Not currently runnable, and cannot be runnable until manually unblocked, depending on what
+    /// reason.
+    HardBlocked { reason: HardBlockedReason },
+
     Stopped(usize),
     Exited(usize),
+}
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum HardBlockedReason {
+    AwaitingMmap,
+    // TODO: PageFaultOom?
+    // TODO: NotYetStarted/ManuallyBlocked (when new contexts are created)
+    // TODO: ptrace_stop?
 }
 
 #[derive(Copy, Clone, Debug)]
