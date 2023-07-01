@@ -30,7 +30,7 @@ use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
 
-use super::memory::FmapCtxt;
+use super::memory::GrantFileRef;
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
@@ -64,7 +64,7 @@ impl Status {
 
 #[derive(Clone, Debug)]
 pub enum HardBlockedReason {
-    AwaitingMmap { ctxt: Arc<FmapCtxt> },
+    AwaitingMmap { file_ref: GrantFileRef },
     // TODO: PageFaultOom?
     // TODO: NotYetStarted/ManuallyBlocked (when new contexts are created)
     // TODO: ptrace_stop?

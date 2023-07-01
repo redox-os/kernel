@@ -9,7 +9,7 @@ use syscall::{
     flag::MapFlags,
     error::*,
 };
-use rmm::Arch as _;
+use rmm::{Arch as _, PhysicalAddress};
 
 use crate::arch::paging::PAGE_SIZE;
 use crate::memory::{Enomem, Frame, get_page_info, PageInfo};
@@ -90,7 +90,7 @@ impl AddrSpace {
                     new_mapper,
                     (),
                 )?,
-                Provider::Allocated { ref fmap } => Grant::cow(
+                Provider::Allocated { ref cow_file_ref } => Grant::cow(
                     Arc::clone(&self_arc),
                     grant_base,
                     grant_base,
@@ -100,12 +100,12 @@ impl AddrSpace {
                     new_mapper,
                     &mut this_flusher,
                     (),
-                    fmap.as_ref().map(Arc::clone),
+                    cow_file_ref.clone(),
                 )?,
 
                 // MAP_SHARED grants are retained by reference, across address space clones (across
                 // forks on monolithic kernels).
-                Provider::External { ref address_space, src_base, ref fmap } => Grant::borrow_grant(
+                Provider::External { ref address_space, src_base } => Grant::borrow_grant(
                     Arc::clone(&address_space),
                     grant_base,
                     grant_base,
@@ -113,7 +113,6 @@ impl AddrSpace {
                     new_mapper,
                     (),
                     false,
-                    fmap.as_ref().map(Arc::clone),
                 )?,
                 // TODO: "clone grant using fmap"
                 Provider::FmapBorrowed { .. } => continue,
@@ -563,15 +562,10 @@ pub struct GrantInfo {
 }
 
 #[derive(Debug)]
-pub struct FmapCtxt {
-    pub file_ref: GrantFileRef,
-}
-
-#[derive(Debug)]
 pub enum Provider {
     /// The grant was initialized with (lazy) zeroed memory, and any changes will make it owned by
     /// the frame allocator.
-    Allocated { fmap: Option<Arc<FmapCtxt>> },
+    Allocated { cow_file_ref: Option<GrantFileRef> },
 
     /// The grant is not owned, but borrowed from physical memory frames that do not belong to the
     /// frame allocator.
@@ -579,10 +573,11 @@ pub enum Provider {
 
     /// The memory is borrowed directly from another address space.
     ///
-    /// All grants in the specified range must be of type Allocated.
-    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, fmap: Option<Arc<FmapCtxt>> },
+    /// Those grants will be pinned, and thus cannot be removed until they are unpinned, when this
+    /// grant is unmapped.
+    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page },
 
-    FmapBorrowed { fmap: Arc<FmapCtxt> },
+    FmapBorrowed { file_ref: GrantFileRef },
 }
 
 #[derive(Debug)]
@@ -638,14 +633,14 @@ impl Grant {
                 page_count: span.count,
                 flags,
                 mapped: true,
-                provider: Provider::Allocated { fmap: None },
+                provider: Provider::Allocated { cow_file_ref: None },
             },
         })
     }
 
     // XXX: borrow_grant is needed because of the borrow checker (iterator invalidation), maybe
     // borrow_grant/borrow can be abstracted somehow?
-    pub fn borrow_grant(src_address_space_lock: Arc<RwLock<AddrSpace>>, src_base: Page, dst_base: Page, src_info: &GrantInfo, mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>, eager: bool, fmap: Option<Arc<FmapCtxt>>) -> Result<Grant, Enomem> {
+    pub fn borrow_grant(src_address_space_lock: Arc<RwLock<AddrSpace>>, src_base: Page, dst_base: Page, src_info: &GrantInfo, mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>, eager: bool) -> Result<Grant, Enomem> {
         Ok(Grant {
             base: dst_base,
             info: GrantInfo {
@@ -655,13 +650,12 @@ impl Grant {
                 provider: Provider::External {
                     src_base,
                     address_space: src_address_space_lock,
-                    fmap,
                 }
             },
         })
     }
 
-    pub fn borrow_fmap(span: PageSpan, flags: PageFlags<RmmA>, fmap: Arc<FmapCtxt>, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Self {
+    pub fn borrow_fmap(span: PageSpan, flags: PageFlags<RmmA>, file_ref: GrantFileRef, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Self {
         if let Some(mut src) = src {
             for dst_page in span.pages() {
                 let src_page = src.src_page.next_by(dst_page.offset_from(span.base));
@@ -679,7 +673,7 @@ impl Grant {
                 page_count: span.count,
                 mapped: true,
                 flags,
-                provider: Provider::FmapBorrowed { fmap },
+                provider: Provider::FmapBorrowed { file_ref },
             }
         }
     }
@@ -690,6 +684,7 @@ impl Grant {
     /// mapping them into `[dst_base, dst_base+page_count)`. The destination pages will lazily read
     /// the page tables of the source pages, but once present in the destination address space,
     /// pages that are unmaped or moved will not be made visible to the destination address space.
+    // TODO: Return only one grant
     pub fn borrow(
         src_address_space_lock: Arc<RwLock<AddrSpace>>,
         src_address_space: &AddrSpace,
@@ -738,16 +733,15 @@ impl Grant {
                     flags,
                     mapped: true,
                     provider: match src_grant.provider {
-                        Provider::Allocated { ref fmap } => Provider::External {
+                        Provider::Allocated { .. } => Provider::External {
                             src_base,
                             address_space: Arc::clone(&src_address_space_lock),
-                            fmap: fmap.as_ref().map(Arc::clone),
                         },
                         Provider::PhysBorrowed { base: src_phys_base } => Provider::PhysBorrowed {
                             base: src_phys_base.next_by(offset_from_src_base),
                         },
-                        Provider::External { ref address_space, src_base, ref fmap } => Provider::External { address_space: Arc::clone(address_space), src_base, fmap: fmap.as_ref().map(Arc::clone) },
-                        Provider::FmapBorrowed { ref fmap } => Provider::FmapBorrowed { fmap: Arc::clone(fmap) }
+                        Provider::External { ref address_space, src_base } => Provider::External { address_space: Arc::clone(address_space), src_base },
+                        Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }
                     }
                 },
             });
@@ -776,7 +770,7 @@ impl Grant {
         dst_mapper: &mut PageMapper,
         mut src_flusher: impl Flusher<RmmA>,
         mut dst_flusher: impl Flusher<RmmA>,
-        fmap: Option<Arc<FmapCtxt>>,
+        cow_file_ref: Option<GrantFileRef>,
     ) -> Result<Grant, Enomem> {
         // TODO: Page table iterator
         for page_idx in 0..page_count {
@@ -809,7 +803,7 @@ impl Grant {
                 page_count,
                 flags,
                 mapped: true,
-                provider: Provider::Allocated { fmap },
+                provider: Provider::Allocated { cow_file_ref },
             },
         })
     }
@@ -868,11 +862,15 @@ impl Grant {
 
         self.info.mapped = false;
 
+        // Dummy value, won't be read.
+        let dangling_frame = Frame::containing_address(PhysicalAddress::new(PAGE_SIZE));
+        let provider = core::mem::replace(&mut self.info.provider, Provider::PhysBorrowed { base: dangling_frame });
+
         UnmapResult {
-            file_desc: if let Provider::Allocated { ref mut fmap } | Provider::External { ref mut fmap, .. } = self.info.provider && let Some(fmap) = fmap.take() && let Ok(ctxt) = Arc::try_unwrap(fmap) {
-                Some(ctxt.file_ref)
-            } else {
-                None
+            file_desc: match provider {
+                Provider::Allocated { cow_file_ref } => cow_file_ref,
+                Provider::FmapBorrowed { file_ref } => Some(file_ref),
+                _ => None,
             }
         }
     }
@@ -903,20 +901,20 @@ impl Grant {
                 mapped: self.info.mapped,
                 page_count: span.count,
                 provider: match self.info.provider {
-                    Provider::External { ref address_space, src_base, ref fmap } => Provider::External {
+                    Provider::External { ref address_space, src_base } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
-                        fmap: fmap.as_ref().map(Arc::clone),
                     },
-                    Provider::Allocated { ref fmap } => Provider::Allocated { fmap: fmap.as_ref().map(Arc::clone) },
+                    Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
                     Provider::PhysBorrowed { ref base } => Provider::PhysBorrowed { base: base.clone() },
-                    Provider::FmapBorrowed { ref fmap } => Provider::FmapBorrowed { fmap: Arc::clone(fmap) }
+                    Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }
                 }
             },
         });
 
         match self.info.provider {
             Provider::PhysBorrowed { ref mut base } => *base = base.next_by(before_grant.as_ref().map_or(0, |g| g.info.page_count)),
+            // TODO: Adjust cow_file_ref offset
             Provider::Allocated { .. } | Provider::External { .. } | Provider::FmapBorrowed { .. } => (),
         }
 
@@ -928,15 +926,15 @@ impl Grant {
                 mapped: self.info.mapped,
                 page_count: span.count,
                 provider: match self.info.provider {
-                    Provider::Allocated { ref fmap } => Provider::Allocated { fmap: fmap.as_ref().map(Arc::clone) },
-                    Provider::External { ref address_space, src_base, ref fmap } => Provider::External {
+                    // TODO: Adjust offset
+                    Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
+                    Provider::External { ref address_space, src_base } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
-                        fmap: fmap.as_ref().map(Arc::clone),
                     },
 
                     Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
-                    Provider::FmapBorrowed { ref fmap } => Provider::FmapBorrowed { fmap: Arc::clone(fmap) }
+                    Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }, 
                 }
             },
         });
@@ -1246,23 +1244,25 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
                 map_zeroed(&mut guard.table.utable, src_page, grant_flags, access == AccessMode::Write)?
             }
         }
-        Provider::FmapBorrowed { ref fmap } => {
-            let ctxt = Arc::clone(fmap);
+        // TODO: NonfatalInternalError if !MAP_LAZY and this page fault occurs.
+
+        Provider::FmapBorrowed { ref file_ref } => {
+            let file_ref = file_ref.clone();
             let flags = map_flags(grant_info.flags());
             drop(addr_space_guard);
 
-            let (scheme_id, scheme_number) = match ctxt.file_ref.description.read() {
+            let (scheme_id, scheme_number) = match file_ref.description.read() {
                 ref desc => (desc.scheme, desc.number),
             };
             let user_inner = scheme::schemes()
                 .get(scheme_id).and_then(|s| s.as_user_inner().transpose().ok().flatten())
                 .ok_or(PfError::Segv)?;
 
-            let offset = ctxt.file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
+            let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
             user_inner.request_fmap(scheme_number, offset, 1, flags).unwrap();
 
             let context_lock = super::current().map_err(|_| PfError::NonfatalInternalError)?;
-            context_lock.write().hard_block(HardBlockedReason::AwaitingMmap { ctxt });
+            context_lock.write().hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
             unsafe { super::switch(); }
 

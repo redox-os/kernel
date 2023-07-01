@@ -1,7 +1,6 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use rmm::PageFlushAll;
 use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +11,7 @@ use spin::{Mutex, RwLock};
 use crate::context::context::HardBlockedReason;
 use crate::context::{self, Context, BorrowedHtBuf, Status};
 use crate::context::file::FileDescription;
-use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, FmapCtxt, BorrowedFmapSource};
+use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, BorrowedFmapSource};
 use crate::event;
 use crate::memory::Frame;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
@@ -503,12 +502,10 @@ impl UserInner {
         let dst_base = match mode {
             MmapMode::Cow => todo!("mmap CoW"),
             MmapMode::Shared => {
-                let ctxt = Arc::new(FmapCtxt {
-                    file_ref: GrantFileRef {
-                        description: desc,
-                        base_offset: map.offset,
-                    },
-                });
+                let file_ref = GrantFileRef {
+                    description: desc,
+                    base_offset: map.offset,
+                };
                 let src_guard = src_address_space.read();
                 let src = match base_page_opt {
                     Some(base_addr) => Some(BorrowedFmapSource {
@@ -519,7 +516,7 @@ impl UserInner {
                 };
                 let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
                 dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, |dst_base, flags, mapper, flusher| {
-                    Ok(Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), ctxt, src, mapper, flusher))
+                    Ok(Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), file_ref, src, mapper, flusher))
                 })?
             }
         };
