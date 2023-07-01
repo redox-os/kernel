@@ -115,7 +115,8 @@ impl AddrSpace {
                     false,
                     fmap.as_ref().map(Arc::clone),
                 )?,
-                Provider::FmapBorrowed { ref fmap } => Grant::borrow_fmap(PageSpan::new(grant_base, grant_info.page_count), grant_info.flags(), Arc::clone(fmap)),
+                // TODO: "clone grant using fmap"
+                Provider::FmapBorrowed { .. } => continue,
             };
 
             new_guard.grants.insert(new_grant);
@@ -660,7 +661,18 @@ impl Grant {
         })
     }
 
-    pub fn borrow_fmap(span: PageSpan, flags: PageFlags<RmmA>, fmap: Arc<FmapCtxt>) -> Self {
+    pub fn borrow_fmap(span: PageSpan, flags: PageFlags<RmmA>, fmap: Arc<FmapCtxt>, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Self {
+        if let Some(mut src) = src {
+            for dst_page in span.pages() {
+                let src_page = src.src_page.next_by(dst_page.offset_from(span.base));
+
+                let (frame, _) = src.src_mapper.translate(src_page.start_address()).unwrap();
+                unsafe {
+                    flusher.consume(mapper.map_phys(dst_page.start_address(), frame, flags).unwrap());
+                }
+            }
+        }
+
         Self {
             base: span.base,
             info: GrantInfo {
@@ -1250,13 +1262,11 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
             user_inner.request_fmap(scheme_number, offset, 1, flags).unwrap();
 
             let context_lock = super::current().map_err(|_| PfError::NonfatalInternalError)?;
-            context_lock.write().hard_block(HardBlockedReason::AwaitingMmap { ctxt, finished: None });
+            context_lock.write().hard_block(HardBlockedReason::AwaitingMmap { ctxt });
 
             unsafe { super::switch(); }
 
-            let super::Status::HardBlocked { reason: HardBlockedReason::AwaitingMmap { finished: Some(frame), .. } } = core::mem::replace(&mut context_lock.write().status, super::Status::Runnable) else {
-                return Err(PfError::NonfatalInternalError);
-            };
+            let frame = context_lock.write().fmap_ret.take().ok_or(PfError::NonfatalInternalError)?;
 
             addr_space_guard = addr_space_lock.write();
             addr_space = &mut *addr_space_guard;
@@ -1285,4 +1295,9 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
 pub enum MmapMode {
     Cow,
     Shared,
+}
+
+pub struct BorrowedFmapSource<'a> {
+    pub src_page: Page,
+    pub src_mapper: &'a PageMapper,
 }

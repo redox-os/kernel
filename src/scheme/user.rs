@@ -1,6 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use rmm::PageFlushAll;
 use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -11,7 +12,7 @@ use spin::{Mutex, RwLock};
 use crate::context::context::HardBlockedReason;
 use crate::context::{self, Context, BorrowedHtBuf, Status};
 use crate::context::file::FileDescription;
-use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, FmapCtxt};
+use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, FmapCtxt, BorrowedFmapSource};
 use crate::event;
 use crate::memory::Frame;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
@@ -39,6 +40,7 @@ pub struct UserInner {
     fmap: Mutex<BTreeMap<u64, Weak<RwLock<Context>>>>,
     unmounting: AtomicBool,
 }
+#[derive(Debug)]
 pub enum Response {
     Regular(usize),
     Fd(Arc<RwLock<FileDescription>>),
@@ -346,6 +348,7 @@ impl UserInner {
         Ok(packets_read * mem::size_of::<Packet>())
     }
     pub fn request_fmap(&self, id: usize, offset: u64, required_page_count: usize, flags: MapFlags) -> Result<()> {
+        log::info!("REQUEST FMAP");
         self.todo.send(Packet {
             id: self.next_id(),
             pid: context::context_id().into(),
@@ -383,26 +386,27 @@ impl UserInner {
                     let offset = u64::from(packet.uid) | (u64::from(packet.gid) << 32);
 
                     if offset % PAGE_SIZE as u64 != 0 {
-                        return dbg!(Err(Error::new(EINVAL)));
+                        return Err(Error::new(EINVAL));
                     }
 
                     let base_addr = VirtualAddress::new(packet.c);
                     if base_addr.data() % PAGE_SIZE != 0 {
-                        return dbg!(Err(Error::new(EINVAL)));
+                        return Err(Error::new(EINVAL));
                     }
 
                     let page_count = packet.d;
 
-                    if page_count != 1 { return dbg!(Err(Error::new(EINVAL))); }
+                    if page_count != 1 { return Err(Error::new(EINVAL)); }
                     let context = self.fmap.lock().remove(&packet.id).ok_or(Error::new(EINVAL))?.upgrade().ok_or(Error::new(ESRCH))?;
 
                     let (frame, _) = AddrSpace::current()?.read().table.utable.translate(base_addr).ok_or(Error::new(EFAULT))?;
 
                     let mut context = context.write();
                     match context.status {
-                        Status::HardBlocked { reason: HardBlockedReason::AwaitingMmap { ref mut finished, .. } } => *finished = Some(Frame::containing_address(frame)),
+                        Status::HardBlocked { reason: HardBlockedReason::AwaitingMmap { .. } } => context.status = Status::Runnable,
                         _ => (),
                     }
+                    context.fmap_ret = Some(Frame::containing_address(frame));
 
                 }
                 _ => return Err(Error::new(EINVAL)),
@@ -433,7 +437,7 @@ impl UserInner {
         }
 
         if map.address % PAGE_SIZE != 0 {
-            return Err(Error::new(EINVAL))
+            return Err(Error::new(EINVAL));
         };
         let dst_base = (map.address != 0).then_some(Page::containing_address(VirtualAddress::new(map.address)));
 
@@ -446,6 +450,11 @@ impl UserInner {
         } else {
             MmapMode::Cow
         };
+
+        let src_address_space = Arc::clone(
+            self.context.upgrade().ok_or(Error::new(ENODEV))?
+                .read().addr_space()?
+        );
 
         let (pid, desc) = {
             let context_lock = context::current()?;
@@ -481,8 +490,9 @@ impl UserInner {
             gid: (map.offset >> 32) as u32,
         })?;
 
-        let _ = match response {
-            Response::Regular(code) => Error::demux(code)?,
+        let base_page_opt = match response {
+            Response::Regular(code) => (!map.flags.contains(MapFlags::MAP_LAZY))
+                .then_some(Error::demux(code)?),
             Response::Fd(_) => {
                 log::debug!("Scheme incorrectly returned an fd for fmap.");
 
@@ -499,9 +509,17 @@ impl UserInner {
                         base_offset: map.offset,
                     },
                 });
+                let src_guard = src_address_space.read();
+                let src = match base_page_opt {
+                    Some(base_addr) => Some(BorrowedFmapSource {
+                        src_page: Page::containing_address(VirtualAddress::new(base_addr)),
+                        src_mapper: &src_guard.table.utable,
+                    }),
+                    None => None,
+                };
                 let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
-                dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, |dst_base, flags, _mapper, _flusher| {
-                    Ok(Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), ctxt))
+                dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, |dst_base, flags, mapper, flusher| {
+                    Ok(Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), ctxt, src, mapper, flusher))
                 })?
             }
         };

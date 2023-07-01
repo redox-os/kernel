@@ -64,7 +64,7 @@ impl Status {
 
 #[derive(Clone, Debug)]
 pub enum HardBlockedReason {
-    AwaitingMmap { ctxt: Arc<FmapCtxt>, finished: Option<Frame> },
+    AwaitingMmap { ctxt: Arc<FmapCtxt> },
     // TODO: PageFaultOom?
     // TODO: NotYetStarted/ManuallyBlocked (when new contexts are created)
     // TODO: ptrace_stop?
@@ -294,6 +294,7 @@ pub struct Context {
     /// set since there is no interrupt stack (unless the kernel stack is copied, but that is in my
     /// opinion hackier and less efficient than this (and UB to do in Rust)).
     pub clone_entry: Option<[usize; 2]>,
+    pub fmap_ret: Option<Frame>,
 }
 
 impl Context {
@@ -336,6 +337,7 @@ impl Context {
             ptrace_stop: false,
             sigstack: None,
             clone_entry: None,
+            fmap_ret: None,
         };
         Ok(this)
     }
