@@ -9,7 +9,7 @@ use syscall::{
     flag::MapFlags,
     error::*,
 };
-use rmm::{Arch as _, PhysicalAddress};
+use rmm::{Arch as _, PhysicalAddress, PageFlush};
 
 use crate::arch::paging::PAGE_SIZE;
 use crate::memory::{Enomem, Frame, get_page_info, PageInfo};
@@ -1073,6 +1073,9 @@ pub enum PfError {
     Segv,
     Oom,
     NonfatalInternalError,
+    // TODO: Handle recursion limit by mapping a zeroed page? Or forbid borrowing borrowed memory,
+    // and ensure pages are mapped at grant time?
+    RecursionLimitExceeded,
 }
 
 fn cow(dst_mapper: &mut PageMapper, page: Page, old_frame: Frame, info: &PageInfo, page_flags: PageFlags<RmmA>) -> Result<Frame, PfError> {
@@ -1120,6 +1123,13 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
         return Err(PfError::Segv);
     };
 
+    let (_, flush) = correct_inner(addr_space_lock, faulting_page, access, 0)?;
+
+    flush.flush();
+
+    Ok(())
+}
+fn correct_inner(addr_space_lock: Arc<RwLock<AddrSpace>>, faulting_page: Page, access: AccessMode, recursion_level: u32) -> Result<(Frame, PageFlush<RmmA>), PfError> {
     let mut addr_space_guard = addr_space_lock.write();
     let mut addr_space = &mut *addr_space_guard;
 
@@ -1205,17 +1215,32 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
             let src_page = src_base.next_by(pages_from_grant_start);
 
             if let Some(src_grant) = guard.grants.contains(src_page) {
-                if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
-                    let src_frame = Frame::containing_address(phys);
-
-                    let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
-                    info.add_ref(false);
-
-                    src_frame
+                let src_frame = if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
+                    Frame::containing_address(phys)
                 } else {
+                    let foreign_address_space_lock = Arc::clone(foreign_address_space);
+
                     // Grant was valid (TODO check), but we need to correct the underlying page.
-                    todo!()
-                }
+                    // TODO: Access mode
+
+                    // TODO: Reasonable maximum?
+                    let new_recursion_level = recursion_level.checked_add(1).filter(|new_lvl| *new_lvl < 16).ok_or(PfError::RecursionLimitExceeded)?;
+
+                    drop(guard);
+                    drop(addr_space_guard);
+
+                    let (frame, _) = correct_inner(foreign_address_space_lock, src_page, AccessMode::Read, new_recursion_level)?;
+
+                    addr_space_guard = addr_space_lock.write();
+                    addr_space = &mut *addr_space_guard;
+
+                    frame
+                };
+
+                let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
+                info.add_ref(false);
+
+                src_frame
             } else {
                 // Grant did not exist, but we did own a Provider::External mapping, and cannot
                 // simply let the current context fail. TODO: But all borrowed memory shouldn't
@@ -1269,9 +1294,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
         return Err(PfError::Oom);
     };
 
-    flush.flush();
-
-    Ok(())
+    Ok((frame, flush))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

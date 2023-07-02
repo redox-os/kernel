@@ -177,7 +177,7 @@ pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faul
         match try_correcting_page_tables(faulting_page, mode) {
             Ok(()) => return Ok(()),
             Err(PfError::Oom) => todo!("oom"),
-            Err(PfError::Segv) => {
+            Err(PfError::Segv | PfError::RecursionLimitExceeded) => {
                 log::error!("Failed to correct page tables");
             },
             Err(PfError::NonfatalInternalError) => todo!(),
