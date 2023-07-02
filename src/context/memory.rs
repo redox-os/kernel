@@ -589,6 +589,11 @@ pub enum Provider {
     /// The memory is borrowed directly from another address space.
     External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, is_pinned_userscheme_borrow: bool },
 
+    /// The memory is MAP_SHARED borrowed from a scheme.
+    ///
+    /// Since the address space is not tracked here, all nonpresent pages (all pages must be
+    /// present before the fmap operation completes, unless MAP_LAZY is specified) are tracked
+    /// using PageInfo, or treated as PhysBorrowed if any frame lacks a PageInfo.
     FmapBorrowed { file_ref: GrantFileRef },
 }
 
@@ -674,6 +679,11 @@ impl Grant {
                 let src_page = src.src_page.next_by(dst_page.offset_from(span.base));
 
                 let (frame, _) = src.src_mapper.translate(src_page.start_address()).unwrap();
+
+                if let Some(page_info) = get_page_info(Frame::containing_address(frame)) {
+                    page_info.add_ref(false);
+                }
+
                 unsafe {
                     flusher.consume(mapper.map_phys(dst_page.start_address(), frame, flags).unwrap());
                 }
