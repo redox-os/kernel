@@ -237,9 +237,6 @@ impl AddrSpace {
         }
     }
     pub fn mmap(&mut self, page: Option<Page>, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
-        self.mmap_multiple(page, page_count, flags, move |page, flags, mapper, flusher| Ok(Some(map(page, flags, mapper, flusher)?)))
-    }
-    pub fn mmap_multiple<I: IntoIterator<Item = Grant>>(&mut self, page: Option<Page>, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<I>) -> Result<Page> {
         // Finally, the end of all "T0DO: Abstract with other grant creation"!
         let selected_span = self.grants.find_free_at(self.mmap_min, page, page_count.get(), flags)?;
 
@@ -256,10 +253,8 @@ impl AddrSpace {
             &mut inactive as &mut dyn Flusher<RmmA>
         };
 
-        let iter = map(selected_span.base, page_flags(flags), &mut self.table.utable, flusher)?;
-        for grant in iter {
-            self.grants.insert(grant);
-        }
+        let grant = map(selected_span.base, page_flags(flags), &mut self.table.utable, flusher)?;
+        self.grants.insert(grant);
 
         Ok(selected_span.base)
     }
@@ -572,9 +567,6 @@ pub enum Provider {
     PhysBorrowed { base: Frame },
 
     /// The memory is borrowed directly from another address space.
-    ///
-    /// Those grants will be pinned, and thus cannot be removed until they are unpinned, when this
-    /// grant is unmapped.
     External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page },
 
     FmapBorrowed { file_ref: GrantFileRef },
@@ -696,7 +688,7 @@ impl Grant {
         dst_flusher: impl Flusher<RmmA>,
         eager: bool,
         allow_phys: bool,
-    ) -> Result<Vec<Grant>> {
+    ) -> Result<Grant> {
         /*
         if eager {
             for page in PageSpan::new(src_base, page_count) {
@@ -704,8 +696,6 @@ impl Grant {
             }
         }
         */
-
-        let mut dst_grants = Vec::with_capacity(1);
 
         let src_span = PageSpan::new(src_base, page_count);
         let mut prev_span = None;
@@ -721,35 +711,6 @@ impl Grant {
                 log::warn!("Hole between grants, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}", prev_span, src_base, src_grant_base, src_grant);
                 return Err(Error::new(EINVAL));
             }
-
-            let common_span = src_span.intersection(grant_span);
-            let offset_from_src_base = common_span.base.offset_from(src_base);
-
-            let grant_dst_base = dst_base.next_by(offset_from_src_base);
-
-            dst_grants.push(Grant {
-                base: grant_dst_base,
-                info: GrantInfo {
-                    page_count: common_span.count,
-                    flags,
-                    mapped: true,
-                    provider: match src_grant.provider {
-                        Provider::Allocated { .. } => Provider::External {
-                            src_base,
-                            address_space: Arc::clone(&src_address_space_lock),
-                        },
-                        Provider::PhysBorrowed { base: src_phys_base } => if allow_phys {
-                            Provider::PhysBorrowed {
-                                base: src_phys_base.next_by(offset_from_src_base),
-                            }
-                        } else {
-                            return Err(Error::new(EACCES));
-                        },
-                        Provider::External { ref address_space, src_base } => Provider::External { address_space: Arc::clone(address_space), src_base },
-                        Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }
-                    }
-                },
-            });
         }
 
         let Some(last_span) = prev_span else {
@@ -762,7 +723,15 @@ impl Grant {
             return Err(Error::new(EINVAL));
         }
 
-        Ok(dst_grants)
+        Ok(Grant {
+            base: dst_base,
+            info: GrantInfo {
+                page_count,
+                flags,
+                mapped: true,
+                provider: Provider::External { address_space: src_address_space_lock, src_base }
+            },
+        })
     }
     // TODO: This is limited to one grant. Should it be (if some magic new proc: API is introduced)?
     pub fn cow(
@@ -1235,14 +1204,23 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
             let guard = foreign_address_space.upgradeable_read();
             let src_page = src_base.next_by(pages_from_grant_start);
 
-            if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
-                let src_frame = Frame::containing_address(phys);
+            if let Some(src_grant) = guard.grants.contains(src_page) {
+                if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
+                    let src_frame = Frame::containing_address(phys);
 
-                let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
-                info.add_ref(false);
+                    let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
+                    info.add_ref(false);
 
-                src_frame
+                    src_frame
+                } else {
+                    // Grant was valid (TODO check), but we need to correct the underlying page.
+                    todo!()
+                }
             } else {
+                // Grant did not exist, but we did own a Provider::External mapping, and cannot
+                // simply let the current context fail. TODO: But all borrowed memory shouldn't
+                // really be lazy though?
+
                 let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
                 // TODO: Should this be called?
