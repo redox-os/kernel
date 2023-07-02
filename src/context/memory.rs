@@ -921,10 +921,13 @@ impl Grant {
             },
         });
 
+        let middle_page_offset = before_grant.as_ref().map_or(0, |g| g.info.page_count);
+
         match self.info.provider {
-            Provider::PhysBorrowed { ref mut base } => *base = base.next_by(before_grant.as_ref().map_or(0, |g| g.info.page_count)),
+            Provider::PhysBorrowed { ref mut base } => *base = base.next_by(middle_page_offset),
             // TODO: Adjust cow_file_ref offset
-            Provider::Allocated { .. } | Provider::External { .. } | Provider::FmapBorrowed { .. } => (),
+            Provider::FmapBorrowed { ref mut file_ref } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref) } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
+            Provider::Allocated { cow_file_ref: None } | Provider::External { .. } => (),
         }
 
 
@@ -936,7 +939,11 @@ impl Grant {
                 page_count: span.count,
                 provider: match self.info.provider {
                     // TODO: Adjust offset
-                    Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
+                    Provider::Allocated { cow_file_ref: None } => Provider::Allocated { cow_file_ref: None },
+                    Provider::Allocated { cow_file_ref: Some(ref file_ref) } => Provider::Allocated { cow_file_ref: Some(GrantFileRef {
+                        base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
+                        description: Arc::clone(&file_ref.description),
+                    })},
                     Provider::External { ref address_space, src_base, .. } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
@@ -944,7 +951,10 @@ impl Grant {
                     },
 
                     Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
-                    Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }, 
+                    Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: GrantFileRef {
+                        base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
+                        description: Arc::clone(&file_ref.description),
+                    }}, 
                 }
             },
         });
