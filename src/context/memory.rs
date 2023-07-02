@@ -40,13 +40,28 @@ pub fn map_flags(page_flags: PageFlags<RmmA>) -> MapFlags {
 
 pub struct UnmapResult {
     pub file_desc: Option<GrantFileRef>,
+    pub size: usize,
 }
-impl Drop for UnmapResult {
-    fn drop(&mut self) {
-        if let Some(fd) = self.file_desc.take().and_then(|d| Arc::try_unwrap(d.description).ok()) {
-            // TODO: Funmap?
-            let _ = fd.into_inner().try_close();
+impl UnmapResult {
+    pub fn unmap(mut self) -> Result<()> {
+        let Some(GrantFileRef { base_offset, description }) = self.file_desc.take() else {
+            return Ok(());
+        };
+
+        let (scheme_id, number) = match description.write() {
+            ref desc => (desc.scheme, desc.number),
+        };
+
+        let funmap_result = crate::scheme::schemes()
+            .get(scheme_id).map(Arc::clone).ok_or(Error::new(ENODEV))
+            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size));
+
+        if let Ok(fd) = Arc::try_unwrap(description) {
+            fd.into_inner().try_close()?;
         }
+        funmap_result?;
+
+        Ok(())
     }
 }
 
@@ -225,33 +240,17 @@ impl AddrSpace {
             }
 
             // Remove irrelevant region
-            let UnmapResult { ref mut file_desc } = grant.unmap(&mut this.table.utable, &mut flusher);
+            let unmap_result = grant.unmap(&mut this.table.utable, &mut flusher);
 
             // Notify scheme that holds grant
-            if let Some(file_ref) = file_desc.take() {
-                notify_files.push((file_ref, intersection));
+            if unmap_result.file_desc.is_some() {
+                notify_files.push(unmap_result);
             }
         }
         drop(self);
 
-        for (file_ref, intersection) in notify_files {
-            let scheme_id = { file_ref.description.read().scheme };
-
-            let scheme = match crate::scheme::schemes().get(scheme_id) {
-                Some(scheme) => Arc::clone(scheme),
-                // One could argue that EBADFD could be returned here, but we have already unmapped
-                // the memory.
-                None => continue,
-            };
-            // Same here, we don't really care about errors when schemes respond to unmap events.
-            // The caller wants the memory to be unmapped, period. When already unmapped, what
-            // would we do with error codes anyway?
-            // FIXME
-            //let _ = scheme.funmap(intersection.base.start_address().data(), intersection.count * PAGE_SIZE);
-
-            if let Ok(desc) = Arc::try_unwrap(file_ref.description) {
-                let _ = desc.into_inner().try_close();
-            }
+        for unmap_result in notify_files {
+            let _ = unmap_result.unmap();
         }
 
         Ok(())
@@ -839,6 +838,7 @@ impl Grant {
 
         self.info.flags = flags;
     }
+    #[must_use = "will not unmap itself"]
     pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
         assert!(self.info.mapped);
 
@@ -873,6 +873,7 @@ impl Grant {
         let provider = core::mem::replace(&mut self.info.provider, Provider::PhysBorrowed { base: dangling_frame });
 
         UnmapResult {
+            size: self.info.page_count * PAGE_SIZE,
             file_desc: match provider {
                 Provider::Allocated { cow_file_ref } => cow_file_ref,
                 Provider::FmapBorrowed { file_ref } => Some(file_ref),
@@ -1028,8 +1029,10 @@ impl Drop for AddrSpace {
             // TODO: Optimize away clearing the actual page tables? Since this address space is no
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
-            // the underlying pages (and send some funmaps possibly).
-            grant.unmap(&mut self.table.utable, ());
+            // the underlying pages (and send some funmaps).
+            let res = grant.unmap(&mut self.table.utable, ());
+
+            let _ = res.unmap();
         }
     }
 }

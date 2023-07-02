@@ -311,6 +311,9 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
+    fn kfunmap(&self, number: usize, offset: usize, size: usize) -> Result<()> {
+        Err(Error::new(EOPNOTSUPP))
+    }
 
     fn kopen(&self, path: &str, flags: usize, caller: CallerCtx) -> Result<OpenResult> {
         self.open(path, flags, caller.uid, caller.gid).map(OpenResult::SchemeLocal)
