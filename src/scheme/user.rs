@@ -264,7 +264,16 @@ impl UserInner {
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
             dst_space.mmap_multiple(Some(first_middle_dst_page), middle_page_count, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), page_flags, mapper, flusher, true)?)
+                let eager = true;
+
+                // It doesn't make sense to allow a context, that has borrowed non-RAM physical
+                // memory, to DIRECTLY do scheme calls onto that memory.
+                //
+                // (TODO: Maybe there are some niche use cases for that, possibly PCI transfer
+                // BARs, but it doesn't make sense yet.)
+                let allow_phys = false;
+
+                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), page_flags, mapper, flusher, eager, allow_phys)?)
             })?;
         }
 

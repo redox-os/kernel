@@ -695,6 +695,7 @@ impl Grant {
         dst_mapper: &mut PageMapper,
         dst_flusher: impl Flusher<RmmA>,
         eager: bool,
+        allow_phys: bool,
     ) -> Result<Vec<Grant>> {
         /*
         if eager {
@@ -737,8 +738,12 @@ impl Grant {
                             src_base,
                             address_space: Arc::clone(&src_address_space_lock),
                         },
-                        Provider::PhysBorrowed { base: src_phys_base } => Provider::PhysBorrowed {
-                            base: src_phys_base.next_by(offset_from_src_base),
+                        Provider::PhysBorrowed { base: src_phys_base } => if allow_phys {
+                            Provider::PhysBorrowed {
+                                base: src_phys_base.next_by(offset_from_src_base),
+                            }
+                        } else {
+                            return Err(Error::new(EACCES));
                         },
                         Provider::External { ref address_space, src_base } => Provider::External { address_space: Arc::clone(address_space), src_base },
                         Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }
