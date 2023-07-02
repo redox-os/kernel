@@ -273,7 +273,11 @@ impl UserInner {
                 // BARs, but it doesn't make sense yet.)
                 let allow_phys = false;
 
-                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), page_flags, mapper, flusher, eager, allow_phys)?)
+                // Deny any attempts by the scheme, to unmap these temporary pages. The only way to
+                // unmap them is to respond to the scheme socket.
+                let is_pinned_userscheme_borrow = true;
+
+                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), page_flags, mapper, flusher, eager, allow_phys, is_pinned_userscheme_borrow)?)
             })?;
         }
 
@@ -579,7 +583,8 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
 
-        space.write().munmap(PageSpan::new(first_page, page_count));
+        let unpin = true;
+        space.write().munmap(PageSpan::new(first_page, page_count), unpin)?;
 
         result
     }

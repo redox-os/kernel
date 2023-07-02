@@ -103,9 +103,12 @@ impl AddrSpace {
                     cow_file_ref.clone(),
                 )?,
 
+                // No, your temporary UserScheme mappings will not be kept across forks.
+                Provider::External { is_pinned_userscheme_borrow: true, .. } => continue,
+
                 // MAP_SHARED grants are retained by reference, across address space clones (across
                 // forks on monolithic kernels).
-                Provider::External { ref address_space, src_base } => Grant::borrow_grant(
+                Provider::External { ref address_space, src_base, .. } => Grant::borrow_grant(
                     Arc::clone(&address_space),
                     grant_base,
                     grant_base,
@@ -144,9 +147,15 @@ impl AddrSpace {
         let mapper = &mut self.table.utable;
 
         // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
-        let regions = self.grants.conflicts(requested_span).map(|(base, info)| PageSpan::new(base, info.page_count)).collect::<Vec<_>>();
+        let regions = self.grants.conflicts(requested_span).map(|(base, info)| if info.is_pinned() {
+            Err(Error::new(EBUSY))
+        } else {
+            Ok(PageSpan::new(base, info.page_count))
+        }).collect::<Vec<_>>();
 
-        for grant_span in regions {
+        for grant_span_res in regions {
+            let grant_span = grant_span_res?;
+
             let grant = self.grants.remove(grant_span.base).expect("grant cannot magically disappear while we hold the lock!");
             //log::info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
             let intersection = grant_span.intersection(requested_span);
@@ -177,17 +186,26 @@ impl AddrSpace {
         }
         Ok(())
     }
-    pub fn munmap(mut self: RwLockWriteGuard<'_, Self>, mut requested_span: PageSpan) {
+    pub fn munmap(mut self: RwLockWriteGuard<'_, Self>, mut requested_span: PageSpan, unpin: bool) -> Result<()> {
         let mut notify_files = Vec::new();
 
         let mut flusher = PageFlushAll::new();
 
         let this = &mut *self;
 
-        let next = |grants: &mut UserGrants, span: PageSpan| grants.conflicts(span).map(|(base, info)| PageSpan::new(base, info.page_count)).next();
+        let next = |grants: &mut UserGrants, span: PageSpan| grants.conflicts(span).map(|(base, info)| if info.is_pinned() && !unpin {
+            Err(Error::new(EBUSY))
+        } else {
+            Ok(PageSpan::new(base, info.page_count))
+        }).next();
 
-        while let Some(conflicting_span) = next(&mut this.grants, requested_span) {
-            let grant = this.grants.remove(conflicting_span.base).expect("conflicting region didn't exist");
+        while let Some(conflicting_span_res) = next(&mut this.grants, requested_span) {
+            let conflicting_span = conflicting_span_res?;
+
+            let mut grant = this.grants.remove(conflicting_span.base).expect("conflicting region didn't exist");
+            if unpin {
+                grant.info.unpin();
+            }
 
             let intersection = conflicting_span.intersection(requested_span);
 
@@ -235,6 +253,8 @@ impl AddrSpace {
                 let _ = desc.into_inner().try_close();
             }
         }
+
+        Ok(())
     }
     pub fn mmap(&mut self, page: Option<Page>, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
         // Finally, the end of all "T0DO: Abstract with other grant creation"!
@@ -567,7 +587,7 @@ pub enum Provider {
     PhysBorrowed { base: Frame },
 
     /// The memory is borrowed directly from another address space.
-    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page },
+    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, is_pinned_userscheme_borrow: bool },
 
     FmapBorrowed { file_ref: GrantFileRef },
 }
@@ -642,6 +662,7 @@ impl Grant {
                 provider: Provider::External {
                     src_base,
                     address_space: src_address_space_lock,
+                    is_pinned_userscheme_borrow: false,
                 }
             },
         })
@@ -688,6 +709,7 @@ impl Grant {
         dst_flusher: impl Flusher<RmmA>,
         eager: bool,
         allow_phys: bool,
+        is_pinned_userscheme_borrow: bool,
     ) -> Result<Grant> {
         /*
         if eager {
@@ -729,7 +751,7 @@ impl Grant {
                 page_count,
                 flags,
                 mapped: true,
-                provider: Provider::External { address_space: src_address_space_lock, src_base }
+                provider: Provider::External { address_space: src_address_space_lock, src_base, is_pinned_userscheme_borrow }
             },
         })
     }
@@ -866,6 +888,8 @@ impl Grant {
         PageSpan::new(self.base, self.info.page_count)
     }
     pub fn extract(mut self, span: PageSpan) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
+        assert!(!self.info.is_pinned(), "forgot to enforce that UserScheme mappings cannot be split");
+
         let (before_span, this_span, after_span) = self.span().slice(span);
 
         let before_grant = before_span.map(|span| Grant {
@@ -875,9 +899,10 @@ impl Grant {
                 mapped: self.info.mapped,
                 page_count: span.count,
                 provider: match self.info.provider {
-                    Provider::External { ref address_space, src_base } => Provider::External {
+                    Provider::External { ref address_space, src_base, .. } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
+                        is_pinned_userscheme_borrow: false,
                     },
                     Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
                     Provider::PhysBorrowed { ref base } => Provider::PhysBorrowed { base: base.clone() },
@@ -902,9 +927,10 @@ impl Grant {
                 provider: match self.info.provider {
                     // TODO: Adjust offset
                     Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
-                    Provider::External { ref address_space, src_base } => Provider::External {
+                    Provider::External { ref address_space, src_base, .. } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
+                        is_pinned_userscheme_borrow: false,
                     },
 
                     Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
@@ -920,6 +946,15 @@ impl Grant {
     }
 }
 impl GrantInfo {
+    pub fn is_pinned(&self) -> bool {
+        matches!(self.provider, Provider::External { is_pinned_userscheme_borrow: true, .. })
+    }
+    pub fn unpin(&mut self) {
+        if let Provider::External { ref mut is_pinned_userscheme_borrow, .. } = self.provider {
+            *is_pinned_userscheme_borrow = false;
+        }
+    }
+
     pub fn flags(&self) -> PageFlags<RmmA> {
         self.flags
     }

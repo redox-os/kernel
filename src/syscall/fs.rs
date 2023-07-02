@@ -394,7 +394,8 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
 
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
     let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned).ok_or(Error::new(EINVAL))?;
-    addr_space.write().munmap(span);
+    let unpin = false;
+    addr_space.write().munmap(span, unpin)?;
 
     Ok(0)
 }
