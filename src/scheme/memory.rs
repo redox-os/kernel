@@ -2,11 +2,12 @@ use core::num::NonZeroUsize;
 
 use alloc::sync::Arc;
 use rmm::PhysicalAddress;
+use alloc::vec::Vec;
 use spin::RwLock;
 use syscall::MapFlags;
 
-use crate::context::memory::{AddrSpace, Grant, PageSpan};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE, Frame};
+use crate::context::memory::{AddrSpace, Grant, PageSpan, handle_notify_files};
 use crate::paging::VirtualAddress;
 
 use crate::paging::entry::EntryFlags;
@@ -59,11 +60,15 @@ impl MemoryScheme {
         let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size).ok_or(Error::new(EINVAL))?;
         let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;
 
+        let mut notify_files = Vec::new();
+
         let page = addr_space
             .write()
-            .mmap((map.address != 0).then_some(span.base), page_count, map.flags, |dst_page, flags, mapper, flusher| {
+            .mmap((map.address != 0).then_some(span.base), page_count, map.flags, &mut notify_files, |dst_page, flags, mapper, flusher| {
                 Ok(Grant::zeroed(PageSpan::new(dst_page, page_count.get()), flags, mapper, flusher)?)
             })?;
+
+        handle_notify_files(notify_files);
 
         Ok(page.start_address().data())
     }
@@ -82,7 +87,7 @@ impl MemoryScheme {
         }
         let page_count = NonZeroUsize::new(size.div_ceil(PAGE_SIZE)).ok_or(Error::new(EINVAL))?;
 
-        AddrSpace::current()?.write().mmap(None, page_count, flags, |dst_page, mut page_flags, dst_mapper, dst_flusher| {
+        AddrSpace::current()?.write().mmap_anywhere(page_count, flags, |dst_page, mut page_flags, dst_mapper, dst_flusher| {
             match memory_type {
                 // Default
                 MemoryType::Writeback => (),

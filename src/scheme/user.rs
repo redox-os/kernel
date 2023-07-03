@@ -1,7 +1,8 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP};
+use alloc::vec::Vec;
+use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
@@ -11,7 +12,7 @@ use spin::{Mutex, RwLock};
 use crate::context::context::HardBlockedReason;
 use crate::context::{self, Context, BorrowedHtBuf, Status};
 use crate::context::file::FileDescription;
-use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, BorrowedFmapSource};
+use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, BorrowedFmapSource, handle_notify_files};
 use crate::event;
 use crate::memory::Frame;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
@@ -146,7 +147,7 @@ impl UserInner {
         let src_page = Page::containing_address(VirtualAddress::new(tail.buf_mut().as_ptr() as usize));
 
         let is_pinned = true;
-        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::physmap(tail_frame, PageSpan::new(dst_page, 1), flags, mapper, flusher, is_pinned)?))?;
+        let dst_page = dst_addr_space.write().mmap_anywhere(ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::physmap(tail_frame, PageSpan::new(dst_page, 1), flags, mapper, flusher, is_pinned)?))?;
 
         Ok(CaptureGuard {
             destroyed: false,
@@ -240,7 +241,7 @@ impl UserInner {
                 }
             }
 
-            dst_space.mmap(Some(free_span.base), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
+            dst_space.mmap(Some(free_span.base), ONE, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
                 let is_pinned = true;
                 Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher, is_pinned)?)
             })?;
@@ -265,7 +266,7 @@ impl UserInner {
         let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf.split_at(middle_page_count * PAGE_SIZE).expect("split must succeed");
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
-            dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags, move |dst_page, page_flags, mapper, flusher| {
+            dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
                 let eager = true;
 
                 // It doesn't make sense to allow a context, that has borrowed non-RAM physical
@@ -304,7 +305,7 @@ impl UserInner {
                 }
             }
 
-            dst_space.mmap(Some(tail_dst_page), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
+            dst_space.mmap(Some(tail_dst_page), ONE, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
                 let is_pinned = true;
                 Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher, is_pinned)?)
             })?;
@@ -545,7 +546,7 @@ impl UserInner {
         };
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
-        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, |dst_base, flags, mapper, flusher| {
+        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), |dst_base, flags, mapper, flusher| {
             Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), file_ref, src, mapper, flusher)
         })?;
 

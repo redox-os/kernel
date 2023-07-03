@@ -1,6 +1,6 @@
 use crate::{
     arch::paging::{mapper::InactiveFlusher, Page, RmmA, RmmArch, VirtualAddress},
-    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, PageSpan}, BorrowedHtBuf},
+    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, PageSpan, handle_notify_files}, BorrowedHtBuf},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme, SchemeId},
@@ -690,12 +690,16 @@ impl KernelScheme for ProcScheme {
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
+                let mut notify_files = Vec::new();
+
                 // TODO: Validate flags
                 let result_base = if consume {
-                    AddrSpace::r#move(&mut *dst_addr_space, &mut *src_addr_space, src_span, requested_dst_base, map.flags)?
+                    AddrSpace::r#move(&mut *dst_addr_space, &mut *src_addr_space, src_span, requested_dst_base, map.flags, &mut notify_files)?
                 } else {
-                    dst_addr_space.mmap(requested_dst_base, src_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Arc::clone(addrspace), &*src_addr_space, src_span.base, dst_page, src_span.count, flags, dst_mapper, flusher, true, true, false)?))?
+                    dst_addr_space.mmap(requested_dst_base, src_page_count, map.flags, &mut notify_files, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Arc::clone(addrspace), &*src_addr_space, src_span.base, dst_page, src_span.count, flags, dst_mapper, flusher, true, true, false)?))?
                 };
+
+                handle_notify_files(notify_files);
 
                 Ok(result_base.start_address().data())
             }

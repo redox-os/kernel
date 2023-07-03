@@ -203,7 +203,8 @@ impl AddrSpace {
         }
         Ok(())
     }
-    pub fn munmap(mut self: RwLockWriteGuard<'_, Self>, mut requested_span: PageSpan, unpin: bool) -> Result<()> {
+    #[must_use = "needs to notify files"]
+    pub fn munmap(&mut self, mut requested_span: PageSpan, unpin: bool) -> Result<Vec<UnmapResult>> {
         let mut notify_files = Vec::new();
 
         let mut flusher = PageFlushAll::new();
@@ -249,17 +250,44 @@ impl AddrSpace {
                 notify_files.push(unmap_result);
             }
         }
-        drop(self);
 
-        for unmap_result in notify_files {
-            let _ = unmap_result.unmap();
-        }
-
-        Ok(())
+        Ok(notify_files)
     }
-    pub fn mmap(&mut self, page: Option<Page>, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
-        // Finally, the end of all "T0DO: Abstract with other grant creation"!
-        let selected_span = self.grants.find_free_at(self.mmap_min, page, page_count.get(), flags)?;
+    pub fn mmap_anywhere(&mut self, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
+        self.mmap(None, page_count, flags, &mut Vec::new(), map)
+    }
+    pub fn mmap(
+        &mut self,
+        requested_base_opt: Option<Page>,
+        page_count: NonZeroUsize,
+        flags: MapFlags,
+        notify_files_out: &mut Vec<UnmapResult>,
+        map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>,
+    ) -> Result<Page> {
+        let selected_span = match requested_base_opt {
+            Some(requested_base) => {
+                let requested_span = PageSpan::new(requested_base, page_count.get());
+
+                if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) && self.grants.conflicts(requested_span).next().is_some() {
+                    return Err(Error::new(EEXIST));
+                }
+
+                // TODO: Rename MAP_FIXED+MAP_FIXED_NOREPLACE to MAP_FIXED and
+                // MAP_FIXED_REPLACE/MAP_REPLACE?
+                let map_fixed_replace = flags.contains(MapFlags::MAP_FIXED);
+
+                if map_fixed_replace {
+                    let unpin = false;
+                    let mut notify_files = self.munmap(requested_span, unpin)?;
+                    notify_files_out.append(&mut notify_files);
+
+                    requested_span
+                } else {
+                    self.grants.find_free_near(self.mmap_min, page_count.get(), Some(requested_base)).ok_or(Error::new(ENOMEM))?
+                }
+            }
+            None => self.grants.find_free(self.mmap_min, page_count.get()).ok_or(Error::new(ENOMEM))?,
+        };
 
         // TODO: Threads share address spaces, so not only the inactive flusher should be sending
         // out IPIs. IPIs will only be sent when downgrading mappings (i.e. when a stale TLB entry
@@ -279,7 +307,7 @@ impl AddrSpace {
 
         Ok(selected_span.base)
     }
-    pub fn r#move(dst: &mut AddrSpace, src: &mut AddrSpace, src_span: PageSpan, requested_dst_base: Option<Page>, new_flags: MapFlags) -> Result<Page> {
+    pub fn r#move(dst: &mut AddrSpace, src: &mut AddrSpace, src_span: PageSpan, requested_dst_base: Option<Page>, new_flags: MapFlags, notify_files: &mut Vec<UnmapResult>) -> Result<Page> {
         let nz_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
         let grant_base = {
@@ -305,7 +333,7 @@ impl AddrSpace {
 
         let src_flusher = PageFlushAll::new();
 
-        dst.mmap(requested_dst_base, nz_count, new_flags, |dst_page, flags, dst_mapper, dst_flusher| middle.transfer(dst_page, flags, &mut src.table.utable, dst_mapper, src_flusher, dst_flusher))
+        dst.mmap(requested_dst_base, nz_count, new_flags, notify_files, |dst_page, flags, dst_mapper, dst_flusher| middle.transfer(dst_page, flags, &mut src.table.utable, dst_mapper, src_flusher, dst_flusher))
     }
 }
 
@@ -447,7 +475,8 @@ impl UserGrants {
     }
     /// Return a free region with the specified size
     // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
-    pub fn find_free(&self, min: usize, page_count: usize) -> Option<PageSpan> {
+    // TODO: Support finding grant close to a requested address?
+    pub fn find_free_near(&self, min: usize, page_count: usize, _near: Option<Page>) -> Option<PageSpan> {
         // Get first available hole, but do reserve the page starting from zero as most compiled
         // languages cannot handle null pointers safely even if they point to valid memory. If an
         // application absolutely needs to map the 0th page, they will have to do so explicitly via
@@ -468,32 +497,8 @@ impl UserGrants {
         // Create new region
         Some(PageSpan::new(Page::containing_address(VirtualAddress::new(cmp::max(hole_start.data(), min))), page_count))
     }
-    /// Return a free region, respecting the user's hinted address and flags. Address may be null.
-    pub fn find_free_at(&mut self, min: usize, base: Option<Page>, page_count: usize, flags: MapFlags) -> Result<PageSpan> {
-        let Some(requested_base) = base else {
-            // Free hands!
-            return self.find_free(min, page_count).ok_or(Error::new(ENOMEM));
-        };
-
-        // The user wished to have this region...
-        let requested_span = PageSpan::new(requested_base, page_count);
-
-        if let Some(_grant) = self.conflicts(requested_span).next() {
-            // ... but it already exists
-
-            if flags.contains(MapFlags::MAP_FIXED_NOREPLACE) {
-                return Err(Error::new(EEXIST));
-            }
-            if flags.contains(MapFlags::MAP_FIXED) {
-                // TODO: find_free_at -> Result<(PageSpan, needs_to_unmap: PageSpan)>
-                return Err(Error::new(EOPNOTSUPP));
-            } else {
-                // TODO: Find grant close to requested address?
-                return self.find_free(min, page_count).ok_or(Error::new(ENOMEM));
-            }
-        }
-
-        Ok(requested_span)
+    pub fn find_free(&self, min: usize, page_count: usize) -> Option<PageSpan> {
+        self.find_free_near(min, page_count, None)
     }
     fn reserve(&mut self, base: Page, page_count: usize) {
         let start_address = base.start_address();
@@ -1483,4 +1488,10 @@ pub struct BorrowedFmapSource<'a> {
     // TODO: There should be a method that obtains the lock from the guard.
     pub addr_space_lock: &'a RwLock<AddrSpace>,
     pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
+}
+
+pub fn handle_notify_files(notify_files: Vec<UnmapResult>) {
+    for file in notify_files {
+        let _ = file.unmap();
+    }
 }

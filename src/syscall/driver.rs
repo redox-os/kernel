@@ -9,6 +9,7 @@ use crate::syscall::flag::{MapFlags, PhysallocFlags, PartialAllocStrategy, Physm
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use super::usercopy::UserSliceRw;
 
