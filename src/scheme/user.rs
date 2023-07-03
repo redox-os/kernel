@@ -457,16 +457,13 @@ impl UserInner {
             return Err(Error::new(EINVAL));
         }
 
-        let mode = if map.flags.contains(MapFlags::MAP_SHARED) {
-            MmapMode::Shared
-        } else {
-            MmapMode::Cow
-        };
-
         let src_address_space = Arc::clone(
             self.context.upgrade().ok_or(Error::new(ENODEV))?
                 .read().addr_space()?
         );
+        if Arc::ptr_eq(&src_address_space, &dst_addr_space) {
+            return Err(Error::new(EBUSY));
+        }
 
         let (pid, desc) = {
             let context_lock = context::current()?;
@@ -511,28 +508,33 @@ impl UserInner {
                 return Err(Error::new(EIO));
             }
         };
-
-        let dst_base = match mode {
-            MmapMode::Cow => todo!("mmap CoW"),
-            MmapMode::Shared => {
-                let file_ref = GrantFileRef {
-                    description: desc,
-                    base_offset: map.offset,
-                };
-                let src_guard = src_address_space.read();
-                let src = match base_page_opt {
-                    Some(base_addr) => Some(BorrowedFmapSource {
-                        src_page: Page::containing_address(VirtualAddress::new(base_addr)),
-                        src_mapper: &src_guard.table.utable,
-                    }),
-                    None => None,
-                };
-                let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
-                dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, |dst_base, flags, mapper, flusher| {
-                    Ok(Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), file_ref, src, mapper, flusher))
-                })?
-            }
+        let file_ref = GrantFileRef {
+            description: desc,
+            base_offset: map.offset,
         };
+
+        let src_read_guard;
+        let mut src_write_guard;
+
+        let src = match base_page_opt {
+            Some(base_addr) => Some(BorrowedFmapSource {
+                src_base: Page::containing_address(VirtualAddress::new(base_addr)),
+                mode: if map.flags.contains(MapFlags::MAP_SHARED) {
+                    src_read_guard = src_address_space.read();
+                    MmapMode::Shared(&src_read_guard.table.utable)
+                } else {
+                    src_write_guard = src_address_space.write();
+                    MmapMode::Cow(&mut src_write_guard.table.utable)
+                },
+
+            }),
+            None => None,
+        };
+
+        let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
+        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, |dst_base, flags, mapper, flusher| {
+            Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), file_ref, src, mapper, flusher)
+        })?;
 
         Ok(dst_base.start_address().data())
     }

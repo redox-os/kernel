@@ -700,41 +700,52 @@ impl Grant {
         })
     }
 
-    pub fn borrow_fmap(span: PageSpan, flags: PageFlags<RmmA>, file_ref: GrantFileRef, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Self {
+    pub fn borrow_fmap(span: PageSpan, new_flags: PageFlags<RmmA>, file_ref: GrantFileRef, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Self> {
         if let Some(mut src) = src {
+            // FIXME: Iterate over grants rather than pages, to allow for not-yet-lazily mapped
+            // pages.
             for dst_page in span.pages() {
-                let src_page = src.src_page.next_by(dst_page.offset_from(span.base));
+                let src_page = src.src_base.next_by(dst_page.offset_from(span.base));
 
-                let (frame, _) = src.src_mapper.translate(src_page.start_address()).unwrap();
+                let (frame, is_cow) = match src.mode {
+                    MmapMode::Shared(src_mapper) => {
+                        // TODO: Error code for "scheme responded with unmapped page"?
+                        let (frame, _) = src_mapper.translate(src_page.start_address()).ok_or(Error::new(EIO))?;
 
-                if let Some(page_info) = get_page_info(Frame::containing_address(frame)) {
+                        (Frame::containing_address(frame), false)
+                    }
+                    MmapMode::Cow(ref mut src_mapper) => unsafe {
+                        let (_, frame, _) = src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false)).ok_or(Error::new(EIO))?;
+
+                        (Frame::containing_address(frame), true)
+                    }
+                };
+
+                if let Some(page_info) = get_page_info(frame) {
                     page_info.add_ref(false);
                 }
 
                 unsafe {
-                    flusher.consume(mapper.map_phys(dst_page.start_address(), frame, flags).unwrap());
+                    flusher.consume(mapper.map_phys(dst_page.start_address(), frame.start_address(), new_flags.write(!is_cow)).unwrap());
                 }
             }
         }
 
-        Self {
+        Ok(Self {
             base: span.base,
             info: GrantInfo {
                 page_count: span.count,
                 mapped: true,
-                flags,
+                flags: new_flags,
                 provider: Provider::FmapBorrowed { file_ref },
             }
-        }
+        })
     }
-
-    // TODO: Do not return Vec, return an iterator perhaps? Referencing the source address space?
 
     /// Borrow all pages in the range `[src_base, src_base+page_count)` from `src_address_space`,
     /// mapping them into `[dst_base, dst_base+page_count)`. The destination pages will lazily read
     /// the page tables of the source pages, but once present in the destination address space,
     /// pages that are unmaped or moved will not be made visible to the destination address space.
-    // TODO: Return only one grant
     pub fn borrow(
         src_address_space_lock: Arc<RwLock<AddrSpace>>,
         src_address_space: &AddrSpace,
@@ -890,17 +901,19 @@ impl Grant {
             };
             let frame = Frame::containing_address(phys);
 
-            let is_cow_opt = match self.info.provider {
-                Provider::Allocated { .. } => Some(true),
-                Provider::External { .. } => Some(false),
-                Provider::PhysBorrowed { .. } => None,
-                Provider::FmapBorrowed { .. } => Some(false),
+            let (is_cow_opt, require_info) = match self.info.provider {
+                Provider::Allocated { .. } => (Some(true), true),
+                Provider::External { .. } => (Some(false), false),
+                Provider::PhysBorrowed { .. } => (None, false),
+                Provider::FmapBorrowed { .. } => (Some(false), false),
             };
 
             if let Some(is_cow) = is_cow_opt {
-                get_page_info(frame)
-                    .expect("allocated frame did not have an associated PageInfo")
-                    .remove_ref(is_cow);
+                if let Some(info) = get_page_info(frame) {
+                    info.remove_ref(is_cow);
+                } else {
+                    assert!(!require_info, "allocated frame did not have an associated PageInfo");
+                }
             }
 
 
@@ -1396,13 +1409,13 @@ fn correct_inner(addr_space_lock: Arc<RwLock<AddrSpace>>, faulting_page: Page, a
     Ok((frame, flush))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MmapMode {
-    Cow,
-    Shared,
+#[derive(Debug)]
+pub enum MmapMode<'a> {
+    Cow(&'a mut PageMapper),
+    Shared(&'a PageMapper),
 }
 
 pub struct BorrowedFmapSource<'a> {
-    pub src_page: Page,
-    pub src_mapper: &'a PageMapper,
+    pub src_base: Page,
+    pub mode: MmapMode<'a>,
 }
