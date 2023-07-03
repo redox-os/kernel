@@ -682,42 +682,20 @@ impl KernelScheme for ProcScheme {
                 }
 
                 let (requested_dst_page, page_count) = crate::syscall::validate_region(map.address, map.size)?;
-                let (src_page, _) = crate::syscall::validate_region(map.offset, map.size)?;
+                let src_span = PageSpan::validate_nonempty(VirtualAddress::new(map.offset), map.size).ok_or(Error::new(EINVAL))?;
 
-                let requested_dst_page = (map.address != 0).then_some(requested_dst_page);
+                let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
 
                 let mut src_addr_space = addrspace.write();
-                let src_addr_space = &mut *src_addr_space;
                 let mut dst_addr_space = dst_addr_space.write();
 
-                let src_grant_span = {
-                    let src_span = PageSpan::new(src_page, page_count);
-                    let mut conflicts = src_addr_space.grants.conflicts(src_span);
-                    let (first_base, first_info) = conflicts.next().ok_or(Error::new(EINVAL))?;
-                    if conflicts.next().is_some() {
-                        return Err(Error::new(EINVAL));
-                    }
+                let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
-                    if !first_info.can_have_flags(map.flags) {
-                        return Err(Error::new(EACCES));
-                    }
-
-                    PageSpan::new(first_base, first_info.page_count()).intersection(src_span)
-                };
-
-                let src_mapper = &mut src_addr_space.table.utable;
-                let src_page_count = NonZeroUsize::new(src_grant_span.count).ok_or(Error::new(EINVAL))?;
-
+                // TODO: Validate flags
                 let result_base = if consume {
-                    let grant = src_addr_space.grants.remove(src_grant_span.base).expect("grant cannot disappear");
-                    let (before, middle, after) = grant.extract(src_grant_span).expect("called intersect(), must succeed");
-
-                    if let Some(before) = before { src_addr_space.grants.insert(before); }
-                    if let Some(after) = after { src_addr_space.grants.insert(after); }
-
-                    dst_addr_space.mmap(requested_dst_page, src_page_count, map.flags, |dst_page, _flags, dst_mapper, dst_flusher| Grant::transfer(middle, dst_page, src_mapper, dst_mapper, InactiveFlusher::new(), dst_flusher))?
+                    AddrSpace::r#move(&mut *dst_addr_space, &mut *src_addr_space, src_span, requested_dst_base, map.flags)?
                 } else {
-                    dst_addr_space.mmap(requested_dst_page, src_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Arc::clone(addrspace), src_addr_space, src_grant_span.base, dst_page, src_grant_span.count, flags, dst_mapper, flusher, true, true, false)?))?
+                    dst_addr_space.mmap(requested_dst_base, src_page_count, map.flags, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Arc::clone(addrspace), &*src_addr_space, src_span.base, dst_page, src_span.count, flags, dst_mapper, flusher, true, true, false)?))?
                 };
 
                 Ok(result_base.start_address().data())

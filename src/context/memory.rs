@@ -277,6 +277,34 @@ impl AddrSpace {
 
         Ok(selected_span.base)
     }
+    pub fn r#move(dst: &mut AddrSpace, src: &mut AddrSpace, src_span: PageSpan, requested_dst_base: Option<Page>, new_flags: MapFlags) -> Result<Page> {
+        let nz_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
+
+        let grant_base = {
+            let mut conflicts_iter = src.grants.conflicts(src_span);
+
+            let (grant_base, grant_info) = conflicts_iter.next().ok_or(Error::new(EINVAL))?;
+
+            if conflicts_iter.next().is_some() {
+                return Err(Error::new(EINVAL));
+            }
+            if grant_info.is_pinned() {
+                return Err(Error::new(EBUSY));
+            }
+
+            grant_base
+        };
+
+        let grant = src.grants.remove(grant_base).expect("grant cannot disappear");
+        let (before, middle, after) = grant.extract(src_span).expect("called intersect(), must succeed");
+
+        if let Some(before) = before { src.grants.insert(before); }
+        if let Some(after) = after { src.grants.insert(after); }
+
+        let src_flusher = PageFlushAll::new();
+
+        dst.mmap(requested_dst_base, nz_count, new_flags, |dst_page, flags, dst_mapper, dst_flusher| middle.transfer(dst_page, flags, &mut src.table.utable, dst_mapper, src_flusher, dst_flusher))
+    }
 }
 
 #[derive(Debug)]
@@ -812,14 +840,27 @@ impl Grant {
             },
         })
     }
-    pub fn transfer(mut src_grant: Grant, dst_base: Page, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, src_flusher: impl Flusher<RmmA>, dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
-        todo!()
-        /*
-        assert!(core::mem::replace(&mut src_grant.info.mapped, false));
-        let desc_opt = src_grant.info.desc_opt.take();
+    /// Move a grant between two address spaces.
+    pub fn transfer(mut self, dst_base: Page, flags: PageFlags<RmmA>, src_mapper: &mut PageMapper, dst_mapper: &mut PageMapper, mut src_flusher: impl Flusher<RmmA>, mut dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
+        assert!(!self.info.is_pinned());
 
-        Self::copy_inner(src_grant.base, dst_base, src_grant.info.page_count, src_grant.info.flags(), desc_opt, src_mapper, dst_mapper, src_flusher, dst_flusher, src_grant.info.owned, true).map_err(Into::into)
-            */
+        for src_page in self.span().pages() {
+            let dst_page = dst_base.next_by(src_page.offset_from(self.base));
+
+            let unmap_parents = true;
+
+            // TODO: Validate flags?
+            let Some((phys, _flags, flush)) = (unsafe { src_mapper.unmap_phys(src_page.start_address(), unmap_parents) }) else {
+                continue;
+            };
+            src_flusher.consume(flush);
+
+            // TODO: Preallocate to handle OOM?
+            let flush = unsafe { dst_mapper.map_phys(dst_page.start_address(), phys, flags).expect("TODO: OOM") };
+            dst_flusher.consume(flush);
+        }
+
+        Ok(self)
     }
 
     pub fn remap(&mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, flags: PageFlags<RmmA>) {
