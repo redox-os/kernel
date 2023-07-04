@@ -61,8 +61,14 @@ slab = ["slab_allocator"]
 x86_fsgsbase = []
 
 [profile.dev]
+# Avoids having to define the eh_personality lang item and reduces kernel size
+panic = "abort"
+
 # Kernel doesn't yet work great with debug mode :(
 opt-level = 3
 
 [profile.release]
+# Avoids having to define the eh_personality lang item and reduces kernel size
+panic = "abort"
+
 lto = true

@@ -50,7 +50,6 @@
 #![feature(concat_idents)]
 #![feature(core_intrinsics)]
 #![feature(integer_atomics)]
-#![feature(lang_items)]
 #![feature(naked_functions)]
 #![feature(ptr_internals)]
 #![feature(slice_ptr_get, slice_ptr_len)]
