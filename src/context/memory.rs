@@ -1,5 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::{sync::Arc, vec::Vec};
+use syscall::GrantFlags;
 use core::cmp;
 use core::fmt::Debug;
 use core::num::NonZeroUsize;
@@ -1061,6 +1062,45 @@ impl GrantInfo {
             //(Provider::External { address_space: ref lhs_space, src_base: ref lhs_base, cow: lhs_cow, .. }, Provider::External { address_space: ref rhs_space, src_base: ref rhs_base, cow: rhs_cow, .. }) => Arc::ptr_eq(lhs_space, rhs_space) && lhs_cow == rhs_cow && lhs_base.next_by(self.page_count) == rhs_base.clone(),
 
             _ => false,
+        }
+    }
+    pub fn grant_flags(&self) -> GrantFlags {
+        let mut flags = GrantFlags::empty();
+        // TODO: has_read
+        flags.set(GrantFlags::GRANT_READ, true);
+
+        flags.set(GrantFlags::GRANT_WRITE, self.flags.has_write());
+        flags.set(GrantFlags::GRANT_EXEC, self.flags.has_execute());
+
+        // TODO: Set GRANT_LAZY
+
+        match self.provider {
+            Provider::External { is_pinned_userscheme_borrow, .. } => {
+                flags.set(GrantFlags::GRANT_PINNED, is_pinned_userscheme_borrow);
+                flags |= GrantFlags::GRANT_SHARED;
+            }
+            Provider::Allocated { ref cow_file_ref } => {
+                // !GRANT_SHARED is equivalent to "GRANT_PRIVATE"
+                flags.set(GrantFlags::GRANT_SCHEME, cow_file_ref.is_some());
+            }
+            Provider::PhysBorrowed { is_pinned_userscheme_borrow, .. } => {
+                flags |= GrantFlags::GRANT_SHARED | GrantFlags::GRANT_PHYS;
+                flags.set(GrantFlags::GRANT_PINNED, is_pinned_userscheme_borrow);
+            }
+            Provider::FmapBorrowed { .. } => {
+                flags |= GrantFlags::GRANT_SHARED | GrantFlags::GRANT_SCHEME;
+            }
+        }
+
+        flags
+    }
+    pub fn file_ref(&self) -> Option<&GrantFileRef> {
+        // TODO: This would be bad for PhysBorrowed head/tail buffers, but otherwise the physical
+        // base address could be included in offset, for PhysBorrowed.
+        if let Provider::FmapBorrowed { ref file_ref } | Provider::Allocated { cow_file_ref: Some(ref file_ref) } = self.provider {
+            Some(file_ref)
+        } else {
+            None
         }
     }
 }

@@ -8,10 +8,10 @@ use crate::{
         FloatRegisters,
         IntRegisters,
         EnvRegisters,
-        data::{Map, PtraceEvent, SigAction, Stat},
+        data::{GrantDesc, Map, PtraceEvent, SigAction, Stat},
         error::*,
         flag::*,
-        scheme::{calc_seek_offset_usize, Scheme},
+        scheme::{CallerCtx, calc_seek_offset_usize, Scheme},
         self, usercopy::{UserSliceWo, UserSliceRo},
     },
 };
@@ -23,7 +23,6 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use ::syscall::CallerCtx;
 use core::{
     mem,
     slice,
@@ -806,6 +805,39 @@ impl KernelScheme for ProcScheme {
                 // Return read events
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
+            Operation::AddrSpace { ref addrspace } => {
+                let OperationData::Offset(orig_offset) = self.handles.read().get(&id).ok_or(Error::new(EBADF))?.data else {
+                    return Err(Error::new(EBADFD));
+                };
+
+                // Output a list of grant descriptors, sufficient to allow relibc's fork()
+                // implementation to fmap MAP_SHARED grants.
+                let mut grants_read = 0;
+
+                let mut dst = [GrantDesc::default(); 16];
+
+                for (dst, (grant_base, grant_info)) in dst.iter_mut().zip(addrspace.read().grants.iter().skip(orig_offset)) {
+                    *dst = GrantDesc {
+                        base: grant_base.start_address().data(),
+                        size: grant_info.page_count() * PAGE_SIZE,
+                        flags: grant_info.grant_flags(),
+                        // The !0 is not a sentinel value; the availability of `offset` is
+                        // indicated by the GRANT_SCHEME flag.
+                        offset: grant_info.file_ref().map_or(!0, |f| f.base_offset as u64),
+                    };
+                    grants_read += 1;
+                }
+                for (src, chunk) in dst.iter().take(grants_read).zip(buf.in_exact_chunks(mem::size_of::<GrantDesc>())) {
+                    chunk.copy_exactly(src)?;
+                }
+
+                match self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.data {
+                    OperationData::Offset(ref mut offset) => *offset = dbg!(dbg!(*offset) + dbg!(grants_read)),
+                    _ => return Err(Error::new(EBADFD)),
+                };
+
+                Ok(grants_read * mem::size_of::<GrantDesc>())
+            }
             Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.as_bytes(), &mut 0),
             Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
             Operation::Attr(attr) => {
@@ -1131,6 +1163,7 @@ impl KernelScheme for ProcScheme {
             }
             Operation::AddrSpace { ref addrspace } => {
                 let addrspace_clone = Arc::clone(addrspace);
+                const GRANT_FD_PREFIX: &[u8] = b"grant-fd-";
 
                 let operation = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
@@ -1138,6 +1171,21 @@ impl KernelScheme for ProcScheme {
                     b"empty" => Operation::AddrSpace { addrspace: new_addrspace()? },
                     b"exclusive" => Operation::AddrSpace { addrspace: addrspace.write().try_clone(addrspace_clone)? },
                     b"mmap-min-addr" => Operation::MmapMinAddr(Arc::clone(addrspace)),
+
+                    _ if buf.starts_with(GRANT_FD_PREFIX) => {
+                        let string = core::str::from_utf8(&buf[GRANT_FD_PREFIX.len()..]).map_err(|_| Error::new(EINVAL))?;
+                        let page_addr = usize::from_str_radix(string, 16).map_err(|_| Error::new(EINVAL))?;
+
+                        if page_addr % PAGE_SIZE != 0 {
+                            return Err(Error::new(EINVAL));
+                        }
+
+                        let page = Page::containing_address(VirtualAddress::new(page_addr));
+
+                        match addrspace.read().grants.contains(page).ok_or(Error::new(EINVAL))? {
+                            (_, info) => return Ok(OpenResult::External(info.file_ref().map(|r| Arc::clone(&r.description)).ok_or(Error::new(EBADF))?)),
+                        }
+                    }
 
                     _ => return Err(Error::new(EINVAL)),
                 };
