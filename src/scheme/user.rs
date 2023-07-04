@@ -532,7 +532,7 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
 
-        space.write().munmap(first_page, page_count);
+        AddrSpace::munmap(space.write(), first_page, page_count);
 
         result
     }

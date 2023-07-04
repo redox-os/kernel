@@ -1030,7 +1030,7 @@ impl KernelScheme for ProcScheme {
                     ADDRSPACE_OP_MUNMAP => {
                         let (page, page_count) = crate::syscall::validate_region(next()??, next()??)?;
 
-                        addrspace.write().munmap(page, page_count);
+                        AddrSpace::munmap(addrspace.write(), page, page_count);
                     }
                     ADDRSPACE_OP_MPROTECT => {
                         let (page, page_count) = crate::syscall::validate_region(next()??, next()??)?;

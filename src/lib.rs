@@ -44,7 +44,6 @@
 
 #![feature(alloc_error_handler)]
 #![feature(allocator_api)]
-#![feature(arbitrary_self_types)]
 #![feature(array_chunks)]
 #![feature(iter_array_chunks)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
