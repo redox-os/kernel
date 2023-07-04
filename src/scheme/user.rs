@@ -517,22 +517,20 @@ impl UserInner {
             base_offset: map.offset,
         };
 
-        let src_read_guard;
-        let mut src_write_guard;
-
         let src = match base_page_opt {
             Some(base_addr) => Some({
                 if base_addr % PAGE_SIZE != 0 {
                     return Err(Error::new(EINVAL));
                 }
+                let addr_space_lock = &*src_address_space;
                 BorrowedFmapSource {
                     src_base: Page::containing_address(VirtualAddress::new(base_addr)),
+                    addr_space_lock,
+                    addr_space_guard: addr_space_lock.write(),
                     mode: if map.flags.contains(MapFlags::MAP_SHARED) {
-                        src_read_guard = src_address_space.read();
-                        MmapMode::Shared(&src_read_guard.table.utable)
+                        MmapMode::Shared
                     } else {
-                        src_write_guard = src_address_space.write();
-                        MmapMode::Cow(&mut src_write_guard.table.utable)
+                        MmapMode::Cow
                     },
 
                 }

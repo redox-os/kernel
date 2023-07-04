@@ -832,7 +832,7 @@ impl KernelScheme for ProcScheme {
                 }
 
                 match self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.data {
-                    OperationData::Offset(ref mut offset) => *offset = dbg!(dbg!(*offset) + dbg!(grants_read)),
+                    OperationData::Offset(ref mut offset) => *offset += grants_read,
                     _ => return Err(Error::new(EBADFD)),
                 };
 

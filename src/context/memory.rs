@@ -706,22 +706,37 @@ impl Grant {
 
     pub fn borrow_fmap(span: PageSpan, new_flags: PageFlags<RmmA>, file_ref: GrantFileRef, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Self> {
         if let Some(mut src) = src {
-            // FIXME: Iterate over grants rather than pages, to allow for not-yet-lazily mapped
-            // pages.
+            let mut guard = src.addr_space_guard;
             for dst_page in span.pages() {
                 let src_page = src.src_base.next_by(dst_page.offset_from(span.base));
 
                 let (frame, is_cow) = match src.mode {
-                    MmapMode::Shared(src_mapper) => {
+                    MmapMode::Shared => {
                         // TODO: Error code for "scheme responded with unmapped page"?
-                        let (frame, _) = src_mapper.translate(src_page.start_address()).ok_or(Error::new(EIO))?;
+                        let frame = match guard.table.utable.translate(src_page.start_address()) {
+                            Some((phys, _)) => Frame::containing_address(phys),
+                            // TODO: ensure the correct context is hardblocked, if necessary
+                            None => {
+                                let (frame, _, new_guard) = correct_inner(src.addr_space_lock, guard, src_page, AccessMode::Read, 0).map_err(|_| Error::new(EIO))?;
+                                guard = new_guard;
+                                frame
+                            }
+                        };
 
-                        (Frame::containing_address(frame), false)
+                        (frame, false)
                     }
-                    MmapMode::Cow(ref mut src_mapper) => unsafe {
-                        let (_, frame, _) = src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false)).ok_or(Error::new(EIO))?;
+                    MmapMode::Cow => unsafe {
+                        let frame = match guard.table.utable.remap_with(src_page.start_address(), |flags| flags.write(false)) {
+                            Some((_, phys, _)) => Frame::containing_address(phys),
+                            // TODO: ensure the correct context is hardblocked, if necessary
+                            None => {
+                                let (frame, _, new_guard) =correct_inner(src.addr_space_lock, guard, src_page, AccessMode::Read, 0).map_err(|_| Error::new(EIO))?;
+                                guard = new_guard;
+                                frame
+                            }
+                        };
 
-                        (Frame::containing_address(frame), true)
+                        (frame, true)
                     }
                 };
 
@@ -984,7 +999,6 @@ impl Grant {
 
         match self.info.provider {
             Provider::PhysBorrowed { ref mut base, .. } => *base = base.next_by(middle_page_offset),
-            // TODO: Adjust cow_file_ref offset
             Provider::FmapBorrowed { ref mut file_ref } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref) } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
             Provider::Allocated { cow_file_ref: None } | Provider::External { .. } => (),
         }
@@ -997,7 +1011,6 @@ impl Grant {
                 mapped: self.info.mapped,
                 page_count: span.count,
                 provider: match self.info.provider {
-                    // TODO: Adjust offset
                     Provider::Allocated { cow_file_ref: None } => Provider::Allocated { cow_file_ref: None },
                     Provider::Allocated { cow_file_ref: Some(ref file_ref) } => Provider::Allocated { cow_file_ref: Some(GrantFileRef {
                         base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
@@ -1278,14 +1291,14 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
         return Err(PfError::Segv);
     };
 
-    let (_, flush) = correct_inner(addr_space_lock, faulting_page, access, 0)?;
+    let lock = &addr_space_lock;
+    let (_, flush, _) = correct_inner(lock, lock.write(), faulting_page, access, 0)?;
 
     flush.flush();
 
     Ok(())
 }
-fn correct_inner(addr_space_lock: Arc<RwLock<AddrSpace>>, faulting_page: Page, access: AccessMode, recursion_level: u32) -> Result<(Frame, PageFlush<RmmA>), PfError> {
-    let mut addr_space_guard = addr_space_lock.write();
+fn correct_inner<'l>(addr_space_lock: &'l RwLock<AddrSpace>, mut addr_space_guard: RwLockWriteGuard<'l, AddrSpace>, faulting_page: Page, access: AccessMode, recursion_level: u32) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
     let mut addr_space = &mut *addr_space_guard;
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
@@ -1384,7 +1397,8 @@ fn correct_inner(addr_space_lock: Arc<RwLock<AddrSpace>>, faulting_page: Page, a
                     drop(guard);
                     drop(addr_space_guard);
 
-                    let (frame, _) = correct_inner(foreign_address_space_lock, src_page, AccessMode::Read, new_recursion_level)?;
+                    let ext_addrspace = &foreign_address_space_lock;
+                    let (frame, _, _) = correct_inner(ext_addrspace, ext_addrspace.write(), src_page, AccessMode::Read, new_recursion_level)?;
 
                     addr_space_guard = addr_space_lock.write();
                     addr_space = &mut *addr_space_guard;
@@ -1449,16 +1463,19 @@ fn correct_inner(addr_space_lock: Arc<RwLock<AddrSpace>>, faulting_page: Page, a
         return Err(PfError::Oom);
     };
 
-    Ok((frame, flush))
+    Ok((frame, flush, addr_space_guard))
 }
 
 #[derive(Debug)]
-pub enum MmapMode<'a> {
-    Cow(&'a mut PageMapper),
-    Shared(&'a PageMapper),
+pub enum MmapMode {
+    Cow,
+    Shared,
 }
 
 pub struct BorrowedFmapSource<'a> {
     pub src_base: Page,
-    pub mode: MmapMode<'a>,
+    pub mode: MmapMode,
+    // TODO: There should be a method that obtains the lock from the guard.
+    pub addr_space_lock: &'a RwLock<AddrSpace>,
+    pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
 }
