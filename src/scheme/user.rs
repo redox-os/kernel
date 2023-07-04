@@ -145,7 +145,8 @@ impl UserInner {
 
         let src_page = Page::containing_address(VirtualAddress::new(tail.buf_mut().as_ptr() as usize));
 
-        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::physmap(tail_frame, PageSpan::new(dst_page, 1), flags, mapper, flusher)?))?;
+        let is_pinned = true;
+        let dst_page = dst_addr_space.write().mmap(None, ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::physmap(tail_frame, PageSpan::new(dst_page, 1), flags, mapper, flusher, is_pinned)?))?;
 
         Ok(CaptureGuard {
             destroyed: false,
@@ -240,7 +241,8 @@ impl UserInner {
             }
 
             dst_space.mmap(Some(free_span.base), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher)?)
+                let is_pinned = true;
+                Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher, is_pinned)?)
             })?;
 
             let head = CopyInfo {
@@ -303,7 +305,8 @@ impl UserInner {
             }
 
             dst_space.mmap(Some(tail_dst_page), ONE, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher)?)
+                let is_pinned = true;
+                Ok(Grant::physmap(frame, PageSpan::new(dst_page, 1), page_flags, mapper, flusher, is_pinned)?)
             })?;
 
             CopyInfo {

@@ -97,6 +97,8 @@ impl MemoryScheme {
                 _ => (),
             }
 
+            let is_pinned = false;
+
             Grant::physmap(
                 Frame::containing_address(PhysicalAddress::new(physical_address)),
                 PageSpan::new(
@@ -106,6 +108,7 @@ impl MemoryScheme {
                 page_flags,
                 dst_mapper,
                 dst_flusher,
+                is_pinned,
             )
         }).map(|page| page.start_address().data())
 
