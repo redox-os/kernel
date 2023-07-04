@@ -6,8 +6,7 @@ use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArc
 use super::sdt::Sdt;
 use super::find_sdt;
 
-use core::intrinsics::{atomic_load_seqcst, atomic_store_seqcst};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 use crate::device::local_apic::LOCAL_APIC;
 use crate::interrupt;
@@ -73,7 +72,8 @@ impl Madt {
                 // Write trampoline, make sure TRAMPOLINE page is free for use
                 for i in 0..TRAMPOLINE_DATA.len() {
                     unsafe {
-                        atomic_store_seqcst((TRAMPOLINE as *mut u8).add(i), TRAMPOLINE_DATA[i]);
+                        (*((TRAMPOLINE as *mut u8).add(i) as *const AtomicU8))
+                            .store(TRAMPOLINE_DATA[i], Ordering::SeqCst);
                     }
                 }
 
@@ -91,7 +91,7 @@ impl Madt {
                                 let stack_start = allocate_frames(64).expect("no more frames in acpi stack_start").start_address().data() + crate::PHYS_OFFSET;
                                 let stack_end = stack_start + 64 * 4096;
 
-                                let ap_ready = (TRAMPOLINE + 8) as *mut u64;
+                                let ap_ready = (TRAMPOLINE + 8) as *const AtomicU64;
                                 let ap_cpu_id = unsafe { ap_ready.offset(1) };
                                 let ap_page_table = unsafe { ap_ready.offset(2) };
                                 let ap_stack_start = unsafe { ap_ready.offset(3) };
@@ -99,12 +99,17 @@ impl Madt {
                                 let ap_code = unsafe { ap_ready.offset(5) };
 
                                 // Set the ap_ready to 0, volatile
-                                unsafe { atomic_store_seqcst(ap_ready, 0) };
-                                unsafe { atomic_store_seqcst(ap_cpu_id, ap_local_apic.id as u64) };
-                                unsafe { atomic_store_seqcst(ap_page_table, page_table_physaddr as u64) };
-                                unsafe { atomic_store_seqcst(ap_stack_start, stack_start as u64) };
-                                unsafe { atomic_store_seqcst(ap_stack_end, stack_end as u64) };
-                                unsafe { atomic_store_seqcst(ap_code, kstart_ap as u64) };
+                                unsafe {
+                                    (*ap_ready).store(0, Ordering::SeqCst);
+                                    (*ap_cpu_id)
+                                        .store(ap_local_apic.id as u64, Ordering::SeqCst);
+                                    (*ap_page_table)
+                                        .store(page_table_physaddr as u64, Ordering::SeqCst);
+                                    (*ap_stack_start)
+                                        .store(stack_start as u64, Ordering::SeqCst);
+                                    (*ap_stack_end).store(stack_end as u64, Ordering::SeqCst);
+                                    (*ap_code).store(kstart_ap as u64, Ordering::SeqCst);
+                                };
                                 AP_READY.store(false, Ordering::SeqCst);
 
                                 print!("        AP {}:", ap_local_apic.id);
@@ -139,7 +144,7 @@ impl Madt {
 
                                 // Wait for trampoline ready
                                 print!(" Wait...");
-                                while unsafe { atomic_load_seqcst(ap_ready) } == 0 {
+                                while unsafe { (*ap_ready).load(Ordering::SeqCst) } == 0 {
                                     interrupt::pause();
                                 }
                                 print!(" Trampoline...");
