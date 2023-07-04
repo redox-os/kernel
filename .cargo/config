@@ -6,4 +6,3 @@ rustflags = [
 
 [unstable]
 build-std = ["core", "alloc", "compiler_builtins"]
-build-std-features = ["panic-unwind"]
