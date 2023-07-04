@@ -18,12 +18,6 @@ pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTableP
     base: 0 as *const X86IdtEntry
 };
 
-#[thread_local]
-pub static mut IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
-    limit: 0,
-    base: 0 as *const X86IdtEntry
-};
-
 pub type IdtEntries = [IdtEntry; 256];
 pub type IdtReservations = [AtomicU64; 4];
 
@@ -151,8 +145,10 @@ pub unsafe fn init_paging_bsp() {
 pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
 
-    IDTR.limit = (current_idt.len() * mem::size_of::<IdtEntry>() - 1) as u16;
-    IDTR.base = current_idt.as_ptr() as *const X86IdtEntry;
+    let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
+        limit: (current_idt.len() * mem::size_of::<IdtEntry>() - 1) as u16,
+        base: current_idt.as_ptr() as *const X86IdtEntry,
+    };
 
     let backup_ist = {
         // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
@@ -268,7 +264,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
     idt.set_reserved_mut(0x80, true);
 
-    dtables::lidt(&IDTR);
+    dtables::lidt(&idtr);
 }
 
 bitflags! {
