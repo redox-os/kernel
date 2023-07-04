@@ -19,14 +19,16 @@ pub unsafe extern fn kreset() -> ! {
         port.write(0xFE);
     }
 
+    emergency_reset();
+}
+
+pub unsafe fn emergency_reset() -> ! {
     // Use triple fault to guarantee reset
     core::arch::asm!("
         cli
         lidt cs:0
         int $3
-    ");
-
-    unreachable!();
+    ", options(noreturn));
 }
 
 #[cfg(feature = "acpi")]
