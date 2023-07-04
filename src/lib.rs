@@ -50,10 +50,8 @@
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(concat_idents)]
 #![feature(core_intrinsics)]
-#![feature(integer_atomics)]
 #![feature(int_roundings)]
 #![feature(naked_functions)]
-#![feature(ptr_internals)]
 #![feature(slice_ptr_get, slice_ptr_len)]
 #![feature(sync_unsafe_cell)]
 #![feature(thread_local)]
