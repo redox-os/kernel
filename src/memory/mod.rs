@@ -265,13 +265,14 @@ impl PageInfo {
 
         core::sync::atomic::fence(Ordering::Release);
     }
-    pub fn remove_ref(&self, cow: bool) {
+    #[must_use = "must deallocate if refcount reaches zero"]
+    pub fn remove_ref(&self, cow: bool) -> usize {
+        core::sync::atomic::fence(Ordering::Release);
+
         if !cow {
             self.borrowed_refcount.fetch_sub(1, Ordering::Relaxed);
         }
-        self.refcount.fetch_sub(1, Ordering::Relaxed);
-
-        core::sync::atomic::fence(Ordering::Release);
+        self.refcount.fetch_sub(1, Ordering::Relaxed) - 1
     }
     pub fn owned_refcount(&self) -> usize {
         self.refcount.load(Ordering::SeqCst) - self.borrowed_refcount.load(Ordering::SeqCst)

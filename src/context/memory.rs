@@ -13,7 +13,7 @@ use syscall::{
 use rmm::{Arch as _, PhysicalAddress, PageFlush};
 
 use crate::arch::paging::PAGE_SIZE;
-use crate::memory::{Enomem, Frame, get_page_info, PageInfo};
+use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{KernelMapper, Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
 use crate::scheme;
@@ -929,7 +929,9 @@ impl Grant {
 
             if let Some(is_cow) = is_cow_opt {
                 if let Some(info) = get_page_info(frame) {
-                    info.remove_ref(is_cow);
+                    if info.remove_ref(is_cow) == 0 {
+                        deallocate_frames(frame, 1);
+                    };
                 } else {
                     assert!(!require_info, "allocated frame did not have an associated PageInfo");
                 }
@@ -1247,11 +1249,14 @@ pub enum PfError {
 }
 
 fn cow(dst_mapper: &mut PageMapper, page: Page, old_frame: Frame, info: &PageInfo, page_flags: PageFlags<RmmA>) -> Result<Frame, PfError> {
+    if info.remove_ref(true) == 0 {
+        info.add_ref(true);
+        return Ok(old_frame);
+    }
+
     let new_frame = init_frame()?;
 
     unsafe { copy_frame_to_frame_directly(new_frame, old_frame); }
-
-    info.remove_ref(true);
 
     Ok(new_frame)
 }
