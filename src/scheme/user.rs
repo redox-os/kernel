@@ -364,8 +364,12 @@ impl UserInner {
     }
     pub fn request_fmap(&self, id: usize, offset: u64, required_page_count: usize, flags: MapFlags) -> Result<()> {
         log::info!("REQUEST FMAP");
+
+        let packet_id = self.next_id();
+        self.fmap.lock().insert(packet_id, Arc::downgrade(&context::current()?));
+
         self.todo.send(Packet {
-            id: self.next_id(),
+            id: packet_id,
             pid: context::context_id().into(),
             a: KSMSG_MMAP,
             b: id,
@@ -502,8 +506,10 @@ impl UserInner {
             gid: (map.offset >> 32) as u32,
         })?;
 
+        let mapping_is_lazy = map.flags.contains(MapFlags::MAP_LAZY);
+
         let base_page_opt = match response {
-            Response::Regular(code) => (!map.flags.contains(MapFlags::MAP_LAZY))
+            Response::Regular(code) => (!mapping_is_lazy)
                 .then_some(Error::demux(code)?),
             Response::Fd(_) => {
                 log::debug!("Scheme incorrectly returned an fd for fmap.");
