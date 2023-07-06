@@ -26,6 +26,9 @@ pub mod idt;
 /// Inter-processor interrupts
 pub mod ipi;
 
+/// Miscellaneous processor features
+pub mod misc;
+
 /// Paging
 pub mod paging;
 
@@ -50,3 +53,28 @@ pub mod flags {
     pub const FLAG_SINGLESTEP: usize = 1 << SHIFT_SINGLESTEP;
     pub const FLAG_INTERRUPTS: usize = 1 << 9;
 }
+
+#[naked]
+#[link_section = ".usercopy-fns"]
+pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
+    // TODO: LFENCE (spectre_v1 mitigation)?
+
+    #[cfg(not(feature = "x86_smap"))]
+    core::arch::asm!("
+        xor eax, eax
+        mov rcx, rdx
+        rep movsb
+        ret
+    ", options(noreturn));
+
+    #[cfg(feature = "x86_smap")]
+    core::arch::asm!("
+        xor eax, eax
+        mov rcx, rdx
+        stac
+        rep movsb
+        clac
+        ret
+    ", options(noreturn));
+}
+pub use arch_copy_to_user as arch_copy_from_user;

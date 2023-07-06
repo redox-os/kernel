@@ -13,9 +13,11 @@ use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_
 use crate::event;
 use crate::interrupt::irq::acknowledge;
 use crate::scheme::{AtomicSchemeId, SchemeId};
+use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_DIRECTORY, O_CREAT, O_STAT, MODE_CHR, MODE_DIR};
 use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
+use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
 pub static IRQ_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 
@@ -216,47 +218,6 @@ impl Scheme for IrqScheme {
         Ok(fd)
     }
 
-    fn read(&self, file: usize, buffer: &mut [u8]) -> Result<usize> {
-        let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&file).ok_or(Error::new(EBADF))?;
-
-        match handle {
-            // Ensures that the length of the buffer is larger than the size of a usize
-            &Handle::Irq { irq: handle_irq, ack: ref handle_ack } => if buffer.len() >= mem::size_of::<usize>() {
-                let current = COUNTS.lock()[handle_irq as usize];
-                if handle_ack.load(Ordering::SeqCst) != current {
-                    // Safe if the length of the buffer is larger than the size of a usize
-                    assert!(buffer.len() >= mem::size_of::<usize>());
-                    unsafe { *(buffer.as_mut_ptr() as *mut usize) = current; }
-                    Ok(mem::size_of::<usize>())
-                } else {
-                    Ok(0)
-                }
-            } else {
-                Err(Error::new(EINVAL))
-            }
-            &Handle::Bsp => {
-                if buffer.len() < mem::size_of::<usize>() {
-                    return Err(Error::new(EINVAL));
-                }
-                if let Some(bsp_apic_id) = bsp_apic_id() {
-                    unsafe { *(buffer.as_mut_ptr() as *mut usize) = bsp_apic_id as usize; }
-                    Ok(mem::size_of::<usize>())
-                } else {
-                    Err(Error::new(EBADFD))
-                }
-            }
-            &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
-                let cur_offset = offset.load(Ordering::SeqCst);
-                let max_bytes_to_read = core::cmp::min(buf.len(), buffer.len());
-                let bytes_to_read = core::cmp::max(max_bytes_to_read, cur_offset) - cur_offset;
-                buffer[..bytes_to_read].copy_from_slice(&buf[cur_offset..cur_offset + bytes_to_read]);
-                offset.fetch_add(bytes_to_read, Ordering::SeqCst);
-                Ok(bytes_to_read)
-            }
-        }
-    }
-
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
@@ -272,67 +233,6 @@ impl Scheme for IrqScheme {
         }
     }
 
-    fn write(&self, file: usize, buffer: &[u8]) -> Result<usize> {
-        let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&file).ok_or(Error::new(EBADF))?;
-
-        match handle {
-            &Handle::Irq { irq: handle_irq, ack: ref handle_ack } => if buffer.len() >= mem::size_of::<usize>() {
-                assert!(buffer.len() >= mem::size_of::<usize>());
-
-                let ack = unsafe { *(buffer.as_ptr() as *const usize) };
-                let current = COUNTS.lock()[handle_irq as usize];
-
-                if ack == current {
-                    handle_ack.store(ack, Ordering::SeqCst);
-                    unsafe { acknowledge(handle_irq as usize); }
-                    Ok(mem::size_of::<usize>())
-                } else {
-                    Ok(0)
-                }
-            } else {
-                Err(Error::new(EINVAL))
-            }
-            _ => Err(Error::new(EBADF)),
-        }
-    }
-
-    fn fstat(&self, id: usize, stat: &mut syscall::data::Stat) -> Result<usize> {
-        let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
-
-        match *handle {
-            Handle::Irq { irq: handle_irq, .. } => {
-                stat.st_mode = MODE_CHR | 0o600;
-                stat.st_size = mem::size_of::<usize>() as u64;
-                stat.st_blocks = 1;
-                stat.st_blksize = mem::size_of::<usize>() as u32;
-                stat.st_ino = handle_irq.into();
-                stat.st_nlink = 1;
-            }
-            Handle::Bsp => {
-                stat.st_mode = MODE_CHR | 0o400;
-                stat.st_size = mem::size_of::<usize>() as u64;
-                stat.st_blocks = 1;
-                stat.st_blksize = mem::size_of::<usize>() as u32;
-                stat.st_ino = INO_BSP;
-                stat.st_nlink = 1;
-            }
-            Handle::Avail(cpu_id, ref buf, _) => {
-                stat.st_mode = MODE_DIR | 0o700;
-                stat.st_size = buf.len() as u64;
-                stat.st_ino = INO_AVAIL | u64::from(cpu_id) << 32;
-                stat.st_nlink = 2;
-            }
-            Handle::TopLevel(ref buf, _) => {
-                stat.st_mode = MODE_DIR | 0o500;
-                stat.st_size = buf.len() as u64;
-                stat.st_ino = INO_TOPLEVEL;
-                stat.st_nlink = 1;
-            }
-        }
-        Ok(0)
-    }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)
@@ -342,24 +242,6 @@ impl Scheme for IrqScheme {
         Ok(EventFlags::empty())
     }
 
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
-
-        let scheme_path = match handle {
-            Handle::Irq { irq, .. } => format!("irq:{}", irq),
-            Handle::Bsp => format!("irq:bsp"),
-            Handle::Avail(cpu_id, _, _) => format!("irq:cpu-{:2x}", cpu_id),
-            Handle::TopLevel(_, _) => format!("irq:"),
-        }.into_bytes();
-
-        let mut i = 0;
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-        Ok(i)
-    }
 
     fn fsync(&self, _file: usize) -> Result<usize> {
         Ok(0)
@@ -377,4 +259,119 @@ impl Scheme for IrqScheme {
         Ok(0)
     }
 }
-impl crate::scheme::KernelScheme for IrqScheme {}
+impl crate::scheme::KernelScheme for IrqScheme {
+    fn kwrite(&self, file: usize, buffer: UserSliceRo) -> Result<usize> {
+        let handles_guard = HANDLES.read();
+        let handle = handles_guard.as_ref().unwrap().get(&file).ok_or(Error::new(EBADF))?;
+
+        match handle {
+            &Handle::Irq { irq: handle_irq, ack: ref handle_ack } => if buffer.len() >= mem::size_of::<usize>() {
+                let ack = buffer.read_usize()?;
+                let current = COUNTS.lock()[handle_irq as usize];
+
+                if ack == current {
+                    handle_ack.store(ack, Ordering::SeqCst);
+                    unsafe { acknowledge(handle_irq as usize); }
+                    Ok(mem::size_of::<usize>())
+                } else {
+                    Ok(0)
+                }
+            } else {
+                Err(Error::new(EINVAL))
+            }
+            _ => Err(Error::new(EBADF)),
+        }
+    }
+
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handles_guard = HANDLES.read();
+        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
+
+        buf.copy_exactly(&match *handle {
+            Handle::Irq { irq: handle_irq, .. } => Stat {
+                st_mode: MODE_CHR | 0o600,
+                st_size: mem::size_of::<usize>() as u64,
+                st_blocks: 1,
+                st_blksize: mem::size_of::<usize>() as u32,
+                st_ino: handle_irq.into(),
+                st_nlink: 1,
+                ..Default::default()
+            },
+            Handle::Bsp => Stat {
+                st_mode: MODE_CHR | 0o400,
+                st_size: mem::size_of::<usize>() as u64,
+                st_blocks: 1,
+                st_blksize: mem::size_of::<usize>() as u32,
+                st_ino: INO_BSP,
+                st_nlink: 1,
+                ..Default::default()
+            },
+            Handle::Avail(cpu_id, ref buf, _) => Stat {
+                st_mode: MODE_DIR | 0o700,
+                st_size: buf.len() as u64,
+                st_ino: INO_AVAIL | u64::from(cpu_id) << 32,
+                st_nlink: 2,
+                ..Default::default()
+            },
+            Handle::TopLevel(ref buf, _) => Stat {
+                st_mode: MODE_DIR | 0o500,
+                st_size: buf.len() as u64,
+                st_ino: INO_TOPLEVEL,
+                st_nlink: 1,
+                ..Default::default()
+            },
+        })?;
+        Ok(0)
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handles_guard = HANDLES.read();
+        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
+
+        let scheme_path = match handle {
+            Handle::Irq { irq, .. } => format!("irq:{}", irq),
+            Handle::Bsp => format!("irq:bsp"),
+            Handle::Avail(cpu_id, _, _) => format!("irq:cpu-{:2x}", cpu_id),
+            Handle::TopLevel(_, _) => format!("irq:"),
+        }.into_bytes();
+
+        buf.copy_common_bytes_from_slice(&scheme_path)
+    }
+    fn kread(&self, file: usize, buffer: UserSliceWo) -> Result<usize> {
+        let handles_guard = HANDLES.read();
+        let handle = handles_guard.as_ref().unwrap().get(&file).ok_or(Error::new(EBADF))?;
+
+        match *handle {
+            // Ensures that the length of the buffer is larger than the size of a usize
+            Handle::Irq { irq: handle_irq, ack: ref handle_ack } => if buffer.len() >= mem::size_of::<usize>() {
+                let current = COUNTS.lock()[handle_irq as usize];
+                if handle_ack.load(Ordering::SeqCst) != current {
+                    buffer.write_usize(current)?;
+                    Ok(mem::size_of::<usize>())
+                } else {
+                    Ok(0)
+                }
+            } else {
+                Err(Error::new(EINVAL))
+            }
+            Handle::Bsp => {
+                if buffer.len() < mem::size_of::<usize>() {
+                    return Err(Error::new(EINVAL));
+                }
+                if let Some(bsp_apic_id) = bsp_apic_id() {
+                    buffer.write_u32(bsp_apic_id)?;
+                    Ok(mem::size_of::<usize>())
+                } else {
+                    Err(Error::new(EBADFD))
+                }
+            }
+            Handle::Avail(_, ref buf, ref offset) | Handle::TopLevel(ref buf, ref offset) => {
+                let cur_offset = offset.load(Ordering::SeqCst);
+                let avail_buf = buf.get(cur_offset..).unwrap_or(&[]);
+                let bytes_read = buffer.copy_common_bytes_from_slice(avail_buf)?;
+                offset.fetch_add(bytes_read, Ordering::SeqCst);
+                Ok(bytes_read)
+            }
+        }
+    }
+
+}

@@ -9,6 +9,7 @@ use crate::scheme::*;
 use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
 use crate::syscall::scheme::Scheme;
+use crate::syscall::usercopy::UserSliceWo;
 
 static SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 
@@ -81,20 +82,6 @@ impl Scheme for SerioScheme {
         Ok(id)
     }
 
-    /// Read the file `number` into the `buffer`
-    ///
-    /// Returns the number of bytes read
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handle = {
-            let handles = handles();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        INPUT[handle.index].call_once(init_input)
-            .receive_into(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "SerioScheme::read")
-            .ok_or(Error::new(EINTR))
-    }
-
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         let mut handles = handles_mut();
         if let Some(handle) = handles.get_mut(&id) {
@@ -120,29 +107,6 @@ impl Scheme for SerioScheme {
         Ok(EventFlags::empty())
     }
 
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handle = {
-            let handles = handles();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let mut i = 0;
-        let scheme_path = b"serio:";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-
-        let file_path = format!("{}", handle.index).into_bytes();
-        let mut j = 0;
-        while i < buf.len() && j < file_path.len() {
-            buf[i] = file_path[j];
-            j += 1;
-        }
-
-        Ok(i)
-    }
-
     fn fsync(&self, id: usize) -> Result<usize> {
         let _handle = {
             let handles = handles();
@@ -162,4 +126,24 @@ impl Scheme for SerioScheme {
         Ok(0)
     }
 }
-impl crate::scheme::KernelScheme for SerioScheme {}
+impl crate::scheme::KernelScheme for SerioScheme {
+    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handle = {
+            let handles = handles();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        INPUT[handle.index].call_once(init_input)
+            .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "SerioScheme::read")
+    }
+
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handle = {
+            let handles = handles();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+        let path = format!("serio:{}", handle.index).into_bytes();
+
+        buf.copy_common_bytes_from_slice(&path)
+    }
+}

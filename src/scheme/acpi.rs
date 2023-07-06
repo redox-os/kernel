@@ -22,6 +22,7 @@ use crate::syscall::flag::{
 };
 use crate::syscall::scheme::Scheme;
 use crate::syscall::error::{Error, Result};
+use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;
@@ -162,29 +163,6 @@ impl Scheme for AcpiScheme {
 
         Ok(fd)
     }
-    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
-        let handles = HANDLES.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        match handle.kind {
-            HandleKind::Rxsdt => {
-                let data = DATA.get().ok_or(Error::new(EBADFD))?;
-
-                stat.st_mode = MODE_FILE;
-                stat.st_size = data.len().try_into().unwrap_or(u64::max_value());
-            }
-            HandleKind::TopLevel => {
-                stat.st_mode = MODE_DIR;
-                stat.st_size = TOPLEVEL_CONTENTS.len().try_into().unwrap_or(u64::max_value());
-            }
-            HandleKind::ShutdownPipe => {
-                stat.st_mode = MODE_CHR;
-                stat.st_size = 1;
-            }
-        }
-
-        Ok(0)
-    }
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -218,7 +196,29 @@ impl Scheme for AcpiScheme {
 
         Ok(new_offset as isize)
     }
-    fn read(&self, id: usize, dst_buf: &mut [u8]) -> Result<usize> {
+    // TODO
+    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
+        let handles = HANDLES.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        if handle.stat {
+            return Err(Error::new(EBADF));
+        }
+
+        Ok(EventFlags::empty())
+    }
+    fn close(&self, id: usize) -> Result<usize> {
+        if HANDLES.write().remove(&id).is_none() {
+            return Err(Error::new(EBADF));
+        }
+        Ok(0)
+    }
+}
+impl crate::scheme::KernelScheme for AcpiScheme {
+    fn kwrite(&self, _id: usize, _buf: UserSliceRo) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+    fn kread(&self, id: usize, dst_buf: UserSliceWo) -> Result<usize> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -228,14 +228,9 @@ impl Scheme for AcpiScheme {
 
         let data = match handle.kind {
             HandleKind::ShutdownPipe => {
-                let dst_byte = match dst_buf.first_mut() {
-                    None => return Ok(0),
-                    Some(dst) => if handle.offset >= 1 {
-                        return Ok(0)
-                    } else {
-                        dst
-                    },
-                };
+                if dst_buf.is_empty() {
+                    return Ok(0);
+                }
 
                 loop {
                     let flag_guard = KSTOP_FLAG.lock();
@@ -247,7 +242,7 @@ impl Scheme for AcpiScheme {
                     }
                 }
 
-                *dst_byte = 0x42;
+                dst_buf.copy_exactly(&[0x42])?;
                 handle.offset = 1;
                 return Ok(1);
             }
@@ -260,32 +255,37 @@ impl Scheme for AcpiScheme {
             .get(src_offset..)
             .expect("expected data to be at least data.len() bytes long");
 
-        let bytes_to_copy = core::cmp::min(dst_buf.len(), src_buf.len());
+        let bytes_copied = dst_buf.copy_common_bytes_from_slice(src_buf)?;
+        handle.offset += bytes_copied;
 
-        dst_buf[..bytes_to_copy].copy_from_slice(&src_buf[..bytes_to_copy]);
-        handle.offset += bytes_to_copy;
-
-        Ok(bytes_to_copy)
+        Ok(bytes_copied)
     }
-    // TODO
-    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if handle.stat {
-            return Err(Error::new(EBADF));
-        }
+        buf.copy_exactly(&match handle.kind {
+            HandleKind::Rxsdt => {
+                let data = DATA.get().ok_or(Error::new(EBADFD))?;
 
-        Ok(EventFlags::empty())
-    }
-    fn write(&self, _id: usize, _buf: &[u8]) -> Result<usize> {
-        Err(Error::new(EBADF))
-    }
-    fn close(&self, id: usize) -> Result<usize> {
-        if HANDLES.write().remove(&id).is_none() {
-            return Err(Error::new(EBADF));
-        }
+                Stat {
+                    st_mode: MODE_FILE,
+                    st_size: data.len().try_into().unwrap_or(u64::max_value()),
+                    ..Default::default()
+                }
+            },
+            HandleKind::TopLevel => Stat {
+                st_mode: MODE_DIR,
+                st_size: TOPLEVEL_CONTENTS.len().try_into().unwrap_or(u64::max_value()),
+                ..Default::default()
+            },
+            HandleKind::ShutdownPipe => Stat {
+                st_mode: MODE_CHR,
+                st_size: 1,
+                ..Default::default()
+            },
+        })?;
+
         Ok(0)
     }
 }
-impl crate::scheme::KernelScheme for AcpiScheme {}

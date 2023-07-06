@@ -1,8 +1,8 @@
 use crate::interrupt::InterruptStack;
 use crate::memory::{allocate_frames_complex, deallocate_frames, Frame, PAGE_SIZE};
-use crate::paging::{PageFlags, PhysicalAddress, VirtualAddress, mapper::PageFlushAll};
+use crate::paging::{PageFlags, PhysicalAddress, VirtualAddress};
 use crate::context;
-use crate::context::memory::{Grant, Region};
+use crate::context::memory::Grant;
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, PHYSMAP_WRITE, PHYSMAP_WRITE_COMBINE, PHYSMAP_NO_CACHE};
 
@@ -10,6 +10,8 @@ use crate::syscall::flag::{PhysallocFlags, PartialAllocStrategy, PhysmapFlags, P
 use crate::paging::entry::EntryFlags;
 
 use alloc::sync::Arc;
+
+use super::usercopy::UserSliceRw;
 
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
@@ -53,17 +55,17 @@ pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
     Ok(0)
 }
 
-pub fn inner_physalloc(size: usize, flags: PhysallocFlags, strategy: Option<PartialAllocStrategy>, min: usize) -> Result<(usize, usize)> {
+pub fn inner_physalloc(size: usize, flags: PhysallocFlags, strategy: Option<PartialAllocStrategy>, _min: usize) -> Result<(usize, usize)> {
     if flags.contains(PhysallocFlags::SPACE_32 | PhysallocFlags::SPACE_64) {
         return Err(Error::new(EINVAL));
     }
-    allocate_frames_complex((size + 4095) / 4096, flags, strategy, (min + 4095) / 4096).ok_or(Error::new(ENOMEM)).map(|(frame, count)| (frame.start_address().data(), count * 4096))
+    allocate_frames_complex(size.div_ceil(PAGE_SIZE), flags, strategy, size.div_ceil(PAGE_SIZE)).ok_or(Error::new(ENOMEM)).map(|(frame, count)| (frame.start_address().data(), count * PAGE_SIZE))
 }
 pub fn physalloc(size: usize) -> Result<usize> {
     enforce_root()?;
     inner_physalloc(size, PhysallocFlags::SPACE_64, None, size).map(|(base, _)| base)
 }
-pub fn physalloc3(size: usize, flags_raw: usize, min: &mut usize) -> Result<usize> {
+pub fn physalloc3(size: usize, flags_raw: usize, min_inout_usize: UserSliceRw) -> Result<usize> {
     enforce_root()?;
     let flags = PhysallocFlags::from_bits(flags_raw & !syscall::PARTIAL_ALLOC_STRATEGY_MASK).ok_or(Error::new(EINVAL))?;
     let strategy = if flags.contains(PhysallocFlags::PARTIAL_ALLOC) {
@@ -71,15 +73,18 @@ pub fn physalloc3(size: usize, flags_raw: usize, min: &mut usize) -> Result<usiz
     } else {
         None
     };
-    let (base, count) = inner_physalloc(size, flags, strategy, *min)?;
-    *min = count;
+    let (base, count) = inner_physalloc(size, flags, strategy, min_inout_usize.read_usize()?)?;
+
+    // TODO: handle error
+    let _ = min_inout_usize.write_usize(count);
+
     Ok(base)
 }
 
 pub fn inner_physfree(physical_address: usize, size: usize) -> Result<usize> {
-    deallocate_frames(Frame::containing_address(PhysicalAddress::new(physical_address)), (size + 4095)/4096);
+    deallocate_frames(Frame::containing_address(PhysicalAddress::new(physical_address)), size.div_ceil(PAGE_SIZE));
 
-    //TODO: Check that no double free occured
+    //TODO: Check that no double free occured. Perhaps by making userspace
     Ok(0)
 }
 pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
@@ -88,9 +93,6 @@ pub fn physfree(physical_address: usize, size: usize) -> Result<usize> {
 }
 
 //TODO: verify exlusive access to physical memory
-// TODO: Replace this completely with something such as `memory:physical`. Mmapping at offset
-// `physaddr` to `address` (optional) will map that physical address. We would have to find out
-// some way to pass flags such as WRITE_COMBINE/NO_CACHE however.
 pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     // TODO: Check physical_address against MAXPHYADDR.
 
@@ -102,7 +104,7 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     if size % PAGE_SIZE != 0 {
         log::warn!("physmap size {} is not multiple of PAGE_SIZE {}", size, PAGE_SIZE);
     }
-    let pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+    let pages = size.div_ceil(PAGE_SIZE);
 
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
     let mut addr_space = addr_space.write();
@@ -131,31 +133,11 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     }).map(|page| page.start_address().data())
 
 }
-// TODO: Remove this syscall, funmap makes it redundant.
+// TODO: Replace physmap with e.g. fmap fd=`memory:physical@wc` or `memory:physical@uncacheable`,
+// or represent memory types as fmap flags.
 pub fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
     enforce_root()?;
     inner_physmap(physical_address, size, flags)
-}
-
-pub fn inner_physunmap(virtual_address: usize) -> Result<usize> {
-    if virtual_address == 0 {
-        Ok(0)
-    } else {
-        let addr_space = Arc::clone(context::current()?.read().addr_space()?);
-        let mut addr_space = addr_space.write();
-
-        if let Some(region) = addr_space.grants.contains(VirtualAddress::new(virtual_address)).map(Region::from) {
-
-            addr_space.grants.take(&region).unwrap().unmap(&mut addr_space.table.utable, PageFlushAll::new());
-            return Ok(0);
-        }
-
-        Err(Error::new(EFAULT))
-    }
-}
-pub fn physunmap(virtual_address: usize) -> Result<usize> {
-    enforce_root()?;
-    inner_physunmap(virtual_address)
 }
 
 pub fn virttophys(virtual_address: usize) -> Result<usize> {

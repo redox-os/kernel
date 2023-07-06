@@ -36,3 +36,29 @@ pub mod init;
 pub mod time;
 
 pub use ::rmm::AArch64Arch as CurrentRmmArch;
+
+pub use arch_copy_to_user as arch_copy_from_user;
+
+#[naked]
+#[link_section = ".usercopy-fns"]
+pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
+    // x0, x1, x2
+    core::arch::asm!("
+        mov x4, x0
+        mov x0, 0
+    2:
+        cmp x2, 0
+        b.eq 3f
+
+        ldrb w3, [x1]
+        strb w3, [x4]
+
+        add x4, x4, 1
+        add x1, x1, 1
+        sub x2, x2, 1
+
+        b 2b
+    3:
+        ret
+    ", options(noreturn));
+}

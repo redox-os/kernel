@@ -322,6 +322,11 @@ impl core::ops::Deref for KernelMapper {
         &self.mapper
     }
 }
+impl core::ops::DerefMut for KernelMapper {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.mapper
+    }
+}
 impl Drop for KernelMapper {
     fn drop(&mut self) {
         if LOCK_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {

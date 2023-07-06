@@ -7,6 +7,8 @@ use crate::scheme::*;
 use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
 use crate::syscall::scheme::Scheme;
+use crate::syscall::usercopy::UserSliceRo;
+use crate::syscall::usercopy::UserSliceWo;
 
 static SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
 
@@ -78,33 +80,6 @@ impl Scheme for DebugScheme {
         Ok(id)
     }
 
-    /// Read the file `number` into the `buffer`
-    ///
-    /// Returns the number of bytes read
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handle = {
-            let handles = handles();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        INPUT.call_once(init_input)
-            .receive_into(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
-            .ok_or(Error::new(EINTR))
-    }
-
-    /// Write the `buffer` to the `file`
-    ///
-    /// Returns the number of bytes written
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        let _handle = {
-            let handles = handles();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        Writer::new().write(buf);
-        Ok(buf.len())
-    }
-
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         let mut handles = handles_mut();
         if let Some(handle) = handles.get_mut(&id) {
@@ -130,22 +105,6 @@ impl Scheme for DebugScheme {
         Ok(EventFlags::empty())
     }
 
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let _handle = {
-            let handles = handles();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let mut i = 0;
-        let scheme_path = b"debug:";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-
-        Ok(i)
-    }
-
     fn fsync(&self, id: usize) -> Result<usize> {
         let _handle = {
             let handles = handles();
@@ -165,4 +124,40 @@ impl Scheme for DebugScheme {
         Ok(0)
     }
 }
-impl crate::scheme::KernelScheme for DebugScheme {}
+impl crate::scheme::KernelScheme for DebugScheme {
+    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handle = {
+            let handles = handles();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        INPUT.call_once(init_input)
+            .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
+    }
+
+    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+        let _handle = {
+            let handles = handles();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+        // FIXME
+        let mut tmp = [0_u8; 512];
+        let count = buf.copy_common_bytes_to_slice(&mut tmp)?;
+
+        Writer::new().write(&tmp[..count]);
+        Ok(buf.len())
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let _handle = {
+            let handles = handles();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        // TODO: Copy elsewhere in the kernel?
+        const SRC: &[u8] = b"debug:";
+        let byte_count = core::cmp::min(buf.len(), SRC.len());
+        buf.limit(byte_count).expect("must succeed").copy_from_slice(&SRC[..byte_count])?;
+
+        Ok(byte_count)
+    }
+}

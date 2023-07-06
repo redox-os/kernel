@@ -3,7 +3,9 @@ use alloc::vec::Vec;
 use crate::context;
 use crate::scheme::{self, SchemeNamespace};
 use crate::syscall::error::*;
-use crate::syscall::validate::validate_str;
+
+use super::copy_path_to_buf;
+use super::usercopy::{UserSlice, UserSliceRo};
 
 pub fn getegid() -> Result<usize> {
     let contexts = context::contexts();
@@ -47,25 +49,35 @@ pub fn getuid() -> Result<usize> {
     Ok(context.ruid as usize)
 }
 
-pub fn mkns(name_ptrs: &[[usize; 2]]) -> Result<usize> {
-    let mut names = Vec::new();
-    for name_ptr in name_ptrs {
-        names.push(validate_str(name_ptr[0] as *const u8, name_ptr[1])?);
-    }
-
-    let (uid, from) = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        (context.euid, context.ens)
+pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
+    let (uid, from) = match context::current()?.read() {
+        ref context => (context.euid, context.ens),
     };
 
-    if uid == 0 {
-        let to = scheme::schemes_mut().make_ns(from, &names)?;
-        Ok(to.into())
-    } else {
-        Err(Error::new(EACCES))
+    // TODO: Lift this restriction later?
+    if uid != 0 {
+        return Err(Error::new(EACCES));
     }
+
+    let mut names = Vec::with_capacity(user_buf.len() / core::mem::size_of::<[usize; 2]>());
+
+    while let Some((current_name_ptr_buf, next_part)) = user_buf.split_at(core::mem::size_of::<[usize; 2]>()) {
+        let mut iter = current_name_ptr_buf.usizes();
+        let ptr = iter.next().ok_or(Error::new(EINVAL))??;
+        let len = iter.next().ok_or(Error::new(EINVAL))??;
+
+        let raw_path = UserSlice::new(ptr, len)?;
+
+        // TODO: Max scheme size limit?
+        let max_len = 256;
+
+        names.push(copy_path_to_buf(raw_path, max_len)?.into_boxed_str());
+
+        user_buf = next_part;
+    }
+
+    let to = scheme::schemes_mut().make_ns(from, names)?;
+    Ok(to.into())
 }
 
 pub fn setregid(rgid: u32, egid: u32) -> Result<usize> {

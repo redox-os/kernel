@@ -4,6 +4,7 @@
 //! For more information about futexes, please read [this](https://eli.thegreenplace.net/2018/basics-of-futexes/) blog post, and the [futex(2)](http://man7.org/linux/man-pages/man2/futex.2.html) man page
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
+use rmm::Arch;
 use core::intrinsics;
 use spin::RwLock;
 
@@ -15,7 +16,8 @@ use crate::time;
 use crate::syscall::data::TimeSpec;
 use crate::syscall::error::{Error, Result, EAGAIN, EFAULT, EINVAL, ESRCH};
 use crate::syscall::flag::{FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE};
-use crate::syscall::validate::validate_array;
+
+use super::usercopy::UserSlice;
 
 type FutexList = VecDeque<FutexEntry>;
 
@@ -43,23 +45,21 @@ fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Optio
 }
 
 pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> Result<usize> {
-    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let addr_space_lock = Arc::clone(context::current()?.read().addr_space()?);
+
+    // Keep the address space locked so we can safely read from the physical address. Unlock it
+    // before context switching.
+    let addr_space_guard = addr_space_lock.read();
 
     let target_physaddr =
-        validate_and_translate_virt(&*addr_space.read(), VirtualAddress::new(addr))
+        validate_and_translate_virt(&*addr_space_guard, VirtualAddress::new(addr))
             .ok_or(Error::new(EFAULT))?;
 
     match op {
         // TODO: FUTEX_WAIT_MULTIPLE?
         FUTEX_WAIT | FUTEX_WAIT64 => {
-            let timeout_ptr = val2 as *const TimeSpec;
-
-            let timeout_opt = if timeout_ptr.is_null() {
-                None
-            } else {
-                let [timeout] = unsafe { *validate_array(timeout_ptr)? };
-                Some(timeout)
-            };
+            let timeout_opt = UserSlice::ro(val2, core::mem::size_of::<TimeSpec>())?.none_if_null()
+                .map(|buf| unsafe { buf.read_exact::<TimeSpec>() }).transpose()?;
 
             {
                 let mut futexes = FUTEXES.write();
@@ -72,9 +72,14 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                     if addr % 4 != 0 {
                         return Err(Error::new(EINVAL));
                     }
+
+                    // On systems where virtual memory is not abundant, we might instead add an
+                    // atomic usercopy function.
+                    let accessible_addr = unsafe { crate::paging::RmmA::phys_to_virt(target_physaddr) }.data();
+
                     (
                         u64::from(unsafe {
-                            intrinsics::atomic_load_seqcst::<u32>(addr as *const u32)
+                            intrinsics::atomic_load_seqcst::<u32>(accessible_addr as *const u32)
                         }),
                         u64::from(val as u32),
                     )
@@ -111,6 +116,8 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                     context_lock,
                 });
             }
+
+            drop(addr_space_guard);
 
             unsafe {
                 context::switch();
@@ -157,8 +164,10 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
         }
         FUTEX_REQUEUE => {
             let addr2_physaddr =
-                validate_and_translate_virt(&*addr_space.read(), VirtualAddress::new(addr2))
+                validate_and_translate_virt(&*addr_space_guard, VirtualAddress::new(addr2))
                     .ok_or(Error::new(EFAULT))?;
+
+            drop(addr_space_guard);
 
             let mut woken = 0;
             let mut requeued = 0;

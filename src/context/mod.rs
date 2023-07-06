@@ -11,7 +11,7 @@ use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::error::{Error, ESRCH, Result};
 
-pub use self::context::{Context, ContextId, ContextSnapshot, Status, WaitpidKey};
+pub use self::context::{BorrowedHtBuf, Context, ContextId, ContextSnapshot, Status, WaitpidKey};
 pub use self::list::ContextList;
 pub use self::switch::switch;
 

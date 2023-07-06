@@ -4,6 +4,8 @@
 
 extern crate syscall;
 
+use syscall::{EventFlags, EOVERFLOW};
+
 pub use self::syscall::{
     FloatRegisters,
     IntRegisters,
@@ -23,11 +25,11 @@ pub use self::futex::futex;
 pub use self::privilege::*;
 pub use self::process::*;
 pub use self::time::*;
-pub use self::validate::*;
+pub use self::usercopy::validate_region;
 
 use self::scheme::Scheme as _;
 
-use self::data::{Map, SigAction, Stat, TimeSpec};
+use self::data::{Map, SigAction, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
 use self::flag::{MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
@@ -35,6 +37,7 @@ use self::number::*;
 use crate::context::ContextId;
 use crate::interrupt::InterruptStack;
 use crate::scheme::{FileHandle, SchemeNamespace, memory::MemoryScheme};
+use crate::syscall::usercopy::UserSlice;
 
 /// Debug
 pub mod debug;
@@ -57,8 +60,8 @@ pub mod process;
 /// Time syscalls
 pub mod time;
 
-/// Validate input
-pub mod validate;
+/// Safely copying memory between user and kernel memory
+pub mod usercopy;
 
 /// This function is the syscall handler of the kernel, it is composed of an inner function that returns a `Result<usize>`. After the inner function runs, the syscall
 /// function calls [`Error::mux`] on it.
@@ -71,43 +74,61 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                 let fd = FileHandle::from(b);
                 match a & SYS_ARG {
                     SYS_ARG_SLICE => match a {
-                        SYS_FMAP if b == !0 => {
-                            MemoryScheme.fmap(!0, unsafe { validate_ref(c as *const Map, d)? })
+                        SYS_WRITE => file_op_generic(fd, |scheme, _, number| scheme.kwrite(number, UserSlice::ro(c, d)?)),
+                        SYS_FMAP => {
+                            let map = unsafe { UserSlice::ro(c, d)?.read_exact::<Map>()? };
+                            if b == !0 {
+                                MemoryScheme.fmap(!0, &map)
+                            } else {
+                                file_op_generic(fd, |scheme, _, number| scheme.fmap(number, &map))
+                            }
                         },
-                        _ => file_op_slice(a, fd, validate_slice(c as *const u8, d)?),
+                        // SYS_FMAP_OLD is ignored
+                        SYS_FUTIMENS => file_op_generic(fd, |scheme, _, number| scheme.kfutimens(number, UserSlice::ro(c, d)?)),
+
+                        _ => return Err(Error::new(ENOSYS)),
                     }
                     SYS_ARG_MSLICE => match a {
-                        SYS_FSTAT => fstat(fd, unsafe { validate_ref_mut(c as *mut Stat, d)? }),
-                        _ => file_op_mut_slice(a, fd, validate_slice_mut(c as *mut u8, d)?),
+                        SYS_READ => file_op_generic(fd, |scheme, _, number| scheme.kread(number, UserSlice::wo(c, d)?)),
+                        SYS_FPATH => file_op_generic(fd, |scheme, _, number| scheme.kfpath(number, UserSlice::wo(c, d)?)),
+                        SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?),
+                        SYS_FSTATVFS => file_op_generic(fd, |scheme, _, number| scheme.kfstatvfs(number, UserSlice::wo(c, d)?)),
+
+                        _ => return Err(Error::new(ENOSYS)),
                     },
                     _ => match a {
-                        SYS_CLOSE => close(fd),
-                        SYS_DUP => dup(fd, validate_slice(c as *const u8, d)?).map(FileHandle::into),
-                        SYS_DUP2 => dup2(fd, FileHandle::from(c), validate_slice(d as *const u8, e)?).map(FileHandle::into),
+                        SYS_DUP => dup(fd, UserSlice::ro(c, d)?).map(FileHandle::into),
+                        SYS_DUP2 => dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?).map(FileHandle::into),
+                        SYS_LSEEK => file_op_generic(fd, |scheme, _, number| Ok(scheme.seek(number, c as isize, d)? as usize)),
+                        SYS_FCHMOD => file_op_generic(fd, |scheme, _, number| scheme.fchmod(number, c as u16)),
+                        SYS_FCHOWN => file_op_generic(fd, |scheme, _, number| scheme.fchown(number, c as u32, d as u32)),
                         SYS_FCNTL => fcntl(fd, c, d),
-                        SYS_FRENAME => frename(fd, validate_str(c as *const u8, d)?),
+                        SYS_FEVENT => file_op_generic(fd, |scheme, _, number| Ok(scheme.fevent(number, EventFlags::from_bits_truncate(c))?.bits())),
+                        SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?),
                         SYS_FUNMAP => funmap(b, c),
-                        _ => file_op(a, fd, c, d)
+
+                        SYS_FSYNC => file_op_generic(fd, |scheme, _, number| scheme.fsync(number)),
+                        SYS_FTRUNCATE => file_op_generic(fd, |scheme, _, number| scheme.ftruncate(number, c)),
+
+                        SYS_CLOSE => close(fd),
+
+                        _ => return Err(Error::new(ENOSYS)),
                     }
                 }
             },
             SYS_CLASS_PATH => match a {
-                SYS_OPEN => open(validate_str(b as *const u8, c)?, d).map(FileHandle::into),
-                SYS_RMDIR => rmdir(validate_str(b as *const u8, c)?),
-                SYS_UNLINK => unlink(validate_str(b as *const u8, c)?),
+                SYS_OPEN => open(UserSlice::ro(b, c)?, d).map(FileHandle::into),
+                SYS_RMDIR => rmdir(UserSlice::ro(b, c)?),
+                SYS_UNLINK => unlink(UserSlice::ro(b, c)?),
                 _ => Err(Error::new(ENOSYS))
             },
             _ => match a {
-                SYS_YIELD => sched_yield(),
+                SYS_YIELD => sched_yield().map(|()| 0),
                 SYS_NANOSLEEP => nanosleep(
-                    validate_slice(b as *const TimeSpec, 1).map(|req| &req[0])?,
-                    if c == 0 {
-                        None
-                    } else {
-                        Some(validate_slice_mut(c as *mut TimeSpec, 1).map(|rem| &mut rem[0])?)
-                    }
-                ),
-                SYS_CLOCK_GETTIME => clock_gettime(b, validate_slice_mut(c as *mut TimeSpec, 1).map(|time| &mut time[0])?),
+                    UserSlice::ro(b, core::mem::size_of::<TimeSpec>())?,
+                    UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?.none_if_null(),
+                ).map(|()| 0),
+                SYS_CLOCK_GETTIME => clock_gettime(b, UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?).map(|()| 0),
                 SYS_FUTEX => futex(b, c, d, e, f),
                 SYS_GETPID => getpid().map(ContextId::into),
                 SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
@@ -115,7 +136,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
 
                 SYS_EXIT => exit((b & 0xFF) << 8),
                 SYS_KILL => kill(ContextId::from(b), c),
-                SYS_WAITPID => waitpid(ContextId::from(b), c, WaitFlags::from_bits_truncate(d)).map(ContextId::into),
+                SYS_WAITPID => waitpid(ContextId::from(b), if c == 0 { None } else { Some(UserSlice::wo(c, core::mem::size_of::<usize>())?) }, WaitFlags::from_bits_truncate(d)).map(ContextId::into),
                 SYS_IOPL => iopl(b, stack),
                 SYS_GETEGID => getegid(),
                 SYS_GETENS => getens(),
@@ -124,45 +145,28 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                 SYS_GETNS => getns(),
                 SYS_GETUID => getuid(),
                 SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)),
-                SYS_MKNS => mkns(validate_slice(b as *const [usize; 2], c)?),
+                SYS_MKNS => mkns(UserSlice::ro(b, c.checked_mul(core::mem::size_of::<[usize; 2]>()).ok_or(Error::new(EOVERFLOW))?)?),
                 SYS_SETPGID => setpgid(ContextId::from(b), ContextId::from(c)),
                 SYS_SETREUID => setreuid(b as u32, c as u32),
                 SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)),
                 SYS_SETREGID => setregid(b as u32, c as u32),
                 SYS_SIGACTION => sigaction(
                     b,
-                    if c == 0 {
-                        None
-                    } else {
-                        Some(validate_slice(c as *const SigAction, 1).map(|act| &act[0])?)
-                    },
-                    if d == 0 {
-                        None
-                    } else {
-                        Some(validate_slice_mut(d as *mut SigAction, 1).map(|oldact| &mut oldact[0])?)
-                    },
-                    e
-                ),
+                    UserSlice::ro(c, core::mem::size_of::<SigAction>())?.none_if_null(),
+                    UserSlice::wo(d, core::mem::size_of::<SigAction>())?.none_if_null(),
+                    e,
+                ).map(|()| 0),
                 SYS_SIGPROCMASK => sigprocmask(
                     b,
-                    if c == 0 {
-                        None
-                    } else {
-                        Some(validate_slice(c as *const [u64; 2], 1).map(|s| &s[0])?)
-                    },
-                    if d == 0 {
-                        None
-                    } else {
-                        Some(validate_slice_mut(d as *mut [u64; 2], 1).map(|s| &mut s[0])?)
-                    }
-                ),
+                    UserSlice::ro(c, 16)?.none_if_null(),
+                    UserSlice::wo(d, 16)?.none_if_null(),
+                ).map(|()| 0),
                 SYS_SIGRETURN => sigreturn(),
-                SYS_PIPE2 => pipe2(validate_slice_mut(b as *mut usize, 2)?, c),
+                SYS_PIPE2 => pipe2(UserSlice::wo(b, 2 * core::mem::size_of::<usize>())?, c).map(|()| 0),
                 SYS_PHYSALLOC => physalloc(b),
-                SYS_PHYSALLOC3 => physalloc3(b, c, &mut validate_slice_mut(d as *mut usize, 1)?[0]),
+                SYS_PHYSALLOC3 => physalloc3(b, c, UserSlice::rw(d, core::mem::size_of::<usize>())?),
                 SYS_PHYSFREE => physfree(b, c),
                 SYS_PHYSMAP => physmap(b, c, PhysmapFlags::from_bits_truncate(d)),
-                SYS_PHYSUNMAP => physunmap(b),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
                 _ => Err(Error::new(ENOSYS))
@@ -170,13 +174,13 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     }
 
-    /*
-    let debug = {
+    let mut debug = false;
+
+    debug = debug && {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            let name = context.name.read();
-            if name.contains("bootstrap") {
+            if context.name.contains("bootstrap") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
@@ -196,16 +200,18 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", *context.name.read(), context.id.into());
+            print!("{} ({}): ", context.name, context.id.into());
         }
 
-        println!("{}", debug::format_call(a, b, c, d, e, f));
+        // Do format_call outside print! so possible exception handlers cannot reentrantly
+        // deadlock.
+        let string = debug::format_call(a, b, c, d, e, f);
+        println!("{}", string);
 
         crate::time::monotonic()
     } else {
         0
     };
-    */
 
     // The next lines set the current syscall in the context struct, then once the inner() function
     // completes, we set the current syscall to none.
@@ -230,17 +236,19 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     }
 
-    /*
     if debug {
         let debug_duration = crate::time::monotonic() - debug_start;
 
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", *context.name.read(), context.id.into());
+            print!("{} ({}): ", context.name, context.id.into());
         }
 
-        print!("{} = ", debug::format_call(a, b, c, d, e, f));
+        // Do format_call outside print! so possible exception handlers cannot reentrantly
+        // deadlock.
+        let string = debug::format_call(a, b, c, d, e, f);
+        print!("{} = ", string);
 
         match result {
             Ok(ref ok) => {
@@ -253,7 +261,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
 
         println!(" in {} ns", debug_duration);
     }
-    */
 
     // errormux turns Result<usize> into -errno
     Error::mux(result)

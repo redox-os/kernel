@@ -3,7 +3,7 @@ use core::{mem, str};
 use goblin::elf::sym;
 use rustc_demangle::demangle;
 
-use crate::{paging::{KernelMapper, VirtualAddress}};
+use crate::{paging::{KernelMapper, VirtualAddress}, USER_END_OFFSET};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
@@ -21,14 +21,14 @@ pub unsafe fn stack_trace() {
         if let Some(rip_rbp) = rbp.checked_add(mem::size_of::<usize>()) {
             let rbp_virt = VirtualAddress::new(rbp);
             let rip_rbp_virt = VirtualAddress::new(rip_rbp);
-            if rbp_virt.is_canonical() && rip_rbp_virt.is_canonical() && mapper.translate(rbp_virt).is_some() && mapper.translate(rip_rbp_virt).is_some() {
-                let rip = *(rip_rbp as *const usize);
+            if rbp_virt.data() >= USER_END_OFFSET && rip_rbp_virt.data() >= USER_END_OFFSET && mapper.translate(rbp_virt).is_some() && mapper.translate(rip_rbp_virt).is_some() {
+                let rip = (rip_rbp as *const usize).read();
                 if rip == 0 {
                     println!(" {:>016X}: EMPTY RETURN", rbp);
                     break;
                 }
                 println!("  {:>016X}: {:>016X}", rbp, rip);
-                rbp = *(rbp as *const usize);
+                rbp = (rbp as *const usize).read();
                 symbol_trace(rip);
             } else {
                 println!("  {:>016X}: GUARD PAGE", rbp);

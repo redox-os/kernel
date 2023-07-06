@@ -21,6 +21,7 @@ use crate::context::file::FileDescription;
 use crate::context::{memory::AddrSpace, file::FileDescriptor};
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
+use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 use self::acpi::AcpiScheme;
@@ -176,15 +177,13 @@ impl SchemeList {
         }
     }
 
-    pub fn make_ns(&mut self, from: SchemeNamespace, names: &[&str]) -> Result<SchemeNamespace> {
+    pub fn make_ns(&mut self, from: SchemeNamespace, names: impl IntoIterator<Item = Box<str>>) -> Result<SchemeNamespace> {
         // Create an empty namespace
         let to = self.new_ns();
 
         // Copy requested scheme IDs
-        for name in names.iter() {
-            let id = if let Some((id, _scheme)) = self.get_name(from, name) {
-                id
-            } else {
+        for name in names {
+            let Some((id, _scheme)) = self.get_name(from, &name) else {
                 return Err(Error::new(ENODEV));
             };
 
@@ -315,11 +314,30 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn kopen(&self, path: &str, flags: usize, caller: CallerCtx) -> Result<OpenResult> {
         self.open(path, flags, caller.uid, caller.gid).map(OpenResult::SchemeLocal)
     }
-    fn kdup(&self, old_id: usize, buf: &[u8], _caller: CallerCtx) -> Result<OpenResult> {
-        self.dup(old_id, buf).map(OpenResult::SchemeLocal)
+    fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+    fn kfutimens(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+    fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        Err(Error::new(EBADF))
     }
 }
 
+#[derive(Debug)]
 pub enum OpenResult {
     SchemeLocal(usize),
     External(Arc<RwLock<FileDescription>>),
