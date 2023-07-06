@@ -546,6 +546,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
             PageFlags::new().user(true).write(true).execute(true),
             &mut addr_space.table.utable,
             PageFlushAll::new(),
+            false, // is_shared
         ).expect("failed to physmap bootstrap memory"));
 
     }

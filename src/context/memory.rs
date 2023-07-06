@@ -110,7 +110,7 @@ impl AddrSpace {
                     (),
                     false, // is_pinned_userscheme_borrow
                 )?,
-                Provider::Allocated { ref cow_file_ref } => Grant::cow(
+                Provider::Allocated { ref cow_file_ref } => Grant::copy_mappings(
                     Arc::clone(&self_arc),
                     grant_base,
                     grant_base,
@@ -120,7 +120,20 @@ impl AddrSpace {
                     new_mapper,
                     &mut this_flusher,
                     (),
-                    cow_file_ref.clone(),
+                    CopyMappingsMode::Owned { cow_file_ref: cow_file_ref.clone() },
+                )?,
+                // TODO: Merge Allocated and AllocatedShared, and make CopyMappingsMode a field?
+                Provider::AllocatedShared => Grant::copy_mappings(
+                    Arc::clone(&self_arc),
+                    grant_base,
+                    grant_base,
+                    grant_info.page_count,
+                    grant_info.flags,
+                    this_mapper,
+                    new_mapper,
+                    &mut this_flusher,
+                    (),
+                    CopyMappingsMode::Borrowed,
                 )?,
 
                 // MAP_SHARED grants are retained by reference, across address space clones (across
@@ -134,7 +147,6 @@ impl AddrSpace {
                     (),
                     false,
                 )?,
-                // TODO: "clone grant using fmap"
                 Provider::FmapBorrowed { .. } => continue,
             };
 
@@ -610,14 +622,30 @@ pub struct GrantInfo {
     pub(crate) provider: Provider,
 }
 
+/// Enumeration of various types of grants.
 #[derive(Debug)]
 pub enum Provider {
-    /// The grant was initialized with (lazy) zeroed memory, and any changes will make it owned by
-    /// the frame allocator.
+    /// The grant is owned, but possibly CoW-shared.
+    ///
+    /// The pages this grant spans, need not necessarily be initialized right away, and can be
+    /// populated either from zeroed frames, the CoW zeroed frame, or from a scheme fmap call, if
+    /// mapped with MAP_LAZY. All frames must have an available PageInfo.
     Allocated { cow_file_ref: Option<GrantFileRef> },
+
+    /// The grant is owned, but possibly shared.
+    ///
+    /// The pages may only be lazily initialized, if the address space has not yet been cloned (when forking).
+    ///
+    /// This type of grants is obtained from MAP_SHARED anonymous or `memory:` mappings, i.e.
+    /// allocated memory that remains shared after address space clones.
+    AllocatedShared,
 
     /// The grant is not owned, but borrowed from physical memory frames that do not belong to the
     /// frame allocator.
+    ///
+    /// This is true for MMIO, or where the frames are managed externally (UserScheme head/tail
+    /// buffers).
+    ///
     // TODO: Stop using PhysBorrowed for head/tail pages when doing scheme calls! Force userspace
     // to provide it, perhaps from relibc?
     PhysBorrowed { base: Frame, is_pinned_userscheme_borrow: bool },
@@ -627,9 +655,9 @@ pub enum Provider {
 
     /// The memory is MAP_SHARED borrowed from a scheme.
     ///
-    /// Since the address space is not tracked here, all nonpresent pages (all pages must be
-    /// present before the fmap operation completes, unless MAP_LAZY is specified) are tracked
-    /// using PageInfo, or treated as PhysBorrowed if any frame lacks a PageInfo.
+    /// Since the address space is not tracked here, all nonpresent pages must be present before
+    /// the fmap operation completes, unless MAP_LAZY is specified. They are tracked using
+    /// PageInfo, or treated as PhysBorrowed if any frame lacks a PageInfo.
     FmapBorrowed { file_ref: GrantFileRef },
 }
 
@@ -645,6 +673,8 @@ pub struct GrantFileRef {
     pub base_offset: usize,
 }
 
+// TODO: When using this frame, keep in mind AllocatedShared must not be able to obtain writable
+// mappings to it.
 static THE_ZEROED_FRAME: Once<Frame> = Once::new();
 
 impl Grant {
@@ -661,7 +691,7 @@ impl Grant {
             },
         })
     }
-    pub fn zeroed(span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
+    pub fn zeroed(span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, shared: bool) -> Result<Grant, Enomem> {
         //let the_frame = THE_ZEROED_FRAME.get().expect("expected the zeroed frame to be available").start_address();
 
         // TODO: O(n) readonly map with zeroed page, or O(1) no-op and then lazily map?
@@ -686,7 +716,11 @@ impl Grant {
                 page_count: span.count,
                 flags,
                 mapped: true,
-                provider: Provider::Allocated { cow_file_ref: None },
+                provider: if shared {
+                    Provider::AllocatedShared
+                } else {
+                    Provider::Allocated { cow_file_ref: None }
+                },
             },
         })
     }
@@ -750,7 +784,7 @@ impl Grant {
                 }
 
                 unsafe {
-                    flusher.consume(mapper.map_phys(dst_page.start_address(), frame.start_address(), new_flags.write(!is_cow)).unwrap());
+                    flusher.consume(mapper.map_phys(dst_page.start_address(), frame.start_address(), new_flags.write(new_flags.has_write() && !is_cow)).unwrap());
                 }
             }
         }
@@ -828,7 +862,7 @@ impl Grant {
         })
     }
     // TODO: This is limited to one grant. Should it be (if some magic new proc: API is introduced)?
-    pub fn cow(
+    pub fn copy_mappings(
         src_address_space_lock: Arc<RwLock<AddrSpace>>,
         src_base: Page,
         dst_base: Page,
@@ -838,27 +872,46 @@ impl Grant {
         dst_mapper: &mut PageMapper,
         mut src_flusher: impl Flusher<RmmA>,
         mut dst_flusher: impl Flusher<RmmA>,
-        cow_file_ref: Option<GrantFileRef>,
+        mode: CopyMappingsMode,
     ) -> Result<Grant, Enomem> {
+        let is_cow = match mode {
+            CopyMappingsMode::Owned { .. } => true,
+            CopyMappingsMode::Borrowed => false,
+        };
+
         // TODO: Page table iterator
         for page_idx in 0..page_count {
             let src_page = src_base.next_by(page_idx);
             let dst_page = dst_base.next_by(page_idx).start_address();
 
-            let Some((_old_flags, src_phys, flush)) = (unsafe { src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false)) }) else {
-                // Page is not mapped, let the page fault handler take care of that (initializing
-                // it to zero).
-                //
-                // TODO: If eager, allocate zeroed page if writable, or use *the* zeroed page (also
-                // for read-only)?
-                continue;
+            let src_frame = if is_cow {
+                let Some((_, phys, flush)) = (unsafe { src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false)) }) else {
+                    // Page is not mapped, let the page fault handler take care of that (initializing
+                    // it to zero).
+                    //
+                    // TODO: If eager, allocate zeroed page if writable, or use *the* zeroed page (also
+                    // for read-only)?
+                    continue;
+                };
+                src_flusher.consume(flush);
+
+                Frame::containing_address(phys)
+            } else {
+                if let Some((phys, _)) = src_mapper.translate(src_page.start_address()) {
+                    Frame::containing_address(phys)
+                } else {
+                    let new_frame = init_frame(2, 2).expect("TODO: handle OOM");
+                    let src_flush = unsafe { src_mapper.map_phys(src_page.start_address(), new_frame.start_address(), flags).expect("TODO: handle OOM") };
+                    src_flusher.consume(src_flush);
+
+                    new_frame
+                }
             };
-            let src_frame = Frame::containing_address(src_phys);
 
             let src_page_info = get_page_info(src_frame).expect("allocated page was not present in the global page array");
-            src_page_info.add_ref(true);
+            src_page_info.add_ref(is_cow);
 
-            let Some(map_result) = (unsafe { dst_mapper.map_phys(dst_page, src_frame.start_address(), flags.write(false)) }) else {
+            let Some(map_result) = (unsafe { dst_mapper.map_phys(dst_page, src_frame.start_address(), flags.write(flags.has_write() && !is_cow)) }) else {
                 break;
             };
 
@@ -871,8 +924,11 @@ impl Grant {
                 page_count,
                 flags,
                 mapped: true,
-                provider: Provider::Allocated { cow_file_ref },
-            },
+                provider: match mode {
+                    CopyMappingsMode::Owned { cow_file_ref } => Provider::Allocated { cow_file_ref },
+                    CopyMappingsMode::Borrowed => Provider::AllocatedShared,
+                },
+            }
         })
     }
     /// Move a grant between two address spaces.
@@ -925,21 +981,20 @@ impl Grant {
             };
             let frame = Frame::containing_address(phys);
 
-            let (is_cow_opt, require_info) = match self.info.provider {
-                Provider::Allocated { .. } => (Some(true), true),
-                Provider::External { .. } => (Some(false), false),
-                Provider::PhysBorrowed { .. } => (None, false),
-                Provider::FmapBorrowed { .. } => (Some(false), false),
+            let (is_cow, require_info) = match self.info.provider {
+                Provider::Allocated { .. } => (true, true),
+                Provider::AllocatedShared => (false, true),
+                Provider::External { .. } => (false, false),
+                Provider::PhysBorrowed { .. } => (false, false),
+                Provider::FmapBorrowed { .. } => (false, false),
             };
 
-            if let Some(is_cow) = is_cow_opt {
-                if let Some(info) = get_page_info(frame) {
-                    if info.remove_ref(is_cow) == 0 {
-                        deallocate_frames(frame, 1);
-                    };
-                } else {
-                    assert!(!require_info, "allocated frame did not have an associated PageInfo");
-                }
+            if let Some(info) = get_page_info(frame) {
+                if info.remove_ref(is_cow) == 0 {
+                    deallocate_frames(frame, 1);
+                };
+            } else {
+                assert!(!require_info, "allocated frame did not have an associated PageInfo");
             }
 
 
@@ -996,6 +1051,7 @@ impl Grant {
                         is_pinned_userscheme_borrow: false,
                     },
                     Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
+                    Provider::AllocatedShared => Provider::AllocatedShared,
                     Provider::PhysBorrowed { base, .. } => Provider::PhysBorrowed { base: base.clone(), is_pinned_userscheme_borrow: false },
                     Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }
                 }
@@ -1007,7 +1063,7 @@ impl Grant {
         match self.info.provider {
             Provider::PhysBorrowed { ref mut base, .. } => *base = base.next_by(middle_page_offset),
             Provider::FmapBorrowed { ref mut file_ref } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref) } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
-            Provider::Allocated { cow_file_ref: None } | Provider::External { .. } => (),
+            Provider::Allocated { cow_file_ref: None } | Provider::AllocatedShared | Provider::External { .. } => (),
         }
 
 
@@ -1019,6 +1075,7 @@ impl Grant {
                 page_count: span.count,
                 provider: match self.info.provider {
                     Provider::Allocated { cow_file_ref: None } => Provider::Allocated { cow_file_ref: None },
+                    Provider::AllocatedShared => Provider::AllocatedShared,
                     Provider::Allocated { cow_file_ref: Some(ref file_ref) } => Provider::Allocated { cow_file_ref: Some(GrantFileRef {
                         base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
                         description: Arc::clone(&file_ref.description),
@@ -1102,6 +1159,9 @@ impl GrantInfo {
             Provider::Allocated { ref cow_file_ref } => {
                 // !GRANT_SHARED is equivalent to "GRANT_PRIVATE"
                 flags.set(GrantFlags::GRANT_SCHEME, cow_file_ref.is_some());
+            }
+            Provider::AllocatedShared => {
+                flags |= GrantFlags::GRANT_SHARED;
             }
             Provider::PhysBorrowed { is_pinned_userscheme_borrow, .. } => {
                 flags |= GrantFlags::GRANT_SHARED | GrantFlags::GRANT_PHYS;
@@ -1244,6 +1304,7 @@ pub enum AccessMode {
     InstrFetch,
 }
 
+#[derive(Debug)]
 pub enum PfError {
     Segv,
     Oom,
@@ -1259,24 +1320,24 @@ fn cow(dst_mapper: &mut PageMapper, page: Page, old_frame: Frame, info: &PageInf
         return Ok(old_frame);
     }
 
-    let new_frame = init_frame()?;
+    let new_frame = init_frame(1, 0)?;
 
     unsafe { copy_frame_to_frame_directly(new_frame, old_frame); }
 
     Ok(new_frame)
 }
 
-fn init_frame() -> Result<Frame, PfError> {
+fn init_frame(init_rc: usize, init_borrowed_rc: usize) -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).expect("all allocated frames need an associated page info");
-    page_info.refcount.store(1, Ordering::Relaxed);
-    page_info.borrowed_refcount.store(0, Ordering::Relaxed);
+    page_info.refcount.store(init_rc, Ordering::Relaxed);
+    page_info.borrowed_refcount.store(init_borrowed_rc, Ordering::Relaxed);
 
     Ok(new_frame)
 }
 
 fn map_zeroed(mapper: &mut PageMapper, page: Page, page_flags: PageFlags<RmmA>, _writable: bool) -> Result<Frame, PfError> {
-    let new_frame = init_frame()?;
+    let new_frame = init_frame(1, 0)?;
 
     unsafe {
         mapper.map_phys(page.start_address(), new_frame.start_address(), page_flags).ok_or(PfError::Oom)?.ignore();
@@ -1357,7 +1418,7 @@ fn correct_inner<'l>(addr_space_lock: &'l RwLock<AddrSpace>, mut addr_space_guar
     let mut debug = false;
 
     let frame = match grant_info.provider {
-        Provider::Allocated { .. } if access == AccessMode::Write => {
+        Provider::Allocated { .. } | Provider::AllocatedShared if access == AccessMode::Write => {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
                 Some((frame, Some(info))) => if info.owned_refcount() == 1 {
@@ -1368,10 +1429,14 @@ fn correct_inner<'l>(addr_space_lock: &'l RwLock<AddrSpace>, mut addr_space_guar
                 _ => map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, true)?,
             }
         }
-        Provider::Allocated { .. } => {
+
+        Provider::Allocated { .. } | Provider::AllocatedShared => {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
                 Some((frame, Some(page_info))) => {
+                    // Keep in mind that alloc_writable must always be true if this code is reached
+                    // for AllocatedShared, since shared pages cannot be mapped lazily (without
+                    // using AddrSpace backrefs).
                     allow_writable = page_info.owned_refcount() == 1;
 
                     frame
@@ -1494,4 +1559,9 @@ pub fn handle_notify_files(notify_files: Vec<UnmapResult>) {
     for file in notify_files {
         let _ = file.unmap();
     }
+}
+
+pub enum CopyMappingsMode {
+    Owned { cow_file_ref: Option<GrantFileRef> },
+    Borrowed,
 }

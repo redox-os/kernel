@@ -12,6 +12,7 @@ use crate::paging::VirtualAddress;
 
 use crate::paging::entry::EntryFlags;
 use crate::syscall::data::{Map, StatVfs};
+use crate::syscall::flag::MapFlags;
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::UserSliceWo;
@@ -65,7 +66,7 @@ impl MemoryScheme {
         let page = addr_space
             .write()
             .mmap((map.address != 0).then_some(span.base), page_count, map.flags, &mut notify_files, |dst_page, flags, mapper, flusher| {
-                Ok(Grant::zeroed(PageSpan::new(dst_page, page_count.get()), flags, mapper, flusher)?)
+                Ok(Grant::zeroed(PageSpan::new(dst_page, page_count.get()), flags, mapper, flusher, map.flags.contains(MapFlags::MAP_SHARED))?)
             })?;
 
         handle_notify_files(notify_files);
