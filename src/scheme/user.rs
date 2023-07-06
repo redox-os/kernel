@@ -447,14 +447,13 @@ impl UserInner {
     }
 
     fn fmap_inner(&self, dst_addr_space: Arc<RwLock<AddrSpace>>, file: usize, map: &Map) -> Result<usize> {
-        let aligned_size = map.size.next_multiple_of(PAGE_SIZE);
-        if aligned_size != map.size {
-            log::warn!("fmap passed length {:#0x} instead of {:#0x}", map.size, aligned_size);
-        }
+        let unaligned_size = map.size;
 
-        if aligned_size == 0 {
+        if unaligned_size == 0 {
             return Err(Error::new(EINVAL));
         }
+
+        let page_count = unaligned_size.div_ceil(PAGE_SIZE);
 
         if map.address % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
@@ -493,15 +492,13 @@ impl UserInner {
             (context.id, desc.description)
         };
 
-        let page_count = aligned_size / PAGE_SIZE;
-
         let response = self.call_extended_inner(Packet {
             id: self.next_id(),
             pid: pid.into(),
             a: KSMSG_MMAP_PREP,
             b: file,
             c: map.flags.bits(),
-            d: page_count,
+            d: unaligned_size,
             // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
             uid: map.offset as u32,
             gid: (map.offset >> 32) as u32,
