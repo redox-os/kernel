@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::str;
@@ -30,33 +29,33 @@ struct Handle {
     seek: usize
 }
 
-type SysFn = dyn Fn() -> Result<Vec<u8>> + Send + Sync;
+type SysFn = fn() -> Result<Vec<u8>>;
 
 /// System information scheme
 pub struct SysScheme {
     next_id: AtomicUsize,
-    files: BTreeMap<&'static str, Box<SysFn>>,
+    files: BTreeMap<&'static str, SysFn>,
     handles: RwLock<BTreeMap<usize, Handle>>
 }
 
 impl SysScheme {
     pub fn new() -> SysScheme {
-        let mut files: BTreeMap<&'static str, Box<SysFn>> = BTreeMap::new();
+        let mut files: BTreeMap<&'static str, SysFn> = BTreeMap::new();
 
-        files.insert("block", Box::new(block::resource));
-        files.insert("context", Box::new(context::resource));
-        files.insert("cpu", Box::new(cpu::resource));
-        files.insert("exe", Box::new(exe::resource));
-        files.insert("iostat", Box::new(iostat::resource));
-        files.insert("irq", Box::new(irq::resource));
-        files.insert("log", Box::new(log::resource));
-        files.insert("scheme", Box::new(scheme::resource));
-        files.insert("scheme_num", Box::new(scheme_num::resource));
-        files.insert("syscall", Box::new(syscall::resource));
-        files.insert("uname", Box::new(uname::resource));
-        files.insert("env", Box::new(|| Ok(Vec::from(crate::init_env()))));
+        files.insert("block", block::resource);
+        files.insert("context", context::resource);
+        files.insert("cpu", cpu::resource);
+        files.insert("exe", exe::resource);
+        files.insert("iostat", iostat::resource);
+        files.insert("irq", irq::resource);
+        files.insert("log", log::resource);
+        files.insert("scheme", scheme::resource);
+        files.insert("scheme_num", scheme_num::resource);
+        files.insert("syscall", syscall::resource);
+        files.insert("uname", uname::resource);
+        files.insert("env", || Ok(Vec::from(crate::init_env())));
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        files.insert("spurious_irq", Box::new(interrupt::irq::spurious_irq_resource));
+        files.insert("spurious_irq", interrupt::irq::spurious_irq_resource);
 
         SysScheme {
             next_id: AtomicUsize::new(0),
