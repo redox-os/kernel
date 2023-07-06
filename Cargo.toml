@@ -2,7 +2,7 @@
 name = "kernel"
 version = "0.3.4"
 build = "build.rs"
-edition = "2018"
+edition = "2021"
 
 [lib]
 name = "kernel"
@@ -44,7 +44,7 @@ raw-cpuid = "10.2.0"
 x86 = { version = "0.47.0", default-features = false }
 
 [features]
-default = ["acpi", "multi_core", "graphical_debug", "serial_debug"]
+default = ["acpi", "multi_core", "graphical_debug", "serial_debug", "x86_smap"]
 acpi = []
 doc = []
 graphical_debug = []
@@ -59,6 +59,9 @@ slab = ["slab_allocator"]
 
 # TODO: Either wait for LLVM 12 and use target_feature, or use another system for cpu features
 x86_fsgsbase = []
+
+# Enables SMAP if available, on x86_64. Ignored on other architectures.
+x86_smap = []
 
 [profile.dev]
 # Avoids having to define the eh_personality lang item and reduces kernel size

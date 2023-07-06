@@ -17,6 +17,7 @@ use crate::devices::graphical_debug;
 use crate::gdt;
 use crate::idt;
 use crate::interrupt;
+use crate::misc;
 use crate::log::{self, info};
 use crate::paging::{self, KernelMapper, TableKind};
 
@@ -169,6 +170,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Activate memory logging
         log::init();
 
+        // Initialize miscellaneous processor features
+        misc::init();
+
         // Initialize devices
         device::init();
 
@@ -246,6 +250,9 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
         // Set up syscall instruction
         interrupt::syscall::init();
+
+        // Initialize miscellaneous processor features
+        misc::init();
 
         // Test tdata and tbss
         {

@@ -50,3 +50,34 @@ pub mod flags {
     pub const FLAG_SINGLESTEP: usize = 1 << SHIFT_SINGLESTEP;
     pub const FLAG_INTERRUPTS: usize = 1 << 9;
 }
+pub use arch_copy_to_user as arch_copy_from_user;
+
+#[inline(always)]
+pub unsafe fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
+    arch_copy_to_user_inner(len, dst, src)
+}
+
+#[naked]
+#[link_section = ".usercopy-fns"]
+#[no_mangle]
+pub unsafe extern "fastcall" fn arch_copy_to_user_inner(len: usize, dst: usize, src: usize) -> u8 {
+    // Explicitly specified __fastcall ABI:
+    //
+    // ECX = len, EDX = dst, src is pushed to the stack (earlier than the CALL return address, of
+    // course)
+    core::arch::asm!("
+        push edi
+        push esi
+
+        mov edi, edx
+        mov esi, [esp+12]
+
+        xor eax, eax
+        rep movsb
+
+        pop esi
+        pop edi
+
+        ret 4
+    ", options(noreturn));
+}

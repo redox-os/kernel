@@ -7,8 +7,9 @@ use crate::context;
 use crate::scheme::{self, SchemeId};
 use crate::sync::WaitQueue;
 use crate::syscall::data::Event;
-use crate::syscall::error::{Error, Result, EBADF, EINTR, ESRCH};
+use crate::syscall::error::{Error, Result, EBADF, ESRCH};
 use crate::syscall::flag::EventFlags;
+use crate::syscall::usercopy::UserSliceWo;
 
 int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 
@@ -25,8 +26,8 @@ impl EventQueue {
         }
     }
 
-    pub fn read(&self, events: &mut [Event]) -> Result<usize> {
-        self.queue.receive_into(events, true, "EventQueue::read").ok_or(Error::new(EINTR))
+    pub fn read(&self, buf: UserSliceWo) -> Result<usize> {
+        self.queue.receive_into_user(buf, true, "EventQueue::read")
     }
 
     pub fn write(&self, events: &[Event]) -> Result<usize> {

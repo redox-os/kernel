@@ -1,10 +1,13 @@
 use core::{ascii, mem};
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use super::data::{Map, Stat, TimeSpec};
-use super::flag::*;
+use super::{flag::*, copy_path_to_buf};
 use super::number::*;
-use super::validate::*;
+use super::usercopy::UserSlice;
+
+use crate::syscall::error::Result;
 
 struct ByteStr<'a>(&'a[u8]);
 
@@ -20,22 +23,37 @@ impl<'a> ::core::fmt::Debug for ByteStr<'a> {
         Ok(())
     }
 }
+fn debug_path(ptr: usize, len: usize) -> Result<String> {
+    // TODO: PATH_MAX
+    UserSlice::ro(ptr, len).and_then(|slice| copy_path_to_buf(slice, 4096))
+}
+fn debug_buf(ptr: usize, len: usize) -> Result<Vec<u8>> {
+    UserSlice::ro(ptr, len).and_then(|user| {
+        let mut buf = vec! [0_u8; 4096];
+        let count = user.copy_common_bytes_to_slice(&mut buf)?;
+        buf.truncate(count);
+        Ok(buf)
+    })
+}
+unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
+    UserSlice::ro(ptr, mem::size_of::<T>()).and_then(|slice| slice.read_exact::<T>())
+}
 
 //TODO: calling format_call with arguments from another process space will not work
 pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> String {
     match a {
         SYS_OPEN => format!(
             "open({:?}, {:#X})",
-            validate_slice(b as *const u8, c).map(ByteStr),
+            debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
             d
         ),
         SYS_RMDIR => format!(
             "rmdir({:?})",
-            validate_slice(b as *const u8, c).map(ByteStr)
+            debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
         ),
         SYS_UNLINK => format!(
             "unlink({:?})",
-            validate_slice(b as *const u8, c).map(ByteStr)
+            debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
         ),
         SYS_CLOSE => format!(
             "close({})", b
@@ -43,13 +61,13 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_DUP => format!(
             "dup({}, {:?})",
             b,
-            validate_slice(c as *const u8, d).map(ByteStr)
+            debug_buf(c, d).as_ref().map(|b| ByteStr(&*b)),
         ),
         SYS_DUP2 => format!(
             "dup2({}, {}, {:?})",
             b,
             c,
-            validate_slice(d as *const u8, e).map(ByteStr)
+            debug_buf(d, e).as_ref().map(|b| ByteStr(&*b)),
         ),
         SYS_READ => format!(
             "read({}, {:#X}, {})",
@@ -103,10 +121,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_FMAP => format!(
             "fmap({}, {:?})",
             b,
-            validate_slice(
-                c as *const Map,
-                d/mem::size_of::<Map>()
-            ),
+            UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Map>() }),
         ),
         SYS_FUNMAP => format!(
             "funmap({:#X}, {:#X})",
@@ -122,15 +137,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_FRENAME => format!(
             "frename({}, {:?})",
             b,
-            validate_slice(c as *const u8, d).map(ByteStr),
+            debug_path(c, d),
         ),
         SYS_FSTAT => format!(
             "fstat({}, {:?})",
             b,
-            validate_slice(
-                c as *const Stat,
-                d/mem::size_of::<Stat>()
-            ),
+            UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Stat>() }),
         ),
         SYS_FSTATVFS => format!(
             "fstatvfs({}, {:#X}, {})",
@@ -150,16 +162,21 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_FUTIMENS => format!(
             "futimens({}, {:?})",
             b,
-            validate_slice(
-                c as *const TimeSpec,
-                d/mem::size_of::<TimeSpec>()
-            ),
+            UserSlice::ro(c, d).and_then(|buf| {
+                let mut times = vec! [unsafe { buf.read_exact::<TimeSpec>()? }];
+
+                // One or two timespecs
+                if let Some(second) = buf.advance(mem::size_of::<TimeSpec>()) {
+                    times.push(unsafe { second.read_exact::<TimeSpec>()? });
+                }
+                Ok(times)
+            }),
         ),
 
         SYS_CLOCK_GETTIME => format!(
             "clock_gettime({}, {:?})",
             b,
-            validate_slice_mut(c as *mut TimeSpec, 1)
+            unsafe { read_struct::<TimeSpec>(c) }
         ),
         SYS_EXIT => format!(
             "exit({})",
@@ -168,7 +185,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,
-            validate_slice_mut(b as *mut i32, 1).map(|uaddr| &mut uaddr[0]),
+            UserSlice::ro(b, 4).and_then(|buf| buf.read_u32()),
             c,
             d,
             e,
@@ -203,12 +220,17 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_SIGPROCMASK => format!(
             "sigprocmask({}, {:?}, {:?})",
             b,
-            validate_slice(c as *const [u64; 2], 1),
-            validate_slice(d as *const [u64; 2], 1)
+            unsafe { read_struct::<[u64; 2]>(c) },
+            unsafe { read_struct::<[u64; 2]>(d) },
         ),
         SYS_MKNS => format!(
-            "mkns({:?})",
-            validate_slice(b as *const [usize; 2], c)
+            "mkns({:p} len: {})",
+            // TODO: Print out all scheme names?
+
+            // Simply printing out simply the pointers and lengths may not provide that much useful
+            // debugging information, so only print the raw args.
+            b as *const u8,
+            c,
         ),
         SYS_MPROTECT => format!(
             "mprotect({:#X}, {}, {:?})",
@@ -218,7 +240,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         ),
         SYS_NANOSLEEP => format!(
             "nanosleep({:?}, ({}, {}))",
-            validate_slice(b as *const TimeSpec, 1),
+            unsafe { read_struct::<TimeSpec>(b) },
             c,
             d
         ),
@@ -241,17 +263,13 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             PhysmapFlags::from_bits(d)
         ),
-        SYS_PHYSUNMAP => format!(
-            "physunmap({:#X})",
-            b
-        ),
         SYS_VIRTTOPHYS => format!(
             "virttophys({:#X})",
             b
         ),
         SYS_PIPE2 => format!(
             "pipe2({:?}, {})",
-            validate_slice_mut(b as *mut usize, 2),
+            unsafe { read_struct::<[usize; 2]>(b) },
             c
         ),
         SYS_SETREGID => format!(

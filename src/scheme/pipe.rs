@@ -10,10 +10,11 @@ use crate::scheme::SchemeId;
 use crate::sync::WaitCondition;
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, ESPIPE};
 use crate::syscall::flag::{EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
-use crate::syscall::scheme::Scheme;
+use crate::syscall::scheme::{CallerCtx, Scheme};
 use crate::syscall::data::Stat;
+use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
-use super::KernelScheme;
+use super::{KernelScheme, OpenResult};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
@@ -65,109 +66,6 @@ impl PipeScheme {
 }
 
 impl Scheme for PipeScheme {
-    fn open(&self, path: &str, flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        if !path.trim_start_matches('/').is_empty() {
-            return Err(Error::new(ENOENT));
-        }
-
-        let (read_id, _) = pipe(flags)?;
-
-        Ok(read_id)
-    }
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let (is_write_not_read, key) = from_raw_id(id);
-
-        if is_write_not_read {
-            return Err(Error::new(EBADF));
-        }
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
-
-        loop {
-            let mut vec = pipe.queue.lock();
-
-            let (s1, s2) = vec.as_slices();
-            let s1_count = core::cmp::min(buf.len(), s1.len());
-
-            let (s1_dst, s2_buf) = buf.split_at_mut(s1_count);
-            s1_dst.copy_from_slice(&s1[..s1_count]);
-
-            let s2_count = core::cmp::min(s2_buf.len(), s2.len());
-            s2_buf[..s2_count].copy_from_slice(&s2[..s2_count]);
-
-            let bytes_read = s1_count + s2_count;
-            let _ = vec.drain(..bytes_read);
-
-            if bytes_read > 0 {
-                event::trigger(pipe_scheme_id(), key | WRITE_NOT_READ_BIT, EVENT_WRITE);
-                pipe.write_condition.notify();
-
-                return Ok(bytes_read);
-            } else if buf.is_empty() {
-                return Ok(0);
-            }
-
-            if !pipe.writer_is_alive.load(Ordering::SeqCst) {
-                return Ok(0);
-            } else if pipe.read_flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
-                return Err(Error::new(EAGAIN));
-            } else if !pipe.read_condition.wait(vec, "PipeRead::read") {
-                return Err(Error::new(EINTR));
-            }
-        }
-    }
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        let (is_write_not_read, key) = from_raw_id(id);
-
-        if !is_write_not_read {
-            return Err(Error::new(EBADF));
-        }
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
-
-        loop {
-            let mut vec = pipe.queue.lock();
-
-            let bytes_left = MAX_QUEUE_SIZE.saturating_sub(vec.len());
-            let byte_count = core::cmp::min(bytes_left, buf.len());
-
-            vec.extend(buf[..byte_count].iter());
-
-            if byte_count > 0 {
-                event::trigger(pipe_scheme_id(), key, EVENT_READ);
-                pipe.read_condition.notify();
-
-                return Ok(byte_count);
-            } else if buf.is_empty() {
-                return Ok(0);
-            }
-
-            if !pipe.reader_is_alive.load(Ordering::SeqCst) {
-                return Err(Error::new(EPIPE));
-            } else if pipe.write_flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
-                return Err(Error::new(EAGAIN));
-            } else if !pipe.write_condition.wait(vec, "PipeWrite::write") {
-                return Err(Error::new(EINTR));
-            }
-        }
-    }
-
-    fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
-        let (is_writer_not_reader, key) = from_raw_id(old_id);
-
-        if is_writer_not_reader {
-            return Err(Error::new(EBADF));
-        }
-        if buf != b"write" {
-            return Err(Error::new(EINVAL));
-        }
-
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
-
-        if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
-            return Err(Error::new(EBADF));
-        }
-
-        Ok(key | WRITE_NOT_READ_BIT)
-    }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         let (is_writer_not_reader, key) = from_raw_id(id);
@@ -206,22 +104,6 @@ impl Scheme for PipeScheme {
         }
 
         Err(Error::new(EBADF))
-    }
-
-    fn fpath(&self, _id: usize, buf: &mut [u8]) -> Result<usize> {
-        let scheme_path = b"pipe:";
-        let to_copy = core::cmp::min(buf.len(), scheme_path.len());
-        buf[..to_copy].copy_from_slice(&scheme_path[..to_copy]);
-        Ok(to_copy)
-    }
-
-    fn fstat(&self, _id: usize, stat: &mut Stat) -> Result<usize> {
-        *stat = Stat {
-            st_mode: MODE_FIFO | 0o666,
-            ..Default::default()
-        };
-
-        Ok(0)
     }
 
     fn fsync(&self, _id: usize) -> Result<usize> {
@@ -273,4 +155,134 @@ pub struct Pipe {
     has_run_dup: AtomicBool,
 }
 
-impl crate::scheme::KernelScheme for PipeScheme {}
+impl KernelScheme for PipeScheme {
+    fn kdup(&self, old_id: usize, user_buf: UserSliceRo, _ctx: CallerCtx) -> Result<OpenResult> {
+        let (is_writer_not_reader, key) = from_raw_id(old_id);
+
+        if is_writer_not_reader {
+            return Err(Error::new(EBADF));
+        }
+
+        let mut buf = [0_u8; 5];
+
+        if user_buf.copy_common_bytes_to_slice(&mut buf)? < 5 || buf != *b"write" {
+            return Err(Error::new(EINVAL));
+        }
+
+        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+
+        if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
+            return Err(Error::new(EBADF));
+        }
+
+        Ok(OpenResult::SchemeLocal(key | WRITE_NOT_READ_BIT))
+    }
+    fn kopen(&self, path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+        if !path.trim_start_matches('/').is_empty() {
+            return Err(Error::new(ENOENT));
+        }
+
+        let (read_id, _) = pipe(flags)?;
+
+        Ok(OpenResult::SchemeLocal(read_id))
+    }
+
+    fn kread(&self, id: usize, user_buf: UserSliceWo) -> Result<usize> {
+        let (is_write_not_read, key) = from_raw_id(id);
+
+        if is_write_not_read {
+            return Err(Error::new(EBADF));
+        }
+        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+
+        loop {
+            let mut vec = pipe.queue.lock();
+
+            let (s1, s2) = vec.as_slices();
+            let s1_count = core::cmp::min(user_buf.len(), s1.len());
+
+            let (s1_dst, s2_buf) = user_buf.split_at(s1_count).expect("s1_count <= user_buf.len()");
+            s1_dst.copy_from_slice(&s1[..s1_count])?;
+
+            let s2_count = core::cmp::min(s2_buf.len(), s2.len());
+            s2_buf.limit(s2_count).expect("s2_count <= s2_buf.len()").copy_from_slice(&s2[..s2_count])?;
+
+            let bytes_read = s1_count + s2_count;
+            let _ = vec.drain(..bytes_read);
+
+            if bytes_read > 0 {
+                event::trigger(pipe_scheme_id(), key | WRITE_NOT_READ_BIT, EVENT_WRITE);
+                pipe.write_condition.notify();
+
+                return Ok(bytes_read);
+            } else if user_buf.is_empty() {
+                return Ok(0);
+            }
+
+            if !pipe.writer_is_alive.load(Ordering::SeqCst) {
+                return Ok(0);
+            } else if pipe.read_flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
+                return Err(Error::new(EAGAIN));
+            } else if !pipe.read_condition.wait(vec, "PipeRead::read") {
+                return Err(Error::new(EINTR));
+            }
+        }
+    }
+    fn kwrite(&self, id: usize, user_buf: UserSliceRo) -> Result<usize> {
+        let (is_write_not_read, key) = from_raw_id(id);
+
+        if !is_write_not_read {
+            return Err(Error::new(EBADF));
+        }
+        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+
+        loop {
+            let mut vec = pipe.queue.lock();
+
+            let bytes_left = MAX_QUEUE_SIZE.saturating_sub(vec.len());
+            let bytes_to_write = core::cmp::min(bytes_left, user_buf.len());
+            let src_buf = user_buf.limit(bytes_to_write).expect("bytes_to_write <= user_buf.len()");
+
+            const TMPBUF_SIZE: usize = 512;
+            let mut tmp_buf = [0_u8; TMPBUF_SIZE];
+
+            let mut bytes_written = 0;
+
+            // TODO: Modify VecDeque so that the unwritten portions can be accessed directly?
+            for (idx, chunk) in src_buf.in_variable_chunks(TMPBUF_SIZE).enumerate() {
+                let chunk_byte_count = match chunk.copy_common_bytes_to_slice(&mut tmp_buf) {
+                    Ok(c) => c,
+                    Err(_) if idx > 0 => break,
+                    Err(error) => return Err(error),
+                };
+                vec.extend(&tmp_buf[..chunk_byte_count]);
+                bytes_written += chunk_byte_count;
+            }
+
+            if bytes_written > 0 {
+                event::trigger(pipe_scheme_id(), key, EVENT_READ);
+                pipe.read_condition.notify();
+
+                return Ok(bytes_written);
+            } else if user_buf.is_empty() {
+                return Ok(0);
+            }
+
+            if !pipe.reader_is_alive.load(Ordering::SeqCst) {
+                return Err(Error::new(EPIPE));
+            } else if pipe.write_flags.load(Ordering::SeqCst) & O_NONBLOCK == O_NONBLOCK {
+                return Err(Error::new(EAGAIN));
+            } else if !pipe.write_condition.wait(vec, "PipeWrite::write") {
+                return Err(Error::new(EINTR));
+            }
+        }
+    }
+    fn kfstat(&self, _id: usize, buf: UserSliceWo) -> Result<usize> {
+        buf.copy_exactly(&Stat {
+            st_mode: MODE_FIFO | 0o666,
+            ..Default::default()
+        })?;
+
+        Ok(0)
+    }
+}

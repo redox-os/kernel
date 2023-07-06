@@ -16,6 +16,7 @@ use crate::syscall::flag::{EventFlags, O_CREAT, MODE_FILE, MODE_DIR};
 use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::scheme::{self, SchemeNamespace, SchemeId};
 use crate::scheme::user::{UserInner, UserScheme};
+use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
 struct FolderInner {
     data: Box<[u8]>,
@@ -23,17 +24,14 @@ struct FolderInner {
 }
 
 impl FolderInner {
-    fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut i = 0;
-        let mut pos = self.pos.lock();
+    fn read(&self, buf: UserSliceWo) -> Result<usize> {
+        let mut pos_guard = self.pos.lock();
 
-        while i < buf.len() && *pos < self.data.len() {
-            buf[i] = self.data[*pos];
-            i += 1;
-            *pos += 1;
-        }
+        let avail_buf = self.data.get(*pos_guard..).unwrap_or(&[]);
+        let bytes_read = buf.copy_common_bytes_from_slice(avail_buf)?;
+        *pos_guard += bytes_read;
 
-        Ok(i)
+        Ok(bytes_read)
     }
 
     fn seek(&self, pos: isize, whence: usize) -> Result<isize> {
@@ -162,45 +160,6 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn read(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
-        let handle = {
-            let handles = self.handles.read();
-            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
-            handle.clone()
-        };
-
-        match handle {
-            Handle::Scheme(inner) => {
-                inner.read(buf)
-            },
-            Handle::File(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::Folder(inner) => {
-                inner.read(buf)
-            }
-        }
-    }
-
-    fn write(&self, file: usize, buf: &[u8]) -> Result<usize> {
-        let handle = {
-            let handles = self.handles.read();
-            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
-            handle.clone()
-        };
-
-        match handle {
-            Handle::Scheme(inner) => {
-                inner.write(buf)
-            },
-            Handle::File(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::Folder(_) => {
-                Err(Error::new(EBADF))
-            }
-        }
-    }
 
     fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<isize> {
         let handle = {
@@ -280,37 +239,6 @@ impl Scheme for RootScheme {
         Ok(i)
     }
 
-    fn fstat(&self, file: usize, stat: &mut Stat) -> Result<usize> {
-        let handle = {
-            let handles = self.handles.read();
-            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
-            handle.clone()
-        };
-
-        match handle {
-            Handle::Scheme(_) => {
-                stat.st_mode = MODE_FILE;
-                stat.st_uid = 0;
-                stat.st_gid = 0;
-                stat.st_size = 0;
-            },
-            Handle::File(_) => {
-                stat.st_mode = MODE_FILE;
-                stat.st_uid = 0;
-                stat.st_gid = 0;
-                stat.st_size = 0;
-            },
-            Handle::Folder(inner) => {
-                stat.st_mode = MODE_DIR;
-                stat.st_uid = 0;
-                stat.st_gid = 0;
-                stat.st_size = inner.data.len() as u64;
-            }
-        }
-
-        Ok(0)
-    }
-
     fn fsync(&self, file: usize) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
@@ -344,4 +272,79 @@ impl Scheme for RootScheme {
         Ok(0)
     }
 }
-impl crate::scheme::KernelScheme for RootScheme {}
+impl crate::scheme::KernelScheme for RootScheme {
+    fn kread(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
+        let handle = {
+            let handles = self.handles.read();
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        match handle {
+            Handle::Scheme(inner) => {
+                inner.read(buf)
+            },
+            Handle::File(_) => {
+                Err(Error::new(EBADF))
+            },
+            Handle::Folder(inner) => {
+                inner.read(buf)
+            }
+        }
+    }
+
+    fn kwrite(&self, file: usize, buf: UserSliceRo) -> Result<usize> {
+        let handle = {
+            let handles = self.handles.read();
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        match handle {
+            Handle::Scheme(inner) => {
+                inner.write(buf)
+            },
+            Handle::File(_) => {
+                Err(Error::new(EBADF))
+            },
+            Handle::Folder(_) => {
+                Err(Error::new(EBADF))
+            }
+        }
+    }
+    
+    fn kfstat(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
+        let handle = {
+            let handles = self.handles.read();
+            let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        buf.copy_exactly(&match handle {
+            Handle::Scheme(_) => Stat {
+                st_mode: MODE_FILE,
+                st_uid: 0,
+                st_gid: 0,
+                st_size: 0,
+                ..Default::default()
+            },
+            Handle::File(_) => Stat {
+                st_mode: MODE_FILE,
+                st_uid: 0,
+                st_gid: 0,
+                st_size: 0,
+                ..Default::default()
+            },
+            Handle::Folder(inner) => Stat {
+                st_mode: MODE_DIR,
+                st_uid: 0,
+                st_gid: 0,
+                st_size: inner.data.len() as u64,
+                ..Default::default()
+            }
+        })?;
+
+        Ok(0)
+    }
+
+}

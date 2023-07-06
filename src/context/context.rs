@@ -5,24 +5,23 @@ use alloc::{
     vec::Vec, borrow::Cow,
 };
 use core::{
-    alloc::GlobalAlloc,
     cmp::Ordering,
     mem,
 };
 use spin::RwLock;
 
 use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
+use crate::common::aligned_box::AlignedBox;
 use crate::common::unique::Unique;
-use crate::context::arch;
+use crate::context::{self, arch};
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::AddrSpace;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
-use crate::memory::Enomem;
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 
 use crate::syscall::data::SigAction;
-use crate::syscall::error::{Result, Error, ESRCH};
+use crate::syscall::error::{Result, Error, EAGAIN, EINVAL, ESRCH};
 use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
@@ -212,9 +211,11 @@ pub struct Context {
     /// Current system call
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
-    pub syscall_head: AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>,
+    // TODO: Store in user memory?
+    pub syscall_head: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
     /// Tail buffer to use when system call buffers are not page aligned
-    pub syscall_tail: AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>,
+    // TODO: Store in user memory?
+    pub syscall_tail: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
     /// Context is halting parent
     pub vfork: bool,
     /// Context is being waited on
@@ -265,81 +266,8 @@ pub struct Context {
     pub clone_entry: Option<[usize; 2]>,
 }
 
-// Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
-// cannot be used for increased alignment directly.
-// TODO: move to common?
-pub struct AlignedBox<T, const ALIGN: usize> {
-    inner: Unique<T>,
-}
-pub unsafe trait ValidForZero {}
-unsafe impl<const N: usize> ValidForZero for [u8; N] {}
-
-impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
-    const LAYOUT: core::alloc::Layout = {
-        const fn max(a: usize, b: usize) -> usize {
-            if a > b { a } else { b }
-        }
-
-        match core::alloc::Layout::from_size_align(mem::size_of::<T>(), max(mem::align_of::<T>(), ALIGN)) {
-            Ok(l) => l,
-            Err(_) => panic!("layout validation failed at compile time"),
-        }
-    };
-    #[inline(always)]
-    pub fn try_zeroed() -> Result<Self, Enomem>
-    where
-        T: ValidForZero,
-    {
-        Ok(unsafe {
-            let ptr = crate::ALLOCATOR.alloc_zeroed(Self::LAYOUT);
-            if ptr.is_null() {
-                return Err(Enomem);
-            }
-            Self {
-                inner: Unique::new_unchecked(ptr.cast()),
-            }
-        })
-    }
-}
-
-impl<T, const ALIGN: usize> core::fmt::Debug for AlignedBox<T, ALIGN> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "[aligned box at {:p}, size {} alignment {}]", self.inner.as_ptr(), mem::size_of::<T>(), mem::align_of::<T>())
-    }
-}
-impl<T, const ALIGN: usize> Drop for AlignedBox<T, ALIGN> {
-    fn drop(&mut self) {
-        unsafe {
-            core::ptr::drop_in_place(self.inner.as_ptr());
-            crate::ALLOCATOR.dealloc(self.inner.as_ptr().cast(), Self::LAYOUT);
-        }
-    }
-}
-impl<T, const ALIGN: usize> core::ops::Deref for AlignedBox<T, ALIGN> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.inner.as_ptr() }
-    }
-}
-impl<T, const ALIGN: usize> core::ops::DerefMut for AlignedBox<T, ALIGN> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.inner.as_ptr() }
-    }
-}
-impl<T: Clone + ValidForZero, const ALIGN: usize> Clone for AlignedBox<T, ALIGN> {
-    fn clone(&self) -> Self {
-        let mut new = Self::try_zeroed().unwrap_or_else(|_| alloc::alloc::handle_alloc_error(Self::LAYOUT));
-        T::clone_from(&mut new, self);
-        new
-    }
-}
-
 impl Context {
     pub fn new(id: ContextId) -> Result<Context> {
-        let syscall_head = AlignedBox::try_zeroed()?;
-        let syscall_tail = AlignedBox::try_zeroed()?;
-
         let this = Context {
             id,
             pgid: id,
@@ -360,8 +288,8 @@ impl Context {
             cpu_time: 0,
             sched_affinity: None,
             syscall: None,
-            syscall_head,
-            syscall_tail,
+            syscall_head: Some(AlignedBox::try_zeroed()?),
+            syscall_tail: Some(AlignedBox::try_zeroed()?),
             vfork: false,
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),
@@ -503,5 +431,67 @@ impl Context {
             },
             0
         ); 128]))
+    }
+}
+
+/// Wrapper struct for borrowing the syscall head or tail buf.
+#[derive(Debug)]
+pub struct BorrowedHtBuf {
+    inner: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
+    head_and_not_tail: bool,
+}
+impl BorrowedHtBuf {
+    pub fn head() -> Result<Self> {
+        Ok(Self {
+            inner: Some(context::current()?.write().syscall_head.take().ok_or(Error::new(EAGAIN))?),
+            head_and_not_tail: true,
+        })
+    }
+    pub fn tail() -> Result<Self> {
+        Ok(Self {
+            inner: Some(context::current()?.write().syscall_tail.take().ok_or(Error::new(EAGAIN))?),
+            head_and_not_tail: false,
+        })
+    }
+    pub fn buf(&self) -> &[u8; PAGE_SIZE] {
+        self.inner.as_ref().expect("must succeed")
+    }
+    pub fn buf_mut(&mut self) -> &mut [u8; PAGE_SIZE] {
+        self.inner.as_mut().expect("must succeed")
+    }
+    /*
+    pub fn use_for_slice(&mut self, raw: UserSlice) -> Result<Option<&[u8]>> {
+        if raw.len() > self.buf().len() {
+            return Ok(None);
+        }
+        raw.copy_to_slice(&mut self.buf_mut()[..raw.len()])?;
+        Ok(Some(&self.buf()[..raw.len()]))
+    }
+    pub fn use_for_string(&mut self, raw: UserSlice) -> Result<&str> {
+        let slice = self.use_for_slice(raw)?.ok_or(Error::new(ENAMETOOLONG))?;
+        core::str::from_utf8(slice).map_err(|_| Error::new(EINVAL))
+    }
+    */
+    pub unsafe fn use_for_struct<T>(&mut self) -> Result<&mut T> {
+        if mem::size_of::<T>() > PAGE_SIZE || mem::align_of::<T>() > PAGE_SIZE {
+            return Err(Error::new(EINVAL));
+        }
+        self.buf_mut().fill(0_u8);
+        Ok(unsafe { &mut *self.buf_mut().as_mut_ptr().cast() })
+    }
+}
+impl Drop for BorrowedHtBuf {
+    fn drop(&mut self) {
+        let Ok(context) = context::current() else {
+            return;
+        };
+        let Some(inner) = self.inner.take() else {
+            return;
+        };
+        match context.write() {
+            mut context => {
+                (if self.head_and_not_tail { &mut context.syscall_head } else { &mut context.syscall_tail }).get_or_insert(inner);
+            }
+        }
     }
 }

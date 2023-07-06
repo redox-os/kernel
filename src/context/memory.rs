@@ -693,7 +693,7 @@ impl Grant {
 
                 (entry, entry_flags)
             } else {
-                src_mapper.translate(src_page.start_address()).expect("grant references unmapped memory")
+                src_mapper.translate(src_page.start_address()).unwrap_or_else(|| panic!("grant at {:p} references unmapped memory", src_page.start_address().data() as *const u8))
             };
 
             let flush = match unsafe { dst_mapper.map_phys(dst_base.next_by(index).start_address(), address, flags) } {
@@ -829,8 +829,6 @@ impl Grant {
 
         Some((before_grant, self, after_grant))
     }
-    // FIXME
-    /*
     pub fn can_be_merged_if_adjacent(&self, with: &Self) -> bool {
         match (&self.desc_opt, &with.desc_opt) {
             (None, None) => (),
@@ -840,7 +838,6 @@ impl Grant {
         }
         self.owned == with.owned && self.mapped == with.mapped && self.flags.data() == with.flags.data()
     }
-    */
 }
 
 impl Deref for Grant {

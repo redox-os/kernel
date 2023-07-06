@@ -153,6 +153,8 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+    unsafe { x86::bits64::rflags::stac(); }
+
     println!("DEBUGGER START");
     println!();
 
@@ -221,6 +223,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     }
 
     println!("DEBUGGER END");
+    unsafe { x86::bits64::rflags::clac(); }
 }
 
 #[cfg(target_arch = "x86_64")]

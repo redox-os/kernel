@@ -10,6 +10,7 @@ use crate::syscall::error::{Error, EBADF, ENOENT, Result};
 use crate::syscall::flag::{MODE_DIR, MODE_FILE};
 use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::arch::interrupt;
+use crate::syscall::usercopy::UserSliceWo;
 
 mod block;
 mod context;
@@ -107,20 +108,6 @@ impl Scheme for SysScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn read(&self, id: usize, buffer: &mut [u8]) -> Result<usize> {
-        let mut handles = self.handles.write();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-
-        let mut i = 0;
-        while i < buffer.len() && handle.seek < handle.data.len() {
-            buffer[i] = handle.data[handle.seek];
-            i += 1;
-            handle.seek += 1;
-        }
-
-        Ok(i)
-    }
-
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut handles = self.handles.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -128,40 +115,6 @@ impl Scheme for SysScheme {
         let new_offset = calc_seek_offset_usize(handle.seek, pos, whence, handle.data.len())?;
         handle.seek = new_offset as usize;
         Ok(new_offset)
-    }
-
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        let mut i = 0;
-        let scheme_path = b"sys:";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-
-        let path = handle.path.as_bytes();
-        let mut j = 0;
-        while i < buf.len() && j < path.len() {
-            buf[i] = path[j];
-            i += 1;
-            j += 1;
-        }
-
-        Ok(i)
-    }
-
-    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        stat.st_mode = handle.mode;
-        stat.st_uid = 0;
-        stat.st_gid = 0;
-        stat.st_size = handle.data.len() as u64;
-
-        Ok(0)
     }
 
     fn fsync(&self, _id: usize) -> Result<usize> {
@@ -172,4 +125,45 @@ impl Scheme for SysScheme {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }
-impl crate::scheme::KernelScheme for SysScheme {}
+impl crate::scheme::KernelScheme for SysScheme {
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        const FIRST: &[u8] = b"sys:";
+        let mut bytes_read = buf.copy_common_bytes_from_slice(FIRST)?;
+
+        if let Some(remaining) = buf.advance(FIRST.len()) {
+            bytes_read += remaining.copy_common_bytes_from_slice(handle.path.as_bytes())?;
+        }
+
+
+        Ok(bytes_read)
+    }
+    fn kread(&self, id: usize, buffer: UserSliceWo) -> Result<usize> {
+        let mut handles = self.handles.write();
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        let avail_buf = handle.data.get(handle.seek..).unwrap_or(&[]);
+
+        let byte_count = buffer.copy_common_bytes_from_slice(avail_buf)?;
+
+        handle.seek = handle.seek.saturating_add(byte_count);
+        Ok(byte_count)
+    }
+
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        buf.copy_exactly(&Stat {
+            st_mode: handle.mode,
+            st_uid: 0,
+            st_gid: 0,
+            st_size: handle.data.len() as u64,
+            ..Default::default()
+        })?;
+
+        Ok(0)
+    }
+}

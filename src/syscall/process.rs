@@ -21,7 +21,8 @@ use crate::syscall::flag::{wifcontinued, wifstopped, MapFlags,
     PTRACE_STOP_EXIT, SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK,
     SIGCONT, SIGTERM, WaitFlags, WCONTINUED, WNOHANG, WUNTRACED};
 use crate::syscall::ptrace_event;
-use crate::syscall::validate::validate_slice_mut;
+
+use super::usercopy::{UserSliceWo, UserSliceRo};
 
 fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGuard<'lock, Context>, reaping: bool) -> RwLockWriteGuard<'lock, Context> {
     // NOTE: If we do not replace the grants `Arc`, then a strange situation can appear where the
@@ -323,7 +324,7 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
     }
 }
 
-pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mut SigAction>, restorer: usize) -> Result<usize> {
+pub fn sigaction(sig: usize, act_opt: Option<UserSliceRo>, oldact_opt: Option<UserSliceWo>, restorer: usize) -> Result<()> {
     if sig == 0 || sig > 0x7F {
         return Err(Error::new(EINVAL));
     }
@@ -333,47 +334,53 @@ pub fn sigaction(sig: usize, act_opt: Option<&SigAction>, oldact_opt: Option<&mu
     let mut actions = context.actions.write();
 
     if let Some(oldact) = oldact_opt {
-        *oldact = actions[sig].0;
+        oldact.copy_exactly(&actions[sig].0)?;
     }
 
     if let Some(act) = act_opt {
-        actions[sig] = (*act, restorer);
+        actions[sig] = (unsafe { act.read_exact::<SigAction>()? }, restorer);
     }
 
-    Ok(0)
+    Ok(())
 }
 
-pub fn sigprocmask(how: usize, mask_opt: Option<&[u64; 2]>, oldmask_opt: Option<&mut [u64; 2]>) -> Result<usize> {
+pub fn sigprocmask(how: usize, mask_opt: Option<UserSliceRo>, oldmask_opt: Option<UserSliceWo>) -> Result<()> {
     {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let mut context = context_lock.write();
 
+        let [old_lo, old_hi] = context.sigmask;
+
         if let Some(oldmask) = oldmask_opt {
-            *oldmask = context.sigmask;
+            // TODO: sigprocmask should be u64
+            let (lo_dst, hi_dst) = oldmask.split_at(core::mem::size_of::<u64>()).ok_or(Error::new(EINVAL))?;
+            lo_dst.write_u64(old_lo)?;
+            hi_dst.write_u64(old_hi)?;
         }
 
         if let Some(mask) = mask_opt {
-            match how {
+            let (lo_src, hi_src) = mask.split_at(core::mem::size_of::<u64>()).ok_or(Error::new(EINVAL))?;
+            let lo_arg = lo_src.read_u64()?;
+            let hi_arg = hi_src.read_u64()?;
+
+            context.sigmask = match how {
                 SIG_BLOCK => {
-                    context.sigmask[0] |= mask[0];
-                    context.sigmask[1] |= mask[1];
+                    [old_lo | lo_arg, old_hi | hi_arg]
                 },
                 SIG_UNBLOCK => {
-                    context.sigmask[0] &= !mask[0];
-                    context.sigmask[1] &= !mask[1];
+                    [old_lo & !lo_arg, old_hi & !hi_arg]
                 },
                 SIG_SETMASK => {
-                    context.sigmask[0] = mask[0];
-                    context.sigmask[1] = mask[1];
+                    [lo_arg, hi_arg]
                 },
                 _ => {
                     return Err(Error::new(EINVAL));
                 }
-            }
+            };
         }
     }
-    Ok(0)
+    Ok(())
 }
 
 pub fn sigreturn() -> Result<usize> {
@@ -432,39 +439,30 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     Ok(pid)
 }
 
-pub fn waitpid(pid: ContextId, status_ptr: usize, flags: WaitFlags) -> Result<ContextId> {
+pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags) -> Result<ContextId> {
     let (ppid, waitpid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
         (context.id, Arc::clone(&context.waitpid))
     };
+    let write_status = |value| status_ptr.map(|ptr| ptr.write_usize(value)).unwrap_or(Ok(()));
 
-    let mut tmp = [0];
-    let status_slice = if status_ptr != 0 {
-        validate_slice_mut(status_ptr as *mut usize, 1)?
-    } else {
-        &mut tmp
-    };
-
-    let mut grim_reaper = |w_pid: ContextId, status: usize| -> Option<Result<ContextId>> {
+    let grim_reaper = |w_pid: ContextId, status: usize| -> Option<Result<ContextId>> {
         if wifcontinued(status) {
             if flags & WCONTINUED == WCONTINUED {
-                status_slice[0] = status;
-                Some(Ok(w_pid))
+                Some(write_status(status).map(|()| w_pid))
             } else {
                 None
             }
         } else if wifstopped(status) {
             if flags & WUNTRACED == WUNTRACED {
-                status_slice[0] = status;
-                Some(Ok(w_pid))
+                Some(write_status(status).map(|()| w_pid))
             } else {
                 None
             }
         } else {
-            status_slice[0] = status;
-            Some(reap(w_pid))
+            Some(write_status(status).and_then(|()| reap(w_pid)))
         }
     };
 

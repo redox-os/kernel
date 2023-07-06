@@ -1,6 +1,6 @@
 use crate::{
     arch::paging::{mapper::InactiveFlusher, Page, RmmA, RmmArch, VirtualAddress},
-    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, Region}},
+    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, Region}, BorrowedHtBuf},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme, SchemeId},
@@ -12,7 +12,7 @@ use crate::{
         error::*,
         flag::*,
         scheme::{calc_seek_offset_usize, Scheme},
-        self,
+        self, usercopy::{UserSliceWo, UserSliceRo},
     },
 };
 
@@ -23,9 +23,8 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
+use ::syscall::CallerCtx;
 use core::{
-    cmp,
-    convert::TryFrom,
     mem,
     slice,
     str,
@@ -33,12 +32,13 @@ use core::{
 };
 use spin::{Once, RwLock};
 
-fn read_from(dst: &mut [u8], src: &[u8], offset: &mut usize) -> Result<usize> {
-    let byte_count = cmp::min(dst.len(), src.len().saturating_sub(*offset));
-    let next_offset = offset.saturating_add(byte_count);
-    dst[..byte_count].copy_from_slice(&src[*offset..next_offset]);
-    *offset = next_offset;
-    Ok(byte_count)
+use super::OpenResult;
+
+fn read_from(dst: UserSliceWo, src: &[u8], offset: &mut usize) -> Result<usize> {
+    let avail_src = src.get(*offset..).unwrap_or(&[]);
+    let bytes_copied = dst.copy_common_bytes_from_slice(avail_src)?;
+    *offset = offset.checked_add(bytes_copied).ok_or(Error::new(EOVERFLOW))?;
+    Ok(bytes_copied)
 }
 
 fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
@@ -584,74 +584,6 @@ impl Scheme for ProcScheme {
         self.open_inner(pid, parts.next(), flags, uid, gid)
     }
 
-    /// Dup is currently used to implement clone() and execve().
-    fn dup(&self, old_id: usize, buf: &[u8]) -> Result<usize> {
-        let info = {
-            let handles = self.handles.read();
-            let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
-
-            handle.info.clone()
-        };
-
-        let handle = |operation, data| Handle {
-            info: Info {
-                flags: 0,
-                pid: info.pid,
-                operation,
-            },
-            data,
-        };
-
-        self.new_handle(match info.operation {
-            Operation::OpenViaDup => {
-                let (uid, gid) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read() {
-                    context => (context.euid, context.egid),
-                };
-                return self.open_inner(info.pid, Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?).filter(|s| !s.is_empty()), O_RDWR | O_CLOEXEC, uid, gid);
-            },
-
-            Operation::Filetable { ref filetable } => {
-                // TODO: Maybe allow userspace to either copy or transfer recently dupped file
-                // descriptors between file tables.
-                if buf != b"copy" {
-                    return Err(Error::new(EINVAL));
-                }
-                let new_filetable = Arc::try_new(RwLock::new(filetable.read().clone())).map_err(|_| Error::new(ENOMEM))?;
-
-                handle(Operation::Filetable { filetable: new_filetable }, OperationData::Other)
-            }
-            Operation::AddrSpace { ref addrspace } => {
-                let (operation, is_mem) = match buf {
-                    // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
-                    // in that case, what scheme?
-                    b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
-                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone()? }, false),
-                    b"mem" => (Operation::Memory { addrspace: Arc::clone(addrspace) }, true),
-                    b"mmap-min-addr" => (Operation::MmapMinAddr(Arc::clone(addrspace)), false),
-
-                    grant_handle if grant_handle.starts_with(b"grant-") => {
-                        let start_addr = usize::from_str_radix(core::str::from_utf8(&grant_handle[6..]).map_err(|_| Error::new(EINVAL))?, 16).map_err(|_| Error::new(EINVAL))?;
-                        (Operation::GrantHandle {
-                            description: Arc::clone(&addrspace.read().grants.contains(VirtualAddress::new(start_addr)).ok_or(Error::new(EINVAL))?.desc_opt.as_ref().ok_or(Error::new(EINVAL))?.desc.description)
-                        }, false)
-                    }
-
-                    _ => return Err(Error::new(EINVAL)),
-                };
-
-                handle(operation, if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Offset(0) })
-            }
-            Operation::Sigactions(ref sigactions) => {
-                let new = match buf {
-                    b"empty" => Context::empty_actions(),
-                    b"copy" => Arc::new(RwLock::new(sigactions.read().clone())),
-                    _ => return Err(Error::new(EINVAL)),
-                };
-                handle(Operation::Sigactions(new), OperationData::Other)
-            }
-            _ => return Err(Error::new(EINVAL)),
-        })
-    }
 
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut handles = self.handles.write();
@@ -661,443 +593,6 @@ impl Scheme for ProcScheme {
         let value = calc_seek_offset_usize(memory.offset.data(), pos, whence, isize::max_value() as usize)?;
         memory.offset = VirtualAddress::new(value as usize);
         Ok(value)
-    }
-
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        // Don't hold a global lock during the context switch later on
-        let info = {
-            let handles = self.handles.read();
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-            handle.info.clone()
-        };
-
-        match info.operation {
-            Operation::Static(_) => {
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.static_data().expect("operations can't change");
-
-                let len = cmp::min(data.buf.len() - data.offset, buf.len());
-                buf[..len].copy_from_slice(&data.buf[data.offset .. data.offset + len]);
-                data.offset += len;
-                Ok(len)
-            },
-            Operation::Memory { addrspace } => {
-                // Won't context switch, don't worry about the locks
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.mem_data().expect("operations can't change");
-
-                let mut bytes_read = 0;
-
-                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
-                    let (chunk, _writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
-                    let dst_slice = &mut buf[bytes_read..bytes_read + chunk.len()];
-                    unsafe {
-                        chunk.as_mut_ptr().copy_to_nonoverlapping(dst_slice.as_mut_ptr(), dst_slice.len());
-                    }
-                    bytes_read += chunk.len();
-                }
-
-                data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
-                Ok(bytes_read)
-            },
-            // TODO: Support reading only a specific address range. Maybe using seek?
-            Operation::AddrSpace { addrspace } => {
-                let mut handles = self.handles.write();
-                let offset = if let OperationData::Offset(ref mut offset) = handles.get_mut(&id).ok_or(Error::new(EBADF))?.data {
-                    offset
-                } else {
-                    return Err(Error::new(EBADFD));
-                };
-
-                // TODO: Define a struct somewhere?
-                const RECORD_SIZE: usize = mem::size_of::<usize>() * 4;
-                let records = buf.array_chunks_mut::<RECORD_SIZE>();
-
-                let addrspace = addrspace.read();
-                let mut bytes_read = 0;
-
-                for (record_bytes, grant) in records.zip(addrspace.grants.iter()).skip(*offset / RECORD_SIZE) {
-                    let mut qwords = record_bytes.array_chunks_mut::<{mem::size_of::<usize>()}>();
-                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.start_address().data()));
-                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.size()));
-                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(map_flags(grant.flags()).bits() | if grant.desc_opt.is_some() { 0x8000_0000 } else { 0 }));
-                    qwords.next().unwrap().copy_from_slice(&usize::to_ne_bytes(grant.desc_opt.as_ref().map_or(0, |d| d.offset)));
-                    bytes_read += RECORD_SIZE;
-                }
-
-                *offset += bytes_read;
-                Ok(bytes_read)
-            }
-
-            Operation::Regs(kind) => {
-                union Output {
-                    float: FloatRegisters,
-                    int: IntRegisters,
-                    env: EnvRegisters,
-                }
-
-                let (output, size) = match kind {
-                    RegsKind::Float => with_context(info.pid, |context| {
-                        // NOTE: The kernel will never touch floats
-
-                        Ok((Output { float: context.get_fx_regs() }, mem::size_of::<FloatRegisters>()))
-                    })?,
-                    RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(context) } {
-                        None => {
-                            assert!(!context.running, "try_stop_context is broken, clearly");
-                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
-                            Err(Error::new(ENOTRECOVERABLE))
-                        },
-                        Some(stack) => {
-                            let mut regs = IntRegisters::default();
-                            stack.save(&mut regs);
-                            Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
-                        }
-                    })?,
-                    RegsKind::Env => {
-                        (
-                            Output { env: self.read_env_regs(&info)? },
-                            mem::size_of::<EnvRegisters>()
-                        )
-                    }
-                };
-
-                let bytes = unsafe {
-                    slice::from_raw_parts(&output as *const _ as *const u8, mem::size_of::<Output>())
-                };
-                let len = cmp::min(buf.len(), size);
-                buf[..len].copy_from_slice(&bytes[..len]);
-
-                Ok(len)
-            },
-            Operation::Trace => {
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.trace_data().expect("operations can't change");
-
-                // Wait for event
-                if handle.info.flags & O_NONBLOCK != O_NONBLOCK {
-                    ptrace::wait(handle.info.pid)?;
-                }
-
-                // Check if context exists
-                with_context(handle.info.pid, |_| Ok(()))?;
-
-                // Read events
-                let slice = unsafe {
-                    slice::from_raw_parts_mut(
-                        buf.as_mut_ptr() as *mut PtraceEvent,
-                        buf.len() / mem::size_of::<PtraceEvent>()
-                    )
-                };
-                let (read, reached) = ptrace::Session::with_session(info.pid, |session| {
-                    let mut data = session.data.lock();
-                    Ok((data.recv_events(slice), data.is_reached()))
-                })?;
-
-                // Save child processes in a list of processes to restart
-                for event in &slice[..read] {
-                    if event.cause == PTRACE_EVENT_CLONE {
-                        data.clones.push(ContextId::from(event.a));
-                    }
-                }
-
-                // If there are no events, and breakpoint isn't reached, we
-                // must not have waited.
-                if read == 0 && !reached {
-                    assert!(handle.info.flags & O_NONBLOCK == O_NONBLOCK, "wait woke up spuriously??");
-                    return Err(Error::new(EAGAIN));
-                }
-
-                // Return read events
-                Ok(read * mem::size_of::<PtraceEvent>())
-            }
-            Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.as_bytes(), &mut 0),
-            Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
-            Operation::Attr(attr) => {
-                let src_buf = match (attr, &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?).read()) {
-                    (Attr::Uid, context) => context.euid.to_string(),
-                    (Attr::Gid, context) => context.egid.to_string(),
-                }.into_bytes();
-
-                read_from(buf, &src_buf, &mut 0)
-            }
-            Operation::Filetable { .. } => {
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.static_data().expect("operations can't change");
-
-                read_from(buf, &data.buf, &mut data.offset)
-            }
-            Operation::MmapMinAddr(ref addrspace) => {
-                let val = addrspace.read().mmap_min;
-                *buf.array_chunks_mut::<{mem::size_of::<usize>()}>().next().unwrap() = usize::to_ne_bytes(val);
-                Ok(mem::size_of::<usize>())
-            }
-            Operation::SchedAffinity => {
-                // TODO: Deduplicate code
-                let val = context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.read().sched_affinity.map_or(usize::MAX, |a| a % crate::cpu_count());
-                *buf.array_chunks_mut::<{mem::size_of::<usize>()}>().next().unwrap() = usize::to_ne_bytes(val);
-                Ok(mem::size_of::<usize>())
-            }
-            // TODO: Replace write() with SYS_DUP_FORWARD.
-            // TODO: Find a better way to switch address spaces, since they also require switching
-            // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
-            // with `<pid>/ctx`
-            _ => Err(Error::new(EBADF)),
-        }
-    }
-
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        // Don't hold a global lock during the context switch later on
-        let info = {
-            let mut handles = self.handles.write();
-            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-            handle.continue_ignored_children();
-            handle.info.clone()
-        };
-
-        match info.operation {
-            Operation::Static(_) => Err(Error::new(EBADF)),
-            Operation::Memory { addrspace } => {
-                // Won't context switch, don't worry about the locks
-                let mut handles = self.handles.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.mem_data().expect("operations can't change");
-
-                let mut bytes_written = 0;
-
-                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
-                    let (chunk, writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
-
-                    if !writable { return Err(Error::new(EACCES)); }
-
-                    let src_slice = &buf[bytes_written..bytes_written + chunk.len()];
-                    unsafe {
-                        chunk.as_mut_ptr().copy_from_nonoverlapping(src_slice.as_ptr(), src_slice.len());
-                    }
-                    bytes_written += chunk.len();
-                }
-
-                data.offset = data.offset.add(bytes_written);
-                Ok(bytes_written)
-            },
-            Operation::AddrSpace { addrspace } => {
-                let mut chunks = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
-                let mut words_read = 0;
-                let mut next = || {
-                    words_read += 1;
-                    chunks.next().ok_or(Error::new(EINVAL))
-                };
-
-                match next()? {
-                    op @ ADDRSPACE_OP_MMAP | op @ ADDRSPACE_OP_TRANSFER => {
-                        let fd = next()?;
-                        let offset = next()?;
-                        let (page, page_count) = crate::syscall::validate_region(next()?, next()?)?;
-                        let flags = MapFlags::from_bits(next()?).ok_or(Error::new(EINVAL))?;
-
-                        if !flags.contains(MapFlags::MAP_FIXED) {
-                            return Err(Error::new(EOPNOTSUPP));
-                        }
-
-                        let (scheme, number) = extract_scheme_number(fd)?;
-
-                        scheme.kfmap(number, &addrspace, &Map { offset, size: page_count * PAGE_SIZE, address: page.start_address().data(), flags }, op == ADDRSPACE_OP_TRANSFER)?;
-                    }
-                    ADDRSPACE_OP_MUNMAP => {
-                        let (page, page_count) = crate::syscall::validate_region(next()?, next()?)?;
-
-                        addrspace.write().munmap(page, page_count);
-                    }
-                    ADDRSPACE_OP_MPROTECT => {
-                        let (page, page_count) = crate::syscall::validate_region(next()?, next()?)?;
-                        let flags = MapFlags::from_bits(next()?).ok_or(Error::new(EINVAL))?;
-
-                        addrspace.write().mprotect(page, page_count, flags)?;
-                    }
-                    _ => return Err(Error::new(EINVAL)),
-                }
-                Ok(words_read * mem::size_of::<usize>())
-            }
-            Operation::Regs(kind) => match kind {
-                RegsKind::Float => {
-                    if buf.len() < mem::size_of::<FloatRegisters>() {
-                        return Ok(0);
-                    }
-                    if (buf.as_ptr() as usize) % mem::align_of::<FloatRegisters>() != 0 {
-                        return Err(Error::new(EINVAL));
-                    }
-                    let regs = unsafe {
-                        *(buf as *const _ as *const FloatRegisters)
-                    };
-
-                    with_context_mut(info.pid, |context| {
-                        // NOTE: The kernel will never touch floats
-
-                        // Ignore the rare case of floating point
-                        // registers being uninitiated
-                        let _ = context.set_fx_regs(regs);
-
-                        Ok(mem::size_of::<FloatRegisters>())
-                    })
-                },
-                RegsKind::Int => {
-                    if buf.len() < mem::size_of::<IntRegisters>() {
-                        return Ok(0);
-                    }
-                    if (buf.as_ptr() as usize) % mem::align_of::<FloatRegisters>() != 0 {
-                        return Err(Error::new(EINVAL));
-                    }
-                    let regs = unsafe {
-                        *(buf as *const _ as *const IntRegisters)
-                    };
-
-                    try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for_mut(context) } {
-                        None => {
-                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
-                            Err(Error::new(ENOTRECOVERABLE))
-                        },
-                        Some(stack) => {
-                            stack.load(&regs);
-
-                            Ok(mem::size_of::<IntRegisters>())
-                        }
-                    })
-                }
-                RegsKind::Env => {
-                    if buf.len() < mem::size_of::<EnvRegisters>() {
-                        return Ok(0);
-                    }
-                    if (buf.as_ptr() as usize) % mem::align_of::<EnvRegisters>() != 0 {
-                        return Err(Error::new(EINVAL));
-                    }
-                    let regs = unsafe {
-                        *(buf as *const _ as *const EnvRegisters)
-                    };
-                    self.write_env_regs(&info, regs)?;
-                    Ok(mem::size_of::<EnvRegisters>())
-                }
-            },
-            Operation::Trace => {
-                if buf.len() < mem::size_of::<u64>() {
-                    return Ok(0);
-                }
-
-                let mut bytes = [0; mem::size_of::<u64>()];
-                let len = bytes.len();
-                bytes.copy_from_slice(&buf[0..len]);
-                let op = u64::from_ne_bytes(bytes);
-                let op = PtraceFlags::from_bits(op).ok_or(Error::new(EINVAL))?;
-
-                // Set next breakpoint
-                ptrace::Session::with_session(info.pid, |session| {
-                    session.data.lock().set_breakpoint(
-                        Some(op)
-                            .filter(|op| op.intersects(PTRACE_STOP_MASK | PTRACE_EVENT_MASK))
-                    );
-                    Ok(())
-                })?;
-
-                if op.contains(PTRACE_STOP_SINGLESTEP) {
-                    try_stop_context(info.pid, |context| {
-                        match unsafe { ptrace::regs_for_mut(context) } {
-                            None => {
-                                println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
-                                Err(Error::new(ENOTRECOVERABLE))
-                            },
-                            Some(stack) => {
-                                stack.set_singlestep(true);
-                                Ok(())
-                            }
-                        }
-                    })?;
-                }
-
-                // disable the ptrace_stop flag, which is used in some cases
-                with_context_mut(info.pid, |context| {
-                    context.ptrace_stop = false;
-                    Ok(())
-                })?;
-
-                // and notify the tracee's WaitCondition, which is used in other cases
-                ptrace::Session::with_session(info.pid, |session| {
-                    session.tracee.notify();
-                    Ok(())
-                })?;
-
-                Ok(mem::size_of::<u64>())
-            },
-            Operation::Name => {
-                let utf8 = alloc::string::String::from_utf8(buf.to_vec()).map_err(|_| Error::new(EINVAL))?;
-                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().name = utf8.into();
-                Ok(buf.len())
-            }
-            Operation::Sigstack => {
-                let bytes = <[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?;
-                let sigstack = usize::from_ne_bytes(bytes);
-                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sigstack = (sigstack != !0).then(|| sigstack);
-                Ok(buf.len())
-            }
-            Operation::Attr(attr) => {
-                let context_lock = Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?);
-                let id = core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?.parse::<u32>().map_err(|_| Error::new(EINVAL))?;
-
-                match attr {
-                    Attr::Uid => context_lock.write().euid = id,
-                    Attr::Gid => context_lock.write().egid = id,
-                }
-                Ok(buf.len())
-            }
-            Operation::Filetable { .. } => Err(Error::new(EBADF)),
-
-            Operation::CurrentFiletable => {
-                let filetable_fd = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
-                let (hopefully_this_scheme, number) = extract_scheme_number(filetable_fd)?;
-
-                let filetable = hopefully_this_scheme.as_filetable(number)?;
-
-                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(filetable);
-
-                Ok(mem::size_of::<usize>())
-            }
-            Operation::CurrentAddrSpace { .. } => {
-                let mut iter = buf.array_chunks::<{mem::size_of::<usize>()}>().copied().map(usize::from_ne_bytes);
-                let addrspace_fd = iter.next().ok_or(Error::new(EINVAL))?;
-                let sp = iter.next().ok_or(Error::new(EINVAL))?;
-                let ip = iter.next().ok_or(Error::new(EINVAL))?;
-
-                let (hopefully_this_scheme, number) = extract_scheme_number(addrspace_fd)?;
-                let space = hopefully_this_scheme.as_addrspace(number)?;
-
-                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: space, new_sp: sp, new_ip: ip };
-
-                Ok(3 * mem::size_of::<usize>())
-            }
-            Operation::CurrentSigactions => {
-                let sigactions_fd = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
-                let (hopefully_this_scheme, number) = extract_scheme_number(sigactions_fd)?;
-                let sigactions = hopefully_this_scheme.as_sigactions(number)?;
-                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
-                Ok(mem::size_of::<usize>())
-            }
-            Operation::MmapMinAddr(ref addrspace) => {
-                let val = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
-                if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET { return Err(Error::new(EINVAL)); }
-                addrspace.write().mmap_min = val;
-                Ok(mem::size_of::<usize>())
-            }
-            // TODO: Deduplicate code.
-            Operation::SchedAffinity => {
-                let val = usize::from_ne_bytes(<[u8; mem::size_of::<usize>()]>::try_from(buf).map_err(|_| Error::new(EINVAL))?);
-                context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.write().sched_affinity = if val == usize::MAX { None } else { Some(val % crate::cpu_count()) };
-                Ok(mem::size_of::<usize>())
-            }
-
-            _ => Err(Error::new(EBADF)),
-        }
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
@@ -1123,57 +618,6 @@ impl Scheme for ProcScheme {
         }
     }
 
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.info.operation {
-            Operation::Memory { .. } => "mem",
-            Operation::Regs(RegsKind::Float) => "regs/float",
-            Operation::Regs(RegsKind::Int) => "regs/int",
-            Operation::Regs(RegsKind::Env) => "regs/env",
-            Operation::Trace => "trace",
-            Operation::Static(path) => path,
-            Operation::Name => "name",
-            Operation::Sigstack => "sigstack",
-            Operation::Attr(Attr::Uid) => "uid",
-            Operation::Attr(Attr::Gid) => "gid",
-            Operation::Filetable { .. } => "filetable",
-            Operation::AddrSpace { .. } => "addrspace",
-            Operation::Sigactions(_) => "sigactions",
-            Operation::CurrentAddrSpace => "current-addrspace",
-            Operation::CurrentFiletable => "current-filetable",
-            Operation::CurrentSigactions => "current-sigactions",
-            Operation::OpenViaDup => "open-via-dup",
-            Operation::MmapMinAddr(_) => "mmap-min-addr",
-            Operation::SchedAffinity => "sched-affinity",
-
-            _ => return Err(Error::new(EOPNOTSUPP)),
-        });
-
-        read_from(buf, path.as_bytes(), &mut 0)
-    }
-
-    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        stat.st_size = match handle.data {
-            OperationData::Static(ref data) => (data.buf.len() - data.offset) as u64,
-            _ => 0,
-        };
-        *stat = Stat {
-            st_mode: MODE_FILE | 0o666,
-            st_size: match handle.data {
-                OperationData::Static(ref data) => (data.buf.len() - data.offset) as u64,
-                _ => 0,
-            },
-
-            ..Stat::default()
-        };
-
-        Ok(0)
-    }
 
     fn close(&self, id: usize) -> Result<usize> {
         let mut handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
@@ -1274,31 +718,20 @@ impl KernelScheme for ProcScheme {
 
         match info.operation {
             Operation::GrantHandle { ref description } => {
-                let current_space = AddrSpace::current()?;
+                // The map struct will probably reside in kernel memory, on the stack, and for that
+                // it would be very insecure not to use the pinned head/tail buffer.
+                let mut buf = BorrowedHtBuf::head()?;
+                // TODO: This can be safe
+                let map_dst = unsafe { buf.use_for_struct()? };
+                *map_dst = *map;
 
-                // Copy Map to user memory
-                let page_count = 1; // TODO: find size required to store Map
-                let page = current_space
-                    .write()
-                    .mmap(None, page_count, MapFlags::PROT_READ, |page, flags, mapper, flusher| {
-                        Ok(Grant::zeroed(page, page_count, flags, mapper, flusher)?)
-                    })?;
-
-                // Write Map using kernel's physmap
-                let (phys, _flags) = current_space.read().table.utable.translate(page.start_address()).expect("could not find mapping that was just made");
-                unsafe { core::ptr::write(RmmA::phys_to_virt(phys).data() as *mut Map, *map); }
-
-                // Scheme fmap with Map in user memory
                 let (scheme_id, number) = {
                     let description = description.read();
 
                     (description.scheme, description.number)
                 };
                 let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(EBADFD))?);
-                let res = scheme.fmap(number, unsafe { &*(page.start_address().data() as *const Map) });
-
-                // Unmap Map user memory
-                current_space.write().munmap(page, page_count);
+                let res = scheme.fmap(number, map_dst);
 
                 res
             }
@@ -1354,6 +787,536 @@ impl KernelScheme for ProcScheme {
             _ => Err(Error::new(EBADF)),
         }
     }
+    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        // Don't hold a global lock during the context switch later on
+        let info = {
+            let handles = self.handles.read();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.info.clone()
+        };
+
+        match info.operation {
+            Operation::Static(_) => {
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.static_data().expect("operations can't change");
+                let src_buf = data.buf.get(data.offset..).unwrap_or(&[]);
+
+                let len = buf.copy_common_bytes_from_slice(src_buf)?;
+                data.offset += len;
+                Ok(len)
+            },
+            Operation::Memory { addrspace } => {
+                // Won't context switch, don't worry about the locks
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.mem_data().expect("operations can't change");
+
+                let mut bytes_read = 0;
+
+                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
+                    let (chunk, _writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
+                    buf.advance(bytes_read).and_then(|buf| buf.limit(chunk.len())).ok_or(Error::new(EINVAL))?.copy_from_slice(unsafe { &*chunk })?;
+                    /*
+                    let dst_slice = &mut buf[bytes_read..bytes_read + chunk.len()];
+                    unsafe {
+                        chunk.as_mut_ptr().copy_to_nonoverlapping(dst_slice.as_mut_ptr(), dst_slice.len());
+                    }
+                    */
+                    bytes_read += chunk.len();
+                }
+
+                data.offset = VirtualAddress::new(data.offset.data() + bytes_read);
+                Ok(bytes_read)
+            },
+            // TODO: Support reading only a specific address range. Maybe using seek?
+            Operation::AddrSpace { addrspace } => {
+                let mut handles = self.handles.write();
+                let OperationData::Offset(ref mut offset) = handles.get_mut(&id).ok_or(Error::new(EBADF))?.data else {
+                    return Err(Error::new(EBADFD));
+                };
+
+                // TODO: Define a struct somewhere?
+                const RECORD_SIZE: usize = mem::size_of::<usize>() * 4;
+                let records = buf.in_exact_chunks(mem::size_of::<usize>()).array_chunks::<4>();
+
+                let addrspace = addrspace.read();
+                let mut bytes_read = 0;
+
+                for ([r1, r2, r3, r4], grant) in records.zip(addrspace.grants.iter()).skip(*offset / RECORD_SIZE) {
+                    r1.write_usize(grant.start_address().data())?;
+                    r2.write_usize(grant.size())?;
+                    r3.write_usize(map_flags(grant.flags()).bits() | if grant.desc_opt.is_some() { 0x8000_0000 } else { 0 })?;
+                    r4.write_usize(grant.desc_opt.as_ref().map_or(0, |d| d.offset))?;
+                    bytes_read += RECORD_SIZE;
+                }
+
+                *offset += bytes_read;
+                Ok(bytes_read)
+            }
+
+            Operation::Regs(kind) => {
+                union Output {
+                    float: FloatRegisters,
+                    int: IntRegisters,
+                    env: EnvRegisters,
+                }
+
+                let (output, size) = match kind {
+                    RegsKind::Float => with_context(info.pid, |context| {
+                        // NOTE: The kernel will never touch floats
+
+                        Ok((Output { float: context.get_fx_regs() }, mem::size_of::<FloatRegisters>()))
+                    })?,
+                    RegsKind::Int => try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for(context) } {
+                        None => {
+                            assert!(!context.running, "try_stop_context is broken, clearly");
+                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            Err(Error::new(ENOTRECOVERABLE))
+                        },
+                        Some(stack) => {
+                            let mut regs = IntRegisters::default();
+                            stack.save(&mut regs);
+                            Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
+                        }
+                    })?,
+                    RegsKind::Env => {
+                        (
+                            Output { env: self.read_env_regs(&info)? },
+                            mem::size_of::<EnvRegisters>()
+                        )
+                    }
+                };
+
+                let src_buf = unsafe {
+                    slice::from_raw_parts(&output as *const _ as *const u8, size)
+                };
+
+                buf.copy_common_bytes_from_slice(src_buf)
+            },
+            Operation::Trace => {
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.trace_data().expect("operations can't change");
+
+                // Wait for event
+                if handle.info.flags & O_NONBLOCK != O_NONBLOCK {
+                    ptrace::wait(handle.info.pid)?;
+                }
+
+                // Check if context exists
+                with_context(handle.info.pid, |_| Ok(()))?;
+
+                let mut src_buf = [PtraceEvent::default(); 4];
+
+                // Read events
+                let src_len = src_buf.len();
+                let slice = &mut src_buf[..core::cmp::min(src_len, buf.len() / mem::size_of::<PtraceEvent>())];
+
+                let (read, reached) = ptrace::Session::with_session(info.pid, |session| {
+                    let mut data = session.data.lock();
+                    Ok((data.recv_events(slice), data.is_reached()))
+                })?;
+
+                // Save child processes in a list of processes to restart
+                for event in &slice[..read] {
+                    if event.cause == PTRACE_EVENT_CLONE {
+                        data.clones.push(ContextId::from(event.a));
+                    }
+                }
+
+                // If there are no events, and breakpoint isn't reached, we
+                // must not have waited.
+                if read == 0 && !reached {
+                    assert!(handle.info.flags & O_NONBLOCK == O_NONBLOCK, "wait woke up spuriously??");
+                    return Err(Error::new(EAGAIN));
+                }
+
+                for (dst, src) in buf.in_exact_chunks(mem::size_of::<PtraceEvent>()).zip(slice.iter()) {
+                    dst.copy_exactly(src)?;
+                }
+
+                // Return read events
+                Ok(read * mem::size_of::<PtraceEvent>())
+            }
+            Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.as_bytes(), &mut 0),
+            Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
+            Operation::Attr(attr) => {
+                let src_buf = match (attr, &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?).read()) {
+                    (Attr::Uid, context) => context.euid.to_string(),
+                    (Attr::Gid, context) => context.egid.to_string(),
+                }.into_bytes();
+
+                read_from(buf, &src_buf, &mut 0)
+            }
+            Operation::Filetable { .. } => {
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.static_data().expect("operations can't change");
+
+                read_from(buf, &data.buf, &mut data.offset)
+            }
+            Operation::MmapMinAddr(ref addrspace) => {
+                buf.write_usize(addrspace.read().mmap_min)?;
+                Ok(mem::size_of::<usize>())
+            }
+            Operation::SchedAffinity => {
+                buf.write_usize(context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.read().sched_affinity.map_or(usize::MAX, |a| a % crate::cpu_count()))?;
+                Ok(mem::size_of::<usize>())
+            }
+            // TODO: Replace write() with SYS_DUP_FORWARD.
+            // TODO: Find a better way to switch address spaces, since they also require switching
+            // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
+            // with `<pid>/ctx`
+            _ => Err(Error::new(EBADF)),
+        }
+    }
+    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+        // Don't hold a global lock during the context switch later on
+        let info = {
+            let mut handles = self.handles.write();
+            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+            handle.continue_ignored_children();
+            handle.info.clone()
+        };
+
+        match info.operation {
+            Operation::Static(_) => Err(Error::new(EBADF)),
+            Operation::Memory { addrspace } => {
+                // Won't context switch, don't worry about the locks
+                let mut handles = self.handles.write();
+                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+                let data = handle.data.mem_data().expect("operations can't change");
+
+                let mut bytes_written = 0;
+
+                for chunk_opt in ptrace::context_memory(&mut *addrspace.write(), data.offset, buf.len()) {
+                    let (chunk, writable) = chunk_opt.ok_or(Error::new(EFAULT))?;
+
+                    if !writable { return Err(Error::new(EACCES)); }
+
+                    buf.advance(bytes_written).and_then(|buf| buf.limit(chunk.len())).ok_or(Error::new(EINVAL))?
+                        .copy_to_slice(unsafe { &mut *chunk })?;
+
+                    bytes_written += chunk.len();
+                }
+
+                data.offset = data.offset.add(bytes_written);
+                Ok(bytes_written)
+            },
+            Operation::AddrSpace { addrspace } => {
+                let mut chunks = buf.usizes();
+                let mut words_read = 0;
+                let mut next = || {
+                    words_read += 1;
+                    chunks.next().ok_or(Error::new(EINVAL))
+                };
+
+                match next()?? {
+                    op @ ADDRSPACE_OP_MMAP | op @ ADDRSPACE_OP_TRANSFER => {
+                        let fd = next()??;
+                        let offset = next()??;
+                        let (page, page_count) = crate::syscall::validate_region(next()??, next()??)?;
+                        let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
+
+                        if !flags.contains(MapFlags::MAP_FIXED) {
+                            return Err(Error::new(EOPNOTSUPP));
+                        }
+
+                        let (scheme, number) = extract_scheme_number(fd)?;
+
+                        scheme.kfmap(number, &addrspace, &Map { offset, size: page_count * PAGE_SIZE, address: page.start_address().data(), flags }, op == ADDRSPACE_OP_TRANSFER)?;
+                    }
+                    ADDRSPACE_OP_MUNMAP => {
+                        let (page, page_count) = crate::syscall::validate_region(next()??, next()??)?;
+
+                        addrspace.write().munmap(page, page_count);
+                    }
+                    ADDRSPACE_OP_MPROTECT => {
+                        let (page, page_count) = crate::syscall::validate_region(next()??, next()??)?;
+                        let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
+
+                        addrspace.write().mprotect(page, page_count, flags)?;
+                    }
+                    _ => return Err(Error::new(EINVAL)),
+                }
+                Ok(words_read * mem::size_of::<usize>())
+            }
+            Operation::Regs(kind) => match kind {
+                RegsKind::Float => {
+                    let regs = unsafe { buf.read_exact::<FloatRegisters>()? };
+
+                    with_context_mut(info.pid, |context| {
+                        // NOTE: The kernel will never touch floats
+
+                        // Ignore the rare case of floating point
+                        // registers being uninitiated
+                        let _ = context.set_fx_regs(regs);
+
+                        Ok(mem::size_of::<FloatRegisters>())
+                    })
+                },
+                RegsKind::Int => {
+                    let regs = unsafe { buf.read_exact::<IntRegisters>()? };
+
+                    try_stop_context(info.pid, |context| match unsafe { ptrace::regs_for_mut(context) } {
+                        None => {
+                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            Err(Error::new(ENOTRECOVERABLE))
+                        },
+                        Some(stack) => {
+                            stack.load(&regs);
+
+                            Ok(mem::size_of::<IntRegisters>())
+                        }
+                    })
+                }
+                RegsKind::Env => {
+                    let regs = unsafe { buf.read_exact::<EnvRegisters>()? };
+                    self.write_env_regs(&info, regs)?;
+                    Ok(mem::size_of::<EnvRegisters>())
+                }
+            },
+            Operation::Trace => {
+                let op = buf.read_u64()?;
+                let op = PtraceFlags::from_bits(op).ok_or(Error::new(EINVAL))?;
+
+                // Set next breakpoint
+                ptrace::Session::with_session(info.pid, |session| {
+                    session.data.lock().set_breakpoint(
+                        Some(op)
+                            .filter(|op| op.intersects(PTRACE_STOP_MASK | PTRACE_EVENT_MASK))
+                    );
+                    Ok(())
+                })?;
+
+                if op.contains(PTRACE_STOP_SINGLESTEP) {
+                    try_stop_context(info.pid, |context| {
+                        match unsafe { ptrace::regs_for_mut(context) } {
+                            None => {
+                                println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                                Err(Error::new(ENOTRECOVERABLE))
+                            },
+                            Some(stack) => {
+                                stack.set_singlestep(true);
+                                Ok(())
+                            }
+                        }
+                    })?;
+                }
+
+                // disable the ptrace_stop flag, which is used in some cases
+                with_context_mut(info.pid, |context| {
+                    context.ptrace_stop = false;
+                    Ok(())
+                })?;
+
+                // and notify the tracee's WaitCondition, which is used in other cases
+                ptrace::Session::with_session(info.pid, |session| {
+                    session.tracee.notify();
+                    Ok(())
+                })?;
+
+                Ok(mem::size_of::<u64>())
+            },
+            Operation::Name => {
+                // TODO: What limit?
+                let mut name_buf = [0_u8; 256];
+                let bytes_copied = buf.copy_common_bytes_to_slice(&mut name_buf)?;
+
+                let utf8 = alloc::string::String::from_utf8(name_buf[..bytes_copied].to_vec()).map_err(|_| Error::new(EINVAL))?;
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().name = utf8.into();
+                Ok(buf.len())
+            }
+            Operation::Sigstack => {
+                let sigstack = buf.read_usize()?;
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sigstack = (sigstack != !0).then(|| sigstack);
+                Ok(buf.len())
+            }
+            Operation::Attr(attr) => {
+                // TODO: What limit?
+                let mut str_buf = [0_u8; 32];
+                let bytes_copied = buf.copy_common_bytes_to_slice(&mut str_buf)?;
+
+                let id = core::str::from_utf8(&str_buf[..bytes_copied]).map_err(|_| Error::new(EINVAL))?.parse::<u32>().map_err(|_| Error::new(EINVAL))?;
+                let context_lock = Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?);
+
+                match attr {
+                    Attr::Uid => context_lock.write().euid = id,
+                    Attr::Gid => context_lock.write().egid = id,
+                }
+                Ok(buf.len())
+            }
+            Operation::Filetable { .. } => Err(Error::new(EBADF)),
+
+            Operation::CurrentFiletable => {
+                let filetable_fd = buf.read_usize()?;
+                let (hopefully_this_scheme, number) = extract_scheme_number(filetable_fd)?;
+
+                let filetable = hopefully_this_scheme.as_filetable(number)?;
+
+                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(filetable);
+
+                Ok(mem::size_of::<usize>())
+            }
+            Operation::CurrentAddrSpace { .. } => {
+                let mut iter = buf.usizes();
+                let addrspace_fd = iter.next().ok_or(Error::new(EINVAL))??;
+                let sp = iter.next().ok_or(Error::new(EINVAL))??;
+                let ip = iter.next().ok_or(Error::new(EINVAL))??;
+
+                let (hopefully_this_scheme, number) = extract_scheme_number(addrspace_fd)?;
+                let space = hopefully_this_scheme.as_addrspace(number)?;
+
+                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: space, new_sp: sp, new_ip: ip };
+
+                Ok(3 * mem::size_of::<usize>())
+            }
+            Operation::CurrentSigactions => {
+                let sigactions_fd = buf.read_usize()?;
+                let (hopefully_this_scheme, number) = extract_scheme_number(sigactions_fd)?;
+                let sigactions = hopefully_this_scheme.as_sigactions(number)?;
+                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
+                Ok(mem::size_of::<usize>())
+            }
+            Operation::MmapMinAddr(ref addrspace) => {
+                let val = buf.read_usize()?;
+                if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET { return Err(Error::new(EINVAL)); }
+                addrspace.write().mmap_min = val;
+                Ok(mem::size_of::<usize>())
+            }
+            // TODO: Deduplicate code.
+            Operation::SchedAffinity => {
+                let val = buf.read_usize()?;
+                context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.write().sched_affinity = if val == usize::MAX { None } else { Some(val % crate::cpu_count()) };
+                Ok(mem::size_of::<usize>())
+            }
+
+            _ => Err(Error::new(EBADF)),
+        }
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.info.operation {
+            Operation::Memory { .. } => "mem",
+            Operation::Regs(RegsKind::Float) => "regs/float",
+            Operation::Regs(RegsKind::Int) => "regs/int",
+            Operation::Regs(RegsKind::Env) => "regs/env",
+            Operation::Trace => "trace",
+            Operation::Static(path) => path,
+            Operation::Name => "name",
+            Operation::Sigstack => "sigstack",
+            Operation::Attr(Attr::Uid) => "uid",
+            Operation::Attr(Attr::Gid) => "gid",
+            Operation::Filetable { .. } => "filetable",
+            Operation::AddrSpace { .. } => "addrspace",
+            Operation::Sigactions(_) => "sigactions",
+            Operation::CurrentAddrSpace => "current-addrspace",
+            Operation::CurrentFiletable => "current-filetable",
+            Operation::CurrentSigactions => "current-sigactions",
+            Operation::OpenViaDup => "open-via-dup",
+            Operation::MmapMinAddr(_) => "mmap-min-addr",
+            Operation::SchedAffinity => "sched-affinity",
+
+            _ => return Err(Error::new(EOPNOTSUPP)),
+        });
+
+        buf.copy_common_bytes_from_slice(path.as_bytes())
+    }
+    fn kfstat(&self, id: usize, buffer: UserSliceWo) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        buffer.copy_exactly(&Stat {
+            st_mode: MODE_FILE | 0o666,
+            st_size: match handle.data {
+                OperationData::Static(ref data) => (data.buf.len() - data.offset) as u64,
+                _ => 0,
+            },
+
+            ..Stat::default()
+        })?;
+
+        Ok(0)
+    }
+
+    /// Dup is currently used to implement clone() and execve().
+    fn kdup(&self, old_id: usize, raw_buf: UserSliceRo, _: CallerCtx) -> Result<OpenResult> {
+        let info = {
+            let handles = self.handles.read();
+            let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
+
+            handle.info.clone()
+        };
+
+        let handle = |operation, data| Handle {
+            info: Info {
+                flags: 0,
+                pid: info.pid,
+                operation,
+            },
+            data,
+        };
+        let mut array = [0_u8; 64];
+        if raw_buf.len() > array.len() {
+            return Err(Error::new(EINVAL));
+        }
+        raw_buf.copy_to_slice(&mut array[..raw_buf.len()])?;
+        let buf = &array[..raw_buf.len()];
+
+        self.new_handle(match info.operation {
+            Operation::OpenViaDup => {
+                let (uid, gid) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read() {
+                    context => (context.euid, context.egid),
+                };
+                return self.open_inner(info.pid, Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?).filter(|s| !s.is_empty()), O_RDWR | O_CLOEXEC, uid, gid).map(OpenResult::SchemeLocal);
+            },
+
+            Operation::Filetable { ref filetable } => {
+                // TODO: Maybe allow userspace to either copy or transfer recently dupped file
+                // descriptors between file tables.
+                if buf != b"copy" {
+                    return Err(Error::new(EINVAL));
+                }
+                let new_filetable = Arc::try_new(RwLock::new(filetable.read().clone())).map_err(|_| Error::new(ENOMEM))?;
+
+                handle(Operation::Filetable { filetable: new_filetable }, OperationData::Other)
+            }
+            Operation::AddrSpace { ref addrspace } => {
+                let (operation, is_mem) = match buf {
+                    // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
+                    // in that case, what scheme?
+                    b"empty" => (Operation::AddrSpace { addrspace: new_addrspace()? }, false),
+                    b"exclusive" => (Operation::AddrSpace { addrspace: addrspace.write().try_clone()? }, false),
+                    b"mem" => (Operation::Memory { addrspace: Arc::clone(addrspace) }, true),
+                    b"mmap-min-addr" => (Operation::MmapMinAddr(Arc::clone(addrspace)), false),
+
+                    grant_handle if grant_handle.starts_with(b"grant-") => {
+                        let start_addr = usize::from_str_radix(core::str::from_utf8(&grant_handle[6..]).map_err(|_| Error::new(EINVAL))?, 16).map_err(|_| Error::new(EINVAL))?;
+                        (Operation::GrantHandle {
+                            description: Arc::clone(&addrspace.read().grants.contains(VirtualAddress::new(start_addr)).ok_or(Error::new(EINVAL))?.desc_opt.as_ref().ok_or(Error::new(EINVAL))?.desc.description)
+                        }, false)
+                    }
+
+                    _ => return Err(Error::new(EINVAL)),
+                };
+
+                handle(operation, if is_mem { OperationData::Memory(MemData { offset: VirtualAddress::new(0) }) } else { OperationData::Offset(0) })
+            }
+            Operation::Sigactions(ref sigactions) => {
+                let new = match buf {
+                    b"empty" => Context::empty_actions(),
+                    b"copy" => Arc::new(RwLock::new(sigactions.read().clone())),
+                    _ => return Err(Error::new(EINVAL)),
+                };
+                handle(Operation::Sigactions(new), OperationData::Other)
+            }
+            _ => return Err(Error::new(EINVAL)),
+        }).map(OpenResult::SchemeLocal)
+    }
+
 }
 extern "C" fn clone_handler() {
     let context_lock = Arc::clone(context::contexts().current().expect("expected the current context to be set in a spawn closure"));

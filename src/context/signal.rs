@@ -6,6 +6,7 @@ use syscall::ptrace_event;
 use crate::context::{contexts, switch, Status, WaitpidKey};
 use crate::start::usermode;
 use crate::ptrace;
+use crate::syscall::usercopy::UserSlice;
 
 pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
     let handler = handler.map(|ptr| ptr as usize).unwrap_or(0);
@@ -115,14 +116,19 @@ pub extern "C" fn signal_handler(sig: usize) {
         };
 
         unsafe {
-            let mut sp = sigstack.expect("sigaction was set while sigstack was not") - 256;
+            const REDZONE_SIZE: usize = 256;
+            let mut sp = sigstack.expect("sigaction was set while sigstack was not") - REDZONE_SIZE;
 
             sp = (sp / 16) * 16;
 
             sp -= mem::size_of::<usize>();
-            *(sp as *mut usize) = restorer;
 
-            usermode(handler, sp, sig, usize::from(singlestep));
+            match UserSlice::wo(sp, core::mem::size_of::<usize>()).and_then(|buf| buf.write_usize(restorer)) {
+                Ok(()) => usermode(handler, sp, sig, usize::from(singlestep)),
+                Err(error) => {
+                    log::error!("Failed to signal: {}", error);
+                }
+            }
         }
     }
 

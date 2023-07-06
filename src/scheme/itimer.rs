@@ -1,5 +1,5 @@
 use alloc::collections::BTreeMap;
-use core::{mem, slice, str};
+use core::{mem, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
@@ -7,6 +7,7 @@ use crate::syscall::data::ITimerSpec;
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
 use crate::syscall::scheme::Scheme;
+use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
 pub struct ITimerScheme {
     next_id: AtomicUsize,
@@ -38,41 +39,6 @@ impl Scheme for ITimerScheme {
         Ok(id)
     }
 
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let _clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let time_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut ITimerSpec, buf.len()/mem::size_of::<ITimerSpec>()) };
-
-        let mut i = 0;
-        while i < time_buf.len() {
-            time_buf[i] = ITimerSpec::default();
-            i += 1;
-        }
-
-        Ok(i * mem::size_of::<ITimerSpec>())
-    }
-
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        let _clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let time_buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const ITimerSpec, buf.len()/mem::size_of::<ITimerSpec>()) };
-
-        let mut i = 0;
-        while i < time_buf.len() {
-            let time = time_buf[i];
-            println!("{}: {:?}", i, time);
-            i += 1;
-        }
-
-        Ok(i * mem::size_of::<ITimerSpec>())
-    }
-
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)
     }
@@ -80,21 +46,6 @@ impl Scheme for ITimerScheme {
     fn fevent(&self, id: usize, _flags: EventFlags) ->  Result<EventFlags> {
         let handles = self.handles.read();
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
-    }
-
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let mut i = 0;
-        let scheme_path = format!("time:{}", clock).into_bytes();
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-        Ok(i)
     }
 
     fn fsync(&self, id: usize) -> Result<usize> {
@@ -106,4 +57,48 @@ impl Scheme for ITimerScheme {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }
-impl crate::scheme::KernelScheme for ITimerScheme {}
+impl crate::scheme::KernelScheme for ITimerScheme {
+    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let _clock = {
+            let handles = self.handles.read();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        let mut specs_read = 0;
+
+        for current_chunk in buf.in_exact_chunks(mem::size_of::<ITimerScheme>()) {
+            current_chunk.copy_exactly(&ITimerSpec::default())?;
+
+            specs_read += 1;
+        }
+
+        Ok(specs_read * mem::size_of::<ITimerSpec>())
+    }
+
+    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+        let _clock = {
+            let handles = self.handles.read();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        let mut specs_written = 0;
+
+        for chunk in buf.in_exact_chunks(mem::size_of::<ITimerSpec>()) {
+            let time = unsafe { chunk.read_exact::<ITimerSpec>()? };
+
+            println!("{}: {:?}", specs_written, time);
+            specs_written += 1;
+        }
+
+        Ok(specs_written * mem::size_of::<ITimerSpec>())
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let clock = {
+            let handles = self.handles.read();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        buf.copy_common_bytes_from_slice(format!("time:{}", clock).as_bytes())
+    }
+
+}

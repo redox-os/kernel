@@ -14,9 +14,9 @@ pub struct ScratchRegisters {
 
 impl ScratchRegisters {
     pub fn dump(&self) {
-        println!("EAX:   {:016x}", { self.eax });
-        println!("ECX:   {:016x}", { self.ecx });
-        println!("EDX:   {:016x}", { self.edx });
+        println!("EAX:   {:08x}", { self.eax });
+        println!("ECX:   {:08x}", { self.ecx });
+        println!("EDX:   {:08x}", { self.edx });
     }
 }
 
@@ -31,10 +31,10 @@ pub struct PreservedRegisters {
 
 impl PreservedRegisters {
     pub fn dump(&self) {
-        println!("EBX:   {:016x}", { self.ebx });
-        println!("EDI:   {:016x}", { self.edi });
-        println!("ESI:   {:016x}", { self.esi });
-        println!("EBP:   {:016x}", { self.ebp });
+        println!("EBX:   {:08x}", { self.ebx });
+        println!("EDI:   {:08x}", { self.edi });
+        println!("ESI:   {:08x}", { self.esi });
+        println!("EBP:   {:08x}", { self.ebp });
     }
 }
 
@@ -56,13 +56,13 @@ pub struct IretRegisters {
 
 impl IretRegisters {
     pub fn dump(&self) {
-        println!("EFLAG: {:016x}", { self.eflags });
-        println!("CS:    {:016x}", { self.cs });
-        println!("EIP:   {:016x}", { self.eip });
+        println!("EFLAG: {:08x}", { self.eflags });
+        println!("CS:    {:08x}", { self.cs });
+        println!("EIP:   {:08x}", { self.eip });
 
         if self.cs & 0b11 != 0b00 {
-            println!("ESP:   {:016x}", { self.esp });
-            println!("SS:    {:016x}", { self.ss });
+            println!("ESP:   {:08x}", { self.esp });
+            println!("SS:    {:08x}", { self.ss });
         }
     }
 }
@@ -161,7 +161,7 @@ pub struct InterruptErrorStack {
 
 impl InterruptErrorStack {
     pub fn dump(&self) {
-        println!("CODE:  {:016x}", { self.code });
+        println!("CODE:  {:08x}", { self.code });
         self.inner.dump();
     }
 }
@@ -378,13 +378,13 @@ macro_rules! interrupt_error {
                 "
                 push esp
                 call {inner}
-                pop esp
                 ",
+                // add esp, 4
 
-                // TODO: Unmap PTI
+                // TODO: Unmap PTI (split "add esp, 8" into two "add esp, 4"s maybe?)
                 // $crate::arch::x86::pti::unmap();
 
-                // Pop code
+                // Pop previous esp and code
                 "add esp, 8\n",
 
                 // Exit kernel TLS segment

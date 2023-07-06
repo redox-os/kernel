@@ -18,7 +18,40 @@ exception_stack!(synchronous_exception_at_el1_with_sp0, |stack| {
     loop {}
 });
 
+fn exception_code(esr: usize) -> u8 {
+    ((esr >> 26) & 0x3f) as u8
+}
+fn iss(esr: usize) -> u32 {
+    (esr & 0x01ff_ffff) as u32
+}
+
 exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
+    if exception_code(stack.iret.esr_el1) == 0b100101 {
+        // "Data Abort taken without a change in Exception level"
+
+        let iss = iss(stack.iret.esr_el1);
+
+        let was_translation_fault = iss >= 0b000100 && iss <= 0b000111;
+        let was_permission_fault = iss >= 0b001101 && iss <= 0b001111;
+
+        extern "C" {
+            static __usercopy_start: u8;
+            static __usercopy_end: u8;
+        }
+        let usercopy = (&__usercopy_start as *const _ as usize)..(&__usercopy_end as *const _ as usize);
+
+        if (was_translation_fault || was_permission_fault) && usercopy.contains(&{stack.iret.elr_el1}) {
+            // This was a usercopy page fault. Set the return value to nonzero to indicate usercopy
+            // failure (EFAULT), and emulate the return instruction by setting the return pointer
+            // to the saved LR value.
+
+            stack.iret.elr_el1 = stack.preserved.x30;
+            stack.scratch.x0 = 1;
+
+            return;
+        }
+    }
+
     println!("Synchronous exception at EL1 with SPx");
     stack.dump();
     stack_trace();
@@ -27,8 +60,7 @@ exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
 
 exception_stack!(synchronous_exception_at_el0, |stack| {
     with_exception_stack!(|stack| {
-        let exception_code = (stack.iret.esr_el1 & (0x3f << 26)) >> 26;
-        if exception_code != 0b010101 {
+        if exception_code(stack.iret.esr_el1) != 0b010101 {
             println!("FATAL: Not an SVC induced synchronous exception");
             stack.dump();
             stack_trace();

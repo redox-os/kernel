@@ -1,5 +1,5 @@
 use alloc::collections::BTreeMap;
-use core::{mem, slice, str};
+use core::{mem, str};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
@@ -9,6 +9,7 @@ use crate::syscall::data::TimeSpec;
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
 use crate::syscall::scheme::Scheme;
+use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 use crate::time;
 
 pub struct TimeScheme {
@@ -43,47 +44,6 @@ impl Scheme for TimeScheme {
         Ok(id)
     }
 
-    fn read(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let time_buf = unsafe { slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut TimeSpec, buf.len()/mem::size_of::<TimeSpec>()) };
-
-        let mut i = 0;
-        while i < time_buf.len() {
-            let arch_time = match clock {
-                CLOCK_REALTIME => time::realtime(),
-                CLOCK_MONOTONIC => time::monotonic(),
-                _ => return Err(Error::new(EINVAL))
-            };
-            time_buf[i].tv_sec = (arch_time / time::NANOS_PER_SEC) as i64;
-            time_buf[i].tv_nsec = (arch_time % time::NANOS_PER_SEC) as i32;
-            i += 1;
-        }
-
-        Ok(i * mem::size_of::<TimeSpec>())
-    }
-
-    fn write(&self, id: usize, buf: &[u8]) -> Result<usize> {
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let time_buf = unsafe { slice::from_raw_parts(buf.as_ptr() as *const TimeSpec, buf.len()/mem::size_of::<TimeSpec>()) };
-
-        let mut i = 0;
-        while i < time_buf.len() {
-            let time = time_buf[i];
-            timeout::register(self.scheme_id, id, clock, time);
-            i += 1;
-        }
-
-        Ok(i * mem::size_of::<TimeSpec>())
-    }
-
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)
     }
@@ -91,21 +51,6 @@ impl Scheme for TimeScheme {
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let handles = self.handles.read();
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
-    }
-
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
-        let mut i = 0;
-        let scheme_path = format!("time:{}", clock).into_bytes();
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-        Ok(i)
     }
 
     fn fsync(&self, id: usize) -> Result<usize> {
@@ -117,4 +62,61 @@ impl Scheme for TimeScheme {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }
-impl crate::scheme::KernelScheme for TimeScheme {}
+impl crate::scheme::KernelScheme for TimeScheme {
+    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let clock = {
+            let handles = self.handles.read();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        let mut bytes_read = 0;
+
+        for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
+            let arch_time = match clock {
+                CLOCK_REALTIME => time::realtime(),
+                CLOCK_MONOTONIC => time::monotonic(),
+                _ => return Err(Error::new(EINVAL))
+            };
+            let time = TimeSpec {
+                tv_sec: (arch_time / time::NANOS_PER_SEC) as i64,
+                tv_nsec: (arch_time % time::NANOS_PER_SEC) as i32,
+            };
+            current_chunk.copy_exactly(&time)?;
+
+            bytes_read += mem::size_of::<TimeSpec>();
+        }
+
+        Ok(bytes_read)
+    }
+
+    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+        let clock = {
+            let handles = self.handles.read();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        let mut bytes_written = 0;
+
+        for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
+            let time = unsafe { current_chunk.read_exact::<TimeSpec>()? };
+
+            timeout::register(self.scheme_id, id, clock, time);
+
+            bytes_written += mem::size_of::<TimeSpec>();
+        };
+
+        Ok(bytes_written)
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let clock = {
+            let handles = self.handles.read();
+            *handles.get(&id).ok_or(Error::new(EBADF))?
+        };
+
+        let scheme_path = format!("time:{}", clock).into_bytes();
+        let byte_count = core::cmp::min(buf.len(), scheme_path.len());
+        buf.limit(byte_count).expect("must succeed").copy_from_slice(&scheme_path)?;
+        Ok(byte_count)
+    }
+
+}
