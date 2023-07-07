@@ -8,18 +8,21 @@ use spin::RwLock;
 use rmm::Flusher;
 
 use syscall::data::Stat;
-use syscall::error::*;
+use syscall::{error::*, CallerCtx};
 use syscall::flag::{MODE_DIR, MODE_FILE};
 use syscall::scheme::{calc_seek_offset_usize, Scheme};
 
 use crate::memory::Frame;
 use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress};
 use crate::paging::mapper::PageFlushAll;
+use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+
+use super::OpenResult;
 
 static mut LIST: [u8; 2] = [b'0', b'\n'];
 
 struct Handle {
-    path: &'static [u8],
+    path: &'static str,
     data: Arc<RwLock<&'static mut [u8]>>,
     mode: u16,
     seek: usize
@@ -85,63 +88,6 @@ impl DiskScheme {
 }
 
 impl Scheme for DiskScheme {
-    fn open(&self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let path_trimmed = path.trim_matches('/');
-        match path_trimmed {
-            "" => {
-                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                self.handles.write().insert(id, Handle {
-                    path: b"",
-                    data: self.list.clone(),
-                    mode: MODE_DIR | 0o755,
-                    seek: 0
-                });
-                Ok(id)
-            },
-            "0" => {
-                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                self.handles.write().insert(id, Handle {
-                    path: b"0",
-                    data: self.data.clone(),
-                    mode: MODE_FILE | 0o644,
-                    seek: 0
-                });
-                Ok(id)
-            }
-            _ => Err(Error::new(ENOENT))
-        }
-    }
-
-    fn read(&self, id: usize, buffer: &mut [u8]) -> Result<usize> {
-        let mut handles = self.handles.write();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-        let data = handle.data.read();
-
-        let mut i = 0;
-        while i < buffer.len() && handle.seek < data.len() {
-            buffer[i] = data[handle.seek];
-            i += 1;
-            handle.seek += 1;
-        }
-
-        Ok(i)
-    }
-
-    fn write(&self, id: usize, buffer: &[u8]) -> Result<usize> {
-        let mut handles = self.handles.write();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-        let mut data = handle.data.write();
-
-        let mut i = 0;
-        while i < buffer.len() && handle.seek < data.len() {
-            data[handle.seek] = buffer[i];
-            i += 1;
-            handle.seek += 1;
-        }
-
-        Ok(i)
-    }
-
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
         let mut handles = self.handles.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -158,41 +104,6 @@ impl Scheme for DiskScheme {
         Ok(0)
     }
 
-    fn fpath(&self, id: usize, buf: &mut [u8]) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        //TODO: Copy scheme part in kernel
-        let mut i = 0;
-        let scheme_path = b"disk/live:";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
-
-        let mut j = 0;
-        while i < buf.len() && j < handle.path.len() {
-            buf[i] = handle.path[j];
-            i += 1;
-            j += 1;
-        }
-
-        Ok(i)
-    }
-
-    fn fstat(&self, id: usize, stat: &mut Stat) -> Result<usize> {
-        let handles = self.handles.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-        let data = handle.data.read();
-
-        stat.st_mode = handle.mode;
-        stat.st_uid = 0;
-        stat.st_gid = 0;
-        stat.st_size = data.len() as u64;
-
-        Ok(0)
-    }
-
     fn fsync(&self, id: usize) -> Result<usize> {
         let handles = self.handles.read();
         let _handle = handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -204,4 +115,82 @@ impl Scheme for DiskScheme {
         self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 }
-impl crate::scheme::KernelScheme for DiskScheme {}
+impl crate::scheme::KernelScheme for DiskScheme {
+    fn kopen(&self, path: &str, _flags: usize, _caller: CallerCtx) -> Result<OpenResult> {
+        let path_trimmed = path.trim_matches('/');
+        match path_trimmed {
+            "" => {
+                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                self.handles.write().insert(id, Handle {
+                    path: "",
+                    data: self.list.clone(),
+                    mode: MODE_DIR | 0o755,
+                    seek: 0
+                });
+                Ok(OpenResult::SchemeLocal(id))
+            },
+            "0" => {
+                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                self.handles.write().insert(id, Handle {
+                    path: "0",
+                    data: self.data.clone(),
+                    mode: MODE_FILE | 0o644,
+                    seek: 0
+                });
+                Ok(OpenResult::SchemeLocal(id))
+            }
+            _ => Err(Error::new(ENOENT))
+        }
+    }
+    fn kread(&self, id: usize, buffer: UserSliceWo) -> Result<usize> {
+        let mut handles = self.handles.write();
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let data = handle.data.read();
+
+        let src = data.get(handle.seek..).unwrap_or(&[]);
+        let bytes_read = buffer.copy_common_bytes_from_slice(src)?;
+        handle.seek += bytes_read;
+
+        Ok(bytes_read)
+    }
+
+    fn kwrite(&self, id: usize, buffer: UserSliceRo) -> Result<usize> {
+        let mut handles = self.handles.write();
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let mut data = handle.data.write();
+
+        let dst = data.get_mut(handle.seek..).unwrap_or(&mut []);
+        let bytes_written = buffer.copy_common_bytes_to_slice(dst)?;
+        handle.seek += bytes_written;
+
+        Ok(bytes_written)
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+        let handles = self.handles.read();
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        let src = format!("disk/live:{}", handle.path);
+        let byte_count = buf.copy_common_bytes_from_slice(src.as_bytes())?;
+
+        Ok(byte_count)
+    }
+    fn kfstat(&self, id: usize, stat_buf: UserSliceWo) -> Result<usize> {
+        let stat = {
+            let handles = self.handles.read();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            let data = handle.data.read();
+
+            Stat {
+                st_mode: handle.mode,
+                st_uid: 0,
+                st_gid: 0,
+                st_size: data.len() as u64,
+                ..Stat::default()
+            }
+        };
+        stat_buf.copy_exactly(&stat)?;
+
+        Ok(0)
+    }
+
+}
