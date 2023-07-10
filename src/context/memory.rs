@@ -780,7 +780,8 @@ impl Grant {
                 };
 
                 if let Some(page_info) = get_page_info(frame) {
-                    page_info.add_ref(false);
+                    let guard = page_info.lock();
+                    guard.add_ref(false);
                 }
 
                 unsafe {
@@ -909,7 +910,8 @@ impl Grant {
             };
 
             let src_page_info = get_page_info(src_frame).expect("allocated page was not present in the global page array");
-            src_page_info.add_ref(is_cow);
+            let guard = src_page_info.lock();
+            guard.add_ref(is_cow);
 
             let Some(map_result) = (unsafe { dst_mapper.map_phys(dst_page, src_frame.start_address(), flags.write(flags.has_write() && !is_cow)) }) else {
                 break;
@@ -990,7 +992,8 @@ impl Grant {
             };
 
             if let Some(info) = get_page_info(frame) {
-                if info.remove_ref(is_cow) == 0 {
+                let guard = info.lock();
+                if guard.remove_ref(is_cow) == 0 {
                     deallocate_frames(frame, 1);
                 };
             } else {
@@ -1330,8 +1333,9 @@ fn cow(dst_mapper: &mut PageMapper, page: Page, old_frame: Frame, info: &PageInf
 fn init_frame(init_rc: usize, init_borrowed_rc: usize) -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).expect("all allocated frames need an associated page info");
-    page_info.refcount.store(init_rc, Ordering::Relaxed);
-    page_info.borrowed_refcount.store(init_borrowed_rc, Ordering::Relaxed);
+    let guard = page_info.lock();
+    guard.refcount.store(init_rc, Ordering::Relaxed);
+    guard.borrowed_refcount.store(init_borrowed_rc, Ordering::Relaxed);
 
     Ok(new_frame)
 }
@@ -1421,10 +1425,13 @@ fn correct_inner<'l>(addr_space_lock: &'l RwLock<AddrSpace>, mut addr_space_guar
         Provider::Allocated { .. } | Provider::AllocatedShared if access == AccessMode::Write => {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
-                Some((frame, Some(info))) => if info.owned_refcount() == 1 {
-                    frame
-                } else {
-                    cow(&mut addr_space.table.utable, faulting_page, frame, info, grant_flags)?
+                Some((frame, Some(info_lock))) => {
+                    let guard = info_lock.lock();
+                    if guard.owned_refcount() == 1 {
+                        frame
+                    } else {
+                        cow(&mut addr_space.table.utable, faulting_page, frame, &*guard, grant_flags)?
+                    }
                 },
                 _ => map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, true)?,
             }
@@ -1433,11 +1440,12 @@ fn correct_inner<'l>(addr_space_lock: &'l RwLock<AddrSpace>, mut addr_space_guar
         Provider::Allocated { .. } | Provider::AllocatedShared => {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
-                Some((frame, Some(page_info))) => {
+                Some((frame, Some(page_info_lock))) => {
+                    let guard = page_info_lock.lock();
                     // Keep in mind that alloc_writable must always be true if this code is reached
                     // for AllocatedShared, since shared pages cannot be mapped lazily (without
                     // using AddrSpace backrefs).
-                    allow_writable = page_info.owned_refcount() == 1;
+                    allow_writable = guard.owned_refcount() == 1;
 
                     frame
                 }
@@ -1481,7 +1489,8 @@ fn correct_inner<'l>(addr_space_lock: &'l RwLock<AddrSpace>, mut addr_space_guar
                     frame
                 };
 
-                let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
+                let info_lock = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
+                let info = info_lock.lock();
                 info.add_ref(false);
 
                 src_frame

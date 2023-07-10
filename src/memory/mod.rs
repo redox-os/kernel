@@ -20,7 +20,7 @@ use rmm::{
     FrameAllocator,
     FrameCount,
 };
-use spin::RwLock;
+use spin::{RwLock, Mutex};
 use crate::syscall::flag::{PartialAllocStrategy, PhysallocFlags};
 use crate::syscall::error::{ENOMEM, Error};
 
@@ -196,7 +196,6 @@ pub struct PageInfo {
     pub borrowed_refcount: AtomicUsize,
     // TODO: AtomicFlags?
     pub flags: FrameFlags,
-    pub _padding: usize,
 }
 
 bitflags::bitflags! {
@@ -213,7 +212,7 @@ pub static SECTIONS: RwLock<Vec<&'static Section>> = RwLock::new(Vec::new());
 
 pub struct Section {
     base: Frame,
-    frames: Box<[PageInfo]>,
+    frames: Box<[Mutex<PageInfo>]>,
 }
 
 pub const MAX_SECTION_SIZE_BITS: u32 = 27;
@@ -235,7 +234,7 @@ pub fn init_mm() {
             sections.push(Box::leak(Box::new(Section {
                 base,
                 // TODO: zeroed rather than PageInfo::new()?
-                frames: try_box_slice_new(PageInfo::new, section_page_count).expect("failed to allocate pages array"),
+                frames: try_box_slice_new(|| Mutex::new(PageInfo::new()), section_page_count).expect("failed to allocate pages array"),
             })) as &'static Section);
 
             pages_left -= section_page_count;
@@ -254,7 +253,6 @@ impl PageInfo {
             refcount: AtomicUsize::new(0),
             borrowed_refcount: AtomicUsize::new(0),
             flags: FrameFlags::NONE,
-            _padding: 0,
         }
     }
     pub fn add_ref(&self, cow: bool) {
@@ -278,7 +276,7 @@ impl PageInfo {
         self.refcount.load(Ordering::SeqCst) - self.borrowed_refcount.load(Ordering::SeqCst)
     }
 }
-pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
+pub fn get_page_info(frame: Frame) -> Option<&'static Mutex<PageInfo>> {
     let sections = SECTIONS.read();
 
     let idx = sections
