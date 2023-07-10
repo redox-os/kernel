@@ -55,9 +55,6 @@ pub mod irq;
 /// `itimer:` - support for getitimer and setitimer
 pub mod itimer;
 
-/// When `disk/live:` - embedded filesystem for live disk
-pub mod live;
-
 /// `memory:` - a scheme for accessing physical memory
 pub mod memory;
 
@@ -172,10 +169,6 @@ impl SchemeList {
         self.insert(ns, "proc", |scheme_id| Arc::new(ProcScheme::new(scheme_id))).unwrap();
         self.insert(ns, "thisproc", |_| Arc::new(ProcScheme::restricted())).unwrap();
         self.insert(ns, "serio", |scheme_id| Arc::new(SerioScheme::new(scheme_id))).unwrap();
-
-        if let Some(scheme) = self::live::DiskScheme::new().map(Arc::new) {
-            self.insert(ns, "disk/live", move |_| scheme.clone()).unwrap();
-        }
     }
 
     pub fn make_ns(&mut self, from: SchemeNamespace, names: impl IntoIterator<Item = Box<str>>) -> Result<SchemeNamespace> {
