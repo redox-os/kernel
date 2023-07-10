@@ -1,5 +1,6 @@
 //! Global descriptor table
 
+use core::cell::UnsafeCell;
 use core::convert::TryInto;
 use core::mem;
 
@@ -53,7 +54,7 @@ static mut INIT_GDT: [GdtEntry; 4] = [
 ];
 
 #[thread_local]
-pub static mut GDT: [GdtEntry; 10] = [
+pub static GDT: UnsafeCell<[GdtEntry; 10]> = UnsafeCell::new([
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -75,7 +76,7 @@ pub static mut GDT: [GdtEntry; 10] = [
     // Unused entry which stores the CPU ID. This is necessary for paranoid interrupts as they have
     // no other way of determining it.
     GdtEntry::new(0, 0, 0, 0),
-];
+]);
 
 #[repr(C, align(16))]
 pub struct ProcessorControlRegion {
@@ -90,7 +91,7 @@ pub struct ProcessorControlRegion {
 pub struct TssWrapper(pub TaskStateSegment);
 
 #[thread_local]
-pub static mut KPCR: ProcessorControlRegion = ProcessorControlRegion {
+pub static KPCR: UnsafeCell<ProcessorControlRegion> = UnsafeCell::new(ProcessorControlRegion {
     tcb_end: 0,
     user_rsp_tmp: 0,
     tss: TssWrapper(TaskStateSegment {
@@ -102,18 +103,18 @@ pub static mut KPCR: ProcessorControlRegion = ProcessorControlRegion {
         reserved4: 0,
         iomap_base: 0xFFFF
     }),
-};
+});
 
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
     use super::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
-    KPCR.tss.0.rsp[0] = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64;
+    (*KPCR.get()).tss.0.rsp[0] = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64;
     PTI_CONTEXT_STACK = stack;
 }
 
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
-    KPCR.tss.0.rsp[0] = stack as u64;
+    (*KPCR.get()).tss.0.rsp[0] = stack as u64;
 }
 
 // Initialize GDT
@@ -152,13 +153,13 @@ pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
 
     // Now that we have access to thread locals, begin by getting a pointer to the Processor
     // Control Region.
-    let kpcr = &mut KPCR;
+    let kpcr = KPCR.get();
 
     // Then, setup the AP's individual GDT
-    let limit = (GDT.len() * mem::size_of::<GdtEntry>() - 1)
+    let limit = ((*GDT.get()).len() * mem::size_of::<GdtEntry>() - 1)
         .try_into()
         .expect("main GDT way too large");
-    let base = GDT.as_ptr() as *const SegmentDescriptor;
+    let base = GDT.get() as *const SegmentDescriptor;
 
     let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
         limit,
@@ -166,23 +167,27 @@ pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
     };
 
     // Once we have fetched the real KPCR address, set the TLS segment to the TCB pointer there.
-    kpcr.tcb_end = (tcb_offset as *const usize).read();
+    (*kpcr).tcb_end = (tcb_offset as *const usize).read();
 
     {
         // We can now access our TSS, via the KPCR, which is a thread local
-        let tss = &kpcr.tss.0 as *const _ as usize as u64;
+        let tss = &(*kpcr).tss.0 as *const _ as usize as u64;
         let tss_lo = (tss & 0xFFFF_FFFF) as u32;
         let tss_hi = (tss >> 32) as u32;
 
-        GDT[GDT_TSS].set_offset(tss_lo);
-        GDT[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
+        (*GDT.get())[GDT_TSS].set_offset(tss_lo);
+        (*GDT.get())[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
 
-        (&mut GDT[GDT_TSS_HIGH] as *mut GdtEntry).cast::<u32>().write(tss_hi);
+        (&mut (*GDT.get())[GDT_TSS_HIGH] as *mut GdtEntry)
+            .cast::<u32>()
+            .write(tss_hi);
     }
 
     // And finally, populate the last GDT entry with the current CPU ID, to allow paranoid
     // interrupt handlers to safely use TLS.
-    (&mut GDT[GDT_CPU_ID_CONTAINER] as *mut GdtEntry).cast::<u32>().write(cpu_id);
+    (&mut (*GDT.get())[GDT_CPU_ID_CONTAINER] as *mut GdtEntry)
+        .cast::<u32>()
+        .write(cpu_id);
 
     // Set the stack pointer to use when coming back from userspace.
     set_tss_stack(stack_offset);
