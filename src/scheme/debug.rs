@@ -140,11 +140,19 @@ impl crate::scheme::KernelScheme for DebugScheme {
             let handles = handles();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
-        // FIXME
-        let mut tmp = [0_u8; 512];
-        let count = buf.copy_common_bytes_to_slice(&mut tmp)?;
 
-        Writer::new().write(&tmp[..count]);
+        let mut tmp = [0_u8; 512];
+
+        for chunk in buf.in_variable_chunks(tmp.len()) {
+            let byte_count = chunk.copy_common_bytes_to_slice(&mut tmp)?;
+            let tmp_bytes = &tmp[..byte_count];
+
+            // The reason why a new writer is created for each iteration, is because the page fault
+            // handler in usercopy might use the same lock when printing for debug purposes, and
+            // although it most likely won't, it would be dangerous to rely on that assumption.
+            Writer::new().write(tmp_bytes);
+        }
+
         Ok(buf.len())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
