@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicBool;
 use alloc::sync::Arc;
 
 use crate::{push_scratch, pop_scratch};
-use crate::gdt::{GDT, GDT_USER_FS, GDT_USER_GS};
+use crate::gdt::{pcr, GDT_USER_FS, GDT_USER_GS};
 use crate::interrupt::handler::ScratchRegisters;
 use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
@@ -137,10 +137,12 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     );
 
     {
-        prev.arch.fsbase = GDT[GDT_USER_FS].offset() as usize;
-        GDT[GDT_USER_FS].set_offset(next.arch.fsbase as u32);
-        prev.arch.gsbase = GDT[GDT_USER_GS].offset() as usize;
-        GDT[GDT_USER_GS].set_offset(next.arch.gsbase as u32);
+        let gdt = &mut (&mut *pcr()).gdt;
+
+        prev.arch.fsbase = gdt[GDT_USER_FS].offset() as usize;
+        gdt[GDT_USER_FS].set_offset(next.arch.fsbase as u32);
+        prev.arch.gsbase = gdt[GDT_USER_GS].offset() as usize;
+        gdt[GDT_USER_GS].set_offset(next.arch.gsbase as u32);
     }
 
     match next.addr_space {

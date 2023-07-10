@@ -960,9 +960,6 @@ pub fn setup_new_utable() -> Result<Table> {
 
         // Copy physmap mapping
         copy_mapping(crate::PHYS_PML4);
-
-        // Copy kernel percpu (similar to TLS) mapping.
-        copy_mapping(crate::KERNEL_PERCPU_PML4);
     }
 
     Ok(Table {

@@ -2,26 +2,27 @@
 
 use core::convert::TryInto;
 use core::mem;
+use core::ptr::addr_of_mut;
 
-use x86::segmentation::load_cs;
 use x86::bits32::task::TaskStateSegment;
 use x86::Ring;
 use x86::dtables::{self, DescriptorTablePointer};
 use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
 use x86::task;
 
+use crate::paging::{RmmA, RmmArch, PAGE_SIZE};
+
 use super::cpuid::cpuid;
 
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;
-pub const GDT_KERNEL_KPCR: usize = 3;
+pub const GDT_KERNEL_PERCPU: usize = 3;
 pub const GDT_USER_CODE: usize = 4;
 pub const GDT_USER_DATA: usize = 5;
 pub const GDT_USER_FS: usize = 6;
 pub const GDT_USER_GS: usize = 7;
 pub const GDT_TSS: usize = 8;
-pub const GDT_CPU_ID_CONTAINER: usize = 9;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
@@ -41,19 +42,16 @@ pub const GDT_F_PAGE_SIZE: u8 = 1 << 7;
 pub const GDT_F_PROTECTED_MODE: u8 = 1 << 6;
 pub const GDT_F_LONG_MODE: u8 = 1 << 5;
 
-static mut INIT_GDT: [GdtEntry; 4] = [
+static INIT_GDT: [GdtEntry; 3] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
     GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
     // Kernel data
     GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
-    // Kernel TLS
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
 ];
 
-#[thread_local]
-pub static mut GDT: [GdtEntry; 10] = [
+const BASE_GDT: [GdtEntry; 9] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
@@ -72,16 +70,15 @@ pub static mut GDT: [GdtEntry; 10] = [
     GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
-    // Unused entry which stores the CPU ID. This is necessary for paranoid interrupts as they have
-    // no other way of determining it.
-    GdtEntry::new(0, 0, 0, 0),
 ];
 
-#[repr(C, align(16))]
+#[repr(C, align(4096))]
 pub struct ProcessorControlRegion {
     pub tcb_end: usize,
     pub user_rsp_tmp: usize,
     pub tss: TssWrapper,
+    pub self_ref: usize,
+    pub gdt: [GdtEntry; 9],
 }
 
 // NOTE: Despite not using #[repr(packed)], we do know that while there may be some padding
@@ -89,112 +86,106 @@ pub struct ProcessorControlRegion {
 #[repr(C, align(16))]
 pub struct TssWrapper(pub TaskStateSegment);
 
-#[thread_local]
-pub static mut KPCR: ProcessorControlRegion = ProcessorControlRegion {
-    tcb_end: 0,
-    user_rsp_tmp: 0,
-    tss: TssWrapper(TaskStateSegment::new()),
-};
+pub unsafe fn pcr() -> *mut ProcessorControlRegion {
+    let mut ret: *mut ProcessorControlRegion;
+    core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(memoffset::offset_of!(ProcessorControlRegion, self_ref)));
+    ret
+}
 
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
     use super::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
-    KPCR.tss.0.ss0 = (GDT_KERNEL_DATA << 3) as u16;
-    KPCR.tss.0.esp0 = (PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32;
+    addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+    addr_of_mut!((*pcr()).tss.0.esp0).write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
     PTI_CONTEXT_STACK = stack;
 }
 
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
-    KPCR.tss.0.ss0 = (GDT_KERNEL_DATA << 3) as u16;
-    KPCR.tss.0.esp0 = stack as u32;
+    addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+    addr_of_mut!((*pcr()).tss.0.esp0).write(stack as u32);
 }
 
-// Initialize GDT
+/// Initialize a minimal GDT without configuring percpu.
 pub unsafe fn init() {
-    {
-        // Setup the initial GDT with TLS, so we can setup the TLS GDT (a little confusing)
-        // This means that each CPU will have its own GDT, but we only need to define it once as a thread local
-
-        let limit = (INIT_GDT.len() * mem::size_of::<GdtEntry>() - 1)
-            .try_into()
-            .expect("initial GDT way too large");
-        let base = INIT_GDT.as_ptr() as *const SegmentDescriptor;
-
-        let init_gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
-            limit,
-            base,
-        };
-
-        // Load the initial GDT, before we have access to thread locals
-        dtables::lgdt(&init_gdtr);
-    }
+    // Load the initial GDT, before the kernel remaps itself.
+    dtables::lgdt(&DescriptorTablePointer {
+        limit: (INIT_GDT.len() * mem::size_of::<GdtEntry>() - 1) as u16,
+        base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
+    });
 
     // Load the segment descriptors
-    load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+    segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
     segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_KPCR as u16, Ring::Ring0));
+    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 }
 
-/// Initialize GDT with TLS
-pub unsafe fn init_paging(cpu_id: u32, tcb_offset: usize, stack_offset: usize) {
-    //TODO: will this work with multicore?
-    {
-        INIT_GDT[GDT_KERNEL_KPCR].set_offset(tcb_offset as u32);
-        segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_KPCR as u16, Ring::Ring0));
-    }
+/// Initialize GDT and configure percpu.
+pub unsafe fn init_paging(stack_offset: usize) {
+    let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR frame");
+    let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
-    // Now that we have access to thread locals, begin by getting a pointer to the Processor
-    // Control Region.
-    let kpcr = &mut KPCR;
-
-    // Then, setup the AP's individual GDT
-    let limit = (GDT.len() * mem::size_of::<GdtEntry>() - 1)
-        .try_into()
-        .expect("main GDT way too large");
-    let base = GDT.as_ptr() as *const SegmentDescriptor;
+    pcr.self_ref = pcr as *const _ as usize;
+    pcr.gdt = BASE_GDT;
+    pcr.gdt[GDT_KERNEL_PERCPU].set_offset(pcr as *const _ as u32);
 
     let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
-        limit,
-        base,
+        limit: (pcr.gdt.len() * mem::size_of::<GdtEntry>() - 1) as u16,
+        base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
     };
 
-    // Once we have fetched the real KPCR address, set the TLS segment to the TCB pointer there.
-    kpcr.tcb_end = (tcb_offset as *const usize).read();
-
-    GDT[GDT_KERNEL_KPCR].set_offset(tcb_offset as u32);
+    pcr.tcb_end = init_percpu();
 
     {
-        // We can now access our TSS, via the KPCR, which is a thread local
-        let tss = &kpcr.tss.0 as *const _ as usize as u32;
+        let tss = &pcr.tss.0 as *const _ as usize as u32;
 
-        GDT[GDT_TSS].set_offset(tss);
-        GDT[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
+        pcr.gdt[GDT_TSS].set_offset(tss);
+        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
     }
-
-    // And finally, populate the last GDT entry with the current CPU ID, to allow paranoid
-    // interrupt handlers to safely use TLS.
-    (&mut GDT[GDT_CPU_ID_CONTAINER] as *mut GdtEntry).cast::<u32>().write(cpu_id);
-
-    // Set the stack pointer to use when coming back from userspace.
-    set_tss_stack(stack_offset);
 
     // Load the new GDT, which is correctly located in thread local storage.
     dtables::lgdt(&gdtr);
 
     // Reload the segment descriptors
-    load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+    segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
     segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
     segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_KPCR as u16, Ring::Ring0));
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+
+    // TODO: Use FS for kernel TLS on i686?
+    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_PERCPU as u16, Ring::Ring0));
+
+    // Set the stack pointer to use when coming back from userspace.
+    set_tss_stack(stack_offset);
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+}
+
+// TODO: Share code with x86. Maybe even with aarch64?
+/// Copy tdata, clear tbss, calculate TCB end pointer
+#[cold]
+unsafe fn init_percpu() -> usize {
+    use crate::kernel_executable_offsets::*;
+
+    let size = __tbss_end() - __tdata_start();
+    assert_eq!(size % PAGE_SIZE, 0);
+
+    let tbss_offset = __tbss_start() - __tdata_start();
+
+    let base_frame = crate::memory::allocate_frames(size / PAGE_SIZE).expect("failed to allocate percpu memory");
+    let base = RmmA::phys_to_virt(base_frame.start_address());
+
+    let tls_end = base.data() + size;
+
+    core::ptr::copy_nonoverlapping(__tdata_start() as *const u8, base.data() as *mut u8, tbss_offset);
+    core::ptr::write_bytes((base.data() + tbss_offset) as *mut u8, 0, size - tbss_offset);
+
+    tls_end
 }
 
 #[derive(Copy, Clone, Debug)]

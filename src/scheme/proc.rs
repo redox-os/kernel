@@ -430,8 +430,8 @@ impl ProcScheme {
         let (fsbase, gsbase) = if info.pid == context::context_id() {
             unsafe {
                 (
-                    crate::gdt::GDT[crate::gdt::GDT_USER_FS].offset() as u64,
-                    crate::gdt::GDT[crate::gdt::GDT_USER_GS].offset() as u64
+                    (&*crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_FS].offset() as u64,
+                    (&*crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_GS].offset() as u64
                 )
             }
         } else {
@@ -501,8 +501,8 @@ impl ProcScheme {
 
         if info.pid == context::context_id() {
             unsafe {
-                crate::gdt::GDT[crate::gdt::GDT_USER_FS].set_offset(regs.fsbase);
-                crate::gdt::GDT[crate::gdt::GDT_USER_GS].set_offset(regs.gsbase);
+                (&mut *crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_FS].set_offset(regs.fsbase);
+                (&mut *crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_GS].set_offset(regs.gsbase);
 
                 match context::contexts().current().ok_or(Error::new(ESRCH))?.write().arch {
                     ref mut arch => {
