@@ -258,6 +258,7 @@ macro_rules! pop_preserved {
     " };
 }
 macro_rules! swapgs_iff_ring3_fast {
+    // TODO: Spectre V1: LFENCE?
     () => { "
         // Check whether the last two bits RSP+8 (code segment) are equal to zero.
         test QWORD PTR [rsp + 8], 0x3
@@ -268,6 +269,7 @@ macro_rules! swapgs_iff_ring3_fast {
     " };
 }
 macro_rules! swapgs_iff_ring3_fast_errorcode {
+    // TODO: Spectre V1: LFENCE?
     () => { "
         test QWORD PTR [rsp + 16], 0x3
         jz 1f
@@ -276,109 +278,87 @@ macro_rules! swapgs_iff_ring3_fast_errorcode {
     " };
 }
 
-#[cfg(feature = "x86_fsgsbase")]
-macro_rules! save_gsbase_paranoid {
-    () => { "
-        // Unused: {IA32_GS_BASE}
-        rdgsbase rax
-        push rax
-    " }
+#[cfg(feature = "x86_fsbase")]
+macro_rules! read_gsbase_into_rdx {
+    () => { "rdgsbase rdx;" }
 }
-#[cfg(feature = "x86_fsgsbase")]
-macro_rules! restore_gsbase_paranoid {
-    () => { "
-        // Unused: {IA32_GS_BASE}
-        pop rax
-        wrgsbase rax
-    " }
-}
-#[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! save_gsbase_paranoid {
+
+#[cfg(not(feature = "x86_fsbase"))]
+macro_rules! read_gsbase_into_rdx {
     () => { "
         mov ecx, {IA32_GS_BASE}
         rdmsr
         shl rdx, 32
-        or rax, rdx
-
-        push rax
-    " }
-}
-#[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! restore_gsbase_paranoid {
-    () => { "
-        pop rdx
-
-        mov ecx, {IA32_GS_BASE}
-        mov eax, edx
-        shr rdx, 32
-        wrmsr
+        or rdx, rax
     " }
 }
 
-#[cfg(feature = "x86_fsgsbase")]
-macro_rules! set_gsbase_paranoid {
-    () => { "
-        // Unused: {IA32_GS_BASE}
-        wrgsbase rdx
-    " }
-}
-#[cfg(not(feature = "x86_fsgsbase"))]
-macro_rules! set_gsbase_paranoid {
-    () => { "
-        mov ecx, {IA32_GS_BASE}
-        mov eax, edx
-        shr rdx, 32
-        wrmsr
-    " }
-}
-
-macro_rules! save_and_set_gsbase_paranoid {
-    // For paranoid interrupt entries, we have to be extremely careful with how we use IA32_GS_BASE
-    // and IA32_KERNEL_GS_BASE. If FSGSBASE is enabled, then we have no way to differentiate these
-    // two, as paranoid interrupts (e.g. NMIs) can occur even in kernel mode. In fact, they can
-    // even occur within another IRQ, so we cannot check the the privilege level via the stack.
+macro_rules! conditional_swapgs_paranoid {
+    // For regular interrupt handlers and the syscall handler, managing IA32_GS_BASE and
+    // IA32_KERNEL_GS_BASE (the "GSBASE registers") is more or less trivial when using the SWAPGS
+    // instruction.
     //
-    // What we do instead, is using a special entry in the GDT, since we know that the GDT will
-    // always be thread local, as it contains the TSS. This gives us more than 32 bits to work
-    // with, which already is the largest x2APIC ID that an x86 CPU can handle. Luckily we can also
-    // use the stack, even though there might be interrupts in between.
+    // The syscall handler simply runs SWAPGS, as syscalls can only originate from usermode,
+    // whereas interrupt handlers conditionally SWAPGS unless the interrupt was triggered from
+    // kernel mode, in which case the "swap state" is already valid, and there is no need to
+    // SWAPGS.
     //
-    // TODO: Linux uses the Interrupt Stack Table to figure out which NMIs were nested. Perhaps
-    // this could be done here, because if nested (sp > initial_sp), that means the NMI could not
-    // have come from userspace. But then, knowing the initial sp would somehow have to involve
-    // percpu, which brings us back to square one. But it might be useful if we would allow faults
-    // in NMIs. If we do detect a nested interrupt, then we can perform the iretq procedure
-    // ourselves, so that the newly nested NMI still blocks additional interrupts while still
-    // returning to the previously (faulting) NMI. See https://lwn.net/Articles/484932/, although I
-    // think the solution becomes a bit simpler when we cannot longer rely on GSBASE anymore.
+    // Handling GSBASE correctly for paranoid interrupts however, is not as simple. NMIs can occur
+    // between the check of whether an interrupt came from usermode, and the actual SWAPGS
+    // instruction. #DB can also be triggered inside of a kernel interrupt handler, due to
+    // breakpoints, even though setting up such breakpoints in the first place, is not yet
+    // supported by the kernel.
+    //
+    // Luckily, the GDT always resides in the PCR (at least after init_paging, but there are no
+    // interrupt handlers set up before that), allowing GSBASE to be calculated relatively cheaply.
+    // Out of the two GSBASE registers, at least one must be *the* kernel GSBASE, allowing for a
+    // simple conditional SWAPGS.
+    //
+    // (An alternative to conditionally executing SWAPGS, would be to save and restore GSBASE via
+    // e.g. the stack. That would nonetheless require saving and restoring both GSBASE registers,
+    // if the interrupt handler should be allowed to context switch, which the current #DB handler
+    // may do.)
+    //
+    // TODO: Handle nested NMIs like Linux does (https://lwn.net/Articles/484932/)?.
 
     () => { concat!(
-        save_gsbase_paranoid!(),
-
-        // Allocate stack space for 8 bytes GDT base and 2 bytes size (ignored).
-        "sub rsp, 16\n",
-        // Set it to the GDT base.
-        "sgdt [rsp + 6]\n",
-        // Get the base pointer
+        // Put the GDT base pointer in RDI.
         "
-        mov rax, [rsp + 8]
+        sub rsp, 16
+        sgdt [rsp + 6]
+        mov rdi, [rsp + 8]
         add rsp, 16
         ",
-        // Load the lower 32 bits of that GDT entry.
-        "mov edx, [rax + {gdt_cpu_id_offset}]\n",
-        // Calculate the percpu offset.
+        // Calculate the PCR address by subtracting the offset of the GDT in the PCR struct.
+        "sub rdi, {PCR_GDT_OFFSET};",
+
+        // Read the current IA32_GS_BASE value into RDX.
+        read_gsbase_into_rdx!(),
+
+        // If they were not equal, the PCR address must instead be in IA32_KERNEL_GS_BASE,
+        // requiring a SWAPGS. GSBASE needs to be swapped back, so store the same flag in RBX.
+
+        // TODO: Spectre V1: LFENCE?
         "
-        mov rbx, {KERNEL_PERCPU_OFFSET}
-        shl rdx, {KERNEL_PERCPU_SHIFT}
-        add rdx, rbx
+        cmp rdx, rdi
+        sete bl
+        je 1f
+        swapgs
+        1:
         ",
-        // Set GSBASE to RAX accordingly
-        set_gsbase_paranoid!(),
     ) }
+}
+macro_rules! conditional_swapgs_back_paranoid {
+    () => { "
+        test ebx, ebx
+        jnz 1f
+        swapgs
+        1:
+    " }
 }
 macro_rules! nop {
     () => { "
-        // Unused: {IA32_GS_BASE} {KERNEL_PERCPU_OFFSET} {KERNEL_PERCPU_SHIFT} {gdt_cpu_id_offset}
+        // Unused: {IA32_GS_BASE} {PCR_GDT_OFFSET}
         " }
 }
 
@@ -399,7 +379,10 @@ macro_rules! interrupt_stack {
                     _guard = $crate::ptrace::set_process_regs($stack);
                 }
 
-                // TODO: Force the declarations to specify unsafe?
+                // TODO: Force the declarations to specify unsafe? For example, accessing a global
+                // core::cell::Cell is safe when running at the "bottom level" (interrupt from
+                // userspace or prior to entering userspace), but UB if simultaneously accessed
+                // from an interrupt.
 
                 #[allow(unused_unsafe)]
                 unsafe {
@@ -442,10 +425,8 @@ macro_rules! interrupt_stack {
 
             inner = sym inner,
             IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
-            KERNEL_PERCPU_SHIFT = const(crate::KERNEL_PERCPU_SHIFT),
-            KERNEL_PERCPU_OFFSET = const(crate::KERNEL_PERCPU_OFFSET),
 
-            gdt_cpu_id_offset = const(crate::gdt::GDT_CPU_ID_CONTAINER * core::mem::size_of::<crate::gdt::GdtEntry>()),
+            PCR_GDT_OFFSET = const(memoffset::offset_of!(crate::gdt::ProcessorControlRegion, gdt)),
 
             options(noreturn),
 
@@ -453,7 +434,7 @@ macro_rules! interrupt_stack {
         }
     };
     ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, swapgs_iff_ring3_fast!, nop!, nop!, swapgs_iff_ring3_fast!, is_paranoid: false, |$stack| $code); };
-    ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, nop!, save_and_set_gsbase_paranoid!, restore_gsbase_paranoid!, nop!, is_paranoid: true, |$stack| $code); }
+    ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, nop!, conditional_swapgs_paranoid!, conditional_swapgs_back_paranoid!, nop!, is_paranoid: true, |$stack| $code); }
 }
 
 #[macro_export]

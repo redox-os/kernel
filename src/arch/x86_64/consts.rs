@@ -20,16 +20,6 @@
     /// Size of kernel heap
     pub const KERNEL_HEAP_SIZE: usize = 1 * 1024 * 1024; // 1 MB
 
-    /// Offset of temporary mapping for misc kernel bring-up actions
-    pub const KERNEL_TMP_MISC_OFFSET: usize = KERNEL_HEAP_OFFSET - PML4_SIZE;
-
-    /// Offset to kernel percpu variables
-    pub const KERNEL_PERCPU_OFFSET: usize = KERNEL_TMP_MISC_OFFSET - PML4_SIZE;
-    pub const KERNEL_PERCPU_PML4: usize = (KERNEL_PERCPU_OFFSET & PML4_MASK)/PML4_SIZE;
-    /// Size of kernel percpu variables
-    pub const KERNEL_PERCPU_SHIFT: u8 = 16; // 2^16 = 64 KiB
-    pub const KERNEL_PERCPU_SIZE: usize = 1_usize << KERNEL_PERCPU_SHIFT;
-
     /// Offset of physmap
     // This needs to match RMM's PHYS_OFFSET
     pub const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;

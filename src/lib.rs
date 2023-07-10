@@ -279,3 +279,23 @@ pub extern fn ksignal(signal: usize) {
             syscall::exit(signal & 0x7F);
         });
 }
+
+// TODO: Use this macro on aarch64 too.
+
+macro_rules! linker_offsets(
+    ($($name:ident),*) => {
+        $(
+        #[inline]
+        pub fn $name() -> usize {
+            extern "C" {
+                // TODO: UnsafeCell?
+                static $name: u8;
+            }
+            unsafe { &$name as *const u8 as usize }
+        }
+        )*
+    }
+);
+pub mod kernel_executable_offsets {
+    linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __tdata_start, __tdata_end, __tbss_start, __tbss_end);
+}

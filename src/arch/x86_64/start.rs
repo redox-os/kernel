@@ -20,7 +20,7 @@ use crate::idt;
 use crate::interrupt;
 use crate::misc;
 use crate::log::{self, info};
-use crate::paging::{self, KernelMapper, TableKind};
+use crate::paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind};
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -132,11 +132,11 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap_base as usize, args.bootstrap_size as usize,
         );
 
-        // Initialize paging
-        let tcb_offset = paging::init(0);
+        // Initialize PAT
+        paging::init();
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(0, tcb_offset, args.stack_base as usize + args.stack_size as usize);
+        gdt::init_paging(args.stack_base as usize + args.stack_size as usize);
 
         // Set up IDT
         idt::init_paging_bsp();
@@ -235,16 +235,11 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         idt::init();
 
         // Initialize paging
-        let tcb_offset = {
-            use crate::paging::{PageMapper, PhysicalAddress};
-            use crate::rmm::FRAME_ALLOCATOR;
-
-            let mut mapper = KernelMapper::lock_for_manual_mapper(cpu_id, PageMapper::new(TableKind::Kernel, PhysicalAddress::new(bsp_table), FRAME_ALLOCATOR));
-            paging::init_ap(cpu_id, &mut mapper)
-        };
+        RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(bsp_table));
+        paging::init();
 
         // Set up GDT with TLS
-        gdt::init_paging(cpu_id as u32, tcb_offset, stack_end);
+        gdt::init_paging(stack_end);
 
         // Set up IDT for AP
         idt::init_paging_post_heap(false, cpu_id);
