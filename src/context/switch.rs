@@ -10,7 +10,6 @@ use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context, CONTEXT_ID};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::gdt;
-use crate::interrupt::irq::PIT_TICKS;
 use crate::interrupt;
 use crate::ptrace;
 use crate::time;
@@ -91,6 +90,20 @@ struct SwitchResult {
 #[thread_local]
 static SWITCH_RESULT: Cell<Option<SwitchResult>> = Cell::new(None);
 
+//resets to 0 in context::switch()
+#[thread_local]
+pub static PIT_TICKS: Cell<usize> = Cell::new(0);
+
+pub fn tick() {
+    let new_ticks = PIT_TICKS.get() + 1;
+    PIT_TICKS.set(new_ticks);
+
+    // Switch after 3 ticks (about 6.75 ms)
+    if new_ticks >= 3 {
+        let _ = unsafe { switch() };
+    }
+}
+
 pub unsafe extern "C" fn switch_finish_hook() {
     if let Some(SwitchResult { prev_lock, next_lock }) = SWITCH_RESULT.take() {
         prev_lock.force_write_unlock();
@@ -110,7 +123,7 @@ pub unsafe extern "C" fn switch_finish_hook() {
 pub unsafe fn switch() -> bool {
     // TODO: Better memory orderings?
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
-    let _ticks = PIT_TICKS.swap(0, Ordering::SeqCst);
+    PIT_TICKS.set(0);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
     while arch::CONTEXT_SWITCH_LOCK.compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {

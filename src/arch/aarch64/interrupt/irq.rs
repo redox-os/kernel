@@ -9,9 +9,6 @@ use crate::time;
 
 use crate::{exception_stack};
 
-//resets to 0 in context::switch()
-pub static PIT_TICKS: AtomicUsize = ATOMIC_USIZE_INIT;
-
 exception_stack!(irq_at_el0, |stack| {
     match gic::irq_ack() {
         30 => irq_handler_gentimer(30),
@@ -56,10 +53,8 @@ pub unsafe fn irq_handler_gentimer(irq: u32) {
 
     timeout::trigger();
 
-    // Switch after 3 ticks (about 6.75 ms)
-    if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 2 {
-        let _ = context::switch();
-    }
+    context::switch::tick();
+
     trigger(irq);
     GENTIMER.reload_count();
 }

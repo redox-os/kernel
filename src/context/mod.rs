@@ -34,7 +34,7 @@ pub mod context;
 mod list;
 
 /// Context switch function
-mod switch;
+pub mod switch;
 
 /// File struct - defines a scheme and a file number
 pub mod file;
