@@ -29,6 +29,7 @@ pub const ENTRY_COUNT: usize = RmmA::PAGE_ENTRIES;
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
 
 /// Setup Memory Access Indirection Register
+#[cold]
 unsafe fn init_mair() {
     let mut val: control_regs::MairEl1 = control_regs::mair_el1();
 
@@ -39,130 +40,10 @@ unsafe fn init_mair() {
     control_regs::mair_el1_write(val);
 }
 
-/// Map percpu
-unsafe fn map_percpu(cpu_id: usize, mapper: &mut PageMapper) -> PageFlushAll<RmmA> {
-    extern "C" {
-        /// The starting byte of the thread data segment
-        static mut __tdata_start: u8;
-        /// The ending byte of the thread data segment
-        static mut __tdata_end: u8;
-        /// The starting byte of the thread BSS segment
-        static mut __tbss_start: u8;
-        /// The ending byte of the thread BSS segment
-        static mut __tbss_end: u8;
-    }
-
-    let size = &__tbss_end as *const _ as usize - &__tdata_start as *const _ as usize;
-    let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
-    let end = start + size;
-
-    let mut flush_all = PageFlushAll::new();
-    let start_page = Page::containing_address(VirtualAddress::new(start));
-    let end_page = Page::containing_address(VirtualAddress::new(end - 1));
-    for page in Page::range_inclusive(start_page, end_page) {
-        let result = mapper.map(
-            page.start_address(),
-            PageFlags::new().write(true).global(cfg!(not(feature = "pti"))),
-        )
-        .expect("failed to allocate page table frames while mapping percpu");
-        flush_all.consume(result);
-    }
-    flush_all
-}
-
-/// Copy tdata, clear tbss, set TCB self pointer
-unsafe fn init_tcb(cpu_id: usize) -> usize {
-    extern "C" {
-        /// The starting byte of the thread data segment
-        static mut __tdata_start: u8;
-        /// The ending byte of the thread data segment
-        static mut __tdata_end: u8;
-        /// The starting byte of the thread BSS segment
-        static mut __tbss_start: u8;
-        /// The ending byte of the thread BSS segment
-        static mut __tbss_end: u8;
-    }
-
-    let tcb_offset;
-    {
-        let size = &__tbss_end as *const _ as usize - &__tdata_start as *const _ as usize;
-        let tbss_offset = &__tbss_start as *const _ as usize - &__tdata_start as *const _ as usize;
-
-        let start = crate::KERNEL_PERCPU_OFFSET + crate::KERNEL_PERCPU_SIZE * cpu_id;
-        println!("SET TPIDR_EL1 TO {:X}", start - 0x10);
-        // FIXME: Empirically initializing tpidr to 16 bytes below start works. I do not know
-        // whether this is the correct way to handle TLS. Will need to revisit.
-        control_regs::tpidr_el1_write((start - 0x10) as u64);
-        println!("SET TPIDR_EL1 DONE");
-
-        let end = start + size;
-        tcb_offset = end - mem::size_of::<usize>();
-
-        ptr::copy(&__tdata_start as *const u8, start as *mut u8, tbss_offset);
-        ptr::write_bytes((start + tbss_offset) as *mut u8, 0, size - tbss_offset);
-
-        *(tcb_offset as *mut usize) = end;
-    }
-    tcb_offset
-}
-
-/// Initialize paging
-///
-/// Returns page table and thread control block offset
-pub unsafe fn init(
-    cpu_id: usize,
-) -> usize {
-    extern "C" {
-        /// The starting byte of the text (code) data segment.
-        static mut __text_start: u8;
-        /// The ending byte of the text (code) data segment.
-        static mut __text_end: u8;
-        /// The starting byte of the _.rodata_ (read-only data) segment.
-        static mut __rodata_start: u8;
-        /// The ending byte of the _.rodata_ (read-only data) segment.
-        static mut __rodata_end: u8;
-        /// The starting byte of the _.data_ segment.
-        static mut __data_start: u8;
-        /// The ending byte of the _.data_ segment.
-        static mut __data_end: u8;
-        /// The starting byte of the thread data segment
-        static mut __tdata_start: u8;
-        /// The ending byte of the thread data segment
-        static mut __tdata_end: u8;
-        /// The starting byte of the thread BSS segment
-        static mut __tbss_start: u8;
-        /// The ending byte of the thread BSS segment
-        static mut __tbss_end: u8;
-        /// The starting byte of the _.bss_ (uninitialized data) segment.
-        static mut __bss_start: u8;
-        /// The ending byte of the _.bss_ (uninitialized data) segment.
-        static mut __bss_end: u8;
-    }
-
+/// Initialize MAIR
+#[cold]
+pub unsafe fn init() {
     init_mair();
-
-    let flush_all = map_percpu(cpu_id, KernelMapper::lock_manually(cpu_id).get_mut().expect("expected KernelMapper not to be locked re-entrant in paging::init"));
-    flush_all.flush();
-
-    return init_tcb(cpu_id);
-}
-
-pub unsafe fn init_ap(
-    cpu_id: usize,
-    bsp_table: &mut KernelMapper,
-) -> usize {
-    init_mair();
-
-    {
-        let flush_all = map_percpu(cpu_id, bsp_table.get_mut().expect("KernelMapper locked re-entrant for AP"));
-
-        // The flush can be ignored as this is not the active table. See later make_current().
-        flush_all.ignore();
-    };
-
-    bsp_table.make_current();
-
-    init_tcb(cpu_id)
 }
 
 /// Page

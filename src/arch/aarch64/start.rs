@@ -22,12 +22,6 @@ use crate::paging::{self, KernelMapper};
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
-/// Test of zero values in thread BSS
-#[thread_local]
-static mut TBSS_TEST_ZERO: usize = 0;
-/// Test of non-zero values in thread data.
-#[thread_local]
-static mut TDATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -138,17 +132,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         );
 
         // Initialize paging
-        let tcb_offset = paging::init(0);
+        paging::init();
 
-        // Test tdata and tbss
-        {
-            assert_eq!(TBSS_TEST_ZERO, 0);
-            TBSS_TEST_ZERO += 1;
-            assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
-            TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFE);
-        }
+        crate::misc::init(0);
 
         // Reset AP variables
         CPU_COUNT.store(1, Ordering::SeqCst);
