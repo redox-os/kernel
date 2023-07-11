@@ -282,5 +282,5 @@ macro_rules! linker_offsets(
     }
 );
 pub mod kernel_executable_offsets {
-    linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __tdata_start, __tdata_end, __tbss_start, __tbss_end, __usercopy_start, __usercopy_end);
+    linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __usercopy_start, __usercopy_end);
 }

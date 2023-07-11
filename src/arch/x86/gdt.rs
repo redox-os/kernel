@@ -74,10 +74,9 @@ const BASE_GDT: [GdtEntry; 9] = [
 
 #[repr(C, align(4096))]
 pub struct ProcessorControlRegion {
-    pub tcb_end: usize,
+    pub self_ref: usize,
     pub user_rsp_tmp: usize,
     pub tss: TssWrapper,
-    pub self_ref: usize,
     pub gdt: [GdtEntry; 9],
     percpu: crate::percpu::PercpuBlock,
 }
@@ -138,8 +137,6 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
         base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
     };
 
-    pcr.tcb_end = init_percpu();
-
     {
         let tss = &pcr.tss.0 as *const _ as usize as u32;
 
@@ -170,28 +167,6 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
         cpu_id,
         switch_internals: Default::default(),
     };
-}
-
-// TODO: Share code with x86. Maybe even with aarch64?
-/// Copy tdata, clear tbss, calculate TCB end pointer
-#[cold]
-unsafe fn init_percpu() -> usize {
-    use crate::kernel_executable_offsets::*;
-
-    let size = __tbss_end() - __tdata_start();
-    assert_eq!(size % PAGE_SIZE, 0);
-
-    let tbss_offset = __tbss_start() - __tdata_start();
-
-    let base_frame = crate::memory::allocate_frames(size / PAGE_SIZE).expect("failed to allocate percpu memory");
-    let base = RmmA::phys_to_virt(base_frame.start_address());
-
-    let tls_end = base.data() + size;
-
-    core::ptr::copy_nonoverlapping(__tdata_start() as *const u8, base.data() as *mut u8, tbss_offset);
-    core::ptr::write_bytes((base.data() + tbss_offset) as *mut u8, 0, size - tbss_offset);
-
-    tls_end
 }
 
 #[derive(Copy, Clone, Debug)]
