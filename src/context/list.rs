@@ -1,7 +1,6 @@
 use alloc::sync::Arc;
 use alloc::collections::BTreeMap;
 use core::{iter, mem};
-use core::sync::atomic::Ordering;
 
 use spin::RwLock;
 
@@ -39,7 +38,7 @@ impl ContextList {
 
     /// Get the current context.
     pub fn current(&self) -> Option<&Arc<RwLock<Context>>> {
-        self.map.get(&super::CONTEXT_ID.load(Ordering::SeqCst))
+        self.map.get(&super::context_id())
     }
 
     pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<ContextId, Arc<RwLock<Context>>> {

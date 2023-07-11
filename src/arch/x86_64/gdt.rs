@@ -4,6 +4,7 @@ use core::convert::TryInto;
 use core::mem;
 
 use crate::paging::{PAGE_SIZE, RmmA, RmmArch};
+use crate::percpu::PercpuBlock;
 
 use x86::bits64::task::TaskStateSegment;
 use x86::Ring;
@@ -82,8 +83,7 @@ pub struct ProcessorControlRegion {
     // The GDT *must* be stored in the PCR! The paranoid interrupt handler, lacking a reliable way
     // to correctly obtain GSBASE, uses SGDT to calculate the PCR offset.
     pub gdt: [GdtEntry; 8],
-    // TODO: Put mailbox queues here, e.g. for TLB shootdown? Just be sure to 128-byte align it
-    // first to avoid cache invalidation.
+    pub percpu: PercpuBlock,
 }
 
 const _: () = {
@@ -145,7 +145,7 @@ unsafe fn load_segments() {
 
 /// Initialize GDT and PCR.
 #[cold]
-pub unsafe fn init_paging(stack_offset: usize) {
+pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR");
     let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
@@ -213,6 +213,11 @@ pub unsafe fn init_paging(stack_offset: usize) {
 
         x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
     }
+
+    pcr.percpu = PercpuBlock {
+        cpu_id,
+        switch_internals: Default::default(),
+    };
 }
 
 /// Copy tdata, clear tbss, calculate TCB end pointer
@@ -268,5 +273,11 @@ impl GdtEntry {
     pub fn set_limit(&mut self, limit: u32) {
         self.limitl = limit as u16;
         self.flags_limith = self.flags_limith & 0xF0 | ((limit >> 16) as u8) & 0x0F;
+    }
+}
+
+impl PercpuBlock {
+    pub fn current() -> &'static Self {
+        unsafe { &*core::ptr::addr_of!((*pcr()).percpu) }
     }
 }

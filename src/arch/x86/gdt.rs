@@ -79,6 +79,7 @@ pub struct ProcessorControlRegion {
     pub tss: TssWrapper,
     pub self_ref: usize,
     pub gdt: [GdtEntry; 9],
+    percpu: crate::percpu::PercpuBlock,
 }
 
 // NOTE: Despite not using #[repr(packed)], we do know that while there may be some padding
@@ -124,7 +125,7 @@ pub unsafe fn init() {
 }
 
 /// Initialize GDT and configure percpu.
-pub unsafe fn init_paging(stack_offset: usize) {
+pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR frame");
     let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
@@ -164,6 +165,11 @@ pub unsafe fn init_paging(stack_offset: usize) {
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+
+    pcr.percpu = crate::percpu::PercpuBlock {
+        cpu_id,
+        switch_internals: Default::default(),
+    };
 }
 
 // TODO: Share code with x86. Maybe even with aarch64?
@@ -226,5 +232,11 @@ impl GdtEntry {
     pub fn set_limit(&mut self, limit: u32) {
         self.limitl = limit as u16;
         self.flags_limith = self.flags_limith & 0xF0 | ((limit >> 16) as u8) & 0x0F;
+    }
+}
+
+impl crate::percpu::PercpuBlock {
+    pub fn current() -> &'static Self {
+        unsafe { &*core::ptr::addr_of!((*pcr()).percpu) }
     }
 }

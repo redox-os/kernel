@@ -48,12 +48,12 @@
 #![feature(iter_array_chunks)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(const_option)]
+#![feature(const_refs_to_cell)]
 #![feature(int_roundings)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
 #![feature(slice_ptr_get, slice_ptr_len)]
 #![feature(sync_unsafe_cell)]
-#![feature(thread_local)]
 #![no_std]
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -64,13 +64,6 @@ extern crate alloc;
 
 #[macro_use]
 extern crate bitflags;
-extern crate bitfield;
-extern crate goblin;
-extern crate linked_list_allocator;
-extern crate rustc_demangle;
-extern crate spin;
-#[cfg(feature = "slab")]
-extern crate slab_allocator;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -125,6 +118,8 @@ pub mod memory;
 #[cfg(not(any(feature="doc", test)))]
 pub mod panic;
 
+pub mod percpu;
+
 /// Process tracing
 pub mod ptrace;
 
@@ -147,14 +142,10 @@ pub mod tests;
 #[global_allocator]
 static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
-/// A unique number that identifies the current CPU - used for scheduling
-#[thread_local]
-static CPU_ID: AtomicUsize = AtomicUsize::new(0);
-
 /// Get the current CPU's scheduling ID
 #[inline(always)]
 pub fn cpu_id() -> usize {
-    CPU_ID.load(Ordering::Relaxed)
+    crate::percpu::PercpuBlock::current().cpu_id
 }
 
 /// The count of all CPUs that can have work scheduled
@@ -185,7 +176,6 @@ static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 pub fn kmain(cpus: usize, bootstrap: Bootstrap) -> ! {
-    CPU_ID.store(0, Ordering::SeqCst);
     CPU_COUNT.store(cpus, Ordering::SeqCst);
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
@@ -226,8 +216,6 @@ pub fn kmain(cpus: usize, bootstrap: Bootstrap) -> ! {
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables)]
 pub fn kmain_ap(id: usize) -> ! {
-    CPU_ID.store(id, Ordering::SeqCst);
-
     if cfg!(feature = "multi_core") {
         context::init();
 

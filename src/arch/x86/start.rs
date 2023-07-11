@@ -25,12 +25,6 @@ use crate::paging::{self, KernelMapper, PhysicalAddress, RmmA, RmmArch, TableKin
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static DATA_TEST_NONZERO: usize = usize::max_value();
-/// Test of zero values in thread BSS
-#[thread_local]
-static mut TBSS_TEST_ZERO: usize = 0;
-/// Test of non-zero values in thread data.
-#[thread_local]
-static mut TDATA_TEST_NONZERO: usize = usize::max_value();
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -134,23 +128,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         paging::init();
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(args.stack_base as usize + args.stack_size as usize);
+        gdt::init_paging(args.stack_base as usize + args.stack_size as usize, 0);
 
         // Set up IDT
         idt::init_paging_bsp();
 
         // Set up syscall instruction
         interrupt::syscall::init();
-
-        // Test tdata and tbss
-        {
-            assert_eq!(TBSS_TEST_ZERO, 0);
-            TBSS_TEST_ZERO += 1;
-            assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
-            TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value() - 1);
-        }
 
         // Reset AP variables
         CPU_COUNT.store(1, Ordering::SeqCst);
@@ -237,23 +221,13 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         paging::init();
 
         // Set up GDT with TLS
-        gdt::init_paging(stack_end);
+        gdt::init_paging(stack_end, cpu_id);
 
         // Set up IDT for AP
         idt::init_paging_post_heap(false, cpu_id);
 
         // Set up syscall instruction
         interrupt::syscall::init();
-
-        // Test tdata and tbss
-        {
-            assert_eq!(TBSS_TEST_ZERO, 0);
-            TBSS_TEST_ZERO += 1;
-            assert_eq!(TBSS_TEST_ZERO, 1);
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value());
-            TDATA_TEST_NONZERO -= 1;
-            assert_eq!(TDATA_TEST_NONZERO, usize::max_value() - 1);
-        }
 
         // Initialize devices (for AP)
         device::init_ap();
