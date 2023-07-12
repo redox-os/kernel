@@ -34,8 +34,6 @@ pub fn map_flags(page_flags: PageFlags<RmmA>) -> MapFlags {
     let mut flags = MapFlags::PROT_READ;
     if page_flags.has_write() { flags |= MapFlags::PROT_WRITE; }
     if page_flags.has_execute() { flags |= MapFlags::PROT_EXEC; }
-    // TODO: MAP_SHARED/MAP_PRIVATE (requires that grants keep track of what they borrow and if
-    // they borrow shared or CoW).
     flags
 }
 

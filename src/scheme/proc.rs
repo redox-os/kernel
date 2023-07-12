@@ -592,7 +592,7 @@ impl Scheme for ProcScheme {
 
         match handle.info.operation {
             Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => {
-                stop_context(handle.info.pid, |context: &mut Context| unsafe {
+                let prev_addr_space = stop_context(handle.info.pid, |context: &mut Context| unsafe {
                     if let Some(saved_regs) = ptrace::regs_for_mut(context) {
                         #[cfg(target_arch = "aarch64")]
                         {
@@ -615,9 +615,7 @@ impl Scheme for ProcScheme {
                         context.clone_entry = Some([new_ip, new_sp]);
                     }
 
-                    let _prev_addr_space = context.set_addr_space(new);
-
-                    Ok(())
+                    Ok(context.set_addr_space(new))
                 })?;
                 let _ = ptrace::send_event(crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0));
             }

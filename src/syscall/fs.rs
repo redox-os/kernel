@@ -387,6 +387,12 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<usize> {
 }
 
 pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
+    // Partial lengths in funmap are allowed according to POSIX, but not particularly meaningful;
+    // since the memory needs to SIGSEGV if later read, the entire page needs to disappear.
+    //
+    // Thus, while (temporarily) allowing unaligned lengths for compatibility, aligning the length
+    // should be done by libc.
+
     let length_aligned = length.next_multiple_of(PAGE_SIZE);
     if length != length_aligned {
         log::warn!("funmap passed length {:#x} instead of {:#x}", length, length_aligned);
@@ -395,7 +401,11 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
     let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned).ok_or(Error::new(EINVAL))?;
     let unpin = false;
-    addr_space.write().munmap(span, unpin)?;
+    let notify = addr_space.write().munmap(span, unpin)?;
+
+    for map in notify {
+        let _ = map.unmap();
+    }
 
     Ok(0)
 }

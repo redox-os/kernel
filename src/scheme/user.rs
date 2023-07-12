@@ -543,9 +543,14 @@ impl UserInner {
         };
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
-        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), |dst_base, flags, mapper, flusher| {
+        let mut notify_files = Vec::new();
+        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags | MAP_FIXED_NOREPLACE, &mut notify_files, |dst_base, flags, mapper, flusher| {
             Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), file_ref, src, mapper, flusher)
         })?;
+
+        for map in notify_files {
+            let _ = map.unmap();
+        }
 
         Ok(dst_base.start_address().data())
     }
@@ -828,6 +833,20 @@ impl KernelScheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         inner.fmap_inner(Arc::clone(addr_space), file, map)
+    }
+    fn kfunmap(&self, number: usize, offset: usize, size: usize) -> Result<()> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let res = inner.call_extended(CallerCtx {
+            pid: context::context_id().into(),
+            uid: offset as u32,
+            gid: (offset >> 32) as u32,
+        }, [KSMSG_MUNMAP, number, size, 0])?;
+
+        match res {
+            Response::Regular(_) => Ok(()),
+            Response::Fd(_) => Err(Error::new(EIO)),
+        }
     }
 
     fn as_user_inner(&self) -> Option<Result<Arc<UserInner>>> {
