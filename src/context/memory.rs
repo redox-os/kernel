@@ -899,7 +899,7 @@ impl Grant {
                 if let Some((phys, _)) = src_mapper.translate(src_page.start_address()) {
                     Frame::containing_address(phys)
                 } else {
-                    let new_frame = init_frame(2, 2).expect("TODO: handle OOM");
+                    let new_frame = init_frame(0, 2).expect("TODO: handle OOM");
                     let src_flush = unsafe { src_mapper.map_phys(src_page.start_address(), new_frame.start_address(), flags).expect("TODO: handle OOM") };
                     src_flusher.consume(src_flush);
 
@@ -907,9 +907,18 @@ impl Grant {
                 }
             };
 
-            let src_page_info = get_page_info(src_frame).expect("allocated page was not present in the global page array");
-            let guard = src_page_info.lock();
-            guard.add_ref(is_cow);
+            let src_frame = {
+                let src_page_info = get_page_info(src_frame).expect("allocated page was not present in the global page array");
+                let mut guard = src_page_info.lock();
+
+                if *guard.borrowed_refcount.get_mut() > 0 {
+                    // Cannot be shared and CoW simultaneously, so use a zeroed page instead.
+                    init_frame(1, 0).map_err(|_| Enomem)?
+                } else {
+                    guard.add_ref(is_cow);
+                    src_frame
+                }
+            };
 
             let Some(map_result) = (unsafe { dst_mapper.map_phys(dst_page, src_frame.start_address(), flags.write(flags.has_write() && !is_cow)) }) else {
                 break;
