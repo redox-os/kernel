@@ -280,7 +280,7 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
         }
     }
 
-    for (base, info) in addr_space.grants.iter() {
+    /*for (base, info) in addr_space.grants.iter() {
         let span = PageSpan::new(base, info.page_count());
         for page in span.pages() {
             let _entry = match addr_space.table.utable.translate(page.start_address()) {
@@ -291,5 +291,5 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
                 }
             };
         }
-    }
+    }*/
 }

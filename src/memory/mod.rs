@@ -3,18 +3,13 @@
 
 use core::cmp;
 use core::num::NonZeroUsize;
-use core::ops::Deref;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
-use crate::context::memory::AddrSpace;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 use crate::rmm::areas;
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
-use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use rmm::{
     FrameAllocator,
@@ -172,7 +167,8 @@ impl RaiiFrame {
         }
     }
     pub fn allocate() -> Result<Self, Enomem> {
-        allocate_frames(1).map(Self::new).ok_or(Enomem)
+        // TODO: Set refcount? Use special tag?
+        crate::memory::allocate_frames(1).ok_or(Enomem).map(|inner| Self { inner })
     }
     pub fn get(&self) -> Frame {
         self.inner
@@ -190,14 +186,33 @@ impl Drop for RaiiFrame {
     }
 }
 
+// TODO: Make PageInfo a union, since *every* allocated page will have an associated PageInfo.
+// Pages that aren't AddrSpace data pages, such as paging-structure pages, might use the memory
+// occupied by a PageInfo for something else, potentially allowing paging structure-level CoW too.
+//
+// TODO: Another interesting possibility would be to use a slab allocator for (ideally
+// power-of-two) allocations smaller than a page, in which case this PageInfo might store a bitmap
+// of used sub-allocations.
+//
+// TODO: Alternatively or in conjunction, the PageInfo can store the number of used entries for
+// each page table, possibly even recursively (total number of mapped pages).
 #[derive(Debug)]
 pub struct PageInfo {
-    pub refcount: AtomicUsize,
-    pub borrowed_refcount: AtomicUsize,
+    /// Stores the reference count to this page, i.e. the number of present page table entries that
+    /// point to this particular frame.
+    ///
+    /// Bits 0..=N-1 are used for the actual reference count, whereas bit N-1 indicates the page is
+    /// shared if set, and CoW if unset. The flag is not meaningful when the refcount is 0 or 1.
+    pub refcount: usize,
+
     // TODO: AtomicFlags?
     pub flags: FrameFlags,
 }
+const RC_SHARED_NOT_COW: usize = 1 << (usize::BITS - 1);
 
+// TODO: Use some of the flag bits as a tag, indicating the type of page (e.g. paging structure,
+// userspace data page, or kernel heap page). This could be done only when debug assertions are
+// enabled.
 bitflags::bitflags! {
     pub struct FrameFlags: usize {
         const NONE = 0;
@@ -247,33 +262,96 @@ pub fn init_mm() {
 
     *guard = sections;
 }
+#[derive(Debug)]
+pub enum AddRefError {
+    RcOverflow,
+    CowToShared,
+    SharedToCow,
+}
 impl PageInfo {
     pub fn new() -> Self {
         Self {
-            refcount: AtomicUsize::new(0),
-            borrowed_refcount: AtomicUsize::new(0),
+            refcount: 0,
             flags: FrameFlags::NONE,
         }
     }
-    pub fn add_ref(&self, cow: bool) {
-        if !cow {
-            self.borrowed_refcount.fetch_add(1, Ordering::Relaxed);
+    pub fn add_ref(&mut self, kind: RefKind) -> Result<(), AddRefError> {
+        let old = self.refcount();
+        match (self.refcount(), kind) {
+            (RefCount::Zero, _) => self.refcount = 1,
+            (RefCount::One, RefKind::Cow) => self.refcount = 2,
+            (RefCount::One, RefKind::Shared) => self.refcount = 2 | RC_SHARED_NOT_COW,
+            (RefCount::Cow(prev), RefKind::Cow) => self.refcount = prev.get().checked_add(1).ok_or(AddRefError::RcOverflow)?,
+            (RefCount::Shared(prev), RefKind::Shared) => self.refcount = prev.get().checked_add(1).ok_or(AddRefError::RcOverflow)? | RC_SHARED_NOT_COW,
+            (RefCount::Cow(prev), RefKind::Shared) => return Err(AddRefError::CowToShared),
+            (RefCount::Shared(prev), RefKind::Cow) => return Err(AddRefError::SharedToCow),
         }
-        self.refcount.fetch_add(1, Ordering::Relaxed);
-
-        core::sync::atomic::fence(Ordering::Release);
+        println!("+: {:?} => {:?}", old, self.refcount());
+        Ok(())
     }
     #[must_use = "must deallocate if refcount reaches zero"]
-    pub fn remove_ref(&self, cow: bool) -> usize {
-        core::sync::atomic::fence(Ordering::Release);
+    pub fn remove_ref(&mut self) -> RefCount {
+        let old = self.refcount();
 
-        if !cow {
-            self.borrowed_refcount.fetch_sub(1, Ordering::Relaxed);
+        match self.refcount() {
+            RefCount::Zero => panic!("refcount was already zero when calling remove_ref!"),
+            RefCount::One => self.refcount = 0,
+            RefCount::Cow(prev) => self.refcount -= 1,
+            RefCount::Shared(prev) => {
+                self.refcount = prev.get() - 1;
+
+                if self.refcount > 1 {
+                    self.refcount |= RC_SHARED_NOT_COW;
+                }
+            }
         }
-        self.refcount.fetch_sub(1, Ordering::Relaxed) - 1
+        println!("-: {:?} => {:?}", old, self.refcount());
+
+        self.refcount()
     }
-    pub fn owned_refcount(&self) -> usize {
-        self.refcount.load(Ordering::SeqCst) - self.borrowed_refcount.load(Ordering::SeqCst)
+    pub fn allows_writable(&self) -> bool {
+        match self.refcount() {
+            RefCount::Zero | RefCount::One => true,
+            RefCount::Cow(_) => false,
+            RefCount::Shared(_) => true,
+        }
+    }
+
+    pub fn refcount(&self) -> RefCount {
+        if let Some(nz_refcount) = NonZeroUsize::new(self.refcount) {
+            if self.refcount == 1 {
+                RefCount::One
+            } else if self.refcount & RC_SHARED_NOT_COW == RC_SHARED_NOT_COW {
+                RefCount::Shared(nz_refcount)
+            } else {
+                RefCount::Cow(nz_refcount)
+            }
+        } else {
+            RefCount::Zero
+        }
+    }
+}
+#[derive(Clone, Copy, Debug)]
+pub enum RefKind {
+    Cow,
+    Shared,
+    // TODO: Observer?
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RefCount {
+    Zero,
+    One,
+    Shared(NonZeroUsize),
+    Cow(NonZeroUsize),
+}
+impl RefCount {
+    pub fn to_raw(self) -> usize {
+        match self {
+            Self::Zero => 0,
+            Self::One => 1,
+            Self::Shared(inner) => inner.get() | RC_SHARED_NOT_COW,
+            Self::Cow(inner) => inner.get(),
+        }
     }
 }
 pub fn get_page_info(frame: Frame) -> Option<&'static Mutex<PageInfo>> {

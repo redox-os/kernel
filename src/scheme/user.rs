@@ -526,7 +526,7 @@ impl UserInner {
                 if base_addr % PAGE_SIZE != 0 {
                     return Err(Error::new(EINVAL));
                 }
-                let addr_space_lock = &*src_address_space;
+                let addr_space_lock = &src_address_space;
                 BorrowedFmapSource {
                     src_base: Page::containing_address(VirtualAddress::new(base_addr)),
                     addr_space_lock,
