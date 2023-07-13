@@ -6,6 +6,7 @@ use core::num::NonZeroUsize;
 
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
+use crate::context::memory::init_frame;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 use crate::rmm::areas;
 
@@ -58,7 +59,7 @@ pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Op
         return allocate_frames(actual).map(|frame| (frame, actual));
     }
 
-    println!(
+    log::error!(
         "!!!! allocate_frames_complex not implemented for count {}, flags {:?}, strategy {:?}, min {}",
         count,
         flags,
@@ -167,8 +168,8 @@ impl RaiiFrame {
         }
     }
     pub fn allocate() -> Result<Self, Enomem> {
-        // TODO: Set refcount? Use special tag?
-        crate::memory::allocate_frames(1).ok_or(Enomem).map(|inner| Self { inner })
+        // TODO: Use special tag?
+        init_frame(RefCount::One).map_err(|_| Enomem).map(|inner| Self { inner })
     }
     pub fn get(&self) -> Frame {
         self.inner
@@ -182,6 +183,7 @@ impl RaiiFrame {
 
 impl Drop for RaiiFrame {
     fn drop(&mut self) {
+        get_page_info(self.inner).expect("RaiiFrame lacking PageInfo").lock().refcount = 0;
         crate::memory::deallocate_frames(self.inner, 1);
     }
 }
@@ -286,7 +288,6 @@ impl PageInfo {
             (RefCount::Cow(prev), RefKind::Shared) => return Err(AddRefError::CowToShared),
             (RefCount::Shared(prev), RefKind::Cow) => return Err(AddRefError::SharedToCow),
         }
-        println!("+: {:?} => {:?}", old, self.refcount());
         Ok(())
     }
     #[must_use = "must deallocate if refcount reaches zero"]
@@ -305,7 +306,6 @@ impl PageInfo {
                 }
             }
         }
-        println!("-: {:?} => {:?}", old, self.refcount());
 
         self.refcount()
     }
@@ -322,7 +322,7 @@ impl PageInfo {
             if self.refcount == 1 {
                 RefCount::One
             } else if self.refcount & RC_SHARED_NOT_COW == RC_SHARED_NOT_COW {
-                RefCount::Shared(nz_refcount)
+                RefCount::Shared(NonZeroUsize::new(self.refcount & !RC_SHARED_NOT_COW).unwrap())
             } else {
                 RefCount::Cow(nz_refcount)
             }

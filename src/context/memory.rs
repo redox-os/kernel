@@ -4,7 +4,6 @@ use syscall::GrantFlags;
 use core::cmp;
 use core::fmt::Debug;
 use core::num::NonZeroUsize;
-use core::sync::atomic::Ordering;
 use spin::{RwLock, RwLockWriteGuard, Once, RwLockUpgradableGuard};
 use syscall::{
     flag::MapFlags,
@@ -98,15 +97,14 @@ impl AddrSpace {
         for (grant_base, grant_info) in self.grants.iter() {
             let new_grant = match grant_info.provider {
                 // No, your temporary UserScheme mappings will not be kept across forks.
-                Provider::External { is_pinned_userscheme_borrow: true, .. } | Provider::PhysBorrowed { is_pinned_userscheme_borrow: true, .. } => continue,
+                Provider::External { is_pinned_userscheme_borrow: true, .. } | Provider::AllocatedShared { is_pinned_userscheme_borrow: true, .. } => continue,
 
-                Provider::PhysBorrowed { base, is_pinned_userscheme_borrow: false } => Grant::physmap(
+                Provider::PhysBorrowed { base } => Grant::physmap(
                     base.clone(),
                     PageSpan::new(grant_base, grant_info.page_count),
                     grant_info.flags,
                     new_mapper,
                     (),
-                    false, // is_pinned_userscheme_borrow
                 )?,
                 Provider::Allocated { ref cow_file_ref } => Grant::copy_mappings(
                     Arc::clone(&self_arc),
@@ -121,7 +119,7 @@ impl AddrSpace {
                     CopyMappingsMode::Owned { cow_file_ref: cow_file_ref.clone() },
                 )?,
                 // TODO: Merge Allocated and AllocatedShared, and make CopyMappingsMode a field?
-                Provider::AllocatedShared => Grant::copy_mappings(
+                Provider::AllocatedShared { is_pinned_userscheme_borrow: false } => Grant::copy_mappings(
                     Arc::clone(&self_arc),
                     grant_base,
                     grant_base,
@@ -636,7 +634,7 @@ pub enum Provider {
     ///
     /// This type of grants is obtained from MAP_SHARED anonymous or `memory:` mappings, i.e.
     /// allocated memory that remains shared after address space clones.
-    AllocatedShared,
+    AllocatedShared { is_pinned_userscheme_borrow: bool },
 
     /// The grant is not owned, but borrowed from physical memory frames that do not belong to the
     /// frame allocator.
@@ -646,7 +644,7 @@ pub enum Provider {
     ///
     // TODO: Stop using PhysBorrowed for head/tail pages when doing scheme calls! Force userspace
     // to provide it, perhaps from relibc?
-    PhysBorrowed { base: Frame, is_pinned_userscheme_borrow: bool },
+    PhysBorrowed { base: Frame },
 
     /// The memory is borrowed directly from another address space.
     External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, is_pinned_userscheme_borrow: bool },
@@ -678,14 +676,45 @@ static THE_ZEROED_FRAME: Once<Frame> = Once::new();
 impl Grant {
     // TODO: PageCount newtype, to avoid confusion between bytes and pages?
 
-    pub fn physmap(phys: Frame, span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, is_pinned_userscheme_borrow: bool) -> Result<Grant> {
+    // TODO: is_pinned
+    pub fn allocated_shared_one_page(frame: Frame, page: Page, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, is_pinned: bool) -> Result<Grant> {
+        match get_page_info(frame).expect("needs page info").lock() {
+            ref mut info => {
+                // This may not necessarily hold, as even pinned memory can remain shared (e.g.
+                // proc: borrow), but it would probably be possible to forbid borrowing memory
+                // there as well.
+                //
+                //assert_eq!(info.refcount(), RefCount::One);
+
+                // Semantically, the page will be shared between the "context struct" and whatever
+                // else.
+                info.add_ref(RefKind::Shared).expect("must be possible if previously Zero");
+            }
+        }
+
+        unsafe {
+            flusher.consume(mapper.map_phys(page.start_address(), frame.start_address(), flags).ok_or(Error::new(ENOMEM))?);
+        }
+
+        Ok(Grant {
+            base: page,
+            info: GrantInfo {
+                page_count: 1,
+                flags,
+                mapped: true,
+                provider: Provider::AllocatedShared { is_pinned_userscheme_borrow: is_pinned },
+            }
+        })
+    }
+
+    pub fn physmap(phys: Frame, span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant> {
         Ok(Grant {
             base: span.base,
             info: GrantInfo {
                 page_count: span.count,
                 flags,
                 mapped: true,
-                provider: Provider::PhysBorrowed { base: phys, is_pinned_userscheme_borrow },
+                provider: Provider::PhysBorrowed { base: phys },
             },
         })
     }
@@ -715,7 +744,7 @@ impl Grant {
                 flags,
                 mapped: true,
                 provider: if shared {
-                    Provider::AllocatedShared
+                    Provider::AllocatedShared { is_pinned_userscheme_borrow: false }
                 } else {
                     Provider::Allocated { cow_file_ref: None }
                 },
@@ -956,7 +985,7 @@ impl Grant {
                 mapped: true,
                 provider: match mode {
                     CopyMappingsMode::Owned { cow_file_ref } => Provider::Allocated { cow_file_ref },
-                    CopyMappingsMode::Borrowed => Provider::AllocatedShared,
+                    CopyMappingsMode::Borrowed => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
                 },
             }
         })
@@ -1011,17 +1040,19 @@ impl Grant {
             };
             let frame = Frame::containing_address(phys);
 
-            let require_info = match self.info.provider {
-                Provider::Allocated { .. } => true,
-                Provider::AllocatedShared => true,
-                Provider::External { .. } => false,
-                Provider::PhysBorrowed { .. } => false,
-                Provider::FmapBorrowed { .. } => false,
+            let (use_info, require_info) = match self.info.provider {
+                Provider::Allocated { .. } => (true, true),
+                Provider::AllocatedShared { .. } => (true, true),
+                Provider::External { .. } => (true, false),
+                Provider::PhysBorrowed { .. } => (false, false),
+                Provider::FmapBorrowed { .. } => (true, false),
             };
+            // TODO: use_info IS A HACK! It shouldn't be possible to obtain *any* PhysBorrowed
+            // grants to allocator-owned memory! Replace physalloc/physfree with something like
+            // madvise(range, PHYSICALLY_CONTIGUOUS).
 
-            if let Some(info) = get_page_info(frame) {
+            if use_info && let Some(info) = get_page_info(frame) {
                 let mut guard = info.lock();
-                log::info!("Removing ref for {:?}", frame);
                 if guard.remove_ref() == RefCount::Zero {
                     deallocate_frames(frame, 1);
                 };
@@ -1036,8 +1067,7 @@ impl Grant {
         self.info.mapped = false;
 
         // Dummy value, won't be read.
-        let dangling_frame = Frame::containing_address(PhysicalAddress::new(PAGE_SIZE));
-        let provider = core::mem::replace(&mut self.info.provider, Provider::PhysBorrowed { base: dangling_frame, is_pinned_userscheme_borrow: false });
+        let provider = core::mem::replace(&mut self.info.provider, Provider::AllocatedShared { is_pinned_userscheme_borrow: false });
 
         UnmapResult {
             size: self.info.page_count * PAGE_SIZE,
@@ -1083,8 +1113,8 @@ impl Grant {
                         is_pinned_userscheme_borrow: false,
                     },
                     Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
-                    Provider::AllocatedShared => Provider::AllocatedShared,
-                    Provider::PhysBorrowed { base, .. } => Provider::PhysBorrowed { base: base.clone(), is_pinned_userscheme_borrow: false },
+                    Provider::AllocatedShared { .. }  => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.clone() },
                     Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }
                 }
             },
@@ -1093,9 +1123,9 @@ impl Grant {
         let middle_page_offset = before_grant.as_ref().map_or(0, |g| g.info.page_count);
 
         match self.info.provider {
-            Provider::PhysBorrowed { ref mut base, .. } => *base = base.next_by(middle_page_offset),
+            Provider::PhysBorrowed { ref mut base } => *base = base.next_by(middle_page_offset),
             Provider::FmapBorrowed { ref mut file_ref } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref) } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
-            Provider::Allocated { cow_file_ref: None } | Provider::AllocatedShared | Provider::External { .. } => (),
+            Provider::Allocated { cow_file_ref: None } | Provider::AllocatedShared { .. } | Provider::External { .. } => (),
         }
 
 
@@ -1107,7 +1137,7 @@ impl Grant {
                 page_count: span.count,
                 provider: match self.info.provider {
                     Provider::Allocated { cow_file_ref: None } => Provider::Allocated { cow_file_ref: None },
-                    Provider::AllocatedShared => Provider::AllocatedShared,
+                    Provider::AllocatedShared { .. } => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
                     Provider::Allocated { cow_file_ref: Some(ref file_ref) } => Provider::Allocated { cow_file_ref: Some(GrantFileRef {
                         base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
                         description: Arc::clone(&file_ref.description),
@@ -1118,7 +1148,7 @@ impl Grant {
                         is_pinned_userscheme_borrow: false,
                     },
 
-                    Provider::PhysBorrowed { base, .. } => Provider::PhysBorrowed { base: base.next_by(this_span.count), is_pinned_userscheme_borrow: false },
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
                     Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: GrantFileRef {
                         base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
                         description: Arc::clone(&file_ref.description),
@@ -1135,10 +1165,10 @@ impl Grant {
 }
 impl GrantInfo {
     pub fn is_pinned(&self) -> bool {
-        matches!(self.provider, Provider::External { is_pinned_userscheme_borrow: true, .. } | Provider::PhysBorrowed { is_pinned_userscheme_borrow: true, .. })
+        matches!(self.provider, Provider::External { is_pinned_userscheme_borrow: true, .. } | Provider::AllocatedShared { is_pinned_userscheme_borrow: true, .. })
     }
     pub fn unpin(&mut self) {
-        if let Provider::External { ref mut is_pinned_userscheme_borrow, .. } | Provider::PhysBorrowed { ref mut is_pinned_userscheme_borrow, .. } = self.provider {
+        if let Provider::External { ref mut is_pinned_userscheme_borrow, .. } | Provider::AllocatedShared { ref mut is_pinned_userscheme_borrow, .. } = self.provider {
             *is_pinned_userscheme_borrow = false;
         }
     }
@@ -1192,12 +1222,12 @@ impl GrantInfo {
                 // !GRANT_SHARED is equivalent to "GRANT_PRIVATE"
                 flags.set(GrantFlags::GRANT_SCHEME, cow_file_ref.is_some());
             }
-            Provider::AllocatedShared => {
+            Provider::AllocatedShared { is_pinned_userscheme_borrow } => {
                 flags |= GrantFlags::GRANT_SHARED;
-            }
-            Provider::PhysBorrowed { is_pinned_userscheme_borrow, .. } => {
-                flags |= GrantFlags::GRANT_SHARED | GrantFlags::GRANT_PHYS;
                 flags.set(GrantFlags::GRANT_PINNED, is_pinned_userscheme_borrow);
+            }
+            Provider::PhysBorrowed { .. } => {
+                flags |= GrantFlags::GRANT_SHARED | GrantFlags::GRANT_PHYS;
             }
             Provider::FmapBorrowed { .. } => {
                 flags |= GrantFlags::GRANT_SHARED | GrantFlags::GRANT_SCHEME;
@@ -1363,8 +1393,6 @@ fn cow(old_frame: Frame, old_info: &mut PageInfo, initial_ref_kind: RefKind) -> 
 
     let _ = old_info.remove_ref();
 
-    log::info!("CoW {:?} => {:?} rk {:?}", old_frame, new_frame, initial_ref_kind);
-
     Ok(new_frame)
 }
 
@@ -1373,8 +1401,6 @@ pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let page_info = get_page_info(new_frame).expect("all allocated frames need an associated page info");
     let mut guard = page_info.lock();
     guard.refcount = init_rc.to_raw();
-
-    log::info!("Init {:?} rc {:?}", new_frame, init_rc);
 
     Ok(new_frame)
 }
@@ -1461,7 +1487,7 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
     let mut debug = false;
 
     let frame = match grant_info.provider {
-        Provider::Allocated { .. } | Provider::AllocatedShared if access == AccessMode::Write => {
+        Provider::Allocated { .. } | Provider::AllocatedShared { .. } if access == AccessMode::Write => {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
                 Some((frame, Some(info_lock))) => {
@@ -1476,7 +1502,7 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
             }
         }
 
-        Provider::Allocated { .. } | Provider::AllocatedShared => {
+        Provider::Allocated { .. } | Provider::AllocatedShared { .. } => {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
 
@@ -1498,11 +1524,10 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                 }
             }
         }
-        Provider::PhysBorrowed { base, .. } => {
+        Provider::PhysBorrowed { base } => {
             base.next_by(pages_from_grant_start)
         }
         Provider::External { address_space: ref foreign_address_space, src_base, .. } => {
-            log::info!("RESOLVING");
             debug = true;
 
             let foreign_address_space = Arc::clone(foreign_address_space);
@@ -1532,8 +1557,6 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
 
                     addr_space_guard = addr_space_lock.write();
                     addr_space = &mut *addr_space_guard;
-
-                    log::info!("Resolved indirectly, {:?} => {:?}", src_page, frame);
 
                     frame
                 };

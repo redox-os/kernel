@@ -4,7 +4,6 @@ use alloc::sync::Arc;
 use rmm::PhysicalAddress;
 use alloc::vec::Vec;
 use spin::RwLock;
-use syscall::MapFlags;
 
 use crate::memory::{free_frames, used_frames, PAGE_SIZE, Frame};
 use crate::context::memory::{AddrSpace, Grant, PageSpan, handle_notify_files};
@@ -114,7 +113,6 @@ impl MemoryScheme {
                 page_flags,
                 dst_mapper,
                 dst_flusher,
-                is_pinned,
             )
         }).map(|page| page.start_address().data())
 
