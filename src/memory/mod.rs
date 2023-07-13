@@ -212,7 +212,10 @@ pub struct PageInfo {
     /// shared if set, and CoW if unset. The flag is not meaningful when the refcount is 0 or 1.
     pub refcount: AtomicUsize,
 
-    // TODO: AtomicFlags?
+    // TODO: Needs to be atomic, or we can introduce some form of lock.
+    //
+    // TODO: Add one flag indicating whether the page contents is zeroed? Or should this primarily
+    // be managed by the memory allocator first?
     pub flags: FrameFlags,
 }
 const RC_SHARED_NOT_COW: usize = 1 << (usize::BITS - 1);
@@ -226,15 +229,15 @@ bitflags::bitflags! {
     }
 }
 
-// TODO: Very read-heavy RwLock?
+// TODO: Very read-heavy RwLock? ArcSwap?
 //
 // XXX: Is it possible to safely initialize an empty boxed slice from a const context?
 //pub static SECTIONS: RwLock<Box<[&'static Section]>> = RwLock::new(Box::new([]));
-pub static SECTIONS: RwLock<Vec<&'static Section>> = RwLock::new(Vec::new());
+pub static SECTIONS: RwLock<Vec<Section>> = RwLock::new(Vec::new());
 
 pub struct Section {
     base: Frame,
-    frames: Box<[PageInfo]>,
+    frames: &'static [PageInfo],
 }
 
 pub const MAX_SECTION_SIZE_BITS: u32 = 27;
@@ -253,11 +256,11 @@ pub fn init_mm() {
         while pages_left > 0 {
             let section_page_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
 
-            sections.push(Box::leak(Box::new(Section {
+            sections.push(Section {
                 base,
                 // TODO: zeroed rather than PageInfo::new()?
-                frames: try_box_slice_new(PageInfo::new, section_page_count).expect("failed to allocate pages array"),
-            })) as &'static Section);
+                frames: Box::leak(try_box_slice_new(PageInfo::new, section_page_count).expect("failed to allocate pages array")),
+            });
 
             pages_left -= section_page_count;
             base = base.next_by(section_page_count);
