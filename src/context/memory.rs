@@ -4,6 +4,7 @@ use syscall::GrantFlags;
 use core::cmp;
 use core::fmt::Debug;
 use core::num::NonZeroUsize;
+use core::sync::atomic::Ordering;
 use spin::{RwLock, RwLockWriteGuard, Once, RwLockUpgradableGuard};
 use syscall::{
     flag::MapFlags,
@@ -678,19 +679,19 @@ impl Grant {
 
     // TODO: is_pinned
     pub fn allocated_shared_one_page(frame: Frame, page: Page, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, is_pinned: bool) -> Result<Grant> {
-        match get_page_info(frame).expect("needs page info").lock() {
-            ref mut info => {
-                // This may not necessarily hold, as even pinned memory can remain shared (e.g.
-                // proc: borrow), but it would probably be possible to forbid borrowing memory
-                // there as well.
-                //
-                //assert_eq!(info.refcount(), RefCount::One);
+        let info = get_page_info(frame).expect("needs page info");
 
-                // Semantically, the page will be shared between the "context struct" and whatever
-                // else.
-                info.add_ref(RefKind::Shared).expect("must be possible if previously Zero");
-            }
-        }
+        // TODO:
+        //
+        // This may not necessarily hold, as even pinned memory can remain shared (e.g.
+        // proc: borrow), but it would probably be possible to forbid borrowing memory
+        // there as well.
+        //
+        // assert_eq!(info.refcount(), RefCount::One);
+
+        // Semantically, the page will be shared between the "context struct" and whatever
+        // else.
+        info.add_ref(RefKind::Shared).expect("must be possible if previously Zero");
 
         unsafe {
             flusher.consume(mapper.map_phys(page.start_address(), frame.start_address(), flags).ok_or(Error::new(ENOMEM))?);
@@ -807,11 +808,9 @@ impl Grant {
                 };
 
                 let frame = if let Some(page_info) = get_page_info(frame) {
-                    let mut guard = page_info.lock();
-
-                    match guard.add_ref(RefKind::Shared) {
+                    match page_info.add_ref(RefKind::Shared) {
                         Ok(()) => frame,
-                        Err(AddRefError::CowToShared) => cow(frame, &mut *guard, RefKind::Shared).map_err(|_| Error::new(ENOMEM))?,
+                        Err(AddRefError::CowToShared) => cow(frame, page_info, RefKind::Shared).map_err(|_| Error::new(ENOMEM))?,
                         Err(AddRefError::SharedToCow) => unreachable!(),
                         Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
                     }
@@ -947,13 +946,12 @@ impl Grant {
 
             let src_frame = {
                 let src_page_info = get_page_info(src_frame).expect("allocated page was not present in the global page array");
-                let mut guard = src_page_info.lock();
 
-                match guard.add_ref(rk) {
+                match src_page_info.add_ref(rk) {
                     Ok(()) => src_frame,
                     Err(AddRefError::RcOverflow) => return Err(Enomem),
                     Err(AddRefError::CowToShared) => {
-                        let new_frame = cow(src_frame, &mut *guard, rk).map_err(|_| Enomem)?;
+                        let new_frame = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
 
                         // TODO: Flusher
                         unsafe {
@@ -965,7 +963,7 @@ impl Grant {
                     // Cannot be shared and CoW simultaneously.
                     Err(AddRefError::SharedToCow) => {
                         // TODO: Copy in place, or use a zeroed page?
-                        cow(src_frame, &mut *guard, rk).map_err(|_| Enomem)?
+                        cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?
                     },
                 }
             };
@@ -1052,8 +1050,7 @@ impl Grant {
             // madvise(range, PHYSICALLY_CONTIGUOUS).
 
             if use_info && let Some(info) = get_page_info(frame) {
-                let mut guard = info.lock();
-                if guard.remove_ref() == RefCount::Zero {
+                if info.remove_ref() == RefCount::Zero {
                     deallocate_frames(frame, 1);
                 };
             } else {
@@ -1376,7 +1373,7 @@ pub enum PfError {
     RecursionLimitExceeded,
 }
 
-fn cow(old_frame: Frame, old_info: &mut PageInfo, initial_ref_kind: RefKind) -> Result<Frame, PfError> {
+fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Result<Frame, PfError> {
     assert_ne!(old_info.refcount(), RefCount::Zero);
 
     if old_info.refcount() == RefCount::One {
@@ -1399,8 +1396,8 @@ fn cow(old_frame: Frame, old_info: &mut PageInfo, initial_ref_kind: RefKind) -> 
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).expect("all allocated frames need an associated page info");
-    let mut guard = page_info.lock();
-    guard.refcount = init_rc.to_raw();
+    assert_eq!(page_info.refcount(), RefCount::Zero);
+    page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
 
     Ok(new_frame)
 }
@@ -1490,12 +1487,11 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
         Provider::Allocated { .. } | Provider::AllocatedShared { .. } if access == AccessMode::Write => {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
-                Some((frame, Some(info_lock))) => {
-                    let mut guard = info_lock.lock();
-                    if guard.allows_writable() {
+                Some((frame, Some(info))) => {
+                    if info.allows_writable() {
                         frame
                     } else {
-                        cow(frame, &mut *guard, RefKind::Cow)?
+                        cow(frame, info, RefKind::Cow)?
                     }
                 },
                 _ => map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, true)?,
@@ -1508,12 +1504,11 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
 
                 // TODO: Can this match arm even be reached? In other words, can the TLB cache
                 // remember that pages are not present?
-                Some((frame, Some(page_info_lock))) => {
-                    let guard = page_info_lock.lock();
+                Some((frame, Some(page_info))) => {
                     // Keep in mind that allow_writable must always be true if this code is reached
                     // for AllocatedShared, since shared pages cannot be mapped lazily (without
                     // using AddrSpace backrefs).
-                    allow_writable = guard.allows_writable();
+                    allow_writable = page_info.allows_writable();
 
                     frame
                 }
@@ -1561,14 +1556,13 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                     frame
                 };
 
-                let info_lock = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
-                let mut info = info_lock.lock();
+                let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
 
                 match info.add_ref(RefKind::Shared) {
                     Ok(()) => src_frame,
                     Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                     Err(AddRefError::CowToShared) => {
-                        let new_frame = cow(src_frame, &mut *info, RefKind::Shared)?;
+                        let new_frame = cow(src_frame, info, RefKind::Shared)?;
 
                         let mut guard = foreign_address_space.write();
 

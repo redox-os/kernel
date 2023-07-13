@@ -3,6 +3,7 @@
 
 use core::cmp;
 use core::num::NonZeroUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
@@ -16,7 +17,7 @@ use rmm::{
     FrameAllocator,
     FrameCount,
 };
-use spin::{RwLock, Mutex};
+use spin::RwLock;
 use crate::syscall::flag::{PartialAllocStrategy, PhysallocFlags};
 use crate::syscall::error::{ENOMEM, Error};
 
@@ -183,7 +184,11 @@ impl RaiiFrame {
 
 impl Drop for RaiiFrame {
     fn drop(&mut self) {
-        get_page_info(self.inner).expect("RaiiFrame lacking PageInfo").lock().refcount = 0;
+        let info = get_page_info(self.inner).expect("RaiiFrame lacking PageInfo");
+
+        if info.refcount.load(Ordering::Relaxed) == 0 {
+            info.refcount.store(0, Ordering::Release);
+        }
         crate::memory::deallocate_frames(self.inner, 1);
     }
 }
@@ -205,7 +210,7 @@ pub struct PageInfo {
     ///
     /// Bits 0..=N-1 are used for the actual reference count, whereas bit N-1 indicates the page is
     /// shared if set, and CoW if unset. The flag is not meaningful when the refcount is 0 or 1.
-    pub refcount: usize,
+    pub refcount: AtomicUsize,
 
     // TODO: AtomicFlags?
     pub flags: FrameFlags,
@@ -229,7 +234,7 @@ pub static SECTIONS: RwLock<Vec<&'static Section>> = RwLock::new(Vec::new());
 
 pub struct Section {
     base: Frame,
-    frames: Box<[Mutex<PageInfo>]>,
+    frames: Box<[PageInfo]>,
 }
 
 pub const MAX_SECTION_SIZE_BITS: u32 = 27;
@@ -251,7 +256,7 @@ pub fn init_mm() {
             sections.push(Box::leak(Box::new(Section {
                 base,
                 // TODO: zeroed rather than PageInfo::new()?
-                frames: try_box_slice_new(|| Mutex::new(PageInfo::new()), section_page_count).expect("failed to allocate pages array"),
+                frames: try_box_slice_new(PageInfo::new, section_page_count).expect("failed to allocate pages array"),
             })) as &'static Section);
 
             pages_left -= section_page_count;
@@ -273,41 +278,38 @@ pub enum AddRefError {
 impl PageInfo {
     pub fn new() -> Self {
         Self {
-            refcount: 0,
+            refcount: AtomicUsize::new(0),
             flags: FrameFlags::NONE,
         }
     }
-    pub fn add_ref(&mut self, kind: RefKind) -> Result<(), AddRefError> {
+    pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
         let old = self.refcount();
+
         match (self.refcount(), kind) {
-            (RefCount::Zero, _) => self.refcount = 1,
-            (RefCount::One, RefKind::Cow) => self.refcount = 2,
-            (RefCount::One, RefKind::Shared) => self.refcount = 2 | RC_SHARED_NOT_COW,
-            (RefCount::Cow(prev), RefKind::Cow) => self.refcount = prev.get().checked_add(1).ok_or(AddRefError::RcOverflow)?,
-            (RefCount::Shared(prev), RefKind::Shared) => self.refcount = prev.get().checked_add(1).ok_or(AddRefError::RcOverflow)? | RC_SHARED_NOT_COW,
+            (RefCount::Zero, _) => self.refcount.store(1, Ordering::Relaxed),
+            (RefCount::One, RefKind::Cow) => self.refcount.store(2, Ordering::Relaxed),
+            (RefCount::One, RefKind::Shared) => self.refcount.store(2 | RC_SHARED_NOT_COW, Ordering::Relaxed),
+            (RefCount::Cow(prev), RefKind::Cow) | (RefCount::Shared(prev), RefKind::Shared) => {
+                self.refcount.fetch_add(1, Ordering::Relaxed);
+            }
             (RefCount::Cow(prev), RefKind::Shared) => return Err(AddRefError::CowToShared),
             (RefCount::Shared(prev), RefKind::Cow) => return Err(AddRefError::SharedToCow),
         }
         Ok(())
     }
     #[must_use = "must deallocate if refcount reaches zero"]
-    pub fn remove_ref(&mut self) -> RefCount {
+    pub fn remove_ref(&self) -> RefCount {
         let old = self.refcount();
 
-        match self.refcount() {
+        RefCount::from_raw(match self.refcount() {
             RefCount::Zero => panic!("refcount was already zero when calling remove_ref!"),
-            RefCount::One => self.refcount = 0,
-            RefCount::Cow(prev) => self.refcount -= 1,
-            RefCount::Shared(prev) => {
-                self.refcount = prev.get() - 1;
+            RefCount::One => {
+                self.refcount.store(0, Ordering::Relaxed);
 
-                if self.refcount > 1 {
-                    self.refcount |= RC_SHARED_NOT_COW;
-                }
+                0
             }
-        }
-
-        self.refcount()
+            RefCount::Cow(_) | RefCount::Shared(_) => self.refcount.fetch_sub(1, Ordering::Relaxed) - 1,
+        })
     }
     pub fn allows_writable(&self) -> bool {
         match self.refcount() {
@@ -318,17 +320,9 @@ impl PageInfo {
     }
 
     pub fn refcount(&self) -> RefCount {
-        if let Some(nz_refcount) = NonZeroUsize::new(self.refcount) {
-            if self.refcount == 1 {
-                RefCount::One
-            } else if self.refcount & RC_SHARED_NOT_COW == RC_SHARED_NOT_COW {
-                RefCount::Shared(NonZeroUsize::new(self.refcount & !RC_SHARED_NOT_COW).unwrap())
-            } else {
-                RefCount::Cow(nz_refcount)
-            }
-        } else {
-            RefCount::Zero
-        }
+        let refcount = self.refcount.load(Ordering::Relaxed);
+
+        RefCount::from_raw(refcount)
     }
 }
 #[derive(Clone, Copy, Debug)]
@@ -345,6 +339,21 @@ pub enum RefCount {
     Cow(NonZeroUsize),
 }
 impl RefCount {
+    pub fn from_raw(raw: usize) -> Self {
+        let refcount = raw & !RC_SHARED_NOT_COW;
+
+        if let Some(nz_refcount) = NonZeroUsize::new(refcount) {
+            if refcount == 1 {
+                RefCount::One
+            } else if raw & RC_SHARED_NOT_COW == RC_SHARED_NOT_COW {
+                RefCount::Shared(nz_refcount)
+            } else {
+                RefCount::Cow(nz_refcount)
+            }
+        } else {
+            RefCount::Zero
+        }
+    }
     pub fn to_raw(self) -> usize {
         match self {
             Self::Zero => 0,
@@ -354,7 +363,7 @@ impl RefCount {
         }
     }
 }
-pub fn get_page_info(frame: Frame) -> Option<&'static Mutex<PageInfo>> {
+pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
     let sections = SECTIONS.read();
 
     let idx = sections
