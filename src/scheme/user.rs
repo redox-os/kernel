@@ -145,7 +145,7 @@ impl UserInner {
             destroyed: false,
             base: dst_page.start_address().data(),
             len: buf.len(),
-            space: None,
+            space: Some(dst_addr_space),
             head: CopyInfo {
                 src: Some(tail),
                 dst: None,
