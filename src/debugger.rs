@@ -185,11 +185,9 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
                 for (base, info) in addr_space.grants.iter() {
                     let size = info.page_count() * PAGE_SIZE;
                     println!(
-                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {}",
+                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
                         base.start_address().data(), base.start_address().data() + size - 1, size,
-                        //if info.is_owned() { "owned" } else { "borrowed" },
-                        // TODO
-                        "",
+                        info.provider,
                     );
                 }
             }
@@ -231,6 +229,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace) {
     use crate::context::memory::PageSpan;
+    use crate::memory::{get_page_info, Frame, RefCount};
     use crate::paging::*;
 
     let p4 = addr_space.table.utable.table();
@@ -271,9 +270,23 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
                             continue;
                         }
                     };
-                    const STICKY: usize = (1 << 5) | (1 << 6); // accessed+dirty
-                    if grant.flags().data() & !STICKY != flags.data() & !STICKY {
+
+                    const EXCLUDE: usize = (1 << 5) | (1 << 6) | (1 << 1); // accessed+dirty+writable
+                    if grant.flags().data() & !EXCLUDE != flags.data() & !EXCLUDE {
                         log::error!("FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}", grant.flags(), flags, address.data() as *const u8, PageSpan::new(base, grant.page_count()));
+                    }
+
+                    if let Some(page) = get_page_info(Frame::containing_address(physaddr)) {
+                        match page.refcount() {
+                            // TODO: Remove physalloc, and ensure physmap cannot map
+                            // allocator-owned memory! This is a hack!
+
+                            //RefCount::Zero => panic!("mapped page with zero refcount"),
+                            RefCount::Zero => (),
+
+                            RefCount::One | RefCount::Shared(_) => assert!(!(flags.has_write() && !grant.flags().has_write()), "page entry has higher permissions than grant!"),
+                            RefCount::Cow(_) => assert!(!flags.has_write(), "directly writable CoW page!"),
+                        }
                     }
                 }
             }
