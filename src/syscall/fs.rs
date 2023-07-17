@@ -1,11 +1,12 @@
 //! Filesystem syscalls
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context;
-use crate::context::memory::PageSpan;
-use crate::paging::{PAGE_SIZE, VirtualAddress};
+use crate::context::memory::{PageSpan, AddrSpace};
+use crate::paging::{PAGE_SIZE, VirtualAddress, Page};
 use crate::scheme::{self, FileHandle, OpenResult, current_caller_ctx, KernelScheme, SchemeId};
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
@@ -408,4 +409,36 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     }
 
     Ok(0)
+}
+
+pub fn mremap(old_address: usize, old_size: usize, new_address: usize, new_size: usize, flags: MremapFlags) -> Result<usize> {
+    if old_address % PAGE_SIZE != 0 || old_size % PAGE_SIZE != 0 || new_address % PAGE_SIZE != 0 || new_size % PAGE_SIZE != 0 {
+        return Err(Error::new(EINVAL));
+    }
+    if old_size == 0 || new_size == 0 {
+        return Err(Error::new(EINVAL));
+    }
+
+    // TODO
+    if old_size != new_size {
+        return Err(Error::new(EOPNOTSUPP));
+    }
+
+    let old_base = Page::containing_address(VirtualAddress::new(old_address));
+    let new_base = Page::containing_address(VirtualAddress::new(new_address));
+
+    let mut map_flags = if flags.contains(MremapFlags::FIXED_REPLACE) {
+        MapFlags::MAP_FIXED
+    } else if flags.contains(MremapFlags::FIXED) {
+        MapFlags::MAP_FIXED_NOREPLACE
+    } else {
+        MapFlags::empty()
+    };
+    let addr_space = AddrSpace::current()?;
+    let src_span = PageSpan::new(old_base, old_size / PAGE_SIZE);
+    let requested_dst_base = Some(new_base).filter(|_| new_address != 0);
+
+    let base = AddrSpace::r#move(&mut *addr_space.write(), None, src_span, requested_dst_base, map_flags, &mut Vec::new())?;
+
+    Ok(base.start_address().data())
 }

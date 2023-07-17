@@ -4,7 +4,7 @@
 
 extern crate syscall;
 
-use syscall::{EventFlags, EOVERFLOW};
+use syscall::{EventFlags, EOVERFLOW, MremapFlags, EINVAL};
 
 pub use self::syscall::{
     FloatRegisters,
@@ -169,6 +169,9 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                 SYS_PHYSMAP => physmap(b, c, PhysmapFlags::from_bits_truncate(d)),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
+
+                SYS_MREMAP => mremap(b, c, d, e, MremapFlags::from_bits(f).ok_or(Error::new(EINVAL))?),
+
                 _ => Err(Error::new(ENOSYS))
             }
         }
