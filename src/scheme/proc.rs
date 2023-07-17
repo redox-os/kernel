@@ -694,7 +694,7 @@ impl KernelScheme for ProcScheme {
                 let result_base = if consume {
                     AddrSpace::r#move(&mut *dst_addr_space, &mut *src_addr_space, src_span, requested_dst_base, map.flags, &mut notify_files)?
                 } else {
-                    dst_addr_space.mmap(requested_dst_base, src_page_count, map.flags, &mut notify_files, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Arc::clone(addrspace), &*src_addr_space, src_span.base, dst_page, src_span.count, flags, dst_mapper, flusher, true, true, false)?))?
+                    dst_addr_space.mmap(requested_dst_base, src_page_count, map.flags, &mut notify_files, |dst_page, flags, dst_mapper, flusher| Ok(Grant::borrow(Arc::clone(addrspace), &mut *src_addr_space, src_span.base, dst_page, src_span.count, flags, dst_mapper, flusher, true, true, false)?))?
                 };
 
                 handle_notify_files(notify_files);

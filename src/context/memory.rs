@@ -482,6 +482,20 @@ impl UserGrants {
             .take_while(move |(base, info)| PageSpan::new(**base, info.page_count).intersects(span))
             .map(|(base, info)| (*base, info))
     }
+    // TODO: DEDUPLICATE CODE!
+    pub fn conflicts_mut(&mut self, span: PageSpan) -> impl Iterator<Item = (Page, &'_ mut GrantInfo)> + '_ {
+        let start = self.contains(span.base);
+
+        // If there is a grant that contains the base page, start searching at the base of that
+        // grant, rather than the requested base here.
+        let start_span = start.map(|(base, info)| PageSpan::new(base, info.page_count)).unwrap_or(span);
+
+        self
+            .inner
+            .range_mut(start_span.base..)
+            .take_while(move |(base, info)| PageSpan::new(**base, info.page_count).intersects(span))
+            .map(|(base, info)| (*base, info))
+    }
     /// Return a free region with the specified size
     // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
     // TODO: Support finding grant close to a requested address?
@@ -655,7 +669,7 @@ pub enum Provider {
     /// Since the address space is not tracked here, all nonpresent pages must be present before
     /// the fmap operation completes, unless MAP_LAZY is specified. They are tracked using
     /// PageInfo, or treated as PhysBorrowed if any frame lacks a PageInfo.
-    FmapBorrowed { file_ref: GrantFileRef },
+    FmapBorrowed { file_ref: GrantFileRef, pin_refcount: usize },
 }
 
 #[derive(Debug)]
@@ -828,7 +842,7 @@ impl Grant {
                 page_count: span.count,
                 mapped: true,
                 flags: new_flags,
-                provider: Provider::FmapBorrowed { file_ref },
+                provider: Provider::FmapBorrowed { file_ref, pin_refcount: 0 },
             }
         })
     }
@@ -839,7 +853,7 @@ impl Grant {
     /// pages that are unmaped or moved will not be made visible to the destination address space.
     pub fn borrow(
         src_address_space_lock: Arc<RwLock<AddrSpace>>,
-        src_address_space: &AddrSpace,
+        src_address_space: &mut AddrSpace,
         src_base: Page,
         dst_base: Page,
         page_count: usize,
@@ -861,7 +875,11 @@ impl Grant {
         let src_span = PageSpan::new(src_base, page_count);
         let mut prev_span = None;
 
-        for (src_grant_base, src_grant) in src_address_space.grants.conflicts(src_span) {
+        for (src_grant_base, src_grant) in src_address_space.grants.conflicts_mut(src_span) {
+            if let Provider::FmapBorrowed { ref mut pin_refcount, .. } = src_grant.provider {
+                *pin_refcount += 1;
+            }
+
             let grant_span = PageSpan::new(src_grant_base, src_grant.page_count);
             let prev_span = prev_span.replace(grant_span);
 
@@ -1030,6 +1048,20 @@ impl Grant {
     #[must_use = "will not unmap itself"]
     pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
         assert!(self.info.mapped);
+        assert!(!self.info.is_pinned());
+
+        if let Provider::External { ref address_space, src_base, .. } = self.info.provider {
+            let mut guard = address_space.write();
+
+            for (_, grant) in guard.grants.conflicts_mut(PageSpan::new(src_base, self.info.page_count)) {
+                match grant.provider {
+                    Provider::FmapBorrowed { ref mut pin_refcount, .. } => *pin_refcount = pin_refcount.checked_sub(1).expect("fmap pinning code is wrong"),
+                    _ => continue,
+                }
+            }
+
+            // TODO: Verify deadlock immunity
+        }
 
         for page in self.span().pages() {
             // Lazy mappings do not need to be unmapped.
@@ -1070,7 +1102,7 @@ impl Grant {
             size: self.info.page_count * PAGE_SIZE,
             file_desc: match provider {
                 Provider::Allocated { cow_file_ref } => cow_file_ref,
-                Provider::FmapBorrowed { file_ref } => Some(file_ref),
+                Provider::FmapBorrowed { file_ref, .. } => Some(file_ref),
                 _ => None,
             }
         }
@@ -1112,7 +1144,7 @@ impl Grant {
                     Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
                     Provider::AllocatedShared { .. }  => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
                     Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.clone() },
-                    Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: file_ref.clone() }
+                    Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed { file_ref: file_ref.clone(), pin_refcount: 0 },
                 }
             },
         });
@@ -1121,7 +1153,7 @@ impl Grant {
 
         match self.info.provider {
             Provider::PhysBorrowed { ref mut base } => *base = base.next_by(middle_page_offset),
-            Provider::FmapBorrowed { ref mut file_ref } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref) } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
+            Provider::FmapBorrowed { ref mut file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref) } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
             Provider::Allocated { cow_file_ref: None } | Provider::AllocatedShared { .. } | Provider::External { .. } => (),
         }
 
@@ -1146,10 +1178,13 @@ impl Grant {
                     },
 
                     Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
-                    Provider::FmapBorrowed { ref file_ref } => Provider::FmapBorrowed { file_ref: GrantFileRef {
-                        base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
-                        description: Arc::clone(&file_ref.description),
-                    }}, 
+                    Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed {
+                        file_ref: GrantFileRef {
+                            base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
+                            description: Arc::clone(&file_ref.description),
+                        },
+                        pin_refcount: 0,
+                    }, 
                 }
             },
         });
@@ -1162,7 +1197,11 @@ impl Grant {
 }
 impl GrantInfo {
     pub fn is_pinned(&self) -> bool {
-        matches!(self.provider, Provider::External { is_pinned_userscheme_borrow: true, .. } | Provider::AllocatedShared { is_pinned_userscheme_borrow: true, .. })
+        matches!(self.provider,
+            Provider::External { is_pinned_userscheme_borrow: true, .. }
+                | Provider::AllocatedShared { is_pinned_userscheme_borrow: true, .. }
+                | Provider::FmapBorrowed { pin_refcount: 1.., .. }
+        )
     }
     pub fn unpin(&mut self) {
         if let Provider::External { ref mut is_pinned_userscheme_borrow, .. } | Provider::AllocatedShared { ref mut is_pinned_userscheme_borrow, .. } = self.provider {
@@ -1236,7 +1275,7 @@ impl GrantInfo {
     pub fn file_ref(&self) -> Option<&GrantFileRef> {
         // TODO: This would be bad for PhysBorrowed head/tail buffers, but otherwise the physical
         // base address could be included in offset, for PhysBorrowed.
-        if let Provider::FmapBorrowed { ref file_ref } | Provider::Allocated { cow_file_ref: Some(ref file_ref) } = self.provider {
+        if let Provider::FmapBorrowed { ref file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref file_ref) } = self.provider {
             Some(file_ref)
         } else {
             None
@@ -1588,7 +1627,7 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
         }
         // TODO: NonfatalInternalError if !MAP_LAZY and this page fault occurs.
 
-        Provider::FmapBorrowed { ref file_ref } => {
+        Provider::FmapBorrowed { ref file_ref, .. } => {
             let file_ref = file_ref.clone();
             let flags = map_flags(grant_info.flags());
             drop(addr_space_guard);
