@@ -27,14 +27,13 @@ pub use self::process::*;
 pub use self::time::*;
 pub use self::usercopy::validate_region;
 
-use self::scheme::Scheme as _;
-
 use self::data::{Map, SigAction, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
 use self::flag::{MapFlags, PhysmapFlags, WaitFlags};
 use self::number::*;
 
 use crate::context::ContextId;
+use crate::context::memory::AddrSpace;
 use crate::interrupt::InterruptStack;
 use crate::scheme::{FileHandle, SchemeNamespace, memory::MemoryScheme};
 use crate::syscall::usercopy::UserSlice;
@@ -78,7 +77,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                         SYS_FMAP => {
                             let map = unsafe { UserSlice::ro(c, d)?.read_exact::<Map>()? };
                             if b == !0 {
-                                MemoryScheme.fmap(!0, &map)
+                                MemoryScheme::fmap_anonymous(&AddrSpace::current()?, &map)
                             } else {
                                 file_op_generic(fd, |scheme, _, number| scheme.fmap(number, &map))
                             }
