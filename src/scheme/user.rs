@@ -428,9 +428,6 @@ impl UserInner {
         if map.address % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
-        if map.size % PAGE_SIZE != 0 {
-            log::warn!("fmap passed length {:#0x} instead of {:#0x}", map.size, map.size.next_multiple_of(PAGE_SIZE));
-        }
 
         let (pid, uid, gid, context_weak, desc) = {
             let context_lock = context::current()?;
@@ -459,7 +456,7 @@ impl UserInner {
             flags: map.flags,
         };
 
-        let address = self.copy_and_capture_tail(&aligned_size_map)?;
+        let address = self.copy_and_capture_tail(map)?;
 
         let id = self.next_id();
 
