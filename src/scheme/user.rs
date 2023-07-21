@@ -2,7 +2,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE};
+use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
@@ -834,14 +834,14 @@ impl KernelScheme for UserScheme {
 
         inner.fmap_inner(Arc::clone(addr_space), file, map)
     }
-    fn kfunmap(&self, number: usize, offset: usize, size: usize) -> Result<()> {
+    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let res = inner.call_extended(CallerCtx {
             pid: context::context_id().into(),
             uid: offset as u32,
             gid: (offset >> 32) as u32,
-        }, [KSMSG_MUNMAP, number, size, 0])?;
+        }, [KSMSG_MUNMAP, number, size, flags.bits()])?;
 
         match res {
             Response::Regular(_) => Ok(()),

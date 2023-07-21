@@ -1,6 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::{sync::Arc, vec::Vec};
-use syscall::GrantFlags;
+use syscall::{GrantFlags, MunmapFlags};
 use core::cmp;
 use core::fmt::Debug;
 use core::num::NonZeroUsize;
@@ -40,6 +40,7 @@ pub fn map_flags(page_flags: PageFlags<RmmA>) -> MapFlags {
 pub struct UnmapResult {
     pub file_desc: Option<GrantFileRef>,
     pub size: usize,
+    pub flags: MunmapFlags,
 }
 impl UnmapResult {
     pub fn unmap(mut self) -> Result<()> {
@@ -53,7 +54,7 @@ impl UnmapResult {
 
         let funmap_result = crate::scheme::schemes()
             .get(scheme_id).map(Arc::clone).ok_or(Error::new(ENODEV))
-            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size));
+            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
             fd.into_inner().try_close()?;
@@ -1070,6 +1071,13 @@ impl Grant {
 
             // TODO: Verify deadlock immunity
         }
+        let (use_info, require_info, is_fmap_shared) = match self.info.provider {
+            Provider::Allocated { .. } => (true, true, Some(false)),
+            Provider::AllocatedShared { .. } => (true, true, None),
+            Provider::External { .. } => (true, false, None),
+            Provider::PhysBorrowed { .. } => (false, false, None),
+            Provider::FmapBorrowed { .. } => (true, false, Some(true)),
+        };
 
         for page in self.span().pages() {
             // Lazy mappings do not need to be unmapped.
@@ -1078,13 +1086,6 @@ impl Grant {
             };
             let frame = Frame::containing_address(phys);
 
-            let (use_info, require_info) = match self.info.provider {
-                Provider::Allocated { .. } => (true, true),
-                Provider::AllocatedShared { .. } => (true, true),
-                Provider::External { .. } => (true, false),
-                Provider::PhysBorrowed { .. } => (false, false),
-                Provider::FmapBorrowed { .. } => (true, false),
-            };
             // TODO: use_info IS A HACK! It shouldn't be possible to obtain *any* PhysBorrowed
             // grants to allocator-owned memory! Replace physalloc/physfree with something like
             // madvise(range, PHYSICALLY_CONTIGUOUS).
@@ -1106,13 +1107,17 @@ impl Grant {
         // Dummy value, won't be read.
         let provider = core::mem::replace(&mut self.info.provider, Provider::AllocatedShared { is_pinned_userscheme_borrow: false });
 
+        let mut munmap_flags = MunmapFlags::empty();
+        munmap_flags.set(MunmapFlags::NEEDS_SYNC, is_fmap_shared.unwrap_or(false) && self.info.flags.has_write());
+
         UnmapResult {
             size: self.info.page_count * PAGE_SIZE,
             file_desc: match provider {
                 Provider::Allocated { cow_file_ref } => cow_file_ref,
                 Provider::FmapBorrowed { file_ref, .. } => Some(file_ref),
                 _ => None,
-            }
+            },
+            flags: munmap_flags,
         }
     }
 

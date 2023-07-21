@@ -13,7 +13,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use syscall::CallerCtx;
+use syscall::{CallerCtx, MunmapFlags};
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -311,7 +311,7 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
-    fn kfunmap(&self, number: usize, offset: usize, size: usize) -> Result<()> {
+    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
         Err(Error::new(EOPNOTSUPP))
     }
 
