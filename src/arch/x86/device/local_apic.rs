@@ -1,5 +1,5 @@
 use core::sync::atomic::{self, AtomicU32};
-use core::intrinsics::{volatile_load, volatile_store};
+use core::ptr::{read_volatile, write_volatile};
 use x86::msr::*;
 
 use crate::paging::{KernelMapper, PhysicalAddress, PageFlags, RmmA, RmmArch, VirtualAddress};
@@ -84,11 +84,11 @@ impl LocalApic {
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
-        volatile_load((self.address + reg as usize) as *const u32)
+        read_volatile((self.address + reg as usize) as *const u32)
     }
 
     unsafe fn write(&mut self, reg: u32, value: u32) {
-        volatile_store((self.address + reg as usize) as *mut u32, value);
+        write_volatile((self.address + reg as usize) as *mut u32, value);
     }
 
     pub fn id(&self) -> u32 {

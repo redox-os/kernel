@@ -1,4 +1,4 @@
-use core::intrinsics::{volatile_load, volatile_store};
+use core::ptr::{read_volatile, write_volatile};
 
 use crate::memory::Frame;
 use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, TableKind, VirtualAddress};
@@ -149,12 +149,12 @@ impl GicDistIf {
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
-        let val = volatile_load((self.address + reg as usize) as *const u32);
+        let val = read_volatile((self.address + reg as usize) as *const u32);
         val
     }
 
     unsafe fn write(&mut self, reg: u32, value: u32) {
-        volatile_store((self.address + reg as usize) as *mut u32, value);
+        write_volatile((self.address + reg as usize) as *mut u32, value);
     }
 }
 
@@ -179,11 +179,11 @@ impl GicCpuIf {
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
-        let val = volatile_load((self.address + reg as usize) as *const u32);
+        let val = read_volatile((self.address + reg as usize) as *const u32);
         val
     }
 
     unsafe fn write(&mut self, reg: u32, value: u32) {
-        volatile_store((self.address + reg as usize) as *mut u32, value);
+        write_volatile((self.address + reg as usize) as *mut u32, value);
     }
 }

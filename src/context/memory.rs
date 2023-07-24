@@ -158,16 +158,16 @@ impl AddrSpace {
         }
         Ok(())
     }
-    pub fn munmap(mut self: RwLockWriteGuard<'_, Self>, page: Page, page_count: usize) {
+    pub fn munmap(mut this: RwLockWriteGuard<'_, Self>, page: Page, page_count: usize) {
         let mut notify_files = Vec::new();
 
         let requested = Region::new(page.start_address(), page_count * PAGE_SIZE);
         let mut flusher = PageFlushAll::new();
 
-        let conflicting: Vec<Region> = self.grants.conflicts(requested).map(Region::from).collect();
+        let conflicting: Vec<Region> = this.grants.conflicts(requested).map(Region::from).collect();
 
         for conflict in conflicting {
-            let grant = self.grants.take(&conflict).expect("conflicting region didn't exist");
+            let grant = this.grants.take(&conflict).expect("conflicting region didn't exist");
             let intersection = grant.intersect(requested);
             let (before, mut grant, after) = grant.extract(intersection.round()).expect("conflicting region shared no common parts");
 
@@ -178,16 +178,16 @@ impl AddrSpace {
 
             // Keep untouched regions
             if let Some(before) = before {
-                self.grants.insert(before);
+                this.grants.insert(before);
             }
             if let Some(after) = after {
-                self.grants.insert(after);
+                this.grants.insert(after);
             }
 
             // Remove irrelevant region
-            grant.unmap(&mut self.table.utable, &mut flusher);
+            grant.unmap(&mut this.table.utable, &mut flusher);
         }
-        drop(self);
+        drop(this);
 
         for (file_ref, intersection) in notify_files {
             let scheme_id = { file_ref.desc.description.read().scheme };

@@ -97,7 +97,7 @@ pub unsafe extern "C" fn switch_finish_hook() {
         next_lock.force_write_unlock();
     } else {
         // TODO: unreachable_unchecked()?
-        core::intrinsics::abort();
+        crate::arch::stop::emergency_reset();
     }
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 }

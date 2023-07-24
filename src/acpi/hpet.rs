@@ -1,6 +1,6 @@
 use core::{mem, ptr};
 
-use core::intrinsics::{volatile_load, volatile_store};
+use core::ptr::{read_volatile, write_volatile};
 
 use crate::memory::Frame;
 use crate::paging::{KernelMapper, PhysicalAddress, PageFlags};
@@ -82,11 +82,11 @@ impl GenericAddressStructure {
     }
 
     pub unsafe fn read_u64(&self, offset: usize) -> u64{
-        volatile_load((crate::HPET_OFFSET + offset) as *const u64)
+        read_volatile((crate::HPET_OFFSET + offset) as *const u64)
     }
 
     pub unsafe fn write_u64(&mut self, offset: usize, value: u64) {
-        volatile_store((crate::HPET_OFFSET + offset) as *mut u64, value);
+        write_volatile((crate::HPET_OFFSET + offset) as *mut u64, value);
     }
 }
 
@@ -103,10 +103,10 @@ impl GenericAddressStructure {
     }
 
     pub unsafe fn read_u64(&self, offset: usize) -> u64{
-        volatile_load((self.address as usize + offset + crate::PHYS_OFFSET) as *const u64)
+        read_volatile((self.address as usize + offset + crate::PHYS_OFFSET) as *const u64)
     }
 
     pub unsafe fn write_u64(&mut self, offset: usize, value: u64) {
-        volatile_store((self.address as usize + offset + crate::PHYS_OFFSET) as *mut u64, value);
+        write_volatile((self.address as usize + offset + crate::PHYS_OFFSET) as *mut u64, value);
     }
 }

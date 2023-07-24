@@ -58,18 +58,14 @@ pub struct BootloaderMemoryEntry {
 unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
     let virt_addr = virt.data();
 
-    // Test for being inside a region
-    macro_rules! in_section {
-        ($n: ident) => {
-            virt_addr >= &concat_idents!(__, $n, _start) as *const u8 as usize
-                && virt_addr < &concat_idents!(__, $n, _end) as *const u8 as usize
-        };
-    }
-
-    if in_section!(text) {
+    if virt_addr >= &__text_start as *const u8 as usize
+        && virt_addr < &__text_end as *const u8 as usize
+    {
         // Remap text read-only, execute
         PageFlags::new().execute(true)
-    } else if in_section!(rodata) {
+    } else if virt_addr >= &__rodata_start as *const u8 as usize
+        && virt_addr < &__rodata_end as *const u8 as usize
+    {
         // Remap rodata read-only, no execute
         PageFlags::new()
     } else {

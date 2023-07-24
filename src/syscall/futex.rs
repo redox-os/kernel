@@ -5,7 +5,7 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use rmm::Arch;
-use core::intrinsics;
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use spin::RwLock;
 
 use crate::context::{self, memory::AddrSpace, Context};
@@ -79,7 +79,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
 
                     (
                         u64::from(unsafe {
-                            intrinsics::atomic_load_seqcst::<u32>(accessible_addr as *const u32)
+                            (*(accessible_addr as *const AtomicU32)).load(Ordering::SeqCst)
                         }),
                         u64::from(val as u32),
                     )
@@ -89,7 +89,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                         return Err(Error::new(EINVAL));
                     }
                     (
-                        unsafe { intrinsics::atomic_load_seqcst::<u64>(addr as *const u64) },
+                        u64::from(unsafe { (*(addr as *const AtomicU64)).load(Ordering::SeqCst) }),
                         val as u64,
                     )
                 };
