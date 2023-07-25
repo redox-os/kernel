@@ -48,7 +48,6 @@
 #![feature(iter_array_chunks)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(const_option)]
-#![feature(arbitrary_self_types)]
 #![feature(int_roundings)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
