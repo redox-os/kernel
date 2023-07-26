@@ -497,8 +497,8 @@ impl UserInner {
             pid: pid.into(),
             a: KSMSG_MMAP_PREP,
             b: file,
-            c: map.flags.bits(),
-            d: unaligned_size,
+            c: unaligned_size,
+            d: map.flags.bits(),
             // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
             uid: map.offset as u32,
             gid: (map.offset >> 32) as u32,
