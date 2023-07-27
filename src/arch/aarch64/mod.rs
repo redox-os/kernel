@@ -62,3 +62,9 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
         ret
     ", options(noreturn));
 }
+pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
+    use ::rmm::Arch;
+    use crate::memory::PAGE_SIZE;
+
+    core::slice::from_raw_parts(CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8, bootstrap.page_count * PAGE_SIZE)
+}

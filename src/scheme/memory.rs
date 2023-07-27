@@ -9,7 +9,9 @@ use crate::memory::{free_frames, used_frames, PAGE_SIZE, Frame};
 use crate::context::memory::{AddrSpace, Grant, PageSpan, handle_notify_files};
 use crate::paging::VirtualAddress;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::paging::entry::EntryFlags;
+
 use crate::syscall::data::{Map, StatVfs};
 use crate::syscall::flag::MapFlags;
 use crate::syscall::error::*;

@@ -32,12 +32,11 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
                 let space = space.read();
                 if ! space.grants.is_empty() {
                     println!("grants:");
-                    for grant in space.grants.iter() {
-                        let region = grant.region();
+                    for (base, grant) in space.grants.iter() {
                         println!(
-                            "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {}",
-                            region.start_address().data(), region.final_address().data(), region.size(),
-                            if grant.is_owned() { "owned" } else { "borrowed" },
+                            "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
+                            base.start_address().data(), base.next_by(grant.page_count()).start_address().data(), grant.page_count() * PAGE_SIZE, grant.provider,
+
                         );
                     }
                 }

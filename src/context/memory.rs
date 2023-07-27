@@ -1447,7 +1447,7 @@ fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Resu
 
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
-    let page_info = get_page_info(new_frame).expect("all allocated frames need an associated page info");
+    let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
     assert_eq!(page_info.refcount(), RefCount::Zero);
     page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
 
@@ -1466,6 +1466,10 @@ fn map_zeroed(mapper: &mut PageMapper, page: Page, page_flags: PageFlags<RmmA>, 
 
 pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
     // Optimized exact-page-size copy function?
+
+    // TODO: For new frames, when the kernel's linear phys=>virt mappings are 4k, this is almost
+    // guaranteed to cause either one (or two) TLB misses.
+
     let dst = unsafe { RmmA::phys_to_virt(dst.start_address()).data() as *mut u8 };
     let src = unsafe { RmmA::phys_to_virt(src.start_address()).data() as *const u8 };
 

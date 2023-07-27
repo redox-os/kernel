@@ -6,8 +6,6 @@ use crate::scheme::memory::{MemoryScheme, MemoryType};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{MapFlags, PhysallocFlags, PartialAllocStrategy, PhysmapFlags};
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
