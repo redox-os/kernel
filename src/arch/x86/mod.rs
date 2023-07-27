@@ -43,6 +43,8 @@ pub mod stop;
 pub mod time;
 
 pub use ::rmm::X86Arch as CurrentRmmArch;
+use ::rmm::Arch;
+use crate::{Bootstrap, memory::PAGE_SIZE};
 
 // Flags
 pub mod flags {
@@ -80,4 +82,7 @@ pub unsafe extern "fastcall" fn arch_copy_to_user_inner(len: usize, dst: usize, 
 
         ret 4
     ", options(noreturn));
+}
+pub unsafe fn bootstrap_mem(bootstrap: &Bootstrap) -> &'static [u8] {
+    core::slice::from_raw_parts(CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8, bootstrap.page_count * PAGE_SIZE)
 }

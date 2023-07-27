@@ -501,7 +501,10 @@ impl UserInner {
             d: map.flags.bits(),
             // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
             uid: map.offset as u32,
+            #[cfg(target_pointer_width = "64")]
             gid: (map.offset >> 32) as u32,
+            #[cfg(target_pointer_width = "32")]
+            gid: 0,
         })?;
 
         let mapping_is_lazy = map.flags.contains(MapFlags::MAP_LAZY);
@@ -840,7 +843,13 @@ impl KernelScheme for UserScheme {
         let res = inner.call_extended(CallerCtx {
             pid: context::context_id().into(),
             uid: offset as u32,
+            #[cfg(target_pointer_width = "64")]
             gid: (offset >> 32) as u32,
+
+            // TODO: saturating_shr?
+            #[cfg(not(target_pointer_width = "64"))]
+            gid: 0,
+
         }, [KSMSG_MUNMAP, number, size, flags.bits()])?;
 
         match res {

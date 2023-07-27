@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
 use crate::context;
-use crate::context::memory::{init_frame, AccessMode, try_correcting_page_tables, PfError};
+use crate::context::memory::{init_frame, AccessMode, PfError};
 use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
 use crate::paging::Page;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};

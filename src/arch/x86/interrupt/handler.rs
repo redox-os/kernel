@@ -1,5 +1,6 @@
 use core::mem;
 
+use crate::memory::ArchIntCtx;
 use crate::syscall::IntRegisters;
 
 use super::super::flags::*;
@@ -403,4 +404,32 @@ macro_rules! interrupt_error {
             options(noreturn));
         }
     };
+}
+#[naked]
+unsafe extern "C" fn usercopy_trampoline() {
+    core::arch::asm!("
+        mov eax, 1
+
+        pop esi
+        pop edi
+
+        ret 4
+    ", options(noreturn));
+}
+
+impl ArchIntCtx for InterruptStack {
+    fn ip(&self) -> usize {
+        self.iret.eip
+    }
+    fn recover_and_efault(&mut self) {
+        // Unlike on x86_64, Protected Mode interrupts will not save/restore esp and ss unless
+        // privilege rings changed, which they won't here as we are catching a kernel-induced page
+        // fault.
+        //
+        // Thus, it is only possible to change scratch/preserved registers, and EIP. While it may
+        // be feasible to set ECX to zero to stop the REP MOVSB, or increase EIP by 2 (REP MOVSB is
+        // f3 a4, i.e. 2 bytes), this trampoline allows any memcpy implementation, that reasonably
+        // pushes preserved registers to the stack.
+        self.iret.eip = usercopy_trampoline as usize;
+    }
 }

@@ -18,6 +18,7 @@ use crate::gdt;
 use crate::idt;
 use crate::interrupt;
 use crate::log::{self, info};
+use crate::memory;
 use crate::paging::{self, KernelMapper, PhysicalAddress, RmmA, RmmArch, TableKind};
 
 /// Test of zero values in BSS.
@@ -184,6 +185,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
+
+        // Initialize data structures used to track pages.
+        memory::init_mm();
 
         // Stop graphical debug
         #[cfg(feature = "graphical_debug")]

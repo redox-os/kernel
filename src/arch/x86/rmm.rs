@@ -1,4 +1,5 @@
 use core::{
+    cell::SyncUnsafeCell,
     cmp,
     mem,
     slice,
@@ -249,10 +250,16 @@ impl core::fmt::Debug for LockedAllocator {
     }
 }
 
-static mut AREAS: [MemoryArea; 512] = [MemoryArea {
+static AREAS: SyncUnsafeCell<[MemoryArea; 512]> = SyncUnsafeCell::new([MemoryArea {
     base: PhysicalAddress::new(0),
     size: 0,
-}; 512];
+}; 512]);
+static AREA_COUNT: SyncUnsafeCell<u16> = SyncUnsafeCell::new(0);
+
+pub fn areas() -> &'static [MemoryArea] {
+    // SAFETY: Both areas and AREA_COUNT are initialized once and then never changed.
+    unsafe { &(&*AREAS.get())[..AREA_COUNT.get().read().into()] }
+}
 
 pub static FRAME_ALLOCATOR: LockedAllocator = LockedAllocator;
 
@@ -361,6 +368,8 @@ pub unsafe fn init(
     let initfs_size_aligned = ((initfs_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
     let initfs_end = initfs_base + initfs_size_aligned;
 
+    let areas = &mut *AREAS.get();
+
     let bootloader_areas = slice::from_raw_parts(
         areas_base as *const BootloaderMemoryEntry,
         areas_size / mem::size_of::<BootloaderMemoryEntry>()
@@ -452,15 +461,15 @@ pub unsafe fn init(
 
         // Combine areas that overlap
         for other_i in 0..area_i {
-            let other = &AREAS[other_i];
+            let other = &areas[other_i];
             let other_base = other.base.data();
             let other_end = other_base + other.size;
             if base < other_end && base + size > other_base {
                 let new_base = cmp::min(base, other_base);
                 let new_size = cmp::max(base + size, other_end).checked_sub(new_base).unwrap_or(0);
                 log::warn!("{:X}:{:X} overlaps with area {:X}:{:X}, combining into {:X}:{:X}", base, size, other_base, other.size, new_base, new_size);
-                AREAS[other_i].base = PhysicalAddress::new(new_base);
-                AREAS[other_i].size = new_size;
+                areas[other_i].base = PhysicalAddress::new(new_base);
+                areas[other_i].size = new_size;
                 size = 0; // Skip area
             }
         }
@@ -470,13 +479,14 @@ pub unsafe fn init(
             continue;
         }
 
-        AREAS[area_i].base = PhysicalAddress::new(base);
-        AREAS[area_i].size = size;
+        areas[area_i].base = PhysicalAddress::new(base);
+        areas[area_i].size = size;
         area_i += 1;
     }
+    AREA_COUNT.get().write(area_i as u16);
 
     let allocator = inner::<A>(
-        &AREAS,
+        areas,
         kernel_base, kernel_size_aligned,
         stack_base, stack_size_aligned,
         env_base, env_size_aligned,
