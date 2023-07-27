@@ -19,6 +19,7 @@ pub use super::CurrentRmmArch as RmmA;
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
 use crate::context::memory::{AccessMode, try_correcting_page_tables, PfError};
 use crate::interrupt::InterruptStack;
+use crate::kernel_executable_offsets::{__usercopy_end, __usercopy_start};
 pub use crate::rmm::KernelMapper;
 
 pub mod entry;
@@ -145,11 +146,7 @@ pub struct Segv;
 pub fn page_fault_handler(stack: &mut InterruptStack, code: PageFaultError, faulting_address: VirtualAddress) -> Result<(), Segv> {
     let faulting_page = Page::containing_address(faulting_address);
 
-    extern "C" {
-        static __usercopy_start: u8;
-        static __usercopy_end: u8;
-    }
-    let usercopy_region = unsafe { (&__usercopy_start as *const u8 as usize)..(&__usercopy_end as *const u8 as usize) };
+    let usercopy_region = __usercopy_start()..__usercopy_end();
 
     // TODO: Most likely not necessary, but maybe also check that cr2 is not too close to USER_END.
     let address_is_user = faulting_address.kind() == TableKind::User;
