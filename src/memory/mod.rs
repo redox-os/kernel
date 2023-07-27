@@ -7,7 +7,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
-use crate::context::memory::init_frame;
+use crate::context;
+use crate::context::memory::{init_frame, AccessMode, try_correcting_page_tables, PfError};
+use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
+use crate::paging::Page;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
 use crate::rmm::areas;
 
@@ -15,7 +18,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use rmm::{
     FrameAllocator,
-    FrameCount,
+    FrameCount, VirtualAddress, TableKind,
 };
 use spin::RwLock;
 use crate::syscall::flag::{PartialAllocStrategy, PhysallocFlags};
@@ -384,4 +387,69 @@ pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
         .filter(|(base, section)| frame <= base.next_by(section.frames.len()))
         .map(|(base, section)| PageInfoHandle { section, idx: frame.offset_from(*base) })
     */
+}
+pub struct Segv;
+
+bitflags! {
+    /// Arch-generic page fault flags, modeled after x86's error code.
+    ///
+    /// This may change when arch-specific features are utilized better.
+    pub struct GenericPfFlags: u32 {
+        const PRESENT = 1 << 0;
+        const INVOLVED_WRITE = 1 << 1;
+        const USER_NOT_SUPERVISOR = 1 << 2;
+        const INSTR_NOT_DATA = 1 << 3;
+        // "reserved bits" on x86
+        const INVL = 1 << 31;
+    }
+}
+
+pub trait ArchIntCtx {
+    fn ip(&self) -> usize;
+    fn recover_and_efault(&mut self);
+}
+
+pub fn page_fault_handler(stack: &mut impl ArchIntCtx, code: GenericPfFlags, faulting_address: VirtualAddress) -> Result<(), Segv> {
+    let faulting_page = Page::containing_address(faulting_address);
+
+    let usercopy_region = __usercopy_start()..__usercopy_end();
+
+    // TODO: Most likely not necessary, but maybe also check that the faulting address is not too
+    // close to USER_END.
+    let address_is_user = faulting_address.kind() == TableKind::User;
+
+    let invalid_page_tables = code.contains(GenericPfFlags::INVL);
+    let caused_by_user = code.contains(GenericPfFlags::USER_NOT_SUPERVISOR);
+    let caused_by_kernel = !caused_by_user;
+    let caused_by_write = code.contains(GenericPfFlags::INVOLVED_WRITE);
+    let caused_by_instr_fetch = code.contains(GenericPfFlags::INSTR_NOT_DATA);
+    let is_usercopy = usercopy_region.contains(&stack.ip());
+
+    let mode = match (caused_by_write, caused_by_instr_fetch) {
+        (true, false) => AccessMode::Write,
+        (false, false) => AccessMode::Read,
+        (false, true) => AccessMode::InstrFetch,
+        (true, true) => unreachable!("page fault cannot be caused by both instruction fetch and write"),
+    };
+
+    if invalid_page_tables {
+        // TODO: Better error code than Segv?
+        return Err(Segv);
+    }
+
+    if address_is_user && (caused_by_user || is_usercopy) {
+        match context::memory::try_correcting_page_tables(faulting_page, mode) {
+            Ok(()) => return Ok(()),
+            Err(PfError::Oom) => todo!("oom"),
+            Err(PfError::Segv | PfError::RecursionLimitExceeded) => (),
+            Err(PfError::NonfatalInternalError) => todo!(),
+        }
+    }
+
+    if address_is_user && caused_by_kernel && mode != AccessMode::InstrFetch && is_usercopy {
+        stack.recover_and_efault();
+        return Ok(());
+    }
+
+    Err(Segv)
 }
