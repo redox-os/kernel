@@ -5,7 +5,8 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use rmm::Arch;
-use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use syscall::EOPNOTSUPP;
+use core::sync::atomic::{AtomicU32, Ordering};
 use spin::RwLock;
 
 use crate::context::{self, memory::AddrSpace, Context};
@@ -84,14 +85,23 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                         u64::from(val as u32),
                     )
                 } else {
-                    // op == FUTEX_WAIT64
-                    if addr % 8 != 0 {
-                        return Err(Error::new(EINVAL));
+                    #[cfg(target_has_atomic = "64")]
+                    {
+                        use core::sync::atomic::AtomicU64;
+
+                        // op == FUTEX_WAIT64
+                        if addr % 8 != 0 {
+                            return Err(Error::new(EINVAL));
+                        }
+                        (
+                            u64::from(unsafe { (*(addr as *const AtomicU64)).load(Ordering::SeqCst) }),
+                            val as u64,
+                        )
                     }
-                    (
-                        u64::from(unsafe { (*(addr as *const AtomicU64)).load(Ordering::SeqCst) }),
-                        val as u64,
-                    )
+                    #[cfg(not(target_has_atomic = "64"))]
+                    {
+                        return Err(Error::new(EOPNOTSUPP));
+                    }
                 };
                 if fetched != expected {
                     return Err(Error::new(EAGAIN));
