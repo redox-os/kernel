@@ -128,7 +128,7 @@ impl Frame {
         }
     }
     pub fn offset_from(self, from: Self) -> usize {
-        from.number.get().checked_sub(self.number.get()).expect("overflow in Frame::offset_from")
+        self.number.get().checked_sub(from.number.get()).expect("overflow in Frame::offset_from")
     }
 }
 
@@ -252,6 +252,7 @@ pub fn init_mm() {
     let mut guard = SECTIONS.write();
     let mut sections = Vec::new();
 
+    // TODO: Merge adjacent areas before the max section size is reached?
     for memory_map_area in areas().iter().filter(|area| area.size > 0) {
         let mut pages_left = memory_map_area.size.div_floor(PAGE_SIZE);
         let mut base = Frame::containing_address(memory_map_area.base);
@@ -269,6 +270,12 @@ pub fn init_mm() {
             base = base.next_by(section_page_count);
         }
     }
+
+    /*
+    for section in &sections {
+        println!("SECTION from {:?}, {} pages", section.base, section.frames.len());
+    }
+    */
 
     sections.sort_unstable_by_key(|s| s.base);
     sections.shrink_to_fit();
@@ -372,11 +379,18 @@ impl RefCount {
 pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
     let sections = SECTIONS.read();
 
-    let idx = sections
-        .binary_search_by_key(&frame, |section| section.base)
-        .unwrap_or_else(|e| e);
+    let idx_res = sections
+        .binary_search_by_key(&frame, |section| section.base);
 
-    let section = sections.get(idx)?;
+    if idx_res == Err(0) || idx_res == Err(sections.len()) {
+        return None;
+    }
+
+    // binary_search_by_key returns either Ok(where it was found) or Err(where it would have been
+    // inserted). The base obviously cannot have been exactly matched from an entry at an
+    // out-of-bounds index, so the only Err(i) where i is out of bounds, is for i=0 and i=len. That
+    // has already been checked.
+    let section = &sections[idx_res.unwrap_or_else(|e| e - 1)];
 
     section.frames.get(frame.offset_from(section.base))
 
