@@ -23,6 +23,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
             RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
+            check_consistency(&mut *space.write());
 
             if let Some((a, b, c, d, e, f)) = context.syscall {
                 println!("syscall: {}", crate::syscall::debug::format_call(a, b, c, d, e, f));
@@ -224,13 +225,17 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     unsafe { x86::bits64::rflags::clac(); }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace) {
+    use alloc::collections::BTreeMap;
+
     use crate::context::memory::PageSpan;
     use crate::memory::{get_page_info, Frame, RefCount};
     use crate::paging::*;
 
     let p4 = addr_space.table.utable.table();
+
+    let mut tree = BTreeMap::new();
 
     for p4i in 0..256 {
         let p3 = match p4.next(p4i) {
@@ -273,8 +278,10 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
                     if grant.flags().data() & !EXCLUDE != flags.data() & !EXCLUDE {
                         log::error!("FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}", grant.flags(), flags, address.data() as *const u8, PageSpan::new(base, grant.page_count()));
                     }
+                    let frame = Frame::containing_address(physaddr);
+                    *tree.entry(frame).or_insert(0) += 1;
 
-                    if let Some(page) = get_page_info(Frame::containing_address(physaddr)) {
+                    if let Some(page) = get_page_info(frame) {
                         match page.refcount() {
                             // TODO: Remove physalloc, and ensure physmap cannot map
                             // allocator-owned memory! This is a hack!
@@ -290,6 +297,16 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
             }
         }
     }
+    for (frame, count) in tree {
+        let rc = get_page_info(frame).unwrap().refcount();
+        let c = match rc {
+            RefCount::Zero => 0,
+            RefCount::One => 1,
+            RefCount::Cow(c) => c.get(),
+            RefCount::Shared(s) => s.get(),
+        };
+        assert_eq!(c, count);
+    }
 
     /*for (base, info) in addr_space.grants.iter() {
         let span = PageSpan::new(base, info.page_count());
@@ -303,4 +320,5 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
             };
         }
     }*/
+    println!("Consistency appears correct");
 }

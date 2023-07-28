@@ -86,6 +86,8 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
 
         ty => if !pf_inner(stack, ty as u8) {
             println!("FATAL: Not an SVC induced synchronous exception");
+            println!("FAR_EL1: {:#0x}", far_el1());
+            crate::debugger::debugger(None);
             stack.dump();
             stack_trace();
             crate::ksignal(SIGSEGV);
