@@ -183,7 +183,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            if context.name.contains("dash") {
+            if context.name.contains("getty") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {

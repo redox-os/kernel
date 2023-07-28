@@ -5,10 +5,18 @@ use crate::paging::{RmmA, RmmArch, TableKind, PAGE_SIZE};
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+    use alloc::collections::{BTreeSet, BTreeMap};
+
+    use crate::memory::{RefCount, get_page_info};
+
     println!("DEBUGGER START");
     println!();
 
+    let mut tree = BTreeMap::new();
+
     let old_table = RmmA::table(TableKind::User);
+
+    let mut spaces = BTreeSet::new();
 
     for (id, context_lock) in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| *id != target_id) { continue; }
@@ -22,8 +30,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
+            let new_as = spaces.insert(space.read().table.utable.table().phys().data());
+
             RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
-            check_consistency(&mut *space.write());
+            check_consistency(&mut *space.write(), new_as, &mut tree);
 
             if let Some((a, b, c, d, e, f)) = context.syscall {
                 println!("syscall: {}", crate::syscall::debug::format_call(a, b, c, d, e, f));
@@ -36,7 +46,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
                     for (base, grant) in space.grants.iter() {
                         println!(
                             "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
-                            base.start_address().data(), base.next_by(grant.page_count()).start_address().data(), grant.page_count() * PAGE_SIZE, grant.provider,
+                            base.start_address().data(), base.next_by(grant.page_count() - 1).start_address().data() + 0xFFF, grant.page_count() * PAGE_SIZE, grant.provider,
 
                         );
                     }
@@ -72,6 +82,18 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         }
 
         println!();
+    }
+    for (frame, count) in tree {
+        let rc = get_page_info(frame).unwrap().refcount();
+        let c = match rc {
+            RefCount::Zero => 0,
+            RefCount::One => 1,
+            RefCount::Cow(c) => c.get(),
+            RefCount::Shared(s) => s.get(),
+        };
+        if c < count {
+            println!("undercounted frame {:?} ({} < {})", frame, c, count);
+        }
     }
 
     println!("DEBUGGER END");
@@ -224,18 +246,17 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     println!("DEBUGGER END");
     unsafe { x86::bits64::rflags::clac(); }
 }
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+use {alloc::collections::BTreeMap, crate::memory::Frame};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace) {
-    use alloc::collections::BTreeMap;
+pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace, new_as: bool, tree: &mut BTreeMap<Frame, usize>) {
 
     use crate::context::memory::PageSpan;
     use crate::memory::{get_page_info, Frame, RefCount};
     use crate::paging::*;
 
     let p4 = addr_space.table.utable.table();
-
-    let mut tree = BTreeMap::new();
 
     for p4i in 0..256 {
         let p3 = match p4.next(p4i) {
@@ -274,12 +295,14 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
                         }
                     };
 
-                    const EXCLUDE: usize = (1 << 5) | (1 << 6) | (1 << 1); // accessed+dirty+writable
-                    if grant.flags().data() & !EXCLUDE != flags.data() & !EXCLUDE {
+                    const EXCLUDE: usize = (1 << 5) | (1 << 6); // accessed+dirty+writable
+                    if grant.flags().write(false).data() & !EXCLUDE != flags.write(false).data() & !EXCLUDE {
                         log::error!("FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}", grant.flags(), flags, address.data() as *const u8, PageSpan::new(base, grant.page_count()));
                     }
                     let frame = Frame::containing_address(physaddr);
-                    *tree.entry(frame).or_insert(0) += 1;
+                    if new_as {
+                        *tree.entry(frame).or_insert(0) += 1;
+                    }
 
                     if let Some(page) = get_page_info(frame) {
                         match page.refcount() {
@@ -296,16 +319,6 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
                 }
             }
         }
-    }
-    for (frame, count) in tree {
-        let rc = get_page_info(frame).unwrap().refcount();
-        let c = match rc {
-            RefCount::Zero => 0,
-            RefCount::One => 1,
-            RefCount::Cow(c) => c.get(),
-            RefCount::Shared(s) => s.get(),
-        };
-        assert_eq!(c, count);
     }
 
     /*for (base, info) in addr_space.grants.iter() {
