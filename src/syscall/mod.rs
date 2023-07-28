@@ -177,7 +177,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         }
     }
 
-    let mut debug = true;
+    let mut debug = false;
 
     debug = debug && {
         let contexts = crate::context::contexts();

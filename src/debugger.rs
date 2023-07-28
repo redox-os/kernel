@@ -174,10 +174,17 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+    use alloc::collections::BTreeSet;
+
+    use crate::memory::{RefCount, get_page_info};
+
     unsafe { x86::bits64::rflags::stac(); }
 
     println!("DEBUGGER START");
     println!();
+
+    let mut tree = BTreeMap::new();
+    let mut spaces = BTreeSet::new();
 
     let old_table = RmmA::table(TableKind::User);
 
@@ -188,8 +195,9 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
+            let was_new = spaces.insert(space.read().table.utable.table().phys().data());
             RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
-            check_consistency(&mut space.write());
+            check_consistency(&mut space.write(), was_new, &mut tree);
         }
 
         println!("status: {:?}", context.status);
@@ -241,6 +249,18 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         RmmA::set_table(TableKind::User, old_table);
 
         println!();
+    }
+    for (frame, count) in tree {
+        let rc = get_page_info(frame).unwrap().refcount();
+        let c = match rc {
+            RefCount::Zero => 0,
+            RefCount::One => 1,
+            RefCount::Cow(c) => c.get(),
+            RefCount::Shared(s) => s.get(),
+        };
+        if c < count {
+            println!("undercounted frame {:?} ({} < {})", frame, c, count);
+        }
     }
 
     println!("DEBUGGER END");
