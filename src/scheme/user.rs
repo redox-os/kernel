@@ -507,7 +507,12 @@ impl UserInner {
             gid: 0,
         })?;
 
-        let mapping_is_lazy = map.flags.contains(MapFlags::MAP_LAZY);
+        // TODO: I've previously tested that this works, but because the scheme trait all of
+        // Redox's schemes currently rely on doesn't allow one-way messages, there's no current
+        // code using it.
+
+        //let mapping_is_lazy = map.flags.contains(MapFlags::MAP_LAZY);
+        let mapping_is_lazy = false;
 
         let base_page_opt = match response {
             Response::Regular(code) => (!mapping_is_lazy)
