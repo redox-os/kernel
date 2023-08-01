@@ -1,3 +1,5 @@
+use core::alloc::Allocator;
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -32,13 +34,13 @@ macro_rules! dbg {
     };
 }
 
-pub fn try_new_vec_with_exact_size<T>(len: usize) -> Result<Vec<T>, Enomem> {
-    let mut vec = Vec::new();
+pub fn try_new_vec_with_exact_size<T, A: Allocator>(len: usize, alloc: A) -> Result<Vec<T, A>, Enomem> {
+    let mut vec = Vec::<T, A>::new_in(alloc);
     vec.try_reserve_exact(len).map_err(|_| Enomem)?;
     Ok(vec.into())
 }
-pub fn try_box_slice_new<T>(value: impl FnMut() -> T, len: usize) -> Result<Box<[T]>, Enomem> {
-    let mut vec = try_new_vec_with_exact_size(len)?;
+pub fn try_box_slice_new<T, A: Allocator>(value: impl FnMut() -> T, len: usize, alloc: A) -> Result<Box<[T], A>, Enomem> {
+    let mut vec = try_new_vec_with_exact_size(len, alloc)?;
     vec.resize_with(len, value);
     Ok(vec.into())
 }

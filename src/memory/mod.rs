@@ -1,17 +1,17 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
+use core::ptr::NonNull;
 use core::{cmp, mem};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
 use crate::common::try_box_slice_new;
-use crate::context;
-use crate::context::memory::{init_frame, AccessMode, PfError};
+use crate::context::{self, memory::{init_frame, AccessMode, PfError}};
 use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
 use crate::paging::Page;
-pub use crate::paging::{PAGE_SIZE, PhysicalAddress};
+pub use crate::paging::{PAGE_SIZE, PhysicalAddress, RmmA, RmmArch};
 use crate::rmm::areas;
 
 use alloc::boxed::Box;
@@ -223,7 +223,8 @@ bitflags::bitflags! {
     }
 }
 
-// TODO: Very read-heavy RwLock? ArcSwap?
+// TODO: Very read-heavy RwLock? ArcSwap? Store the struct in percpu, and in the *very* unlikely
+// event of hotplugging, do IPIs to force all CPUs to update the sections.
 //
 // XXX: Is it possible to safely initialize an empty boxed slice from a const context?
 //pub static SECTIONS: RwLock<Box<[&'static Section]>> = RwLock::new(Box::new([]));
@@ -238,6 +239,38 @@ pub const MAX_SECTION_SIZE_BITS: u32 = 27;
 pub const MAX_SECTION_SIZE: usize = 1 << MAX_SECTION_SIZE_BITS;
 pub const MAX_SECTION_PAGE_COUNT: usize = MAX_SECTION_SIZE / PAGE_SIZE;
 
+const _: () = {
+    assert!(mem::size_of::<PageInfo>().is_power_of_two());
+};
+
+/// Allocator that bypasses the kernel heap, instead allocating directly from physical memory.
+pub struct DirectAllocator;
+
+unsafe impl core::alloc::Allocator for DirectAllocator {
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        // TODO: virt_to_phys
+        let phys = (ptr.as_ptr() as usize) - RmmA::PHYS_OFFSET;
+        let frame = Frame::containing_address(PhysicalAddress::new(phys));
+
+        deallocate_frames(frame, layout.size().div_ceil(PAGE_SIZE));
+    }
+    // TODO: Allow zeroing out frames to be optional in RMM?
+    fn allocate_zeroed(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
+        assert!(layout.align() <= PAGE_SIZE);
+
+        let phys = allocate_frames(layout.size().div_ceil(PAGE_SIZE)).ok_or(core::alloc::AllocError)?;
+
+        Ok(unsafe {
+            let virt = RmmA::phys_to_virt(phys.start_address()).data() as *mut u8;
+
+            NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(virt as *mut u8, layout.size()))
+        })
+    }
+    fn allocate(&self, layout: core::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        self.allocate_zeroed(layout)
+    }
+}
+
 #[cold]
 pub fn init_mm() {
     let mut guard = SECTIONS.write();
@@ -250,6 +283,7 @@ pub fn init_mm() {
         assert_ne!(memory_map_area.size, 0, "RMM should enforce areas are not zeroed");
 
         // TODO: Would it make sense to naturally align the sections?
+        // TODO: Should RMM do this?
 
         while let Some(next_area) = iter.peek() && next_area.base == memory_map_area.base.add(memory_map_area.size) {
             memory_map_area.size += next_area.size;
@@ -267,8 +301,7 @@ pub fn init_mm() {
 
             sections.push(Section {
                 base,
-                // TODO: zeroed rather than PageInfo::new()?
-                frames: Box::leak(try_box_slice_new(PageInfo::new, section_page_count).expect("failed to allocate pages array")),
+                frames: Box::leak(try_box_slice_new(|| PageInfo::new(), section_page_count, DirectAllocator).expect("failed to allocate static frame sections")),
             });
 
             pages_left -= section_page_count;
