@@ -13,7 +13,7 @@ use syscall::{
 use rmm::{Arch as _, PhysicalAddress, PageFlush};
 
 use crate::arch::paging::PAGE_SIZE;
-use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames, RefKind, AddRefError, RefCount};
+use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames, RefKind, AddRefError, RefCount, the_zeroed_frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{KernelMapper, Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
 use crate::scheme;
@@ -691,10 +691,6 @@ pub struct GrantFileRef {
     pub base_offset: usize,
 }
 
-// TODO: When using this frame, keep in mind AllocatedShared must not be able to obtain writable
-// mappings to it.
-static THE_ZEROED_FRAME: Once<Frame> = Once::new();
-
 impl Grant {
     // TODO: PageCount newtype, to avoid confusion between bytes and pages?
 
@@ -730,6 +726,17 @@ impl Grant {
     }
 
     pub fn physmap(phys: Frame, span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant> {
+        const MAX_EAGER_PAGES: usize = 4096;
+
+        for (i, page) in span.pages().enumerate().take(MAX_EAGER_PAGES) {
+            unsafe {
+                let Some(result) = mapper.map_phys(page.start_address(), phys.next_by(i).start_address(), flags.write(false)) else {
+                    break;
+                };
+                flusher.consume(result);
+            }
+        }
+
         Ok(Grant {
             base: span.base,
             info: GrantInfo {
@@ -741,23 +748,24 @@ impl Grant {
         })
     }
     pub fn zeroed(span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, shared: bool) -> Result<Grant, Enomem> {
-        //let the_frame = THE_ZEROED_FRAME.get().expect("expected the zeroed frame to be available").start_address();
+        const MAX_EAGER_PAGES: usize = 16;
 
-        // TODO: O(n) readonly map with zeroed page, or O(1) no-op and then lazily map?
+        let (the_frame, the_frame_info) = the_zeroed_frame();
+
         // TODO: Use flush_all after a certain number of pages, otherwise no
 
-        /*
-        for page in span.pages() {
+        for page in span.pages().take(MAX_EAGER_PAGES) {
             // Good thing with lazy page fault handlers, is that if we fail due to ENOMEM here, we
             // can continue and let the process face the OOM killer later.
             unsafe {
+                the_frame_info.add_ref(RefKind::Cow).expect("the static zeroed frame cannot be shared!");
+
                 let Some(result) = mapper.map_phys(page.start_address(), the_frame.start_address(), flags.write(false)) else {
                     break;
                 };
                 flusher.consume(result);
             }
         }
-        */
 
         Ok(Grant {
             base: span.base,
@@ -793,7 +801,7 @@ impl Grant {
     }
 
     pub fn borrow_fmap(span: PageSpan, new_flags: PageFlags<RmmA>, file_ref: GrantFileRef, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Self> {
-        if let Some(mut src) = src {
+        if let Some(src) = src {
             let mut guard = src.addr_space_guard;
             for dst_page in span.pages() {
                 let src_page = src.src_base.next_by(dst_page.offset_from(span.base));
@@ -866,18 +874,37 @@ impl Grant {
         page_count: usize,
         flags: PageFlags<RmmA>,
         dst_mapper: &mut PageMapper,
-        dst_flusher: impl Flusher<RmmA>,
+        mut dst_flusher: impl Flusher<RmmA>,
         eager: bool,
         allow_phys: bool,
         is_pinned_userscheme_borrow: bool,
     ) -> Result<Grant> {
-        /*
+        const MAX_EAGER_PAGES: usize = 4096;
+
         if eager {
-            for page in PageSpan::new(src_base, page_count) {
-                // ...
+            for (i, page) in PageSpan::new(src_base, page_count).pages().enumerate().take(MAX_EAGER_PAGES) {
+                let Some((phys, _)) = src_address_space.table.utable.translate(page.start_address()) else {
+                    continue;
+                };
+
+                let writable = match get_page_info(Frame::containing_address(phys)) {
+                    // TODO: this is a hack for PhysBorrowed pages
+                    None => false,
+                    Some(i) => {
+                        if i.add_ref(RefKind::Shared).is_err() {
+                            continue;
+                        };
+
+                        i.allows_writable()
+                    }
+                };
+
+                unsafe {
+                    let flush = dst_mapper.map_phys(dst_base.next_by(i).start_address(), phys, flags.write(writable)).ok_or(Error::new(ENOMEM))?;
+                    dst_flusher.consume(flush);
+                }
             }
         }
-        */
 
         let src_span = PageSpan::new(src_base, page_count);
         let mut prev_span = None;
@@ -1438,7 +1465,10 @@ fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Resu
         RefKind::Shared => RefCount::Shared(NonZeroUsize::new(2).unwrap()),
     })?;
 
-    unsafe { copy_frame_to_frame_directly(new_frame, old_frame); }
+    // TODO: omit this step if old_frame == the_zeroed_frame()
+    if old_frame != the_zeroed_frame().0 {
+        unsafe { copy_frame_to_frame_directly(new_frame, old_frame); }
+    }
 
     let _ = old_info.remove_ref();
 
@@ -1526,12 +1556,10 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
         .map(|(phys, _page_flags)| Frame::containing_address(phys));
     let faulting_pageinfo_opt = faulting_frame_opt.map(|frame| (frame, get_page_info(frame)));
 
-    // TODO: Readahead!
-    //
     // TODO: Aligned readahead? AMD Zen3+ CPUs can smash 4 4k pages that are 16k-aligned, into a
     // single TLB entry, thus emulating 16k pages albeit with higher page table overhead. With the
-    // correct posix_madvise information, allocating 4 contiguous pages and mapping them together,
-    // might be a useful future optimization.
+    // correct madvise information, allocating 4 contiguous pages and mapping them together, might
+    // be a useful future optimization.
     //
     // TODO: Readahead backwards, i.e. MAP_GROWSDOWN.
 
@@ -1587,10 +1615,10 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                 return Err(PfError::NonfatalInternalError);
             }
 
-            let guard = foreign_address_space.upgradeable_read();
+            let mut guard = foreign_address_space.upgradeable_read();
             let src_page = src_base.next_by(pages_from_grant_start);
 
-            if let Some(src_grant) = guard.grants.contains(src_page) {
+            if let Some(_) = guard.grants.contains(src_page) {
                 let src_frame = if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
                     Frame::containing_address(phys)
                 } else {
@@ -1604,10 +1632,14 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                     drop(addr_space_guard);
 
                     let ext_addrspace = &foreign_address_space;
-                    let (frame, _, _) = correct_inner(ext_addrspace, ext_addrspace.write(), src_page, AccessMode::Read, new_recursion_level)?;
+                    let (frame, _, _) = {
+                        let g = ext_addrspace.write();
+                        correct_inner(ext_addrspace, g, src_page, AccessMode::Read, new_recursion_level)?
+                    };
 
                     addr_space_guard = addr_space_lock.write();
                     addr_space = &mut *addr_space_guard;
+                    guard = foreign_address_space.upgradeable_read();
 
                     frame
                 };
@@ -1620,7 +1652,7 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                     Err(AddRefError::CowToShared) => {
                         let new_frame = cow(src_frame, info, RefKind::Shared)?;
 
-                        let mut guard = foreign_address_space.write();
+                        let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
                         // TODO: flusher
                         unsafe {

@@ -1,6 +1,7 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
+use core::cell::SyncUnsafeCell;
 use core::ptr::NonNull;
 use core::{cmp, mem};
 use core::num::NonZeroUsize;
@@ -272,7 +273,7 @@ unsafe impl core::alloc::Allocator for DirectAllocator {
 }
 
 #[cold]
-pub fn init_mm() {
+fn init_sections() {
     let mut guard = SECTIONS.write();
     let mut sections = Vec::new();
 
@@ -319,6 +320,19 @@ pub fn init_mm() {
     sections.shrink_to_fit();
 
     *guard = sections;
+}
+
+#[cold]
+pub fn init_mm() {
+    init_sections();
+
+    unsafe {
+        let the_frame = allocate_frames(1).expect("failed to allocate static zeroed frame");
+        let the_info = get_page_info(the_frame).expect("static zeroed frame had no PageInfo");
+        the_info.refcount.store(RefCount::Cow(NonZeroUsize::new(2).unwrap()).to_raw(), Ordering::Relaxed);
+
+        THE_ZEROED_FRAME.get().write(Some((the_frame, the_info)));
+    }
 }
 #[derive(Debug)]
 pub enum AddRefError {
@@ -500,4 +514,11 @@ pub fn page_fault_handler(stack: &mut impl ArchIntCtx, code: GenericPfFlags, fau
     }
 
     Err(Segv)
+}
+static THE_ZEROED_FRAME: SyncUnsafeCell<Option<(Frame, &'static PageInfo)>> = SyncUnsafeCell::new(None);
+
+pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
+    unsafe {
+        THE_ZEROED_FRAME.get().read().expect("zeroed frame must be initialized")
+    }
 }
