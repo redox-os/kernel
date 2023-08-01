@@ -1,7 +1,7 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
-use core::cmp;
+use core::{cmp, mem};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -86,8 +86,6 @@ pub fn deallocate_frames(frame: Frame, count: usize) {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Frame {
-    // TODO: NonZeroUsize
-    //
     // On x86/x86_64, all memory below 1 MiB is reserved, and although some frames in that range
     // may end up in the paging code, it's very unlikely that frame 0x0 would.
     number: NonZeroUsize,
@@ -102,13 +100,6 @@ impl Frame {
     /// Get the address of this frame
     pub fn start_address(&self) -> PhysicalAddress {
         PhysicalAddress::new(self.number.get() * PAGE_SIZE)
-    }
-
-    //TODO: Set private
-    pub fn clone(&self) -> Frame {
-        Frame {
-            number: self.number
-        }
     }
 
     /// Create a frame containing `address`
@@ -252,8 +243,22 @@ pub fn init_mm() {
     let mut guard = SECTIONS.write();
     let mut sections = Vec::new();
 
-    // TODO: Merge adjacent areas before the max section size is reached?
-    for memory_map_area in areas().iter().filter(|area| area.size > 0) {
+    let mut iter = areas().iter().copied().peekable();
+
+    while let Some(mut memory_map_area) = iter.next() {
+        // TODO: NonZeroUsize
+        assert_ne!(memory_map_area.size, 0, "RMM should enforce areas are not zeroed");
+
+        // TODO: Would it make sense to naturally align the sections?
+
+        while let Some(next_area) = iter.peek() && next_area.base == memory_map_area.base.add(memory_map_area.size) {
+            memory_map_area.size += next_area.size;
+            let _ = iter.next();
+        }
+
+        assert_eq!(memory_map_area.base.data() % PAGE_SIZE, 0, "RMM should enforce area alignment");
+        assert_eq!(memory_map_area.size % PAGE_SIZE, 0, "RMM should enforce area length alignment");
+
         let mut pages_left = memory_map_area.size.div_floor(PAGE_SIZE);
         let mut base = Frame::containing_address(memory_map_area.base);
 
@@ -273,7 +278,7 @@ pub fn init_mm() {
 
     /*
     for section in &sections {
-        println!("SECTION from {:?}, {} pages", section.base, section.frames.len());
+        log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
     }
     */
 
@@ -296,24 +301,20 @@ impl PageInfo {
         }
     }
     pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
-        let old = self.refcount();
-
         match (self.refcount(), kind) {
             (RefCount::Zero, _) => self.refcount.store(1, Ordering::Relaxed),
             (RefCount::One, RefKind::Cow) => self.refcount.store(2, Ordering::Relaxed),
             (RefCount::One, RefKind::Shared) => self.refcount.store(2 | RC_SHARED_NOT_COW, Ordering::Relaxed),
-            (RefCount::Cow(prev), RefKind::Cow) | (RefCount::Shared(prev), RefKind::Shared) => {
+            (RefCount::Cow(_), RefKind::Cow) | (RefCount::Shared(_), RefKind::Shared) => {
                 self.refcount.fetch_add(1, Ordering::Relaxed);
             }
-            (RefCount::Cow(prev), RefKind::Shared) => return Err(AddRefError::CowToShared),
-            (RefCount::Shared(prev), RefKind::Cow) => return Err(AddRefError::SharedToCow),
+            (RefCount::Cow(_), RefKind::Shared) => return Err(AddRefError::CowToShared),
+            (RefCount::Shared(_), RefKind::Cow) => return Err(AddRefError::SharedToCow),
         }
         Ok(())
     }
     #[must_use = "must deallocate if refcount reaches zero"]
     pub fn remove_ref(&self) -> RefCount {
-        let old = self.refcount();
-
         RefCount::from_raw(match self.refcount() {
             RefCount::Zero => panic!("refcount was already zero when calling remove_ref!"),
             RefCount::One => {
