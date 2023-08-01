@@ -553,7 +553,7 @@ impl UserInner {
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
         let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags | MAP_FIXED_NOREPLACE, &mut notify_files, |dst_base, flags, mapper, flusher| {
-            Grant::borrow_fmap(PageSpan::new(dst_base, page_count), page_flags(map.flags), file_ref, src, mapper, flusher)
+            Grant::borrow_fmap(PageSpan::new(dst_base, page_count), flags, file_ref, src, mapper, flusher)
         })?;
 
         for map in notify_files {
