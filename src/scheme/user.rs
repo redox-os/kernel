@@ -15,6 +15,7 @@ use crate::context::file::FileDescription;
 use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, BorrowedFmapSource};
 use crate::event;
 use crate::memory::Frame;
+use crate::paging::mapper::InactiveFlusher;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
@@ -526,6 +527,7 @@ impl UserInner {
             description: desc,
             base_offset: map.offset,
         };
+        let mut flusher;
 
         let src = match base_page_opt {
             Some(base_addr) => Some({
@@ -542,7 +544,10 @@ impl UserInner {
                     } else {
                         MmapMode::Cow
                     },
-
+                    flusher: {
+                        flusher = InactiveFlusher::new();
+                        &mut flusher
+                    }
                 }
             }),
             None => None,

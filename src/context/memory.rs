@@ -840,7 +840,17 @@ impl Grant {
                 let frame = if let Some(page_info) = get_page_info(frame) {
                     match page_info.add_ref(RefKind::Shared) {
                         Ok(()) => frame,
-                        Err(AddRefError::CowToShared) => cow(frame, page_info, RefKind::Shared).map_err(|_| Error::new(ENOMEM))?,
+                        Err(AddRefError::CowToShared) => unsafe {
+                            let new_cow_frame = cow(frame, page_info, RefKind::Shared).map_err(|_| Error::new(ENOMEM))?;
+                            let (_, _, flush) = guard.table.utable.remap_with_full(src_page.start_address(), |_, flags| (new_cow_frame.start_address(), flags)).expect("page did exist");
+                            src.flusher.consume(flush);
+
+                            if page_info.remove_ref() == RefCount::Zero {
+                                deallocate_frames(frame, 1);
+                            }
+
+                            new_cow_frame
+                        }
                         Err(AddRefError::SharedToCow) => unreachable!(),
                         Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
                     }
@@ -1735,6 +1745,7 @@ pub struct BorrowedFmapSource<'a> {
     // TODO: There should be a method that obtains the lock from the guard.
     pub addr_space_lock: &'a Arc<RwLock<AddrSpace>>,
     pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
+    pub flusher: &'a mut dyn Flusher<RmmA>,
 }
 
 pub fn handle_notify_files(notify_files: Vec<UnmapResult>) {
