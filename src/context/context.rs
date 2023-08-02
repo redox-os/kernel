@@ -1,13 +1,12 @@
-use alloc::sync::Weak;
+use core::{
+    cmp::Ordering,
+    mem,
+};
 use alloc::{
     boxed::Box,
     collections::VecDeque,
     sync::Arc,
     vec::Vec, borrow::Cow,
-};
-use core::{
-    cmp::Ordering,
-    mem,
 };
 use spin::RwLock;
 

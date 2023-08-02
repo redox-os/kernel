@@ -7,7 +7,6 @@ use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result}
 use crate::syscall::flag::{MapFlags, PhysallocFlags, PartialAllocStrategy, PhysmapFlags};
 
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 
 use super::usercopy::UserSliceRw;
 

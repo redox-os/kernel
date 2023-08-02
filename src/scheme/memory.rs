@@ -104,8 +104,6 @@ impl MemoryScheme {
                 _ => (),
             }
 
-            let is_pinned = false;
-
             Grant::physmap(
                 Frame::containing_address(PhysicalAddress::new(physical_address)),
                 PageSpan::new(

@@ -273,7 +273,7 @@ use {alloc::collections::BTreeMap, crate::memory::Frame};
 pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace, new_as: bool, tree: &mut BTreeMap<Frame, usize>) {
 
     use crate::context::memory::PageSpan;
-    use crate::memory::{get_page_info, Frame, RefCount};
+    use crate::memory::{get_page_info, RefCount};
     use crate::paging::*;
 
     let p4 = addr_space.table.utable.table();

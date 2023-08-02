@@ -4,15 +4,15 @@ use alloc::{
 };
 use core::mem;
 
-use spin::{RwLock, RwLockWriteGuard};
+use spin::RwLock;
 
 use crate::context::memory::PageSpan;
-use crate::context::{Context, ContextId, memory::AddrSpace, WaitpidKey};
+use crate::context::{ContextId, memory::AddrSpace, WaitpidKey};
 
 use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
-use crate::paging::mapper::{InactiveFlusher, PageFlushAll};
+use crate::paging::mapper::PageFlushAll;
 use crate::paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE};
 use crate::ptrace;
 use crate::start::usermode;
@@ -89,10 +89,7 @@ pub fn exit(status: usize) -> ! {
         {
             let contexts = context::contexts();
             if let Some(parent_lock) = contexts.get(ppid) {
-                let waitpid = {
-                    let mut parent = parent_lock.write();
-                    Arc::clone(&parent.waitpid)
-                };
+                let waitpid = Arc::clone(&parent_lock.write().waitpid);
 
                 for (c_pid, c_status) in children {
                     waitpid.send(c_pid, c_status);

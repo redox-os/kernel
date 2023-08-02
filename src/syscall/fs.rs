@@ -427,7 +427,7 @@ pub fn mremap(old_address: usize, old_size: usize, new_address: usize, new_size:
     let old_base = Page::containing_address(VirtualAddress::new(old_address));
     let new_base = Page::containing_address(VirtualAddress::new(new_address));
 
-    let mut map_flags = if flags.contains(MremapFlags::FIXED_REPLACE) {
+    let map_flags = if flags.contains(MremapFlags::FIXED_REPLACE) {
         MapFlags::MAP_FIXED
     } else if flags.contains(MremapFlags::FIXED) {
         MapFlags::MAP_FIXED_NOREPLACE

@@ -2,15 +2,10 @@
 //! handling should go here, unless they closely depend on the design
 //! of the scheme.
 
-use rmm::Arch;
-
 use crate::{
-    arch::{
-        interrupt::InterruptStack,
-        paging::{PAGE_SIZE, VirtualAddress},
-    },
+    arch::interrupt::InterruptStack,
     common::unique::Unique,
-    context::{self, signal, Context, ContextId, memory::AddrSpace},
+    context::{self, signal, Context, ContextId},
     event,
     scheme::proc,
     sync::WaitCondition,
@@ -20,7 +15,6 @@ use crate::{
         flag::*,
         ptrace_event
     },
-    CurrentRmmArch as RmmA,
 };
 
 use alloc::{

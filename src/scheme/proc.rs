@@ -1,6 +1,6 @@
 use crate::{
-    arch::paging::{mapper::InactiveFlusher, Page, RmmA, RmmArch, VirtualAddress},
-    context::{self, Context, ContextId, Status, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, Grant, new_addrspace, map_flags, PageSpan, handle_notify_files}, BorrowedHtBuf},
+    arch::paging::{Page, RmmA, RmmArch, VirtualAddress},
+    context::{self, Context, ContextId, Status, file::FileDescriptor, memory::{AddrSpace, Grant, new_addrspace, PageSpan, handle_notify_files}},
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme, SchemeId},
@@ -11,7 +11,7 @@ use crate::{
         data::{GrantDesc, Map, PtraceEvent, SigAction, Stat},
         error::*,
         flag::*,
-        scheme::{CallerCtx, calc_seek_offset_usize, Scheme},
+        scheme::{CallerCtx, Scheme},
         self, usercopy::{UserSliceWo, UserSliceRo},
     },
 };
@@ -592,7 +592,7 @@ impl Scheme for ProcScheme {
 
         match handle.info.operation {
             Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => {
-                let prev_addr_space = stop_context(handle.info.pid, |context: &mut Context| unsafe {
+                let _ = stop_context(handle.info.pid, |context: &mut Context| unsafe {
                     if let Some(saved_regs) = ptrace::regs_for_mut(context) {
                         #[cfg(target_arch = "aarch64")]
                         {
@@ -678,7 +678,7 @@ impl KernelScheme for ProcScheme {
                     return Err(Error::new(EBUSY));
                 }
 
-                let (requested_dst_page, page_count) = crate::syscall::validate_region(map.address, map.size)?;
+                let (requested_dst_page, _) = crate::syscall::validate_region(map.address, map.size)?;
                 let src_span = PageSpan::validate_nonempty(VirtualAddress::new(map.offset), map.size).ok_or(Error::new(EINVAL))?;
 
                 let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
@@ -1164,14 +1164,13 @@ impl KernelScheme for ProcScheme {
                 handle(Operation::Filetable { filetable: new_filetable }, OperationData::Other)
             }
             Operation::AddrSpace { ref addrspace } => {
-                let addrspace_clone = Arc::clone(addrspace);
                 const GRANT_FD_PREFIX: &[u8] = b"grant-fd-";
 
                 let operation = match buf {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
                     b"empty" => Operation::AddrSpace { addrspace: new_addrspace()? },
-                    b"exclusive" => Operation::AddrSpace { addrspace: addrspace.write().try_clone(addrspace_clone)? },
+                    b"exclusive" => Operation::AddrSpace { addrspace: addrspace.write().try_clone()? },
                     b"mmap-min-addr" => Operation::MmapMinAddr(Arc::clone(addrspace)),
 
                     _ if buf.starts_with(GRANT_FD_PREFIX) => {

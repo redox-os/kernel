@@ -12,7 +12,7 @@ use spin::{Mutex, RwLock};
 use crate::context::context::HardBlockedReason;
 use crate::context::{self, Context, BorrowedHtBuf, Status};
 use crate::context::file::FileDescription;
-use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, page_flags, BorrowedFmapSource, handle_notify_files};
+use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, BorrowedFmapSource};
 use crate::event;
 use crate::memory::Frame;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
@@ -143,8 +143,6 @@ impl UserInner {
             return Err(Error::new(EINVAL));
         }
         tail.buf_mut()[..buf.len()].copy_from_slice(buf);
-
-        let src_page = Page::containing_address(VirtualAddress::new(tail.buf_mut().as_ptr() as usize));
 
         let is_pinned = true;
         let dst_page = dst_addr_space.write().mmap_anywhere(ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::allocated_shared_one_page(tail_frame, dst_page, flags, mapper, flusher, is_pinned)?))?;

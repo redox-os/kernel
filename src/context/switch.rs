@@ -7,7 +7,7 @@ use alloc::sync::Arc;
 use spin::{RwLock, RwLockWriteGuard};
 
 use crate::context::signal::signal_handler;
-use crate::context::{arch, contexts, Context, Status, CONTEXT_ID};
+use crate::context::{arch, contexts, Context, CONTEXT_ID};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::gdt;
 use crate::interrupt::irq::PIT_TICKS;

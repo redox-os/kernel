@@ -3,7 +3,6 @@
 
 use core::fmt::Debug;
 
-use x86::irq::PageFaultError;
 use x86::msr;
 
 pub use rmm::{
@@ -17,9 +16,6 @@ pub use rmm::{
 pub use super::CurrentRmmArch as RmmA;
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
-use crate::context::memory::{AccessMode, try_correcting_page_tables, PfError};
-use crate::interrupt::InterruptStack;
-use crate::kernel_executable_offsets::{__usercopy_end, __usercopy_start};
 pub use crate::rmm::KernelMapper;
 
 pub mod entry;

@@ -5,7 +5,6 @@
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use rmm::Arch;
-use syscall::EOPNOTSUPP;
 use core::sync::atomic::{AtomicU32, Ordering};
 use spin::RwLock;
 
@@ -100,7 +99,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                     }
                     #[cfg(not(target_has_atomic = "64"))]
                     {
-                        return Err(Error::new(EOPNOTSUPP));
+                        return Err(Error::new(crate::syscall::error::EOPNOTSUPP));
                     }
                 };
                 if fetched != expected {

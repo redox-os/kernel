@@ -5,17 +5,17 @@ use core::cmp;
 use core::fmt::Debug;
 use core::num::NonZeroUsize;
 use core::sync::atomic::Ordering;
-use spin::{RwLock, RwLockWriteGuard, Once, RwLockUpgradableGuard};
+use spin::{RwLock, RwLockWriteGuard, RwLockUpgradableGuard};
 use syscall::{
     flag::MapFlags,
     error::*,
 };
-use rmm::{Arch as _, PhysicalAddress, PageFlush};
+use rmm::{Arch as _, PageFlush};
 
 use crate::arch::paging::PAGE_SIZE;
 use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames, RefKind, AddRefError, RefCount, the_zeroed_frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
-use crate::paging::{KernelMapper, Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
+use crate::paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
 use crate::scheme;
 
 use super::context::HardBlockedReason;
@@ -85,7 +85,7 @@ impl AddrSpace {
     }
 
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    pub fn try_clone(&mut self, self_arc: Arc<RwLock<Self>>) -> Result<Arc<RwLock<Self>>> {
+    pub fn try_clone(&mut self) -> Result<Arc<RwLock<Self>>> {
         let mut new = new_addrspace()?;
 
         let new_guard = Arc::get_mut(&mut new)
@@ -109,7 +109,6 @@ impl AddrSpace {
                     (),
                 )?,
                 Provider::Allocated { ref cow_file_ref } => Grant::copy_mappings(
-                    Arc::clone(&self_arc),
                     grant_base,
                     grant_base,
                     grant_info.page_count,
@@ -122,7 +121,6 @@ impl AddrSpace {
                 )?,
                 // TODO: Merge Allocated and AllocatedShared, and make CopyMappingsMode a field?
                 Provider::AllocatedShared { is_pinned_userscheme_borrow: false } => Grant::copy_mappings(
-                    Arc::clone(&self_arc),
                     grant_base,
                     grant_base,
                     grant_info.page_count,
@@ -138,7 +136,7 @@ impl AddrSpace {
                 // forks on monolithic kernels).
                 Provider::External { ref address_space, src_base, .. } => Grant::borrow_grant(
                     Arc::clone(&address_space),
-                    grant_base,
+                    src_base,
                     grant_base,
                     grant_info,
                     new_mapper,
@@ -242,7 +240,7 @@ impl AddrSpace {
                 PageSpan::new(conflicting_span.end(), requested_span.count - offset - conflicting_span.count)
             };
 
-            let (before, mut grant, after) = grant.extract(intersection).expect("conflicting region shared no common parts");
+            let (before, grant, after) = grant.extract(intersection).expect("conflicting region shared no common parts");
 
             // Keep untouched regions
             if let Some(before) = before {
@@ -784,7 +782,7 @@ impl Grant {
 
     // XXX: borrow_grant is needed because of the borrow checker (iterator invalidation), maybe
     // borrow_grant/borrow can be abstracted somehow?
-    pub fn borrow_grant(src_address_space_lock: Arc<RwLock<AddrSpace>>, src_base: Page, dst_base: Page, src_info: &GrantInfo, mapper: &mut PageMapper, dst_flusher: impl Flusher<RmmA>, eager: bool) -> Result<Grant, Enomem> {
+    pub fn borrow_grant(src_address_space_lock: Arc<RwLock<AddrSpace>>, src_base: Page, dst_base: Page, src_info: &GrantInfo, _mapper: &mut PageMapper, _dst_flusher: impl Flusher<RmmA>, _eager: bool) -> Result<Grant, Enomem> {
         Ok(Grant {
             base: dst_base,
             info: GrantInfo {
@@ -879,7 +877,7 @@ impl Grant {
         dst_mapper: &mut PageMapper,
         mut dst_flusher: impl Flusher<RmmA>,
         eager: bool,
-        allow_phys: bool,
+        _allow_phys: bool,
         is_pinned_userscheme_borrow: bool,
     ) -> Result<Grant> {
         const MAX_EAGER_PAGES: usize = 4096;
@@ -951,7 +949,6 @@ impl Grant {
     }
     // TODO: This is limited to one grant. Should it be (if some magic new proc: API is introduced)?
     pub fn copy_mappings(
-        src_address_space_lock: Arc<RwLock<AddrSpace>>,
         src_base: Page,
         dst_base: Page,
         page_count: usize,
@@ -1044,7 +1041,7 @@ impl Grant {
         })
     }
     /// Move a grant between two address spaces.
-    pub fn transfer(mut self, dst_base: Page, flags: PageFlags<RmmA>, src_mapper: &mut PageMapper, mut dst_mapper: Option<&mut PageMapper>, mut src_flusher: impl Flusher<RmmA>, mut dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
+    pub fn transfer(self, dst_base: Page, flags: PageFlags<RmmA>, src_mapper: &mut PageMapper, mut dst_mapper: Option<&mut PageMapper>, mut src_flusher: impl Flusher<RmmA>, mut dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
         assert!(!self.info.is_pinned());
 
         for src_page in self.span().pages() {
@@ -1383,6 +1380,8 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86)
 #[cfg(target_arch = "x86")]
 pub fn setup_new_utable() -> Result<Table> {
+    use crate::paging::KernelMapper;
+
     let mut utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
 
     {
@@ -1409,6 +1408,8 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
 #[cfg(target_arch = "x86_64")]
 pub fn setup_new_utable() -> Result<Table> {
+    use crate::paging::KernelMapper;
+
     let utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
 
     {
