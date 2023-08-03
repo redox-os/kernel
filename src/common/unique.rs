@@ -12,8 +12,8 @@ impl<T> Clone for Unique<T> {
         *self
     }
 }
-unsafe impl<T> Send for Unique<T> {}
-unsafe impl<T> Sync for Unique<T> {}
+unsafe impl<T: Send> Send for Unique<T> {}
+unsafe impl<T: Sync> Sync for Unique<T> {}
 
 impl<T> Unique<T> {
     pub fn new(ptr: *mut T) -> Self {
