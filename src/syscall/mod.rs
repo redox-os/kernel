@@ -4,7 +4,7 @@
 
 extern crate syscall;
 
-use syscall::{EventFlags, EOVERFLOW, MremapFlags, EINVAL};
+use syscall::{EventFlags, EOVERFLOW};
 
 pub use self::syscall::{
     FloatRegisters,
@@ -170,7 +170,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
 
-                SYS_MREMAP => mremap(b, c, d, e, MremapFlags::from_bits(f).ok_or(Error::new(EINVAL))?),
+                SYS_MREMAP => mremap(b, c, d, e, f),
 
                 _ => Err(Error::new(ENOSYS))
             }
@@ -183,7 +183,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            if context.name.contains("getty") {
+            if context.name.contains("acid") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {

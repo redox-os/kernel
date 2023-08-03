@@ -265,7 +265,7 @@ impl UserInner {
         let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf.split_at(middle_page_count * PAGE_SIZE).expect("split must succeed");
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
-            dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
+            dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, _, mapper, flusher| {
                 let eager = true;
 
                 // It doesn't make sense to allow a context, that has borrowed non-RAM physical
@@ -279,7 +279,7 @@ impl UserInner {
                 // unmap them is to respond to the scheme socket.
                 let is_pinned_userscheme_borrow = true;
 
-                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), page_flags, mapper, flusher, eager, allow_phys, is_pinned_userscheme_borrow)?)
+                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), map_flags, mapper, flusher, eager, allow_phys, is_pinned_userscheme_borrow)?)
             })?;
         }
 
@@ -555,7 +555,7 @@ impl UserInner {
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
-        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags | MAP_FIXED_NOREPLACE, &mut notify_files, |dst_base, flags, mapper, flusher| {
+        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, &mut notify_files, |dst_base, flags, mapper, flusher| {
             Grant::borrow_fmap(PageSpan::new(dst_base, page_count), flags, file_ref, src, mapper, flusher)
         })?;
 
