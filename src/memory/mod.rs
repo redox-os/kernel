@@ -181,7 +181,7 @@ impl Drop for RaiiFrame {
     fn drop(&mut self) {
         let info = get_page_info(self.inner).expect("RaiiFrame lacking PageInfo");
 
-        if info.refcount.load(Ordering::Relaxed) == 0 {
+        if info.refcount.load(Ordering::Relaxed) == 1 {
             info.refcount.store(0, Ordering::Release);
         }
         crate::memory::deallocate_frames(self.inner, 1);
