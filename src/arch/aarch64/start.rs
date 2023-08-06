@@ -72,17 +72,17 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
         //TODO: Remove hard-coded UART for QEMU virt machine
-        {
+        if args.dtb_base == 0 {
             let mut serial_port = crate::device::uart_pl011::SerialPort::new(
                 crate::PHYS_OFFSET + 0x9000000
             );
             serial_port.init(false);
             serial_port.write(b"UART\n");
             *crate::device::serial::COM1.lock() = Some(serial_port);
+        } else {
+            // Try to find serial port prior to logging
+            device::serial::init_early(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
         }
-
-        // Try to find serial port prior to logging
-        device::serial::init_early(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
 
         // Convert env to slice
         let env = slice::from_raw_parts((args.env_base + crate::PHYS_OFFSET) as *const u8, args.env_size);
