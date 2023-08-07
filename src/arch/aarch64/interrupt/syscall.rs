@@ -61,9 +61,3 @@ macro_rules! with_exception_stack {
             (*$stack).scratch.x0 = $code;
     }}
 }
-
-function!(clone_ret => {
-    "ldp x29, x30, [sp], #16\n",
-    "mov sp, x29\n",
-    "ret\n",
-});

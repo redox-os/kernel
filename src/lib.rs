@@ -47,7 +47,9 @@
 #![feature(array_chunks)]
 #![feature(iter_array_chunks)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
+#![feature(const_option)]
 #![feature(int_roundings)]
+#![feature(let_chains)]
 #![feature(naked_functions)]
 #![feature(slice_ptr_get, slice_ptr_len)]
 #![feature(sync_unsafe_cell)]
@@ -292,5 +294,5 @@ macro_rules! linker_offsets(
     }
 );
 pub mod kernel_executable_offsets {
-    linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __tdata_start, __tdata_end, __tbss_start, __tbss_end);
+    linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __tdata_start, __tdata_end, __tbss_start, __tbss_end, __usercopy_start, __usercopy_end);
 }

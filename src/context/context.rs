@@ -1,12 +1,12 @@
+use core::{
+    cmp::Ordering,
+    mem,
+};
 use alloc::{
     boxed::Box,
     collections::VecDeque,
     sync::Arc,
     vec::Vec, borrow::Cow,
-};
-use core::{
-    cmp::Ordering,
-    mem,
 };
 use spin::RwLock;
 
@@ -17,6 +17,8 @@ use crate::context::{self, arch};
 use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context::memory::AddrSpace;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::paging::{RmmA, RmmArch};
+use crate::memory::{RaiiFrame, Frame};
 use crate::scheme::{SchemeNamespace, FileHandle};
 use crate::sync::WaitMap;
 
@@ -26,16 +28,45 @@ use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
+
+use super::memory::GrantFileRef;
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
 /// See `syscall::process::waitpid` and the `sync` module for examples of usage
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Status {
     Runnable,
+
+    // TODO: Rename to SoftBlocked and move status_reason to this variant.
+
+    /// Not currently runnable, typically due to some blocking syscall, but it can be trivially
+    /// unblocked by e.g. signals.
     Blocked,
+
+    /// Not currently runnable, and cannot be runnable until manually unblocked, depending on what
+    /// reason.
+    HardBlocked { reason: HardBlockedReason },
+
     Stopped(usize),
     Exited(usize),
+}
+
+impl Status {
+    pub fn is_runnable(&self) -> bool {
+        matches!(self, Self::Runnable)
+    }
+    pub fn is_soft_blocked(&self) -> bool {
+        matches!(self, Self::Blocked)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum HardBlockedReason {
+    AwaitingMmap { file_ref: GrantFileRef },
+    // TODO: PageFaultOom?
+    // TODO: NotYetStarted/ManuallyBlocked (when new contexts are created)
+    // TODO: ptrace_stop?
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -155,7 +186,7 @@ impl ContextSnapshot {
             ens: context.ens,
             sigmask: context.sigmask,
             umask: context.umask,
-            status: context.status,
+            status: context.status.clone(),
             status_reason: context.status_reason,
             running: context.running,
             cpu_id: context.cpu_id,
@@ -212,12 +243,10 @@ pub struct Context {
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_head: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
+    pub syscall_head: Option<RaiiFrame>,
     /// Tail buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_tail: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
-    /// Context is halting parent
-    pub vfork: bool,
+    pub syscall_tail: Option<RaiiFrame>,
     /// Context is being waited on
     pub waitpid: Arc<WaitMap<WaitpidKey, (ContextId, usize)>>,
     /// Context should handle pending signals
@@ -264,6 +293,7 @@ pub struct Context {
     /// set since there is no interrupt stack (unless the kernel stack is copied, but that is in my
     /// opinion hackier and less efficient than this (and UB to do in Rust)).
     pub clone_entry: Option<[usize; 2]>,
+    pub fmap_ret: Option<Frame>,
 }
 
 impl Context {
@@ -288,9 +318,8 @@ impl Context {
             cpu_time: 0,
             sched_affinity: None,
             syscall: None,
-            syscall_head: Some(AlignedBox::try_zeroed()?),
-            syscall_tail: Some(AlignedBox::try_zeroed()?),
-            vfork: false,
+            syscall_head: Some(RaiiFrame::allocate()?),
+            syscall_tail: Some(RaiiFrame::allocate()?),
             waitpid: Arc::new(WaitMap::new()),
             pending: VecDeque::new(),
             wake: None,
@@ -307,13 +336,14 @@ impl Context {
             ptrace_stop: false,
             sigstack: None,
             clone_entry: None,
+            fmap_ret: None,
         };
         Ok(this)
     }
 
     /// Block the context, and return true if it was runnable before being blocked
     pub fn block(&mut self, reason: &'static str) -> bool {
-        if self.status == Status::Runnable {
+        if self.status.is_runnable() {
             self.status = Status::Blocked;
             self.status_reason = reason;
             true
@@ -322,9 +352,19 @@ impl Context {
         }
     }
 
+    pub fn hard_block(&mut self, reason: HardBlockedReason) -> bool {
+        if self.status.is_runnable() {
+            self.status = Status::HardBlocked { reason };
+
+            true
+        } else {
+            false
+        }
+    }
+
     /// Unblock context, and return true if it was blocked before being marked runnable
     pub fn unblock(&mut self) -> bool {
-        if self.status == Status::Blocked {
+        if self.status.is_soft_blocked() {
             self.status = Status::Runnable;
             self.status_reason = "";
 
@@ -414,7 +454,6 @@ impl Context {
     pub fn addr_space(&self) -> Result<&Arc<RwLock<AddrSpace>>> {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
-    #[must_use = "grants must be manually unmapped, otherwise it WILL panic!"]
     pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) -> Option<Arc<RwLock<AddrSpace>>> {
         if self.id == super::context_id() {
             unsafe { addr_space.read().table.utable.make_current(); }
@@ -437,7 +476,7 @@ impl Context {
 /// Wrapper struct for borrowing the syscall head or tail buf.
 #[derive(Debug)]
 pub struct BorrowedHtBuf {
-    inner: Option<AlignedBox<[u8; PAGE_SIZE], PAGE_SIZE>>,
+    inner: Option<RaiiFrame>,
     head_and_not_tail: bool,
 }
 impl BorrowedHtBuf {
@@ -454,10 +493,13 @@ impl BorrowedHtBuf {
         })
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
-        self.inner.as_ref().expect("must succeed")
+        unsafe { &*(RmmA::phys_to_virt(self.inner.as_ref().expect("must succeed").get().start_address()).data() as *const [u8; PAGE_SIZE]) }
     }
     pub fn buf_mut(&mut self) -> &mut [u8; PAGE_SIZE] {
-        self.inner.as_mut().expect("must succeed")
+        unsafe { &mut *(RmmA::phys_to_virt(self.inner.as_mut().expect("must succeed").get().start_address()).data() as *mut [u8; PAGE_SIZE]) }
+    }
+    pub fn frame(&self) -> Frame {
+        self.inner.as_ref().expect("must succeed").get()
     }
     /*
     pub fn use_for_slice(&mut self, raw: UserSlice) -> Result<Option<&[u8]>> {

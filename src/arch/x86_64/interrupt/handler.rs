@@ -1,5 +1,6 @@
 use core::mem;
 
+use crate::memory::ArchIntCtx;
 use crate::syscall::IntRegisters;
 
 use super::super::flags::*;
@@ -549,4 +550,19 @@ macro_rules! interrupt_error {
             options(noreturn));
         }
     };
+}
+
+impl ArchIntCtx for InterruptStack {
+    fn ip(&self) -> usize {
+        self.iret.rip
+    }
+    fn recover_and_efault(&mut self) {
+        // We were inside a usercopy function that failed. This is handled by setting rax to a
+        // nonzero value, and emulating the ret instruction.
+        self.scratch.rax = 1;
+        let ret_addr = unsafe { (self.iret.rsp as *const usize).read() };
+        self.iret.rsp += 8;
+        self.iret.rip = ret_addr;
+        self.iret.rflags &= !(1 << 18);
+    }
 }

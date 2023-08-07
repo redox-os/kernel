@@ -1,3 +1,10 @@
+use core::alloc::Allocator;
+
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use crate::memory::Enomem;
+
 pub mod aligned_box;
 #[macro_use]
 pub mod int_like;
@@ -25,4 +32,15 @@ macro_rules! dbg {
     ($($val:expr),+ $(,)?) => {
         ($($crate::dbg!($val)),+,)
     };
+}
+
+pub fn try_new_vec_with_exact_size<T, A: Allocator>(len: usize, alloc: A) -> Result<Vec<T, A>, Enomem> {
+    let mut vec = Vec::<T, A>::new_in(alloc);
+    vec.try_reserve_exact(len).map_err(|_| Enomem)?;
+    Ok(vec.into())
+}
+pub fn try_box_slice_new<T, A: Allocator>(value: impl FnMut() -> T, len: usize, alloc: A) -> Result<Box<[T], A>, Enomem> {
+    let mut vec = try_new_vec_with_exact_size(len, alloc)?;
+    vec.resize_with(len, value);
+    Ok(vec.into())
 }

@@ -13,7 +13,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use syscall::CallerCtx;
+use syscall::{CallerCtx, MunmapFlags};
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -37,6 +37,7 @@ use self::root::RootScheme;
 use self::serio::SerioScheme;
 use self::sys::SysScheme;
 use self::time::TimeScheme;
+use self::user::UserInner;
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
@@ -310,6 +311,9 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
+    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
+        Err(Error::new(EOPNOTSUPP))
+    }
 
     fn kopen(&self, path: &str, flags: usize, caller: CallerCtx) -> Result<OpenResult> {
         self.open(path, flags, caller.uid, caller.gid).map(OpenResult::SchemeLocal)
@@ -335,6 +339,9 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         Err(Error::new(EBADF))
     }
+
+    // TODO: This demonstrates why we need to transition away from a dyn trait.
+    fn as_user_inner(&self) -> Option<Result<Arc<UserInner>>> { None }
 }
 
 #[derive(Debug)]

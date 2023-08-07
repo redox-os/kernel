@@ -2,6 +2,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::context;
+use crate::paging::PAGE_SIZE;
 use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
@@ -42,7 +43,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 context::Status::Runnable => {
                     stat_string.push('R');
                 },
-                context::Status::Blocked => if context.wake.is_some() {
+                context::Status::Blocked | context::Status::HardBlocked { .. } => if context.wake.is_some() {
                     stat_string.push('S');
                 } else {
                     stat_string.push('B');
@@ -84,9 +85,10 @@ pub fn resource() -> Result<Vec<u8>> {
                 memory += kstack.len();
             }
             if let Ok(addr_space) = context.addr_space() {
-                for grant in addr_space.read().grants.iter() {
-                    if grant.is_owned() {
-                        memory += grant.size();
+                for (_base, info) in addr_space.read().grants.iter() {
+                    // TODO: method
+                    if matches!(info.provider, context::memory::Provider::Allocated { .. }) {
+                        memory += info.page_count() * PAGE_SIZE;
                     }
                 }
             }

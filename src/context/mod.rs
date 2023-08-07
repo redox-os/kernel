@@ -28,7 +28,7 @@ mod arch;
 mod arch;
 
 /// Context struct
-mod context;
+pub mod context;
 
 /// Context list
 mod list;

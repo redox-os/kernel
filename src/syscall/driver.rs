@@ -6,8 +6,6 @@ use crate::scheme::memory::{MemoryScheme, MemoryType};
 use crate::syscall::error::{Error, EFAULT, EINVAL, ENOMEM, EPERM, ESRCH, Result};
 use crate::syscall::flag::{MapFlags, PhysallocFlags, PartialAllocStrategy, PhysmapFlags};
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-
 use alloc::sync::Arc;
 
 use super::usercopy::UserSliceRw;
@@ -102,6 +100,46 @@ pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) 
     } else {
         MemoryType::Writeback
     };
+
+    /*
+    let end = 1 << 52;
+    if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0 {
+        return Err(Error::new(EINVAL));
+    }
+
+    if size % PAGE_SIZE != 0 {
+        log::warn!("physmap size {} is not multiple of PAGE_SIZE {}", size, PAGE_SIZE);
+    }
+    let pages = NonZeroUsize::new(size.div_ceil(PAGE_SIZE)).ok_or(Error::new(EINVAL))?;
+
+    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let mut guard = addr_space.write();
+
+    guard.mmap_anywhere(pages, Default::default(), |dst_page, _, dst_mapper, dst_flusher| {
+        let mut page_flags = PageFlags::new().user(true);
+        if flags.contains(PHYSMAP_WRITE) {
+            page_flags = page_flags.write(true);
+        }
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
+        if flags.contains(PHYSMAP_WRITE_COMBINE) {
+            page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
+        }
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
+        if flags.contains(PHYSMAP_NO_CACHE) {
+            page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true);
+        }
+        Grant::physmap(
+            Frame::containing_address(PhysicalAddress::new(physical_address)),
+            PageSpan::new(
+                dst_page,
+                pages.get(),
+            ),
+            page_flags,
+            dst_mapper,
+            dst_flusher,
+        )
+    }).map(|page| page.start_address().data())
+    */
 
     MemoryScheme::physmap(physical_address, size, map_flags, memory_type)
 }

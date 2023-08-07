@@ -1,13 +1,19 @@
+use core::num::NonZeroUsize;
+
 use alloc::sync::Arc;
 use rmm::PhysicalAddress;
+use alloc::vec::Vec;
 use spin::RwLock;
-use syscall::MapFlags;
 
-use crate::context::memory::{AddrSpace, Grant};
 use crate::memory::{free_frames, used_frames, PAGE_SIZE, Frame};
+use crate::context::memory::{AddrSpace, Grant, PageSpan, handle_notify_files};
+use crate::paging::VirtualAddress;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::paging::entry::EntryFlags;
+
 use crate::syscall::data::{Map, StatVfs};
+use crate::syscall::flag::MapFlags;
 use crate::syscall::error::*;
 use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::UserSliceWo;
@@ -53,13 +59,18 @@ impl MemoryScheme {
     }
 
     pub fn fmap_anonymous(addr_space: &Arc<RwLock<AddrSpace>>, map: &Map) -> Result<usize> {
-        let (requested_page, page_count) = crate::syscall::usercopy::validate_region(map.address, map.size)?;
+        let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size).ok_or(Error::new(EINVAL))?;
+        let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;
+
+        let mut notify_files = Vec::new();
 
         let page = addr_space
             .write()
-            .mmap((map.address != 0).then_some(requested_page), page_count, map.flags, |page, flags, mapper, flusher| {
-                Ok(Grant::zeroed(page, page_count, flags, mapper, flusher)?)
+            .mmap((map.address != 0).then_some(span.base), page_count, map.flags, &mut notify_files, |dst_page, flags, mapper, flusher| {
+                Ok(Grant::zeroed(PageSpan::new(dst_page, page_count.get()), flags, mapper, flusher, map.flags.contains(MapFlags::MAP_SHARED))?)
             })?;
+
+        handle_notify_files(notify_files);
 
         Ok(page.start_address().data())
     }
@@ -76,9 +87,9 @@ impl MemoryScheme {
             log::warn!("physmap size {} is not multiple of PAGE_SIZE {}", size, PAGE_SIZE);
             return Err(Error::new(EINVAL));
         }
-        let page_count = size.div_ceil(PAGE_SIZE);
+        let page_count = NonZeroUsize::new(size.div_ceil(PAGE_SIZE)).ok_or(Error::new(EINVAL))?;
 
-        AddrSpace::current()?.write().mmap(None, page_count, flags, |dst_page, mut page_flags, dst_mapper, dst_flusher| {
+        AddrSpace::current()?.write().mmap_anywhere(page_count, flags, |dst_page, mut page_flags, dst_mapper, dst_flusher| {
             match memory_type {
                 // Default
                 MemoryType::Writeback => (),
@@ -95,8 +106,10 @@ impl MemoryScheme {
 
             Grant::physmap(
                 Frame::containing_address(PhysicalAddress::new(physical_address)),
-                dst_page,
-                page_count,
+                PageSpan::new(
+                    dst_page,
+                    page_count.get(),
+                ),
                 page_flags,
                 dst_mapper,
                 dst_flusher,
@@ -121,10 +134,6 @@ impl Scheme for MemoryScheme {
         }
 
         Ok(intended_handle as usize)
-    }
-
-    fn fmap(&self, id: usize, map: &Map) -> Result<usize> {
-        self.kfmap(id, &AddrSpace::current()?, map, false)
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {

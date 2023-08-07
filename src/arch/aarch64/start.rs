@@ -171,6 +171,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
 
+        crate::memory::init_mm();
+
         // Stop graphical debug
         #[cfg(feature = "graphical_debug")]
         graphical_debug::fini();

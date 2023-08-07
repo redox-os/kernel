@@ -4,14 +4,15 @@ use alloc::{
 };
 use core::mem;
 
-use spin::{RwLock, RwLockWriteGuard};
+use spin::RwLock;
 
-use crate::context::{Context, ContextId, memory::AddrSpace, WaitpidKey};
+use crate::context::memory::PageSpan;
+use crate::context::{ContextId, memory::AddrSpace, WaitpidKey};
 
 use crate::Bootstrap;
 use crate::context;
 use crate::interrupt;
-use crate::paging::mapper::{InactiveFlusher, PageFlushAll};
+use crate::paging::mapper::PageFlushAll;
 use crate::paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE};
 use crate::ptrace;
 use crate::start::usermode;
@@ -23,44 +24,6 @@ use crate::syscall::flag::{wifcontinued, wifstopped, MapFlags,
 use crate::syscall::ptrace_event;
 
 use super::usercopy::{UserSliceWo, UserSliceRo};
-
-fn empty<'lock>(context_lock: &'lock RwLock<Context>, mut context: RwLockWriteGuard<'lock, Context>, reaping: bool) -> RwLockWriteGuard<'lock, Context> {
-    // NOTE: If we do not replace the grants `Arc`, then a strange situation can appear where the
-    // main thread and another thread exit simultaneously before either one is reaped. If that
-    // happens, then the last context that runs exit will think that there is still are still
-    // remaining references to the grants, where there are in fact none. However, if either one is
-    // reaped before, then that reference will disappear, and no leak will occur.
-    //
-    // By removing the reference to the address space when the context will no longer be used, this
-    // problem will never occur.
-    let addr_space_arc = match context.addr_space.take() {
-        Some(a) => a,
-        None => return context,
-    };
-
-    if let Ok(mut addr_space) = Arc::try_unwrap(addr_space_arc).map(RwLock::into_inner) {
-        let mapper = &mut addr_space.table.utable;
-
-        for grant in addr_space.grants.into_iter() {
-            let unmap_result = if reaping {
-                log::error!("{}: {}: Grant should not exist: {:?}", context.id.into(), context.name, grant);
-
-                grant.unmap(mapper, &mut InactiveFlusher::new())
-            } else {
-                grant.unmap(mapper, PageFlushAll::new())
-            };
-
-            if unmap_result.file_desc.is_some() {
-                drop(context);
-
-                drop(unmap_result);
-
-                context = context_lock.write();
-            }
-        }
-    }
-    context
-}
 
 pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(PTRACE_STOP_EXIT, Some(ptrace_event!(PTRACE_STOP_EXIT, status)));
@@ -111,36 +74,22 @@ pub fn exit(status: usize) -> ! {
                 let mut context = context_lock.write();
                 if context.ppid == pid {
                     context.ppid = ppid;
-                    context.vfork = false;
                 }
             }
         }
 
-        let (vfork, children) = {
+        let children = {
             let mut context = context_lock.write();
-
-            context = empty(&context_lock, context, false);
-
-            let vfork = context.vfork;
-            context.vfork = false;
 
             context.status = context::Status::Exited(status);
 
-            let children = context.waitpid.receive_all();
-
-            (vfork, children)
+            context.waitpid.receive_all()
         };
 
         {
             let contexts = context::contexts();
             if let Some(parent_lock) = contexts.get(ppid) {
-                let waitpid = {
-                    let mut parent = parent_lock.write();
-                    if vfork && ! parent.unblock() {
-                        println!("{}: {} not blocked for exit vfork unblock", pid.into(), ppid.into());
-                    }
-                    Arc::clone(&parent.waitpid)
-                };
+                let waitpid = Arc::clone(&parent_lock.write().waitpid);
 
                 for (c_pid, c_status) in children {
                     waitpid.send(c_pid, c_status);
@@ -150,8 +99,6 @@ pub fn exit(status: usize) -> ! {
                     pid: Some(pid),
                     pgid: Some(pgid)
                 }, (pid, status));
-            } else {
-                println!("{}: {} not found for exit vfork unblock", pid.into(), ppid.into());
             }
         }
 
@@ -290,10 +237,9 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
-    if address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 { return Err(Error::new(EINVAL)); }
-    if address.saturating_add(size) > crate::USER_END_OFFSET { return Err(Error::new(EFAULT)); }
+    let span = PageSpan::validate_nonempty(VirtualAddress::new(address), size).ok_or(Error::new(EINVAL))?;
 
-    AddrSpace::current()?.write().mprotect(Page::containing_address(VirtualAddress::new(address)), size / PAGE_SIZE, flags).map(|()| 0)
+    AddrSpace::current()?.write().mprotect(span, flags).map(|()| 0)
 }
 
 pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
@@ -418,6 +364,7 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     // Spin until not running
     let mut running = true;
     while running {
+        // TODO: exit WaitCondition?
         {
             let contexts = context::contexts();
             let context_lock = contexts.get(pid).ok_or(Error::new(ESRCH))?;
@@ -428,13 +375,8 @@ fn reap(pid: ContextId) -> Result<ContextId> {
         interrupt::pause();
     }
 
-    let mut contexts = context::contexts_mut();
-    let context_lock = contexts.remove(pid).ok_or(Error::new(ESRCH))?;
-    {
-        let context = context_lock.write();
-        empty(&context_lock, context, true);
-    }
-    drop(context_lock);
+    let _ = context::contexts_mut()
+        .remove(pid).ok_or(Error::new(ESRCH))?;
 
     Ok(pid)
 }
@@ -542,7 +484,7 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
                     println!("TODO: Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
                     context.ppid = ppid;
                     //return Err(Error::new(ECHILD));
-                    Some(context.status)
+                    Some(context.status.clone())
                 } else {
                     None
                 }
@@ -587,22 +529,29 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
             .read().addr_space()
             .expect("expected bootstrap context to have an address space"));
 
+        // TODO: Use AddrSpace::mmap.
         let mut addr_space = addr_space.write();
         let addr_space = &mut *addr_space;
 
-        let mut grant = context::memory::Grant::physmap(
-            bootstrap.base.clone(),
-            Page::containing_address(VirtualAddress::new(0)),
-            bootstrap.page_count,
+        // TODO: Mark as owned and then support reclaiming the memory to the allocator if
+        // deallocated?
+        addr_space.grants.insert(context::memory::Grant::zeroed(
+            PageSpan::new(
+                Page::containing_address(VirtualAddress::new(0)),
+                bootstrap.page_count,
+            ),
             PageFlags::new().user(true).write(true).execute(true),
             &mut addr_space.table.utable,
             PageFlushAll::new(),
-        ).expect("failed to physmap bootstrap memory");
-        grant.allocator_owned = false;
-        grant.owned = true;
+            false, // is_shared
+        ).expect("failed to physmap bootstrap memory"));
 
-        addr_space.grants.insert(grant);
     }
+    // TODO: Not all arches do linear mapping
+    UserSliceWo::new(0, bootstrap.page_count * PAGE_SIZE)
+        .expect("failed to create bootstrap user slice")
+        .copy_from_slice(unsafe { crate::arch::bootstrap_mem(bootstrap) })
+        .expect("failed to copy memory to bootstrap");
 
     // Start in a minimal environment without any stack.
     usermode(bootstrap.entry, 0, 0, 0);

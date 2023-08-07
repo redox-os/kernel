@@ -1,23 +1,27 @@
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use syscall::{SKMSG_FRETURNFD, CallerCtx};
+use alloc::vec::Vec;
+use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags};
+use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
 use core::convert::TryFrom;
 use spin::{Mutex, RwLock};
 
-use crate::context::{self, Context, BorrowedHtBuf};
-use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::{AddrSpace, DANGLING, Grant, Region, GrantFileRef};
+use crate::context::context::HardBlockedReason;
+use crate::context::{self, Context, BorrowedHtBuf, Status};
+use crate::context::file::FileDescription;
+use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, BorrowedFmapSource};
 use crate::event;
-use crate::paging::KernelMapper;
+use crate::memory::Frame;
+use crate::paging::mapper::InactiveFlusher;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet};
 use crate::syscall::error::*;
-use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE};
+use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE, MapFlags};
 use crate::syscall::number::*;
 use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::{UserSlice, UserSliceWo, UserSliceRo};
@@ -33,14 +37,17 @@ pub struct UserInner {
     next_id: Mutex<u64>,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    fmap: Mutex<BTreeMap<u64, (Weak<RwLock<Context>>, FileDescriptor, Map)>>,
     done: WaitMap<u64, Response>,
+    fmap: Mutex<BTreeMap<u64, Weak<RwLock<Context>>>>,
     unmounting: AtomicBool,
 }
+#[derive(Debug)]
 pub enum Response {
     Regular(usize),
     Fd(Arc<RwLock<FileDescription>>),
 }
+
+const ONE: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 
 impl UserInner {
     pub fn new(root_id: SchemeId, handle_id: usize, name: Box<str>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
@@ -53,9 +60,9 @@ impl UserInner {
             next_id: Mutex::new(1),
             context,
             todo: WaitQueue::new(),
-            fmap: Mutex::new(BTreeMap::new()),
             done: WaitMap::new(),
             unmounting: AtomicBool::new(false),
+            fmap: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -132,14 +139,14 @@ impl UserInner {
         let dst_addr_space = Arc::clone(self.context.upgrade().ok_or(Error::new(ENODEV))?.read().addr_space()?);
 
         let mut tail = BorrowedHtBuf::tail()?;
+        let tail_frame = tail.frame();
         if buf.len() > tail.buf().len() {
             return Err(Error::new(EINVAL));
         }
         tail.buf_mut()[..buf.len()].copy_from_slice(buf);
 
-        let src_page = Page::containing_address(VirtualAddress::new(tail.buf_mut().as_ptr() as usize));
-
-        let dst_page = dst_addr_space.write().mmap(None, 1, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::borrow(src_page, dst_page, 1, flags, None, &mut KernelMapper::lock(), mapper, flusher)?))?;
+        let is_pinned = true;
+        let dst_page = dst_addr_space.write().mmap_anywhere(ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::allocated_shared_one_page(tail_frame, dst_page, flags, mapper, flusher, is_pinned)?))?;
 
         Ok(CaptureGuard {
             destroyed: false,
@@ -209,13 +216,12 @@ impl UserInner {
 
         let mut dst_space = dst_space_lock.write();
 
-        let free_region = dst_space.grants.find_free(dst_space.mmap_min, page_count * PAGE_SIZE).ok_or(Error::new(ENOMEM))?;
-
-        let first_dst_page = Page::containing_address(free_region.start_address());
+        let free_span = dst_space.grants.find_free(dst_space.mmap_min, page_count).ok_or(Error::new(ENOMEM))?;
 
         let head = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
             let mut array = BorrowedHtBuf::head()?;
+            let frame = array.frame();
 
             let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
 
@@ -233,10 +239,10 @@ impl UserInner {
                     array.buf_mut().fill(0_u8);
                 }
             }
-            let head_buf_page = Page::containing_address(VirtualAddress::new(array.buf_mut().as_mut_ptr() as usize));
 
-            dst_space.mmap(Some(first_dst_page), 1, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                Ok(Grant::borrow(head_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
+            dst_space.mmap(Some(free_span.base), ONE, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
+                let is_pinned = true;
+                Ok(Grant::allocated_shared_one_page(frame, dst_page, page_flags, mapper, flusher, is_pinned)?)
             })?;
 
             let head = CopyInfo {
@@ -251,17 +257,29 @@ impl UserInner {
                 dst: None,
             }
         };
-        let (first_middle_dst_page, first_middle_src_page) = if !head_part_of_buf.is_empty() { (first_dst_page.next(), src_page.next()) } else { (first_dst_page, src_page) };
+        let (first_middle_dst_page, first_middle_src_page) = if !head_part_of_buf.is_empty() { (free_span.base.next(), src_page.next()) } else { (free_span.base, src_page) };
 
         let middle_page_count = middle_tail_part_of_buf.len() / PAGE_SIZE;
         let tail_size = middle_tail_part_of_buf.len() % PAGE_SIZE;
 
         let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf.split_at(middle_page_count * PAGE_SIZE).expect("split must succeed");
 
-        if middle_page_count > 0 {
-            dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                let mut cur_space = cur_space_lock.write();
-                Ok(Grant::borrow(first_middle_src_page, dst_page, middle_page_count, page_flags, None, &mut cur_space.table.utable, mapper, flusher)?)
+        if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
+            dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, _, mapper, flusher| {
+                let eager = true;
+
+                // It doesn't make sense to allow a context, that has borrowed non-RAM physical
+                // memory, to DIRECTLY do scheme calls onto that memory.
+                //
+                // (TODO: Maybe there are some niche use cases for that, possibly PCI transfer
+                // BARs, but it doesn't make sense yet.)
+                let allow_phys = false;
+
+                // Deny any attempts by the scheme, to unmap these temporary pages. The only way to
+                // unmap them is to respond to the scheme socket.
+                let is_pinned_userscheme_borrow = true;
+
+                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), map_flags, mapper, flusher, eager, allow_phys, is_pinned_userscheme_borrow)?)
             })?;
         }
 
@@ -270,8 +288,7 @@ impl UserInner {
 
             // FIXME: Signal context can probably recursively use head/tail.
             let mut array = BorrowedHtBuf::tail()?;
-
-            let tail_buf_page = Page::containing_address(VirtualAddress::new(array.buf_mut().as_mut_ptr() as usize));
+            let frame = array.frame();
 
             match mode {
                 Mode::Ro => {
@@ -287,8 +304,9 @@ impl UserInner {
                 }
             }
 
-            dst_space.mmap(Some(tail_dst_page), 1, map_flags, move |dst_page, page_flags, mapper, flusher| {
-                Ok(Grant::borrow(tail_buf_page, dst_page, 1, page_flags, None, &mut KernelMapper::lock(), mapper, flusher)?)
+            dst_space.mmap(Some(tail_dst_page), ONE, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
+                let is_pinned = true;
+                Ok(Grant::allocated_shared_one_page(frame, dst_page, page_flags, mapper, flusher, is_pinned)?)
             })?;
 
             CopyInfo {
@@ -306,7 +324,7 @@ impl UserInner {
 
         Ok(CaptureGuard {
             destroyed: false,
-            base: free_region.start_address().data() + offset,
+            base: free_span.base.start_address().data() + offset,
             len: user_buf.len(),
             space: Some(dst_space_lock),
             head,
@@ -344,6 +362,26 @@ impl UserInner {
 
         Ok(packets_read * mem::size_of::<Packet>())
     }
+    pub fn request_fmap(&self, id: usize, offset: u64, required_page_count: usize, flags: MapFlags) -> Result<()> {
+        log::info!("REQUEST FMAP");
+
+        let packet_id = self.next_id();
+        self.fmap.lock().insert(packet_id, Arc::downgrade(&context::current()?));
+
+        self.todo.send(Packet {
+            id: packet_id,
+            pid: context::context_id().into(),
+            a: KSMSG_MMAP,
+            b: id,
+            c: flags.bits(),
+            d: required_page_count,
+            uid: offset as u32,
+            gid: (offset >> 32) as u32,
+        });
+        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+
+        Ok(())
+    }
     fn handle_packet(&self, packet: &Packet) -> Result<()> {
         if packet.id == 0 {
             // TODO: Simplify logic by using SKMSG with packet.id being ignored?
@@ -362,55 +400,38 @@ impl UserInner {
 
                     self.done.send(packet.id, Response::Fd(desc));
                 }
+                SKMSG_PROVIDE_MMAP => {
+                    log::info!("PROVIDE_MAP {:?}", packet);
+                    let offset = u64::from(packet.uid) | (u64::from(packet.gid) << 32);
+
+                    if offset % PAGE_SIZE as u64 != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    let base_addr = VirtualAddress::new(packet.c);
+                    if base_addr.data() % PAGE_SIZE != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    let page_count = packet.d;
+
+                    if page_count != 1 { return Err(Error::new(EINVAL)); }
+                    let context = self.fmap.lock().remove(&packet.id).ok_or(Error::new(EINVAL))?.upgrade().ok_or(Error::new(ESRCH))?;
+
+                    let (frame, _) = AddrSpace::current()?.read().table.utable.translate(base_addr).ok_or(Error::new(EFAULT))?;
+
+                    let mut context = context.write();
+                    match context.status {
+                        Status::HardBlocked { reason: HardBlockedReason::AwaitingMmap { .. } } => context.status = Status::Runnable,
+                        _ => (),
+                    }
+                    context.fmap_ret = Some(Frame::containing_address(frame));
+
+                }
                 _ => return Err(Error::new(EINVAL)),
             }
         } else {
-            // TODO: Avoid having to check if fmap contains the packet ID, by forcing fmap to use
-            // SKMSG?
-
-            let mut retcode = packet.a;
-
-            // The motivation of doing this here instead of within the fmap handler, is that we
-            // can operate on an inactive table. This reduces the number of page table reloads
-            // from two (context switch + active TLB flush) to one (context switch).
-            if let Some((context_weak, desc, map)) = self.fmap.lock().remove(&packet.id) {
-                if let Ok(address) = Error::demux(packet.a) {
-                    if address % PAGE_SIZE > 0 || map.size % PAGE_SIZE > 0 {
-                        return Err(Error::new(EINVAL));
-                    }
-                    let src_page = Page::containing_address(VirtualAddress::new(address));
-                    let dst_page = Some(map.address).filter(|addr| *addr > 0).map(|addr| Page::containing_address(VirtualAddress::new(addr)));
-
-                    let file_ref = GrantFileRef { desc, offset: map.offset, flags: map.flags };
-
-                    if let Some(context_lock) = context_weak.upgrade() {
-                        let context = context_lock.read();
-                        let mut addr_space = context.addr_space()?.write();
-
-                        // TODO: ensure all mappings are aligned!
-                        let page_count = map.size.div_ceil(PAGE_SIZE);
-
-                        let res = addr_space.mmap(dst_page, page_count, map.flags, move |dst_page, flags, mapper, flusher| {
-                            Ok(Grant::borrow(src_page, dst_page, page_count, flags, Some(file_ref), &mut AddrSpace::current()?.write().table.utable, mapper, flusher)?)
-                        });
-                        retcode = Error::mux(res.map(|grant_start_page| {
-                            addr_space.grants.funmap.insert(
-                                Region::new(grant_start_page.start_address(), page_count * PAGE_SIZE),
-                                VirtualAddress::new(address),
-                            );
-                            grant_start_page.start_address().data()
-                        }));
-
-                    } else {
-                        //TODO: packet.pid is an assumption
-                        log::warn!("UserInner::write: failed to find context {} for fmap", packet.pid);
-                    }
-                } else {
-                    let _ = desc.close();
-                }
-            }
-
-            self.done.send(packet.id, Response::Regular(retcode));
+            self.done.send(packet.id, Response::Regular(packet.a));
         }
 
         Ok(())
@@ -424,12 +445,33 @@ impl UserInner {
         Ok(0)
     }
 
-    fn fmap_inner(&self, file: usize, map: &Map) -> Result<usize> {
-        if map.address % PAGE_SIZE != 0 {
+    fn fmap_inner(&self, dst_addr_space: Arc<RwLock<AddrSpace>>, file: usize, map: &Map) -> Result<usize> {
+        let unaligned_size = map.size;
+
+        if unaligned_size == 0 {
             return Err(Error::new(EINVAL));
         }
 
-        let (pid, uid, gid, context_weak, desc) = {
+        let page_count = unaligned_size.div_ceil(PAGE_SIZE);
+
+        if map.address % PAGE_SIZE != 0 {
+            return Err(Error::new(EINVAL));
+        };
+        let dst_base = (map.address != 0).then_some(Page::containing_address(VirtualAddress::new(map.address)));
+
+        if map.offset % PAGE_SIZE != 0 {
+            return Err(Error::new(EINVAL));
+        }
+
+        let src_address_space = Arc::clone(
+            self.context.upgrade().ok_or(Error::new(ENODEV))?
+                .read().addr_space()?
+        );
+        if Arc::ptr_eq(&src_address_space, &dst_addr_space) {
+            return Err(Error::new(EBUSY));
+        }
+
+        let (pid, desc) = {
             let context_lock = context::current()?;
             let context = context_lock.read();
             // TODO: Faster, cleaner mechanism to get descriptor
@@ -446,41 +488,82 @@ impl UserInner {
                 }
             }
             let desc = desc_res?;
-            (context.id, context.euid, context.egid, Arc::downgrade(&context_lock), desc)
+            (context.id, desc.description)
         };
 
-        let aligned_size_map = Map {
-            offset: map.offset,
-            size: map.size.next_multiple_of(PAGE_SIZE),
-            address: map.address,
-            flags: map.flags,
-        };
-
-        let address = self.copy_and_capture_tail(map)?;
-
-        let id = self.next_id();
-
-        self.fmap.lock().insert(id, (context_weak, desc, aligned_size_map));
-
-        let result = self.call_extended_inner(Packet {
-            id,
+        let response = self.call_extended_inner(Packet {
+            id: self.next_id(),
             pid: pid.into(),
-            uid,
-            gid,
-            a: SYS_FMAP,
+            a: KSMSG_MMAP_PREP,
             b: file,
-            c: address.base(),
-            d: address.len(),
-        });
+            c: unaligned_size,
+            d: map.flags.bits(),
+            // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
+            uid: map.offset as u32,
+            #[cfg(target_pointer_width = "64")]
+            gid: (map.offset >> 32) as u32,
+            #[cfg(target_pointer_width = "32")]
+            gid: 0,
+        })?;
 
-        result.and_then(|response| match response {
-            Response::Regular(code) => Error::demux(code),
+        // TODO: I've previously tested that this works, but because the scheme trait all of
+        // Redox's schemes currently rely on doesn't allow one-way messages, there's no current
+        // code using it.
+
+        //let mapping_is_lazy = map.flags.contains(MapFlags::MAP_LAZY);
+        let mapping_is_lazy = false;
+
+        let base_page_opt = match response {
+            Response::Regular(code) => (!mapping_is_lazy)
+                .then_some(Error::demux(code)?),
             Response::Fd(_) => {
                 log::debug!("Scheme incorrectly returned an fd for fmap.");
 
-                Err(Error::new(EIO))
+                return Err(Error::new(EIO));
             }
-        })
+        };
+
+        let file_ref = GrantFileRef {
+            description: desc,
+            base_offset: map.offset,
+        };
+        let mut flusher;
+
+        let src = match base_page_opt {
+            Some(base_addr) => Some({
+                if base_addr % PAGE_SIZE != 0 {
+                    return Err(Error::new(EINVAL));
+                }
+                let addr_space_lock = &src_address_space;
+                BorrowedFmapSource {
+                    src_base: Page::containing_address(VirtualAddress::new(base_addr)),
+                    addr_space_lock,
+                    addr_space_guard: addr_space_lock.write(),
+                    mode: if map.flags.contains(MapFlags::MAP_SHARED) {
+                        MmapMode::Shared
+                    } else {
+                        MmapMode::Cow
+                    },
+                    flusher: {
+                        flusher = InactiveFlusher::new();
+                        &mut flusher
+                    }
+                }
+            }),
+            None => None,
+        };
+
+        let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
+        let mut notify_files = Vec::new();
+        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, &mut notify_files, |dst_base, flags, mapper, flusher| {
+            Grant::borrow_fmap(PageSpan::new(dst_base, page_count), flags, file_ref, src, mapper, flusher)
+        })?;
+
+        for map in notify_files {
+            let _ = map.unmap();
+        }
+
+        Ok(dst_base.start_address().data())
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
@@ -529,7 +612,8 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
 
-        AddrSpace::munmap(space.write(), first_page, page_count);
+        let unpin = true;
+        space.write().munmap(PageSpan::new(first_page, page_count), unpin)?;
 
         result
     }
@@ -625,47 +709,42 @@ impl Scheme for UserScheme {
         inner.call(SYS_FEVENT, file, flags.bits(), 0).map(EventFlags::from_bits_truncate)
     }
 
-    fn fmap(&self, file: usize, map: &Map) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-
-        inner.fmap_inner(file, map)
-    }
-
+    /*
     fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
+        let requested_span = PageSpan::validate_nonempty(VirtualAddress::new(grant_address), size).ok_or(Error::new(EINVAL))?;
+
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
         let address_opt = {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context_lock = context::current()?;
             let context = context_lock.read();
+
             let mut addr_space = context.addr_space()?.write();
             let funmap = &mut addr_space.grants.funmap;
-            let entry = funmap.range(..=Region::byte(VirtualAddress::new(grant_address))).next_back();
+            let entry = funmap.range(..=Page::containing_address(VirtualAddress::new(grant_address))).next_back();
 
-            let grant_address = VirtualAddress::new(grant_address);
-
-            if let Some((&grant, &user_base)) = entry {
-                let grant_requested = Region::new(grant_address, size);
-                if grant_requested.end_address() > grant.end_address() {
+            if let Some((&grant_page, &(page_count, user_page))) = entry {
+                if requested_span.base.next_by(requested_span.count) > grant_page.next_by(page_count) {
                     return Err(Error::new(EINVAL));
                 }
 
-                funmap.remove(&grant);
+                funmap.remove(&grant_page);
 
-                let user = Region::new(user_base, grant.size());
+                let grant_span = PageSpan::new(grant_page, page_count);
+                let user_span = PageSpan::new(user_page, page_count);
 
-                if let Some(before) = grant.before(grant_requested) {
-                    funmap.insert(before, user_base);
+                if let Some(before) = grant_span.before(requested_span) {
+                    funmap.insert(before.base, (before.count, user_page));
                 }
-                if let Some(after) = grant.after(grant_requested) {
-                    let start = grant.rebase(user, after.start_address());
-                    funmap.insert(after, start);
+                if let Some(after) = grant_span.after(requested_span) {
+                    let start = grant_span.rebase(user_span, after.base);
+                    funmap.insert(after.base, (after.count, start));
                 }
 
-                Some(grant.rebase(user, grant_address).data())
+                Some(grant_span.rebase(user_span,grant_span.base).start_address().data())
             } else {
                 None
             }
-
         };
         if let Some(user_address) = address_opt {
             inner.call(SYS_FUNMAP, user_address, size, 0)
@@ -673,6 +752,7 @@ impl Scheme for UserScheme {
             Err(Error::new(EINVAL))
         }
     }
+    */
 
     fn frename(&self, file: usize, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
@@ -759,6 +839,35 @@ impl KernelScheme for UserScheme {
         let result = inner.call(SYS_FSTATVFS, file, address.base(), address.len());
         address.release()?;
         result
+    }
+    fn kfmap(&self, file: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        inner.fmap_inner(Arc::clone(addr_space), file, map)
+    }
+    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let res = inner.call_extended(CallerCtx {
+            pid: context::context_id().into(),
+            uid: offset as u32,
+            #[cfg(target_pointer_width = "64")]
+            gid: (offset >> 32) as u32,
+
+            // TODO: saturating_shr?
+            #[cfg(not(target_pointer_width = "64"))]
+            gid: 0,
+
+        }, [KSMSG_MUNMAP, number, size, flags.bits()])?;
+
+        match res {
+            Response::Regular(_) => Ok(()),
+            Response::Fd(_) => Err(Error::new(EIO)),
+        }
+    }
+
+    fn as_user_inner(&self) -> Option<Result<Arc<UserInner>>> {
+        Some(self.inner.upgrade().ok_or(Error::new(ENODEV)))
     }
 }
 

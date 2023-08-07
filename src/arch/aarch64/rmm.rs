@@ -2,7 +2,7 @@ use core::{
     cmp,
     mem,
     slice,
-    sync::atomic::{self, AtomicUsize, Ordering},
+    sync::atomic::{self, AtomicUsize, Ordering}, cell::SyncUnsafeCell,
 };
 use rmm::{
     KILOBYTE,
@@ -251,10 +251,19 @@ impl core::fmt::Debug for LockedAllocator {
     }
 }
 
-static mut AREAS: [MemoryArea; 512] = [MemoryArea {
+static AREAS: SyncUnsafeCell<[MemoryArea; 512]> = SyncUnsafeCell::new([MemoryArea {
     base: PhysicalAddress::new(0),
     size: 0,
-}; 512];
+}; 512]);
+static AREA_COUNT: SyncUnsafeCell<u16> = SyncUnsafeCell::new(0);
+
+// TODO: Share code
+pub fn areas() -> &'static [MemoryArea] {
+    // SAFETY: Both AREAS and AREA_COUNT are initialized once and then never changed.
+    //
+    // TODO: Memory hotplug?
+    unsafe { &(&*AREAS.get())[..AREA_COUNT.get().read().into()] }
+}
 
 pub static FRAME_ALLOCATOR: LockedAllocator = LockedAllocator;
 
@@ -368,6 +377,8 @@ pub unsafe fn init(
         areas_size / mem::size_of::<BootloaderMemoryEntry>()
     );
 
+    let areas = &mut *AREAS.get();
+
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
     for bootloader_area in bootloader_areas.iter() {
@@ -443,13 +454,14 @@ pub unsafe fn init(
             continue;
         }
 
-        AREAS[area_i].base = PhysicalAddress::new(base);
-        AREAS[area_i].size = size;
+        areas[area_i].base = PhysicalAddress::new(base);
+        areas[area_i].size = size;
         area_i += 1;
     }
+    AREA_COUNT.get().write(area_i as u16);
 
     let allocator = inner::<A>(
-        &AREAS,
+        areas,
         kernel_base, kernel_size_aligned,
         stack_base, stack_size_aligned,
         env_base, env_size_aligned,

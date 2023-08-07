@@ -1,14 +1,22 @@
-use crate::paging::{RmmA, RmmArch, TableKind};
+use crate::paging::{RmmA, RmmArch, TableKind, PAGE_SIZE};
 
 //TODO: combine arches into one function (aarch64 one is newest)
 
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+    use alloc::collections::{BTreeSet, BTreeMap};
+
+    use crate::memory::{RefCount, get_page_info};
+
     println!("DEBUGGER START");
     println!();
 
+    let mut tree = BTreeMap::new();
+
     let old_table = RmmA::table(TableKind::User);
+
+    let mut spaces = BTreeSet::new();
 
     for (id, context_lock) in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| *id != target_id) { continue; }
@@ -22,7 +30,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
+            let new_as = spaces.insert(space.read().table.utable.table().phys().data());
+
             RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
+            check_consistency(&mut *space.write(), new_as, &mut tree);
 
             if let Some((a, b, c, d, e, f)) = context.syscall {
                 println!("syscall: {}", crate::syscall::debug::format_call(a, b, c, d, e, f));
@@ -32,12 +43,11 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
                 let space = space.read();
                 if ! space.grants.is_empty() {
                     println!("grants:");
-                    for grant in space.grants.iter() {
-                        let region = grant.region();
+                    for (base, grant) in space.grants.iter() {
                         println!(
-                            "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {}",
-                            region.start_address().data(), region.final_address().data(), region.size(),
-                            if grant.is_owned() { "owned" } else { "borrowed" },
+                            "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
+                            base.start_address().data(), base.next_by(grant.page_count() - 1).start_address().data() + 0xFFF, grant.page_count() * PAGE_SIZE, grant.provider,
+
                         );
                     }
                 }
@@ -73,6 +83,18 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         println!();
     }
+    for (frame, count) in tree {
+        let rc = get_page_info(frame).unwrap().refcount();
+        let c = match rc {
+            RefCount::Zero => 0,
+            RefCount::One => 1,
+            RefCount::Cow(c) => c.get(),
+            RefCount::Shared(s) => s.get(),
+        };
+        if c < count {
+            println!("undercounted frame {:?} ({} < {})", frame, c, count);
+        }
+    }
 
     println!("DEBUGGER END");
 }
@@ -107,12 +129,11 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             let addr_space = addr_space.read();
             if ! addr_space.grants.is_empty() {
                 println!("grants:");
-                for grant in addr_space.grants.iter() {
-                    let region = grant.region();
+                for (base, grant) in addr_space.grants.iter() {
                     println!(
-                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {}",
-                        region.start_address().data(), region.final_address().data(), region.size(),
-                        if grant.is_owned() { "owned" } else { "borrowed" },
+                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {:?}",
+                        base.start_address().data(), base.next_by(grant.page_count()).start_address().data() + 0xFFF, grant.page_count() * crate::memory::PAGE_SIZE,
+                        grant.provider,
                     );
                 }
             }
@@ -153,10 +174,17 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+    use alloc::collections::BTreeSet;
+
+    use crate::memory::{RefCount, get_page_info};
+
     unsafe { x86::bits64::rflags::stac(); }
 
     println!("DEBUGGER START");
     println!();
+
+    let mut tree = BTreeMap::new();
+    let mut spaces = BTreeSet::new();
 
     let old_table = RmmA::table(TableKind::User);
 
@@ -167,8 +195,9 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
+            let was_new = spaces.insert(space.read().table.utable.table().phys().data());
             RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
-            check_consistency(&mut space.write());
+            check_consistency(&mut space.write(), was_new, &mut tree);
         }
 
         println!("status: {:?}", context.status);
@@ -182,12 +211,12 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             let addr_space = addr_space.read();
             if ! addr_space.grants.is_empty() {
                 println!("grants:");
-                for grant in addr_space.grants.iter() {
-                    let region = grant.region();
+                for (base, info) in addr_space.grants.iter() {
+                    let size = info.page_count() * PAGE_SIZE;
                     println!(
-                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {}",
-                        region.start_address().data(), region.final_address().data(), region.size(),
-                        if grant.is_owned() { "owned" } else { "borrowed" },
+                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
+                        base.start_address().data(), base.start_address().data() + size - 1, size,
+                        info.provider,
                     );
                 }
             }
@@ -221,13 +250,30 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         println!();
     }
+    for (frame, count) in tree {
+        let rc = get_page_info(frame).unwrap().refcount();
+        let c = match rc {
+            RefCount::Zero => 0,
+            RefCount::One => 1,
+            RefCount::Cow(c) => c.get(),
+            RefCount::Shared(s) => s.get(),
+        };
+        if c < count {
+            println!("undercounted frame {:?} ({} < {})", frame, c, count);
+        }
+    }
 
     println!("DEBUGGER END");
     unsafe { x86::bits64::rflags::clac(); }
 }
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+use {alloc::collections::BTreeMap, crate::memory::Frame};
 
-#[cfg(target_arch = "x86_64")]
-pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace) {
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace, new_as: bool, tree: &mut BTreeMap<Frame, usize>) {
+
+    use crate::context::memory::PageSpan;
+    use crate::memory::{get_page_info, RefCount};
     use crate::paging::*;
 
     let p4 = addr_space.table.utable.table();
@@ -261,31 +307,51 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
                     };
                     let address = VirtualAddress::new((p1i << 12) | (p2i << 21) | (p3i << 30) | (p4i << 39));
 
-                    let grant = match addr_space.grants.contains(address) {
+                    let (base, grant) = match addr_space.grants.contains(Page::containing_address(address)) {
                         Some(g) => g,
                         None => {
                             log::error!("ADDRESS {:p} LACKING GRANT BUT MAPPED TO {:#0x} FLAGS {:?}!", address.data() as *const u8, physaddr.data(), flags);
                             continue;
                         }
                     };
-                    const STICKY: usize = (1 << 5) | (1 << 6); // accessed+dirty
-                    if grant.flags().data() & !STICKY != flags.data() & !STICKY {
-                        log::error!("FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}", grant.flags(), flags, address.data() as *const u8, grant.region());
+
+                    const EXCLUDE: usize = (1 << 5) | (1 << 6); // accessed+dirty+writable
+                    if grant.flags().write(false).data() & !EXCLUDE != flags.write(false).data() & !EXCLUDE {
+                        log::error!("FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}", grant.flags(), flags, address.data() as *const u8, PageSpan::new(base, grant.page_count()));
+                    }
+                    let frame = Frame::containing_address(physaddr);
+                    if new_as {
+                        *tree.entry(frame).or_insert(0) += 1;
+                    }
+
+                    if let Some(page) = get_page_info(frame) {
+                        match page.refcount() {
+                            // TODO: Remove physalloc, and ensure physmap cannot map
+                            // allocator-owned memory! This is a hack!
+
+                            //RefCount::Zero => panic!("mapped page with zero refcount"),
+                            RefCount::Zero => (),
+
+                            RefCount::One | RefCount::Shared(_) => assert!(!(flags.has_write() && !grant.flags().has_write()), "page entry has higher permissions than grant!"),
+                            RefCount::Cow(_) => assert!(!flags.has_write(), "directly writable CoW page!"),
+                        }
                     }
                 }
             }
         }
     }
 
-    for grant in addr_space.grants.iter() {
-        for page in grant.pages() {
+    /*for (base, info) in addr_space.grants.iter() {
+        let span = PageSpan::new(base, info.page_count());
+        for page in span.pages() {
             let _entry = match addr_space.table.utable.translate(page.start_address()) {
                 Some(e) => e,
                 None => {
-                    log::error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", grant.region(), page.start_address().data() as *const u8);
+                    log::error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", span, page.start_address().data() as *const u8);
                     continue;
                 }
             };
         }
-    }
+    }*/
+    println!("Consistency appears correct");
 }

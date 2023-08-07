@@ -2,15 +2,10 @@
 //! handling should go here, unless they closely depend on the design
 //! of the scheme.
 
-use rmm::Arch;
-
 use crate::{
-    arch::{
-        interrupt::InterruptStack,
-        paging::{PAGE_SIZE, VirtualAddress},
-    },
+    arch::interrupt::InterruptStack,
     common::unique::Unique,
-    context::{self, signal, Context, ContextId, memory::AddrSpace},
+    context::{self, signal, Context, ContextId},
     event,
     scheme::proc,
     sync::WaitCondition,
@@ -20,7 +15,6 @@ use crate::{
         flag::*,
         ptrace_event
     },
-    CurrentRmmArch as RmmA,
 };
 
 use alloc::{
@@ -436,50 +430,4 @@ pub unsafe fn regs_for_mut(context: &mut Context) -> Option<&mut InterruptStack>
     signal_backup_regs
         .or_else(|| context.regs.map(|regs| regs.1.as_ptr()))
         .map(|ptr| &mut *ptr)
-}
-
-//  __  __
-// |  \/  | ___ _ __ ___   ___  _ __ _   _
-// | |\/| |/ _ \ '_ ` _ \ / _ \| '__| | | |
-// | |  | |  __/ | | | | | (_) | |  | |_| |
-// |_|  |_|\___|_| |_| |_|\___/|_|   \__, |
-//                                   |___/
-
-// Returns an iterator which splits [start, start + len) into an iterator of possibly trimmed
-// pages.
-fn page_aligned_chunks(mut start: usize, mut len: usize) -> impl Iterator<Item = (usize, usize)> {
-    // Ensure no pages can overlap with kernel memory.
-    if start.saturating_add(len) > crate::USER_END_OFFSET {
-        len = crate::USER_END_OFFSET.saturating_sub(start);
-    }
-
-    let first_len = core::cmp::min(len, PAGE_SIZE - start % PAGE_SIZE);
-    let first = Some((start, first_len)).filter(|(_, len)| *len > 0);
-    start += first_len;
-    len -= first_len;
-
-    let last_len = len % PAGE_SIZE;
-    len -= last_len;
-    let last = Some((start + len, last_len)).filter(|(_, len)| *len > 0);
-
-    first.into_iter().chain((start..start + len).step_by(PAGE_SIZE).map(|off| (off, PAGE_SIZE))).chain(last)
-}
-
-pub fn context_memory(addrspace: &mut AddrSpace, offset: VirtualAddress, len: usize) -> impl Iterator<Item = Option<(*mut [u8], bool)>> + '_ {
-    let end = core::cmp::min(offset.data().saturating_add(len), crate::USER_END_OFFSET);
-    let len = end - offset.data();
-
-    // TODO: Iterate over grants instead to avoid yielding None too many times. What if
-    // context_memory is used for an entire process's address space, where the stack is at the very
-    // end? Alternatively we can skip pages recursively, i.e. first skip unpopulated PML4s and then
-    // onwards.
-    page_aligned_chunks(offset.data(), len).map(move |(addr, len)| unsafe {
-        // [addr,addr+len) is a continuous page starting and/or ending at page boundaries, with the
-        // possible exception of an unaligned head/tail.
-
-        let (address, flags) = addrspace.table.utable.translate(VirtualAddress::new(addr))?;
-
-        let start = RmmA::phys_to_virt(address).data() + addr % crate::memory::PAGE_SIZE;
-        Some((core::ptr::slice_from_raw_parts_mut(start as *mut u8, len), flags.has_write()))
-    })
 }

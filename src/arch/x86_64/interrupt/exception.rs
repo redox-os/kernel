@@ -1,6 +1,6 @@
-use rmm::TableKind;
 use x86::irq::PageFaultError;
 
+use crate::memory::GenericPfFlags;
 use crate::{
     interrupt::stack_trace,
     paging::VirtualAddress,
@@ -135,42 +135,22 @@ interrupt_error!(protection, |stack| {
 });
 
 interrupt_error!(page, |stack| {
-    let cr2 = unsafe { x86::controlregs::cr2() };
-    let flags = PageFaultError::from_bits_truncate(stack.code as u32);
+    let cr2 = VirtualAddress::new(unsafe { x86::controlregs::cr2() });
+    let arch_flags = PageFaultError::from_bits_truncate(stack.code as u32);
+    let mut generic_flags = GenericPfFlags::empty();
 
-    extern "C" {
-        static __usercopy_start: u8;
-        static __usercopy_end: u8;
+    generic_flags.set(GenericPfFlags::PRESENT, arch_flags.contains(PageFaultError::P));
+    generic_flags.set(GenericPfFlags::INVOLVED_WRITE, arch_flags.contains(PageFaultError::WR));
+    generic_flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, arch_flags.contains(PageFaultError::US));
+    generic_flags.set(GenericPfFlags::INVL, arch_flags.contains(PageFaultError::RSVD));
+    generic_flags.set(GenericPfFlags::INSTR_NOT_DATA, arch_flags.contains(PageFaultError::ID));
+
+    if crate::memory::page_fault_handler(&mut stack.inner, generic_flags, cr2).is_err() {
+        println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);
+        stack.dump();
+        stack_trace();
+        ksignal(SIGSEGV);
     }
-    let usercopy_region = (&__usercopy_start as *const u8 as usize)..(&__usercopy_end as *const u8 as usize);
-
-    // TODO: Most likely not necessary, but maybe also check that cr2 is not too close to USER_END.
-    let address_is_user = VirtualAddress::new(cr2).kind() == TableKind::User;
-
-    let invalid_page_tables = flags.contains(PageFaultError::RSVD);
-    let caused_by_user = flags.contains(PageFaultError::US);
-    let caused_by_instr_fetch = flags.contains(PageFaultError::ID);
-
-    if address_is_user && !caused_by_user && !caused_by_instr_fetch && !invalid_page_tables && usercopy_region.contains(&{ stack.inner.iret.rip }) {
-        // We were inside a usercopy function that failed. This is handled by setting rax to a
-        // nonzero value, and emulating the ret instruction.
-        stack.inner.scratch.rax = 1;
-        let ret_addr = unsafe { (stack.inner.iret.rsp as *const usize).read() };
-        stack.inner.iret.rsp += 8;
-        stack.inner.iret.rip = ret_addr;
-        stack.inner.iret.rflags &= !(1 << 18);
-        return;
-    }
-
-    println!("Page fault: {:>016X}", cr2);
-    println!("  Present: {}", flags.contains(PageFaultError::P));
-    println!("  Write: {}", flags.contains(PageFaultError::WR));
-    println!("  User: {}", flags.contains(PageFaultError::US));
-    println!("  Reserved write: {}", flags.contains(PageFaultError::RSVD));
-    println!("  Instruction fetch: {}", flags.contains(PageFaultError::ID));
-    stack.dump();
-    stack_trace();
-    ksignal(SIGSEGV);
 });
 
 interrupt_stack!(fpu_fault, |stack| {

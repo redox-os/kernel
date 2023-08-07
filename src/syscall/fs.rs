@@ -1,11 +1,12 @@
 //! Filesystem syscalls
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use spin::RwLock;
 
 use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context::memory::AddrSpace;
 use crate::context;
-use crate::memory::PAGE_SIZE;
+use crate::context::memory::{PageSpan, AddrSpace};
+use crate::paging::{PAGE_SIZE, VirtualAddress, Page};
 use crate::scheme::{self, FileHandle, OpenResult, current_caller_ctx, KernelScheme, SchemeId};
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
@@ -387,15 +388,59 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<usize> {
 }
 
 pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
+    // Partial lengths in funmap are allowed according to POSIX, but not particularly meaningful;
+    // since the memory needs to SIGSEGV if later read, the entire page needs to disappear.
+    //
+    // Thus, while (temporarily) allowing unaligned lengths for compatibility, aligning the length
+    // should be done by libc.
+
     let length_aligned = length.next_multiple_of(PAGE_SIZE);
     if length != length_aligned {
         log::warn!("funmap passed length {:#x} instead of {:#x}", length, length_aligned);
     }
 
-    let (page, page_count) = crate::syscall::validate_region(virtual_address, length_aligned)?;
-
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
-    AddrSpace::munmap(addr_space.write(), page, page_count);
+    let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned).ok_or(Error::new(EINVAL))?;
+    let unpin = false;
+    let notify = addr_space.write().munmap(span, unpin)?;
+
+    for map in notify {
+        let _ = map.unmap();
+    }
 
     Ok(0)
+}
+
+pub fn mremap(old_address: usize, old_size: usize, new_address: usize, new_size: usize, flags: usize) -> Result<usize> {
+    if old_address % PAGE_SIZE != 0 || old_size % PAGE_SIZE != 0 || new_address % PAGE_SIZE != 0 || new_size % PAGE_SIZE != 0 {
+        return Err(Error::new(EINVAL));
+    }
+    if old_size == 0 || new_size == 0 {
+        return Err(Error::new(EINVAL));
+    }
+
+    let old_base = Page::containing_address(VirtualAddress::new(old_address));
+    let new_base = Page::containing_address(VirtualAddress::new(new_address));
+
+    let mremap_flags = MremapFlags::from_bits_truncate(flags);
+    let prot_flags = MapFlags::from_bits_truncate(flags) & (MapFlags::PROT_READ | MapFlags::PROT_WRITE | MapFlags::PROT_EXEC);
+
+    let map_flags = if mremap_flags.contains(MremapFlags::FIXED_REPLACE) {
+        MapFlags::MAP_FIXED
+    } else if mremap_flags.contains(MremapFlags::FIXED) {
+        MapFlags::MAP_FIXED_NOREPLACE
+    } else {
+        MapFlags::empty()
+    } | prot_flags;
+
+    let addr_space = AddrSpace::current()?;
+    let src_span = PageSpan::new(old_base, old_size.div_ceil(PAGE_SIZE));
+    let new_page_count = new_size.div_ceil(PAGE_SIZE);
+    let requested_dst_base = Some(new_base).filter(|_| new_address != 0);
+
+    let mut guard = addr_space.write();
+
+    let base = AddrSpace::r#move(&mut *guard, None, src_span, requested_dst_base, new_page_count, map_flags, &mut Vec::new())?;
+
+    Ok(base.start_address().data())
 }

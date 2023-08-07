@@ -7,7 +7,7 @@ use core::cell::Cell;
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use crate::allocator;
+use crate::{allocator, memory};
 #[cfg(feature = "acpi")]
 use crate::acpi;
 use crate::arch::pti;
@@ -190,6 +190,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
+
+        // Initialize data structures used to track pages.
+        memory::init_mm();
 
         // Stop graphical debug
         #[cfg(feature = "graphical_debug")]
