@@ -179,12 +179,12 @@ impl RaiiFrame {
 
 impl Drop for RaiiFrame {
     fn drop(&mut self) {
-        let info = get_page_info(self.inner).expect("RaiiFrame lacking PageInfo");
-
-        if info.refcount.load(Ordering::Relaxed) == 1 {
-            info.refcount.store(0, Ordering::Release);
+        if get_page_info(self.inner)
+            .expect("RaiiFrame lacking PageInfo")
+            .remove_ref() == RefCount::Zero
+        {
+            crate::memory::deallocate_frames(self.inner, 1);
         }
-        crate::memory::deallocate_frames(self.inner, 1);
     }
 }
 
