@@ -3,7 +3,6 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 
-use core::cell::Cell;
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -26,12 +25,6 @@ use crate::paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind};
 static BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static DATA_TEST_NONZERO: usize = usize::max_value();
-/// Test of zero values in thread BSS
-#[thread_local]
-static TBSS_TEST_ZERO: Cell<usize> = Cell::new(0);
-/// Test of non-zero values in thread data.
-#[thread_local]
-static TDATA_TEST_NONZERO: Cell<usize> = Cell::new(usize::max_value());
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -136,23 +129,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         paging::init();
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(args.stack_base as usize + args.stack_size as usize);
+        gdt::init_paging(args.stack_base as usize + args.stack_size as usize, 0);
 
         // Set up IDT
         idt::init_paging_bsp();
 
         // Set up syscall instruction
         interrupt::syscall::init();
-
-        // Test tdata and tbss
-        {
-            assert_eq!(TBSS_TEST_ZERO.get(), 0);
-            TBSS_TEST_ZERO.set(TBSS_TEST_ZERO.get() + 1);
-            assert_eq!(TBSS_TEST_ZERO.get(), 1);
-            assert_eq!(TDATA_TEST_NONZERO.get(), usize::max_value());
-            TDATA_TEST_NONZERO.set(TDATA_TEST_NONZERO.get() - 1);
-            assert_eq!(TDATA_TEST_NONZERO.get(), usize::max_value() - 1);
-        }
 
         // Reset AP variables
         CPU_COUNT.store(1, Ordering::SeqCst);
@@ -242,7 +225,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         paging::init();
 
         // Set up GDT with TLS
-        gdt::init_paging(stack_end);
+        gdt::init_paging(stack_end, cpu_id);
 
         // Set up IDT for AP
         idt::init_paging_post_heap(false, cpu_id);
@@ -252,16 +235,6 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
         // Initialize miscellaneous processor features
         misc::init();
-
-        // Test tdata and tbss
-        {
-            assert_eq!(TBSS_TEST_ZERO.get(), 0);
-            TBSS_TEST_ZERO.set(TBSS_TEST_ZERO.get() + 1);
-            assert_eq!(TBSS_TEST_ZERO.get(), 1);
-            assert_eq!(TDATA_TEST_NONZERO.get(), usize::max_value());
-            TDATA_TEST_NONZERO.set(TDATA_TEST_NONZERO.get() - 1);
-            assert_eq!(TDATA_TEST_NONZERO.get(), usize::max_value() - 1);
-        }
 
         // Initialize devices (for AP)
         device::init_ap();

@@ -11,10 +11,6 @@ use crate::scheme::debug::{debug_input, debug_notify};
 use crate::scheme::serio::serio_input;
 use crate::{context, time};
 
-//resets to 0 in context::switch()
-#[thread_local]
-pub static PIT_TICKS: AtomicUsize = AtomicUsize::new(0);
-
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrqMethod {
@@ -149,10 +145,8 @@ interrupt_stack!(pit_stack, |_stack| {
     // Any better way of doing this?
     timeout::trigger();
 
-    // Switch after 3 ticks (about 6.75 ms)
-    if PIT_TICKS.fetch_add(1, Ordering::SeqCst) >= 2 {
-        let _ = context::switch();
-    }
+    // Switch after a sufficent amount of time since the last switch.
+    context::switch::tick();
 });
 
 interrupt!(keyboard, || {

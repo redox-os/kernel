@@ -3,7 +3,8 @@
 use core::convert::TryInto;
 use core::mem;
 
-use crate::paging::{PAGE_SIZE, RmmA, RmmArch};
+use crate::paging::{RmmA, RmmArch};
+use crate::percpu::PercpuBlock;
 
 use x86::bits64::task::TaskStateSegment;
 use x86::Ring;
@@ -73,17 +74,15 @@ const BASE_GDT: [GdtEntry; 8] = [
 pub struct ProcessorControlRegion {
     // TODO: When both KASLR and KPTI are implemented, the PCR may need to be split into two pages,
     // such that "secret" kernel addresses are only stored in the protected half.
+    pub self_ref: usize,
 
-    pub tcb_end: usize,
     pub user_rsp_tmp: usize,
     // TODO: The I/O permissions bitmap can require more than 8192 bytes of space.
     pub tss: TaskStateSegment,
-    pub self_ref: usize,
     // The GDT *must* be stored in the PCR! The paranoid interrupt handler, lacking a reliable way
     // to correctly obtain GSBASE, uses SGDT to calculate the PCR offset.
     pub gdt: [GdtEntry; 8],
-    // TODO: Put mailbox queues here, e.g. for TLB shootdown? Just be sure to 128-byte align it
-    // first to avoid cache invalidation.
+    pub percpu: PercpuBlock,
 }
 
 const _: () = {
@@ -145,7 +144,7 @@ unsafe fn load_segments() {
 
 /// Initialize GDT and PCR.
 #[cold]
-pub unsafe fn init_paging(stack_offset: usize) {
+pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR");
     let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
@@ -163,8 +162,6 @@ pub unsafe fn init_paging(stack_offset: usize) {
         limit,
         base,
     };
-
-    pcr.tcb_end = init_percpu();
 
     {
         pcr.tss.iomap_base = 0xFFFF;
@@ -213,27 +210,11 @@ pub unsafe fn init_paging(stack_offset: usize) {
 
         x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
     }
-}
 
-/// Copy tdata, clear tbss, calculate TCB end pointer
-#[cold]
-unsafe fn init_percpu() -> usize {
-    use crate::kernel_executable_offsets::*;
-
-    let size = __tbss_end() - __tdata_start();
-    assert_eq!(size % PAGE_SIZE, 0);
-
-    let tbss_offset = __tbss_start() - __tdata_start();
-
-    let base_frame = crate::memory::allocate_frames(size / PAGE_SIZE).expect("failed to allocate percpu memory");
-    let base = RmmA::phys_to_virt(base_frame.start_address());
-
-    let tls_end = base.data() + size;
-
-    core::ptr::copy_nonoverlapping(__tdata_start() as *const u8, base.data() as *mut u8, tbss_offset);
-    core::ptr::write_bytes((base.data() + tbss_offset) as *mut u8, 0, size - tbss_offset);
-
-    tls_end
+    pcr.percpu = PercpuBlock {
+        cpu_id,
+        switch_internals: Default::default(),
+    };
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -268,5 +249,11 @@ impl GdtEntry {
     pub fn set_limit(&mut self, limit: u32) {
         self.limitl = limit as u16;
         self.flags_limith = self.flags_limith & 0xF0 | ((limit >> 16) as u8) & 0x0F;
+    }
+}
+
+impl PercpuBlock {
+    pub fn current() -> &'static Self {
+        unsafe { &*core::ptr::addr_of!((*pcr()).percpu) }
     }
 }

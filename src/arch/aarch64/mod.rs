@@ -16,6 +16,9 @@ pub mod interrupt;
 /// Inter-processor interrupts
 pub mod ipi;
 
+/// Miscellaneous
+pub mod misc;
+
 /// Paging
 pub mod paging;
 

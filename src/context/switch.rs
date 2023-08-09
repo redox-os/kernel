@@ -7,13 +7,14 @@ use alloc::sync::Arc;
 use spin::{RwLock, RwLockWriteGuard};
 
 use crate::context::signal::signal_handler;
-use crate::context::{arch, contexts, Context, CONTEXT_ID};
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::context::{arch, contexts, Context};
 use crate::gdt;
-use crate::interrupt::irq::PIT_TICKS;
 use crate::interrupt;
+use crate::percpu::PercpuBlock;
 use crate::ptrace;
 use crate::time;
+
+use super::ContextId;
 
 unsafe fn update_runnable(context: &mut Context, cpu_id: usize) -> bool {
     // Ignore already running contexts
@@ -88,11 +89,21 @@ struct SwitchResult {
     next_lock: Arc<RwLock<Context>>,
 }
 
-#[thread_local]
-static SWITCH_RESULT: Cell<Option<SwitchResult>> = Cell::new(None);
+
+pub fn tick() {
+    let ticks_cell = &PercpuBlock::current().switch_internals.pit_ticks;
+
+    let new_ticks = ticks_cell.get() + 1;
+    ticks_cell.set(new_ticks);
+
+    // Switch after 3 ticks (about 6.75 ms)
+    if new_ticks >= 3 {
+        let _ = unsafe { switch() };
+    }
+}
 
 pub unsafe extern "C" fn switch_finish_hook() {
-    if let Some(SwitchResult { prev_lock, next_lock }) = SWITCH_RESULT.take() {
+    if let Some(SwitchResult { prev_lock, next_lock }) = PercpuBlock::current().switch_internals.switch_result.take() {
         prev_lock.force_write_unlock();
         next_lock.force_write_unlock();
     } else {
@@ -108,11 +119,13 @@ pub unsafe extern "C" fn switch_finish_hook() {
 ///
 /// Do not call this while holding locks!
 pub unsafe fn switch() -> bool {
-    // TODO: Better memory orderings?
+    let percpu = PercpuBlock::current();
+
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
-    let _ticks = PIT_TICKS.swap(0, Ordering::SeqCst);
+    percpu.switch_internals.pit_ticks.set(0);
 
     // Set the global lock to avoid the unsafe operations below from causing issues
+    // TODO: Better memory orderings?
     while arch::CONTEXT_SWITCH_LOCK.compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
         interrupt::pause();
     }
@@ -177,7 +190,8 @@ pub unsafe fn switch() -> bool {
                 gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
             }
         }
-        CONTEXT_ID.store(next_context.id, Ordering::SeqCst);
+        let percpu = PercpuBlock::current();
+        percpu.switch_internals.context_id.set(next_context.id);
 
         if next_context.ksig.is_none() {
             //TODO: Allow nested signals
@@ -191,7 +205,7 @@ pub unsafe fn switch() -> bool {
             }
         }
 
-        SWITCH_RESULT.set(Some(SwitchResult {
+        percpu.switch_internals.switch_result.set(Some(SwitchResult {
             prev_lock: prev_context_lock,
             next_lock: next_context_lock,
         }));
@@ -208,5 +222,22 @@ pub unsafe fn switch() -> bool {
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
         false
+    }
+}
+
+#[derive(Default)]
+pub struct ContextSwitchPercpu {
+    switch_result: Cell<Option<SwitchResult>>,
+    pit_ticks: Cell<usize>,
+
+    /// Unique ID of the currently running context.
+    context_id: Cell<ContextId>,
+}
+impl ContextSwitchPercpu {
+    pub fn context_id(&self) -> ContextId {
+        self.context_id.get()
+    }
+    pub unsafe fn set_context_id(&self, new: ContextId) {
+        self.context_id.set(new)
     }
 }

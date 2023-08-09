@@ -33,19 +33,6 @@ SECTIONS {
         . = ALIGN(4K);
     }
 
-    .tdata ALIGN(4K) : AT(ADDR(.tdata) - KERNEL_OFFSET) {
-        __bss_end = .;
-        __tdata_start = .;
-        *(.tdata*)
-        . = ALIGN(4K);
-        __tdata_end = .;
-        __tbss_start = .;
-        *(.tbss*)
-        . += 8;
-        . = ALIGN(4K);
-        __tbss_end = .;
-    }
-
     __end = .;
 
     /DISCARD/ : {

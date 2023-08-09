@@ -74,11 +74,11 @@ const BASE_GDT: [GdtEntry; 9] = [
 
 #[repr(C, align(4096))]
 pub struct ProcessorControlRegion {
-    pub tcb_end: usize,
+    pub self_ref: usize,
     pub user_rsp_tmp: usize,
     pub tss: TssWrapper,
-    pub self_ref: usize,
     pub gdt: [GdtEntry; 9],
+    percpu: crate::percpu::PercpuBlock,
 }
 
 // NOTE: Despite not using #[repr(packed)], we do know that while there may be some padding
@@ -124,7 +124,7 @@ pub unsafe fn init() {
 }
 
 /// Initialize GDT and configure percpu.
-pub unsafe fn init_paging(stack_offset: usize) {
+pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR frame");
     let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
@@ -136,8 +136,6 @@ pub unsafe fn init_paging(stack_offset: usize) {
         limit: (pcr.gdt.len() * mem::size_of::<GdtEntry>() - 1) as u16,
         base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
     };
-
-    pcr.tcb_end = init_percpu();
 
     {
         let tss = &pcr.tss.0 as *const _ as usize as u32;
@@ -164,28 +162,11 @@ pub unsafe fn init_paging(stack_offset: usize) {
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
-}
 
-// TODO: Share code with x86. Maybe even with aarch64?
-/// Copy tdata, clear tbss, calculate TCB end pointer
-#[cold]
-unsafe fn init_percpu() -> usize {
-    use crate::kernel_executable_offsets::*;
-
-    let size = __tbss_end() - __tdata_start();
-    assert_eq!(size % PAGE_SIZE, 0);
-
-    let tbss_offset = __tbss_start() - __tdata_start();
-
-    let base_frame = crate::memory::allocate_frames(size / PAGE_SIZE).expect("failed to allocate percpu memory");
-    let base = RmmA::phys_to_virt(base_frame.start_address());
-
-    let tls_end = base.data() + size;
-
-    core::ptr::copy_nonoverlapping(__tdata_start() as *const u8, base.data() as *mut u8, tbss_offset);
-    core::ptr::write_bytes((base.data() + tbss_offset) as *mut u8, 0, size - tbss_offset);
-
-    tls_end
+    pcr.percpu = crate::percpu::PercpuBlock {
+        cpu_id,
+        switch_internals: Default::default(),
+    };
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -226,5 +207,11 @@ impl GdtEntry {
     pub fn set_limit(&mut self, limit: u32) {
         self.limitl = limit as u16;
         self.flags_limith = self.flags_limith & 0xF0 | ((limit >> 16) as u8) & 0x0F;
+    }
+}
+
+impl crate::percpu::PercpuBlock {
+    pub fn current() -> &'static Self {
+        unsafe { &*core::ptr::addr_of!((*pcr()).percpu) }
     }
 }

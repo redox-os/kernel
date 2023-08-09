@@ -50,6 +50,12 @@ pub unsafe fn tpidr_el0_write(val: u64) {
     asm!("msr tpidr_el0, {}", in(reg) val);
 }
 
+pub unsafe fn tpidr_el1() -> u64 {
+    let ret: u64;
+    asm!("mrs {}, tpidr_el1", out(reg) ret);
+    ret
+}
+
 pub unsafe fn tpidr_el1_write(val: u64) {
     asm!("msr tpidr_el1, {}", in(reg) val);
 }

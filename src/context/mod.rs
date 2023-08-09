@@ -1,7 +1,6 @@
 //! # Context management
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
-use core::sync::atomic::Ordering;
 
 use alloc::borrow::Cow;
 use alloc::sync::Arc;
@@ -9,6 +8,7 @@ use alloc::sync::Arc;
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::paging::{RmmA, RmmArch, TableKind};
+use crate::percpu::PercpuBlock;
 use crate::syscall::error::{Error, ESRCH, Result};
 
 pub use self::context::{BorrowedHtBuf, Context, ContextId, ContextSnapshot, Status, WaitpidKey};
@@ -34,7 +34,7 @@ pub mod context;
 mod list;
 
 /// Context switch function
-mod switch;
+pub mod switch;
 
 /// File struct - defines a scheme and a file number
 pub mod file;
@@ -59,9 +59,6 @@ pub const CONTEXT_MAX_FILES: usize = 65_536;
 /// Contexts list
 static CONTEXTS: RwLock<ContextList> = RwLock::new(ContextList::new());
 
-#[thread_local]
-static CONTEXT_ID: context::AtomicContextId = context::AtomicContextId::default();
-
 pub use self::arch::empty_cr3;
 
 pub fn init() {
@@ -77,7 +74,10 @@ pub fn init() {
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
-    CONTEXT_ID.store(context.id, Ordering::SeqCst);
+
+    unsafe {
+        PercpuBlock::current().switch_internals.set_context_id(context.id);
+    }
 }
 
 /// Get the global schemes list, const
@@ -91,13 +91,7 @@ pub fn contexts_mut() -> RwLockWriteGuard<'static, ContextList> {
 }
 
 pub fn context_id() -> ContextId {
-    // Thread local variables can and should only be modified using Relaxed. This is to prevent a
-    // hardware thread from racing with itself, for example if there is an interrupt. Orderings
-    // stronger than Relaxed are only necessary for inter-processor synchronization.
-    let id = CONTEXT_ID.load(Ordering::Relaxed);
-    // Prevent the compiler from reordering subsequent loads and stores to before this load.
-    core::sync::atomic::compiler_fence(Ordering::Acquire);
-    id
+    PercpuBlock::current().switch_internals.context_id()
 }
 
 pub fn current() -> Result<Arc<RwLock<Context>>> {

@@ -22,6 +22,5 @@
     "exe-suffix": "",
     "has-rpath": false,
     "no-default-libraries": true,
-    "position-independent-executables": false,
-    "tls-model": "global-dynamic"
+    "position-independent-executables": false
 }
