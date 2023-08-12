@@ -8,7 +8,6 @@ use spin::{RwLock, RwLockWriteGuard};
 
 use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context};
-use crate::gdt;
 use crate::interrupt;
 use crate::percpu::PercpuBlock;
 use crate::ptrace;
@@ -187,7 +186,7 @@ pub unsafe fn switch() -> bool {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {
             if let Some(ref stack) = next_context.kstack {
-                gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
+                crate::gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
             }
         }
         let percpu = PercpuBlock::current();
