@@ -267,11 +267,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "virttophys({:#X})",
             b
         ),
-        SYS_PIPE2 => format!(
-            "pipe2({:?}, {})",
-            unsafe { read_struct::<[usize; 2]>(b) },
-            c
-        ),
         SYS_SETREGID => format!(
             "setregid({}, {})",
             b,

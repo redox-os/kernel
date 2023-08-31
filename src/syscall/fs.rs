@@ -117,40 +117,6 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     }).ok_or(Error::new(EMFILE))
 }
 
-pub fn pipe2(fds: UserSliceWo, flags: usize) -> Result<()> {
-    let scheme_id = crate::scheme::pipe::pipe_scheme_id();
-    let (read_id, write_id) = crate::scheme::pipe::pipe(flags)?;
-
-    let context_lock = context::current()?;
-    let context = context_lock.read();
-
-    //log::warn!("Context {} used deprecated pipe2.", context.name);
-
-    let read_fd = context.add_file(FileDescriptor {
-        description: Arc::new(RwLock::new(FileDescription {
-            namespace: context.ens,
-            scheme: scheme_id,
-            number: read_id,
-            flags: O_RDONLY | flags & !O_ACCMODE & !O_CLOEXEC,
-        })),
-        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-    }).ok_or(Error::new(EMFILE))?;
-
-    let write_fd = context.add_file(FileDescriptor {
-        description: Arc::new(RwLock::new(FileDescription {
-            namespace: context.ens,
-            scheme: scheme_id,
-            number: write_id,
-            flags: O_WRONLY | flags & !O_ACCMODE & !O_CLOEXEC,
-        })),
-        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-    }).ok_or(Error::new(EMFILE))?;
-
-    let (read_outptr, write_outptr) = fds.split_at(core::mem::size_of::<usize>()).ok_or(Error::new(EINVAL))?;
-    read_outptr.write_usize(read_fd.into())?;
-    write_outptr.write_usize(write_fd.into())
-}
-
 /// rmdir syscall
 pub fn rmdir(raw_path: UserSliceRo) -> Result<usize> {
     let (uid, gid, scheme_ns) = match context::current()?.read() {

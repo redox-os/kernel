@@ -162,7 +162,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                     UserSlice::wo(d, 16)?.none_if_null(),
                 ).map(|()| 0),
                 SYS_SIGRETURN => sigreturn(),
-                SYS_PIPE2 => pipe2(UserSlice::wo(b, 2 * core::mem::size_of::<usize>())?, c).map(|()| 0),
                 SYS_PHYSALLOC => physalloc(b),
                 SYS_PHYSALLOC3 => physalloc3(b, c, UserSlice::rw(d, core::mem::size_of::<usize>())?),
                 SYS_PHYSFREE => physfree(b, c),
