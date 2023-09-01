@@ -77,7 +77,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                             let addrspace = AddrSpace::current()?;
                             let map = unsafe { UserSlice::ro(c, d)?.read_exact::<Map>()? };
                             if b == !0 {
-                                MemoryScheme::fmap_anonymous(&addrspace, &map)
+                                MemoryScheme::fmap_anonymous(&addrspace, &map, false)
                             } else {
                                 file_op_generic(fd, |scheme, _, number| scheme.kfmap(number, &addrspace, &map, false))
                             }

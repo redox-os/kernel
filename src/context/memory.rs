@@ -777,6 +777,30 @@ impl Grant {
             },
         })
     }
+    pub fn zeroed_phys_contiguous(span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
+        let base = crate::memory::allocate_frames(span.count).ok_or(Enomem)?;
+
+        for (i, page) in span.pages().enumerate() {
+            let frame = base.next_by(i);
+
+            get_page_info(base).expect("PageInfo must exist for allocated frame").refcount.store(RefCount::One.to_raw(), Ordering::Relaxed);
+
+            unsafe {
+                let result = mapper.map_phys(page.start_address(), frame.start_address(), flags).expect("TODO: page table OOM");
+                flusher.consume(result);
+            }
+        }
+
+        Ok(Grant {
+            base: span.base,
+            info: GrantInfo {
+                page_count: span.count,
+                flags,
+                mapped: true,
+                provider: Provider::Allocated { cow_file_ref: None },
+            },
+        })
+    }
     pub fn zeroed(span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, shared: bool) -> Result<Grant, Enomem> {
         const MAX_EAGER_PAGES: usize = 16;
 
