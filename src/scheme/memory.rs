@@ -22,38 +22,46 @@ pub struct MemoryScheme;
 
 // TODO: Use crate that autogenerates conversion functions.
 #[repr(u8)]
-enum Handle {
-    Zeroed = 0,
-    ZeroedPhysContiguous = 4,
-
-    PhysicalWb = 1,
-    PhysicalUc = 2,
-    PhysicalWc = 3,
-    PhysicalDev = 4,
-
-    // TODO: More/make arch-specific?
+#[derive(Clone, Copy, PartialEq)]
+enum HandleTy {
+    Allocated = 0,
+    PhysBorrow = 1,
 }
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum MemoryType {
-    Writeback,
-    Uncacheable,
-    WriteCombining,
-    DeviceMemory,
+    Writeback = 0,
+    Uncacheable = 1,
+    WriteCombining = 2,
+    DeviceMemory = 3,
 }
 
-impl Handle {
-    fn from_raw(raw: usize) -> Option<Self> {
-        Some(match raw {
-            0 => Self::Zeroed,
-            4 => Self::ZeroedPhysContiguous,
+bitflags! {
+    struct HandleFlags: u16 {
+        // TODO: below 32 bits?
+        const PHYS_CONTIGUOUS = 1;
+    }
+}
 
-            1 => Self::PhysicalWb,
-            2 => Self::PhysicalUc,
-            3 => Self::PhysicalWc,
-            4 => Self::PhysicalDev,
+fn from_raw(raw: u32) -> Option<(HandleTy, MemoryType, HandleFlags)> {
+    Some((
+        match raw & 0xFF {
+            0 => HandleTy::Allocated,
+            1 => HandleTy::PhysBorrow,
 
             _ => return None,
-        })
-    }
+        },
+        match (raw >> 8) & 0xFF {
+            0 => MemoryType::Writeback,
+            1 => MemoryType::Uncacheable,
+            2 => MemoryType::WriteCombining,
+            3 => MemoryType::DeviceMemory,
+
+            _ => return None,
+        },
+        HandleFlags::from_bits_truncate((raw >> 16) as u16)
+    ))
+
 }
 
 impl MemoryScheme {
@@ -108,11 +116,12 @@ impl MemoryScheme {
 
                 MemoryType::Uncacheable => page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true),
 
+                // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
+                // uncacheable, write-combining, write-through, write-protect, and write-back.
+
                 #[cfg(target_arch = "aarch64")]
                 MemoryType::DeviceMemory => page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true),
 
-                //x86 && x86_64 MemoryType::DeviceMemory unimplemented
-                //aarch64 MemoryType::WriteCombining unimplemented
                 _ => (),
             }
 
@@ -132,22 +141,42 @@ impl MemoryScheme {
 }
 impl KernelScheme for MemoryScheme {
     fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
-        let intended_handle = match path.trim_start_matches('/') {
-            "" | "zeroed" => Handle::Zeroed,
-            "zeroed_phys_contiguous" => Handle::ZeroedPhysContiguous,
-            "physical" | "physical@wb" => Handle::PhysicalWb,
-            "physical@uc" => Handle::PhysicalUc,
-            "physical@wc" => Handle::PhysicalWc,
-            "physical@dev" => Handle::PhysicalDev,
+        if path.len() > 64 {
+            return Err(Error::new(ENOENT));
+        }
+        let path = path.trim_start_matches('/');
+
+        let (before_memty, memty_str) = path.split_once('@').unwrap_or((path, ""));
+        let (before_ty, type_str) = before_memty.split_once('?').unwrap_or((before_memty, ""));
+
+        let handle_ty = match before_ty {
+            "" | "zeroed" => HandleTy::Allocated,
+            "physical" => HandleTy::PhysBorrow,
+
+            _ => return Err(Error::new(ENOENT)),
+        };
+        let mem_ty = match memty_str {
+            "" | "wb" => MemoryType::Writeback,
+            "wc" => MemoryType::WriteCombining,
+            "uc" => MemoryType::Uncacheable,
+            "dev" => MemoryType::DeviceMemory,
 
             _ => return Err(Error::new(ENOENT)),
         };
 
-        if ctx.uid != 0 && !matches!(intended_handle, Handle::Zeroed) {
+        let flags = type_str.split(',').filter_map(|ty_str| match ty_str {
+            //"32" => HandleFlags::BELOW_4G,
+            "phys_contiguous" => Some(Some(HandleFlags::PHYS_CONTIGUOUS)),
+            "" => None,
+            _ => Some(None),
+        }).collect::<Option<HandleFlags>>().ok_or(Error::new(ENOENT))?;
+
+        // TODO: Support arches with other default memory types?
+        if ctx.uid != 0 && (!flags.is_empty() || !matches!((handle_ty, mem_ty), (HandleTy::Allocated, MemoryType::Writeback))) {
             return Err(Error::new(EACCES));
         }
 
-        Ok(OpenResult::SchemeLocal(intended_handle as usize))
+        Ok(OpenResult::SchemeLocal((handle_ty as usize) | ((mem_ty as usize) << 8) | (usize::from(flags.bits()) << 16)))
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -158,26 +187,12 @@ impl KernelScheme for MemoryScheme {
         Ok(())
     }
     fn kfmap(&self, id: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
-        match Handle::from_raw(id).ok_or(Error::new(EBADF))? {
-            Handle::Zeroed => Self::fmap_anonymous(addr_space, map, false),
-            Handle::ZeroedPhysContiguous => Self::fmap_anonymous(addr_space, map, true),
-            Handle::PhysicalWb => Self::physmap(map.offset, map.size, map.flags, MemoryType::Writeback),
-            Handle::PhysicalUc => Self::physmap(map.offset, map.size, map.flags, MemoryType::Uncacheable),
-            Handle::PhysicalWc => Self::physmap(map.offset, map.size, map.flags, MemoryType::WriteCombining),
-            Handle::PhysicalDev => Self::physmap(map.offset, map.size, map.flags, MemoryType::DeviceMemory),
+        let (handle_ty, mem_ty, flags) = u32::try_from(id).ok().and_then(from_raw).ok_or(Error::new(EBADF))?;
+
+        match handle_ty {
+            HandleTy::Allocated => Self::fmap_anonymous(addr_space, map, flags.contains(HandleFlags::PHYS_CONTIGUOUS)),
+            HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty),
         }
-    }
-    fn kfpath(&self, id: usize, dst: UserSliceWo) -> Result<usize> {
-        // TODO: Copy scheme name elsewhere in the kernel?
-        let src = match Handle::from_raw(id).ok_or(Error::new(EBADF))? {
-            Handle::Zeroed => "memory:zeroed",
-            Handle::ZeroedPhysContiguous => "memory:zeroed_phys_contiguous",
-            Handle::PhysicalWb => "memory:physical@wb",
-            Handle::PhysicalUc => "memory:physical@uc",
-            Handle::PhysicalWc => "memory:physical@wc",
-            Handle::PhysicalDev => "memory:physical@dev",
-        };
-        dst.copy_common_bytes_from_slice(src.as_bytes())
     }
     fn kfstatvfs(&self, _file: usize, dst: UserSliceWo) -> Result<()> {
         let used = used_frames() as u64;
