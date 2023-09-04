@@ -155,7 +155,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         log::init();
 
         // Initialize miscellaneous processor features
-        misc::init();
+        misc::init(0);
 
         // Initialize devices
         device::init();
@@ -234,7 +234,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         interrupt::syscall::init();
 
         // Initialize miscellaneous processor features
-        misc::init();
+        misc::init(cpu_id);
 
         // Initialize devices (for AP)
         device::init_ap();
