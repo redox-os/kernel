@@ -7,6 +7,7 @@ use alloc::sync::Arc;
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+use crate::LogicalCpuSet;
 use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::percpu::PercpuBlock;
 use crate::syscall::error::{Error, ESRCH, Result};
@@ -66,7 +67,7 @@ pub fn init() {
     let id = ContextId::from(crate::cpu_id().get() as usize + 1);
     let context_lock = contexts.insert_context_raw(id).expect("could not initialize first context");
     let mut context = context_lock.write();
-    context.sched_affinity = Some(crate::cpu_id());
+    context.sched_affinity = LogicalCpuSet::single(crate::cpu_id());
     context.name = Cow::Borrowed("kmain");
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });

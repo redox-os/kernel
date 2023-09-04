@@ -10,7 +10,7 @@ use alloc::{
 };
 use spin::RwLock;
 
-use crate::LogicalCpuId;
+use crate::{LogicalCpuId, LogicalCpuSet};
 use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::aligned_box::AlignedBox;
 use crate::common::unique::Unique;
@@ -147,7 +147,7 @@ pub struct ContextSnapshot {
     pub running: bool,
     pub cpu_id: Option<LogicalCpuId>,
     pub cpu_time: u128,
-    pub sched_affinity: Option<LogicalCpuId>,
+    pub sched_affinity: LogicalCpuSet,
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     // Clone fields
     //TODO: is there a faster way than allocation?
@@ -239,7 +239,7 @@ pub struct Context {
     /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything else than
     /// this value.
     // TODO: bitmask (selection of multiple allowed CPUs)?
-    pub sched_affinity: Option<LogicalCpuId>,
+    pub sched_affinity: LogicalCpuSet,
     /// Current system call
     pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
     /// Head buffer to use when system call buffers are not page aligned
@@ -317,7 +317,7 @@ impl Context {
             cpu_id: None,
             switch_time: 0,
             cpu_time: 0,
-            sched_affinity: None,
+            sched_affinity: LogicalCpuSet::all(),
             syscall: None,
             syscall_head: Some(RaiiFrame::allocate()?),
             syscall_tail: Some(RaiiFrame::allocate()?),

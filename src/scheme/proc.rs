@@ -13,7 +13,7 @@ use crate::{
         flag::*,
         scheme::{CallerCtx, Scheme},
         self, usercopy::{UserSliceWo, UserSliceRo},
-    }, LogicalCpuId,
+    }, LogicalCpuId, LogicalCpuSet,
 };
 
 use alloc::{
@@ -862,7 +862,15 @@ impl KernelScheme for ProcScheme {
                 Ok(mem::size_of::<usize>())
             }
             Operation::SchedAffinity => {
-                let id = context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.read().sched_affinity.map_or(u32::MAX, |a| a.get() % crate::cpu_count());
+                // TODO: Improve the sched_affinity interface to allow a full mask.
+                let set = context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.read().sched_affinity;
+
+                let id = if set == LogicalCpuSet::empty() {
+                    usize::MAX
+                } else {
+                    set.get().trailing_zeros() as usize
+                };
+
                 buf.write_usize(id as usize)?;
                 Ok(mem::size_of::<usize>())
             }
@@ -1074,9 +1082,9 @@ impl KernelScheme for ProcScheme {
                 context::contexts().get(info.pid)
                     .ok_or(Error::new(EBADFD))?.write()
                     .sched_affinity = if val == u32::MAX {
-                        None
+                        LogicalCpuSet::all()
                     } else {
-                        Some(LogicalCpuId::new(val % crate::cpu_count()))
+                        LogicalCpuSet::single(LogicalCpuId::new(val % crate::cpu_count()))
                     };
                 Ok(mem::size_of::<usize>())
             }

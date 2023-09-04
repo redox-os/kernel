@@ -64,11 +64,7 @@ pub fn resource() -> Result<Vec<u8>> {
             } else {
                 format!("?")
             };
-            let affinity = if let Some(aff) = context.sched_affinity {
-                format!("{}", aff)
-            } else {
-                format!("?")
-            };
+            let affinity = format!("{:#x}", context.sched_affinity.get() & ((1 << crate::cpu_count()) - 1));
 
             let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;
             let cpu_time_ns = context.cpu_time % crate::time::NANOS_PER_SEC;

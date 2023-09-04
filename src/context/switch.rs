@@ -28,7 +28,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
 
     // Take ownership if not already owned
     // TODO: Support unclaiming context, while still respecting the CPU affinity.
-    if context.cpu_id == None && context.sched_affinity.map_or(true, |id| id == crate::cpu_id()) {
+    if context.cpu_id == None && context.sched_affinity.contains(crate::cpu_id()) {
         context.cpu_id = Some(cpu_id);
         // println!("{}: take {} {}", cpu_id, context.id, *context.name.read());
     }

@@ -290,7 +290,7 @@ pub mod kernel_executable_offsets {
 /// This is usually but not necessarily the same as the APIC ID.
 
 // TODO: Differentiate between logical CPU IDs and hardware CPU IDs (e.g. APIC IDs)
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 // TODO: NonMaxUsize?
 // TODO: Optimize away this type if not cfg!(feature = "multi_core")
 pub struct LogicalCpuId(u32);
@@ -302,8 +302,32 @@ impl LogicalCpuId {
     pub const fn get(self) -> u32 { self.0 }
 }
 
-impl core::fmt::Display for LogicalCpuId {
+impl core::fmt::Debug for LogicalCpuId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "[logical cpu #{}]", self.0)
+    }
+}
+impl core::fmt::Display for LogicalCpuId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "#{}", self.0)
+    }
+}
+
+// TODO: Support more than 128 CPUs.
+// The maximum number of CPUs on Linux is configurable, and the type for LogicalCpuSet and
+// LogicalCpuId may be optimized accordingly. In that case, box the mask if it's larger than some
+// base size (probably 256 bytes).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LogicalCpuSet(u128);
+
+impl LogicalCpuSet {
+    pub const fn new(inner: u128) -> Self { Self(inner) }
+    pub const fn get(self) -> u128 { self.0 }
+
+    pub const fn empty() -> Self { Self::new(0) }
+    pub const fn all() -> Self { Self::new(!0) }
+    pub const fn single(id: LogicalCpuId) -> Self { Self::new(1 << id.get()) }
+    pub const fn contains(&self, id: LogicalCpuId) -> bool {
+        self.0 & (1 << id.get()) != 0
     }
 }
