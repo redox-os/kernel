@@ -60,7 +60,7 @@ impl ContextList {
         // Zero is not a valid context ID, therefore add 1.
         //
         // FIXME: Ensure the number of CPUs can't switch between new_context calls.
-        let min = crate::cpu_count() + 1;
+        let min = crate::cpu_count() as usize + 1;
 
         self.next_id = core::cmp::max(self.next_id, min);
 

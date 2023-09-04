@@ -1,10 +1,10 @@
+use crate::LogicalCpuId;
 use crate::context::switch::ContextSwitchPercpu;
 
 /// The percpu block, that stored all percpu variables.
 pub struct PercpuBlock {
     /// A unique immutable number that identifies the current CPU - used for scheduling
-    // TODO: Differentiate between logical CPU IDs and hardware CPU IDs (e.g. APIC IDs)
-    pub cpu_id: usize,
+    pub cpu_id: LogicalCpuId,
 
     /// Context management
     pub switch_internals: ContextSwitchPercpu,

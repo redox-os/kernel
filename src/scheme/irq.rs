@@ -10,7 +10,7 @@ use spin::{Mutex, RwLock};
 
 use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved};
 
-use crate::event;
+use crate::{event, LogicalCpuId};
 use crate::interrupt::irq::acknowledge;
 use crate::scheme::{AtomicSchemeId, SchemeId};
 use crate::syscall::data::Stat;
@@ -127,10 +127,10 @@ impl IrqScheme {
                 return Err(Error::new(EINVAL));
             }
             if flags & O_STAT == 0 {
-                if is_reserved(usize::from(cpu_id), irq_to_vector(irq_number)) {
+                if is_reserved(LogicalCpuId::new(cpu_id.into()), irq_to_vector(irq_number)) {
                     return Err(Error::new(EEXIST));
                 }
-                set_reserved(usize::from(cpu_id), irq_to_vector(irq_number), true);
+                set_reserved(LogicalCpuId::new(cpu_id.into()), irq_to_vector(irq_number), true);
             }
             Handle::Irq { ack: AtomicUsize::new(0), irq: irq_number }
         } else {
@@ -188,7 +188,7 @@ impl Scheme for IrqScheme {
                     let mut data = String::new();
                     use core::fmt::Write;
 
-                    for vector in available_irqs_iter(cpu_id.into()) {
+                    for vector in available_irqs_iter(LogicalCpuId::new(cpu_id.into())) {
                         let irq = vector_to_irq(vector);
                         if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
                             continue;
@@ -253,7 +253,7 @@ impl Scheme for IrqScheme {
 
         if let &Handle::Irq { irq: handle_irq, .. } = handle {
             if handle_irq > BASE_IRQ_COUNT {
-                set_reserved(0, irq_to_vector(handle_irq), false);
+                set_reserved(LogicalCpuId::BSP, irq_to_vector(handle_irq), false);
             }
         }
         Ok(0)

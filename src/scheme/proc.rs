@@ -13,7 +13,7 @@ use crate::{
         flag::*,
         scheme::{CallerCtx, Scheme},
         self, usercopy::{UserSliceWo, UserSliceRo},
-    },
+    }, LogicalCpuId,
 };
 
 use alloc::{
@@ -862,7 +862,8 @@ impl KernelScheme for ProcScheme {
                 Ok(mem::size_of::<usize>())
             }
             Operation::SchedAffinity => {
-                buf.write_usize(context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.read().sched_affinity.map_or(usize::MAX, |a| a % crate::cpu_count()))?;
+                let id = context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.read().sched_affinity.map_or(u32::MAX, |a| a.get() % crate::cpu_count());
+                buf.write_usize(id as usize)?;
                 Ok(mem::size_of::<usize>())
             }
             // TODO: Replace write() with SYS_DUP_FORWARD.
@@ -1067,8 +1068,16 @@ impl KernelScheme for ProcScheme {
             }
             // TODO: Deduplicate code.
             Operation::SchedAffinity => {
-                let val = buf.read_usize()?;
-                context::contexts().get(info.pid).ok_or(Error::new(EBADFD))?.write().sched_affinity = if val == usize::MAX { None } else { Some(val % crate::cpu_count()) };
+                // TODO: read_u32
+                let val = u32::try_from(buf.read_usize()?).map_err(|_| Error::new(EINVAL))?;
+
+                context::contexts().get(info.pid)
+                    .ok_or(Error::new(EBADFD))?.write()
+                    .sched_affinity = if val == u32::MAX {
+                        None
+                    } else {
+                        Some(LogicalCpuId::new(val % crate::cpu_count()))
+                    };
                 Ok(mem::size_of::<usize>())
             }
 

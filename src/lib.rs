@@ -65,7 +65,7 @@ extern crate alloc;
 #[macro_use]
 extern crate bitflags;
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::scheme::SchemeNamespace;
 
@@ -144,16 +144,16 @@ static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// Get the current CPU's scheduling ID
 #[inline(always)]
-pub fn cpu_id() -> usize {
+pub fn cpu_id() -> LogicalCpuId {
     crate::percpu::PercpuBlock::current().cpu_id
 }
 
 /// The count of all CPUs that can have work scheduled
-static CPU_COUNT : AtomicUsize = AtomicUsize::new(0);
+static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Get the number of CPUs currently active
 #[inline(always)]
-pub fn cpu_count() -> usize {
+pub fn cpu_count() -> u32 {
     CPU_COUNT.load(Ordering::Relaxed)
 }
 
@@ -175,14 +175,14 @@ pub struct Bootstrap {
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-pub fn kmain(cpus: usize, bootstrap: Bootstrap) -> ! {
-    CPU_COUNT.store(cpus, Ordering::SeqCst);
+pub fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
+    CPU_COUNT.store(cpu_count, Ordering::SeqCst);
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
 
     let pid = syscall::getpid();
-    info!("BSP: {:?} {}", pid, cpus);
+    info!("BSP: {:?} {}", pid, cpu_count);
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
@@ -215,12 +215,12 @@ pub fn kmain(cpus: usize, bootstrap: Bootstrap) -> ! {
 
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables)]
-pub fn kmain_ap(id: usize) -> ! {
+pub fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
     if cfg!(feature = "multi_core") {
         context::init();
 
         let pid = syscall::getpid();
-        info!("AP {}: {:?}", id, pid);
+        info!("AP {}: {:?}", cpu_id, pid);
 
         loop {
             unsafe {
@@ -234,7 +234,7 @@ pub fn kmain_ap(id: usize) -> ! {
             }
         }
     } else {
-        info!("AP {}: Disabled", id);
+        info!("AP {}: Disabled", cpu_id);
 
         loop {
             unsafe {
@@ -283,4 +283,27 @@ macro_rules! linker_offsets(
 );
 pub mod kernel_executable_offsets {
     linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __usercopy_start, __usercopy_end);
+}
+
+/// A unique number used internally by the kernel to identify CPUs.
+///
+/// This is usually but not necessarily the same as the APIC ID.
+
+// TODO: Differentiate between logical CPU IDs and hardware CPU IDs (e.g. APIC IDs)
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+// TODO: NonMaxUsize?
+// TODO: Optimize away this type if not cfg!(feature = "multi_core")
+pub struct LogicalCpuId(u32);
+
+impl LogicalCpuId {
+    pub const BSP: Self = Self::new(0);
+
+    pub const fn new(inner: u32) -> Self { Self(inner) }
+    pub const fn get(self) -> u32 { self.0 }
+}
+
+impl core::fmt::Display for LogicalCpuId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "[logical cpu #{}]", self.0)
+    }
 }

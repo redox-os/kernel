@@ -22,6 +22,8 @@ use rmm::{
 };
 use spin::Mutex;
 
+use crate::LogicalCpuId;
+
 use super::CurrentRmmArch as RmmA;
 
 // Keep synced with OsMemoryKind in bootloader
@@ -275,14 +277,14 @@ impl KernelMapper {
 
         prev_count > 0
     }
-    pub unsafe fn lock_for_manual_mapper(current_processor: usize, mapper: crate::paging::PageMapper) -> Self {
-        let ro = Self::lock_inner(current_processor);
+    pub unsafe fn lock_for_manual_mapper(current_processor: LogicalCpuId, mapper: crate::paging::PageMapper) -> Self {
+        let ro = Self::lock_inner(current_processor.get() as usize);
         Self {
             mapper,
             ro,
         }
     }
-    pub fn lock_manually(current_processor: usize) -> Self {
+    pub fn lock_manually(current_processor: LogicalCpuId) -> Self {
         unsafe { Self::lock_for_manual_mapper(current_processor, PageMapper::current(TableKind::Kernel, FRAME_ALLOCATOR)) }
     }
     pub fn lock() -> Self {

@@ -4,9 +4,9 @@
 /// defined in other files inside of the `arch` module
 
 use core::slice;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, AtomicU32};
 
-use crate::{allocator, memory};
+use crate::{allocator, memory, LogicalCpuId};
 #[cfg(feature = "acpi")]
 use crate::acpi;
 use crate::arch::pti;
@@ -28,7 +28,10 @@ static DATA_TEST_NONZERO: usize = usize::max_value();
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
-pub static CPU_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+// TODO: This probably shouldn't be an atomic. Only the BSP starts APs.
+pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
+
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
@@ -129,7 +132,7 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         paging::init();
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(args.stack_base as usize + args.stack_size as usize, 0);
+        gdt::init_paging(args.stack_base as usize + args.stack_size as usize, LogicalCpuId::BSP);
 
         // Set up IDT
         idt::init_paging_bsp();
@@ -149,13 +152,13 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init_heap();
 
-        idt::init_paging_post_heap(true, 0);
+        idt::init_paging_post_heap(true, LogicalCpuId::BSP);
 
         // Activate memory logging
         log::init();
 
         // Initialize miscellaneous processor features
-        misc::init(0);
+        misc::init(LogicalCpuId::BSP);
 
         // Initialize devices
         device::init();
@@ -196,7 +199,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
 #[repr(packed)]
 pub struct KernelArgsAp {
+    // TODO: u32?
     cpu_id: u64,
+
     page_table: u64,
     stack_start: u64,
     stack_end: u64,
@@ -206,7 +211,7 @@ pub struct KernelArgsAp {
 pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
     let cpu_id = {
         let args = &*args_ptr;
-        let cpu_id = args.cpu_id as usize;
+        let cpu_id = LogicalCpuId::new(args.cpu_id as u32);
         let bsp_table = args.page_table as usize;
         let _stack_start = args.stack_start as usize;
         let stack_end = args.stack_end as usize;

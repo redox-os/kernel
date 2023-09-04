@@ -8,7 +8,7 @@ use alloc::collections::BTreeMap;
 use x86::segmentation::Descriptor as X86IdtEntry;
 use x86::dtables::{self, DescriptorTablePointer};
 
-use crate::interrupt::*;
+use crate::{interrupt::*, LogicalCpuId};
 use crate::ipi::IpiKind;
 
 use spin::RwLock;
@@ -68,10 +68,10 @@ impl Idt {
 static mut INIT_BSP_IDT: Idt = Idt::new();
 
 // TODO: VecMap?
-pub static IDTS: RwLock<Option<BTreeMap<usize, &'static mut Idt>>> = RwLock::new(None);
+pub static IDTS: RwLock<Option<BTreeMap<LogicalCpuId, &'static mut Idt>>> = RwLock::new(None);
 
 #[inline]
-pub fn is_reserved(cpu_id: usize, index: u8) -> bool {
+pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
     let byte_index = index / 64;
     let bit = index % 64;
 
@@ -79,7 +79,7 @@ pub fn is_reserved(cpu_id: usize, index: u8) -> bool {
 }
 
 #[inline]
-pub fn set_reserved(cpu_id: usize, index: u8, reserved: bool) {
+pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
     let byte_index = index / 64;
     let bit = index % 64;
 
@@ -97,7 +97,7 @@ pub fn allocate_interrupt() -> Option<NonZeroU8> {
     None
 }
 
-pub fn available_irqs_iter(cpu_id: usize) -> impl Iterator<Item = u8> + 'static {
+pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
     (32..=254).filter(move |&index| !is_reserved(cpu_id, index))
 }
 
@@ -123,7 +123,7 @@ const fn new_idt_reservations() -> [AtomicU64; 4] {
 }
 
 /// Initialize the IDT for a
-pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: usize) {
+pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: LogicalCpuId) {
     let mut idts_guard = IDTS.write();
     let idts_btree = idts_guard.get_or_insert_with(BTreeMap::new);
 

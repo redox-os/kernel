@@ -1,9 +1,10 @@
 use x86::controlregs::Cr4;
 use x86::cpuid::ExtendedFeatures;
 
+use crate::LogicalCpuId;
 use crate::cpuid::cpuid_always;
 
-pub unsafe fn init(cpu_id: usize) {
+pub unsafe fn init(cpu_id: LogicalCpuId) {
     let has_ext_feat = |feat: fn(ExtendedFeatures) -> bool| {
         cpuid_always()
             .get_extended_feature_info()
@@ -33,6 +34,6 @@ pub unsafe fn init(cpu_id: usize) {
     }
 
     if let Some(feats) = cpuid_always().get_extended_processor_and_feature_identifiers() && feats.has_rdtscp() {
-        x86::msr::wrmsr(x86::msr::IA32_TSC_AUX, cpu_id as u64);
+        x86::msr::wrmsr(x86::msr::IA32_TSC_AUX, cpu_id.get().into());
     }
 }

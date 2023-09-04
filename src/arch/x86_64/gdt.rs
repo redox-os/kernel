@@ -3,6 +3,7 @@
 use core::convert::TryInto;
 use core::mem;
 
+use crate::LogicalCpuId;
 use crate::paging::{RmmA, RmmArch};
 use crate::percpu::PercpuBlock;
 
@@ -144,7 +145,7 @@ unsafe fn load_segments() {
 
 /// Initialize GDT and PCR.
 #[cold]
-pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
+pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR");
     let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 

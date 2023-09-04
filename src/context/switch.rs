@@ -8,14 +8,14 @@ use spin::{RwLock, RwLockWriteGuard};
 
 use crate::context::signal::signal_handler;
 use crate::context::{arch, contexts, Context};
-use crate::interrupt;
+use crate::{interrupt, LogicalCpuId};
 use crate::percpu::PercpuBlock;
 use crate::ptrace;
 use crate::time;
 
 use super::ContextId;
 
-unsafe fn update_runnable(context: &mut Context, cpu_id: usize) -> bool {
+unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
     // Ignore already running contexts
     if context.running {
         return false;
