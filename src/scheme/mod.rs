@@ -496,3 +496,12 @@ impl GlobalSchemes {
         SchemeId::new(self as usize)
     }
 }
+
+#[cold]
+pub fn init_globals() {
+    #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+    {
+        AcpiScheme::init();
+    }
+    IrqScheme::init();
+}

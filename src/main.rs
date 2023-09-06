@@ -178,6 +178,9 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
 
+    //Initialize global schemes, such as `acpi:`.
+    scheme::init_globals();
+
     let pid = syscall::getpid();
     info!("BSP: {:?} {}", pid, cpu_count);
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
