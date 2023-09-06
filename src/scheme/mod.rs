@@ -89,7 +89,7 @@ pub const SCHEME_MAX_SCHEMES: usize = 65_536;
 int_like!(SchemeNamespace, AtomicSchemeNamespace, usize, AtomicUsize);
 
 // Unique identifier for a scheme.
-int_like!(SchemeId, AtomicSchemeId, usize, AtomicUsize);
+int_like!(SchemeId, usize);
 
 // Unique identifier for a file descriptor.
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
