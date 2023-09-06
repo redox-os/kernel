@@ -34,46 +34,31 @@ struct Handle {
 type SysFn = fn() -> Result<Vec<u8>>;
 
 /// System information scheme
-pub struct SysScheme {
-    next_id: AtomicUsize,
-    files: BTreeMap<&'static str, SysFn>,
-    handles: RwLock<BTreeMap<usize, Handle>>
-}
+pub struct SysScheme;
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
-impl SysScheme {
-    pub fn new() -> SysScheme {
-        let mut files: BTreeMap<&'static str, SysFn> = BTreeMap::new();
-
-        files.insert("block", block::resource);
-        files.insert("context", context::resource);
-        files.insert("cpu", cpu::resource);
-        files.insert("exe", exe::resource);
-        files.insert("iostat", iostat::resource);
-        files.insert("irq", irq::resource);
-        files.insert("log", log::resource);
-        files.insert("scheme", scheme::resource);
-        files.insert("scheme_num", scheme_num::resource);
-        files.insert("syscall", syscall::resource);
-        files.insert("uname", uname::resource);
-        files.insert("env", || Ok(Vec::from(crate::init_env())));
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        files.insert("spurious_irq", interrupt::irq::spurious_irq_resource);
-
-        // Disabled because the debugger is inherently unsafe and probably will break the system.
-        /*
-        files.insert("trigger_debugger", || unsafe {
-            crate::debugger::debugger(None);
-            Ok(Vec::new())
-        });
-        */
-
-        SysScheme {
-            next_id: AtomicUsize::new(0),
-            files,
-            handles: RwLock::new(BTreeMap::new())
-        }
-    }
-}
+const FILES: [(&'static str, SysFn); 14] = [
+    ("block", block::resource),
+    ("context", context::resource),
+    ("cpu", cpu::resource),
+    ("exe", exe::resource),
+    ("iostat", iostat::resource),
+    ("irq", irq::resource),
+    ("log", log::resource),
+    ("scheme", scheme::resource),
+    ("scheme_num", scheme_num::resource),
+    ("syscall", syscall::resource),
+    ("uname", uname::resource),
+    ("env", || Ok(Vec::from(crate::init_env()))),
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    ("spurious_irq", interrupt::irq::spurious_irq_resource),
+    // Disabled because the debugger is inherently unsafe and probably will break the system.
+    ("trigger_debugger", || unsafe {
+        crate::debugger::debugger(None);
+        Ok(Vec::new())
+    }),
+];
 
 impl KernelScheme for SysScheme {
     fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
@@ -81,15 +66,15 @@ impl KernelScheme for SysScheme {
 
         if path.is_empty() {
             let mut data = Vec::new();
-            for entry in self.files.iter() {
+            for entry in FILES.iter() {
                 if ! data.is_empty() {
                     data.push(b'\n');
                 }
                 data.extend_from_slice(entry.0.as_bytes());
             }
 
-            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-            self.handles.write().insert(id, Handle {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            HANDLES.write().insert(id, Handle {
                 path: "",
                 data,
                 mode: MODE_DIR | 0o444,
@@ -98,11 +83,11 @@ impl KernelScheme for SysScheme {
             return Ok(OpenResult::SchemeLocal(id))
         } else {
             //Have to iterate to get the path without allocation
-            for entry in self.files.iter() {
-                if entry.0 == &path {
-                    let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            for entry in FILES.iter() {
+                if &entry.0 == &path {
+                    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
                     let data = entry.1()?;
-                    self.handles.write().insert(id, Handle {
+                    HANDLES.write().insert(id, Handle {
                         path: entry.0,
                         data,
                         mode: MODE_FILE | 0o444,
@@ -117,11 +102,11 @@ impl KernelScheme for SysScheme {
     }
 
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
-        let mut handles = self.handles.write();
+        let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let new_offset = calc_seek_offset(handle.seek, pos, whence, handle.data.len())?;
-        handle.seek = new_offset as usize;
+        handle.seek = new_offset;
         Ok(new_offset)
     }
 
@@ -130,10 +115,10 @@ impl KernelScheme for SysScheme {
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        HANDLES.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let handles = self.handles.read();
+        let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         const FIRST: &[u8] = b"sys:";
@@ -147,7 +132,7 @@ impl KernelScheme for SysScheme {
         Ok(bytes_read)
     }
     fn kread(&self, id: usize, buffer: UserSliceWo) -> Result<usize> {
-        let mut handles = self.handles.write();
+        let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         let avail_buf = handle.data.get(handle.seek..).unwrap_or(&[]);
@@ -159,7 +144,7 @@ impl KernelScheme for SysScheme {
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
-        let handles = self.handles.read();
+        let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         buf.copy_exactly(&Stat {
