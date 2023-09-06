@@ -2,7 +2,8 @@
 //! to how status is utilized
 use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+use spin::{Once, RwLock};
 
 use crate::event;
 use crate::scheme::*;
@@ -11,17 +12,12 @@ use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, 
 use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::UserSliceWo;
 
-static SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
+static SCHEME_ID: Once<SchemeId> = Once::new();
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Input queue
-static INPUT: [Once<WaitQueue<u8>>; 2] = [Once::new(), Once::new()];
-
-/// Initialize input queue, called if needed
-fn init_input() -> WaitQueue<u8> {
-    WaitQueue::new()
-}
+static INPUT: [WaitQueue<u8>; 2] = [WaitQueue::new(), WaitQueue::new()];
 
 #[derive(Clone, Copy)]
 struct Handle {
@@ -29,25 +25,18 @@ struct Handle {
     flags: usize,
 }
 
-static HANDLES: Once<RwLock<BTreeMap<usize, Handle>>> = Once::new();
-
-fn init_handles() -> RwLock<BTreeMap<usize, Handle>> {
-    RwLock::new(BTreeMap::new())
-}
-
-fn handles() -> RwLockReadGuard<'static, BTreeMap<usize, Handle>> {
-    HANDLES.call_once(init_handles).read()
-}
-
-fn handles_mut() -> RwLockWriteGuard<'static, BTreeMap<usize, Handle>> {
-    HANDLES.call_once(init_handles).write()
-}
+static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
 /// Add to the input queue
 pub fn serio_input(index: usize, data: u8) {
-    INPUT[index].call_once(init_input).send(data);
-    for (id, _handle) in handles().iter() {
-        event::trigger(SCHEME_ID.load(Ordering::SeqCst), *id, EVENT_READ);
+    INPUT[index].send(data);
+
+    let Some(scheme_id) = SCHEME_ID.get().copied() else {
+        return;
+    };
+
+    for (id, _handle) in HANDLES.read().iter() {
+        event::trigger(scheme_id, *id, EVENT_READ);
     }
 }
 
@@ -55,7 +44,7 @@ pub struct SerioScheme;
 
 impl SerioScheme {
     pub fn new(scheme_id: SchemeId) -> Self {
-        SCHEME_ID.store(scheme_id, Ordering::SeqCst);
+        SCHEME_ID.call_once(|| scheme_id);
         Self
     }
 }
@@ -73,8 +62,8 @@ impl Scheme for SerioScheme {
             return Err(Error::new(ENOENT));
         }
 
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        handles_mut().insert(id, Handle {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write().insert(id, Handle {
             index,
             flags: flags & ! O_ACCMODE
         });
@@ -83,7 +72,7 @@ impl Scheme for SerioScheme {
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        let mut handles = handles_mut();
+        let mut handles = HANDLES.write();
         if let Some(handle) = handles.get_mut(&id) {
             match cmd {
                 F_GETFL => Ok(handle.flags),
@@ -100,7 +89,7 @@ impl Scheme for SerioScheme {
 
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let _handle = {
-            let handles = handles();
+            let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -109,7 +98,7 @@ impl Scheme for SerioScheme {
 
     fn fsync(&self, id: usize) -> Result<usize> {
         let _handle = {
-            let handles = handles();
+            let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -119,7 +108,7 @@ impl Scheme for SerioScheme {
     /// Close the file `number`
     fn close(&self, id: usize) -> Result<usize> {
         let _handle = {
-            let mut handles = handles_mut();
+            let mut handles = HANDLES.write();
             handles.remove(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -129,17 +118,17 @@ impl Scheme for SerioScheme {
 impl crate::scheme::KernelScheme for SerioScheme {
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handle = {
-            let handles = handles();
+            let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        INPUT[handle.index].call_once(init_input)
+        INPUT[handle.index]
             .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "SerioScheme::read")
     }
 
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handle = {
-            let handles = handles();
+            let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
         let path = format!("serio:{}", handle.index).into_bytes();
