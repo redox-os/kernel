@@ -750,6 +750,7 @@ fn page_range_containing(base: usize, size: usize) -> (Page, usize, usize) {
 }
 
 /// `UserInner` has to be wrapped
+#[derive(Clone)]
 pub struct UserScheme {
     inner: Weak<UserInner>
 }

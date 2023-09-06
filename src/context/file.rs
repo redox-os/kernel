@@ -35,10 +35,10 @@ impl FileDescription {
     pub fn try_close(self) -> Result<()> {
         event::unregister_file(self.scheme, self.number);
 
-        let scheme = Arc::clone(
-            scheme::schemes()
-                .get(self.scheme).ok_or(Error::new(EBADF))?
-        );
+        let scheme = scheme::schemes()
+            .get(self.scheme).ok_or(Error::new(EBADF))?
+            .clone();
+
         scheme.close(self.number)
     }
 }

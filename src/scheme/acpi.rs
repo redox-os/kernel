@@ -78,7 +78,7 @@ pub fn register_kstop() -> bool {
 }
 
 impl AcpiScheme {
-    pub fn new(id: SchemeId) -> Self {
+    pub fn init(id: SchemeId) {
         // NOTE: This __must__ be called from the main kernel context, while initializing all
         // schemes. If it is called by any other context, then all ACPI data will probably not even
         // be mapped.
@@ -109,8 +109,6 @@ impl AcpiScheme {
         if !data_init || !id_init {
             log::error!("AcpiScheme::init called multiple times");
         }
-
-        Self
     }
 }
 

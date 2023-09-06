@@ -17,14 +17,14 @@ use super::{KernelScheme, OpenResult, CallerCtx};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
-static THE_PIPE_SCHEME: Once<(SchemeId, Arc<dyn KernelScheme>)> = Once::new();
+static SCHEME_ID: Once<SchemeId> = Once::new();
 static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 // TODO: SLOB?
 static PIPES: RwLock<BTreeMap<usize, Arc<Pipe>>> = RwLock::new(BTreeMap::new());
 
 pub fn pipe_scheme_id() -> SchemeId {
-    THE_PIPE_SCHEME.get().expect("pipe scheme must be initialized").0
+    *SCHEME_ID.get().expect("pipe scheme must be initialized")
 }
 
 const MAX_QUEUE_SIZE: usize = 65536;
@@ -57,10 +57,8 @@ pub fn pipe(flags: usize) -> Result<(usize, usize)> {
 pub struct PipeScheme;
 
 impl PipeScheme {
-    pub fn new(scheme_id: SchemeId) -> Arc<dyn KernelScheme> {
-        Arc::clone(&THE_PIPE_SCHEME.call_once(|| {
-            (scheme_id, Arc::new(Self))
-        }).1)
+    pub fn init(scheme_id: SchemeId) {
+        SCHEME_ID.call_once(|| scheme_id);
     }
 }
 

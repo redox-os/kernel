@@ -23,7 +23,7 @@ pub fn file_op_generic_ext<T>(fd: FileHandle, op: impl FnOnce(&dyn KernelScheme,
     };
     let FileDescription { scheme: scheme_id, number, .. } = *file.description.read();
 
-    let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(EBADF))?);
+    let scheme = scheme::schemes().get(scheme_id).ok_or(Error::new(EBADF))?.clone();
 
     op(&*scheme, scheme_id, &ctx, number)
 }
@@ -64,7 +64,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
         let (scheme_id, scheme) = {
             let schemes = scheme::schemes();
             let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-            (scheme_id, Arc::clone(scheme))
+            (scheme_id, scheme.clone())
         };
 
         match scheme.kopen(reference, flags, CallerCtx { uid, gid, pid })? {
@@ -104,7 +104,7 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        Arc::clone(scheme)
+        scheme.clone()
     };
     scheme.rmdir(reference, caller_ctx)
 }
@@ -127,7 +127,7 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
-        Arc::clone(scheme)
+        scheme.clone()
     };
     scheme.unlink(reference, caller_ctx)
 }
@@ -158,11 +158,9 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
         let description = file.description.read();
 
         let new_description = {
-            let scheme = {
-                let schemes = scheme::schemes();
-                let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-                Arc::clone(scheme)
-            };
+            let scheme = scheme::schemes()
+                .get(description.scheme).ok_or(Error::new(EBADF))?
+                .clone();
 
             match scheme.kdup(description.number, user_buf, caller_ctx)? {
                 OpenResult::SchemeLocal(number) => Arc::new(RwLock::new(FileDescription {
@@ -250,11 +248,10 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 
     // Communicate fcntl with scheme
     if cmd != F_DUPFD && cmd != F_GETFD && cmd != F_SETFD {
-        let scheme = {
-            let schemes = scheme::schemes();
-            let scheme = schemes.get(description.scheme).ok_or(Error::new(EBADF))?;
-            Arc::clone(scheme)
-        };
+        let scheme = scheme::schemes()
+            .get(description.scheme).ok_or(Error::new(EBADF))?
+            .clone();
+
         scheme.fcntl(description.number, cmd, arg)?;
     };
 

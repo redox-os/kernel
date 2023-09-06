@@ -53,7 +53,7 @@ impl UnmapResult {
         };
 
         let funmap_result = crate::scheme::schemes()
-            .get(scheme_id).map(Arc::clone).ok_or(Error::new(ENODEV))
+            .get(scheme_id).cloned().ok_or(Error::new(ENODEV))
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
 
         if let Ok(fd) = Arc::try_unwrap(description) {

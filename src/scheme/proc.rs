@@ -30,7 +30,7 @@ use core::{
 };
 use spin::{Once, RwLock};
 
-use super::{OpenResult, CallerCtx};
+use super::{OpenResult, CallerCtx, KernelSchemes};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: &mut usize) -> Result<usize> {
     let avail_src = src.get(*offset..).unwrap_or(&[]);
@@ -1248,11 +1248,11 @@ fn inherit_context() -> Result<ContextId> {
 
     Ok(new_id)
 }
-fn extract_scheme_number(fd: usize) -> Result<(Arc<dyn KernelScheme>, usize)> {
+fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
     let (scheme_id, number) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read().get_file(FileHandle::from(fd)).ok_or(Error::new(EBADF))?.description.read() {
         desc => (desc.scheme, desc.number)
     };
-    let scheme = Arc::clone(scheme::schemes().get(scheme_id).ok_or(Error::new(ENODEV))?);
+    let scheme = scheme::schemes().get(scheme_id).ok_or(Error::new(ENODEV))?.clone();
 
     Ok((scheme, number))
 }

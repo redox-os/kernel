@@ -42,9 +42,8 @@ pub fn debug_notify() {
 pub struct DebugScheme;
 
 impl DebugScheme {
-    pub fn new(scheme_id: SchemeId) -> Self {
+    pub fn init(scheme_id: SchemeId) {
         SCHEME_ID.call_once(|| scheme_id);
-        Self
     }
 }
 

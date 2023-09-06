@@ -42,9 +42,8 @@ pub fn serio_input(index: usize, data: u8) {
 pub struct SerioScheme;
 
 impl SerioScheme {
-    pub fn new(scheme_id: SchemeId) -> Self {
+    pub fn init(scheme_id: SchemeId) {
         SCHEME_ID.call_once(|| scheme_id);
-        Self
     }
 }
 

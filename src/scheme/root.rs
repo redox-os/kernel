@@ -17,7 +17,7 @@ use crate::scheme::{self, SchemeNamespace, SchemeId};
 use crate::scheme::user::{UserInner, UserScheme};
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
-use super::{KernelScheme, CallerCtx, OpenResult, calc_seek_offset};
+use super::{KernelScheme, KernelSchemes, CallerCtx, OpenResult, calc_seek_offset};
 
 struct FolderInner {
     data: Box<[u8]>,
@@ -96,7 +96,7 @@ impl KernelScheme for RootScheme {
 
                 let (_scheme_id, inner) = schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
                     let inner = Arc::new(UserInner::new(self.scheme_id, scheme_id, id, path_box, flags, context));
-                    (Arc::new(UserScheme::new(Arc::downgrade(&inner))), inner)
+                    (KernelSchemes::User(UserScheme::new(Arc::downgrade(&inner))), inner)
                 })?;
 
                 inner
