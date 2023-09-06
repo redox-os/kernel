@@ -138,10 +138,10 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
     let mut context = context_lock.write();
 
     let setrns =
-        if rns.into() == 0 {
+        if rns.get() == 0 {
             // Allow entering capability mode
             true
-        } else if context.rns.into() == 0 {
+        } else if context.rns.get() == 0 {
             // Do not allow leaving capability mode
             return Err(Error::new(EPERM));
         } else if context.euid == 0 {
@@ -153,7 +153,7 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
         } else if rns == context.rns {
             // Allow setting RNS if used for RNS
             true
-        } else if rns.into() as isize == -1 {
+        } else if rns.get() as isize == -1 {
             // Ignore RNS if -1 is passed
             false
         } else {
@@ -162,10 +162,10 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
         };
 
     let setens =
-        if ens.into() == 0 {
+        if ens.get() == 0 {
             // Allow entering capability mode
             true
-        } else if context.ens.into() == 0 {
+        } else if context.ens.get() == 0 {
             // Do not allow leaving capability mode
             return Err(Error::new(EPERM));
         } else if context.euid == 0 {
@@ -177,7 +177,7 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
         } else if ens == context.rns {
             // Allow setting ENS if used for RNS
             true
-        } else if ens.into() as isize == -1 {
+        } else if ens.get() as isize == -1 {
             // Ignore ENS if -1 is passed
             false
         } else {

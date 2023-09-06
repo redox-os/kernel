@@ -277,7 +277,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         let context = context_lock.read();
 
         let mut files = context.files.write();
-        match *files.get_mut(fd.into()).ok_or(Error::new(EBADF))? {
+        match *files.get_mut(fd.get()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
                 F_GETFD => {
                     if file.cloexec {
@@ -346,7 +346,7 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<usize> {
         // TODO: Ensure only the kernel can access the stat when st_dev is set, or use another API
         // for retrieving the scheme ID from a file descriptor.
         // TODO: Less hacky method.
-        let st_dev = scheme_id.into().try_into().map_err(|_| Error::new(EOVERFLOW))?;
+        let st_dev = scheme_id.get().try_into().map_err(|_| Error::new(EOVERFLOW))?;
         user_buf.advance(memoffset::offset_of!(Stat, st_dev)).and_then(|b| b.limit(8)).ok_or(Error::new(EIO))?.copy_from_slice(&u64::to_ne_bytes(st_dev))?;
 
         Ok(0)

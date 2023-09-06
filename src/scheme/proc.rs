@@ -554,7 +554,7 @@ impl Scheme for ProcScheme {
         } else if self.access == Access::Restricted {
             return Err(Error::new(EACCES));
         } else {
-            ContextId::from(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
+            ContextId::new(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
         };
 
         self.open_inner(pid, parts.next(), flags, uid, gid)
@@ -1096,7 +1096,7 @@ impl KernelScheme for ProcScheme {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let path = format!("proc:{}/{}", handle.info.pid.into(), match handle.info.operation {
+        let path = format!("proc:{}/{}", handle.info.pid.get(), match handle.info.operation {
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
             Operation::Regs(RegsKind::Env) => "regs/env",

@@ -72,10 +72,11 @@ macro_rules! int_like {
                     container: $backing_atomic_type::new(x.get())
                 }
             }
+            // TODO: Rename/replace with Default trait?
             #[allow(dead_code)]
             #[inline]
             pub const fn default() -> Self {
-                Self::new($new_type_name::from(0))
+                Self::new($new_type_name::new(0))
             }
             #[allow(dead_code)]
             #[inline]

@@ -120,7 +120,7 @@ pub fn getpid() -> Result<ContextId> {
 
 pub fn getpgid(pid: ContextId) -> Result<ContextId> {
     let contexts = context::contexts();
-    let context_lock = if pid.into() == 0 {
+    let context_lock = if pid.get() == 0 {
         contexts.current().ok_or(Error::new(ESRCH))?
     } else {
         contexts.get(pid).ok_or(Error::new(ESRCH))?
@@ -174,7 +174,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 }
             };
 
-            if pid.into() as isize > 0 {
+            if pid.get() as isize > 0 {
                 // Send to a single process
                 if let Some(context_lock) = contexts.get(pid) {
                     let mut context = context_lock.write();
@@ -184,12 +184,12 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                         sent += 1;
                     }
                 }
-            } else if pid.into() as isize == -1 {
+            } else if pid.get() as isize == -1 {
                 // Send to every process with permission, except for init
                 for (_id, context_lock) in contexts.iter() {
                     let mut context = context_lock.write();
 
-                    if context.id.into() > 2 {
+                    if context.id.get() > 2 {
                         found += 1;
 
                         if send(&mut context) {
@@ -198,10 +198,10 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                     }
                 }
             } else {
-                let pgid = if pid.into() == 0 {
+                let pgid = if pid.get() == 0 {
                     current_pgid
                 } else {
-                    ContextId::from(-(pid.into() as isize) as usize)
+                    ContextId::from(-(pid.get() as isize) as usize)
                 };
 
                 // Send to every process in the process group whose ID
@@ -251,7 +251,7 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
         context.id
     };
 
-    let context_lock = if pid.into() == 0 {
+    let context_lock = if pid.get() == 0 {
         contexts.current().ok_or(Error::new(ESRCH))?
     } else {
         contexts.get(pid).ok_or(Error::new(ESRCH))?
@@ -259,7 +259,7 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
 
     let mut context = context_lock.write();
     if context.id == current_pid || context.ppid == current_pid {
-        if pgid.into() == 0 {
+        if pgid.get() == 0 {
             context.pgid = context.id;
         } else {
             context.pgid = pgid;
@@ -409,7 +409,7 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
     };
 
     loop {
-        let res_opt = if pid.into() == 0 {
+        let res_opt = if pid.get() == 0 {
             // Check for existence of child
             {
                 let mut found = false;
@@ -438,8 +438,8 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
                 let (_wid, (w_pid, status)) = waitpid.receive_any("waitpid any");
                 grim_reaper(w_pid, status)
             }
-        } else if (pid.into() as isize) < 0 {
-            let pgid = ContextId::from(-(pid.into() as isize) as usize);
+        } else if (pid.get() as isize) < 0 {
+            let pgid = ContextId::from(-(pid.get() as isize) as usize);
 
             // Check for existence of child in process group PGID
             {
@@ -481,7 +481,7 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
                 let context_lock = contexts.get(pid).ok_or(Error::new(ECHILD))?;
                 let mut context = context_lock.write();
                 if context.ppid != ppid {
-                    println!("TODO: Hack for rustc - changing ppid of {} from {} to {}", context.id.into(), context.ppid.into(), ppid.into());
+                    println!("TODO: Hack for rustc - changing ppid of {} from {} to {}", context.id.get(), context.ppid.get(), ppid.get());
                     context.ppid = ppid;
                     //return Err(Error::new(ECHILD));
                     Some(context.status.clone())

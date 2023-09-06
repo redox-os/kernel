@@ -38,7 +38,7 @@ pub fn resource() -> Result<Vec<u8>> {
                     match schemes.get(description.scheme) {
                         Some(scheme) => scheme.clone(),
                         None => {
-                            let _ = writeln!(string, "  {:>4}: {:>8} {:>8} {:>08X}: no scheme", fd, description.scheme.into(), description.number, description.flags);
+                            let _ = writeln!(string, "  {:>4}: {:>8} {:>8} {:>08X}: no scheme", fd, description.scheme.get(), description.number, description.flags);
                             continue;
                         }
                     }
@@ -48,10 +48,10 @@ pub fn resource() -> Result<Vec<u8>> {
                 match scheme.fpath(description.number, &mut fpath) {
                     Ok(path_len) => {
                         let fname = str::from_utf8(&fpath[..path_len]).unwrap_or("?");
-                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, description.scheme.into(), description.number, description.flags, fname);
+                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, description.scheme.get(), description.number, description.flags, fname);
                     },
                     Err(err) => {
-                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, description.scheme.into(), description.number, description.flags, err);
+                        let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, description.scheme.get(), description.number, description.flags, err);
                     }
                 }
             }

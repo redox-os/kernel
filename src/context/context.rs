@@ -415,8 +415,8 @@ impl Context {
     /// Get a file
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let files = self.files.read();
-        if i.into() < files.len() {
-            files[i.into()].clone()
+        if i.get() < files.len() {
+            files[i.get()].clone()
         } else {
             None
         }
@@ -426,12 +426,12 @@ impl Context {
     /// Return the file descriptor number or None if the slot was not empty, or i was invalid
     pub fn insert_file(&self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
         let mut files = self.files.write();
-        if i.into() < super::CONTEXT_MAX_FILES {
-            while i.into() >= files.len() {
+        if i.get() < super::CONTEXT_MAX_FILES {
+            while i.get() >= files.len() {
                 files.push(None);
             }
-            if files[i.into()].is_none() {
-                files[i.into()] = Some(file);
+            if files[i.get()].is_none() {
+                files[i.get()] = Some(file);
                 Some(i)
             } else {
                 None
@@ -445,8 +445,8 @@ impl Context {
     // TODO: adjust files vector to smaller size if possible
     pub fn remove_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let mut files = self.files.write();
-        if i.into() < files.len() {
-            files[i.into()].take()
+        if i.get() < files.len() {
+            files[i.get()].take()
         } else {
             None
         }

@@ -1631,8 +1631,6 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
 
     let mut allow_writable = true;
 
-    let mut debug = false;
-
     let frame = match grant_info.provider {
         Provider::Allocated { .. } | Provider::AllocatedShared { .. } if access == AccessMode::Write => {
             match faulting_pageinfo_opt {
@@ -1673,8 +1671,6 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
             base.next_by(pages_from_grant_start)
         }
         Provider::External { address_space: ref foreign_address_space, src_base, .. } => {
-            debug = true;
-
             let foreign_address_space = Arc::clone(foreign_address_space);
 
             if Arc::ptr_eq(addr_space_lock, &foreign_address_space) {
@@ -1773,9 +1769,6 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
         }
     };
 
-    if super::context_id().into() == 3 && debug {
-        //log::info!("Correcting {:?} => {:?} (base {:?} info {:?})", faulting_page, frame, grant_base, grant_info);
-    }
     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
     let Some(flush) = (unsafe { addr_space.table.utable.map_phys(faulting_page.start_address(), frame.start_address(), new_flags) }) else {
         // TODO

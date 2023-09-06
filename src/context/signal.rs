@@ -62,7 +62,7 @@ pub extern "C" fn signal_handler(sig: usize) {
                             pgid: Some(pgid)
                         }, (pid, 0xFFFF));
                     } else {
-                        println!("{}: {} not found for continue", pid.into(), ppid.into());
+                        println!("{}: {} not found for continue", pid.get(), ppid.get());
                     }
                 }
             },
@@ -90,7 +90,7 @@ pub extern "C" fn signal_handler(sig: usize) {
                             pgid: Some(pgid)
                         }, (pid, (sig << 8) | 0x7F));
                     } else {
-                        println!("{}: {} not found for stop", pid.into(), ppid.into());
+                        println!("{}: {} not found for stop", pid.get(), ppid.get());
                     }
                 }
 

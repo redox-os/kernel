@@ -202,7 +202,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", context.name, context.id.into());
+            print!("{} ({}): ", context.name, context.id.get());
         }
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
@@ -244,7 +244,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", context.name, context.id.into());
+            print!("{} ({}): ", context.name, context.id.get());
         }
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
