@@ -30,12 +30,27 @@ macro_rules! int_like {
 
         impl $new_type_name {
             #[allow(dead_code)]
-            pub const fn into(self) -> $backing_type {
+            #[inline]
+            pub const fn get(self) -> $backing_type {
                 self.0
             }
             #[allow(dead_code)]
-            pub const fn from(x: $backing_type) -> Self {
+            #[inline]
+            pub const fn new(x: $backing_type) -> Self {
                 $new_type_name(x)
+            }
+        }
+
+        impl ::core::convert::From<$backing_type> for $new_type_name {
+            #[inline]
+            fn from(inner: $backing_type) -> Self {
+                Self::new(inner)
+            }
+        }
+        impl ::core::convert::From<$new_type_name> for $backing_type {
+            #[inline]
+            fn from(wrapped: $new_type_name) -> Self {
+                wrapped.get()
             }
         }
     };
@@ -51,28 +66,34 @@ macro_rules! int_like {
 
         impl $new_atomic_type_name {
             #[allow(dead_code)]
+            #[inline]
             pub const fn new(x: $new_type_name) -> Self {
                 $new_atomic_type_name {
-                    container: $backing_atomic_type::new(x.into())
+                    container: $backing_atomic_type::new(x.get())
                 }
             }
             #[allow(dead_code)]
+            #[inline]
             pub const fn default() -> Self {
                 Self::new($new_type_name::from(0))
             }
             #[allow(dead_code)]
+            #[inline]
             pub fn load(&self, order: ::core::sync::atomic::Ordering) -> $new_type_name {
                 $new_type_name::from(self.container.load(order))
             }
             #[allow(dead_code)]
+            #[inline]
             pub fn store(&self, val: $new_type_name, order: ::core::sync::atomic::Ordering) {
                 self.container.store(val.into(), order)
             }
             #[allow(dead_code)]
+            #[inline]
             pub fn swap(&self, val: $new_type_name, order: ::core::sync::atomic::Ordering) -> $new_type_name {
                 $new_type_name::from(self.container.swap(val.into(), order))
             }
             #[allow(dead_code)]
+            #[inline]
             pub fn compare_exchange(&self, current: $new_type_name, new: $new_type_name, success: ::core::sync::atomic::Ordering, failure: ::core::sync::atomic::Ordering) -> ::core::result::Result<$new_type_name, $new_type_name> {
                 match self.container.compare_exchange(current.into(), new.into(), success, failure) {
                     Ok(result) => Ok($new_type_name::from(result)),
@@ -80,6 +101,7 @@ macro_rules! int_like {
                 }
             }
             #[allow(dead_code)]
+            #[inline]
             pub fn compare_exchange_weak(&self, current: $new_type_name, new: $new_type_name, success: ::core::sync::atomic::Ordering, failure: ::core::sync::atomic::Ordering) -> ::core::result::Result<$new_type_name, $new_type_name> {
                 match self.container.compare_exchange_weak(current.into(), new.into(), success, failure) {
                     Ok(result) => Ok($new_type_name::from(result)),
