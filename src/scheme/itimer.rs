@@ -9,20 +9,10 @@ use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
 use super::{KernelScheme, CallerCtx, OpenResult};
+pub struct ITimerScheme;
 
-pub struct ITimerScheme {
-    next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, usize>>
-}
-
-impl ITimerScheme {
-    pub fn new() -> ITimerScheme {
-        ITimerScheme {
-            next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
-        }
-    }
-}
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+static HANDLES: RwLock<BTreeMap<usize, usize>> = RwLock::new(BTreeMap::new());
 
 impl KernelScheme for ITimerScheme {
     fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
@@ -34,8 +24,8 @@ impl KernelScheme for ITimerScheme {
             _ => return Err(Error::new(ENOENT))
         }
 
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.handles.write().insert(id, clock);
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write().insert(id, clock);
 
         Ok(OpenResult::SchemeLocal(id))
     }
@@ -45,21 +35,20 @@ impl KernelScheme for ITimerScheme {
     }
 
     fn fevent(&self, id: usize, _flags: EventFlags) ->  Result<EventFlags> {
-        let handles = self.handles.read();
+        let handles = HANDLES.read();
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
     }
 
     fn fsync(&self, id: usize) -> Result<()> {
-        let handles = self.handles.read();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        HANDLES.read().get(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        HANDLES.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let _clock = {
-            let handles = self.handles.read();
+            let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -76,7 +65,7 @@ impl KernelScheme for ITimerScheme {
 
     fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
         let _clock = {
-            let handles = self.handles.read();
+            let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -93,7 +82,7 @@ impl KernelScheme for ITimerScheme {
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let clock = {
-            let handles = self.handles.read();
+            let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 

@@ -133,7 +133,7 @@ impl SchemeList {
         // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
         {
             use GlobalSchemes::*;
-            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time]);
+            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, ITimer]);
 
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             insert_globals(&[Acpi]);
@@ -164,7 +164,7 @@ impl SchemeList {
 
         self.insert(ns, "", |scheme_id| KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))).unwrap();
         self.insert_global(ns, "event", GlobalSchemes::Event).unwrap();
-        self.insert(ns, "itimer", |_| KernelSchemes::ITimer(Arc::new(ITimerScheme::new()))).unwrap();
+        self.insert_global(ns, "itimer", GlobalSchemes::ITimer).unwrap();
         self.insert_global(ns, "memory", GlobalSchemes::Memory).unwrap();
         self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
         self.insert(ns, "sys", |_| KernelSchemes::Sys(Arc::new(SysScheme::new()))).unwrap();
@@ -432,7 +432,6 @@ pub fn calc_seek_offset(cur_pos: usize, rel_pos: isize, whence: usize, len: usiz
 
 #[derive(Clone)]
 pub enum KernelSchemes {
-    ITimer(Arc<ITimerScheme>),
     Proc(Arc<ProcScheme>),
     Root(Arc<RootScheme>),
     Sys(Arc<SysScheme>),
@@ -449,6 +448,7 @@ pub enum GlobalSchemes {
     Serio,
     Irq,
     Time,
+    ITimer,
 
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
     Acpi,
@@ -464,7 +464,6 @@ impl core::ops::Deref for KernelSchemes {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::ITimer(scheme) => &**scheme,
             Self::Proc(scheme) => &**scheme,
             Self::Root(scheme) => &**scheme,
             Self::Sys(scheme) => &**scheme,
@@ -486,6 +485,7 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Serio => &SerioScheme,
             Self::Irq => &IrqScheme,
             Self::Time => &TimeScheme,
+            Self::ITimer => &ITimerScheme,
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             Self::Acpi => &AcpiScheme,
         }
