@@ -4,30 +4,18 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
 use crate::context::timeout;
-use crate::scheme::SchemeId;
 use crate::syscall::data::TimeSpec;
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 use crate::time;
 
-use super::{KernelScheme, CallerCtx, OpenResult};
+use super::{GlobalSchemes, KernelScheme, CallerCtx, OpenResult};
 
-pub struct TimeScheme {
-    scheme_id: SchemeId,
-    next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, usize>>
-}
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+static HANDLES: RwLock<BTreeMap<usize, usize>> = RwLock::new(BTreeMap::new());
 
-impl TimeScheme {
-    pub fn new(scheme_id: SchemeId) -> TimeScheme {
-        TimeScheme {
-            scheme_id,
-            next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new())
-        }
-    }
-}
+pub struct TimeScheme;
 
 impl KernelScheme for TimeScheme {
     fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
@@ -39,8 +27,8 @@ impl KernelScheme for TimeScheme {
             _ => return Err(Error::new(ENOENT))
         }
 
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.handles.write().insert(id, clock);
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write().insert(id, clock);
 
         Ok(OpenResult::SchemeLocal(id))
     }
@@ -50,23 +38,19 @@ impl KernelScheme for TimeScheme {
     }
 
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
-        let handles = self.handles.read();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
+        HANDLES.read().get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
     }
 
     fn fsync(&self, id: usize) -> Result<()> {
-        self.handles.read().get(&id).ok_or(Error::new(EBADF))?;
+        HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
         Ok(())
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        HANDLES.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let clock = *HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
 
         let mut bytes_read = 0;
 
@@ -89,17 +73,14 @@ impl KernelScheme for TimeScheme {
     }
 
     fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let clock = *HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
 
         let mut bytes_written = 0;
 
         for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
             let time = unsafe { current_chunk.read_exact::<TimeSpec>()? };
 
-            timeout::register(self.scheme_id, id, clock, time);
+            timeout::register(GlobalSchemes::Time.scheme_id(), id, clock, time);
 
             bytes_written += mem::size_of::<TimeSpec>();
         };
@@ -107,15 +88,10 @@ impl KernelScheme for TimeScheme {
         Ok(bytes_written)
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let clock = {
-            let handles = self.handles.read();
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let clock = *HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
 
         let scheme_path = format!("time:{}", clock).into_bytes();
-        let byte_count = core::cmp::min(buf.len(), scheme_path.len());
-        buf.limit(byte_count).expect("must succeed").copy_from_slice(&scheme_path)?;
-        Ok(byte_count)
+        buf.copy_common_bytes_from_slice(&scheme_path)
     }
 
 }

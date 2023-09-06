@@ -133,7 +133,7 @@ impl SchemeList {
         // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
         {
             use GlobalSchemes::*;
-            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq]);
+            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time]);
 
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             insert_globals(&[Acpi]);
@@ -168,7 +168,7 @@ impl SchemeList {
         self.insert_global(ns, "memory", GlobalSchemes::Memory).unwrap();
         self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
         self.insert(ns, "sys", |_| KernelSchemes::Sys(Arc::new(SysScheme::new()))).unwrap();
-        self.insert(ns, "time", |scheme_id| KernelSchemes::Time(Arc::new(TimeScheme::new(scheme_id)))).unwrap();
+        self.insert_global(ns, "time", GlobalSchemes::Time).unwrap();
 
         ns
     }
@@ -436,7 +436,6 @@ pub enum KernelSchemes {
     Proc(Arc<ProcScheme>),
     Root(Arc<RootScheme>),
     Sys(Arc<SysScheme>),
-    Time(Arc<TimeScheme>),
     User(UserScheme),
     Global(GlobalSchemes),
 }
@@ -449,6 +448,7 @@ pub enum GlobalSchemes {
     Pipe,
     Serio,
     Irq,
+    Time,
 
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
     Acpi,
@@ -468,7 +468,6 @@ impl core::ops::Deref for KernelSchemes {
             Self::Proc(scheme) => &**scheme,
             Self::Root(scheme) => &**scheme,
             Self::Sys(scheme) => &**scheme,
-            Self::Time(scheme) => &**scheme,
             Self::User(scheme) => scheme,
 
             Self::Global(global) => &**global,
@@ -486,6 +485,7 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Pipe => &PipeScheme,
             Self::Serio => &SerioScheme,
             Self::Irq => &IrqScheme,
+            Self::Time => &TimeScheme,
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             Self::Acpi => &AcpiScheme,
         }
