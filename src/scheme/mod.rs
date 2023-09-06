@@ -109,7 +109,7 @@ impl<'a> Iterator for SchemeIter<'a> {
 /// Scheme list type
 pub struct SchemeList {
     map: BTreeMap<SchemeId, KernelSchemes>,
-    names: BTreeMap<SchemeNamespace, BTreeMap<Box<str>, SchemeId>>,
+    pub(crate) names: BTreeMap<SchemeNamespace, BTreeMap<Box<str>, SchemeId>>,
     next_ns: usize,
     next_id: usize,
 }
@@ -121,8 +121,23 @@ impl SchemeList {
             names: BTreeMap::new(),
             // Scheme namespaces always start at 1. 0 is a reserved namespace, the null namespace
             next_ns: 1,
-            next_id: 1 + core::mem::variant_count::<GlobalSchemes>(),
+            next_id: MAX_GLOBAL_SCHEMES,
         };
+
+        let mut insert_globals = |globals: &[GlobalSchemes]| {
+            for &g in globals {
+                list.map.insert(SchemeId::from(g as usize), KernelSchemes::Global(g));
+            }
+        };
+
+        // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
+        {
+            use GlobalSchemes::*;
+            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq]);
+
+            #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+            insert_globals(&[Acpi]);
+        }
 
         list.new_null();
         list.new_root();
@@ -438,6 +453,11 @@ pub enum GlobalSchemes {
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
     Acpi,
 }
+pub const MAX_GLOBAL_SCHEMES: usize = 16;
+
+const _: () = {
+    assert!(1 + core::mem::variant_count::<GlobalSchemes>() < MAX_GLOBAL_SCHEMES);
+};
 
 impl core::ops::Deref for KernelSchemes {
     type Target = dyn KernelScheme;
