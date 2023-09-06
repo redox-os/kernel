@@ -72,12 +72,6 @@ macro_rules! int_like {
                     container: $backing_atomic_type::new(x.get())
                 }
             }
-            // TODO: Rename/replace with Default trait?
-            #[allow(dead_code)]
-            #[inline]
-            pub const fn default() -> Self {
-                Self::new($new_type_name::new(0))
-            }
             #[allow(dead_code)]
             #[inline]
             pub fn load(&self, order: ::core::sync::atomic::Ordering) -> $new_type_name {
@@ -108,6 +102,12 @@ macro_rules! int_like {
                     Ok(result) => Ok($new_type_name::from(result)),
                     Err(result) => Err($new_type_name::from(result))
                 }
+            }
+        }
+        impl ::core::default::Default for $new_atomic_type_name {
+            #[inline]
+            fn default() -> Self {
+                Self::new($new_type_name::new(0))
             }
         }
     }
