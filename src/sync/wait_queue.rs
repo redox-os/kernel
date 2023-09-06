@@ -13,7 +13,7 @@ pub struct WaitQueue<T> {
 }
 
 impl<T> WaitQueue<T> {
-    pub fn new() -> WaitQueue<T> {
+    pub const fn new() -> WaitQueue<T> {
         WaitQueue {
             inner: Mutex::new(VecDeque::new()),
             condition: WaitCondition::new()
