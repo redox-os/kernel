@@ -12,19 +12,16 @@ use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_
 
 use crate::{event, LogicalCpuId};
 use crate::interrupt::irq::acknowledge;
-use crate::scheme::SchemeId;
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_DIRECTORY, O_CREAT, O_STAT, MODE_CHR, MODE_DIR};
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
-use super::{OpenResult, CallerCtx, calc_seek_offset};
-
-pub static IRQ_SCHEME_ID: Once<SchemeId> = Once::new();
+use super::{GlobalSchemes, OpenResult, CallerCtx, calc_seek_offset};
 
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
-static HANDLES: RwLock<Option<BTreeMap<usize, Handle>>> = RwLock::new(None);
+static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
 /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the
 /// O_CREAT flag.
@@ -47,13 +44,8 @@ const INO_BSP: u64 = 0x8001_0000_0000_0000;
 pub extern fn irq_trigger(irq: u8) {
     COUNTS.lock()[irq as usize] += 1;
 
-    let guard = HANDLES.read();
-    if let (Some(handles), Some(scheme_id)) = (guard.as_ref(), IRQ_SCHEME_ID.get()) {
-        for (fd, _) in handles.iter().filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?))).filter(|&(_, (_, handle_irq))| handle_irq == irq) {
-            event::trigger(*scheme_id, *fd, EVENT_READ);
-        }
-    } else {
-        println!("Calling IRQ without triggering {}", irq);
+    for (fd, _) in HANDLES.read().iter().filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?))).filter(|&(_, (_, handle_irq))| handle_irq == irq) {
+        event::trigger(GlobalSchemes::Irq.scheme_id(), *fd, EVENT_READ);
     }
 }
 
@@ -75,17 +67,13 @@ impl Handle {
     }
 }
 
-pub struct IrqScheme {
-    next_fd: AtomicUsize,
-    cpus: Vec<u8>,
-}
+static NEXT_FD: AtomicUsize = AtomicUsize::new(1);
+static CPUS: Once<Vec<u8>> = Once::new();
+
+pub struct IrqScheme;
 
 impl IrqScheme {
-    pub fn new(scheme_id: SchemeId) -> IrqScheme {
-        IRQ_SCHEME_ID.call_once(|| scheme_id);
-
-        *HANDLES.write() = Some(BTreeMap::new());
-
+    pub fn init() {
         #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
         let cpus = {
             use crate::acpi::madt::*;
@@ -106,10 +94,7 @@ impl IrqScheme {
         #[cfg(not(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64"))))]
         let cpus = vec!(0);
 
-        IrqScheme {
-            next_fd: AtomicUsize::new(0),
-            cpus,
-        }
+        CPUS.call_once(|| cpus);
     }
     fn open_ext_irq(flags: usize, cpu_id: u8, path_str: &str) -> Result<Handle> {
         let irq_number = u8::from_str(path_str).or(Err(Error::new(ENOENT)))?;
@@ -162,7 +147,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
             use core::fmt::Write;
 
-            for cpu_id in &self.cpus {
+            for cpu_id in CPUS.get().expect("IRQ scheme not initialized") {
                 writeln!(bytes, "cpu-{:02x}", cpu_id).unwrap();
             }
 
@@ -214,14 +199,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 return Err(Error::new(ENOENT));
             }
         };
-        let fd = self.next_fd.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().as_mut().unwrap().insert(fd, handle);
+        let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write().insert(fd, handle);
         Ok(OpenResult::SchemeLocal(fd))
     }
 
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
         let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
             &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
@@ -250,7 +235,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
     fn close(&self, id: usize) -> Result<()> {
         let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
         if let &Handle::Irq { irq: handle_irq, .. } = handle {
             if handle_irq > BASE_IRQ_COUNT {
@@ -261,7 +246,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
     fn kwrite(&self, file: usize, buffer: UserSliceRo) -> Result<usize> {
         let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&file).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
         match handle {
             &Handle::Irq { irq: handle_irq, ack: ref handle_ack } => if buffer.len() >= mem::size_of::<usize>() {
@@ -284,7 +269,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
         buf.copy_exactly(&match *handle {
             Handle::Irq { irq: handle_irq, .. } => Stat {
@@ -325,7 +310,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
         let scheme_path = match handle {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
@@ -338,7 +323,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
     fn kread(&self, file: usize, buffer: UserSliceWo) -> Result<usize> {
         let handles_guard = HANDLES.read();
-        let handle = handles_guard.as_ref().unwrap().get(&file).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
         match *handle {
             // Ensures that the length of the buffer is larger than the size of a usize
