@@ -6,20 +6,20 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::string::String;
 
-use spin::{Mutex, RwLock};
+use spin::{Mutex, RwLock, Once};
 
 use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved};
 
 use crate::{event, LogicalCpuId};
 use crate::interrupt::irq::acknowledge;
-use crate::scheme::{AtomicSchemeId, SchemeId};
+use crate::scheme::SchemeId;
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_DIRECTORY, O_CREAT, O_STAT, MODE_CHR, MODE_DIR};
 use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
-pub static IRQ_SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
+pub static IRQ_SCHEME_ID: Once<SchemeId> = Once::new();
 
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
@@ -47,9 +47,9 @@ pub extern fn irq_trigger(irq: u8) {
     COUNTS.lock()[irq as usize] += 1;
 
     let guard = HANDLES.read();
-    if let Some(handles) = guard.as_ref() {
+    if let (Some(handles), Some(scheme_id)) = (guard.as_ref(), IRQ_SCHEME_ID.get()) {
         for (fd, _) in handles.iter().filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?))).filter(|&(_, (_, handle_irq))| handle_irq == irq) {
-            event::trigger(IRQ_SCHEME_ID.load(Ordering::SeqCst), *fd, EVENT_READ);
+            event::trigger(*scheme_id, *fd, EVENT_READ);
         }
     } else {
         println!("Calling IRQ without triggering");
@@ -81,7 +81,7 @@ pub struct IrqScheme {
 
 impl IrqScheme {
     pub fn new(scheme_id: SchemeId) -> IrqScheme {
-        IRQ_SCHEME_ID.store(scheme_id, Ordering::SeqCst);
+        IRQ_SCHEME_ID.call_once(|| scheme_id);
 
         *HANDLES.write() = Some(BTreeMap::new());
 
