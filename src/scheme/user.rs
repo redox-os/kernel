@@ -17,7 +17,7 @@ use crate::event;
 use crate::memory::Frame;
 use crate::paging::mapper::InactiveFlusher;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
-use crate::scheme::{AtomicSchemeId, SchemeId};
+use crate::scheme::SchemeId;
 use crate::sync::{WaitQueue, WaitMap};
 use crate::syscall::data::{Map, Packet};
 use crate::syscall::error::*;
@@ -33,7 +33,7 @@ pub struct UserInner {
     handle_id: usize,
     pub name: Box<str>,
     pub flags: usize,
-    pub scheme_id: AtomicSchemeId,
+    pub scheme_id: SchemeId,
     next_id: Mutex<u64>,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
@@ -50,13 +50,13 @@ pub enum Response {
 const ONE: NonZeroUsize = NonZeroUsize::new(1).unwrap();
 
 impl UserInner {
-    pub fn new(root_id: SchemeId, handle_id: usize, name: Box<str>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
+    pub fn new(root_id: SchemeId, scheme_id: SchemeId, handle_id: usize, name: Box<str>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
         UserInner {
             root_id,
             handle_id,
             name,
             flags,
-            scheme_id: AtomicSchemeId::default(),
+            scheme_id,
             next_id: Mutex::new(1),
             context,
             todo: WaitQueue::new(),
@@ -386,7 +386,7 @@ impl UserInner {
         if packet.id == 0 {
             // TODO: Simplify logic by using SKMSG with packet.id being ignored?
             match packet.a {
-                SYS_FEVENT => event::trigger(self.scheme_id.load(Ordering::SeqCst), packet.b, EventFlags::from_bits_truncate(packet.c)),
+                SYS_FEVENT => event::trigger(self.scheme_id, packet.b, EventFlags::from_bits_truncate(packet.c)),
                 _ => log::warn!("Unknown scheme -> kernel message {}", packet.a)
             }
         } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
@@ -475,14 +475,13 @@ impl UserInner {
             let context_lock = context::current()?;
             let context = context_lock.read();
             // TODO: Faster, cleaner mechanism to get descriptor
-            let scheme = self.scheme_id.load(Ordering::SeqCst);
             let mut desc_res = Err(Error::new(EBADF));
             for context_file in context.files.read().iter().flatten() {
                 let (context_scheme, context_number) = {
                     let desc = context_file.description.read();
                     (desc.scheme, desc.number)
                 };
-                if context_scheme == scheme && context_number == file {
+                if context_scheme == self.scheme_id && context_number == file {
                     desc_res = Ok(context_file.clone());
                     break;
                 }

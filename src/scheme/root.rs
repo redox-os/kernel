@@ -85,11 +85,12 @@ impl Scheme for RootScheme {
                 let inner = {
                     let path_box = path.to_string().into_boxed_str();
                     let mut schemes = scheme::schemes_mut();
-                    let inner = Arc::new(UserInner::new(self.scheme_id, id, path_box, flags, context));
-                    schemes.insert(self.scheme_ns, path, |scheme_id| {
-                        inner.scheme_id.store(scheme_id, Ordering::SeqCst);
-                        Arc::new(UserScheme::new(Arc::downgrade(&inner)))
+
+                    let (_scheme_id, inner) = schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
+                        let inner = Arc::new(UserInner::new(self.scheme_id, scheme_id, id, path_box, flags, context));
+                        (Arc::new(UserScheme::new(Arc::downgrade(&inner))), inner)
                     })?;
+
                     inner
                 };
 
@@ -263,9 +264,7 @@ impl Scheme for RootScheme {
         let handle = self.handles.write().remove(&file).ok_or(Error::new(EBADF))?;
         match handle {
             Handle::Scheme(inner) => {
-                let scheme_id = inner.scheme_id.load(Ordering::SeqCst);
-                let mut schemes = scheme::schemes_mut();
-                schemes.remove(scheme_id);
+                scheme::schemes_mut().remove(inner.scheme_id);
             },
             _ => ()
         }

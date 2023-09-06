@@ -223,9 +223,11 @@ impl SchemeList {
     }
 
     /// Create a new scheme.
-    pub fn insert<F>(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: F) -> Result<SchemeId>
-        where F: Fn(SchemeId) -> Arc<dyn KernelScheme>
-    {
+    pub fn insert(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: impl FnOnce(SchemeId) -> Arc<dyn KernelScheme>) -> Result<SchemeId> {
+        self.insert_and_pass(ns, name, |id| (scheme_fn(id), ())).map(|(id, ())| id)
+    }
+
+    pub fn insert_and_pass<T>(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: impl FnOnce(SchemeId) -> (Arc<dyn KernelScheme>, T)) -> Result<(SchemeId, T)> {
         if let Some(names) = self.names.get(&ns) {
             if names.contains_key(name) {
                 return Err(Error::new(EEXIST));
@@ -249,16 +251,16 @@ impl SchemeList {
         let id = SchemeId(self.next_id);
         self.next_id += 1;
 
-        let scheme = scheme_fn(id);
+        let (new_scheme, t) = scheme_fn(id);
 
-        assert!(self.map.insert(id, scheme).is_none());
+        assert!(self.map.insert(id, new_scheme).is_none());
         if let Some(ref mut names) = self.names.get_mut(&ns) {
             assert!(names.insert(name.to_string().into_boxed_str(), id).is_none());
         } else {
             // Nonexistent namespace, posssibly null namespace
             return Err(Error::new(ENODEV));
         }
-        Ok(id)
+        Ok((id, t))
     }
 
     /// Remove a scheme
