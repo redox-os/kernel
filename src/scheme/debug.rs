@@ -10,17 +10,12 @@ use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::UserSliceRo;
 use crate::syscall::usercopy::UserSliceWo;
 
-static SCHEME_ID: AtomicSchemeId = AtomicSchemeId::default();
+static SCHEME_ID: Once<SchemeId> = Once::new();
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Input queue
-static INPUT: Once<WaitQueue<u8>> = Once::new();
-
-/// Initialize input queue, called if needed
-fn init_input() -> WaitQueue<u8> {
-    WaitQueue::new()
-}
+static INPUT: WaitQueue<u8> = WaitQueue::new();
 
 #[derive(Clone, Copy)]
 struct Handle {
@@ -43,13 +38,17 @@ fn handles_mut() -> RwLockWriteGuard<'static, BTreeMap<usize, Handle>> {
 
 /// Add to the input queue
 pub fn debug_input(data: u8) {
-    INPUT.call_once(init_input).send(data);
+    INPUT.send(data);
 }
 
 // Notify readers of input updates
 pub fn debug_notify() {
+    let Some(scheme_id) = SCHEME_ID.get().copied() else {
+        return;
+    };
+
     for (id, _handle) in handles().iter() {
-        event::trigger(SCHEME_ID.load(Ordering::SeqCst), *id, EVENT_READ);
+        event::trigger(scheme_id, *id, EVENT_READ);
     }
 }
 
@@ -57,7 +56,7 @@ pub struct DebugScheme;
 
 impl DebugScheme {
     pub fn new(scheme_id: SchemeId) -> Self {
-        SCHEME_ID.store(scheme_id, Ordering::SeqCst);
+        SCHEME_ID.call_once(|| scheme_id);
         Self
     }
 }
@@ -131,7 +130,7 @@ impl crate::scheme::KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        INPUT.call_once(init_input)
+        INPUT
             .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
     }
 
