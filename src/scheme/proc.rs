@@ -3,7 +3,7 @@ use crate::{
     context::{self, Context, ContextId, Status, file::FileDescriptor, memory::{AddrSpace, Grant, new_addrspace, PageSpan, handle_notify_files}},
     memory::PAGE_SIZE,
     ptrace,
-    scheme::{self, FileHandle, KernelScheme, SchemeId},
+    scheme::{self, FileHandle, KernelScheme},
     syscall::{
         FloatRegisters,
         IntRegisters,
@@ -28,7 +28,7 @@ use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering}, num::NonZeroUsize,
 };
-use spin::{Once, RwLock};
+use spin::RwLock;
 
 use super::{OpenResult, CallerCtx, KernelSchemes};
 
@@ -223,48 +223,28 @@ impl Handle {
     }
 }
 
-pub static PROC_SCHEME_ID: Once<SchemeId> = Once::new();
+pub struct ProcScheme<const FULL: bool>;
 
-pub struct ProcScheme {
-    next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Handle>>,
-    access: Access,
-}
+static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+
 #[derive(PartialEq)]
 pub enum Access {
     OtherProcesses,
     Restricted,
 }
 
-impl ProcScheme {
-    pub fn new(scheme_id: SchemeId) -> Self {
-        PROC_SCHEME_ID.call_once(|| scheme_id);
-
-        Self {
-            next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new()),
-            access: Access::OtherProcesses,
-        }
-    }
-    pub fn restricted() -> Self {
-        Self {
-            next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new()),
-            access: Access::Restricted,
-        }
-    }
-    fn new_handle(&self, handle: Handle) -> Result<usize> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let _ = self.handles.write().insert(id, handle);
-        Ok(id)
-    }
+fn new_handle(handle: Handle) -> Result<usize> {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let _ = HANDLES.write().insert(id, handle);
+    Ok(id)
 }
 
 fn get_context(id: ContextId) -> Result<Arc<RwLock<Context>>> {
     context::contexts().get(id).ok_or(Error::new(ENOENT)).map(Arc::clone)
 }
 
-impl ProcScheme {
+impl<const FULL: bool> ProcScheme<FULL> {
     fn open_inner(&self, pid: ContextId, operation_str: Option<&str>, flags: usize, uid: u32, gid: u32) -> Result<usize> {
         let operation = match operation_str {
             Some("addrspace") => Operation::AddrSpace { addrspace: Arc::clone(get_context(pid)?.read().addr_space().map_err(|_| Error::new(ENOENT))?) },
@@ -350,7 +330,7 @@ impl ProcScheme {
             }
         };
 
-        let id = self.new_handle(Handle {
+        let id = new_handle(Handle {
             info: Info {
                 flags,
                 pid,
@@ -513,7 +493,7 @@ impl ProcScheme {
     }
 }
 
-impl KernelScheme for ProcScheme {
+impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let mut parts = path.splitn(2, '/');
         let pid_str = parts.next()
@@ -523,7 +503,7 @@ impl KernelScheme for ProcScheme {
             context::context_id()
         } else if pid_str == "new" {
             inherit_context()?
-        } else if self.access == Access::Restricted {
+        } else if !FULL {
             return Err(Error::new(EACCES));
         } else {
             ContextId::new(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
@@ -533,7 +513,7 @@ impl KernelScheme for ProcScheme {
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        let mut handles = self.handles.write();
+        let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         match cmd {
@@ -544,7 +524,7 @@ impl KernelScheme for ProcScheme {
     }
 
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
-        let handles = self.handles.read();
+        let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match handle.info.operation {
@@ -557,7 +537,7 @@ impl KernelScheme for ProcScheme {
 
 
     fn close(&self, id: usize) -> Result<()> {
-        let mut handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
+        let mut handle = HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
         handle.continue_ignored_children();
 
         let stop_context = if handle.info.pid == context::context_id() { with_context_mut } else { try_stop_context };
@@ -618,29 +598,30 @@ impl KernelScheme for ProcScheme {
         }
         Ok(())
     }
+    // TODO: These three functions will become obsolete soon.
     fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
-        if let Operation::AddrSpace { ref addrspace } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
+        if let Operation::AddrSpace { ref addrspace } = HANDLES.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
             Ok(Arc::clone(addrspace))
         } else {
             Err(Error::new(EBADF))
         }
     }
     fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
-        if let Operation::Filetable { ref filetable } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
+        if let Operation::Filetable { ref filetable } = HANDLES.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
             Ok(Arc::clone(filetable))
         } else {
             Err(Error::new(EBADF))
         }
     }
     fn as_sigactions(&self, number: usize) -> Result<Arc<RwLock<Vec<(crate::syscall::data::SigAction, usize)>>>> {
-        if let Operation::Sigactions(ref sigactions) = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
+        if let Operation::Sigactions(ref sigactions) = HANDLES.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
             Ok(Arc::clone(sigactions))
         } else {
             Err(Error::new(EBADF))
         }
     }
     fn kfmap(&self, id: usize, dst_addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
-        let info = self.handles.read().get(&id).ok_or(Error::new(EBADF))?.info.clone();
+        let info = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.info.clone();
 
         match info.operation {
             Operation::AddrSpace { ref addrspace } => {
@@ -677,14 +658,14 @@ impl KernelScheme for ProcScheme {
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
-            let handles = self.handles.read();
+            let handles = HANDLES.read();
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.info.clone()
         };
 
         match info.operation {
             Operation::Static(_) => {
-                let mut handles = self.handles.write();
+                let mut handles = HANDLES.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
                 let data = handle.data.static_data().expect("operations can't change");
                 let src_buf = data.buf.get(data.offset..).unwrap_or(&[]);
@@ -733,7 +714,7 @@ impl KernelScheme for ProcScheme {
                 buf.copy_common_bytes_from_slice(src_buf)
             },
             Operation::Trace => {
-                let mut handles = self.handles.write();
+                let mut handles = HANDLES.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
                 let data = handle.data.trace_data().expect("operations can't change");
 
@@ -778,7 +759,7 @@ impl KernelScheme for ProcScheme {
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
             Operation::AddrSpace { ref addrspace } => {
-                let OperationData::Offset(orig_offset) = self.handles.read().get(&id).ok_or(Error::new(EBADF))?.data else {
+                let OperationData::Offset(orig_offset) = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.data else {
                     return Err(Error::new(EBADFD));
                 };
 
@@ -803,7 +784,7 @@ impl KernelScheme for ProcScheme {
                     chunk.copy_exactly(src)?;
                 }
 
-                match self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.data {
+                match HANDLES.write().get_mut(&id).ok_or(Error::new(EBADF))?.data {
                     OperationData::Offset(ref mut offset) => *offset += grants_read,
                     _ => return Err(Error::new(EBADFD)),
                 };
@@ -821,7 +802,7 @@ impl KernelScheme for ProcScheme {
                 read_from(buf, &src_buf, &mut 0)
             }
             Operation::Filetable { .. } => {
-                let mut handles = self.handles.write();
+                let mut handles = HANDLES.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
                 let data = handle.data.static_data().expect("operations can't change");
 
@@ -854,7 +835,7 @@ impl KernelScheme for ProcScheme {
     fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
-            let mut handles = self.handles.write();
+            let mut handles = HANDLES.write();
             let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
             handle.continue_ignored_children();
             handle.info.clone()
@@ -1014,7 +995,7 @@ impl KernelScheme for ProcScheme {
 
                 let filetable = hopefully_this_scheme.as_filetable(number)?;
 
-                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(filetable);
+                HANDLES.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(filetable);
 
                 Ok(mem::size_of::<usize>())
             }
@@ -1027,7 +1008,7 @@ impl KernelScheme for ProcScheme {
                 let (hopefully_this_scheme, number) = extract_scheme_number(addrspace_fd)?;
                 let space = hopefully_this_scheme.as_addrspace(number)?;
 
-                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: space, new_sp: sp, new_ip: ip };
+                HANDLES.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: space, new_sp: sp, new_ip: ip };
 
                 Ok(3 * mem::size_of::<usize>())
             }
@@ -1035,7 +1016,7 @@ impl KernelScheme for ProcScheme {
                 let sigactions_fd = buf.read_usize()?;
                 let (hopefully_this_scheme, number) = extract_scheme_number(sigactions_fd)?;
                 let sigactions = hopefully_this_scheme.as_sigactions(number)?;
-                self.handles.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
+                HANDLES.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
                 Ok(mem::size_of::<usize>())
             }
             Operation::MmapMinAddr(ref addrspace) => {
@@ -1063,7 +1044,7 @@ impl KernelScheme for ProcScheme {
         }
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let handles = self.handles.read();
+        let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let path = format!("proc:{}/{}", handle.info.pid.get(), match handle.info.operation {
@@ -1092,7 +1073,7 @@ impl KernelScheme for ProcScheme {
         buf.copy_common_bytes_from_slice(path.as_bytes())
     }
     fn kfstat(&self, id: usize, buffer: UserSliceWo) -> Result<()> {
-        let handles = self.handles.read();
+        let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         buffer.copy_exactly(&Stat {
@@ -1111,7 +1092,7 @@ impl KernelScheme for ProcScheme {
     /// Dup is currently used to implement clone() and execve().
     fn kdup(&self, old_id: usize, raw_buf: UserSliceRo, _: CallerCtx) -> Result<OpenResult> {
         let info = {
-            let handles = self.handles.read();
+            let handles = HANDLES.read();
             let handle = handles.get(&old_id).ok_or(Error::new(EBADF))?;
 
             handle.info.clone()
@@ -1132,7 +1113,7 @@ impl KernelScheme for ProcScheme {
         raw_buf.copy_to_slice(&mut array[..raw_buf.len()])?;
         let buf = &array[..raw_buf.len()];
 
-        self.new_handle(match info.operation {
+        new_handle(match info.operation {
             Operation::OpenViaDup => {
                 let (uid, gid) = match &*context::contexts().current().ok_or(Error::new(ESRCH))?.read() {
                     context => (context.euid, context.egid),

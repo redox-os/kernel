@@ -7,7 +7,7 @@ use crate::{
     common::unique::Unique,
     context::{self, signal, Context, ContextId},
     event,
-    scheme::proc,
+    scheme::GlobalSchemes,
     sync::WaitCondition,
     syscall::{
         data::PtraceEvent,
@@ -177,11 +177,7 @@ pub fn is_traced(pid: ContextId) -> bool {
 
 /// Trigger a notification to the event: scheme
 fn proc_trigger_event(file_id: usize, flags: EventFlags) {
-    if let Some(scheme_id) = proc::PROC_SCHEME_ID.get() {
-        event::trigger(*scheme_id, file_id, flags);
-    } else {
-        log::warn!("Failed to trigger proc event: scheme never initialized");
-    }
+    event::trigger(GlobalSchemes::ProcFull.scheme_id(), file_id, flags);
 }
 
 /// Dispatch an event to any tracer tracing `self`. This will cause

@@ -133,7 +133,7 @@ impl SchemeList {
         // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
         {
             use GlobalSchemes::*;
-            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, ITimer, Sys]);
+            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, ITimer, Sys, ProcFull, ProcRestricted]);
 
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             insert_globals(&[Acpi]);
@@ -152,7 +152,7 @@ impl SchemeList {
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
         self.insert_global(ns, "memory", GlobalSchemes::Memory).unwrap();
-        self.insert(ns, "thisproc", |_| KernelSchemes::Proc(Arc::new(ProcScheme::restricted()))).unwrap();
+        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted).unwrap();
         self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
     }
 
@@ -189,8 +189,8 @@ impl SchemeList {
         }
         self.insert_global(ns, "debug", GlobalSchemes::Debug).unwrap();
         self.insert_global(ns, "irq", GlobalSchemes::Irq).unwrap();
-        self.insert(ns, "proc", |scheme_id| KernelSchemes::Proc(Arc::new(ProcScheme::new(scheme_id)))).unwrap();
-        self.insert(ns, "thisproc", |_| KernelSchemes::Proc(Arc::new(ProcScheme::restricted()))).unwrap();
+        self.insert_global(ns, "proc", GlobalSchemes::ProcFull).unwrap();
+        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted).unwrap();
         self.insert_global(ns, "serio", GlobalSchemes::Serio).unwrap();
     }
 
@@ -432,7 +432,6 @@ pub fn calc_seek_offset(cur_pos: usize, rel_pos: isize, whence: usize, len: usiz
 
 #[derive(Clone)]
 pub enum KernelSchemes {
-    Proc(Arc<ProcScheme>),
     Root(Arc<RootScheme>),
     User(UserScheme),
     Global(GlobalSchemes),
@@ -449,6 +448,8 @@ pub enum GlobalSchemes {
     Time,
     ITimer,
     Sys,
+    ProcFull,
+    ProcRestricted,
 
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
     Acpi,
@@ -464,7 +465,6 @@ impl core::ops::Deref for KernelSchemes {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Proc(scheme) => &**scheme,
             Self::Root(scheme) => &**scheme,
             Self::User(scheme) => scheme,
 
@@ -486,6 +486,8 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Time => &TimeScheme,
             Self::ITimer => &ITimerScheme,
             Self::Sys => &SysScheme,
+            Self::ProcFull => &ProcScheme::<true>,
+            Self::ProcRestricted => &ProcScheme::<false>,
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             Self::Acpi => &AcpiScheme,
         }
