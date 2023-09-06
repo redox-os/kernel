@@ -3,29 +3,23 @@ use core::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 use alloc::sync::Arc;
 use alloc::collections::{BTreeMap, VecDeque};
 
-use spin::{Mutex, Once, RwLock};
+use spin::{Mutex, RwLock};
 
 use crate::event;
-use crate::scheme::SchemeId;
 use crate::sync::WaitCondition;
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, ESPIPE};
 use crate::syscall::flag::{EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
 use crate::syscall::data::Stat;
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
-use super::{KernelScheme, OpenResult, CallerCtx};
+use super::{KernelScheme, OpenResult, CallerCtx, GlobalSchemes};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
-static SCHEME_ID: Once<SchemeId> = Once::new();
 static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 // TODO: SLOB?
 static PIPES: RwLock<BTreeMap<usize, Arc<Pipe>>> = RwLock::new(BTreeMap::new());
-
-pub fn pipe_scheme_id() -> SchemeId {
-    *SCHEME_ID.get().expect("pipe scheme must be initialized")
-}
 
 const MAX_QUEUE_SIZE: usize = 65536;
 
@@ -55,12 +49,6 @@ pub fn pipe(flags: usize) -> Result<(usize, usize)> {
 }
 
 pub struct PipeScheme;
-
-impl PipeScheme {
-    pub fn init(scheme_id: SchemeId) {
-        SCHEME_ID.call_once(|| scheme_id);
-    }
-}
 
 impl KernelScheme for PipeScheme {
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
@@ -110,7 +98,7 @@ impl KernelScheme for PipeScheme {
         let (is_write_not_read, key) = from_raw_id(id);
 
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
-        let scheme_id = pipe_scheme_id();
+        let scheme_id = GlobalSchemes::Pipe.scheme_id();
 
         let can_remove = if is_write_not_read {
             event::trigger(scheme_id, key, EVENT_READ);
@@ -193,7 +181,7 @@ impl KernelScheme for PipeScheme {
             let _ = vec.drain(..bytes_read);
 
             if bytes_read > 0 {
-                event::trigger(pipe_scheme_id(), key | WRITE_NOT_READ_BIT, EVENT_WRITE);
+                event::trigger(GlobalSchemes::Pipe.scheme_id(), key | WRITE_NOT_READ_BIT, EVENT_WRITE);
                 pipe.write_condition.notify();
 
                 return Ok(bytes_read);
@@ -242,7 +230,7 @@ impl KernelScheme for PipeScheme {
             }
 
             if bytes_written > 0 {
-                event::trigger(pipe_scheme_id(), key, EVENT_READ);
+                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify();
 
                 return Ok(bytes_written);

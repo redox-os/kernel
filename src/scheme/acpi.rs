@@ -9,7 +9,6 @@ use spin::{Mutex, Once, RwLock};
 
 use crate::acpi::{RXSDT_ENUM, RxsdtEnum};
 use crate::event;
-use crate::scheme::SchemeId;
 use crate::sync::WaitCondition;
 
 use crate::syscall::data::Stat;
@@ -23,7 +22,7 @@ use crate::syscall::flag::{
 use crate::syscall::error::{Error, Result};
 use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
-use super::{KernelScheme, CallerCtx, OpenResult};
+use super::{GlobalSchemes, KernelScheme, CallerCtx, OpenResult};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;
@@ -50,21 +49,15 @@ const TOPLEVEL_CONTENTS: &[u8] = b"rxsdt\nkstop\n";
 static KSTOP_WAITCOND: WaitCondition = WaitCondition::new();
 static KSTOP_FLAG: Mutex<bool> = Mutex::new(false);
 
-static SCHEME_ID: Once<SchemeId> = Once::new();
-
 pub fn register_kstop() -> bool {
     *KSTOP_FLAG.lock() = true;
     let mut waiters_awoken = KSTOP_WAITCOND.notify();
 
-    if let Some(&acpi_scheme) = SCHEME_ID.get() {
-        let handles = HANDLES.read();
+    let handles = HANDLES.read();
 
-        for (&fd, _) in handles.iter().filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe) {
-            event::trigger(acpi_scheme, fd, EVENT_READ);
-            waiters_awoken += 1;
-        }
-    } else {
-        log::error!("Calling register_kstop before kernel ACPI scheme was initialized");
+    for (&fd, _) in handles.iter().filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe) {
+        event::trigger(GlobalSchemes::Acpi.scheme_id(), fd, EVENT_READ);
+        waiters_awoken += 1;
     }
 
     if waiters_awoken == 0 {
@@ -78,13 +71,12 @@ pub fn register_kstop() -> bool {
 }
 
 impl AcpiScheme {
-    pub fn init(id: SchemeId) {
+    pub fn init() {
         // NOTE: This __must__ be called from the main kernel context, while initializing all
         // schemes. If it is called by any other context, then all ACPI data will probably not even
         // be mapped.
 
         let mut data_init = false;
-        let mut id_init = false;
 
         DATA.call_once(|| {
             data_init = true;
@@ -100,13 +92,8 @@ impl AcpiScheme {
 
             Box::from(table)
         });
-        SCHEME_ID.call_once(|| {
-            id_init = true;
 
-            id
-        });
-
-        if !data_init || !id_init {
+        if !data_init {
             log::error!("AcpiScheme::init called multiple times");
         }
     }

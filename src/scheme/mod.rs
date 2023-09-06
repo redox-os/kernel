@@ -111,9 +111,8 @@ pub struct SchemeList {
     map: BTreeMap<SchemeId, KernelSchemes>,
     names: BTreeMap<SchemeNamespace, BTreeMap<Box<str>, SchemeId>>,
     next_ns: usize,
-    next_id: usize
+    next_id: usize,
 }
-
 impl SchemeList {
     /// Create a new scheme list.
     pub fn new() -> Self {
@@ -122,8 +121,9 @@ impl SchemeList {
             names: BTreeMap::new(),
             // Scheme namespaces always start at 1. 0 is a reserved namespace, the null namespace
             next_ns: 1,
-            next_id: 1
+            next_id: 1 + core::mem::variant_count::<GlobalSchemes>(),
         };
+
         list.new_null();
         list.new_root();
         list
@@ -136,12 +136,9 @@ impl SchemeList {
 
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
-        self.insert(ns, "memory", |_| KernelSchemes::Memory).unwrap();
+        self.insert_global(ns, "memory", GlobalSchemes::Memory).unwrap();
         self.insert(ns, "thisproc", |_| KernelSchemes::Proc(Arc::new(ProcScheme::restricted()))).unwrap();
-        self.insert(ns, "pipe", |scheme_id| {
-            PipeScheme::init(scheme_id);
-            KernelSchemes::Pipe
-        }).unwrap();
+        self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
     }
 
     /// Initialize a new namespace
@@ -151,13 +148,10 @@ impl SchemeList {
         self.names.insert(ns, BTreeMap::new());
 
         self.insert(ns, "", |scheme_id| KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))).unwrap();
-        self.insert(ns, "event", |_| KernelSchemes::Event).unwrap();
+        self.insert_global(ns, "event", GlobalSchemes::Event).unwrap();
         self.insert(ns, "itimer", |_| KernelSchemes::ITimer(Arc::new(ITimerScheme::new()))).unwrap();
-        self.insert(ns, "memory", |_| KernelSchemes::Memory).unwrap();
-        self.insert(ns, "pipe", |scheme_id| {
-            PipeScheme::init(scheme_id);
-            KernelSchemes::Pipe
-        }).unwrap();
+        self.insert_global(ns, "memory", GlobalSchemes::Memory).unwrap();
+        self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
         self.insert(ns, "sys", |_| KernelSchemes::Sys(Arc::new(SysScheme::new()))).unwrap();
         self.insert(ns, "time", |scheme_id| KernelSchemes::Time(Arc::new(TimeScheme::new(scheme_id)))).unwrap();
 
@@ -170,28 +164,19 @@ impl SchemeList {
         let ns = self.new_ns();
 
         // These schemes should only be available on the root
-        #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
-        self.insert(ns, "kernel.acpi", |scheme_id| {
-            AcpiScheme::init(scheme_id);
-            KernelSchemes::Acpi
-        }).unwrap();
-
         #[cfg(all(any(target_arch = "aarch64")))]
         {
             self.insert(ns, "kernel.dtb", |scheme_id| Arc::new(DtbScheme::new(scheme_id))).unwrap();
         }
-
-        self.insert(ns, "debug", |scheme_id| {
-            DebugScheme::init(scheme_id);
-            KernelSchemes::Debug
-        }).unwrap();
+        #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi).unwrap();
+        }
+        self.insert_global(ns, "debug", GlobalSchemes::Debug).unwrap();
         self.insert(ns, "irq", |scheme_id| KernelSchemes::Irq(Arc::new(IrqScheme::new(scheme_id)))).unwrap();
         self.insert(ns, "proc", |scheme_id| KernelSchemes::Proc(Arc::new(ProcScheme::new(scheme_id)))).unwrap();
         self.insert(ns, "thisproc", |_| KernelSchemes::Proc(Arc::new(ProcScheme::restricted()))).unwrap();
-        self.insert(ns, "serio", |scheme_id| {
-            SerioScheme::init(scheme_id);
-            KernelSchemes::Serio
-        }).unwrap();
+        self.insert_global(ns, "serio", GlobalSchemes::Serio).unwrap();
     }
 
     pub fn make_ns(&mut self, from: SchemeNamespace, names: impl IntoIterator<Item = Box<str>>) -> Result<SchemeNamespace> {
@@ -234,6 +219,16 @@ impl SchemeList {
             }
         }
         None
+    }
+
+    pub fn insert_global(&mut self, ns: SchemeNamespace, name: &str, global: GlobalSchemes) -> Result<()> {
+        let prev = self.names.get_mut(&ns).ok_or(Error::new(ENODEV))?.insert(name.into(), global.scheme_id());
+
+        if prev.is_some() {
+            return Err(Error::new(EEXIST));
+        }
+
+        Ok(())
     }
 
     /// Create a new scheme.
@@ -422,18 +417,23 @@ pub fn calc_seek_offset(cur_pos: usize, rel_pos: isize, whence: usize, len: usiz
 
 #[derive(Clone)]
 pub enum KernelSchemes {
-    Debug,
-    Event,
     Irq(Arc<IrqScheme>),
     ITimer(Arc<ITimerScheme>),
-    Memory,
-    Pipe,
     Proc(Arc<ProcScheme>),
     Root(Arc<RootScheme>),
-    Serio,
     Sys(Arc<SysScheme>),
     Time(Arc<TimeScheme>),
     User(UserScheme),
+    Global(GlobalSchemes),
+}
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum GlobalSchemes {
+    Debug = 1,
+    Event,
+    Memory,
+    Pipe,
+    Serio,
 
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
     Acpi,
@@ -444,21 +444,35 @@ impl core::ops::Deref for KernelSchemes {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Debug => &DebugScheme,
-            Self::Event => &EventScheme,
             Self::Irq(scheme) => &**scheme,
             Self::ITimer(scheme) => &**scheme,
-            Self::Memory => &MemoryScheme,
-            Self::Pipe => &PipeScheme,
             Self::Proc(scheme) => &**scheme,
             Self::Root(scheme) => &**scheme,
-            Self::Serio => &SerioScheme,
             Self::Sys(scheme) => &**scheme,
             Self::Time(scheme) => &**scheme,
             Self::User(scheme) => scheme,
 
+            Self::Global(global) => &**global,
+        }
+    }
+}
+impl core::ops::Deref for GlobalSchemes {
+    type Target = dyn KernelScheme;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Debug => &DebugScheme,
+            Self::Event => &EventScheme,
+            Self::Memory => &MemoryScheme,
+            Self::Pipe => &PipeScheme,
+            Self::Serio => &SerioScheme,
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             Self::Acpi => &AcpiScheme,
         }
+    }
+}
+impl GlobalSchemes {
+    pub fn scheme_id(self) -> SchemeId {
+        SchemeId::new(self as usize)
     }
 }

@@ -55,10 +55,6 @@ impl Handle {
 }
 
 impl MemoryScheme {
-    pub fn new() -> Self {
-        MemoryScheme
-    }
-
     pub fn fmap_anonymous(addr_space: &Arc<RwLock<AddrSpace>>, map: &Map) -> Result<usize> {
         let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size).ok_or(Error::new(EINVAL))?;
         let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;

@@ -3,15 +3,13 @@
 use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use spin::{Once, RwLock};
+use spin::RwLock;
 
 use crate::event;
 use crate::scheme::*;
 use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
 use crate::syscall::usercopy::UserSliceWo;
-
-static SCHEME_ID: Once<SchemeId> = Once::new();
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -30,22 +28,12 @@ static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 pub fn serio_input(index: usize, data: u8) {
     INPUT[index].send(data);
 
-    let Some(scheme_id) = SCHEME_ID.get().copied() else {
-        return;
-    };
-
     for (id, _handle) in HANDLES.read().iter() {
-        event::trigger(scheme_id, *id, EVENT_READ);
+        event::trigger(GlobalSchemes::Serio.scheme_id(), *id, EVENT_READ);
     }
 }
 
 pub struct SerioScheme;
-
-impl SerioScheme {
-    pub fn init(scheme_id: SchemeId) {
-        SCHEME_ID.call_once(|| scheme_id);
-    }
-}
 
 impl KernelScheme for SerioScheme {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {

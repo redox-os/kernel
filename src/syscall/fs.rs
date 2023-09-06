@@ -214,7 +214,7 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
         let (scheme, number) = match current.get_file(socket).ok_or(Error::new(EBADF))?.description.read() {
             ref desc => (desc.scheme, desc.number),
         };
-        let scheme = Arc::clone(scheme::schemes().get(scheme).ok_or(Error::new(ENODEV))?);
+        let scheme = scheme::schemes().get(scheme).ok_or(Error::new(ENODEV))?.clone();
 
         (scheme, number, current.remove_file(fd).ok_or(Error::new(EBADF))?.description)
     };

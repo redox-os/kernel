@@ -1,15 +1,12 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::{Once, RwLock};
+use spin::RwLock;
 
 use crate::arch::debug::Writer;
 use crate::event;
 use crate::scheme::*;
 use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
-use crate::syscall::usercopy::UserSliceRo;
-use crate::syscall::usercopy::UserSliceWo;
-
-static SCHEME_ID: Once<SchemeId> = Once::new();
+use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -30,22 +27,12 @@ pub fn debug_input(data: u8) {
 
 // Notify readers of input updates
 pub fn debug_notify() {
-    let Some(scheme_id) = SCHEME_ID.get().copied() else {
-        return;
-    };
-
     for (id, _handle) in HANDLES.read().iter() {
-        event::trigger(scheme_id, *id, EVENT_READ);
+        event::trigger(GlobalSchemes::Debug.scheme_id(), *id, EVENT_READ);
     }
 }
 
 pub struct DebugScheme;
-
-impl DebugScheme {
-    pub fn init(scheme_id: SchemeId) {
-        SCHEME_ID.call_once(|| scheme_id);
-    }
-}
 
 impl KernelScheme for DebugScheme {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {

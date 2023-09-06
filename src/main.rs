@@ -49,6 +49,7 @@
 #![feature(naked_functions)]
 #![feature(offset_of)]
 #![feature(sync_unsafe_cell)]
+#![feature(variant_count)]
 #![no_std]
 #![no_main]
 
