@@ -4,6 +4,8 @@ use core::convert::TryInto;
 use core::mem;
 use core::ptr::addr_of_mut;
 
+use crate::LogicalCpuId;
+
 use x86::bits32::task::TaskStateSegment;
 use x86::Ring;
 use x86::dtables::{self, DescriptorTablePointer};
@@ -124,7 +126,7 @@ pub unsafe fn init() {
 }
 
 /// Initialize GDT and configure percpu.
-pub unsafe fn init_paging(stack_offset: usize, cpu_id: usize) {
+pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR frame");
     let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
