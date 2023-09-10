@@ -9,6 +9,7 @@ use x86::segmentation::Descriptor as X86IdtEntry;
 use x86::dtables::{self, DescriptorTablePointer};
 
 use crate::{interrupt::*, LogicalCpuId};
+use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
 use crate::ipi::IpiKind;
 
 use spin::RwLock;
@@ -100,19 +101,6 @@ pub fn allocate_interrupt() -> Option<NonZeroU8> {
 pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
     (32..=254).filter(move |&index| !is_reserved(cpu_id, index))
 }
-
-macro_rules! use_irq(
-    ( $idt: expr, $number:literal, $func:ident ) => {{
-        $idt[$number].set_func($func);
-    }}
-);
-
-macro_rules! use_default_irqs(
-    ($idt:expr) => {{
-        use crate::interrupt::irq::*;
-        default_irqs!($idt, use_irq);
-    }}
-);
 
 pub unsafe fn init() {
     dtables::lidt(&INIT_IDTR);
@@ -211,6 +199,12 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     current_idt[30].set_func(exception::security);
     // 31 reserved
 
+    assert_eq!(__generic_interrupts_end as usize - __generic_interrupts_start as usize, 224 * 8);
+
+    for i in 0..224 {
+        current_idt[i + 32].set_func(mem::transmute(__generic_interrupts_start as usize + i * 8));
+    }
+
     // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
     *current_reservations[0].get_mut() |= 0x0000_0000_FFFF_FFFF;
 
@@ -235,7 +229,6 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         current_idt[48].set_func(irq::lapic_timer);
         current_idt[49].set_func(irq::lapic_error);
 
-
         // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
         *current_reservations[0].get_mut() |= 0x0003_FFFF_0000_0000;
     } else {
@@ -245,8 +238,6 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         // reserve bit 49
         *current_reservations[0].get_mut() |= 1 << 49;
     }
-
-    use_default_irqs!(current_idt);
 
     // Set IPI handlers
     current_idt[IpiKind::Wakeup as usize].set_func(ipi::wakeup);

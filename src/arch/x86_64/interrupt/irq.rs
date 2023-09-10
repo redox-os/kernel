@@ -258,26 +258,31 @@ interrupt!(lapic_error, || {
     lapic_eoi();
 });
 
-interrupt!(calib_pit, || {
-    {
-        *time::OFFSET.lock() += pit::RATE;
-    }
+interrupt_error!(generic_irq, |stack, code| {
+    // The reason why 128 is subtracted and added from the code, is that PUSH imm8 sign-extends the
+    // value, and the longer PUSH imm32 would make the generic_interrupts table twice as large
+    // (containing lots of useless NOPs).
+    irq_trigger((code as i32).wrapping_add(128) as u8);
 
-    eoi(0);
-});
-// XXX: This would look way prettier using const generics.
-
-macro_rules! allocatable_irq(
-    ( $idt:expr, $number:literal, $name:ident ) => {
-        interrupt!($name, || {
-            allocatable_irq_generic($number);
-        });
-    }
-);
-
-pub unsafe fn allocatable_irq_generic(number: u8) {
-    irq_trigger(number - 32);
     lapic_eoi();
-}
+});
 
-define_default_irqs!();
+core::arch::global_asm!("
+    .globl __generic_interrupts_start
+    .globl __generic_interrupts_end
+    .p2align 3
+__generic_interrupts_start:
+    n = 0
+    .rept 224
+    push (n - 128)
+    jmp {}
+    .p2align 3
+    n = n + 1
+    .endr
+__generic_interrupts_end:
+", sym generic_irq);
+
+extern "C" {
+    pub fn __generic_interrupts_start();
+    pub fn __generic_interrupts_end();
+}
