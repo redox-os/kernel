@@ -689,7 +689,12 @@ impl UserInner {
                 _ => return Err(Error::new(EINVAL)),
             }
         } else {
-            self.respond(packet.id, Response::Regular(packet.a))?;
+            let response = if Error::demux(packet.a) == Err(Error::new(EINTR)) {
+                Error::mux(Err(Error::new(EIO)))
+            } else {
+                packet.a
+            };
+            self.respond(packet.id, Response::Regular(response))?;
         }
 
         Ok(())
