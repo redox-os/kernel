@@ -1,13 +1,38 @@
 use rustc_cfg::Cfg;
+use toml::Table;
 use std::env;
+use std::path::Path;
 use std::process::Command;
+
+fn parse_kconfig(arch: &str) {
+    println!("cargo:rerun-if-changed=config.toml");
+
+    assert!(Path::new("config.toml.example").try_exists().unwrap());
+    if !Path::new("config.toml").try_exists().unwrap() {
+        std::fs::copy("config.toml.example", "config.toml").unwrap();
+    }
+    let config_str = std::fs::read_to_string("config.toml").unwrap();
+    let root: Table = toml::from_str(&config_str).unwrap();
+    let altfeatures = root.get("arch").unwrap().as_table().unwrap()
+        .get(arch).unwrap().as_table().unwrap()
+        .get("features").unwrap().as_table().unwrap();
+
+    for (name, value) in altfeatures {
+        let choice = value.as_str().unwrap();
+        assert!(matches!(choice, "always" | "never" | "auto"));
+
+        println!("cargo:rustc-cfg=cpu_feature_{choice}=\"{name}\"");
+    }
+}
 
 fn main() {
     println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let cfg = Cfg::new(env::var_os("TARGET").unwrap()).unwrap();
-    match cfg.target_arch.as_str() {
+    let arch_str = cfg.target_arch.as_str();
+
+    match arch_str {
         "aarch64" => {
             // Build pre kstart init asm code for aarch64
             /*TODO: do we need any of this?
@@ -46,4 +71,6 @@ fn main() {
         }
         _ => (),
     }
+
+    parse_kconfig(arch_str);
 }

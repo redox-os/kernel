@@ -12,6 +12,7 @@ crate-type = ["staticlib"]
 [build-dependencies]
 cc = "1.0.3"
 rustc-cfg = "0.3.0"
+toml = "0.7"
 
 [dependencies]
 bitflags = "1.2.1"
