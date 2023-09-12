@@ -206,7 +206,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         })
     });
 
-    if cfg!(feature = "x86_fsgsbase") {
+    if cfg!(cpu_feature_always = "fsgsbase") {
         assert!(cpu_supports_fsgsbase, "running kernel with features not supported by the current CPU");
 
         x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);

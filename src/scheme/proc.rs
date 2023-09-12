@@ -421,14 +421,14 @@ impl ProcScheme {
     #[cfg(target_arch = "x86_64")]
     fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
         let (fsbase, gsbase) = if info.pid == context::context_id() {
-            #[cfg(not(feature = "x86_fsgsbase"))]
+            #[cfg(cpu_feature_never = "fsgsbase")]
             unsafe {
                 (
                     x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
                     x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE),
                 )
             }
-            #[cfg(feature = "x86_fsgsbase")]
+            #[cfg(cpu_feature_always = "fsgsbase")]
             unsafe {
                 use x86::bits64::segmentation::*;
 
@@ -504,7 +504,7 @@ impl ProcScheme {
         }
 
         if info.pid == context::context_id() {
-            #[cfg(not(feature = "x86_fsgsbase"))]
+            #[cfg(cpu_feature_never = "fsgsbase")]
             unsafe {
                 x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
                 // We have to write to KERNEL_GSBASE, because when the kernel returns to
@@ -518,7 +518,7 @@ impl ProcScheme {
                     }
                 }
             }
-            #[cfg(feature = "x86_fsgsbase")]
+            #[cfg(cpu_feature_always = "fsgsbase")]
             unsafe {
                 use x86::bits64::segmentation::*;
 

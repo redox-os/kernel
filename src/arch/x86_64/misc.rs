@@ -23,7 +23,7 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
         // obvious reasons.
         x86::controlregs::cr4_write(x86::controlregs::cr4() | Cr4::CR4_ENABLE_SMEP);
     }
-    if has_ext_feat(|feat| feat.has_smap()) && cfg!(feature = "x86_smap") {
+    if has_ext_feat(|feat| feat.has_smap()) && cfg!(cpu_feature_always = "smap") {
         // SMAP (Supervisor-Mode Access Prevention) forbids the kernel from accessing any
         // userspace-accessible pages, with the necessary exception of RFLAGS.AC = 1. This limits
         // user-memory accesses to the UserSlice wrapper, so that no code outside of usercopy

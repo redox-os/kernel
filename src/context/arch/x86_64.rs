@@ -146,7 +146,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
         // This is so much shorter in Rust!
 
-        if cfg!(feature = "x86_fsgsbase") {
+        if cfg!(cpu_feature_always = "fsgsbase") {
             prev.arch.fsbase = rdfsbase() as usize;
             wrfsbase(next.arch.fsbase as u64);
             swapgs();

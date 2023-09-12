@@ -285,7 +285,7 @@ macro_rules! inner_pit_unmap(
     }
 );
 
-#[cfg(not(feature = "x86_fsgsbase"))]
+#[cfg(cpu_feature_never = "fsgsbase")]
 macro_rules! save_fsgsbase(
     () => {
         "
@@ -303,7 +303,7 @@ macro_rules! save_fsgsbase(
         "
     }
 );
-#[cfg(feature = "x86_fsgsbase")]
+#[cfg(cpu_feature_always = "fsgsbase")]
 macro_rules! save_fsgsbase(
     () => {
         "
@@ -314,7 +314,7 @@ macro_rules! save_fsgsbase(
     }
 );
 
-#[cfg(feature = "x86_fsgsbase")]
+#[cfg(cpu_feature_always = "fsgsbase")]
 macro_rules! restore_fsgsbase(
     () => {
         "
@@ -324,7 +324,7 @@ macro_rules! restore_fsgsbase(
     }
 );
 
-#[cfg(not(feature = "x86_fsgsbase"))]
+#[cfg(cpu_feature_never = "fsgsbase")]
 macro_rules! restore_fsgsbase(
     () => {
         "

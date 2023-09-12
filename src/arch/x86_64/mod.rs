@@ -64,7 +64,7 @@ pub mod flags {
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     // TODO: LFENCE (spectre_v1 mitigation)?
 
-    #[cfg(not(feature = "x86_smap"))]
+    #[cfg(cpu_feature_never = "smap")]
     core::arch::asm!("
         xor eax, eax
         mov rcx, rdx
@@ -72,7 +72,7 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
         ret
     ", options(noreturn));
 
-    #[cfg(feature = "x86_smap")]
+    #[cfg(cpu_feature_always = "smap")]
     core::arch::asm!("
         xor eax, eax
         mov rcx, rdx
