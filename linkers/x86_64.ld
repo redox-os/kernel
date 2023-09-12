@@ -20,6 +20,15 @@ SECTIONS {
         __text_end = .;
         __rodata_start = .;
         *(.rodata*)
+        __altcode_start = .;
+        *(.altcode)
+        __altcode_end = .;
+        __altrelocs_start = .;
+        *(.altrelocs)
+        __altrelocs_end = .;
+        __altfeatures_start = .;
+        *(.altfeatures)
+        __altfeatures_end = .;
     }
 
     .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_OFFSET) {

@@ -59,28 +59,30 @@ pub mod flags {
     pub const FLAG_INTERRUPTS: usize = 1 << 9;
 }
 
+// TODO: Maybe support rewriting relocations (using LD's --emit-relocs) when working with entire
+// functions?
 #[naked]
 #[link_section = ".usercopy-fns"]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    // TODO: LFENCE (spectre_v1 mitigation)?
+    // TODO: spectre_v1
 
-    #[cfg(cpu_feature_never = "smap")]
-    core::arch::asm!("
-        xor eax, eax
-        mov rcx, rdx
-        rep movsb
-        ret
-    ", options(noreturn));
-
-    #[cfg(cpu_feature_always = "smap")]
-    core::arch::asm!("
-        xor eax, eax
-        mov rcx, rdx
-        stac
-        rep movsb
-        clac
-        ret
-    ", options(noreturn));
+    core::arch::asm!(alternative!(
+        feature: "smap",
+        then: ["
+            xor eax, eax
+            mov rcx, rdx
+            stac
+            rep movsb
+            clac
+            ret
+        "],
+        default: ["
+            xor eax, eax
+            mov rcx, rdx
+            rep movsb
+            ret
+        "]
+    ), options(noreturn));
 }
 pub use arch_copy_to_user as arch_copy_from_user;
 
