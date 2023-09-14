@@ -1,5 +1,7 @@
 [arch.x86_64.features]
 smap = "auto"
 fsgsbase = "auto"
+xsave = "auto"
+xsaveopt = "auto"
 
 # vim: ft=toml

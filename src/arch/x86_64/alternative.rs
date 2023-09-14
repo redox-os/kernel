@@ -1,11 +1,15 @@
 use core::mem::size_of;
 
+use raw_cpuid::{ExtendedRegisterType, ExtendedRegisterStateLocation};
 use spin::Once;
-use x86::controlregs::Cr4;
+use x86::controlregs::{Cr4, Xcr0};
 
 use crate::context::memory::PageSpan;
-use crate::cpuid::{has_ext_feat, cpuid_always};
+use crate::cpuid::{has_ext_feat, cpuid_always, feature_info};
 use crate::paging::{KernelMapper, Page, PageFlags, PAGE_SIZE, VirtualAddress};
+
+#[cfg(all(cpu_feature_never = "xsave", not(cpu_feature_never = "xsaveopt")))]
+compile_error!("cannot force-disable xsave without force-disabling xsaveopt");
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -49,6 +53,38 @@ pub unsafe fn early_init(bsp: bool) {
         enable |= KcpuFeatures::FSGSBASE;
     }
 
+    if cfg!(not(cpu_feature_never = "xsave")) && feature_info().has_xsave() {
+        x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_OS_XSAVE);
+
+        let mut xcr0 = Xcr0::XCR0_FPU_MMX_STATE | Xcr0::XCR0_SSE_STATE;
+        let ext_state_info = cpuid_always().get_extended_state_info().expect("must be present if XSAVE is supported");
+
+        enable |= KcpuFeatures::XSAVE;
+        enable.set(KcpuFeatures::XSAVEOPT, ext_state_info.has_xsaveopt());
+
+        let info = xsave::XsaveInfo {
+            ymm_upper_offset: feature_info().has_avx().then(|| {
+                xcr0 |= Xcr0::XCR0_AVX_STATE;
+                x86::controlregs::xcr0_write(xcr0);
+
+                let state = ext_state_info.iter().find(|state| {
+                    state.register() == ExtendedRegisterType::Avx
+                        && state.location() == ExtendedRegisterStateLocation::Xcr0
+                }).expect("CPUID said AVX was supported but there's no state info");
+
+                if state.size() as usize != 16 * core::mem::size_of::<u128>() {
+                    log::warn!("Unusual AVX state size {}", state.size());
+                }
+
+                state.offset()
+            }),
+            xsave_size: ext_state_info.xsave_area_size_enabled_features(),
+        };
+        log::info!("INFO: {:?}", info);
+
+        xsave::XSAVE_INFO.call_once(|| info);
+    }
+
     if !bsp {
         return;
     }
@@ -75,6 +111,8 @@ pub unsafe fn early_init(bsp: bool) {
         let feature_is_enabled = match name {
             "smap" => enable.contains(KcpuFeatures::SMAP),
             "fsgsbase" => enable.contains(KcpuFeatures::FSGSBASE),
+            "xsave" => enable.contains(KcpuFeatures::XSAVE),
+            "xsaveopt" => enable.contains(KcpuFeatures::XSAVEOPT),
             //_ => panic!("unknown altcode relocation: {}", name),
             _ => true,
         };
@@ -121,6 +159,8 @@ bitflags! {
     pub struct KcpuFeatures: usize {
         const SMAP = 1;
         const FSGSBASE = 2;
+        const XSAVE = 4;
+        const XSAVEOPT = 8;
     }
 }
 
@@ -129,3 +169,34 @@ static FEATURES: Once<KcpuFeatures> = Once::new();
 pub fn features() -> KcpuFeatures {
     *FEATURES.get().expect("early_cpu_init was not called")
 }
+
+#[cfg(not(cpu_feature_never = "xsave"))]
+mod xsave {
+    use super::*;
+
+    #[derive(Debug)]
+    pub struct XsaveInfo {
+        pub ymm_upper_offset: Option<u32>,
+        pub xsave_size: u32,
+    }
+    pub(in super) static XSAVE_INFO: Once<XsaveInfo> = Once::new();
+
+    pub fn info() -> &'static XsaveInfo {
+        XSAVE_INFO.get().unwrap()
+    }
+}
+
+pub fn kfx_size() -> usize {
+    #[cfg(not(cpu_feature_never = "xsave"))]
+    {
+        FXSAVE_SIZE + XSAVE_HEADER_SIZE + xsave::info().xsave_size as usize
+    }
+    #[cfg(cpu_feature_never = "xsave")]
+    {
+        // FXSAVE size
+        FXSAVE_SIZE
+    }
+}
+
+pub const FXSAVE_SIZE: usize = 512;
+pub const XSAVE_HEADER_SIZE: usize = 64;

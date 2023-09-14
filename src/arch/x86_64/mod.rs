@@ -92,3 +92,5 @@ pub use arch_copy_to_user as arch_copy_from_user;
 pub unsafe fn bootstrap_mem(bootstrap: &Bootstrap) -> &'static [u8] {
     core::slice::from_raw_parts(CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8, bootstrap.page_count * PAGE_SIZE)
 }
+
+pub use alternative::kfx_size;

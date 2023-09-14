@@ -257,11 +257,11 @@ pub struct Context {
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
-    pub kfx: AlignedBox<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>,
+    pub kfx: AlignedBox<[u8], {arch::KFX_ALIGN}>,
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
     /// Kernel signal backup: Registers, Kernel FX, Kernel Stack, Signal number
-    pub ksig: Option<(arch::Context, AlignedBox<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>, Option<Box<[u8]>>, u8)>,
+    pub ksig: Option<(arch::Context, AlignedBox<[u8], {arch::KFX_ALIGN}>, Option<Box<[u8]>>, u8)>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
@@ -325,7 +325,7 @@ impl Context {
             pending: VecDeque::new(),
             wake: None,
             arch: arch::Context::new(),
-            kfx: AlignedBox::<[u8; arch::KFX_SIZE], {arch::KFX_ALIGN}>::try_zeroed()?,
+            kfx: AlignedBox::<[u8], {arch::KFX_ALIGN}>::try_zeroed_slice(crate::arch::kfx_size())?,
             kstack: None,
             ksig: None,
             ksig_restore: false,

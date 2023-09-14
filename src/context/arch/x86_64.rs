@@ -21,8 +21,11 @@ pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 
 const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
-pub const KFX_SIZE: usize = 512;
+#[cfg(cpu_feature_never = "xsave")]
 pub const KFX_ALIGN: usize = 16;
+
+#[cfg(not(cpu_feature_never = "xsave"))]
+pub const KFX_ALIGN: usize = 64;
 
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -136,11 +139,31 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    core::arch::asm!("
-        fxsave64 [{prev_fx}]
-        fxrstor64 [{next_fx}]
-        ", prev_fx = in(reg) prev.kfx.as_mut_ptr(),
+    core::arch::asm!(
+        alternative2!(
+            feature1: "xsaveopt",
+            then1: ["
+                mov eax, 0xffffffff
+                mov edx, eax
+                xsaveopt [{prev_fx}]
+                xrstor [{next_fx}]
+            "],
+            feature2: "xsave",
+            then2: ["
+                mov eax, 0xffffffff
+                mov edx, eax
+                xsave [{prev_fx}]
+                xrstor [{next_fx}]
+            "],
+            default: ["
+                fxsave64 [{prev_fx}]
+                fxrstor64 [{next_fx}]
+            "]
+        ),
+        prev_fx = in(reg) prev.kfx.as_mut_ptr(),
         next_fx = in(reg) next.kfx.as_ptr(),
+        out("eax") _,
+        out("edx") _,
     );
 
     {
