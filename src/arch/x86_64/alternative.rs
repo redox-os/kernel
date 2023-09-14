@@ -99,6 +99,26 @@ pub unsafe fn early_init(bsp: bool) {
         return;
     }
 
+    #[cfg(feature = "self_modifying")]
+    overwrite(&relocs, enable);
+
+    #[cfg(not(feature = "self_modifying"))]
+    let _ = relocs;
+
+    if cfg!(not(feature = "self_modifying")) {
+        assert!(
+            cfg!(not(cpu_feature_auto = "smap"))
+                && cfg!(not(cpu_feature_auto = "fsgsbase"))
+                && cfg!(not(cpu_feature_auto = "xsave"))
+                && cfg!(not(cpu_feature_auto = "xsaveopt"))
+        );
+    }
+
+    FEATURES.call_once(|| enable);
+}
+
+#[cfg(feature = "self_modifying")]
+unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
     let mut mapper = KernelMapper::lock();
     for reloc in relocs.iter().copied() {
         let name = core::str::from_utf8(core::slice::from_raw_parts(reloc.name_start, reloc.name_len)).expect("invalid feature name");
@@ -116,7 +136,7 @@ pub unsafe fn early_init(bsp: bool) {
 
         let code = core::slice::from_raw_parts_mut(reloc.code_start, total_length);
 
-        log::info!("feature {} current {:x?} altcode {:x?}", name, code, altcode);
+        log::trace!("feature {} current {:x?} altcode {:x?}", name, code, altcode);
 
         let feature_is_enabled = match name {
             "smap" => enable.contains(KcpuFeatures::SMAP),
@@ -156,13 +176,12 @@ pub unsafe fn early_init(bsp: bool) {
         for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
             chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
         }
-        log::info!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
+        log::trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
 
         for page in dst_pages.pages() {
             mapper.remap(page.start_address(), PageFlags::new().write(false).execute(true).global(true)).unwrap().flush();
         }
     }
-    FEATURES.call_once(|| enable);
 }
 
 bitflags! {

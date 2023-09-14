@@ -45,7 +45,11 @@ raw-cpuid = "10.2.0"
 x86 = { version = "0.47.0", default-features = false }
 
 [features]
-default = ["acpi", "multi_core", "graphical_debug", "serial_debug"]
+default = ["acpi", "multi_core", "graphical_debug", "serial_debug", "self_modifying"]
+
+# Activates some limited code-overwriting optimizations, based on CPU features.
+self_modifying = []
+
 acpi = []
 doc = []
 graphical_debug = []
