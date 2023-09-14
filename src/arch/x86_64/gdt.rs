@@ -13,8 +13,6 @@ use x86::dtables::{self, DescriptorTablePointer};
 use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
 use x86::task;
 
-use super::cpuid::cpuid;
-
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;
@@ -199,18 +197,6 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
-
-    let cpu_supports_fsgsbase = cpuid().map_or(false, |cpuid| {
-        cpuid.get_extended_feature_info().map_or(false, |extended_features| {
-            extended_features.has_fsgsbase()
-        })
-    });
-
-    if cfg!(cpu_feature_always = "fsgsbase") {
-        assert!(cpu_supports_fsgsbase, "running kernel with features not supported by the current CPU");
-
-        x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
-    }
 
     pcr.percpu = PercpuBlock {
         cpu_id,

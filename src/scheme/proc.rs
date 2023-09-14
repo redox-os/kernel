@@ -420,26 +420,12 @@ impl ProcScheme {
 
     #[cfg(target_arch = "x86_64")]
     fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
+        // TODO: Avoid rdmsr if fsgsbase is not enabled, if this is worth optimizing for.
         let (fsbase, gsbase) = if info.pid == context::context_id() {
-            #[cfg(cpu_feature_never = "fsgsbase")]
             unsafe {
                 (
                     x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
                     x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE),
-                )
-            }
-            #[cfg(cpu_feature_always = "fsgsbase")]
-            unsafe {
-                use x86::bits64::segmentation::*;
-
-                (
-                    rdfsbase(),
-                    {
-                        swapgs();
-                        let gsbase = rdgsbase();
-                        swapgs();
-                        gsbase
-                    }
                 )
             }
         } else {
@@ -504,7 +490,6 @@ impl ProcScheme {
         }
 
         if info.pid == context::context_id() {
-            #[cfg(cpu_feature_never = "fsgsbase")]
             unsafe {
                 x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
                 // We have to write to KERNEL_GSBASE, because when the kernel returns to
@@ -517,18 +502,6 @@ impl ProcScheme {
                         arch.gsbase = regs.gsbase as usize;
                     }
                 }
-            }
-            #[cfg(cpu_feature_always = "fsgsbase")]
-            unsafe {
-                use x86::bits64::segmentation::*;
-
-                wrfsbase(regs.fsbase);
-                swapgs();
-                wrgsbase(regs.gsbase);
-                swapgs();
-
-                // No need to update the current context; with fsgsbase enabled, these
-                // registers are automatically saved and restored.
             }
         } else {
             try_stop_context(info.pid, |context| {
@@ -562,7 +535,7 @@ impl Scheme for ProcScheme {
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         let mut handles = self.handles.write();
-        let mut handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         match cmd {
             F_SETFL => { handle.info.flags = arg; Ok(0) },

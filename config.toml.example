@@ -1,5 +1,5 @@
 [arch.x86_64.features]
-smap = "always"
-fsgsbase = "never"
+smap = "auto"
+fsgsbase = "auto"
 
 # vim: ft=toml

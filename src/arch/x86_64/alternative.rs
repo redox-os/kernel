@@ -1,9 +1,10 @@
 use core::mem::size_of;
 
+use spin::Once;
 use x86::controlregs::Cr4;
 
 use crate::context::memory::PageSpan;
-use crate::cpuid::has_ext_feat;
+use crate::cpuid::{has_ext_feat, cpuid_always};
 use crate::paging::{KernelMapper, Page, PageFlags, PAGE_SIZE, VirtualAddress};
 
 #[repr(C)]
@@ -25,7 +26,7 @@ pub unsafe fn early_init(bsp: bool) {
     assert_eq!(relocs_size % size_of::<AltReloc>(), 0);
     let relocs = core::slice::from_raw_parts(relocs_offset as *const AltReloc, relocs_size / size_of::<AltReloc>());
 
-    let mut enable_smap = false;
+    let mut enable = KcpuFeatures::empty();
 
     if cfg!(not(cpu_feature_never = "smap")) && has_ext_feat(|feat| feat.has_smap()) {
         // SMAP (Supervisor-Mode Access Prevention) forbids the kernel from accessing any
@@ -36,8 +37,18 @@ pub unsafe fn early_init(bsp: bool) {
         // Clear CLAC in (the probably unlikely) case the bootloader set it earlier.
         x86::bits64::rflags::clac();
 
-        enable_smap = true;
+        enable |= KcpuFeatures::SMAP;
     }
+
+    if cfg!(not(cpu_feature_never = "fsgsbase"))
+        && let Some(f) = cpuid_always().get_extended_feature_info()
+        && f.has_fsgsbase()
+    {
+        x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
+
+        enable |= KcpuFeatures::FSGSBASE;
+    }
+
     if !bsp {
         return;
     }
@@ -62,7 +73,8 @@ pub unsafe fn early_init(bsp: bool) {
         log::info!("feature {} current {:x?} altcode {:x?}", name, code, altcode);
 
         let feature_is_enabled = match name {
-            "smap" => enable_smap,
+            "smap" => enable.contains(KcpuFeatures::SMAP),
+            "fsgsbase" => enable.contains(KcpuFeatures::FSGSBASE),
             //_ => panic!("unknown altcode relocation: {}", name),
             _ => true,
         };
@@ -102,4 +114,18 @@ pub unsafe fn early_init(bsp: bool) {
             mapper.remap(page.start_address(), PageFlags::new().write(false).execute(true).global(true)).unwrap().flush();
         }
     }
+    FEATURES.call_once(|| enable);
+}
+
+bitflags! {
+    pub struct KcpuFeatures: usize {
+        const SMAP = 1;
+        const FSGSBASE = 2;
+    }
+}
+
+static FEATURES: Once<KcpuFeatures> = Once::new();
+
+pub fn features() -> KcpuFeatures {
+    *FEATURES.get().expect("early_cpu_init was not called")
 }

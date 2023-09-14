@@ -1,4 +1,5 @@
 use core::mem;
+use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::AtomicBool;
 
 use alloc::sync::Arc;
@@ -10,6 +11,7 @@ use crate::syscall::FloatRegisters;
 
 use memoffset::offset_of;
 use spin::Once;
+use x86::msr;
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
@@ -142,21 +144,50 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     );
 
     {
-        use x86::{bits64::segmentation::*, msr};
+        core::arch::asm!(
+            alternative!(
+                feature: "fsgsbase",
+                then: ["
+                    mov rax, [{next}+{fsbase_off}]
+                    mov rcx, [{next}+{gsbase_off}]
 
-        // This is so much shorter in Rust!
+                    rdfsbase rdx
+                    wrfsbase rax
+                    swapgs
+                    rdgsbase rax
+                    wrgsbase rcx
+                    swapgs
 
-        if cfg!(cpu_feature_always = "fsgsbase") {
-            prev.arch.fsbase = rdfsbase() as usize;
-            wrfsbase(next.arch.fsbase as u64);
-            swapgs();
-            prev.arch.gsbase = rdgsbase() as usize;
-            wrgsbase(next.arch.gsbase as u64);
-            swapgs();
-        } else {
-            msr::wrmsr(msr::IA32_FS_BASE, next.arch.fsbase as u64);
-            msr::wrmsr(msr::IA32_KERNEL_GSBASE, next.arch.gsbase as u64);
-        }
+                    mov [{prev}+{fsbase_off}], rdx
+                    mov [{prev}+{gsbase_off}], rax
+                "],
+                // TODO: Most applications will set FSBASE, but won't touch GSBASE. Maybe avoid
+                // wrmsr or even the swapgs+rdgsbase+wrgsbase+swapgs sequence if they are already
+                // equal?
+                default: ["
+                    mov ecx, {MSR_FSBASE}
+                    mov rdx, [{next}+{fsbase_off}]
+                    mov eax, edx
+                    shr rdx, 32
+                    wrmsr
+
+                    mov ecx, {MSR_KERNEL_GSBASE}
+                    mov rdx, [{next}+{gsbase_off}]
+                    mov eax, edx
+                    shr rdx, 32
+                    wrmsr
+
+                    // {prev}
+                "]
+            ),
+            out("rax") _,
+            out("rdx") _,
+            out("ecx") _, prev = in(reg) addr_of_mut!(prev.arch), next = in(reg) addr_of!(next.arch),
+            MSR_FSBASE = const msr::IA32_FS_BASE,
+            MSR_KERNEL_GSBASE = const msr::IA32_KERNEL_GSBASE,
+            gsbase_off = const offset_of!(Context, gsbase),
+            fsbase_off = const offset_of!(Context, fsbase),
+        );
     }
 
     match next.addr_space {
