@@ -15,16 +15,6 @@ macro_rules! println {
     ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
 }
 
-
-#[repr(C)]
-pub struct AltReloc {
-    pub code_start: usize,
-    pub code_end: usize,
-    pub altcode_start: usize,
-    pub altcode_end: usize,
-    pub name_start: usize,
-    pub name_end: usize,
-}
 macro_rules! expand_bool(
     ($value:expr) => {
         concat!($value)
@@ -95,7 +85,7 @@ macro_rules! alternative_auto(
         .quad 70b
         .quad 71b - 70b
         .quad 40b
-        .quad 41b - 40b
+        .quad 42b - 40b
         .quad ", $first_digit, "0b
         .quad ", $first_digit, "1b - ", $first_digit, "0b
         .popsection

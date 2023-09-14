@@ -1,4 +1,4 @@
-use raw_cpuid::{CpuId, CpuIdResult};
+use raw_cpuid::{CpuId, CpuIdResult, ExtendedFeatures};
 
 pub fn cpuid() -> Option<CpuId> {
     // CPUID is always available on x86_64 systems.
@@ -14,4 +14,9 @@ pub fn cpuid_always() -> CpuId {
             edx: result.edx,
         }
     })
+}
+pub fn has_ext_feat(feat: impl FnOnce(ExtendedFeatures) -> bool) -> bool {
+    cpuid_always()
+        .get_extended_feature_info()
+        .map_or(false, feat)
 }

@@ -2,6 +2,8 @@ use crate::Bootstrap;
 
 use self::paging::PAGE_SIZE;
 
+pub mod alternative;
+
 #[macro_use]
 pub mod macros;
 

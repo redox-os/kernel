@@ -137,6 +137,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Set up IDT
         idt::init_paging_bsp();
 
+        crate::alternative::early_init(true);
+
         // Set up syscall instruction
         interrupt::syscall::init();
 
@@ -234,6 +236,8 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
         // Set up IDT for AP
         idt::init_paging_post_heap(false, cpu_id);
+
+        crate::alternative::early_init(false);
 
         // Set up syscall instruction
         interrupt::syscall::init();
