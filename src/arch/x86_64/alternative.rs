@@ -1,6 +1,7 @@
+#![allow(unused_imports)]
+
 use core::mem::size_of;
 
-use raw_cpuid::{ExtendedRegisterType, ExtendedRegisterStateLocation};
 use spin::Once;
 use x86::controlregs::{Cr4, Xcr0};
 
@@ -42,6 +43,8 @@ pub unsafe fn early_init(bsp: bool) {
         x86::bits64::rflags::clac();
 
         enable |= KcpuFeatures::SMAP;
+    } else {
+        assert!(cfg!(not(cpu_feature_always = "smap")));
     }
 
     if cfg!(not(cpu_feature_never = "fsgsbase"))
@@ -51,9 +54,14 @@ pub unsafe fn early_init(bsp: bool) {
         x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
 
         enable |= KcpuFeatures::FSGSBASE;
+    } else {
+        assert!(cfg!(not(cpu_feature_always = "fsgsbase")));
     }
 
-    if cfg!(not(cpu_feature_never = "xsave")) && feature_info().has_xsave() {
+    #[cfg(not(cpu_feature_never = "xsave"))]
+    if feature_info().has_xsave() {
+        use raw_cpuid::{ExtendedRegisterType, ExtendedRegisterStateLocation};
+
         x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_OS_XSAVE);
 
         let mut xcr0 = Xcr0::XCR0_FPU_MMX_STATE | Xcr0::XCR0_SSE_STATE;
@@ -83,6 +91,8 @@ pub unsafe fn early_init(bsp: bool) {
         log::info!("INFO: {:?}", info);
 
         xsave::XSAVE_INFO.call_once(|| info);
+    } else {
+        assert!(cfg!(not(cpu_feature_always = "xsave")));
     }
 
     if !bsp {
