@@ -121,7 +121,7 @@ pub unsafe fn early_init(bsp: bool) {
             continue;
         }
 
-        let (dst, dst_nops) = code.split_at_mut(reloc.altcode_len);
+        let (dst, dst_nops) = code.split_at_mut(altcode.len());
         dst.copy_from_slice(altcode);
 
         // XXX: The `.nops` directive only works for constant lengths, and the variable `.skip -X`
@@ -144,7 +144,7 @@ pub unsafe fn early_init(bsp: bool) {
         ];
 
         for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
-            chunk.copy_from_slice(NOPS_TABLE[chunk.len()]);
+            chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
         }
         log::info!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
 
