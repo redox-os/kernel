@@ -21,13 +21,13 @@ SECTIONS {
         __rodata_start = .;
         *(.rodata*)
         __altcode_start = .;
-        *(.altcode)
+        KEEP(*(.altcode*))
         __altcode_end = .;
         __altrelocs_start = .;
-        *(.altrelocs)
+        KEEP(*(.altrelocs*))
         __altrelocs_end = .;
         __altfeatures_start = .;
-        *(.altfeatures)
+        KEEP(*(.altfeatures*))
         __altfeatures_end = .;
     }
 
