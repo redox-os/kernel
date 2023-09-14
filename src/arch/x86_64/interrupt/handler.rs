@@ -263,21 +263,6 @@ macro_rules! swapgs_iff_ring3_fast_errorcode {
     " };
 }
 
-#[cfg(feature = "x86_fsbase")]
-macro_rules! read_gsbase_into_rdx {
-    () => { "rdgsbase rdx;" }
-}
-
-#[cfg(not(feature = "x86_fsbase"))]
-macro_rules! read_gsbase_into_rdx {
-    () => { "
-        mov ecx, {IA32_GS_BASE}
-        rdmsr
-        shl rdx, 32
-        or rdx, rax
-    " }
-}
-
 macro_rules! conditional_swapgs_paranoid {
     // For regular interrupt handlers and the syscall handler, managing IA32_GS_BASE and
     // IA32_KERNEL_GS_BASE (the "GSBASE registers") is more or less trivial when using the SWAPGS
@@ -318,7 +303,16 @@ macro_rules! conditional_swapgs_paranoid {
         "sub rdi, {PCR_GDT_OFFSET};",
 
         // Read the current IA32_GS_BASE value into RDX.
-        read_gsbase_into_rdx!(),
+        alternative!(
+            feature: "fsgsbase",
+            then: ["rdgsbase rdx"],
+            default: ["
+                mov ecx, {IA32_GS_BASE}
+                rdmsr
+                shl rdx, 32
+                or rdx, rax
+            "]
+        ),
 
         // If they were not equal, the PCR address must instead be in IA32_KERNEL_GS_BASE,
         // requiring a SWAPGS. GSBASE needs to be swapped back, so store the same flag in RBX.
