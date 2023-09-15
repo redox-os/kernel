@@ -25,6 +25,8 @@ use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 use self::acpi::AcpiScheme;
+#[cfg(all(any(target_arch = "aarch64")))]
+use self::dtb::DtbScheme;
 
 use self::debug::DebugScheme;
 use self::event::EventScheme;
@@ -42,6 +44,8 @@ use self::user::UserInner;
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 pub mod acpi;
+#[cfg(all(any(target_arch = "aarch64")))]
+pub mod dtb;
 
 /// `debug:` - provides access to serial console
 pub mod debug;
@@ -163,6 +167,9 @@ impl SchemeList {
         // These schemes should only be available on the root
         #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))] {
             self.insert(ns, "kernel/acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
+        }
+        #[cfg(all(any(target_arch = "aarch64")))] {
+            self.insert(ns, "kernel/dtb", |scheme_id| Arc::new(DtbScheme::new(scheme_id))).unwrap();
         }
         self.insert(ns, "debug", |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();
         self.insert(ns, "irq", |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();

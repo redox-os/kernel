@@ -89,6 +89,9 @@ pub mod allocator;
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 mod acpi;
 
+#[cfg(all(any(target_arch = "aarch64")))]
+mod dtb;
+
 /// Context management
 pub mod context;
 

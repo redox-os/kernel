@@ -9,7 +9,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::memory::{Frame};
 use crate::paging::{Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
 
-use crate::allocator;
+use crate::{allocator, dtb};
 use crate::device;
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug;
@@ -153,6 +153,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize devices
         device::init();
+
+        dtb::init(Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size)));
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();
