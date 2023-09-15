@@ -204,6 +204,44 @@ impl InterruptStack {
         self.scratch.x0 = all.x0;
     }
 
+    /// Store a specific generic registers
+    pub fn store_reg(&mut self, idx: usize, val: usize) {
+        match idx {
+            0 => self.scratch.x0 = val,
+            1 => self.scratch.x1 = val,
+            2 => self.scratch.x2 = val,
+            3 => self.scratch.x3 = val,
+            4 => self.scratch.x4 = val,
+            5 => self.scratch.x5 = val,
+            6 => self.scratch.x6 = val,
+            7 => self.scratch.x7 = val,
+            8 => self.scratch.x8 = val,
+            9 => self.scratch.x9 = val,
+            10 => self.scratch.x10 = val,
+            11 => self.scratch.x11 = val,
+            12 => self.scratch.x12 = val,
+            13 => self.scratch.x13 = val,
+            14 => self.scratch.x14 = val,
+            15 => self.scratch.x15 = val,
+            16 => self.scratch.x16 = val,
+            17 => self.scratch.x17 = val,
+            18 => self.scratch.x18 = val,
+            19 => self.preserved.x19 = val,
+            20 => self.preserved.x20 = val,
+            21 => self.preserved.x21 = val,
+            22 => self.preserved.x22 = val,
+            23 => self.preserved.x23 = val,
+            24 => self.preserved.x24 = val,
+            25 => self.preserved.x25 = val,
+            26 => self.preserved.x26 = val,
+            27 => self.preserved.x27 = val,
+            28 => self.preserved.x28 = val,
+            29 => self.preserved.x29 = val,
+            30 => self.preserved.x30 = val,
+            _ => {},
+        }
+    }
+
     //TODO
     pub fn is_singlestep(&self) -> bool { false }
     pub fn set_singlestep(&mut self, singlestep: bool) {}

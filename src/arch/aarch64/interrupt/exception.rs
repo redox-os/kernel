@@ -56,6 +56,73 @@ unsafe fn instr_data_abort_inner(stack: &mut InterruptStack, from_user: bool, in
     crate::memory::page_fault_handler(stack, flags, faulting_addr).is_ok()
 }
 
+unsafe fn cntfrq_el0() -> usize {
+    let ret: usize;
+    core::arch::asm!("mrs {}, cntfrq_el0", out(reg) ret);
+    ret
+}
+
+unsafe fn cntpct_el0() -> usize {
+    let ret: usize;
+    core::arch::asm!("mrs {}, cntpct_el0", out(reg) ret);
+    ret
+}
+
+unsafe fn cntvct_el0() -> usize {
+    let ret: usize;
+    core::arch::asm!("mrs {}, cntvct_el0", out(reg) ret);
+    ret
+}
+
+unsafe fn instr_trapped_msr_mrs_inner(stack: &mut InterruptStack, from_user: bool, instr_not_data: bool, from: &str) -> bool {
+    let iss = iss(stack.iret.esr_el1);
+    let res0 = (iss & 0x1C0_0000) >> 22;
+    let op0 = (iss & 0x030_0000) >> 20;
+    let op2 = (iss & 0x00e_0000) >> 17;
+    let op1 = (iss & 0x001_c000) >> 14;
+    let crn = (iss & 0x000_3c00) >> 10;
+    let rt = (iss & 0x000_03e0) >> 5;
+    let crm = (iss & 0x000_001e) >> 1;
+    let dir = iss & 0x000_0001;
+
+    /*
+    print!("iss=0x{:x}, res0=0b{:03b}, op0=0b{:02b}\n
+            op2=0b{:03b}, op1=0b{:03b}, crn=0b{:04b}\n
+            rt=0b{:05b}, crm=0b{:04b}, dir=0b{:b}\n",
+            iss, res0, op0, op2, op1, crn, rt, crm, dir);
+    */
+
+    match (op0, op1, crn, crm, op2, dir) {
+        //MRS <Xt>, CNTFRQ_EL0
+        (0b11, 0b011, 0b1110, 0b0000, 0b000, 0b1) => {
+            let reg_val = cntfrq_el0();
+            stack.store_reg(rt as usize, reg_val);
+            //skip faulting instruction, A64 instructions are always 32-bits
+            stack.iret.elr_el1 += 4;
+            return true
+        }
+        //MRS <Xt>, CNTPCT_EL0
+        (0b11, 0b011, 0b1110, 0b0000, 0b001, 0b1) => {
+            let reg_val = cntpct_el0();
+            stack.store_reg(rt as usize, reg_val);
+            //skip faulting instruction, A64 instructions are always 32-bits
+            stack.iret.elr_el1 += 4;
+            return true
+        }
+        //MRS <Xt>, CNTVCT_EL0
+        (0b11, 0b011, 0b1110, 0b0000, 0b010, 0b1) => {
+            let reg_val = cntvct_el0();
+            stack.store_reg(rt as usize, reg_val);
+            //skip faulting instruction, A64 instructions are always 32-bits
+            stack.iret.elr_el1 += 4;
+            return true
+        }
+        _ => {},
+    }
+
+    false
+}
+
 exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
     if !pf_inner(stack, exception_code(stack.iret.esr_el1), "sync_exc_el1_spx") {
         println!("Synchronous exception at EL1 with SPx");
@@ -74,6 +141,8 @@ unsafe fn pf_inner(stack: &mut InterruptStack, ty: u8, from: &str) -> bool {
         0b100000 => instr_data_abort_inner(stack, true, true, from),
         // "Instruction Abort taken without a change in Exception level"
         0b100001 => instr_data_abort_inner(stack, false, true, from),
+        // "Trapped MSR, MRS or System instruction execution in AArch64 state"
+        0b011000 => instr_trapped_msr_mrs_inner(stack, true, true, from),
 
         _ => return false,
     }
