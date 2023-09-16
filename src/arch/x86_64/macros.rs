@@ -86,6 +86,8 @@ macro_rules! alternative_auto(
         .quad 71b - 70b
         .quad 40b
         .quad 42b - 40b
+        .quad 41b - 40b
+        .quad 0
         .quad ", $first_digit, "0b
         .quad ", $first_digit, "1b - ", $first_digit, "0b
         .popsection

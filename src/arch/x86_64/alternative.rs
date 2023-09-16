@@ -19,6 +19,8 @@ pub struct AltReloc {
     pub name_len: usize,
     pub code_start: *mut u8,
     pub origcode_len: usize,
+    pub padded_len: usize,
+    pub _rsvd: usize,
     pub altcode_start: *const u8,
     pub altcode_len: usize,
 }
@@ -88,7 +90,7 @@ pub unsafe fn early_init(bsp: bool) {
             }),
             xsave_size: ext_state_info.xsave_area_size_enabled_features(),
         };
-        log::info!("INFO: {:?}", info);
+        log::debug!("XSAVE: {:?}", info);
 
         xsave::XSAVE_INFO.call_once(|| info);
     } else {
@@ -124,8 +126,6 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
         let name = core::str::from_utf8(core::slice::from_raw_parts(reloc.name_start, reloc.name_len)).expect("invalid feature name");
         let altcode = core::slice::from_raw_parts(reloc.altcode_start, reloc.altcode_len);
 
-        let total_length = core::cmp::max(reloc.altcode_len, reloc.origcode_len);
-
         let dst_pages = PageSpan::between(
             Page::containing_address(VirtualAddress::new(reloc.code_start as usize)),
             Page::containing_address(VirtualAddress::new((reloc.code_start as usize + reloc.origcode_len).next_multiple_of(PAGE_SIZE))),
@@ -134,7 +134,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             mapper.remap(page.start_address(), PageFlags::new().write(true).execute(true).global(true)).unwrap().flush();
         }
 
-        let code = core::slice::from_raw_parts_mut(reloc.code_start, total_length);
+        let code = core::slice::from_raw_parts_mut(reloc.code_start, reloc.padded_len);
 
         log::trace!("feature {} current {:x?} altcode {:x?}", name, code, altcode);
 
