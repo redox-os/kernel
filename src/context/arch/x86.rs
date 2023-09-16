@@ -20,7 +20,6 @@ pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 
 const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
-pub const KFX_SIZE: usize = 512;
 pub const KFX_ALIGN: usize = 16;
 
 #[derive(Clone, Debug)]
