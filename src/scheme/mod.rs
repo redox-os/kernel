@@ -18,7 +18,7 @@ use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::context::file::FileDescription;
-use crate::context::{memory::AddrSpace, file::FileDescriptor};
+use crate::context::memory::AddrSpace;
 use crate::syscall::error::*;
 use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
@@ -326,16 +326,6 @@ pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
 pub trait KernelScheme: Send + Sync + 'static {
     fn kopen(&self, path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         Err(Error::new(ENOENT))
-    }
-
-    fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
-        Err(Error::new(EBADF))
-    }
-    fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
-        Err(Error::new(EBADF))
-    }
-    fn as_sigactions(&self, number: usize) -> Result<Arc<RwLock<Vec<(crate::syscall::data::SigAction, usize)>>>> {
-        Err(Error::new(EBADF))
     }
 
     fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {

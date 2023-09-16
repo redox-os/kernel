@@ -30,7 +30,7 @@ use core::{
 };
 use spin::RwLock;
 
-use super::{OpenResult, CallerCtx, KernelSchemes};
+use super::{OpenResult, CallerCtx, KernelSchemes, GlobalSchemes};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: &mut usize) -> Result<usize> {
     let avail_src = src.get(*offset..).unwrap_or(&[]);
@@ -598,28 +598,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         }
         Ok(())
     }
-    // TODO: These three functions will become obsolete soon.
-    fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
-        if let Operation::AddrSpace { ref addrspace } = HANDLES.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
-            Ok(Arc::clone(addrspace))
-        } else {
-            Err(Error::new(EBADF))
-        }
-    }
-    fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
-        if let Operation::Filetable { ref filetable } = HANDLES.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
-            Ok(Arc::clone(filetable))
-        } else {
-            Err(Error::new(EBADF))
-        }
-    }
-    fn as_sigactions(&self, number: usize) -> Result<Arc<RwLock<Vec<(crate::syscall::data::SigAction, usize)>>>> {
-        if let Operation::Sigactions(ref sigactions) = HANDLES.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
-            Ok(Arc::clone(sigactions))
-        } else {
-            Err(Error::new(EBADF))
-        }
-    }
     fn kfmap(&self, id: usize, dst_addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
         let info = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.info.clone();
 
@@ -992,10 +970,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             Operation::CurrentFiletable => {
                 let filetable_fd = buf.read_usize()?;
                 let (hopefully_this_scheme, number) = extract_scheme_number(filetable_fd)?;
+                verify_scheme(hopefully_this_scheme)?;
 
-                let filetable = hopefully_this_scheme.as_filetable(number)?;
+                let mut handles = HANDLES.write();
+                let Operation::Filetable { ref filetable } = handles.get(&number).ok_or(Error::new(EBADF))?.info.operation else {
+                    return Err(Error::new(EBADF));
+                };
 
-                HANDLES.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(filetable);
+                handles.get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingFiletableChange(Arc::clone(filetable));
 
                 Ok(mem::size_of::<usize>())
             }
@@ -1006,17 +988,28 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 let ip = iter.next().ok_or(Error::new(EINVAL))??;
 
                 let (hopefully_this_scheme, number) = extract_scheme_number(addrspace_fd)?;
-                let space = hopefully_this_scheme.as_addrspace(number)?;
+                verify_scheme(hopefully_this_scheme)?;
 
-                HANDLES.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: space, new_sp: sp, new_ip: ip };
+                let mut handles = HANDLES.write();
+                let Operation::AddrSpace { ref addrspace } = handles.get(&number).ok_or(Error::new(EBADF))?.info.operation else {
+                    return Err(Error::new(EBADF));
+                };
+
+                handles.get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingAddrSpaceChange { new: Arc::clone(addrspace), new_sp: sp, new_ip: ip };
 
                 Ok(3 * mem::size_of::<usize>())
             }
             Operation::CurrentSigactions => {
                 let sigactions_fd = buf.read_usize()?;
                 let (hopefully_this_scheme, number) = extract_scheme_number(sigactions_fd)?;
-                let sigactions = hopefully_this_scheme.as_sigactions(number)?;
-                HANDLES.write().get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(sigactions);
+                verify_scheme(hopefully_this_scheme)?;
+
+                let mut handles = HANDLES.write();
+                let Operation::Sigactions(ref sigactions) = handles.get(&number).ok_or(Error::new(EBADF))?.info.operation else {
+                    return Err(Error::new(EBADF));
+                };
+
+                handles.get_mut(&id).ok_or(Error::new(EBADF))?.info.operation = Operation::AwaitingSigactionsChange(Arc::clone(sigactions));
                 Ok(mem::size_of::<usize>())
             }
             Operation::MmapMinAddr(ref addrspace) => {
@@ -1236,4 +1229,10 @@ fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
     let scheme = scheme::schemes().get(scheme_id).ok_or(Error::new(ENODEV))?.clone();
 
     Ok((scheme, number))
+}
+fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
+    if !matches!(scheme, KernelSchemes::Global(GlobalSchemes::ProcFull | GlobalSchemes::ProcRestricted)) {
+        return Err(Error::new(EBADF));
+    }
+    Ok(())
 }
