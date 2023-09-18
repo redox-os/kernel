@@ -210,15 +210,18 @@ mod xsave {
     }
     pub(in super) static XSAVE_INFO: Once<XsaveInfo> = Once::new();
 
-    pub fn info() -> &'static XsaveInfo {
-        XSAVE_INFO.get().unwrap()
+    pub fn info() -> Option<&'static XsaveInfo> {
+        XSAVE_INFO.get()
     }
 }
 
 pub fn kfx_size() -> usize {
     #[cfg(not(cpu_feature_never = "xsave"))]
     {
-        FXSAVE_SIZE + XSAVE_HEADER_SIZE + xsave::info().xsave_size as usize
+        match xsave::info() {
+            Some(info) => FXSAVE_SIZE + XSAVE_HEADER_SIZE + info.xsave_size as usize,
+            None => FXSAVE_SIZE,
+        }
     }
     #[cfg(cpu_feature_never = "xsave")]
     {
