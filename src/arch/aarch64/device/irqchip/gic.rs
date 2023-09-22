@@ -63,13 +63,13 @@ impl InterruptController for GenericInterruptController {
             // Map in CPU0's interface
             io_mmap(cpu_addr, cpu_size);
 
-            self.gic_cpu_if.init(cpu_addr);
-            self.gic_dist_if.init(dist_addr);
+            self.gic_cpu_if.init(crate::PHYS_OFFSET + cpu_addr);
+            self.gic_dist_if.init(crate::PHYS_OFFSET + dist_addr);
 
             // Enable CPU0's GIC interface
-            self.gic_dist_if.write(GICC_CTLR, 1);
+            self.gic_cpu_if.write(GICC_CTLR, 1);
             // Set CPU0's Interrupt Priority Mask
-            self.gic_dist_if.write(GICC_PMR, 0xff);
+            self.gic_cpu_if.write(GICC_PMR, 0xff);
 
         }
         Ok(())

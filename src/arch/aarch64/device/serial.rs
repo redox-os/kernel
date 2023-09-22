@@ -1,11 +1,7 @@
-use core::sync::atomic::{Ordering};
 use spin::Mutex;
 
 use crate::device::uart_pl011::SerialPort;
 use crate::init::device_tree;
-use crate::memory::Frame;
-use crate::paging::mapper::PageFlushAll;
-use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 
 pub static COM1: Mutex<Option<SerialPort>> = Mutex::new(None);
 

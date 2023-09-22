@@ -1,4 +1,4 @@
-use crate::arch::device::gic;
+use crate::arch::device::irqchip::IRQ_CHIP;
 use crate::device::cpu::registers::{control_regs};
 
 bitflags! {
@@ -36,7 +36,7 @@ pub struct GenericTimer {
 impl GenericTimer {
     pub fn init(&mut self) {
         let clk_freq = unsafe { control_regs::cntfreq_el0() };
-        self.clk_freq = clk_freq;;
+        self.clk_freq = clk_freq;
         self.reload_count = clk_freq / 100;
 
         unsafe { control_regs::tmr_tval_write(self.reload_count) };
@@ -44,9 +44,10 @@ impl GenericTimer {
         let mut ctrl = TimerCtrlFlags::from_bits_truncate(unsafe { control_regs::tmr_ctrl() });
         ctrl.insert(TimerCtrlFlags::ENABLE);
         ctrl.remove(TimerCtrlFlags::IMASK);
-        unsafe { control_regs::tmr_ctrl_write(ctrl.bits()) };
-
-        gic::irq_enable(30);
+        unsafe {
+            control_regs::tmr_ctrl_write(ctrl.bits());
+            IRQ_CHIP.irq_enable(30);
+        }
     }
 
     fn disable() {

@@ -4,7 +4,7 @@ use fdt::DeviceTree;
 
 mod gic;
 
-trait InterruptController {
+pub trait InterruptController {
     fn irq_init(&mut self, fdt: Option<&DeviceTree>) -> Result<()>;
     fn irq_ack(&mut self) -> u32;
     fn irq_eoi(&mut self, irq_num: u32);
@@ -12,33 +12,38 @@ trait InterruptController {
     fn irq_disable(&mut self, irq_num: u32);
 }
 
-struct IrqChipCore {
+pub struct IrqChipCore {
     //TODO: support multi level interrupt constrollers
-    ic: Vec<Box<dyn InterruptController>>,
-    main_ic_idx: usize,
+    pub ic: Vec<Box<dyn InterruptController>>,
+    pub ic_idx: usize,
 }
 
 impl IrqChipCore {
     pub fn irq_ack(&mut self) -> u32 {
-        self.ic[self.main_ic_idx].irq_ack()
+        self.ic[self.ic_idx].irq_ack()
     }
 
     pub fn irq_eoi(&mut self, irq_num: u32) {
-        self.ic[self.main_ic_idx].irq_eoi(irq_num)
+        self.ic[self.ic_idx].irq_eoi(irq_num)
     }
 
     pub fn irq_enable(&mut self, irq_num: u32) {
-        self.ic[self.main_ic_idx].irq_enable(irq_num)
+        self.ic[self.ic_idx].irq_enable(irq_num)
     }
 
     pub fn irq_disable(&mut self, irq_num: u32) {
-        self.ic[self.main_ic_idx].irq_disable(irq_num)
+        self.ic[self.ic_idx].irq_disable(irq_num)
     }
 }
 
-static IRQ_CHIP = IrqChipCore { ic: Vec::new(), main_ic_idx: 0 };
+pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore { ic: Vec::new(), ic_idx: 0 };
 
 pub fn init(fdt: Option<&DeviceTree>) {
     let ic = Box::new(gic::GenericInterruptController::new());
-    let irq_chip_core =  IrqChipCore { ic };
+    unsafe {
+         IRQ_CHIP.ic.push(ic); 
+         for ic in IRQ_CHIP.ic.iter_mut() {
+             ic.irq_init(fdt).unwrap();
+         }
+    }
 }

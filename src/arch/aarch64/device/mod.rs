@@ -2,7 +2,6 @@ use crate::memory::Frame;
 use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, VirtualAddress};
 
 pub mod cpu;
-pub mod gic;
 pub mod irqchip;
 pub mod generic_timer;
 pub mod serial;
@@ -11,7 +10,7 @@ pub mod uart_pl011;
 
 pub unsafe fn init() {
     println!("GIC INIT");
-    gic::init();
+    irqchip::init(None);
     println!("GIT INIT");
     generic_timer::init();
 }

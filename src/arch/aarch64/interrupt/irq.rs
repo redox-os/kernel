@@ -3,14 +3,14 @@ use core::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use crate::context;
 use crate::context::timeout;
 use crate::device::generic_timer::{GENTIMER};
-use crate::device::{gic};
+use crate::device::irqchip::IRQ_CHIP;
 use crate::device::serial::{COM1};
 use crate::time;
 
 use crate::{exception_stack};
 
 exception_stack!(irq_at_el0, |stack| {
-    match gic::irq_ack() {
+    match IRQ_CHIP.irq_ack() {
         30 => irq_handler_gentimer(30),
         33 => irq_handler_com1(33),
         _ => panic!("irq_demux: unregistered IRQ"),
@@ -18,7 +18,7 @@ exception_stack!(irq_at_el0, |stack| {
 });
 
 exception_stack!(irq_at_el1, |stack| {
-    match gic::irq_ack() {
+    match IRQ_CHIP.irq_ack() {
         30 => irq_handler_gentimer(30),
         33 => irq_handler_com1(33),
         _ => panic!("irq_demux: unregistered IRQ"),
@@ -31,7 +31,7 @@ unsafe fn trigger(irq: u32) {
     }
 
     irq_trigger(irq);
-    gic::irq_eoi(irq);
+    IRQ_CHIP.irq_eoi(irq);
 }
 
 pub unsafe fn acknowledge(_irq: usize) {
@@ -60,7 +60,7 @@ pub unsafe fn irq_handler_gentimer(irq: u32) {
 }
 
 unsafe fn irq_demux() {
-    match gic::irq_ack() {
+    match IRQ_CHIP.irq_ack() {
         30 => irq_handler_gentimer(30),
         33 => irq_handler_com1(33),
         _ => panic!("irq_demux: unregistered IRQ"),

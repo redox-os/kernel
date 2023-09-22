@@ -1,7 +1,7 @@
 use core::fmt::{self, Write};
 use core::ptr;
 
-use crate::device::gic;
+use crate::device::irqchip::IRQ_CHIP;
 use crate::scheme::debug::{debug_input, debug_notify};
 
 bitflags! {
@@ -126,7 +126,7 @@ impl SerialPort {
             self.write_reg(self.intr_clr_reg, 0x7ff);
 
             // Enable interrupt at GIC distributor
-            gic::irq_enable(33);
+            unsafe { IRQ_CHIP.irq_enable(33); }
         }
     }
 
