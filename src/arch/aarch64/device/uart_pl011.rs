@@ -2,7 +2,10 @@ use core::fmt::{self, Write};
 use core::ptr;
 
 use crate::device::irqchip::IRQ_CHIP;
+use crate::interrupt::irq::trigger;
 use crate::scheme::debug::{debug_input, debug_notify};
+
+use super::irqchip::InterruptHandler;
 
 bitflags! {
     /// UARTFR
@@ -125,8 +128,6 @@ impl SerialPort {
             // Clear pending interrupts
             self.write_reg(self.intr_clr_reg, 0x7ff);
 
-            // Enable interrupt at GIC distributor
-            unsafe { IRQ_CHIP.irq_enable(33); }
         }
     }
 

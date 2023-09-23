@@ -1,5 +1,14 @@
+use alloc::boxed::Box;
+
 use crate::arch::device::irqchip::IRQ_CHIP;
-use crate::device::cpu::registers::{control_regs};
+use crate::context::timeout;
+use crate::device::cpu::registers::control_regs;
+use crate::interrupt::irq::trigger;
+use crate::time;
+use crate::context;
+
+use super::irqchip::InterruptHandler;
+use super::irqchip::register_irq;
 
 bitflags! {
     struct TimerCtrlFlags: u32 {
@@ -9,24 +18,13 @@ bitflags! {
     }
 }
 
-pub static mut GENTIMER: GenericTimer = GenericTimer {
-    clk_freq: 0,
-    reload_count: 0,
-};
-
 pub unsafe fn init() {
-    GENTIMER.init();
+    let mut timer = GenericTimer{ clk_freq: 0, reload_count: 0};
+    timer.init();
+    //TODO: REMOVE HARD CODE IRQ NUMBER
+    register_irq(30, Box::new(timer));
+    IRQ_CHIP.irq_enable(30);
 }
-
-/*
-pub unsafe fn clear_irq() {
-    GENTIMER.clear_irq();
-}
-
-pub unsafe fn reload() {
-    GENTIMER.reload_count();
-}
-*/
 
 pub struct GenericTimer {
     pub clk_freq: u32,
@@ -46,7 +44,6 @@ impl GenericTimer {
         ctrl.remove(TimerCtrlFlags::IMASK);
         unsafe {
             control_regs::tmr_ctrl_write(ctrl.bits());
-            IRQ_CHIP.irq_enable(30);
         }
     }
 
@@ -77,5 +74,22 @@ impl GenericTimer {
         ctrl.remove(TimerCtrlFlags::IMASK);
         unsafe { control_regs::tmr_tval_write(self.reload_count) };
         unsafe { control_regs::tmr_ctrl_write(ctrl.bits()) };
+    }
+}
+
+impl InterruptHandler for GenericTimer {
+    fn irq_handler(&mut self, irq: u32) {
+
+        self.clear_irq();
+        {
+            *time::OFFSET.lock() += self.clk_freq as u128;
+        }
+
+        timeout::trigger();
+
+        context::switch::tick();
+
+        unsafe { trigger(irq); }
+        self.reload_count();
     }
 }

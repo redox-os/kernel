@@ -151,10 +151,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Activate memory logging
         log::init();
 
+        dtb::init(Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size)));
+
         // Initialize devices
         device::init();
-
-        dtb::init(Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size)));
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
         device::init_noncore();

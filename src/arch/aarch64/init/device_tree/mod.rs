@@ -2,6 +2,7 @@ extern crate fdt;
 extern crate byteorder;
 
 use alloc::vec::Vec;
+use fdt::Node;
 use core::slice;
 use crate::memory::MemoryArea;
 use self::byteorder::{ByteOrder, BE};
@@ -13,7 +14,7 @@ pub static mut MEMORY_MAP: [MemoryArea; 512] = [MemoryArea {
     acpi: 0,
 }; 512];
 
-fn root_cell_sz(dt: &fdt::DeviceTree) -> Option<(u32, u32)> {
+pub fn root_cell_sz(dt: &fdt::DeviceTree) -> Option<(u32, u32)> {
     let root_node = dt.nodes().nth(0).unwrap();
     let address_cells = root_node.properties().find(|p| p.name.contains("#address-cells")).unwrap();
     let size_cells = root_node.properties().find(|p| p.name.contains("#size-cells")).unwrap();
@@ -86,6 +87,18 @@ fn compatible_node_present<'a>(dt: &fdt::DeviceTree<'a>, compat_string: &str) ->
         }
     }
     false
+}
+
+pub fn find_compatible_node<'a>(dt: &'a fdt::DeviceTree<'a>, compat_string: &str) -> Option<Node<'a, 'a>> {
+    for node in dt.nodes() {
+        if let Some(compatible) = node.properties().find(|p| p.name.contains("compatible")) {
+            let s = core::str::from_utf8(compatible.data).unwrap();
+            if s.contains(compat_string) {
+                return Some(node);
+            }
+        }
+    }
+    None
 }
 
 pub fn fill_env_data(dtb_base: usize, dtb_size: usize, env_base: usize) -> usize {

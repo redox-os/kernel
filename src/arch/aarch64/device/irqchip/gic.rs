@@ -39,6 +39,8 @@ impl GenericInterruptController {
         GenericInterruptController { gic_dist_if, gic_cpu_if }
     }
     pub fn parse(fdt: Option<&DeviceTree>) -> Result<(usize, usize, usize, usize)> {
+        Ok((0x800_0000, 0x1_0000, 0x801_0000, 0x1_0000))
+        /*
         match fdt {
             //TODO: remove hard code for qemu-virt
             None => Ok((0x800_0000, 0x1_0000, 0x801_0000, 0x1_0000)),
@@ -47,6 +49,7 @@ impl GenericInterruptController {
                 Err(Error::new(EINVAL))
             }
         }
+        */
     }
 }
 

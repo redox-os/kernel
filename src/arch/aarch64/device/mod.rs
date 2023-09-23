@@ -1,5 +1,6 @@
 use crate::memory::Frame;
 use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, VirtualAddress};
+use crate::dtb::DTB_BINARY;
 
 pub mod cpu;
 pub mod irqchip;
@@ -9,8 +10,14 @@ pub mod rtc;
 pub mod uart_pl011;
 
 pub unsafe fn init() {
-    println!("GIC INIT");
-    irqchip::init(None);
+    println!("IRQCHIP INIT");
+    let data = DTB_BINARY.get().unwrap();
+    if data.len() == 0 {
+        irqchip::init(None);
+    } else {
+        let fdt = fdt::DeviceTree::new(data).unwrap();
+        irqchip::init(Some(&fdt));
+    }
     println!("GIT INIT");
     generic_timer::init();
 }
