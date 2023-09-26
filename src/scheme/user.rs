@@ -1,3 +1,4 @@
+use alloc::collections::btree_map::Entry;
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -18,7 +19,7 @@ use crate::memory::Frame;
 use crate::paging::mapper::InactiveFlusher;
 use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
 use crate::scheme::SchemeId;
-use crate::sync::{WaitQueue, WaitMap};
+use crate::sync::WaitQueue;
 use crate::syscall::data::{Map, Packet};
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE, MapFlags};
@@ -37,10 +38,17 @@ pub struct UserInner {
     next_id: Mutex<u64>,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    done: WaitMap<u64, Response>,
-    fmap: Mutex<BTreeMap<u64, Weak<RwLock<Context>>>>,
+    states: Mutex<BTreeMap<u64, State>>,
     unmounting: AtomicBool,
 }
+
+enum State {
+    Waiting(Weak<RwLock<Context>>),
+    Responded(Response),
+    Fmap(Weak<RwLock<Context>>),
+    Placeholder,
+}
+
 #[derive(Debug)]
 pub enum Response {
     Regular(usize),
@@ -60,9 +68,8 @@ impl UserInner {
             next_id: Mutex::new(1),
             context,
             todo: WaitQueue::new(),
-            done: WaitMap::new(),
             unmounting: AtomicBool::new(false),
-            fmap: Mutex::new(BTreeMap::new()),
+            states: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -120,10 +127,46 @@ impl UserInner {
 
         let id = packet.id;
 
+        let current_context = context::current()?;
+
+        {
+            let mut states = self.states.lock();
+            current_context.write().block("UserScheme::call");
+            states.insert(id, State::Waiting(Arc::downgrade(&current_context)));
+        }
+
         self.todo.send(packet);
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
-        Ok(self.done.receive(&id, "UserInner::call_inner"))
+        unsafe {
+            context::switch();
+        }
+
+        loop {
+            let mut states = self.states.lock();
+            match states.entry(id) {
+                // invalid state
+                Entry::Vacant(_) => return Err(Error::new(EBADFD)),
+                Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
+                    // spurious wakeup, TODO: EINTR
+                    old_state @ State::Waiting(_) => {
+                        *o.get_mut() = old_state;
+                        continue;
+                    }
+
+                    // invalid state
+                    old_state @ (State::Placeholder | State::Fmap(_)) => {
+                        *o.get_mut() = old_state;
+                        return Err(Error::new(EBADFD));
+                    }
+
+                    State::Responded(response) => {
+                        o.remove();
+                        return Ok(response);
+                    }
+                }
+            }
+        }
     }
 
     /// Map a readable structure to the scheme's userspace and return the
@@ -366,7 +409,8 @@ impl UserInner {
         log::info!("REQUEST FMAP");
 
         let packet_id = self.next_id();
-        self.fmap.lock().insert(packet_id, Arc::downgrade(&context::current()?));
+        let mut states = self.states.lock();
+        states.insert(packet_id, State::Fmap(Arc::downgrade(&context::current()?)));
 
         self.todo.send(Packet {
             id: packet_id,
@@ -398,7 +442,7 @@ impl UserInner {
 
                     let desc = context::current()?.read().remove_file(FileHandle::from(fd)).ok_or(Error::new(EINVAL))?.description;
 
-                    self.done.send(packet.id, Response::Fd(desc));
+                    self.respond(packet.id, Response::Fd(desc))?;
                 }
                 SKMSG_PROVIDE_MMAP => {
                     log::info!("PROVIDE_MAP {:?}", packet);
@@ -416,7 +460,27 @@ impl UserInner {
                     let page_count = packet.d;
 
                     if page_count != 1 { return Err(Error::new(EINVAL)); }
-                    let context = self.fmap.lock().remove(&packet.id).ok_or(Error::new(EINVAL))?.upgrade().ok_or(Error::new(ESRCH))?;
+
+                    let context = match self.states.lock().entry(packet.id) {
+                        Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
+                            // invalid state
+                            State::Placeholder => {
+                                return Err(Error::new(EBADFD));
+                            }
+                            // invalid kernel to scheme call
+                            old_state @ (State::Waiting(_) | State::Responded(_)) => {
+                                *o.get_mut() = old_state;
+                                return Err(Error::new(EINVAL));
+                            }
+                            State::Fmap(context) => {
+                                o.remove();
+                                context
+                            }
+                        },
+                        Entry::Vacant(_) => return Err(Error::new(EINVAL)),
+                    };
+
+                    let context = context.upgrade().ok_or(Error::new(ESRCH))?;
 
                     let (frame, _) = AddrSpace::current()?.read().table.utable.translate(base_addr).ok_or(Error::new(EFAULT))?;
 
@@ -431,10 +495,35 @@ impl UserInner {
                 _ => return Err(Error::new(EINVAL)),
             }
         } else {
-            self.done.send(packet.id, Response::Regular(packet.a));
+            self.respond(packet.id, Response::Regular(packet.a))?;
         }
 
         Ok(())
+    }
+    fn respond(&self, id: u64, response: Response) -> Result<()> {
+        match self.states.lock().entry(id) {
+            Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
+                // invalid state
+                State::Placeholder => return Err(Error::new(EBADFD)),
+                // invalid scheme to kernel call
+                old_state @ (State::Responded(_) | State::Fmap(_)) => {
+                    *o.get_mut() = old_state;
+                    return Err(Error::new(EINVAL));
+                }
+
+                State::Waiting(context) => {
+                    if let Some(context) = context.upgrade() {
+                        context.write().unblock();
+                        *o.get_mut() = State::Responded(response);
+                    } else {
+                        o.remove();
+                    }
+                    Ok(())
+                }
+            }
+            // invalid state
+            Entry::Vacant(_) => return Err(Error::new(EBADFD)),
+        }
     }
 
     pub fn fevent(&self, _flags: EventFlags) -> Result<EventFlags> {
