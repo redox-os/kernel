@@ -102,7 +102,6 @@ impl ContextList {
 
             #[cfg(target_arch = "aarch64")]
             {
-                let context_id = context.id.into();
                 context.arch.set_lr(func as usize);
                 context.arch.set_context_handle();
                 // Stack should be 16 byte aligned

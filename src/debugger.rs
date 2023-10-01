@@ -21,7 +21,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     for (id, context_lock) in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| *id != target_id) { continue; }
         let context = context_lock.read();
-        println!("{}: {}", (*id).into(), context.name);
+        println!("{}: {}", (*id).get(), context.name);
 
         println!("status: {:?}", context.status);
         if ! context.status_reason.is_empty() {

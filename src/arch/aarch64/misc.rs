@@ -1,3 +1,4 @@
+use crate::LogicalCpuId;
 use crate::paging::{RmmA, RmmArch};
 use crate::percpu::PercpuBlock;
 
@@ -8,7 +9,7 @@ impl PercpuBlock {
 }
 
 #[cold]
-pub unsafe fn init(cpu_id: usize) {
+pub unsafe fn init(cpu_id: LogicalCpuId) {
     let frame = crate::memory::allocate_frames(1).expect("failed to allocate percpu memory");
     let virt = RmmA::phys_to_virt(frame.start_address()).data() as *mut PercpuBlock;
 

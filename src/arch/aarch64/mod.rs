@@ -71,3 +71,10 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
 
     core::slice::from_raw_parts(CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8, bootstrap.page_count * PAGE_SIZE)
 }
+
+pub const KFX_SIZE: usize = 1024;
+
+// This function exists as the KFX size is dynamic on x86_64.
+pub fn kfx_size() -> usize {
+    KFX_SIZE
+}

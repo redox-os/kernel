@@ -19,7 +19,6 @@ use crate::syscall::FloatRegisters;
 pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 
 // 512 bytes for registers, extra bytes for fpcr and fpsr
-pub const KFX_SIZE: usize = 1024;
 pub const KFX_ALIGN: usize = 16;
 
 #[derive(Clone, Debug)]

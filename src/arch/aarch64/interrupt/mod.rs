@@ -10,6 +10,8 @@ pub mod irq;
 pub mod syscall;
 pub mod trace;
 
+use crate::LogicalCpuId;
+
 pub use self::handler::InterruptStack;
 pub use self::trace::stack_trace;
 
@@ -56,7 +58,7 @@ pub fn pause() {
     unsafe { asm!("nop") };
 }
 
-pub fn available_irqs_iter(cpu_id: usize) -> impl Iterator<Item = u8> + 'static {
+pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
     0..0
 }
 
@@ -66,12 +68,12 @@ pub fn bsp_apic_id() -> Option<u32> {
 }
 
 #[inline]
-pub fn is_reserved(cpu_id: usize, index: u8) -> bool {
+pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
     //TODO
     true
 }
 
 #[inline]
-pub fn set_reserved(cpu_id: usize, index: u8, reserved: bool) {
+pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
     //TODO
 }
