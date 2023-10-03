@@ -8,14 +8,15 @@
     "os": "none",
     "env": "",
     "vendor": "unknown",
-    "linker-flavor": "gcc",
+    "linker": "rust-lld",
+    "linker-flavor": "gnu-lld",
     "target-family": "redox",
     "pre-link-args": {
-        "gcc": ["-m32", "-nostdlib", "-static"]
+        "gnu-lld": ["-z", "max-page-size=0x1000"]
     },
     "features": "-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-3dnow,-3dnowa,-avx,-avx2,+soft-float",
     "dynamic-linking": false,
-    "executables": false,
+    "executables": true,
     "relocation-model": "static",
     "code-model": "kernel",
     "disable-redzone": true,

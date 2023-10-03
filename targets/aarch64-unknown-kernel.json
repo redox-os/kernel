@@ -8,14 +8,15 @@
     "os": "none",
     "env": "",
     "vendor": "unknown",
-    "linker-flavor": "gcc",
+    "linker": "rust-lld",
+    "linker-flavor": "gnu-lld",
     "target-family": "redox",
     "pre-link-args": {
-        "gcc": ["-m64", "-nostdlib", "-static"]
+        "gnu-lld": ["-z", "max-page-size=0x1000"]
     },
     "features": "+strict-align,-neon,-fp-armv8,+tpidr-el1",
     "dynamic-linking": false,
-    "executables": false,
+    "executables": true,
     "relocation-model": "pic",
     "disable-redzone": true,
     "frame-pointer": "always",

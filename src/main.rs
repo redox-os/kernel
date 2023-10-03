@@ -55,6 +55,7 @@
 #![feature(slice_ptr_get, slice_ptr_len)]
 #![feature(sync_unsafe_cell)]
 #![no_std]
+#![no_main]
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub extern crate x86;
