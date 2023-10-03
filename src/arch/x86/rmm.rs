@@ -28,17 +28,6 @@ use crate::LogicalCpuId;
 
 use super::CurrentRmmArch as RmmA;
 
-extern "C" {
-    /// The starting byte of the text (code) data segment.
-    static mut __text_start: u8;
-    /// The ending byte of the text (code) data segment.
-    static mut __text_end: u8;
-    /// The starting byte of the _.rodata_ (read-only data) segment.
-    static mut __rodata_start: u8;
-    /// The ending byte of the _.rodata_ (read-only data) segment.
-    static mut __rodata_end: u8;
-}
-
 // Keep synced with OsMemoryKind in bootloader
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u64)]
@@ -59,16 +48,13 @@ pub struct BootloaderMemoryEntry {
 }
 
 unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
+    use crate::kernel_executable_offsets::*;
     let virt_addr = virt.data();
 
-    if virt_addr >= &__text_start as *const u8 as usize
-        && virt_addr < &__text_end as *const u8 as usize
-    {
+    if virt_addr >= __text_start() && virt_addr < __text_end() {
         // Remap text read-only, execute
         PageFlags::new().execute(true)
-    } else if virt_addr >= &__rodata_start as *const u8 as usize
-        && virt_addr < &__rodata_end as *const u8 as usize
-    {
+    } else if virt_addr >= __rodata_start() && virt_addr < __rodata_end() {
         // Remap rodata read-only, no execute
         PageFlags::new()
     } else {
