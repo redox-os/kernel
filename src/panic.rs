@@ -6,8 +6,7 @@ use crate::{cpu_id, context, interrupt, syscall};
 
 /// Required to handle panics
 #[panic_handler]
-#[no_mangle]
-pub extern "C" fn rust_begin_unwind(info: &PanicInfo) -> ! {
+fn rust_begin_unwind(info: &PanicInfo) -> ! {
     println!("KERNEL PANIC: {}", info);
 
     unsafe { interrupt::stack_trace(); }
