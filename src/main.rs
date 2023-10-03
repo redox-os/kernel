@@ -44,15 +44,12 @@
 
 #![feature(alloc_error_handler)]
 #![feature(allocator_api)]
-#![feature(array_chunks)]
-#![feature(iter_array_chunks)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(const_option)]
 #![feature(const_refs_to_cell)]
 #![feature(int_roundings)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
-#![feature(slice_ptr_get, slice_ptr_len)]
 #![feature(sync_unsafe_cell)]
 #![no_std]
 #![no_main]
