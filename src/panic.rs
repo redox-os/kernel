@@ -1,6 +1,5 @@
 //! Intrinsics for panic handling
 
-use core::alloc::Layout;
 use core::panic::PanicInfo;
 
 use crate::{cpu_id, context, interrupt, syscall};
@@ -32,11 +31,4 @@ pub extern "C" fn rust_begin_unwind(info: &PanicInfo) -> ! {
     loop {
         unsafe { interrupt::halt(); }
     }
-}
-
-#[alloc_error_handler]
-#[no_mangle]
-#[allow(improper_ctypes_definitions)] // Layout is not repr(C)
-pub extern fn rust_oom(_layout: Layout) -> ! {
-    panic!("kernel memory allocation failed");
 }
