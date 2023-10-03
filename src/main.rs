@@ -64,21 +64,21 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::scheme::SchemeNamespace;
 
-pub use crate::consts::*;
+use crate::consts::*;
 
 #[macro_use]
 /// Shared data structures
-pub mod common;
+mod common;
 
 /// Architecture-dependent stuff
 #[macro_use]
-pub mod arch;
-pub use crate::arch::*;
+mod arch;
+use crate::arch::*;
 
 use crate::log::info;
 
 /// Heap allocators
-pub mod allocator;
+mod allocator;
 
 /// ACPI table parsing
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
@@ -88,61 +88,61 @@ mod acpi;
 mod dtb;
 
 /// Context management
-pub mod context;
+mod context;
 
 /// Debugger
-pub mod debugger;
+mod debugger;
 
 /// Architecture-independent devices
-pub mod devices;
+mod devices;
 
 /// ELF file parsing
 #[cfg(not(feature="doc"))]
-pub mod elf;
+mod elf;
 
 /// Event handling
-pub mod event;
+mod event;
 
 /// External functions
-pub mod externs;
+mod externs;
 
 /// Logging
-pub mod log;
+mod log;
 
 /// Memory management
-pub mod memory;
+mod memory;
 
 /// Panic
 #[cfg(not(any(feature="doc", test)))]
-pub mod panic;
+mod panic;
 
-pub mod percpu;
+mod percpu;
 
 /// Process tracing
-pub mod ptrace;
+mod ptrace;
 
 /// Schemes, filesystem handlers
-pub mod scheme;
+mod scheme;
 
 /// Synchronization primitives
-pub mod sync;
+mod sync;
 
 /// Syscall handlers
-pub mod syscall;
+mod syscall;
 
 /// Time
-pub mod time;
+mod time;
 
 /// Tests
 #[cfg(test)]
-pub mod tests;
+mod tests;
 
 #[global_allocator]
 static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// Get the current CPU's scheduling ID
 #[inline(always)]
-pub fn cpu_id() -> LogicalCpuId {
+fn cpu_id() -> LogicalCpuId {
     crate::percpu::PercpuBlock::current().cpu_id
 }
 
@@ -151,29 +151,29 @@ static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Get the number of CPUs currently active
 #[inline(always)]
-pub fn cpu_count() -> u32 {
+fn cpu_count() -> u32 {
     CPU_COUNT.load(Ordering::Relaxed)
 }
 
-pub fn init_env() -> &'static [u8] {
+fn init_env() -> &'static [u8] {
     crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set").env
 }
 
-pub extern "C" fn userspace_init() {
+extern "C" fn userspace_init() {
     let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
     unsafe { crate::syscall::process::usermode_bootstrap(bootstrap) }
 }
 
-pub struct Bootstrap {
-    pub base: crate::memory::Frame,
-    pub page_count: usize,
-    pub entry: usize,
-    pub env: &'static [u8],
+struct Bootstrap {
+    base: crate::memory::Frame,
+    page_count: usize,
+    entry: usize,
+    env: &'static [u8],
 }
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-pub fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
+fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     CPU_COUNT.store(cpu_count, Ordering::SeqCst);
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
@@ -213,7 +213,7 @@ pub fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
 
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables)]
-pub fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
+fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
     if cfg!(feature = "multi_core") {
         context::init();
 
@@ -245,7 +245,7 @@ pub fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
 
 /// Allow exception handlers to send signal to arch-independant kernel
 #[no_mangle]
-pub extern fn ksignal(signal: usize) {
+extern fn ksignal(signal: usize) {
     info!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
     {
         let contexts = context::contexts();
@@ -279,7 +279,7 @@ macro_rules! linker_offsets(
         )*
     }
 );
-pub mod kernel_executable_offsets {
+mod kernel_executable_offsets {
     linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __usercopy_start, __usercopy_end);
 
     #[cfg(target_arch = "x86_64")]
@@ -294,13 +294,13 @@ pub mod kernel_executable_offsets {
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 // TODO: NonMaxUsize?
 // TODO: Optimize away this type if not cfg!(feature = "multi_core")
-pub struct LogicalCpuId(u32);
+struct LogicalCpuId(u32);
 
 impl LogicalCpuId {
-    pub const BSP: Self = Self::new(0);
+    const BSP: Self = Self::new(0);
 
-    pub const fn new(inner: u32) -> Self { Self(inner) }
-    pub const fn get(self) -> u32 { self.0 }
+    const fn new(inner: u32) -> Self { Self(inner) }
+    const fn get(self) -> u32 { self.0 }
 }
 
 impl core::fmt::Debug for LogicalCpuId {
@@ -319,16 +319,16 @@ impl core::fmt::Display for LogicalCpuId {
 // LogicalCpuId may be optimized accordingly. In that case, box the mask if it's larger than some
 // base size (probably 256 bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LogicalCpuSet(u128);
+struct LogicalCpuSet(u128);
 
 impl LogicalCpuSet {
-    pub const fn new(inner: u128) -> Self { Self(inner) }
-    pub const fn get(self) -> u128 { self.0 }
+    const fn new(inner: u128) -> Self { Self(inner) }
+    const fn get(self) -> u128 { self.0 }
 
-    pub const fn empty() -> Self { Self::new(0) }
-    pub const fn all() -> Self { Self::new(!0) }
-    pub const fn single(id: LogicalCpuId) -> Self { Self::new(1 << id.get()) }
-    pub const fn contains(&self, id: LogicalCpuId) -> bool {
+    const fn empty() -> Self { Self::new(0) }
+    const fn all() -> Self { Self::new(!0) }
+    const fn single(id: LogicalCpuId) -> Self { Self::new(1 << id.get()) }
+    const fn contains(&self, id: LogicalCpuId) -> bool {
         self.0 & (1 << id.get()) != 0
     }
 }
