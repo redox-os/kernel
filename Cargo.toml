@@ -74,3 +74,5 @@ opt-level = 3
 panic = "abort"
 
 lto = true
+
+debug = "full"
