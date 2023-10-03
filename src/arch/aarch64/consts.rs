@@ -35,8 +35,5 @@ pub const KERNEL_PERCPU_SIZE: usize = 1_usize << KERNEL_PERCPU_SHIFT;
 pub const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
 pub const PHYS_PML4: usize = (PHYS_OFFSET & PML4_MASK)/PML4_SIZE;
 
-/// Offset to user image
-pub const USER_OFFSET: usize = 0;
-
 /// End offset of the user image, i.e. kernel start
 pub const USER_END_OFFSET: usize = 256 * PML4_SIZE;

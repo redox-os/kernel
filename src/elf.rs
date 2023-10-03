@@ -45,14 +45,6 @@ impl<'a> Elf<'a> {
         }
     }
 
-    pub fn segments(&'a self) -> ElfSegments<'a> {
-        ElfSegments {
-            data: self.data,
-            header: self.header,
-            i: 0
-        }
-    }
-
     pub fn symbols(&'a self) -> Option<ElfSymbols<'a>> {
         let mut symtab_opt = None;
         for section in self.sections() {
@@ -71,22 +63,6 @@ impl<'a> Elf<'a> {
         } else {
             None
         }
-    }
-
-    /// Get the entry field of the header
-    pub fn entry(&self) -> usize {
-        self.header.e_entry as usize
-    }
-
-    /// Get the program header offset
-    pub fn program_headers(&self) -> usize {
-        self.header.e_phoff as usize
-    }
-    pub fn program_header_count(&self) -> usize {
-        self.header.e_phnum as usize
-    }
-    pub fn program_headers_size(&self) -> usize {
-        self.header.e_phentsize as usize
     }
 }
 

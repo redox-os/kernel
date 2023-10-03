@@ -157,23 +157,12 @@ pub struct RaiiFrame {
     inner: Frame,
 }
 impl RaiiFrame {
-    // TODO: Unsafe?
-    pub fn new(frame: Frame) -> Self {
-        Self {
-            inner: frame,
-        }
-    }
     pub fn allocate() -> Result<Self, Enomem> {
         // TODO: Use special tag?
         init_frame(RefCount::One).map_err(|_| Enomem).map(|inner| Self { inner })
     }
     pub fn get(&self) -> Frame {
         self.inner
-    }
-    pub fn take_ownership(self) -> Frame {
-        let frame = self.inner.clone();
-        core::mem::forget(self);
-        frame
     }
 }
 
@@ -336,7 +325,6 @@ pub fn init_mm() {
 }
 #[derive(Debug)]
 pub enum AddRefError {
-    RcOverflow,
     CowToShared,
     SharedToCow,
 }

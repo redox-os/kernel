@@ -15,7 +15,7 @@ use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
 use crate::common::aligned_box::AlignedBox;
 use crate::common::unique::Unique;
 use crate::context::{self, arch};
-use crate::context::file::{FileDescriptor, FileDescription};
+use crate::context::file::FileDescriptor;
 use crate::context::memory::AddrSpace;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::paging::{RmmA, RmmArch};
@@ -24,7 +24,7 @@ use crate::scheme::{SchemeNamespace, FileHandle, CallerCtx};
 use crate::sync::WaitMap;
 
 use crate::syscall::data::SigAction;
-use crate::syscall::error::{Result, Error, EAGAIN, EINVAL, ESRCH};
+use crate::syscall::error::{Result, Error, EAGAIN, ESRCH};
 use crate::syscall::flag::{SIG_DFL, SigActionFlags};
 
 /// Unique identifier for a context (i.e. `pid`).
@@ -128,77 +128,6 @@ impl PartialEq for WaitpidKey {
 }
 
 impl Eq for WaitpidKey {}
-
-pub struct ContextSnapshot {
-    // Copy fields
-    pub id: ContextId,
-    pub pgid: ContextId,
-    pub ppid: ContextId,
-    pub ruid: u32,
-    pub rgid: u32,
-    pub rns: SchemeNamespace,
-    pub euid: u32,
-    pub egid: u32,
-    pub ens: SchemeNamespace,
-    pub sigmask: [u64; 2],
-    pub umask: usize,
-    pub status: Status,
-    pub status_reason: &'static str,
-    pub running: bool,
-    pub cpu_id: Option<LogicalCpuId>,
-    pub cpu_time: u128,
-    pub sched_affinity: LogicalCpuSet,
-    pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
-    // Clone fields
-    //TODO: is there a faster way than allocation?
-    pub name: Box<str>,
-    pub files: Vec<Option<FileDescription>>,
-}
-
-impl ContextSnapshot {
-    //TODO: Should this accept &mut Context to ensure name/files will not change?
-    pub fn new(context: &Context) -> Self {
-        let name = context.name.clone().into_owned().into_boxed_str();
-        let mut files = Vec::new();
-        for descriptor_opt in context.files.read().iter() {
-            let description = if let Some(descriptor) = descriptor_opt {
-                let description = descriptor.description.read();
-                Some(FileDescription {
-                    namespace: description.namespace,
-                    scheme: description.scheme,
-                    number: description.number,
-                    flags: description.flags,
-                })
-            } else {
-                None
-            };
-            files.push(description);
-        }
-
-        Self {
-            id: context.id,
-            pgid: context.pgid,
-            ppid: context.ppid,
-            ruid: context.ruid,
-            rgid: context.rgid,
-            rns: context.rns,
-            euid: context.euid,
-            egid: context.egid,
-            ens: context.ens,
-            sigmask: context.sigmask,
-            umask: context.umask,
-            status: context.status.clone(),
-            status_reason: context.status_reason,
-            running: context.running,
-            cpu_id: context.cpu_id,
-            cpu_time: context.cpu_time,
-            sched_affinity: context.sched_affinity,
-            syscall: context.syscall,
-            name,
-            files,
-        }
-    }
-}
 
 /// A context, which identifies either a process or a thread
 #[derive(Debug)]
@@ -517,7 +446,6 @@ impl BorrowedHtBuf {
         let slice = self.use_for_slice(raw)?.ok_or(Error::new(ENAMETOOLONG))?;
         core::str::from_utf8(slice).map_err(|_| Error::new(EINVAL))
     }
-    */
     pub unsafe fn use_for_struct<T>(&mut self) -> Result<&mut T> {
         if mem::size_of::<T>() > PAGE_SIZE || mem::align_of::<T>() > PAGE_SIZE {
             return Err(Error::new(EINVAL));
@@ -525,6 +453,7 @@ impl BorrowedHtBuf {
         self.buf_mut().fill(0_u8);
         Ok(unsafe { &mut *self.buf_mut().as_mut_ptr().cast() })
     }
+    */
 }
 impl Drop for BorrowedHtBuf {
     fn drop(&mut self) {

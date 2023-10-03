@@ -199,10 +199,6 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<SchemeId, Arc<dyn KernelScheme>> {
-        self.map.iter()
-    }
-
     pub fn iter_name(&self, ns: SchemeNamespace) -> SchemeIter {
         SchemeIter {
             inner: self.names.get(&ns).map(|names| names.iter())

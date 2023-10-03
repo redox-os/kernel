@@ -12,7 +12,7 @@ use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::percpu::PercpuBlock;
 use crate::syscall::error::{Error, ESRCH, Result};
 
-pub use self::context::{BorrowedHtBuf, Context, ContextId, ContextSnapshot, Status, WaitpidKey};
+pub use self::context::{BorrowedHtBuf, Context, ContextId, Status, WaitpidKey};
 pub use self::list::ContextList;
 pub use self::switch::switch;
 

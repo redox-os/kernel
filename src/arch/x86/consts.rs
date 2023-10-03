@@ -28,8 +28,5 @@
     // This needs to match RMM's PHYS_OFFSET
     pub const PHYS_OFFSET: usize = 0x8000_0000;
 
-    /// Offset to user image
-    pub const USER_OFFSET: usize = 0;
-
     /// End offset of the user image, i.e. kernel start
     pub const USER_END_OFFSET: usize = 0x8000_0000;

@@ -18,11 +18,17 @@ pub use super::CurrentRmmArch as RmmA;
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
 pub use crate::rmm::KernelMapper;
 
-pub mod entry;
-pub mod mapper;
+pub mod entry {
+    bitflags! {
+        pub struct EntryFlags: usize {
+            const NO_CACHE =        1 << 4;
+            const HUGE_PAGE =       1 << 7;
+            const GLOBAL =          1 << 8;
+        }
+    }
+}
 
-/// Number of entries per page table
-pub const ENTRY_COUNT: usize = RmmA::PAGE_ENTRIES;
+pub mod mapper;
 
 /// Size of pages
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;

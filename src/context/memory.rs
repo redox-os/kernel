@@ -443,9 +443,6 @@ impl PageSpan {
     pub fn intersects(&self, with: PageSpan) -> bool {
         !self.intersection(with).is_empty()
     }
-    pub fn contains(&self, page: Page) -> bool {
-        self.intersects(Self::new(page, 1))
-    }
     pub fn slice(&self, inner_span: PageSpan) -> (Option<PageSpan>, PageSpan, Option<PageSpan>) {
         (self.before(inner_span), inner_span, self.after(inner_span))
     }
@@ -481,11 +478,6 @@ impl PageSpan {
             end.start_address().data().saturating_sub(start.start_address().data()) / PAGE_SIZE,
         )
     }
-
-    pub fn rebase(self, new_base: Self, page: Page) -> Page {
-        let offset = page.offset_from(self.base);
-        new_base.base.next_by(offset)
-    }
 }
 
 impl Default for UserGrants {
@@ -511,14 +503,6 @@ impl UserGrants {
     pub fn contains(&self, page: Page) -> Option<(Page, &GrantInfo)> {
         self.inner
             .range(..=page)
-            .next_back()
-            .filter(|(base, info)| (**base..base.next_by(info.page_count)).contains(&page))
-            .map(|(base, info)| (*base, info))
-    }
-    // TODO: Deduplicate code?
-    pub fn contains_mut(&mut self, page: Page) -> Option<(Page, &mut GrantInfo)> {
-        self.inner
-            .range_mut(..=page)
             .next_back()
             .filter(|(base, info)| (**base..base.next_by(info.page_count)).contains(&page))
             .map(|(base, info)| (*base, info))
@@ -897,7 +881,6 @@ impl Grant {
                             new_cow_frame
                         }
                         Err(AddRefError::SharedToCow) => unreachable!(),
-                        Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
                     }
                 } else { frame };
 
@@ -1062,7 +1045,6 @@ impl Grant {
 
                 match src_page_info.add_ref(rk) {
                     Ok(()) => src_frame,
-                    Err(AddRefError::RcOverflow) => return Err(Enomem),
                     Err(AddRefError::CowToShared) => {
                         let new_frame = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
 
@@ -1286,7 +1268,7 @@ impl Grant {
                             description: Arc::clone(&file_ref.description),
                         },
                         pin_refcount: 0,
-                    }, 
+                    },
                 }
             },
         });
@@ -1444,12 +1426,12 @@ pub fn setup_new_utable() -> Result<Table> {
 pub fn setup_new_utable() -> Result<Table> {
     use crate::paging::KernelMapper;
 
-    let mut utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
 
     {
         let active_ktable = KernelMapper::lock();
 
-        let mut copy_mapping = |p4_no| unsafe {
+        let copy_mapping = |p4_no| unsafe {
             let entry = active_ktable.table().entry(p4_no)
                 .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
 
@@ -1710,7 +1692,6 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
 
                 match info.add_ref(RefKind::Shared) {
                     Ok(()) => src_frame,
-                    Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                     Err(AddRefError::CowToShared) => {
                         let new_frame = cow(src_frame, info, RefKind::Shared)?;
 
