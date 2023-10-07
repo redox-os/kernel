@@ -1,8 +1,9 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering, AtomicPtr};
 use spin::RwLock;
 
 use crate::arch::debug::Writer;
 use crate::event;
+use crate::percpu::RingBuffer;
 use crate::scheme::*;
 use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
@@ -16,6 +17,7 @@ static INPUT: WaitQueue<u8> = WaitQueue::new();
 #[derive(Clone, Copy)]
 struct Handle {
     flags: usize,
+    num: usize,
 }
 
 // Using BTreeMap as hashbrown doesn't have a const constructor.
@@ -41,13 +43,17 @@ impl KernelScheme for DebugScheme {
             return Err(Error::new(EPERM));
         }
 
-        if ! path.is_empty() {
-            return Err(Error::new(ENOENT));
-        }
+        let num = match path {
+            "" => !0,
+            "profiling" => flags & 0xffff,
+
+            _ => return Err(Error::new(ENOENT)),
+        };
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().insert(id, Handle {
-            flags: flags & ! O_ACCMODE
+            flags: flags & ! O_ACCMODE,
+            num,
         });
 
         Ok(OpenResult::SchemeLocal(id))
@@ -102,8 +108,27 @@ impl KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        INPUT
-            .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
+        if handle.num == !0 {
+            INPUT
+                .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
+        } else {
+            unsafe {
+                let Some(src) = BUFS.get(handle.num).ok_or(Error::new(EBADFD))?.load(Ordering::Relaxed).as_ref() else {
+                    return Ok(0);
+                };
+                let byte_slices = src.peek().map(|words| core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 8));
+
+                let copied_1 = buf.copy_common_bytes_from_slice(byte_slices[0])?;
+
+                let copied_2 = if let Some(remaining) = buf.advance(copied_1) {
+                    remaining.copy_common_bytes_from_slice(byte_slices[1])?
+                } else {
+                    0
+                };
+
+                Ok(copied_1 + copied_2)
+            }
+        }
     }
 
     fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
@@ -140,3 +165,6 @@ impl KernelScheme for DebugScheme {
         Ok(byte_count)
     }
 }
+
+const NULL: AtomicPtr<RingBuffer> = AtomicPtr::new(core::ptr::null_mut());
+pub static BUFS: [AtomicPtr<RingBuffer>; 4] = [NULL; 4];

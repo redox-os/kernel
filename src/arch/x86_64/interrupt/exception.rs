@@ -1,10 +1,11 @@
+use core::sync::atomic::Ordering;
+
 use x86::irq::PageFaultError;
 
 use crate::memory::GenericPfFlags;
 use crate::{
     interrupt::stack_trace,
     paging::VirtualAddress,
-    ptrace,
     syscall::flag::*,
 
     interrupt_stack,
@@ -23,7 +24,7 @@ interrupt_stack!(divide_by_zero, |stack| {
 });
 
 interrupt_stack!(debug, @paranoid, |stack| {
-    let mut handled = false;
+    /*let mut handled = false;
 
     // Disable singlestep before there is a breakpoint, since the breakpoint
     // handler might end up setting it again but unless it does we want the
@@ -38,19 +39,54 @@ interrupt_stack!(debug, @paranoid, |stack| {
         stack.set_singlestep(had_singlestep);
     }
 
-    if !handled {
+    if !handled {*/
         println!("Debug trap");
         stack.dump();
+        loop {}
+        /*
         ksignal(SIGTRAP);
-    }
+    }*/
 });
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
-    println!("Non-maskable interrupt");
-    stack.dump();
+    let Some(profiling) = crate::percpu::PercpuBlock::current().profiling else {
+        return;
+    };
+    if stack.iret.cs & 0b00 == 0b11 {
+        profiling.nmi_ucount.store(profiling.nmi_ucount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+        return;
+    } else {
+        profiling.nmi_kcount.store(profiling.nmi_kcount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+    };
+
+    let mut buf = [0_usize; 32];
+    buf[0] = stack.iret.rip & !(1<<63);
+    buf[1] = x86::time::rdtsc() as usize;
+
+    let mut bp = stack.preserved.rbp;
+
+    let mut len = 2;
+
+    for i in 2..32 {
+        if bp.saturating_add(16) < crate::KERNEL_HEAP_OFFSET || bp >= crate::KERNEL_HEAP_OFFSET + crate::PML4_SIZE {
+            break;
+        }
+        let ip = ((bp + 8) as *const usize).read();
+        bp = (bp as *const usize).read();
+
+        if ip < crate::kernel_executable_offsets::__text_start() || ip >= crate::kernel_executable_offsets::__text_end() {
+            break;
+        }
+        buf[i] = ip;
+
+        len = i + 1;
+    }
+
+    let _ = profiling.extend(&buf[..len]);
 });
 
 interrupt_stack!(breakpoint, |stack| {
+    /*
     // The processor lets RIP point to the instruction *after* int3, so
     // unhandled breakpoint interrupt don't go in an infinite loop. But we
     // throw SIGTRAP anyway, so that's not a problem.
@@ -64,11 +100,13 @@ interrupt_stack!(breakpoint, |stack| {
     // int3 instruction. After all, it's the sanest thing to do.
     stack.iret.rip -= 1;
 
-    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
+    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {*/
         println!("Breakpoint trap");
         stack.dump();
+        loop {}
+        /*
         ksignal(SIGTRAP);
-    }
+    }*/
 });
 
 interrupt_stack!(overflow, |stack| {
@@ -127,8 +165,8 @@ interrupt_error!(stack_segment, |stack, _code| {
     ksignal(SIGSEGV);
 });
 
-interrupt_error!(protection, |stack, _code| {
-    println!("Protection fault");
+interrupt_error!(protection, |stack, code| {
+    println!("Protection fault code={:#0x}", code);
     stack.dump();
     stack_trace();
     ksignal(SIGSEGV);

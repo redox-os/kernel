@@ -80,6 +80,7 @@ impl LocalApic {
             self.write(0xF0, 0x100);
         }
         self.setup_error_int();
+
         //self.setup_timer();
     }
 

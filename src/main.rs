@@ -47,6 +47,7 @@
 #![feature(int_roundings)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
+#![feature(new_uninit)]
 #![feature(offset_of)]
 #![feature(sync_unsafe_cell)]
 #![feature(variant_count)]
@@ -59,6 +60,7 @@ extern crate alloc;
 #[macro_use]
 extern crate bitflags;
 
+use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::scheme::SchemeNamespace;
@@ -186,6 +188,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
+    crate::ACK.fetch_add(1, Ordering::SeqCst);
 
     match context::contexts_mut().spawn(userspace_init) {
         Ok(context_lock) => {
@@ -213,14 +216,40 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     }
 }
 
+pub static ACK: AtomicUsize = AtomicUsize::new(0);
+
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables)]
 fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
+    if cpu_id.get() == 4 {
+        unsafe {
+            for i in 33..255 {
+                crate::idt::IDTS.write().as_mut().unwrap().get_mut(&cpu_id).unwrap().entries[i].set_func(crate::interrupt::ipi::wakeup);
+            }
+
+            let apic = &mut crate::device::local_apic::LOCAL_APIC;
+            apic.set_lvt_timer((0b01 << 17) | 32);
+            apic.set_div_conf(0b1011);
+            apic.set_init_count(0xffff);
+
+            while ACK.load(Ordering::Relaxed) < 4 {
+                core::hint::spin_loop();
+            }
+
+            interrupt::enable_and_nop();
+            loop {
+                interrupt::halt();
+            }
+        }
+    }
+
     if cfg!(feature = "multi_core") {
         context::init();
 
         let pid = syscall::getpid();
         info!("AP {}: {:?}", cpu_id, pid);
+
+        crate::ACK.fetch_add(1, Ordering::SeqCst);
 
         loop {
             unsafe {

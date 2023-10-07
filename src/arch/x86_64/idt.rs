@@ -24,7 +24,7 @@ pub type IdtReservations = [AtomicU64; 4];
 
 #[repr(C)]
 pub struct Idt {
-    entries: IdtEntries,
+    pub(crate) entries: IdtEntries,
     reservations: IdtReservations,
 }
 impl Idt {
@@ -232,11 +232,12 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
         *current_reservations[0].get_mut() |= 0x0003_FFFF_0000_0000;
     } else {
+        current_idt[32].set_func(irq::aux_timer);
         // TODO: use_default_irqs! but also the legacy IRQs that are only needed on one CPU
         current_idt[49].set_func(irq::lapic_error);
 
         // reserve bit 49
-        *current_reservations[0].get_mut() |= 1 << 49;
+        *current_reservations[0].get_mut() |= 1 << 32 | 1 << 49;
     }
 
     // Set IPI handlers

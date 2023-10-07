@@ -252,6 +252,10 @@ interrupt!(lapic_timer, || {
     println!("Local apic timer interrupt");
     lapic_eoi();
 });
+interrupt!(aux_timer, || {
+    lapic_eoi();
+    crate::ipi::ipi(IpiKind::Profile, IpiTarget::Other);
+});
 
 interrupt!(lapic_error, || {
     println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());

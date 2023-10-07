@@ -5,7 +5,7 @@ use core::mem;
 
 use crate::LogicalCpuId;
 use crate::paging::{RmmA, RmmArch};
-use crate::percpu::PercpuBlock;
+use crate::percpu::{PercpuBlock, RingBuffer};
 
 use x86::bits64::task::TaskStateSegment;
 use x86::Ring;
@@ -201,7 +201,18 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     pcr.percpu = PercpuBlock {
         cpu_id,
         switch_internals: Default::default(),
+        profiling: None,
     };
+}
+pub unsafe fn init_allocator() {
+    let percpu = PercpuBlock::current();
+
+    if percpu.cpu_id.get() == 4 { return }
+
+    let profiling = RingBuffer::create();
+
+    crate::scheme::debug::BUFS[percpu.cpu_id.get() as usize].store(profiling as *const _ as *mut _, core::sync::atomic::Ordering::SeqCst);
+    (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>).write(Some(profiling));
 }
 
 #[derive(Copy, Clone, Debug)]

@@ -150,6 +150,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init();
 
+        gdt::init_allocator();
+
         // Set up double buffer for grpahical debug now that heap is available
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init_heap();
@@ -233,6 +235,8 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
         // Set up GDT with TLS
         gdt::init_paging(stack_end, cpu_id);
+
+        gdt::init_allocator();
 
         // Set up IDT for AP
         idt::init_paging_post_heap(false, cpu_id);
