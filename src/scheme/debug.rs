@@ -1,9 +1,9 @@
-use core::sync::atomic::{AtomicUsize, Ordering, AtomicPtr};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
+use crate::LogicalCpuId;
 use crate::arch::debug::Writer;
 use crate::event;
-use crate::percpu::RingBuffer;
 use crate::scheme::*;
 use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
@@ -45,7 +45,9 @@ impl KernelScheme for DebugScheme {
 
         let num = match path {
             "" => !0,
-            "profiling" => flags & 0xffff,
+            p if p.starts_with("profiling-") => {
+                path[10..].parse().map_err(|_| Error::new(ENOENT))?
+            }
 
             _ => return Err(Error::new(ENOENT)),
         };
@@ -112,32 +114,18 @@ impl KernelScheme for DebugScheme {
             INPUT
                 .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
         } else {
-            unsafe {
-                let Some(src) = BUFS.get(handle.num).ok_or(Error::new(EBADFD))?.load(Ordering::Relaxed).as_ref() else {
-                    return Ok(0);
-                };
-                let byte_slices = src.peek().map(|words| core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 8));
-
-                let copied_1 = buf.copy_common_bytes_from_slice(byte_slices[0])?;
-                src.advance(copied_1 / 8);
-
-                let copied_2 = if let Some(remaining) = buf.advance(copied_1) {
-                    remaining.copy_common_bytes_from_slice(byte_slices[1])?
-                } else {
-                    0
-                };
-                src.advance(copied_2 / 8);
-
-                Ok(copied_1 + copied_2)
-            }
+            crate::profiling::drain_buffer(LogicalCpuId::new(handle.num as u32), buf)
         }
     }
 
     fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
-        let _handle = {
+        let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
+        if handle.num != !0 {
+            return Err(Error::new(EBADF));
+        }
 
         let mut tmp = [0_u8; 512];
 
@@ -154,10 +142,13 @@ impl KernelScheme for DebugScheme {
         Ok(buf.len())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let _handle = {
+        let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
+        if handle.num != !0 {
+            return Err(Error::new(EBADF));
+        }
 
         // TODO: Copy elsewhere in the kernel?
         const SRC: &[u8] = b"debug:";
@@ -167,6 +158,3 @@ impl KernelScheme for DebugScheme {
         Ok(byte_count)
     }
 }
-
-const NULL: AtomicPtr<RingBuffer> = AtomicPtr::new(core::ptr::null_mut());
-pub static BUFS: [AtomicPtr<RingBuffer>; 4] = [NULL; 4];

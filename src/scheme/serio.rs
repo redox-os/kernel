@@ -1,7 +1,7 @@
 //! PS/2 unfortunately requires a kernel driver to prevent race conditions due
 //! to how status is utilized
 use core::str;
-use core::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use spin::RwLock;
 
@@ -25,20 +25,10 @@ struct Handle {
 // Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
-pub const PROFILE_TOGGLEABLE: bool = true;
-pub static IS_PROFILING: AtomicBool = AtomicBool::new(false);
-
 /// Add to the input queue
 pub fn serio_input(index: usize, data: u8) {
-    if PROFILE_TOGGLEABLE {
-        if index == 0 && data == 30 {
-            log::info!("Enabling profiling");
-            IS_PROFILING.store(true, Ordering::SeqCst);
-        } else if index == 0 && data == 48 {
-            log::info!("Disabling profiling");
-            IS_PROFILING.store(false, Ordering::SeqCst);
-        }
-    }
+    crate::profiling::serio_command(index, data);
+
     INPUT[index].send(data);
 
     for (id, _handle) in HANDLES.read().iter() {

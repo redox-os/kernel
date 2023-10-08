@@ -1,9 +1,7 @@
-use core::sync::atomic::Ordering;
-
 use x86::irq::PageFaultError;
 
 use crate::memory::GenericPfFlags;
-use crate::scheme::serio::IS_PROFILING;
+use crate::ptrace;
 use crate::{
     interrupt::stack_trace,
     paging::VirtualAddress,
@@ -48,46 +46,7 @@ interrupt_stack!(debug, @paranoid, |stack| {
 });
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
-    let Some(profiling) = crate::percpu::PercpuBlock::current().profiling else {
-        return;
-    };
-    if !IS_PROFILING.load(Ordering::Relaxed) {
-        return;
-    }
-    if stack.iret.cs & 0b00 == 0b11 {
-        profiling.nmi_ucount.store(profiling.nmi_ucount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
-        return;
-    } else if stack.iret.rflags & (1 << 9) != 0 {
-        // Interrupts were enabled, i.e. we were in kmain, so ignore.
-        return;
-    } else {
-        profiling.nmi_kcount.store(profiling.nmi_kcount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
-    };
-
-    let mut buf = [0_usize; 32];
-    buf[0] = stack.iret.rip & !(1<<63);
-    buf[1] = x86::time::rdtsc() as usize;
-
-    let mut bp = stack.preserved.rbp;
-
-    let mut len = 2;
-
-    for i in 2..32 {
-        if bp.saturating_add(16) < crate::KERNEL_HEAP_OFFSET || bp >= crate::KERNEL_HEAP_OFFSET + crate::PML4_SIZE {
-            break;
-        }
-        let ip = ((bp + 8) as *const usize).read();
-        bp = (bp as *const usize).read();
-
-        if ip < crate::kernel_executable_offsets::__text_start() || ip >= crate::kernel_executable_offsets::__text_end() {
-            break;
-        }
-        buf[i] = ip;
-
-        len = i + 1;
-    }
-
-    let _ = profiling.extend(&buf[..len]);
+    crate::profiling::nmi_handler(stack);
 });
 
 interrupt_stack!(breakpoint, |stack| {
