@@ -57,10 +57,14 @@ impl SysScheme {
         files.insert("env", || Ok(Vec::from(crate::init_env())));
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         files.insert("spurious_irq", interrupt::irq::spurious_irq_resource);
+
+        // Disabled because the debugger is inherently unsafe and probably will break the system.
+        /*
         files.insert("trigger_debugger", || unsafe {
             crate::debugger::debugger(None);
             Ok(Vec::new())
         });
+        */
 
         SysScheme {
             next_id: AtomicUsize::new(0),
