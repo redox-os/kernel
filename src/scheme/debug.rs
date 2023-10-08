@@ -119,12 +119,14 @@ impl KernelScheme for DebugScheme {
                 let byte_slices = src.peek().map(|words| core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * 8));
 
                 let copied_1 = buf.copy_common_bytes_from_slice(byte_slices[0])?;
+                src.advance(copied_1 / 8);
 
                 let copied_2 = if let Some(remaining) = buf.advance(copied_1) {
                     remaining.copy_common_bytes_from_slice(byte_slices[1])?
                 } else {
                     0
                 };
+                src.advance(copied_2 / 8);
 
                 Ok(copied_1 + copied_2)
             }
