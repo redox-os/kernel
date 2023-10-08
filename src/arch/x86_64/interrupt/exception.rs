@@ -3,6 +3,7 @@ use core::sync::atomic::Ordering;
 use x86::irq::PageFaultError;
 
 use crate::memory::GenericPfFlags;
+use crate::scheme::serio::IS_PROFILING;
 use crate::{
     interrupt::stack_trace,
     paging::VirtualAddress,
@@ -50,6 +51,9 @@ interrupt_stack!(non_maskable, @paranoid, |stack| {
     let Some(profiling) = crate::percpu::PercpuBlock::current().profiling else {
         return;
     };
+    if !IS_PROFILING.load(Ordering::Relaxed) {
+        return;
+    }
     if stack.iret.cs & 0b00 == 0b11 {
         profiling.nmi_ucount.store(profiling.nmi_ucount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
         return;
