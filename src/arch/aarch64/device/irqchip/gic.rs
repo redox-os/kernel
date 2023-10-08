@@ -6,7 +6,7 @@ use byteorder::{ByteOrder, BE};
 use crate::{device::io_mmap, init::device_tree::find_compatible_node};
 use syscall::{Result, error::{Error, EINVAL}};
 
-use super::InterruptController;
+use super::{InterruptController, IrqDesc};
 
 static GICD_CTLR: u32 = 0x000;
 static GICD_TYPER: u32 = 0x004;
@@ -24,6 +24,7 @@ static GICC_PMR: u32 = 0x0004;
 pub struct GenericInterruptController {
     gic_dist_if: GicDistIf,
     gic_cpu_if: GicCpuIf,
+    irq_range: (usize, usize),
 }
 
 impl GenericInterruptController {
@@ -37,18 +38,13 @@ impl GenericInterruptController {
             address: 0,
         };
 
-        GenericInterruptController { gic_dist_if, gic_cpu_if }
+        GenericInterruptController { gic_dist_if, gic_cpu_if, irq_range: (0, 0) }
     }
-    pub fn parse(fdt: Option<&DeviceTree>) -> Result<(usize, usize, usize, usize)> {
-        match fdt {
-            None => Err(Error::new(EINVAL)),
-            Some(dtb) => {
-                if let Some(node) = find_compatible_node(dtb, "arm,cortex-a15-gic") {
-                    return GenericInterruptController::parse_inner(&node);
-                } else {
-                    return Err(Error::new(EINVAL));
-                }
-            }
+    pub fn parse(fdt: &DeviceTree) -> Result<(usize, usize, usize, usize)> {
+        if let Some(node) = find_compatible_node(fdt, "arm,cortex-a15-gic") {
+            return GenericInterruptController::parse_inner(&node);
+        } else {
+            return Err(Error::new(EINVAL));
         }
     }
     fn parse_inner(node: &Node) -> Result<(usize, usize, usize, usize)> {
@@ -79,9 +75,11 @@ impl GenericInterruptController {
 }
 
 impl InterruptController for GenericInterruptController {
-    fn irq_init(&mut self, fdt: Option<&DeviceTree>) -> Result<()> {
-        let (dist_addr, dist_size, cpu_addr, cpu_size) =
-            GenericInterruptController::parse(fdt).unwrap();
+    fn irq_init(&mut self, fdt: &DeviceTree, irq_desc: &mut [IrqDesc; 1024], ic_idx: usize, irq_idx: &mut usize) -> Result<Option<usize>> {
+        let (dist_addr, dist_size, cpu_addr, cpu_size) = match GenericInterruptController::parse(fdt) {
+            Ok(regs) => regs,
+            Err(err) => return Err(err),
+        };
 
         unsafe {
             //TODO: do kernel memory map using node.ranges
@@ -98,9 +96,23 @@ impl InterruptController for GenericInterruptController {
             self.gic_cpu_if.write(GICC_CTLR, 1);
             // Set CPU0's Interrupt Priority Mask
             self.gic_cpu_if.write(GICC_PMR, 0xff);
-
         }
-        Ok(())
+        let idx = *irq_idx;
+        let cnt = if self.gic_dist_if.nirqs > 1024 { 1024 } else { self.gic_dist_if.nirqs as usize };
+        let mut i: usize = 0;
+        //only support linear irq map now.
+        while i < cnt && (idx + i < 1024) {
+            irq_desc[idx + i].basic.ic_idx = ic_idx;
+            irq_desc[idx + i].basic.ic_irq = i as u32;
+            irq_desc[idx + i].basic.used = true;
+
+            i += 1;
+        }
+
+        println!("gic irq_range = ({}, {})", idx, idx + cnt);
+        self.irq_range = (idx, idx + cnt);
+        *irq_idx = idx + cnt;
+        Ok(None)
     }
     fn irq_ack(&mut self) -> u32 {
         unsafe { self.gic_cpu_if.irq_ack() }
@@ -113,6 +125,33 @@ impl InterruptController for GenericInterruptController {
     }
     fn irq_disable(&mut self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
+    }
+    fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
+        let mut off: usize = 0;
+        let mut i = 0;
+        for chunk in irq_data.chunks(3) {
+            if i == idx {
+                match chunk[0] {
+                    0 => off = chunk[1] as usize + 32, //SPI
+                    1 => off = chunk[1] as usize + 16, //PPI,
+                    _ => return Err(Error::new(EINVAL)),
+                }
+                off += self.irq_range.0;
+                return Ok(off);
+            }
+            i += 1;
+        }
+        Err(Error::new(EINVAL))
+    }
+    fn irq_to_virq(&mut self, hwirq: u32) -> Option<usize> {
+        if hwirq >= self.gic_dist_if.nirqs {
+            None
+        } else {
+            Some(self.irq_range.0 + hwirq as usize)
+        }
+    }
+    fn irq_handler(&mut self, irq: u32) {
+
     }
 }
 

@@ -22,6 +22,37 @@ pub fn root_cell_sz(dt: &fdt::DeviceTree) -> Option<(u32, u32)> {
     Some((BE::read_u32(&size_cells.data), BE::read_u32(&size_cells.data)))
 }
 
+pub fn travel_interrupt_ctrl(fdt: &fdt::DeviceTree) {
+    let root_node = fdt.nodes().nth(0).unwrap();
+    let intr = root_node.properties().find(|p| p.name.contains("interrupt-parent")).unwrap();
+
+    let root_intr_parent = BE::read_u32(&intr.data);
+    println!("root parent = 0x{:08x}", root_intr_parent);
+    for node in fdt.nodes() {
+        if node.properties().find(|p| p.name.contains("interrupt-controller")).is_some() {
+            let compatible = node.properties().find(|p| p.name.contains("compatible")).unwrap();
+            let phandle = node.properties().find(|p| p.name.contains("phandle")).unwrap();
+            let intr_cells = node.properties().find(|p| p.name.contains("#interrupt-cells")).unwrap();
+            let _intr = node.properties().find(|p| p.name.contains("interrupt-parent"));
+            let _intr_data = node.properties().find(|p| p.name.contains("interrupts"));
+
+            let s = core::str::from_utf8(compatible.data).unwrap();
+            println!("{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}", node.name, s, BE::read_u32(intr_cells.data),
+                     BE::read_u32(phandle.data));
+            if let Some(intr) = _intr {
+                if let Some(intr_data) = _intr_data {
+                    println!("interrupt-parent = 0x{:08x}", BE::read_u32(intr.data));
+                    println!("interrupts begin:");
+                    for chunk in intr_data.data.chunks(4) {
+                        print!("0x{:08x}, ", BE::read_u32(chunk));
+                    }
+                    println!("interrupts end");
+                }
+            }
+        }
+    }
+}
+
 fn memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usize, ranges: &mut [(usize, usize); 10]) -> usize {
 
     let (memory_node, _memory_cells) = dt.find_node("/memory").unwrap();

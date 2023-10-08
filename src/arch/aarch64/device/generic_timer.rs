@@ -1,11 +1,15 @@
 use alloc::boxed::Box;
 
+use alloc::vec::Vec;
+use byteorder::{ByteOrder, BE};
 use crate::arch::device::irqchip::IRQ_CHIP;
 use crate::context::timeout;
 use crate::device::cpu::registers::control_regs;
+use crate::init::device_tree::find_compatible_node;
 use crate::interrupt::irq::trigger;
 use crate::time;
 use crate::context;
+use crate::dtb::DTB_BINARY;
 
 use super::irqchip::InterruptHandler;
 use super::irqchip::register_irq;
@@ -21,9 +25,34 @@ bitflags! {
 pub unsafe fn init() {
     let mut timer = GenericTimer{ clk_freq: 0, reload_count: 0};
     timer.init();
-    //TODO: REMOVE HARD CODE IRQ NUMBER
-    register_irq(30, Box::new(timer));
-    IRQ_CHIP.irq_enable(30);
+    let data = DTB_BINARY.get().unwrap();
+    let fdt = fdt::DeviceTree::new(data).unwrap();
+    if let Some(node) = find_compatible_node(&fdt, "arm,armv7-timer") {
+        let interrupts = node.properties().find(|p| p.name.contains("interrupts")).unwrap();
+        let mut intr_data = Vec::new();
+        for chunk in interrupts.data.chunks(4) {
+            let val = BE::read_u32(chunk);
+            intr_data.push(val);
+        }
+        let mut ic_idx = IRQ_CHIP.irq_chip_list.root_idx;
+        if let Some(interrupt_parent) = node.properties().find(|p| p.name.contains("interrupt-parent")) {
+            let phandle = BE::read_u32(interrupt_parent.data);
+            let mut i = 0;
+            while i < IRQ_CHIP.irq_chip_list.chips.len() {
+                let item = &IRQ_CHIP.irq_chip_list.chips[i];
+                if item.phandle == phandle {
+                    ic_idx = i;
+                    break;
+                }
+                i += 1;
+            }
+        }
+        //PHYS_NONSECURE_PPI only
+        let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_xlate(&intr_data, 1).unwrap();
+        println!("generic_timer virq = {}", virq);
+        register_irq(virq as u32, Box::new(timer));
+        IRQ_CHIP.irq_enable(virq as u32);
+    }
 }
 
 pub struct GenericTimer {

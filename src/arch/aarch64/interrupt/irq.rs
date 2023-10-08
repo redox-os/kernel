@@ -1,34 +1,42 @@
-use crate::context;
-use crate::context::timeout;
 //use crate::device::generic_timer::{GENTIMER};
 use crate::device::irqchip::IRQ_CHIP;
-use crate::device::serial::{COM1};
-use crate::time;
+use crate::device::serial::COM1;
 
-use crate::{exception_stack};
+pub struct IrqDesc {
+    pub virq: u32,
+    pub hwirq: u32,
+}
 
 exception_stack!(irq_at_el0, |stack| {
     let irq = IRQ_CHIP.irq_ack();
-    if irq >= 1024 {
-        println!("unexpected irq num {}", irq);
-    } else {
-        if let Some(handler) = &mut IRQ_CHIP.handlers[irq as usize] {
-            handler.irq_handler(irq);
+    //println!("el0 irq num {}", irq);
+    if let Some(virq) = IRQ_CHIP.irq_to_virq(irq) && virq < 1024 {
+        if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
+            handler.irq_handler(virq as u32);
+        } else if let Some(ic_idx) = IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
+            IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_handler(virq as u32);
         }
+    } else {
+        println!("unexpected irq num {}", irq);
     }
 });
 
 exception_stack!(irq_at_el1, |stack| {
     let irq = IRQ_CHIP.irq_ack();
-    if irq >= 1024 {
-        println!("unexpected irq num {}", irq);
-    } else {
-        if let Some(handler) = &mut IRQ_CHIP.handlers[irq as usize] {
-            handler.irq_handler(irq);
+    //println!("el1 irq num {}", irq);
+    if let Some(virq) = IRQ_CHIP.irq_to_virq(irq) && virq < 1024 {
+        if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
+            handler.irq_handler(virq as u32);
+        } else if let Some(ic_idx) = IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
+            IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_handler(virq as u32);
         }
+    } else {
+        println!("unexpected irq num {}", irq);
     }
 });
 
+
+//TODO
 pub unsafe fn trigger(irq: u32) {
     extern {
         fn irq_trigger(irq: u32);
