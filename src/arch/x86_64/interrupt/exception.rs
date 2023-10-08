@@ -24,7 +24,7 @@ interrupt_stack!(divide_by_zero, |stack| {
 });
 
 interrupt_stack!(debug, @paranoid, |stack| {
-    /*let mut handled = false;
+    let mut handled = false;
 
     // Disable singlestep before there is a breakpoint, since the breakpoint
     // handler might end up setting it again but unless it does we want the
@@ -39,13 +39,11 @@ interrupt_stack!(debug, @paranoid, |stack| {
         stack.set_singlestep(had_singlestep);
     }
 
-    if !handled {*/
+    if !handled {
         println!("Debug trap");
         stack.dump();
-        loop {}
-        /*
         ksignal(SIGTRAP);
-    }*/
+    }
 });
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
@@ -54,6 +52,9 @@ interrupt_stack!(non_maskable, @paranoid, |stack| {
     };
     if stack.iret.cs & 0b00 == 0b11 {
         profiling.nmi_ucount.store(profiling.nmi_ucount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+        return;
+    } else if stack.iret.rflags & (1 << 9) != 0 {
+        // Interrupts were enabled, i.e. we were in kmain, so ignore.
         return;
     } else {
         profiling.nmi_kcount.store(profiling.nmi_kcount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
@@ -86,7 +87,6 @@ interrupt_stack!(non_maskable, @paranoid, |stack| {
 });
 
 interrupt_stack!(breakpoint, |stack| {
-    /*
     // The processor lets RIP point to the instruction *after* int3, so
     // unhandled breakpoint interrupt don't go in an infinite loop. But we
     // throw SIGTRAP anyway, so that's not a problem.
@@ -100,13 +100,11 @@ interrupt_stack!(breakpoint, |stack| {
     // int3 instruction. After all, it's the sanest thing to do.
     stack.iret.rip -= 1;
 
-    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {*/
+    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
         println!("Breakpoint trap");
         stack.dump();
-        loop {}
-        /*
         ksignal(SIGTRAP);
-    }*/
+    }
 });
 
 interrupt_stack!(overflow, |stack| {

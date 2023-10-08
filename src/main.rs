@@ -230,7 +230,7 @@ fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
             let apic = &mut crate::device::local_apic::LOCAL_APIC;
             apic.set_lvt_timer((0b01 << 17) | 32);
             apic.set_div_conf(0b1011);
-            apic.set_init_count(0xffff);
+            apic.set_init_count(0xffff_f);
 
             while ACK.load(Ordering::Relaxed) < 4 {
                 core::hint::spin_loop();
