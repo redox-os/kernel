@@ -329,7 +329,7 @@ macro_rules! conditional_swapgs_paranoid {
 }
 macro_rules! conditional_swapgs_back_paranoid {
     () => { "
-        test ebx, ebx
+        test bl, bl
         jnz 1f
         swapgs
         1:
