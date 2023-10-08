@@ -122,6 +122,7 @@ mod percpu;
 mod ptrace;
 
 /// Performance profiling of the kernel
+#[cfg(feature = "profiling")]
 pub mod profiling;
 
 /// Schemes, filesystem handlers
@@ -190,6 +191,8 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
+
+    #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
     match context::contexts_mut().spawn(userspace_init) {
@@ -221,6 +224,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables)]
 fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
+    #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
     if cfg!(feature = "multi_core") {
@@ -229,6 +233,7 @@ fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
         let pid = syscall::getpid();
         info!("AP {}: {:?}", cpu_id, pid);
 
+        #[cfg(feature = "profiling")]
         profiling::ready_for_profiling();
 
         loop {

@@ -1,7 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use crate::LogicalCpuId;
 use crate::arch::debug::Writer;
 use crate::event;
 use crate::scheme::*;
@@ -45,6 +44,8 @@ impl KernelScheme for DebugScheme {
 
         let num = match path {
             "" => !0,
+
+            #[cfg(feature = "profiling")]
             p if p.starts_with("profiling-") => {
                 path[10..].parse().map_err(|_| Error::new(ENOENT))?
             }
@@ -110,12 +111,13 @@ impl KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        if handle.num == !0 {
-            INPUT
-                .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
-        } else {
-            crate::profiling::drain_buffer(LogicalCpuId::new(handle.num as u32), buf)
+        #[cfg(feature = "profiling")]
+        if handle.num != !0 {
+            return crate::profiling::drain_buffer(crate::LogicalCpuId::new(handle.num as u32), buf);
         }
+
+        INPUT
+            .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
     }
 
     fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {

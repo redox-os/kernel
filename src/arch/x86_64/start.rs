@@ -6,7 +6,7 @@
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, AtomicU32};
 
-use crate::{allocator, memory, LogicalCpuId, profiling};
+use crate::{allocator, memory, LogicalCpuId};
 #[cfg(feature = "acpi")]
 use crate::acpi;
 use crate::arch::pti;
@@ -150,7 +150,8 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init();
 
-        profiling::init();
+        #[cfg(feature = "profiling")]
+        crate::profiling::init();
 
         // Set up double buffer for grpahical debug now that heap is available
         #[cfg(feature = "graphical_debug")]
@@ -236,7 +237,8 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         // Set up GDT with TLS
         gdt::init_paging(stack_end, cpu_id);
 
-        profiling::init();
+        #[cfg(feature = "profiling")]
+        crate::profiling::init();
 
         // Set up IDT for AP
         idt::init_paging_post_heap(cpu_id);

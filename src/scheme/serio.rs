@@ -27,6 +27,7 @@ static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
 /// Add to the input queue
 pub fn serio_input(index: usize, data: u8) {
+    #[cfg(feature = "profiling")]
     crate::profiling::serio_command(index, data);
 
     INPUT[index].send(data);

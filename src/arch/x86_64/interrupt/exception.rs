@@ -46,7 +46,14 @@ interrupt_stack!(debug, @paranoid, |stack| {
 });
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
+    #[cfg(feature = "profiling")]
     crate::profiling::nmi_handler(stack);
+
+    #[cfg(not(feature = "profiling"))]
+    {
+        println!("Non-maskable interrupt");
+        stack.dump();
+    }
 });
 
 interrupt_stack!(breakpoint, |stack| {

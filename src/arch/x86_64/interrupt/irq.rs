@@ -252,6 +252,7 @@ interrupt!(lapic_timer, || {
     println!("Local apic timer interrupt");
     lapic_eoi();
 });
+#[cfg(feature = "profiling")]
 interrupt!(aux_timer, || {
     lapic_eoi();
     crate::ipi::ipi(IpiKind::Profile, IpiTarget::Other);

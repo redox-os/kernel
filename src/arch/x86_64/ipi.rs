@@ -5,6 +5,8 @@ pub enum IpiKind {
     Tlb = 0x41,
     Switch = 0x42,
     Pit = 0x43,
+
+    #[cfg(feature = "profiling")]
     Profile = 0x44,
 }
 
@@ -25,6 +27,7 @@ pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
 pub fn ipi(kind: IpiKind, target: IpiTarget) {
     use crate::device::local_apic::LOCAL_APIC;
 
+    #[cfg(feature = "profiling")]
     if matches!(kind, IpiKind::Profile) {
         let icr = (target as u64) << 18 | 1 << 14 | 0b100 << 8;
         unsafe { LOCAL_APIC.set_icr(icr) };

@@ -8,7 +8,6 @@ use hashbrown::HashMap;
 use x86::segmentation::Descriptor as X86IdtEntry;
 use x86::dtables::{self, DescriptorTablePointer};
 
-use crate::profiling::maybe_setup_timer;
 use crate::{interrupt::*, LogicalCpuId};
 use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
 use crate::ipi::IpiKind;
@@ -255,7 +254,8 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
     idt.set_reserved_mut(0x80, true);
 
-    maybe_setup_timer(idt, cpu_id);
+    #[cfg(feature = "profiling")]
+    crate::profiling::maybe_setup_timer(idt, cpu_id);
 
     dtables::lidt(&idtr);
 }
