@@ -1,8 +1,9 @@
 use core::ptr::{read_volatile, write_volatile};
 
-use fdt::DeviceTree;
+use fdt::{DeviceTree, Node};
+use byteorder::{ByteOrder, BE};
 
-use crate::device::io_mmap;
+use crate::{device::io_mmap, init::device_tree::find_compatible_node};
 use syscall::{Result, error::{Error, EINVAL}};
 
 use super::InterruptController;
@@ -39,17 +40,41 @@ impl GenericInterruptController {
         GenericInterruptController { gic_dist_if, gic_cpu_if }
     }
     pub fn parse(fdt: Option<&DeviceTree>) -> Result<(usize, usize, usize, usize)> {
-        Ok((0x800_0000, 0x1_0000, 0x801_0000, 0x1_0000))
-        /*
         match fdt {
-            //TODO: remove hard code for qemu-virt
-            None => Ok((0x800_0000, 0x1_0000, 0x801_0000, 0x1_0000)),
+            None => Err(Error::new(EINVAL)),
             Some(dtb) => {
-                //TODO: try to parse dtb using stable library
-                Err(Error::new(EINVAL))
+                if let Some(node) = find_compatible_node(dtb, "arm,cortex-a15-gic") {
+                    return GenericInterruptController::parse_inner(&node);
+                } else {
+                    return Err(Error::new(EINVAL));
+                }
             }
         }
-        */
+    }
+    fn parse_inner(node: &Node) -> Result<(usize, usize, usize, usize)> {
+        //assert address_cells == 0x2, size_cells == 0x2
+        let reg = node.properties().find(|p| p.name.contains("reg")).unwrap();
+        let mut regs = (0, 0, 0, 0);
+        let mut idx = 0;
+
+        for chunk in reg.data.chunks(8) {
+            let val = BE::read_u64(chunk) as usize;
+            println!("idx{} = {:08x}", idx, val);
+            match idx {
+                0 => regs.0 = val,
+                1 => regs.1 = val,
+                2 => regs.2 = val,
+                3 => regs.3 = val,
+                _ => break,
+            }
+            idx += 1;
+        }
+
+        if idx == 4 {
+            Ok(regs)
+        } else {
+            Err(Error::new(EINVAL))
+        }
     }
 }
 
