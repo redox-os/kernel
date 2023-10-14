@@ -15,37 +15,6 @@ use crate::syscall::scheme::CallerCtx;
 
 use super::usercopy::{UserSlice, UserSliceWo, UserSliceRo};
 
-/*pub fn file_op(a: usize, fd: FileHandle, c: usize, d: usize) -> Result<usize> {
-    let (file, pid, uid, gid) = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        let file = context.get_file(fd).ok_or(Error::new(EBADF))?;
-        (file, context.id, context.euid, context.egid)
-    };
-
-    let scheme = {
-        let schemes = scheme::schemes();
-        let scheme = schemes.get(file.description.read().scheme).ok_or(Error::new(EBADF))?;
-        Arc::clone(scheme)
-    };
-
-    let mut packet = Packet {
-        id: 0,
-        pid: pid.into(),
-        uid,
-        gid,
-        a,
-        b: file.description.read().number,
-        c,
-        d
-    };
-
-    scheme.handle(&mut packet);
-
-    Error::demux(packet.a)
-}*/
-
 pub fn file_op_generic<T>(fd: FileHandle, op: impl FnOnce(&dyn KernelScheme, &CallerCtx, usize) -> Result<T>) -> Result<T> {
     file_op_generic_ext(fd, |s, _, ctx, no| op(s, ctx, no))
 }
@@ -235,7 +204,9 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: UserSliceRo) -> Result<File
         context.insert_file(new_fd, new_file).ok_or(Error::new(EMFILE))
     }
 }
-pub fn sendfd(socket: FileHandle, fd: FileHandle, flags: usize, arg: u64) -> Result<usize> {
+pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
+    let requested_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
+
     let (scheme, number, desc_to_send) = {
         let current_lock = context::current()?;
         let current = current_lock.read();
@@ -249,7 +220,21 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags: usize, arg: u64) -> Res
 
         (scheme, number, current.remove_file(fd).ok_or(Error::new(EBADF))?.description)
     };
-    scheme.ksendfd(number, desc_to_send, flags, arg)
+
+    // Inform the scheme whether there are still references to the file description to be sent,
+    // either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
+    // requested.
+
+    let flags_to_scheme = if Arc::strong_count(&desc_to_send) == 1 {
+        SendFdFlags::EXCLUSIVE
+    } else {
+        if requested_flags.contains(SendFdFlags::EXCLUSIVE) {
+            return Err(Error::new(EBUSY));
+        }
+        SendFdFlags::empty()
+    };
+
+    scheme.ksendfd(number, desc_to_send, flags_to_scheme, arg)
 }
 
 /// File descriptor controls

@@ -13,7 +13,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use syscall::{CallerCtx, MunmapFlags};
+use syscall::{CallerCtx, MunmapFlags, SendFdFlags};
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -342,7 +342,7 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
         Err(Error::new(EBADF))
     }
 
-    fn ksendfd(&self, id: usize, desc: Arc<RwLock<FileDescription>>, flags: usize, arg: u64) -> Result<usize> {
+    fn ksendfd(&self, id: usize, desc: Arc<RwLock<FileDescription>>, flags: SendFdFlags, arg: u64) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
 

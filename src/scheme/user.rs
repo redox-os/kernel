@@ -3,7 +3,7 @@ use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags, SKMSG_FOBTAINFD, FobtainFdFlags};
+use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags, SKMSG_FOBTAINFD, FobtainFdFlags, SendFdFlags};
 use core::mem::size_of;
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -968,14 +968,14 @@ impl KernelScheme for UserScheme {
             Response::Fd(_) => Err(Error::new(EIO)),
         }
     }
-    fn ksendfd(&self, number: usize, desc: Arc<RwLock<FileDescription>>, flags: usize, arg: u64) -> Result<usize> {
+    fn ksendfd(&self, number: usize, desc: Arc<RwLock<FileDescription>>, flags: SendFdFlags, arg: u64) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let res = inner.call_extended(CallerCtx {
             pid: context::context_id().into(),
             uid: arg as u32,
             gid: (arg >> 32) as u32,
-        }, Some(desc), [SYS_SENDFD, number, flags, 0])?;
+        }, Some(desc), [SYS_SENDFD, number, flags.bits(), 0])?;
 
         match res {
             Response::Regular(res) => Ok(res),
