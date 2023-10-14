@@ -235,6 +235,22 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: UserSliceRo) -> Result<File
         context.insert_file(new_fd, new_file).ok_or(Error::new(EMFILE))
     }
 }
+pub fn sendfd(socket: FileHandle, fd: FileHandle, flags: usize, arg: u64) -> Result<usize> {
+    let (scheme, number, desc_to_send) = {
+        let current_lock = context::current()?;
+        let current = current_lock.read();
+
+        // TODO: Ensure deadlocks can't happen
+
+        let (scheme, number) = match current.get_file(socket).ok_or(Error::new(EBADF))?.description.read() {
+            ref desc => (desc.scheme, desc.number),
+        };
+        let scheme = Arc::clone(scheme::schemes().get(scheme).ok_or(Error::new(ENODEV))?);
+
+        (scheme, number, current.remove_file(fd).ok_or(Error::new(EBADF))?.description)
+    };
+    scheme.ksendfd(number, desc_to_send, flags, arg)
+}
 
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {

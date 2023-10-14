@@ -99,6 +99,13 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                     _ => match a {
                         SYS_DUP => dup(fd, UserSlice::ro(c, d)?).map(FileHandle::into),
                         SYS_DUP2 => dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?).map(FileHandle::into),
+
+                        #[cfg(target_pointer_width = "32")]
+                        SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64 | ((f as u64) << 32)),
+
+                        #[cfg(target_pointer_width = "64")]
+                        SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64),
+
                         SYS_LSEEK => file_op_generic(fd, |scheme, _, number| Ok(scheme.seek(number, c as isize, d)? as usize)),
                         SYS_FCHMOD => file_op_generic(fd, |scheme, _, number| scheme.fchmod(number, c as u16)),
                         SYS_FCHOWN => file_op_generic(fd, |scheme, _, number| scheme.fchown(number, c as u32, d as u32)),

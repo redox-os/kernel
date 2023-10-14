@@ -3,7 +3,8 @@ use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags};
+use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags, SKMSG_FOBTAINFD, FobtainFdFlags};
+use core::mem::size_of;
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
@@ -12,7 +13,7 @@ use spin::{Mutex, RwLock};
 
 use crate::context::context::HardBlockedReason;
 use crate::context::{self, Context, BorrowedHtBuf, Status};
-use crate::context::file::FileDescription;
+use crate::context::file::{FileDescription, FileDescriptor};
 use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, BorrowedFmapSource};
 use crate::event;
 use crate::memory::Frame;
@@ -43,7 +44,7 @@ pub struct UserInner {
 }
 
 enum State {
-    Waiting(Weak<RwLock<Context>>),
+    Waiting { context: Weak<RwLock<Context>>, fd: Option<Arc<RwLock<FileDescription>>> },
     Responded(Response),
     Fmap(Weak<RwLock<Context>>),
     Placeholder,
@@ -95,7 +96,7 @@ impl UserInner {
     }
 
     pub fn call(&self, a: usize, b: usize, c: usize, d: usize) -> Result<usize> {
-        match self.call_extended(current_caller_ctx()?, [a, b, c, d])? {
+        match self.call_extended(current_caller_ctx()?, None, [a, b, c, d])? {
             Response::Regular(code) => Error::demux(code),
             Response::Fd(_) => {
                 if a & SYS_RET_FILE == SYS_RET_FILE {
@@ -107,8 +108,8 @@ impl UserInner {
         }
     }
 
-    pub fn call_extended(&self, ctx: CallerCtx, [a, b, c, d]: [usize; 4]) -> Result<Response> {
-        self.call_extended_inner(Packet {
+    pub fn call_extended(&self, ctx: CallerCtx, fd: Option<Arc<RwLock<FileDescription>>>, [a, b, c, d]: [usize; 4]) -> Result<Response> {
+        self.call_extended_inner(fd, Packet {
             id: self.next_id(),
             pid: ctx.pid,
             uid: ctx.uid,
@@ -120,7 +121,7 @@ impl UserInner {
         })
     }
 
-    fn call_extended_inner(&self, packet: Packet) -> Result<Response> {
+    fn call_extended_inner(&self, fd: Option<Arc<RwLock<FileDescription>>>, packet: Packet) -> Result<Response> {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
         }
@@ -132,7 +133,7 @@ impl UserInner {
         {
             let mut states = self.states.lock();
             current_context.write().block("UserScheme::call");
-            states.insert(id, State::Waiting(Arc::downgrade(&current_context)));
+            states.insert(id, State::Waiting { context: Arc::downgrade(&current_context), fd });
         }
 
         self.todo.send(packet);
@@ -149,7 +150,7 @@ impl UserInner {
                 Entry::Vacant(_) => return Err(Error::new(EBADFD)),
                 Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
                     // spurious wakeup, TODO: EINTR
-                    old_state @ State::Waiting(_) => {
+                    old_state @ State::Waiting { .. } => {
                         *o.get_mut() = old_state;
                         continue;
                     }
@@ -395,7 +396,7 @@ impl UserInner {
     pub fn write(&self, buf: UserSliceRo) -> Result<usize> {
         let mut packets_read = 0;
 
-        for chunk in buf.in_exact_chunks(mem::size_of::<Packet>()) {
+        for chunk in buf.in_exact_chunks(size_of::<Packet>()) {
             match self.handle_packet(&unsafe { chunk.read_exact::<Packet>()? }) {
                 Ok(()) => packets_read += 1,
                 Err(_) if packets_read > 0 => break,
@@ -403,7 +404,7 @@ impl UserInner {
             }
         }
 
-        Ok(packets_read * mem::size_of::<Packet>())
+        Ok(packets_read * size_of::<Packet>())
     }
     pub fn request_fmap(&self, id: usize, offset: u64, required_page_count: usize, flags: MapFlags) -> Result<()> {
         log::info!("REQUEST FMAP");
@@ -444,6 +445,20 @@ impl UserInner {
 
                     self.respond(packet.id, Response::Fd(desc))?;
                 }
+                SKMSG_FOBTAINFD => {
+                    let flags = FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?;
+                    let description = match self.states.lock().get_mut(&packet.id).ok_or(Error::new(EINVAL))? {
+                        State::Waiting { ref mut fd, .. } => fd.take().ok_or(Error::new(ENOENT))?,
+                        _ => return Err(Error::new(ENOENT)),
+                    };
+
+                    if flags.contains(FobtainFdFlags::MANUAL_FD) {
+                        context::current()?.read().insert_file(FileHandle::from(packet.c), FileDescriptor { description, cloexec: true });
+                    } else {
+                        let fd = context::current()?.read().add_file(FileDescriptor { description, cloexec: true }).ok_or(Error::new(EMFILE))?;
+                        UserSlice::wo(packet.c, size_of::<usize>())?.write_usize(fd.get())?;
+                    }
+                }
                 SKMSG_PROVIDE_MMAP => {
                     log::info!("PROVIDE_MAP {:?}", packet);
                     let offset = u64::from(packet.uid) | (u64::from(packet.gid) << 32);
@@ -468,7 +483,7 @@ impl UserInner {
                                 return Err(Error::new(EBADFD));
                             }
                             // invalid kernel to scheme call
-                            old_state @ (State::Waiting(_) | State::Responded(_)) => {
+                            old_state @ (State::Waiting { .. } | State::Responded(_)) => {
                                 *o.get_mut() = old_state;
                                 return Err(Error::new(EINVAL));
                             }
@@ -511,7 +526,7 @@ impl UserInner {
                     return Err(Error::new(EINVAL));
                 }
 
-                State::Waiting(context) => {
+                State::Waiting { context, .. } => {
                     if let Some(context) = context.upgrade() {
                         context.write().unblock();
                         *o.get_mut() = State::Responded(response);
@@ -579,7 +594,7 @@ impl UserInner {
             (context.id, desc.description)
         };
 
-        let response = self.call_extended_inner(Packet {
+        let response = self.call_extended_inner(None, Packet {
             id: self.next_id(),
             pid: pid.into(),
             a: KSMSG_MMAP_PREP,
@@ -867,7 +882,7 @@ impl KernelScheme for UserScheme {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        match inner.call_extended(ctx, [SYS_OPEN, address.base(), address.len(), flags])? {
+        match inner.call_extended(ctx, None, [SYS_OPEN, address.base(), address.len(), flags])? {
             Response::Regular(code) => Error::demux(code).map(OpenResult::SchemeLocal),
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
         }
@@ -875,7 +890,7 @@ impl KernelScheme for UserScheme {
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call_extended(ctx, [SYS_DUP, file, address.base(), address.len()]);
+        let result = inner.call_extended(ctx, None, [SYS_DUP, file, address.base(), address.len()]);
 
         address.release()?;
 
@@ -946,10 +961,24 @@ impl KernelScheme for UserScheme {
             #[cfg(not(target_pointer_width = "64"))]
             gid: 0,
 
-        }, [KSMSG_MUNMAP, number, size, flags.bits()])?;
+        }, None, [KSMSG_MUNMAP, number, size, flags.bits()])?;
 
         match res {
             Response::Regular(_) => Ok(()),
+            Response::Fd(_) => Err(Error::new(EIO)),
+        }
+    }
+    fn ksendfd(&self, number: usize, desc: Arc<RwLock<FileDescription>>, flags: usize, arg: u64) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let res = inner.call_extended(CallerCtx {
+            pid: context::context_id().into(),
+            uid: arg as u32,
+            gid: (arg >> 32) as u32,
+        }, Some(desc), [SYS_SENDFD, number, flags, 0])?;
+
+        match res {
+            Response::Regular(res) => Ok(res),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
     }

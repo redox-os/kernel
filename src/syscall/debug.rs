@@ -69,6 +69,14 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             debug_buf(d, e).as_ref().map(|b| ByteStr(&*b)),
         ),
+        SYS_SENDFD => format!(
+            "sendfd({}, {}, {:#0x} {:#0x} {:#0x})",
+            b,
+            c,
+            d,
+            e,
+            f,
+        ),
         SYS_READ => format!(
             "read({}, {:#X}, {})",
             b,

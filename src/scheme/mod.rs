@@ -342,6 +342,10 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
         Err(Error::new(EBADF))
     }
 
+    fn ksendfd(&self, id: usize, desc: Arc<RwLock<FileDescription>>, flags: usize, arg: u64) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+
     // TODO: This demonstrates why we need to transition away from a dyn trait.
     fn as_user_inner(&self) -> Option<Result<Arc<UserInner>>> { None }
 }
