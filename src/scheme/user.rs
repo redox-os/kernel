@@ -452,6 +452,8 @@ impl UserInner {
                         _ => return Err(Error::new(ENOENT)),
                     };
 
+                    // FIXME: Description can leak if context::current() fails, or if there is no
+                    // additional file table space.
                     if flags.contains(FobtainFdFlags::MANUAL_FD) {
                         context::current()?.read().insert_file(FileHandle::from(packet.c), FileDescriptor { description, cloexec: true });
                     } else {
@@ -516,6 +518,8 @@ impl UserInner {
         Ok(())
     }
     fn respond(&self, id: u64, response: Response) -> Result<()> {
+        let to_close;
+
         match self.states.lock().entry(id) {
             Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
                 // invalid state
@@ -526,19 +530,25 @@ impl UserInner {
                     return Err(Error::new(EINVAL));
                 }
 
-                State::Waiting { context, .. } => {
+                State::Waiting { context, fd } => {
+                    to_close = fd.and_then(|f| Arc::try_unwrap(f).ok()).map(RwLock::into_inner);
+
                     if let Some(context) = context.upgrade() {
                         context.write().unblock();
                         *o.get_mut() = State::Responded(response);
                     } else {
                         o.remove();
                     }
-                    Ok(())
                 }
             }
             // invalid state
             Entry::Vacant(_) => return Err(Error::new(EBADFD)),
         }
+
+        if let Some(to_close) = to_close {
+            let _ = to_close.try_close();
+        }
+        Ok(())
     }
 
     pub fn fevent(&self, _flags: EventFlags) -> Result<EventFlags> {
