@@ -261,7 +261,9 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         let mut base = Frame::containing_address(memory_map_area.base);
 
         while pages_left > 0 {
-            let page_info_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
+            let page_info_max_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
+            let pages_to_next_section = (MAX_SECTION_SIZE - (base.start_address().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
+            let page_info_count = core::cmp::min(page_info_max_count, pages_to_next_section);
 
             let page_info_array_size_pages = (page_info_count * mem::size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
             let page_info_array = unsafe {
