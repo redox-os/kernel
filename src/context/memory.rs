@@ -7,15 +7,11 @@ use spin::{RwLock, RwLockUpgradableGuard, RwLockWriteGuard, RwLockReadGuard};
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
-    arch::paging::PAGE_SIZE,
-    memory::{
-        deallocate_frames, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
-        PageInfo, RefCount, RefKind,
-    },
-    paging::{
+    arch::paging::PAGE_SIZE, cpu_set::LogicalCpuSet, memory::{
+        deallocate_frame, deallocate_frames, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame, PageInfo, RefCount, RefKind
+    }, paging::{
         Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
-    },
-    scheme::{self, KernelSchemes}, cpu_set::LogicalCpuSet, percpu::PercpuBlock,
+    }, percpu::PercpuBlock, scheme::{self, KernelSchemes}
 };
 
 use super::{context::HardBlockedReason, file::FileDescription};
@@ -1323,6 +1319,10 @@ impl Grant {
                             }
                             src_flusher_state = src_flusher.detach();
 
+                            if page_info.remove_ref() == RefCount::Zero {
+                                deallocate_frame(frame);
+                            }
+
                             new_cow_frame
                         },
                         Err(AddRefError::SharedToCow) => unreachable!(),
@@ -2105,7 +2105,9 @@ impl Drop for Table {
                 RmmA::set_table(TableKind::User, super::empty_cr3());
             }
         }
-        crate::memory::deallocate_frames(Frame::containing_address(self.utable.table().phys()), 1);
+        unsafe {
+            crate::memory::deallocate_frame(Frame::containing_address(self.utable.table().phys()));
+        }
     }
 }
 
@@ -2154,12 +2156,10 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
 #[cfg(target_arch = "x86_64")]
 pub fn setup_new_utable() -> Result<Table> {
+    use crate::memory::TheFrameAllocator;
     use crate::paging::KernelMapper;
 
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
-            .ok_or(Error::new(ENOMEM))?
-    };
+    let utable = unsafe { PageMapper::create(TableKind::User, TheFrameAllocator).ok_or(Error::new(ENOMEM))? };
 
     {
         let active_ktable = KernelMapper::lock();
@@ -2690,13 +2690,17 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
 
                     assert_eq!(new_rc, RefCount::Zero);
                 }
-                deallocate_frames(base, count.get());
+                unsafe {
+                    deallocate_frames(base, count.get());
+                }
             } else {
                 let Some(info) = get_page_info(base) else {
                     continue;
                 };
                 if info.remove_ref() == RefCount::Zero {
-                    deallocate_frames(base, 1);
+                    unsafe {
+                        deallocate_frames(base, 1);
+                    }
                 }
             }
         }

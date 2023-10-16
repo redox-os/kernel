@@ -8,7 +8,7 @@ use x86::msr;
 pub use super::CurrentRmmArch as RmmA;
 pub use rmm::{Arch as RmmArch, Flusher, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 
-pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
+pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 pub use crate::rmm::KernelMapper;
 
 pub mod entry {

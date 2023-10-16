@@ -9,21 +9,14 @@ use core::{
 };
 
 pub use crate::paging::{PhysicalAddress, RmmA, RmmArch, PAGE_SIZE};
-use crate::{
-    arch::rmm::LockedAllocator,
-    context::{
-        self,
-        memory::{AccessMode, PfError},
-    },
-    kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    paging::Page,
-    rmm::areas,
+use crate::paging::Page;
+use crate::context::{self, memory::{AccessMode, PfError}};
+use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
+use rmm::{
+    FrameAllocator,
+    FrameCount, VirtualAddress, TableKind, BumpAllocator,
 };
-
-use crate::syscall::error::{Error, ENOMEM};
-use alloc::vec::Vec;
-use rmm::{FrameAllocator, FrameCount, TableKind, VirtualAddress};
-use spin::RwLock;
+use crate::syscall::error::{ENOMEM, Error};
 
 /// A memory map area
 #[derive(Copy, Clone, Debug, Default)]
@@ -37,33 +30,37 @@ pub struct MemoryArea {
 
 /// Get the number of frames available
 pub fn free_frames() -> usize {
-    unsafe { LockedAllocator.usage().free().data() }
+    0
 }
 
 /// Get the number of frames used
 pub fn used_frames() -> usize {
-    unsafe { LockedAllocator.usage().used().data() }
+    0
 }
 
 /// Allocate a range of frames
 pub fn allocate_frames(count: usize) -> Option<Frame> {
-    unsafe {
-        LockedAllocator
-            .allocate(FrameCount::new(count))
-            .map(|phys| Frame::containing_address(PhysicalAddress::new(phys.data())))
-    }
+    allocate_frames_complex(count, (), None, count).map(|(f, _)| f)
 }
-// TODO: allocate_frames_complex
+pub fn allocate_frame() -> Option<Frame> {
+    allocate_frames(1)
+}
+pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, min: usize) -> Option<(Frame, usize)> {
+    todo!()
+}
+
+const ORDER_COUNT: u32 = 11;
+
+pub struct FreeList {
+    for_orders: [Option<Frame>; ORDER_COUNT as usize],
+}
 
 /// Deallocate a range of frames frame
-// TODO: Make unsafe
-pub fn deallocate_frames(frame: Frame, count: usize) {
-    unsafe {
-        LockedAllocator.free(
-            rmm::PhysicalAddress::new(frame.start_address().data()),
-            FrameCount::new(count),
-        );
-    }
+pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
+    todo!()
+}
+pub unsafe fn deallocate_frame(frame: Frame) {
+    deallocate_frames(frame, 1)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -96,8 +93,8 @@ impl Frame {
     }
 
     //TODO: Set private
-    pub fn range_inclusive(start: Frame, end: Frame) -> FrameIter {
-        FrameIter { start, end }
+    pub fn range_inclusive(start: Frame, end: Frame) -> impl Iterator<Item = Frame> {
+        (start.number.get()..=end.number.get()).map(|number| Frame { number: NonZeroUsize::new(number).unwrap() })
     }
     pub fn next_by(self, n: usize) -> Self {
         Self {
@@ -114,25 +111,6 @@ impl Frame {
             .get()
             .checked_sub(from.number.get())
             .expect("overflow in Frame::offset_from")
-    }
-}
-
-pub struct FrameIter {
-    start: Frame,
-    end: Frame,
-}
-
-impl Iterator for FrameIter {
-    type Item = Frame;
-
-    fn next(&mut self) -> Option<Frame> {
-        if self.start <= self.end {
-            let frame = self.start.clone();
-            self.start = self.start.next_by(1);
-            Some(frame)
-        } else {
-            None
-        }
     }
 }
 
@@ -167,7 +145,9 @@ impl Drop for RaiiFrame {
             .remove_ref()
             == RefCount::Zero
         {
-            crate::memory::deallocate_frames(self.inner, 1);
+            unsafe {
+                crate::memory::deallocate_frames(self.inner, 1);
+            }
         }
     }
 }
@@ -210,12 +190,12 @@ bitflags::bitflags! {
     }
 }
 
-// TODO: Very read-heavy RwLock? ArcSwap? Store the struct in percpu, and in the *very* unlikely
-// event of hotplugging, do IPIs to force all CPUs to update the sections.
-//
-// XXX: Is it possible to safely initialize an empty boxed slice from a const context?
-//pub static SECTIONS: RwLock<Box<[&'static Section]>> = RwLock::new(Box::new([]));
-pub static SECTIONS: RwLock<Vec<Section>> = RwLock::new(Vec::new());
+static mut ALLOCATOR_DATA: AllocatorData = AllocatorData { sections: &[] };
+
+struct AllocatorData {
+    // TODO: Memory hotplugging?
+    sections: &'static [Section],
+}
 
 pub struct Section {
     base: Frame,
@@ -231,11 +211,25 @@ const _: () = {
 };
 
 #[cold]
-fn init_sections() {
-    let mut guard = SECTIONS.write();
-    let mut sections = Vec::new();
+fn init_sections(mut allocator: BumpAllocator<RmmA>) {
+    let sections: &'static mut [Section] = {
+        let max_section_count: usize = allocator.areas().iter().map(|area| {
+            let aligned_end = area.base.add(area.size).data().next_multiple_of(MAX_SECTION_SIZE);
+            let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
-    let mut iter = areas().iter().copied().peekable();
+            (aligned_end - aligned_start) / MAX_SECTION_SIZE
+        }).sum();
+        let section_array_page_count = (max_section_count * mem::size_of::<Section>()).div_ceil(PAGE_SIZE);
+
+        unsafe {
+            let base = allocator.allocate(FrameCount::new(section_array_page_count)).expect("failed to allocate sections array");
+            core::slice::from_raw_parts_mut(RmmA::phys_to_virt(base).data() as *mut Section, max_section_count)
+        }
+    };
+
+    let mut iter = allocator.areas().iter().copied().peekable();
+
+    let mut i = 0;
 
     while let Some(mut memory_map_area) = iter.next() {
         // TODO: NonZeroUsize
@@ -267,50 +261,40 @@ fn init_sections() {
         let mut base = Frame::containing_address(memory_map_area.base);
 
         while pages_left > 0 {
-            let section_page_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
+            let page_info_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
 
-            // Avoid Vec here as we are currently initializing data structures
-            // required by the global allocator.
-
-            let Ok(layout) = core::alloc::Layout::array::<PageInfo>(section_page_count) else {
-                panic!("failed to allocate static frame sections: length overflow");
-            };
-            assert!(layout.align() <= PAGE_SIZE);
-
-            // We use the fact that allocate_frames returns zeroed frames. We
-            // want every element to be the default initialized value, which
-            // consists entirely of zero bytes.
-            let phys = allocate_frames(layout.size().div_ceil(PAGE_SIZE))
-                .expect("failed to allocate static frame sections");
-
-            let mut frames = unsafe {
-                let virt = RmmA::phys_to_virt(phys.start_address()).data();
-
-                core::slice::from_raw_parts_mut(virt as *mut PageInfo, section_page_count)
+            let page_info_array_size_pages = (page_info_count * mem::size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
+            let page_info_array = unsafe {
+                let base = allocator.allocate(FrameCount::new(page_info_array_size_pages)).expect("failed to allocate page info array");
+                core::slice::from_raw_parts_mut(base.data() as *mut PageInfo, page_info_count)
             };
 
-            sections.push(Section { base, frames });
+            sections[i] = Section {
+                base,
+                frames: page_info_array,
+            };
+            i += 1;
 
-            pages_left -= section_page_count;
-            base = base.next_by(section_page_count);
+            pages_left -= page_info_count;
+            base = base.next_by(page_info_count);
         }
     }
 
-    /*
-    for section in &sections {
-        log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
+    for section in &*sections {
+        //log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
     }
-    */
 
     sections.sort_unstable_by_key(|s| s.base);
-    sections.shrink_to_fit();
 
-    *guard = sections;
+    unsafe {
+        ALLOCATOR_DATA = AllocatorData { sections };
+    }
+    loop {}
 }
 
 #[cold]
-pub fn init_mm() {
-    init_sections();
+pub fn init_mm(allocator: BumpAllocator<RmmA>) {
+    init_sections(allocator);
 
     unsafe {
         let the_frame = allocate_frames(1).expect("failed to allocate static zeroed frame");
@@ -410,7 +394,7 @@ impl RefCount {
     }
 }
 pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
-    let sections = SECTIONS.read();
+    let sections = unsafe { ALLOCATOR_DATA.sections };
 
     let idx_res = sections.binary_search_by_key(&frame, |section| section.base);
 
@@ -519,17 +503,33 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
 }
 
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
-    let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
-    let page_info = get_page_info(new_frame).unwrap_or_else(|| {
-        panic!(
-            "all allocated frames need an associated page info, {:?} didn't",
-            new_frame
-        )
-    });
+    let new_frame = crate::memory::allocate_frame().ok_or(PfError::Oom)?;
+    let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
     assert_eq!(page_info.refcount(), RefCount::Zero);
     page_info
         .refcount
         .store(init_rc.to_raw(), Ordering::Relaxed);
 
     Ok(new_frame)
+}
+#[derive(Debug)]
+pub struct TheFrameAllocator;
+
+impl FrameAllocator for TheFrameAllocator {
+    unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+        allocate_frames(count.data()).map(|f| f.start_address())
+    }
+    unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
+        deallocate_frames(Frame::containing_address(address), count.data())
+    }
+    unsafe fn usage(&self) -> rmm::FrameUsage {
+        todo!()
+    }
+}
+impl FreeList {
+    pub fn new() -> Self {
+        Self {
+            for_orders: [None; ORDER_COUNT as usize],
+        }
+    }
 }

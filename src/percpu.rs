@@ -8,6 +8,7 @@ use syscall::PtraceFlags;
 use crate::context::empty_cr3;
 use crate::context::memory::AddrSpaceWrapper;
 use crate::cpu_set::MAX_CPU_COUNT;
+use crate::memory::FreeList;
 use crate::ptrace::Session;
 use crate::{context::switch::ContextSwitchPercpu, cpu_set::LogicalCpuId};
 
@@ -30,6 +31,8 @@ pub struct PercpuBlock {
     // first to avoid cache invalidation.
     #[cfg(feature = "profiling")]
     pub profiling: Option<&'static crate::profiling::RingBuffer>,
+
+    pub freelist: crate::memory::FreeList,
 
     pub ptrace_flags: Cell<PtraceFlags>,
     pub ptrace_session: RefCell<Option<Weak<Session>>>,
@@ -138,6 +141,7 @@ impl PercpuBlock {
             ptrace_flags: Cell::new(Default::default()),
             ptrace_session: RefCell::new(None),
             inside_syscall: Cell::new(false),
+            freelist: FreeList::new(),
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: Cell::new(SyscallDebugInfo::default()),
