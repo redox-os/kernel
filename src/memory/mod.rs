@@ -67,7 +67,7 @@ pub unsafe fn deallocate_frame(frame: Frame) {
 pub struct Frame {
     // On x86/x86_64, all memory below 1 MiB is reserved, and although some frames in that range
     // may end up in the paging code, it's very unlikely that frame 0x0 would.
-    number: NonZeroUsize,
+    physaddr: NonZeroUsize,
 }
 impl core::fmt::Debug for Frame {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -81,36 +81,44 @@ impl core::fmt::Debug for Frame {
 
 impl Frame {
     /// Get the address of this frame
+    // TODO: Remove
     pub fn start_address(&self) -> PhysicalAddress {
-        PhysicalAddress::new(self.number.get() * PAGE_SIZE)
+        PhysicalAddress::new(self.physaddr.get())
     }
 
     /// Create a frame containing `address`
-    pub fn containing_address(address: PhysicalAddress) -> Frame {
+    pub fn containing(address: PhysicalAddress) -> Frame {
         Frame {
-            number: NonZeroUsize::new(address.data() / PAGE_SIZE).expect("frame 0x0 is reserved"),
+            physaddr: NonZeroUsize::new(address.data()).expect("frame 0x0 is reserved"),
         }
+    }
+    // TODO: Remove
+    pub fn containing_address(address: PhysicalAddress) -> Frame {
+        Self::containing(address)
+    }
+    pub fn base(self) -> PhysicalAddress {
+        PhysicalAddress::new(self.physaddr.get())
     }
 
     //TODO: Set private
     pub fn range_inclusive(start: Frame, end: Frame) -> impl Iterator<Item = Frame> {
-        (start.number.get()..=end.number.get()).map(|number| Frame { number: NonZeroUsize::new(number).unwrap() })
+        (start.physaddr.get()..=end.physaddr.get()).step_by(PAGE_SIZE).map(|number| Frame { physaddr: NonZeroUsize::new(number).unwrap() })
     }
     pub fn next_by(self, n: usize) -> Self {
         Self {
-            number: self
-                .number
+            physaddr: self
+                .physaddr
                 .get()
-                .checked_add(n)
+                .checked_add(n * PAGE_SIZE)
                 .and_then(NonZeroUsize::new)
                 .expect("overflow in Frame::next_by"),
         }
     }
     pub fn offset_from(self, from: Self) -> usize {
-        self.number
+        self.physaddr
             .get()
-            .checked_sub(from.number.get())
-            .expect("overflow in Frame::offset_from")
+            .checked_sub(from.physaddr.get())
+            .expect("overflow in Frame::offset_from") / PAGE_SIZE
     }
 }
 
