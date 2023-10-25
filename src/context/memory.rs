@@ -1326,6 +1326,7 @@ impl Grant {
                             new_cow_frame
                         },
                         Err(AddRefError::SharedToCow) => unreachable!(),
+                        Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
                     }
                 } else {
                     frame
@@ -1576,6 +1577,7 @@ impl Grant {
                         }
                         new_frame
                     }
+                    Err(AddRefError::RcOverflow) => return Err(Enomem),
                 }
             };
 
@@ -2489,6 +2491,7 @@ fn correct_inner<'l>(
                         new_frame
                     }
                     Err(AddRefError::SharedToCow) => unreachable!(),
+                    Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                 }
             } else {
                 // Grant did not exist, but we did own a Provider::External mapping, and cannot

@@ -59,7 +59,9 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         return None
     };
 
-    let info = get_page_info(frame).unwrap_or_else(|| panic!("no page info for allocated frame {frame:?}"));
+    let info = get_page_info(frame)
+        .unwrap_or_else(|| panic!("no page info for allocated frame {frame:?}"))
+        .as_free().expect("freelist frames must not be marked used!");
     let next_free = info.next();
     log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
 
@@ -73,7 +75,10 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
         if let Some(old_head) = freelist[order].replace(hi) {
-            let hi_info = get_page_info(hi).expect("no page info for allocated frame");
+            let hi_info = get_page_info(hi)
+                .expect("no page info for allocated frame")
+                .as_free().expect("freelist cannot contain used pages!");
+
             hi_info.set_next(P2Frame::new(Some(old_head), order as u32));
         }
     }
@@ -115,22 +120,44 @@ unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
         // 2^addrwidth - 1. However, allocation and deallocation must be synchronized (the "next"
         // word of the PageInfo).
 
+        let frame_info = get_page_info(frame)
+            .expect("deallocating frame without PageInfo")
+            .as_free().expect("deallocating used page!");
+
         let Some(neighbor) = frame.neighbor(merge_order) else {
             break;
         };
 
-        let Some(next_info) = get_page_info(neighbor) else {
+        let Some(neighbor_info) = get_page_info(neighbor) else {
             // The frame that was deallocated, was the end of a contiguous allocator memory range.
             break;
         };
 
+        let PageInfoKind::Free(neighbor_info) = neighbor_info.kind() else {
+            // The frame is currently in use (refcounted). It cannot be merged!
+            break;
+        };
+
         // Whether or not there's a linked frame, the order is nevertheless stored.
-        if next_info.next().order() != merge_order {
+        if neighbor_info.next().order() != merge_order {
             break;
         }
 
         frame = frame.align_down_to_order(order)
             .expect("must succeed since the neighbor p2frame existed");
+
+        // Link frame->prev->next to neighbor->next
+        if let Some(prev_info) = frame_info.prev().frame() {
+            get_page_info(prev_info).expect("linked frame lacks PageInfo")
+                .as_free().expect("frame->prev pointing to used frame!")
+                .set_next(neighbor_info.next())
+        }
+        // Link neighbor->next->prev to frame->prev
+        if let Some(next_info) = neighbor_info.next().frame() {
+            get_page_info(next_info).expect("linked frame lacks PageInfo")
+                .as_free().expect("neighbor->next pointing to used frame!")
+                .set_prev(frame_info.prev())
+        }
     }
 
     log::info!("FREED {frame:?}+2^{order}");
@@ -314,7 +341,40 @@ pub struct PageInfo {
     // be managed by the memory allocator first?
     pub next: AtomicUsize,
 }
-const RC_SHARED_NOT_COW: usize = 1 << (usize::BITS - 1);
+
+enum PageInfoKind<'info> {
+    Used(PageInfoUsed<'info>),
+    Free(PageInfoFree<'info>),
+}
+struct PageInfoUsed<'info> {
+    refcount: &'info AtomicUsize,
+    _misc: &'info AtomicUsize,
+}
+struct PageInfoFree<'info> {
+    prev: &'info AtomicUsize,
+    next: &'info AtomicUsize,
+    last_next: usize,
+}
+
+// There should be at least 2 bits available; even with a 4k page size on a 32-bit system (where a
+// paging structure node is itself a 4k page size, i.e. on i386 with 1024 32-bit entries), there
+// simply cannot be more than 2^30 entries pointing to the same page. However, to be able to use
+// fetch_add safely, we reserve another bit (which makes fetch_add safe if properly reverted, and
+// there aren't more than 2^(BITS-2) CPUs on the system).
+
+// Indicates whether the page is free (and thus managed by the allocator), or owned (and thus
+// managed by the kernel heap, or most commonly, the virtual memory system). The refcount may
+// increase or decrease with fetch_add, but must never flip this bit.
+const RC_USED_NOT_FREE: usize = 1 << (usize::BITS - 1);
+
+// Only valid if RC_USED. Controls whether the page is CoW (map readonly, on page fault, copy and
+// remap writable) or shared (mapped writable in the first place).
+const RC_SHARED_NOT_COW: usize = 1 << (usize::BITS - 2);
+
+// The page refcount limit. This acts as a buffer zone allowing subsequent fetch_sub to correct
+// overflow, which works as long as there's fewer CPUs than RC_MAX itself (and interrupts are
+// disabled).
+const RC_MAX: usize = 1 << (usize::BITS - 3);
 
 // TODO: Use some of the flag bits as a tag, indicating the type of page (e.g. paging structure,
 // userspace data page, or kernel heap page). This could be done only when debug assertions are
@@ -426,8 +486,9 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         let this_page = (page, info);
         let last_page = last_pages[order as usize].replace(this_page);
 
-        if let Some((_, last_page_info)) = last_page {
-            last_page_info.set_next(P2Frame::new(Some(page), order));
+        if let Some((last_frame, last_page_info)) = last_page {
+            last_page_info.as_free().unwrap().set_next(P2Frame::new(Some(page), order));
+            info.as_free().unwrap().set_prev(P2Frame::new(Some(last_frame), order));
         } else {
             first_pages[order as usize] = Some(this_page);
         }
@@ -496,23 +557,42 @@ pub fn init_mm(allocator: BumpAllocator<RmmA>) {
 pub enum AddRefError {
     CowToShared,
     SharedToCow,
+    RcOverflow,
 }
 impl PageInfo {
-    fn next(&self) -> P2Frame {
-        P2Frame(self.next.load(Ordering::Relaxed))
+    pub fn new() -> Self {
+        Self {
+            refcount: AtomicUsize::new(0),
+            next: AtomicUsize::new(0),
+        }
     }
-    fn set_next(&self, next: P2Frame) {
-        self.next.store(next.0, Ordering::Relaxed)
+    fn kind(&self) -> PageInfoKind<'_> {
+        let next = self.next.load(Ordering::Relaxed);
+
+        if next & RC_USED_NOT_FREE == RC_USED_NOT_FREE {
+            PageInfoKind::Used(PageInfoUsed { refcount: &self.refcount, _misc: &self.next })
+        } else {
+            PageInfoKind::Free(PageInfoFree { prev: &self.refcount, next: &self.next, last_next: next })
+        }
+    }
+    fn as_free(&self) -> Option<PageInfoFree<'_>> {
+        match self.kind() {
+            PageInfoKind::Free(f) => Some(f),
+            PageInfoKind::Used(_) => None,
+        }
     }
     pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
         match (self.refcount(), kind) {
-            (RefCount::Zero, _) => self.refcount.store(1, Ordering::Relaxed),
-            (RefCount::One, RefKind::Cow) => self.refcount.store(2, Ordering::Relaxed),
-            (RefCount::One, RefKind::Shared) => self
-                .refcount
-                .store(2 | RC_SHARED_NOT_COW, Ordering::Relaxed),
+            (RefCount::Zero, _) => self.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed),
+            (RefCount::One, RefKind::Cow) => self.refcount.store(RC_USED_NOT_FREE | 1, Ordering::Relaxed),
+            (RefCount::One, RefKind::Shared) => self.refcount.store(RC_USED_NOT_FREE | 1 | RC_SHARED_NOT_COW, Ordering::Relaxed),
             (RefCount::Cow(_), RefKind::Cow) | (RefCount::Shared(_), RefKind::Shared) => {
-                self.refcount.fetch_add(1, Ordering::Relaxed);
+                let old = self.refcount.fetch_add(1, Ordering::Relaxed);
+
+                if old >= RC_MAX {
+                    self.refcount.fetch_sub(1, Ordering::Relaxed);
+                    return Err(AddRefError::RcOverflow);
+                }
             }
             (RefCount::Cow(_), RefKind::Shared) => return Err(AddRefError::CowToShared),
             (RefCount::Shared(_), RefKind::Cow) => return Err(AddRefError::SharedToCow),
@@ -524,13 +604,16 @@ impl PageInfo {
         RefCount::from_raw(match self.refcount() {
             RefCount::Zero => panic!("refcount was already zero when calling remove_ref!"),
             RefCount::One => {
+                // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | 0, now becomes 0
                 self.refcount.store(0, Ordering::Relaxed);
 
                 0
             }
             RefCount::Cow(_) | RefCount::Shared(_) => {
+                // Was RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n, now becomes RC_USED_NOT_FREE |
+                // ?RC_SHARED_NOW_COW | n - 1
                 self.refcount.fetch_sub(1, Ordering::Relaxed) - 1
-            }
+            },
         })
     }
     pub fn allows_writable(&self) -> bool {
@@ -545,6 +628,20 @@ impl PageInfo {
         let refcount = self.refcount.load(Ordering::Relaxed);
 
         RefCount::from_raw(refcount)
+    }
+}
+impl PageInfoFree<'_> {
+    fn next(&self) -> P2Frame {
+        P2Frame(self.next.load(Ordering::Relaxed))
+    }
+    fn set_next(&self, next: P2Frame) {
+        self.next.store(next.0, Ordering::Relaxed)
+    }
+    fn prev(&self) -> P2Frame {
+        P2Frame(self.prev.load(Ordering::Relaxed))
+    }
+    fn set_prev(&self, prev: P2Frame) {
+        self.prev.store(prev.0, Ordering::Relaxed)
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
