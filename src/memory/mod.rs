@@ -80,6 +80,10 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
                 .as_free().expect("freelist cannot contain used pages!");
 
             hi_info.set_next(P2Frame::new(Some(old_head), order as u32));
+
+            get_page_info(old_head).expect("freelist head needs page info")
+                .as_free().expect("freelist head cannot be in use")
+                .set_prev(P2Frame::new(Some(hi), order as u32));
         }
     }
 
@@ -113,6 +117,7 @@ pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
 
 unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
     let mut freelist = FREELIST.lock();
+    let mut largest_order = 0;
 
     for merge_order in order..=MAX_ORDER {
         // Because there's a PageInfo, this frame must be allocator-owned. We need to be very
@@ -143,9 +148,6 @@ unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
             break;
         }
 
-        frame = frame.align_down_to_order(order)
-            .expect("must succeed since the neighbor p2frame existed");
-
         // Link frame->prev->next to neighbor->next
         if let Some(prev_info) = frame_info.prev().frame() {
             get_page_info(prev_info).expect("linked frame lacks PageInfo")
@@ -158,6 +160,23 @@ unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
                 .as_free().expect("neighbor->next pointing to used frame!")
                 .set_prev(frame_info.prev())
         }
+
+        // Pick either frame or neighbor depending on which is aligned to the next power of two.
+        frame = frame.align_down_to_order(order)
+            .expect("must succeed since the neighbor p2frame existed");
+
+        largest_order = merge_order;
+    }
+
+    if let Some(old_head) = freelist[largest_order as usize].replace(frame) {
+        let head_info = get_page_info(old_head).expect("failed to get page info for old head")
+            .as_free().expect("freelist head is currently in use!");
+
+        head_info.set_next(P2Frame::new(Some(frame), largest_order));
+
+        get_page_info(frame).expect("failed to get page info for possibly merged frame")
+            .as_free().expect("page was used but should be free")
+            .set_prev(P2Frame::new(Some(old_head), largest_order));
     }
 
     log::info!("FREED {frame:?}+2^{order}");
