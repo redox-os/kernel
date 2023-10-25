@@ -32,7 +32,7 @@ pub struct PercpuBlock {
     #[cfg(feature = "profiling")]
     pub profiling: Option<&'static crate::profiling::RingBuffer>,
 
-    pub freelist: crate::memory::FreeList,
+    //pub freelist: crate::memory::FreeList,
 
     pub ptrace_flags: Cell<PtraceFlags>,
     pub ptrace_session: RefCell<Option<Weak<Session>>>,
@@ -141,7 +141,7 @@ impl PercpuBlock {
             ptrace_flags: Cell::new(Default::default()),
             ptrace_session: RefCell::new(None),
             inside_syscall: Cell::new(false),
-            freelist: FreeList::new(),
+            //freelist: FreeList::new(),
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: Cell::new(SyscallDebugInfo::default()),

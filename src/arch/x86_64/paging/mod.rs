@@ -25,6 +25,7 @@ pub mod mapper;
 
 /// Size of pages
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
+pub const PAGE_MASK: usize = RmmA::PAGE_OFFSET_MASK;
 
 /// Setup page attribute table
 #[cold]

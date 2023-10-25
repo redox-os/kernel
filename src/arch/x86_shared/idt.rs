@@ -18,10 +18,7 @@ use crate::{interrupt::*, ipi::IpiKind, cpu_set::LogicalCpuId};
 
 use spin::RwLock;
 
-pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
-    limit: 0,
-    base: 0 as *const X86IdtEntry,
-};
+pub static mut INIT_IDT: [IdtEntry; 32] = [IdtEntry::new(); 32];
 
 pub type IdtEntries = [IdtEntry; 256];
 pub type IdtReservations = [AtomicU32; 8];
@@ -144,7 +141,37 @@ macro_rules! use_default_irqs(
 );
 
 pub unsafe fn init() {
-    dtables::lidt(&INIT_IDTR);
+    set_exceptions(&mut INIT_IDT);
+    dtables::lidt(&DescriptorTablePointer::new(&INIT_IDT));
+}
+
+fn set_exceptions(idt: &mut [IdtEntry]) {
+    // Set up exceptions
+    idt[0].set_func(exception::divide_by_zero);
+    idt[1].set_func(exception::debug);
+    idt[2].set_func(exception::non_maskable);
+    idt[3].set_func(exception::breakpoint);
+    idt[3].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
+    idt[4].set_func(exception::overflow);
+    idt[5].set_func(exception::bound_range);
+    idt[6].set_func(exception::invalid_opcode);
+    idt[7].set_func(exception::device_not_available);
+    idt[8].set_func(exception::double_fault);
+    // 9 no longer available
+    idt[10].set_func(exception::invalid_tss);
+    idt[11].set_func(exception::segment_not_present);
+    idt[12].set_func(exception::stack_segment);
+    idt[13].set_func(exception::protection);
+    idt[14].set_func(exception::page);
+    // 15 reserved
+    idt[16].set_func(exception::fpu_fault);
+    idt[17].set_func(exception::alignment_check);
+    idt[18].set_func(exception::machine_check);
+    idt[19].set_func(exception::simd);
+    idt[20].set_func(exception::virtualization);
+    // 21 through 29 reserved
+    idt[30].set_func(exception::security);
+    // 31 reserved
 }
 
 const fn new_idt_reservations() -> [AtomicU32; 8] {
@@ -224,35 +251,10 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
         index
     };
 
-    // Set up exceptions
-    current_idt[0].set_func(exception::divide_by_zero);
-    current_idt[1].set_func(exception::debug);
-    current_idt[2].set_func(exception::non_maskable);
+    set_exceptions(current_idt);
     current_idt[2].set_ist(backup_ist);
-    current_idt[3].set_func(exception::breakpoint);
-    current_idt[3].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
-    current_idt[4].set_func(exception::overflow);
-    current_idt[5].set_func(exception::bound_range);
-    current_idt[6].set_func(exception::invalid_opcode);
-    current_idt[7].set_func(exception::device_not_available);
-    current_idt[8].set_func(exception::double_fault);
     current_idt[8].set_ist(backup_ist);
-    // 9 no longer available
-    current_idt[10].set_func(exception::invalid_tss);
-    current_idt[11].set_func(exception::segment_not_present);
-    current_idt[12].set_func(exception::stack_segment);
-    current_idt[13].set_func(exception::protection);
-    current_idt[14].set_func(exception::page);
-    // 15 reserved
-    current_idt[16].set_func(exception::fpu_fault);
-    current_idt[17].set_func(exception::alignment_check);
-    current_idt[18].set_func(exception::machine_check);
     current_idt[18].set_ist(backup_ist);
-    current_idt[19].set_func(exception::simd);
-    current_idt[20].set_func(exception::virtualization);
-    // 21 through 29 reserved
-    current_idt[30].set_func(exception::security);
-    // 31 reserved
 
     #[cfg(target_arch = "x86_64")]
     assert_eq!(
