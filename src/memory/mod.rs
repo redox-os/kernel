@@ -56,23 +56,26 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
 
     let Some((frame_order, frame)) = freelist[min_order as usize..].iter().enumerate().find_map(|(i, f)| f.map(|f| (i, f))) else {
         // TODO: For larger sizes than the max order, split into power of two allocations.
-        return None
+        log::error!("COUNT {min}");
+        log::error!("FREELIST {freelist:#?}");
+        log::error!(":(");
+        return None;
     };
 
     let info = get_page_info(frame)
         .unwrap_or_else(|| panic!("no page info for allocated frame {frame:?}"))
         .as_free().expect("freelist frames must not be marked used!");
     let next_free = info.next();
-    log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
+    //log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
 
     freelist[frame_order] = next_free.frame();
 
     // TODO: Is this LIFO cache optimal?
     for order in (min..frame_order).rev() {
-        let order_page_count = 1 << order;
+        let order_page_count = 1 << (order - 1);
 
         let hi = frame.next_by(order_page_count);
-        log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
+        //log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
         if let Some(old_head) = freelist[order].replace(hi) {
             let hi_info = get_page_info(hi)
@@ -513,6 +516,12 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         }
     };
 
+    sections.sort_unstable_by_key(|s| s.base);
+
+    unsafe {
+        ALLOCATOR_DATA = AllocatorData { sections };
+    }
+
     for section in &*sections {
         let mut base = section.base;
         let mut frames = section.frames;
@@ -520,42 +529,60 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         for order in 0..=MAX_ORDER {
             let pages_for_current_order = 1 << order;
 
-            if !frames.is_empty() && (order == MAX_ORDER || !base.is_aligned_to_order(order + 1)) {
+            if !frames.is_empty() && order != MAX_ORDER && !base.is_aligned_to_order(order + 1) {
                 // The first section page is not aligned to the next order size.
 
-                log::info!("ORDER {order}: FIRST {base:?}");
+                //log::info!("ORDER {order}: FIRST {base:?}");
                 append_page(base, &frames[0], order);
 
-                base = base.next_by(pages_for_current_order << order);
+                base = base.next_by(pages_for_current_order);
                 frames = &frames[pages_for_current_order..];
             } else {
-                log::info!("ORDER {order}: FIRST SKIP");
+                //log::info!("ORDER {order}: FIRST SKIP");
             }
 
-            if let Some(off2) = frames.len().checked_sub(2 * pages_for_current_order) && (order == MAX_ORDER || !base.next_by(off2).is_aligned_to_order(order + 1)) {
+            if let Some(off2) = frames.len().checked_sub(2 * pages_for_current_order) && order != MAX_ORDER && !base.next_by(off2).is_aligned_to_order(order + 1) {
+                // The last section page is not aligned to the next order size.
+
                 let off = frames.len() - pages_for_current_order;
 
-                log::info!("ORDER {order}: LAST {base:?}");
+                //log::info!("ORDER {order}: LAST {base:?}");
                 append_page(base.next_by(off), &frames[off], order);
 
-                // The last section page is not aligned to the next order size.
                 frames = &frames[..frames.len() - pages_for_current_order];
             } else {
-                log::info!("ORDER {order}: LAST SKIP");
+                //log::info!("ORDER {order}: LAST SKIP");
+            }
+
+            if order == MAX_ORDER {
+                assert_eq!(frames.len() % pages_for_current_order, 0);
+                assert!(base.is_aligned_to_order(MAX_ORDER));
+
+                for (off, info) in frames.iter().enumerate().step_by(pages_for_current_order) {
+                    append_page(base.next_by(off), info, MAX_ORDER);
+                }
             }
         }
 
-        log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
+        //log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
     }
 
     *FREELIST.lock() = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
-    sections.sort_unstable_by_key(|s| s.base);
+    let freelist = FREELIST.lock();
 
-    unsafe {
-        ALLOCATOR_DATA = AllocatorData { sections };
+    for order in 0..=MAX_ORDER {
+        let Some(first_frame) = freelist[order as usize] else {
+            continue;
+        };
+        //log::info!("ORDER {order} FIRST {first_frame:?}");
+        let mut frame = first_frame;
+
+        while let Some(next) = get_page_info(frame).unwrap_or_else(|| panic!("no page info: {frame:?}")).as_free().expect("not free").next().frame() {
+            //log::info!("ORDER {order} THEN {next:?}");
+            frame = next;
+        }
     }
-    //loop {}
 }
 
 #[cold]
