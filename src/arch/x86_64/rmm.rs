@@ -318,6 +318,8 @@ pub unsafe fn init(
 
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
+    let areas_raw = &mut *AREAS.get();
+
     for bootloader_area in bootloader_areas.iter() {
         if { bootloader_area.kind } != BootloaderMemoryKind::Free {
             // Not a free area
@@ -435,11 +437,19 @@ pub unsafe fn init(
             continue;
         }
 
-        let areas = &mut *AREAS.get();
-        areas[area_i].base = PhysicalAddress::new(base);
-        areas[area_i].size = size;
+        areas_raw[area_i].base = PhysicalAddress::new(base);
+        areas_raw[area_i].size = size;
         area_i += 1;
     }
+    for i in area_i..areas_raw.len() {
+        areas_raw[i] = MemoryArea {
+            base: PhysicalAddress::new(!0),
+            size: 0,
+        };
+    }
+
+    areas_raw.sort_unstable_by_key(|area| area.base);
+
     AREA_COUNT.get().write(area_i as u16);
 
     inner(

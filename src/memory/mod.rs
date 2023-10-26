@@ -90,7 +90,23 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         }
     }
 
-    log::info!("ALLOCATED {frame:?}+2^{min_order}");
+    info.mark_used();
+
+    unsafe {
+        (RmmA::phys_to_virt(frame.start_address()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
+    }
+
+    //log::info!("ALLOCATED {frame:?}+2^{min_order}");
+    /*unsafe {
+        let mut found = false;
+        for area in AREAS {
+            if frame.start_address() >= area.base && frame.next_by(1 << min_order).start_address() < area.base.add(area.size) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found);
+    }*/
     Some((frame, PAGE_SIZE << min_order))
 }
 
@@ -116,6 +132,9 @@ pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
     let hi_subblock_page_count = count - (number_of_chunks << chunk_order) - lo_subblock_page_count;
     deallocate_frames(frame, lo_subblock_page_count);
     deallocate_frames(first_aligned_frame.next_by(number_of_chunks << chunk_order), hi_subblock_page_count);
+
+    //log::info!("DEALLOCED {frame:?}+{count}");
+    loop {}
 }
 
 unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
@@ -398,6 +417,8 @@ const RC_SHARED_NOT_COW: usize = 1 << (usize::BITS - 2);
 // disabled).
 const RC_MAX: usize = 1 << (usize::BITS - 3);
 
+const RC_COUNT_MASK: usize = !(RC_USED_NOT_FREE | RC_SHARED_NOT_COW);
+
 // TODO: Use some of the flag bits as a tag, indicating the type of page (e.g. paging structure,
 // userspace data page, or kernel heap page). This could be done only when debug assertions are
 // enabled.
@@ -431,8 +452,19 @@ const _: () = {
 
 #[cold]
 fn init_sections(mut allocator: BumpAllocator<RmmA>) {
+    let (free_areas, offset_into_first_free_area) = allocator.free_areas();
+
+    let free_areas_iter = || free_areas.iter().copied().enumerate().map(|(i, area)| if i == 0 {
+        rmm::MemoryArea {
+            base: area.base.add(offset_into_first_free_area),
+            size: area.size - offset_into_first_free_area,
+        }
+    } else {
+        area
+    });
+
     let sections: &'static mut [Section] = {
-        let max_section_count: usize = allocator.areas().iter().map(|area| {
+        let max_section_count: usize = free_areas_iter().map(|area| {
             let aligned_end = area.base.add(area.size).data().next_multiple_of(MAX_SECTION_SIZE);
             let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
@@ -445,8 +477,9 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             core::slice::from_raw_parts_mut(RmmA::phys_to_virt(base).data() as *mut Section, max_section_count)
         }
     };
+    log::info!("SECTIONS AT {sections:p}");
 
-    let mut iter = allocator.areas().iter().copied().peekable();
+    let mut iter = free_areas_iter().peekable();
 
     let mut i = 0;
 
@@ -489,6 +522,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 let base = allocator.allocate(FrameCount::new(page_info_array_size_pages)).expect("failed to allocate page info array");
                 core::slice::from_raw_parts_mut(RmmA::phys_to_virt(base).data() as *mut PageInfo, page_info_count)
             };
+            log::info!("page info at {page_info_array:p}");
 
             sections[i] = Section {
                 base,
@@ -501,11 +535,36 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         }
     }
 
+    sections.sort_unstable_by_key(|s| s.base);
+
+    // The bump allocator has been used during the section array and page info array allocation
+    // phases, which means some of the PageInfos will be pointing to those arrays themselves.
+    // Mark those pages as used!
+    'sections: for section in &*sections {
+        for (off, page_info) in section.frames.iter().enumerate() {
+            let frame = section.base.next_by(off);
+            if frame.start_address() >= allocator.abs_offset() {
+                break 'sections;
+            }
+            log::info!("Marking {frame:?} as used");
+            page_info.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed);
+            page_info.next.store(0, Ordering::Relaxed);
+        }
+    }
+
     let mut first_pages: [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] = [None; ORDER_COUNT as usize];
     let mut last_pages = first_pages;
 
-    let mut append_page = |page, info, order| {
+    log::info!("ABSOFF {:?}", Frame::containing(allocator.abs_offset()));
+
+    let mut append_page = |page: Frame, info: &'static PageInfo, order| {
         let this_page = (page, info);
+
+        if info.refcount.load(Ordering::Relaxed) & RC_USED_NOT_FREE == RC_USED_NOT_FREE {
+            // Already marked as used by the section/page info arrays themselves.
+            return;
+        }
+
         let last_page = last_pages[order as usize].replace(this_page);
 
         if let Some((last_frame, last_page_info)) = last_page {
@@ -515,8 +574,6 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             first_pages[order as usize] = Some(this_page);
         }
     };
-
-    sections.sort_unstable_by_key(|s| s.base);
 
     unsafe {
         ALLOCATOR_DATA = AllocatorData { sections };
@@ -564,24 +621,37 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             }
         }
 
-        //log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
+        log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
     }
 
     *FREELIST.lock() = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
-    let freelist = FREELIST.lock();
+    {
+        let freelist = FREELIST.lock();
 
-    for order in 0..=MAX_ORDER {
-        let Some(first_frame) = freelist[order as usize] else {
-            continue;
-        };
-        //log::info!("ORDER {order} FIRST {first_frame:?}");
-        let mut frame = first_frame;
+        for order in 0..=MAX_ORDER {
+            let Some(first_frame) = freelist[order as usize] else {
+                continue;
+            };
+            //log::info!("ORDER {order} FIRST {first_frame:?}");
+            let mut frame = first_frame;
 
-        while let Some(next) = get_page_info(frame).unwrap_or_else(|| panic!("no page info: {frame:?}")).as_free().expect("not free").next().frame() {
-            //log::info!("ORDER {order} THEN {next:?}");
-            frame = next;
+            while let Some(next) = get_page_info(frame).unwrap_or_else(|| panic!("no page info: {frame:?}")).as_free().expect("not free").next().frame() {
+                //log::info!("ORDER {order} THEN {next:?}");
+                frame = next;
+            }
         }
+    }
+
+    let sections_page = Frame::containing(PhysicalAddress::new((unsafe { ALLOCATOR_DATA.sections }).as_ptr() as usize - crate::PHYS_OFFSET));
+    let info = get_page_info(sections_page);
+    log::info!("SECTIONS PAGE {sections_page:?} INFO {info:#0x?}");
+
+    for section in unsafe { ALLOCATOR_DATA.sections } {
+        let start = section.base;
+        let page = Frame::containing(PhysicalAddress::new(section.frames.as_ptr() as usize - crate::PHYS_OFFSET));
+        let info = get_page_info(page);
+        log::info!("SECTIONS AT {start:?} PAGE {page:?} INFO {info:#0x?}");
     }
 }
 
@@ -590,7 +660,7 @@ pub fn init_mm(allocator: BumpAllocator<RmmA>) {
     init_sections(allocator);
 
     unsafe {
-        let the_frame = allocate_frames(1).expect("failed to allocate static zeroed frame");
+        let the_frame = allocate_frame().expect("failed to allocate static zeroed frame");
         let the_info = get_page_info(the_frame).expect("static zeroed frame had no PageInfo");
         the_info
             .refcount
@@ -635,7 +705,7 @@ impl PageInfo {
             (RefCount::Cow(_), RefKind::Cow) | (RefCount::Shared(_), RefKind::Shared) => {
                 let old = self.refcount.fetch_add(1, Ordering::Relaxed);
 
-                if old >= RC_MAX {
+                if (old & RC_COUNT_MASK) >= RC_MAX {
                     self.refcount.fetch_sub(1, Ordering::Relaxed);
                     return Err(AddRefError::RcOverflow);
                 }
@@ -688,6 +758,10 @@ impl PageInfoFree<'_> {
     }
     fn set_prev(&self, prev: P2Frame) {
         self.prev.store(prev.0, Ordering::Relaxed)
+    }
+    fn mark_used(&self) {
+        self.next.store(0, Ordering::Relaxed);
+        self.prev.store(0, Ordering::Relaxed);
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
