@@ -166,10 +166,10 @@ impl SchemeList {
 
         // These schemes should only be available on the root
         #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))] {
-            self.insert(ns, "kernel/acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
+            self.insert(ns, "kernel.acpi", |scheme_id| Arc::new(AcpiScheme::new(scheme_id))).unwrap();
         }
         #[cfg(all(any(target_arch = "aarch64")))] {
-            self.insert(ns, "kernel/dtb", |scheme_id| Arc::new(DtbScheme::new(scheme_id))).unwrap();
+            self.insert(ns, "kernel.dtb", |scheme_id| Arc::new(DtbScheme::new(scheme_id))).unwrap();
         }
         self.insert(ns, "debug", |scheme_id| Arc::new(DebugScheme::new(scheme_id))).unwrap();
         self.insert(ns, "irq", |scheme_id| Arc::new(IrqScheme::new(scheme_id))).unwrap();

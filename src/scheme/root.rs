@@ -73,33 +73,37 @@ impl Scheme for RootScheme {
 
         //TODO: Make this follow standards for flags and errors
         if flags & O_CREAT == O_CREAT {
-            if uid == 0 {
-                let context = {
-                    let contexts = context::contexts();
-                    let context = contexts.current().ok_or(Error::new(ESRCH))?;
-                    Arc::downgrade(context)
-                };
+            if uid != 0 {
+                return Err(Error::new(EACCES));
+            };
 
-                let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-
-                let inner = {
-                    let path_box = path.to_string().into_boxed_str();
-                    let mut schemes = scheme::schemes_mut();
-
-                    let (_scheme_id, inner) = schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
-                        let inner = Arc::new(UserInner::new(self.scheme_id, scheme_id, id, path_box, flags, context));
-                        (Arc::new(UserScheme::new(Arc::downgrade(&inner))), inner)
-                    })?;
-
-                    inner
-                };
-
-                self.handles.write().insert(id, Handle::Scheme(inner));
-
-                Ok(id)
-            } else {
-                Err(Error::new(EACCES))
+            if path.contains('/') {
+                return Err(Error::new(EINVAL));
             }
+
+            let context = {
+                let contexts = context::contexts();
+                let context = contexts.current().ok_or(Error::new(ESRCH))?;
+                Arc::downgrade(context)
+            };
+
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+            let inner = {
+                let path_box = path.to_string().into_boxed_str();
+                let mut schemes = scheme::schemes_mut();
+
+                let (_scheme_id, inner) = schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
+                    let inner = Arc::new(UserInner::new(self.scheme_id, scheme_id, id, path_box, flags, context));
+                    (Arc::new(UserScheme::new(Arc::downgrade(&inner))), inner)
+                })?;
+
+                inner
+            };
+
+            self.handles.write().insert(id, Handle::Scheme(inner));
+
+            Ok(id)
         } else if path.is_empty() {
             let scheme_ns = {
                 let contexts = context::contexts();
