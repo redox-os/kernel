@@ -112,6 +112,11 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
 
 /// Deallocate a range of frames
 pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
+    if count == 0 {
+        log::warn!("Count == 0 (frame {frame:?}");
+        return;
+    }
+
     let max_order = core::cmp::min(MAX_ORDER, count.next_power_of_two().trailing_zeros());
 
     let (first_aligned, chunk_order, number_of_chunks) = (0..=max_order).rev().find_map(|order| {
@@ -130,11 +135,14 @@ pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
     let first_aligned_frame = Frame::containing_address(PhysicalAddress::new(first_aligned));
     let lo_subblock_page_count = first_aligned_frame.offset_from(frame);
     let hi_subblock_page_count = count - (number_of_chunks << chunk_order) - lo_subblock_page_count;
-    deallocate_frames(frame, lo_subblock_page_count);
-    deallocate_frames(first_aligned_frame.next_by(number_of_chunks << chunk_order), hi_subblock_page_count);
+    if lo_subblock_page_count > 0 {
+        deallocate_frames(frame, lo_subblock_page_count);
+    }
+    if hi_subblock_page_count > 0 {
+        deallocate_frames(first_aligned_frame.next_by(number_of_chunks << chunk_order), hi_subblock_page_count);
+    }
 
     //log::info!("DEALLOCED {frame:?}+{count}");
-    loop {}
 }
 
 unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
@@ -169,6 +177,7 @@ unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
         if neighbor_info.next().order() != merge_order {
             break;
         }
+        //log::info!("MERGED {frame:?} WITH {neighbor:?} ORDER {order}");
 
         // Link frame->prev->next to neighbor->next
         if let Some(prev_info) = frame_info.prev().frame() {
@@ -201,7 +210,7 @@ unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
             .set_prev(P2Frame::new(Some(old_head), largest_order));
     }
 
-    log::info!("FREED {frame:?}+2^{order}");
+    //log::info!("FREED {frame:?}+2^{order}");
 }
 
 pub unsafe fn deallocate_frame(frame: Frame) {
@@ -477,7 +486,6 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             core::slice::from_raw_parts_mut(RmmA::phys_to_virt(base).data() as *mut Section, max_section_count)
         }
     };
-    log::info!("SECTIONS AT {sections:p}");
 
     let mut iter = free_areas_iter().peekable();
 
@@ -522,7 +530,6 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 let base = allocator.allocate(FrameCount::new(page_info_array_size_pages)).expect("failed to allocate page info array");
                 core::slice::from_raw_parts_mut(RmmA::phys_to_virt(base).data() as *mut PageInfo, page_info_count)
             };
-            log::info!("page info at {page_info_array:p}");
 
             sections[i] = Section {
                 base,
@@ -546,7 +553,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             if frame.start_address() >= allocator.abs_offset() {
                 break 'sections;
             }
-            log::info!("Marking {frame:?} as used");
+            //log::info!("MARKING {frame:?} AS USED");
             page_info.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed);
             page_info.next.store(0, Ordering::Relaxed);
         }
@@ -554,8 +561,6 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
     let mut first_pages: [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] = [None; ORDER_COUNT as usize];
     let mut last_pages = first_pages;
-
-    log::info!("ABSOFF {:?}", Frame::containing(allocator.abs_offset()));
 
     let mut append_page = |page: Frame, info: &'static PageInfo, order| {
         let this_page = (page, info);
@@ -621,7 +626,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             }
         }
 
-        log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
+        //log::info!("SECTION from {:?}, {} pages", section.base, section.frames.len());
     }
 
     *FREELIST.lock() = first_pages.map(|pair| pair.map(|(frame, _)| frame));
@@ -641,17 +646,6 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 frame = next;
             }
         }
-    }
-
-    let sections_page = Frame::containing(PhysicalAddress::new((unsafe { ALLOCATOR_DATA.sections }).as_ptr() as usize - crate::PHYS_OFFSET));
-    let info = get_page_info(sections_page);
-    log::info!("SECTIONS PAGE {sections_page:?} INFO {info:#0x?}");
-
-    for section in unsafe { ALLOCATOR_DATA.sections } {
-        let start = section.base;
-        let page = Frame::containing(PhysicalAddress::new(section.frames.as_ptr() as usize - crate::PHYS_OFFSET));
-        let info = get_page_info(page);
-        log::info!("SECTIONS AT {start:?} PAGE {page:?} INFO {info:#0x?}");
     }
 }
 
