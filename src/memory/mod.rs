@@ -48,13 +48,16 @@ pub fn allocate_frame() -> Option<Frame> {
     allocate_frames(1)
 }
 pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, min: usize) -> Option<(Frame, usize)> {
+    let before = get_freelist_pagecount();
+    //debug_freelist();
+
     // TODO: Split into sub-power of two allocations.
     let min_order = min.next_power_of_two().trailing_zeros();
     let _req_order = count.next_power_of_two().trailing_zeros();
 
     let mut freelist = FREELIST.lock();
 
-    let Some((frame_order, frame)) = freelist[min_order as usize..].iter().enumerate().find_map(|(i, f)| f.map(|f| (i, f))) else {
+    let Some((frame_order, frame)) = freelist.iter().enumerate().skip(min_order as usize).find_map(|(i, f)| f.map(|f| (i as u32, f))) else {
         // TODO: For larger sizes than the max order, split into power of two allocations.
         log::error!("COUNT {min}");
         log::error!("FREELIST {freelist:#?}");
@@ -68,29 +71,32 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
     let next_free = info.next();
     //log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
 
-    freelist[frame_order] = next_free.frame();
+    freelist[frame_order as usize] = next_free.frame();
 
     // TODO: Is this LIFO cache optimal?
-    for order in (min..frame_order).rev() {
-        let order_page_count = 1 << (order - 1);
+    //log::info!("MIN{min_order}FRAMEORD{frame_order}");
+    for order in (min_order..frame_order).rev() {
+        //log::info!("SPLIT ORDER {order}");
+        let order_page_count = 1 << order;
 
         let hi = frame.next_by(order_page_count);
         //log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
-        if let Some(old_head) = freelist[order].replace(hi) {
+        if let Some(old_head) = freelist[order as usize].replace(hi) {
             let hi_info = get_page_info(hi)
                 .expect("no page info for allocated frame")
                 .as_free().expect("freelist cannot contain used pages!");
 
-            hi_info.set_next(P2Frame::new(Some(old_head), order as u32));
+            hi_info.set_next(P2Frame::new(Some(old_head), order));
 
             get_page_info(old_head).expect("freelist head needs page info")
                 .as_free().expect("freelist head cannot be in use")
-                .set_prev(P2Frame::new(Some(hi), order as u32));
+                .set_prev(P2Frame::new(Some(hi), order));
         }
     }
 
     info.mark_used();
+    drop(freelist);
 
     unsafe {
         (RmmA::phys_to_virt(frame.start_address()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
@@ -107,15 +113,33 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         }
         assert!(found);
     }*/
+    let after = get_freelist_pagecount();
+    assert_eq!(after, before - (1 << min_order));
+    /*
+    if after != before - (1 << min_order) {
+        log::info!("BAD ALLOC order {min_order} frame {frame:?} after {after} before {before} frameorder {frame_order}");
+        debug_freelist();
+        loop {}
+    } else {
+        //log::info!("GOOD ALLOC order {min_order} frame {frame:?}");
+    }*/
+
     Some((frame, PAGE_SIZE << min_order))
 }
 
 /// Deallocate a range of frames
 pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
+    let before = get_freelist_pagecount();
+    deallocate_frames_inner(frame, count);
+    let after = get_freelist_pagecount();
+    assert_eq!(before + count, after);
+}
+unsafe fn deallocate_frames_inner(frame: Frame, count: usize) {
     if count == 0 {
         log::warn!("Count == 0 (frame {frame:?}");
         return;
     }
+    //log::info!("DEALLOCATE {frame:?}+{count}");
 
     let max_order = core::cmp::min(MAX_ORDER, count.next_power_of_two().trailing_zeros());
 
@@ -129,20 +153,40 @@ pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
     }).expect("must succeed at least for order=0");
 
     for i in 0..number_of_chunks {
-        deallocate_p2frame(Frame::containing_address(PhysicalAddress::new(first_aligned + i * (PAGE_SIZE << chunk_order))), chunk_order);
+        let p2frame = Frame::containing_address(PhysicalAddress::new(first_aligned + i * (PAGE_SIZE << chunk_order)));
+        //log::info!("P2DEALLOCATE {frame:?}+2^{chunk_order}");
+        deallocate_p2frame(p2frame, chunk_order);
     }
 
     let first_aligned_frame = Frame::containing_address(PhysicalAddress::new(first_aligned));
     let lo_subblock_page_count = first_aligned_frame.offset_from(frame);
     let hi_subblock_page_count = count - (number_of_chunks << chunk_order) - lo_subblock_page_count;
     if lo_subblock_page_count > 0 {
-        deallocate_frames(frame, lo_subblock_page_count);
+        //log::info!("SUBDEALLOCATE LO {frame:?}+{lo_subblock_page_count}");
+        deallocate_frames_inner(frame, lo_subblock_page_count);
     }
     if hi_subblock_page_count > 0 {
-        deallocate_frames(first_aligned_frame.next_by(number_of_chunks << chunk_order), hi_subblock_page_count);
+        let hi_frame = first_aligned_frame.next_by(number_of_chunks << chunk_order);
+        //log::info!("SUBDEALLOCATE HI {hi_frame:?}+{hi_subblock_page_count}");
+        deallocate_frames_inner(hi_frame, hi_subblock_page_count);
     }
+}
+fn get_freelist_pagecount() -> usize {
+    let mut pagecount = 0;
+    let freelist = FREELIST.lock();
 
-    //log::info!("DEALLOCED {frame:?}+{count}");
+    for order in 0..=MAX_ORDER {
+        let Some(mut p2frame) = freelist[order as usize] else {
+            continue;
+        };
+        pagecount += 1 << order;
+
+        while let Some(next) = get_page_info(p2frame).unwrap().as_free().unwrap().next().frame() {
+            pagecount += 1 << order;
+            p2frame = next;
+        }
+    }
+    pagecount
 }
 
 unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
@@ -631,21 +675,25 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
     *FREELIST.lock() = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
-    {
-        let freelist = FREELIST.lock();
+}
+fn debug_freelist() {
+    let freelist = FREELIST.lock();
 
-        for order in 0..=MAX_ORDER {
-            let Some(first_frame) = freelist[order as usize] else {
-                continue;
-            };
-            //log::info!("ORDER {order} FIRST {first_frame:?}");
-            let mut frame = first_frame;
+    for order in 0..=MAX_ORDER {
+        let Some(first_frame) = freelist[order as usize] else {
+            continue;
+        };
+        log::info!("ORDER {order} FIRST {first_frame:?}");
+        let mut frame = first_frame;
 
-            while let Some(next) = get_page_info(frame).unwrap_or_else(|| panic!("no page info: {frame:?}")).as_free().expect("not free").next().frame() {
-                //log::info!("ORDER {order} THEN {next:?}");
-                frame = next;
-            }
+        if order == MAX_ORDER { break }
+        let mut count = 1;
+        while let Some(next) = get_page_info(frame).unwrap_or_else(|| panic!("no page info: {frame:?}")).as_free().expect("not free").next().frame() {
+            log::info!("ORDER {order} THEN {next:?}");
+            frame = next;
+            count += 1;
         }
+        log::info!("ORDER {order}: {count} p2frames");
     }
 }
 
