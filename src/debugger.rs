@@ -318,10 +318,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         };
         let rc = info.refcount();
         let c = match rc {
-            RefCount::Zero => 0,
-            RefCount::One => 1,
-            RefCount::Cow(c) => c.get(),
-            RefCount::Shared(s) => s.get(),
+            None => 0,
+            Some(RefCount::One) => 1,
+            Some(RefCount::Cow(c)) => c.get(),
+            Some(RefCount::Shared(s)) => s.get(),
         };
         if c != count {
             println!(
@@ -430,15 +430,10 @@ pub unsafe fn check_consistency(
 
                     if let Some(page) = get_page_info(frame) {
                         match page.refcount() {
-                            RefCount::Zero => panic!("mapped page with zero refcount"),
+                            None => panic!("mapped page with zero refcount"),
 
-                            RefCount::One | RefCount::Shared(_) => assert!(
-                                !(flags.has_write() && !grant.flags().has_write()),
-                                "page entry has higher permissions than grant!"
-                            ),
-                            RefCount::Cow(_) => {
-                                assert!(!flags.has_write(), "directly writable CoW page!")
-                            }
+                            Some(RefCount::One | RefCount::Shared(_)) => assert!(!(flags.has_write() && !grant.flags().has_write()), "page entry has higher permissions than grant!"),
+                            Some(RefCount::Cow(_)) => assert!(!flags.has_write(), "directly writable CoW page!"),
                         }
                     } else {
                         //println!("!OWNED {:?}", frame);

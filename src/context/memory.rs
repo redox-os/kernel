@@ -1319,7 +1319,7 @@ impl Grant {
                             }
                             src_flusher_state = src_flusher.detach();
 
-                            if page_info.remove_ref() == RefCount::Zero {
+                            if page_info.remove_ref().is_none() {
                                 deallocate_frame(frame);
                             }
 
@@ -2222,14 +2222,14 @@ pub struct CowResult {
 /// deallocated.
 fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Result<CowResult, PfError> {
     let old_refcount = old_info.refcount();
-    assert_ne!(old_refcount, RefCount::Zero);
+    assert!(old_refcount.is_some());
 
     let initial_rc = match initial_ref_kind {
         RefKind::Cow => RefCount::One,
         RefKind::Shared => RefCount::Shared(NonZeroUsize::new(2).unwrap()),
     };
 
-    if old_refcount == RefCount::One {
+    if old_refcount == Some(RefCount::One) {
         // We were lucky; the frame was already exclusively owned, so the refcount cannot be
         // modified unless we modify it. This is the special case where the old_frame returned is
         // None.
@@ -2691,7 +2691,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
                         .expect("phys_contiguous frames all need PageInfos")
                         .remove_ref();
 
-                    assert_eq!(new_rc, RefCount::Zero);
+                    assert_eq!(new_rc, None);
                 }
                 unsafe {
                     deallocate_frames(base, count.get());
@@ -2700,7 +2700,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
                 let Some(info) = get_page_info(base) else {
                     continue;
                 };
-                if info.remove_ref() == RefCount::Zero {
+                if info.remove_ref() == None {
                     unsafe {
                         deallocate_frames(base, 1);
                     }
