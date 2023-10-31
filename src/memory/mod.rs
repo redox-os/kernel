@@ -117,7 +117,7 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
     let after = get_freelist_pagecount();
     assert_eq!(after, before - (1 << min_order));
 
-    log::info!("ALLOCED {frame:?}+2^{min_order}");
+    //log::info!("ALLOCED {frame:?}+2^{min_order}");
 
     Some((frame, PAGE_SIZE << min_order))
 }
@@ -798,7 +798,7 @@ impl PageInfo {
         }
     }
     fn kind(&self) -> PageInfoKind<'_> {
-        let next = self.next.load(Ordering::Relaxed);
+        let next = self.refcount.load(Ordering::Relaxed);
 
         if next & RC_USED_NOT_FREE == RC_USED_NOT_FREE {
             PageInfoKind::Used(PageInfoUsed { refcount: &self.refcount, _misc: &self.next })
@@ -836,7 +836,7 @@ impl PageInfo {
             RefCount::Zero => panic!("refcount was already zero when calling remove_ref!"),
             RefCount::One => {
                 // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | 0, now becomes 0
-                self.refcount.store(0, Ordering::Relaxed);
+                //self.refcount.store(0, Ordering::Relaxed);
 
                 0
             }
@@ -875,8 +875,12 @@ impl PageInfoFree<'_> {
         self.prev.store(prev.0, Ordering::Relaxed)
     }
     fn mark_used(&self) {
+        self.prev.store(RC_USED_NOT_FREE, Ordering::Relaxed);
         self.next.store(0, Ordering::Relaxed);
+    }
+    fn mark_free(&self) {
         self.prev.store(0, Ordering::Relaxed);
+        self.next.store(0, Ordering::Relaxed);
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -887,26 +891,31 @@ pub enum RefKind {
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RefCount {
+    // TODO: Remove?
     Zero,
+
     One,
     Shared(NonZeroUsize),
     Cow(NonZeroUsize),
 }
 impl RefCount {
     pub fn from_raw(raw: usize) -> Self {
-        let refcount = raw & !RC_SHARED_NOT_COW;
+        if raw & RC_USED_NOT_FREE != RC_USED_NOT_FREE {
+            RefCount::Zero
+        } else {
+            let refcount = raw & !(RC_SHARED_NOT_COW | RC_USED_NOT_FREE);
+            let nz_refcount = NonZeroUsize::new(refcount + 1).unwrap();
 
-        if let Some(nz_refcount) = NonZeroUsize::new(refcount) {
-            if refcount == 1 {
+            if nz_refcount.get() == 1 {
                 RefCount::One
             } else if raw & RC_SHARED_NOT_COW == RC_SHARED_NOT_COW {
                 RefCount::Shared(nz_refcount)
             } else {
                 RefCount::Cow(nz_refcount)
             }
-        } else {
-            RefCount::Zero
+
         }
+
     }
     pub fn to_raw(self) -> usize {
         match self {
@@ -946,8 +955,8 @@ pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
 
 #[track_caller]
 fn get_free_alloc_page_info(frame: Frame) -> PageInfoFree<'static> {
-    get_page_info(frame).expect("allocator-owned frames need a PageInfo")
-        .as_free().expect("expected frame to be free")
+    get_page_info(frame).unwrap_or_else(|| panic!("allocator-owned frames need a PageInfo, but none for {frame:?}"))
+        .as_free().unwrap_or_else(|| panic!("expected frame to be free, but {frame:?} wasn't"))
 }
 
 pub struct Segv;
