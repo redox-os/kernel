@@ -83,7 +83,7 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         //log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
         if let Some(old_head) = freelist[order as usize].replace(hi) {
-            let hi_info = get_free_alloc_page_info(hi);
+            let hi_info = get_page_info(hi).expect("sub-p2frame of split p2flame lacked PageInfo").make_free();
 
             hi_info.set_next(P2Frame::new(Some(old_head), order));
             hi_info.set_prev(P2Frame::new(None, order));
@@ -125,12 +125,12 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
 /// Deallocate a range of frames
 pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
     log::info!("DEALLOC{frame:?}+{count}");
-    //let before = get_freelist_pagecount();
+    let before = get_freelist_pagecount();
     debug_freelist();
     deallocate_frames_inner(frame, count);
     debug_freelist();
     //loop {}
-    //let after = get_freelist_pagecount();
+    let after = get_freelist_pagecount();
 }
 unsafe fn deallocate_frames_inner(frame: Frame, count: usize) {
     if count == 0 {
@@ -203,6 +203,11 @@ fn get_freelist_pagecount() -> usize {
 unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
     let mut freelist = FREELIST.lock();
     let mut largest_order = 0;
+
+    get_page_info(frame)
+        .expect("freeing frame without PageInfo")
+        .as_used().expect("deallocating free frame")
+        .make_free();
 
     for merge_order in order..MAX_ORDER {
         // Because there's a PageInfo, this frame must be allocator-owned. We need to be very
@@ -324,17 +329,15 @@ unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
     }
 
     let new_head = frame;
-    let new_head_info = get_page_info(new_head).expect("allocated frames must have PageInfos").as_used().expect("deallocating free frame").make_free();
 
     if let Some(old_head) = freelist[largest_order as usize].replace(new_head) {
         //log::info!("HEAD {:p} FREED {:p} BARRIER {:p}", get_page_info(old_head).unwrap(), get_page_info(frame).unwrap(), unsafe { ALLOCATOR_DATA.abs_off as *const u8 });
         let old_head_info = get_free_alloc_page_info(old_head);
+        let new_head_info = get_free_alloc_page_info(new_head);
 
         new_head_info.set_next(P2Frame::new(Some(old_head), largest_order));
         old_head_info.set_prev(P2Frame::new(Some(new_head), largest_order));
     }
-    // This will mark it as unused
-    new_head_info.set_prev(P2Frame::new(None, largest_order));
 
     log::info!("FREED {frame:?}+2^{order}");
 }
@@ -686,6 +689,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         if page.start_address() < allocator.abs_offset() {
             return;
         }
+        assert!(info.as_free().is_some());
 
         let last_page = last_pages[order as usize].replace(this_page);
 
@@ -865,6 +869,14 @@ impl PageInfo {
         let refcount = self.refcount.load(Ordering::Relaxed);
 
         RefCount::from_raw(refcount)
+    }
+    fn make_free(&self) -> PageInfoFree<'_> {
+        self.refcount.store(0, Ordering::Relaxed);
+
+        PageInfoFree {
+            next: &self.next,
+            prev: &self.refcount,
+        }
     }
 }
 impl PageInfoFree<'_> {
