@@ -9,7 +9,6 @@ use crate::event;
 use crate::scheme::*;
 use crate::sync::WaitQueue;
 use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
-use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::UserSliceWo;
 
 static SCHEME_ID: Once<SchemeId> = Once::new();
@@ -49,9 +48,9 @@ impl SerioScheme {
     }
 }
 
-impl Scheme for SerioScheme {
-    fn open(&self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if uid != 0 {
+impl KernelScheme for SerioScheme {
+    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+        if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
 
@@ -68,7 +67,7 @@ impl Scheme for SerioScheme {
             flags: flags & ! O_ACCMODE
         });
 
-        Ok(id)
+        Ok(OpenResult::SchemeLocal(id))
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
@@ -96,26 +95,24 @@ impl Scheme for SerioScheme {
         Ok(EventFlags::empty())
     }
 
-    fn fsync(&self, id: usize) -> Result<usize> {
+    fn fsync(&self, id: usize) -> Result<()> {
         let _handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        Ok(0)
+        Ok(())
     }
 
     /// Close the file `number`
-    fn close(&self, id: usize) -> Result<usize> {
+    fn close(&self, id: usize) -> Result<()> {
         let _handle = {
             let mut handles = HANDLES.write();
             handles.remove(&id).ok_or(Error::new(EBADF))?
         };
 
-        Ok(0)
+        Ok(())
     }
-}
-impl crate::scheme::KernelScheme for SerioScheme {
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();

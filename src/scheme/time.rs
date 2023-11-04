@@ -8,9 +8,10 @@ use crate::scheme::SchemeId;
 use crate::syscall::data::TimeSpec;
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
-use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 use crate::time;
+
+use super::{KernelScheme, CallerCtx, OpenResult};
 
 pub struct TimeScheme {
     scheme_id: SchemeId,
@@ -28,9 +29,9 @@ impl TimeScheme {
     }
 }
 
-impl Scheme for TimeScheme {
-    fn open(&self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
-        let clock = path.parse::<usize>().or(Err(Error::new(ENOENT)))?;
+impl KernelScheme for TimeScheme {
+    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+        let clock = path.parse::<usize>().map_err(|_| Error::new(ENOENT))?;
 
         match clock {
             CLOCK_REALTIME => (),
@@ -38,10 +39,10 @@ impl Scheme for TimeScheme {
             _ => return Err(Error::new(ENOENT))
         }
 
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.handles.write().insert(id, clock);
 
-        Ok(id)
+        Ok(OpenResult::SchemeLocal(id))
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -53,16 +54,14 @@ impl Scheme for TimeScheme {
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
     }
 
-    fn fsync(&self, id: usize) -> Result<usize> {
-        let handles = self.handles.read();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+    fn fsync(&self, id: usize) -> Result<()> {
+        self.handles.read().get(&id).ok_or(Error::new(EBADF))?;
+        Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+    fn close(&self, id: usize) -> Result<()> {
+        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
-}
-impl crate::scheme::KernelScheme for TimeScheme {
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let clock = {
             let handles = self.handles.read();

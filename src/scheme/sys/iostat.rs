@@ -1,8 +1,6 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write;
-use core::str;
-
 use crate::context;
 use crate::scheme;
 use crate::syscall::error::Result;
@@ -33,7 +31,7 @@ pub fn resource() -> Result<Vec<u8>> {
 
                 let description = file.description.read();
 
-                let scheme = {
+                let _scheme = {
                     let schemes = scheme::schemes();
                     match schemes.get(description.scheme) {
                         Some(scheme) => scheme.clone(),
@@ -44,6 +42,7 @@ pub fn resource() -> Result<Vec<u8>> {
                     }
                 };
 
+                /*
                 let mut fpath = [0; 4096];
                 match scheme.fpath(description.number, &mut fpath) {
                     Ok(path_len) => {
@@ -54,6 +53,7 @@ pub fn resource() -> Result<Vec<u8>> {
                         let _ = writeln!(string, "{:>6}: {:>8} {:>8} {:>08X}: {}", fd, description.scheme.get(), description.number, description.flags, err);
                     }
                 }
+                */
             }
         }
     }

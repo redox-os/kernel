@@ -16,7 +16,6 @@ pub use self::syscall::{
     io,
     number,
     ptrace_event,
-    scheme,
 };
 
 pub use self::driver::*;
@@ -91,8 +90,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                     SYS_ARG_MSLICE => match a {
                         SYS_READ => file_op_generic(fd, |scheme, _, number| scheme.kread(number, UserSlice::wo(c, d)?)),
                         SYS_FPATH => file_op_generic(fd, |scheme, _, number| scheme.kfpath(number, UserSlice::wo(c, d)?)),
-                        SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?),
-                        SYS_FSTATVFS => file_op_generic(fd, |scheme, _, number| scheme.kfstatvfs(number, UserSlice::wo(c, d)?)),
+                        SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?).map(|()| 0),
+                        SYS_FSTATVFS => file_op_generic(fd, |scheme, _, number| scheme.kfstatvfs(number, UserSlice::wo(c, d)?).map(|()| 0)),
 
                         _ => return Err(Error::new(ENOSYS)),
                     },
@@ -106,18 +105,19 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                         #[cfg(target_pointer_width = "64")]
                         SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64),
 
-                        SYS_LSEEK => file_op_generic(fd, |scheme, _, number| Ok(scheme.seek(number, c as isize, d)? as usize)),
-                        SYS_FCHMOD => file_op_generic(fd, |scheme, _, number| scheme.fchmod(number, c as u16)),
-                        SYS_FCHOWN => file_op_generic(fd, |scheme, _, number| scheme.fchown(number, c as u32, d as u32)),
+                        SYS_LSEEK => file_op_generic(fd, |scheme, _, number| scheme.seek(number, c as isize, d)),
+                        SYS_FCHMOD => file_op_generic(fd, |scheme, _, number| scheme.fchmod(number, c as u16).map(|()| 0)),
+                        SYS_FCHOWN => file_op_generic(fd, |scheme, _, number| scheme.fchown(number, c as u32, d as u32).map(|()| 0)),
                         SYS_FCNTL => fcntl(fd, c, d),
                         SYS_FEVENT => file_op_generic(fd, |scheme, _, number| Ok(scheme.fevent(number, EventFlags::from_bits_truncate(c))?.bits())),
-                        SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?),
+                        SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?).map(|()| 0),
                         SYS_FUNMAP => funmap(b, c),
 
-                        SYS_FSYNC => file_op_generic(fd, |scheme, _, number| scheme.fsync(number)),
-                        SYS_FTRUNCATE => file_op_generic(fd, |scheme, _, number| scheme.ftruncate(number, c)),
+                        SYS_FSYNC => file_op_generic(fd, |scheme, _, number| scheme.fsync(number).map(|()| 0)),
+                        // TODO: 64-bit lengths on 32-bit platforms
+                        SYS_FTRUNCATE => file_op_generic(fd, |scheme, _, number| scheme.ftruncate(number, c).map(|()| 0)),
 
-                        SYS_CLOSE => close(fd),
+                        SYS_CLOSE => close(fd).map(|()| 0),
 
                         _ => return Err(Error::new(ENOSYS)),
                     }
@@ -125,8 +125,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
             },
             SYS_CLASS_PATH => match a {
                 SYS_OPEN => open(UserSlice::ro(b, c)?, d).map(FileHandle::into),
-                SYS_RMDIR => rmdir(UserSlice::ro(b, c)?),
-                SYS_UNLINK => unlink(UserSlice::ro(b, c)?),
+                SYS_RMDIR => rmdir(UserSlice::ro(b, c)?).map(|()| 0),
+                SYS_UNLINK => unlink(UserSlice::ro(b, c)?).map(|()| 0),
                 _ => Err(Error::new(ENOSYS))
             },
             _ => match a {

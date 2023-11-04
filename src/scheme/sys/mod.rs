@@ -7,9 +7,10 @@ use spin::RwLock;
 use crate::syscall::data::Stat;
 use crate::syscall::error::{Error, EBADF, ENOENT, Result};
 use crate::syscall::flag::{MODE_DIR, MODE_FILE};
-use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::arch::interrupt;
 use crate::syscall::usercopy::UserSliceWo;
+
+use super::{KernelScheme, CallerCtx, OpenResult, calc_seek_offset};
 
 mod block;
 mod context;
@@ -74,8 +75,8 @@ impl SysScheme {
     }
 }
 
-impl Scheme for SysScheme {
-    fn open(&self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+impl KernelScheme for SysScheme {
+    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         let path = path.trim_matches('/');
 
         if path.is_empty() {
@@ -87,19 +88,19 @@ impl Scheme for SysScheme {
                 data.extend_from_slice(entry.0.as_bytes());
             }
 
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle {
                 path: "",
                 data,
                 mode: MODE_DIR | 0o444,
                 seek: 0
             });
-            return Ok(id)
+            return Ok(OpenResult::SchemeLocal(id))
         } else {
             //Have to iterate to get the path without allocation
             for entry in self.files.iter() {
                 if entry.0 == &path {
-                    let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+                    let id = self.next_id.fetch_add(1, Ordering::Relaxed);
                     let data = entry.1()?;
                     self.handles.write().insert(id, Handle {
                         path: entry.0,
@@ -107,7 +108,7 @@ impl Scheme for SysScheme {
                         mode: MODE_FILE | 0o444,
                         seek: 0
                     });
-                    return Ok(id)
+                    return Ok(OpenResult::SchemeLocal(id));
                 }
             }
         }
@@ -115,24 +116,22 @@ impl Scheme for SysScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
         let mut handles = self.handles.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let new_offset = calc_seek_offset_usize(handle.seek, pos, whence, handle.data.len())?;
+        let new_offset = calc_seek_offset(handle.seek, pos, whence, handle.data.len())?;
         handle.seek = new_offset as usize;
         Ok(new_offset)
     }
 
-    fn fsync(&self, _id: usize) -> Result<usize> {
-        Ok(0)
+    fn fsync(&self, _id: usize) -> Result<()> {
+        Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+    fn close(&self, id: usize) -> Result<()> {
+        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
-}
-impl crate::scheme::KernelScheme for SysScheme {
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -159,7 +158,7 @@ impl crate::scheme::KernelScheme for SysScheme {
         Ok(byte_count)
     }
 
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -171,6 +170,6 @@ impl crate::scheme::KernelScheme for SysScheme {
             ..Default::default()
         })?;
 
-        Ok(0)
+        Ok(())
     }
 }

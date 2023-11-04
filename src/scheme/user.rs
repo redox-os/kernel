@@ -3,12 +3,11 @@ use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use syscall::{SKMSG_FRETURNFD, CallerCtx, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags, SKMSG_FOBTAINFD, FobtainFdFlags, SendFdFlags};
+use syscall::{SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags, SKMSG_FOBTAINFD, FobtainFdFlags, SendFdFlags};
 use core::mem::size_of;
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
-use core::convert::TryFrom;
 use spin::{Mutex, RwLock};
 
 use crate::context::context::HardBlockedReason;
@@ -25,10 +24,9 @@ use crate::syscall::data::{Map, Packet};
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE, MapFlags};
 use crate::syscall::number::*;
-use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::{UserSlice, UserSliceWo, UserSliceRo};
 
-use super::{FileHandle, OpenResult, KernelScheme, current_caller_ctx};
+use super::{FileHandle, OpenResult, KernelScheme, CallerCtx};
 
 pub struct UserInner {
     root_id: SchemeId,
@@ -74,7 +72,7 @@ impl UserInner {
         }
     }
 
-    pub fn unmount(&self) -> Result<usize> {
+    pub fn unmount(&self) -> Result<()> {
         // First, block new requests and prepare to return EOF
         self.unmounting.store(true, Ordering::SeqCst);
 
@@ -85,7 +83,7 @@ impl UserInner {
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         //TODO: wait for all todo and done to be processed?
-        Ok(0)
+        Ok(())
     }
 
     fn next_id(&self) -> u64 {
@@ -96,7 +94,8 @@ impl UserInner {
     }
 
     pub fn call(&self, a: usize, b: usize, c: usize, d: usize) -> Result<usize> {
-        match self.call_extended(current_caller_ctx()?, None, [a, b, c, d])? {
+        let ctx = context::current()?.read().caller_ctx();
+        match self.call_extended(ctx, None, [a, b, c, d])? {
             Response::Regular(code) => Error::demux(code),
             Response::Fd(_) => {
                 if a & SYS_RET_FILE == SYS_RET_FILE {
@@ -555,8 +554,8 @@ impl UserInner {
         Ok(EventFlags::empty())
     }
 
-    pub fn fsync(&self) -> Result<usize> {
-        Ok(0)
+    pub fn fsync(&self) -> Result<()> {
+        Ok(())
     }
 
     fn fmap_inner(&self, dst_addr_space: Arc<RwLock<AddrSpace>>, file: usize, map: &Map) -> Result<usize> {
@@ -758,45 +757,41 @@ impl UserScheme {
     }
 }
 
-fn handle_open_res(res: OpenResult) -> Result<usize> {
-    match res {
-        OpenResult::SchemeLocal(num) => Ok(num),
-        OpenResult::External(_) => {
-            log::warn!("Used Scheme::open when forwarding fd!");
-            Err(Error::new(EIO))
+impl KernelScheme for UserScheme {
+    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let address = inner.copy_and_capture_tail(path.as_bytes())?;
+        match inner.call_extended(ctx, None, [SYS_OPEN, address.base(), address.len(), flags])? {
+            Response::Regular(code) => Error::demux(code).map(OpenResult::SchemeLocal),
+            Response::Fd(desc) => Ok(OpenResult::External(desc)),
         }
     }
-}
-
-impl Scheme for UserScheme {
-    fn open(&self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
-        self.kopen(path, flags, CallerCtx { uid, gid, pid: context::context_id().into() }).and_then(handle_open_res)
-    }
-
-    fn rmdir(&self, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
+    fn rmdir(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(SYS_RMDIR, address.base(), address.len(), 0)
+        inner.call(SYS_RMDIR, address.base(), address.len(), 0)?;
+        Ok(())
     }
 
-    fn unlink(&self, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
+    fn unlink(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(SYS_UNLINK, address.base(), address.len(), 0)
+        inner.call(SYS_UNLINK, address.base(), address.len(), 0)?;
+        Ok(())
     }
 
-    fn seek(&self, file: usize, position: isize, whence: usize) -> Result<isize> {
+    fn seek(&self, file: usize, position: isize, whence: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let new_offset = inner.call(SYS_LSEEK, file, position as usize, whence)?;
-        isize::try_from(new_offset).or_else(|_| Err(Error::new(EOVERFLOW)))
+        inner.call(SYS_LSEEK, file, position as usize, whence)
     }
 
-    fn fchmod(&self, file: usize, mode: u16) -> Result<usize> {
+    fn fchmod(&self, file: usize, mode: u16) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FCHMOD, file, mode as usize, 0)
+        inner.call(SYS_FCHMOD, file, mode as usize, 0)?;
+        Ok(())
     }
 
-    fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<usize> {
+    fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<()> {
         {
             let contexts = context::contexts();
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -809,7 +804,8 @@ impl Scheme for UserScheme {
         }
 
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FCHOWN, file, uid as usize, gid as usize)
+        inner.call(SYS_FCHOWN, file, uid as usize, gid as usize)?;
+        Ok(())
     }
 
     fn fcntl(&self, file: usize, cmd: usize, arg: usize) -> Result<usize> {
@@ -867,35 +863,29 @@ impl Scheme for UserScheme {
     }
     */
 
-    fn frename(&self, file: usize, path: &str, _uid: u32, _gid: u32) -> Result<usize> {
+    fn frename(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(SYS_FRENAME, file, address.base(), address.len())
+        inner.call(SYS_FRENAME, file, address.base(), address.len())?;
+        Ok(())
     }
 
-    fn fsync(&self, file: usize) -> Result<usize> {
+    fn fsync(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FSYNC, file, 0, 0)
+        inner.call(SYS_FSYNC, file, 0, 0)?;
+        Ok(())
     }
 
-    fn ftruncate(&self, file: usize, len: usize) -> Result<usize> {
+    fn ftruncate(&self, file: usize, len: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FTRUNCATE, file, len, 0)
+        inner.call(SYS_FTRUNCATE, file, len, 0)?;
+        Ok(())
     }
 
-    fn close(&self, file: usize) -> Result<usize> {
+    fn close(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_CLOSE, file, 0, 0)
-    }
-}
-impl KernelScheme for UserScheme {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        match inner.call_extended(ctx, None, [SYS_OPEN, address.base(), address.len(), flags])? {
-            Response::Regular(code) => Error::demux(code).map(OpenResult::SchemeLocal),
-            Response::Fd(desc) => Ok(OpenResult::External(desc)),
-        }
+        inner.call(SYS_CLOSE, file, 0, 0)?;
+        Ok(())
     }
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
@@ -939,19 +929,19 @@ impl KernelScheme for UserScheme {
         address.release()?;
         result
     }
-    fn kfstat(&self, file: usize, stat: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(stat)?;
         let result = inner.call(SYS_FSTAT, file, address.base(), address.len());
         address.release()?;
-        result
+        result.map(|_| ())
     }
-    fn kfstatvfs(&self, file: usize, stat: UserSliceWo) -> Result<usize> {
+    fn kfstatvfs(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(stat)?;
         let result = inner.call(SYS_FSTATVFS, file, address.base(), address.len());
         address.release()?;
-        result
+        result.map(|_| ())
     }
     fn kfmap(&self, file: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;

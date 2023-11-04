@@ -32,7 +32,7 @@ pub struct FileDescriptor {
 impl FileDescription {
     /// Try closing a file, although at this point the description will be destroyed anyway, if
     /// doing so fails.
-    pub fn try_close(self) -> Result<usize> {
+    pub fn try_close(self) -> Result<()> {
         event::unregister_file(self.scheme, self.number);
 
         let scheme = Arc::clone(
@@ -44,11 +44,10 @@ impl FileDescription {
 }
 
 impl FileDescriptor {
-    pub fn close(self) -> Result<usize> {
-        let Ok(file) = Arc::try_unwrap(self.description) else {
-            return Ok(0);
-        };
-
-        file.into_inner().try_close()
+    pub fn close(self) -> Result<()> {
+        if let Ok(file) = Arc::try_unwrap(self.description) {
+            file.into_inner().try_close()?;
+        }
+        Ok(())
     }
 }

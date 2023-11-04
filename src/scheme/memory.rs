@@ -15,10 +15,9 @@ use crate::paging::entry::EntryFlags;
 use crate::syscall::data::{Map, StatVfs};
 use crate::syscall::flag::MapFlags;
 use crate::syscall::error::*;
-use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::UserSliceWo;
 
-use super::KernelScheme;
+use super::{KernelScheme, CallerCtx, OpenResult};
 
 pub struct MemoryScheme;
 
@@ -118,8 +117,8 @@ impl MemoryScheme {
 
     }
 }
-impl Scheme for MemoryScheme {
-    fn open(&self, path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl KernelScheme for MemoryScheme {
+    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let intended_handle = match path.trim_start_matches('/') {
             "" => Handle::Anonymous,
             "physical" | "physical@wb" => Handle::PhysicalWb,
@@ -129,22 +128,20 @@ impl Scheme for MemoryScheme {
             _ => return Err(Error::new(ENOENT)),
         };
 
-        if uid != 0 && !matches!(intended_handle, Handle::Anonymous) {
+        if ctx.uid != 0 && !matches!(intended_handle, Handle::Anonymous) {
             return Err(Error::new(EACCES));
         }
 
-        Ok(intended_handle as usize)
+        Ok(OpenResult::SchemeLocal(intended_handle as usize))
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         Ok(0)
     }
 
-    fn close(&self, _id: usize) -> Result<usize> {
-        Ok(0)
+    fn close(&self, _id: usize) -> Result<()> {
+        Ok(())
     }
-}
-impl KernelScheme for MemoryScheme {
     fn kfmap(&self, id: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
         match Handle::from_raw(id).ok_or(Error::new(EBADF))? {
             Handle::Anonymous => Self::fmap_anonymous(addr_space, map),
@@ -163,7 +160,7 @@ impl KernelScheme for MemoryScheme {
         };
         dst.copy_common_bytes_from_slice(src.as_bytes())
     }
-    fn kfstatvfs(&self, _file: usize, dst: UserSliceWo) -> Result<usize> {
+    fn kfstatvfs(&self, _file: usize, dst: UserSliceWo) -> Result<()> {
         let used = used_frames() as u64;
         let free = free_frames() as u64;
 
@@ -175,6 +172,6 @@ impl KernelScheme for MemoryScheme {
         };
         dst.copy_exactly(&stat)?;
 
-        Ok(0)
+        Ok(())
     }
 }

@@ -11,7 +11,6 @@ use crate::{
         data::{GrantDesc, Map, PtraceEvent, SigAction, Stat},
         error::*,
         flag::*,
-        scheme::{CallerCtx, Scheme},
         self, usercopy::{UserSliceWo, UserSliceRo},
     }, LogicalCpuId, LogicalCpuSet,
 };
@@ -31,7 +30,7 @@ use core::{
 };
 use spin::{Once, RwLock};
 
-use super::OpenResult;
+use super::{OpenResult, CallerCtx};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: &mut usize) -> Result<usize> {
     let avail_src = src.get(*offset..).unwrap_or(&[]);
@@ -514,8 +513,8 @@ impl ProcScheme {
     }
 }
 
-impl Scheme for ProcScheme {
-    fn open(&self, path: &str, flags: usize, uid: u32, gid: u32) -> Result<usize> {
+impl KernelScheme for ProcScheme {
+    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let mut parts = path.splitn(2, '/');
         let pid_str = parts.next()
             .ok_or(Error::new(ENOENT))?;
@@ -530,7 +529,7 @@ impl Scheme for ProcScheme {
             ContextId::new(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
         };
 
-        self.open_inner(pid, parts.next(), flags, uid, gid)
+        self.open_inner(pid, parts.next(), flags, ctx.uid, ctx.gid).map(OpenResult::SchemeLocal)
     }
 
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
@@ -557,7 +556,7 @@ impl Scheme for ProcScheme {
     }
 
 
-    fn close(&self, id: usize) -> Result<usize> {
+    fn close(&self, id: usize) -> Result<()> {
         let mut handle = self.handles.write().remove(&id).ok_or(Error::new(EBADF))?;
         handle.continue_ignored_children();
 
@@ -617,10 +616,8 @@ impl Scheme for ProcScheme {
             }
             _ => (),
         }
-        Ok(0)
+        Ok(())
     }
-}
-impl KernelScheme for ProcScheme {
     fn as_addrspace(&self, number: usize) -> Result<Arc<RwLock<AddrSpace>>> {
         if let Operation::AddrSpace { ref addrspace } = self.handles.read().get(&number).ok_or(Error::new(EBADF))?.info.operation {
             Ok(Arc::clone(addrspace))
@@ -1094,7 +1091,7 @@ impl KernelScheme for ProcScheme {
 
         buf.copy_common_bytes_from_slice(path.as_bytes())
     }
-    fn kfstat(&self, id: usize, buffer: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, id: usize, buffer: UserSliceWo) -> Result<()> {
         let handles = self.handles.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -1108,7 +1105,7 @@ impl KernelScheme for ProcScheme {
             ..Stat::default()
         })?;
 
-        Ok(0)
+        Ok(())
     }
 
     /// Dup is currently used to implement clone() and execve().

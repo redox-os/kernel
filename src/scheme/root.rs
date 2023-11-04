@@ -13,10 +13,11 @@ use crate::context;
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, O_CREAT, MODE_FILE, MODE_DIR};
-use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::scheme::{self, SchemeNamespace, SchemeId};
 use crate::scheme::user::{UserInner, UserScheme};
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+
+use super::{KernelScheme, CallerCtx, OpenResult, calc_seek_offset};
 
 struct FolderInner {
     data: Box<[u8]>,
@@ -34,9 +35,9 @@ impl FolderInner {
         Ok(bytes_read)
     }
 
-    fn seek(&self, pos: isize, whence: usize) -> Result<isize> {
+    fn seek(&self, pos: isize, whence: usize) -> Result<usize> {
         let mut seek = self.pos.lock();
-        let new_offset = calc_seek_offset_usize(*seek, pos, whence, self.data.len())?;
+        let new_offset = calc_seek_offset(*seek, pos, whence, self.data.len())?;
         *seek = new_offset as usize;
         Ok(new_offset)
     }
@@ -67,13 +68,13 @@ impl RootScheme {
     }
 }
 
-impl Scheme for RootScheme {
-    fn open(&self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        let path = path.trim_matches('/');
+impl KernelScheme for RootScheme {
+    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+        let path = path.trim_start_matches('/');
 
         //TODO: Make this follow standards for flags and errors
         if flags & O_CREAT == O_CREAT {
-            if uid != 0 {
+            if ctx.uid != 0 {
                 return Err(Error::new(EACCES));
             };
 
@@ -103,7 +104,7 @@ impl Scheme for RootScheme {
 
             self.handles.write().insert(id, Handle::Scheme(inner));
 
-            Ok(id)
+            Ok(OpenResult::SchemeLocal(id))
         } else if path.is_empty() {
             let scheme_ns = {
                 let contexts = context::contexts();
@@ -126,47 +127,46 @@ impl Scheme for RootScheme {
                 pos: Mutex::new(0)
             });
 
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::Folder(inner));
-            Ok(id)
+            Ok(OpenResult::SchemeLocal(id))
         } else {
             let inner = Arc::new(
                 path.as_bytes().to_vec().into_boxed_slice()
             );
 
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::File(inner));
-            Ok(id)
+            Ok(OpenResult::SchemeLocal(id))
         }
     }
 
-    fn unlink(&self, path: &str, uid: u32, _gid: u32) -> Result<usize> {
+    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
         let path = path.trim_matches('/');
 
-        if uid == 0 {
-            let inner = {
-                let handles = self.handles.read();
-                handles.iter().find_map(|(_id, handle)| {
-                    match handle {
-                        Handle::Scheme(inner) => {
-                            if path == inner.name.as_ref() {
-                                return Some(inner.clone());
-                            }
-                        },
-                        _ => (),
-                    }
-                    None
-                }).ok_or(Error::new(ENOENT))?
-            };
-
-            inner.unmount()
-        } else {
-            Err(Error::new(EACCES))
+        if ctx.uid != 0 {
+            return Err(Error::new(EACCES));
         }
+        let inner = {
+            let handles = self.handles.read();
+            handles.iter().find_map(|(_id, handle)| {
+                match handle {
+                    Handle::Scheme(inner) => {
+                        if path == inner.name.as_ref() {
+                            return Some(inner.clone());
+                        }
+                    },
+                    _ => (),
+                }
+                None
+            }).ok_or(Error::new(ENOENT))?
+        };
+
+        inner.unmount()
     }
 
 
-    fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<isize> {
+    fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
@@ -206,45 +206,30 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn fpath(&self, file: usize, buf: &mut [u8]) -> Result<usize> {
+    fn kfpath(&self, file: usize, mut buf: UserSliceWo) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
-        let mut i = 0;
-        let scheme_path = b":";
-        while i < buf.len() && i < scheme_path.len() {
-            buf[i] = scheme_path[i];
-            i += 1;
-        }
+        let mut bytes_copied = buf.copy_common_bytes_from_slice(b":")?;
+        buf = buf.advance(bytes_copied).ok_or(Error::new(EINVAL))?;
 
         match handle {
             Handle::Scheme(inner) => {
-                let name = inner.name.as_bytes();
-                let mut j = 0;
-                while i < buf.len() && j < name.len() {
-                    buf[i] = name[j];
-                    i += 1;
-                    j += 1;
-                }
+                bytes_copied += buf.copy_common_bytes_from_slice(inner.name.as_bytes())?;
             },
             Handle::File(inner) => {
-                let mut j = 0;
-                while i < buf.len() && j < inner.len() {
-                    buf[i] = inner[j];
-                    i += 1;
-                    j += 1;
-                }
+                bytes_copied += buf.copy_common_bytes_from_slice(&inner)?;
             },
             Handle::Folder(_) => ()
         }
 
-        Ok(i)
+        Ok(bytes_copied)
     }
 
-    fn fsync(&self, file: usize) -> Result<usize> {
+    fn fsync(&self, file: usize) -> Result<()> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
@@ -264,7 +249,7 @@ impl Scheme for RootScheme {
         }
     }
 
-    fn close(&self, file: usize) -> Result<usize> {
+    fn close(&self, file: usize) -> Result<()> {
         let handle = self.handles.write().remove(&file).ok_or(Error::new(EBADF))?;
         match handle {
             Handle::Scheme(inner) => {
@@ -272,10 +257,8 @@ impl Scheme for RootScheme {
             },
             _ => ()
         }
-        Ok(0)
+        Ok(())
     }
-}
-impl crate::scheme::KernelScheme for RootScheme {
     fn kread(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
@@ -316,7 +299,7 @@ impl crate::scheme::KernelScheme for RootScheme {
         }
     }
     
-    fn kfstat(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, file: usize, buf: UserSliceWo) -> Result<()> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
@@ -347,7 +330,7 @@ impl crate::scheme::KernelScheme for RootScheme {
             }
         })?;
 
-        Ok(0)
+        Ok(())
     }
 
 }

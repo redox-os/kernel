@@ -7,11 +7,10 @@ use crate::context::file::{FileDescriptor, FileDescription};
 use crate::context;
 use crate::context::memory::{PageSpan, AddrSpace};
 use crate::paging::{PAGE_SIZE, VirtualAddress, Page};
-use crate::scheme::{self, FileHandle, OpenResult, current_caller_ctx, KernelScheme, SchemeId};
+use crate::scheme::{self, FileHandle, OpenResult, KernelScheme, SchemeId, CallerCtx};
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::*;
-use crate::syscall::scheme::CallerCtx;
 
 use super::usercopy::{UserSlice, UserSliceWo, UserSliceRo};
 
@@ -87,9 +86,9 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 }
 
 /// rmdir syscall
-pub fn rmdir(raw_path: UserSliceRo) -> Result<usize> {
-    let (uid, gid, scheme_ns) = match context::current()?.read() {
-        ref context => (context.euid, context.egid, context.ens),
+pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
+    let (scheme_ns, caller_ctx) = match context::current()?.read() {
+        ref context => (context.ens, context.caller_ctx()),
     };
 
     /*
@@ -107,13 +106,13 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<usize> {
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
         Arc::clone(scheme)
     };
-    scheme.rmdir(reference, uid, gid)
+    scheme.rmdir(reference, caller_ctx)
 }
 
 /// Unlink syscall
-pub fn unlink(raw_path: UserSliceRo) -> Result<usize> {
-    let (uid, gid, scheme_ns) = match context::current()?.read() {
-        ref context => (context.euid, context.egid, context.ens),
+pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
+    let (scheme_ns, caller_ctx) = match context::current()?.read() {
+        ref context => (context.ens, context.caller_ctx()),
     };
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -130,11 +129,11 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<usize> {
         let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
         Arc::clone(scheme)
     };
-    scheme.unlink(reference, uid, gid)
+    scheme.unlink(reference, caller_ctx)
 }
 
 /// Close syscall
-pub fn close(fd: FileHandle) -> Result<usize> {
+pub fn close(fd: FileHandle) -> Result<()> {
     let file = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -146,8 +145,9 @@ pub fn close(fd: FileHandle) -> Result<usize> {
 }
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
-    let file = context::current()?.read()
-        .get_file(fd).ok_or(Error::new(EBADF))?;
+    let (file, caller_ctx) = match context::current()?.read() {
+        ref context => (context.get_file(fd).ok_or(Error::new(EBADF))?, context.caller_ctx()),
+    };
 
     if user_buf.is_empty() {
         Ok(FileDescriptor {
@@ -164,7 +164,7 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
                 Arc::clone(scheme)
             };
 
-            match scheme.kdup(description.number, user_buf, current_caller_ctx()?)? {
+            match scheme.kdup(description.number, user_buf, caller_ctx)? {
                 OpenResult::SchemeLocal(number) => Arc::new(RwLock::new(FileDescription {
                     namespace: description.namespace,
                     scheme: description.scheme,
@@ -309,9 +309,9 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     }
 }
 
-pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<usize> {
-    let (file, uid, gid, scheme_ns) = match context::current()?.read() {
-        ref context => (context.get_file(fd).ok_or(Error::new(EBADF))?, context.euid, context.egid, context.ens),
+pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
+    let (file, caller_ctx, scheme_ns) = match context::current()?.read() {
+        ref context => (context.get_file(fd).ok_or(Error::new(EBADF))?, CallerCtx { uid: context.euid, gid: context.egid, pid: context.id.get() }, context.ens),
     };
 
     /*
@@ -332,15 +332,15 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<usize> {
 
     let description = file.description.read();
 
-    if scheme_id == description.scheme {
-        scheme.frename(description.number, reference, uid, gid)
-    } else {
-        Err(Error::new(EXDEV))
+    if scheme_id != description.scheme {
+        return Err(Error::new(EXDEV));
     }
+
+    scheme.frename(description.number, reference, caller_ctx)
 }
 
 /// File status
-pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<usize> {
+pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<()> {
     file_op_generic_ext(fd, |scheme, scheme_id, _, number| {
         scheme.kfstat(number, user_buf)?;
 
@@ -350,7 +350,7 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<usize> {
         let st_dev = scheme_id.get().try_into().map_err(|_| Error::new(EOVERFLOW))?;
         user_buf.advance(memoffset::offset_of!(Stat, st_dev)).and_then(|b| b.limit(8)).ok_or(Error::new(EIO))?.copy_from_slice(&u64::to_ne_bytes(st_dev))?;
 
-        Ok(0)
+        Ok(())
     })
 }
 

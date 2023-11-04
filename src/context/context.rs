@@ -20,7 +20,7 @@ use crate::context::memory::AddrSpace;
 use crate::ipi::{ipi, IpiKind, IpiTarget};
 use crate::paging::{RmmA, RmmArch};
 use crate::memory::{RaiiFrame, Frame};
-use crate::scheme::{SchemeNamespace, FileHandle};
+use crate::scheme::{SchemeNamespace, FileHandle, CallerCtx};
 use crate::sync::WaitMap;
 
 use crate::syscall::data::SigAction;
@@ -471,6 +471,9 @@ impl Context {
             },
             0
         ); 128]))
+    }
+    pub fn caller_ctx(&self) -> CallerCtx {
+        CallerCtx { pid: self.id.into(), uid: self.euid, gid: self.egid }
     }
 }
 

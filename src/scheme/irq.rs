@@ -16,8 +16,9 @@ use crate::scheme::SchemeId;
 use crate::syscall::data::Stat;
 use crate::syscall::error::*;
 use crate::syscall::flag::{EventFlags, EVENT_READ, O_DIRECTORY, O_CREAT, O_STAT, MODE_CHR, MODE_DIR};
-use crate::syscall::scheme::{calc_seek_offset_usize, Scheme};
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+
+use super::{OpenResult, CallerCtx, calc_seek_offset};
 
 pub static IRQ_SCHEME_ID: Once<SchemeId> = Once::new();
 
@@ -146,9 +147,9 @@ const fn vector_to_irq(vector: u8) -> u8 {
     vector - 32
 }
 
-impl Scheme for IrqScheme {
-    fn open(&self, path: &str, flags: usize, uid: u32, _gid: u32) -> Result<usize> {
-        if uid != 0 { return Err(Error::new(EACCES)) }
+impl crate::scheme::KernelScheme for IrqScheme {
+    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+        if ctx.uid != 0 { return Err(Error::new(EACCES)) }
 
         let path_str = path.trim_start_matches('/');
 
@@ -213,21 +214,21 @@ impl Scheme for IrqScheme {
                 return Err(Error::new(ENOENT));
             }
         };
-        let fd = self.next_fd.fetch_add(1, Ordering::SeqCst);
+        let fd = self.next_fd.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().as_mut().unwrap().insert(fd, handle);
-        Ok(fd)
+        Ok(OpenResult::SchemeLocal(fd))
     }
 
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
             &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
                 let cur_offset = offset.load(Ordering::SeqCst);
-                let new_offset = calc_seek_offset_usize(cur_offset, pos, whence, buf.len())?;
+                let new_offset = calc_seek_offset(cur_offset, pos, whence, buf.len())?;
                 offset.store(new_offset as usize, Ordering::SeqCst);
-                Ok(new_offset)
+                Ok(new_offset as usize)
             }
             _ => Err(Error::new(ESPIPE)),
         }
@@ -243,11 +244,11 @@ impl Scheme for IrqScheme {
     }
 
 
-    fn fsync(&self, _file: usize) -> Result<usize> {
-        Ok(0)
+    fn fsync(&self, _file: usize) -> Result<()> {
+        Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
+    fn close(&self, id: usize) -> Result<()> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
 
@@ -256,10 +257,8 @@ impl Scheme for IrqScheme {
                 set_reserved(LogicalCpuId::BSP, irq_to_vector(handle_irq), false);
             }
         }
-        Ok(0)
+        Ok(())
     }
-}
-impl crate::scheme::KernelScheme for IrqScheme {
     fn kwrite(&self, file: usize, buffer: UserSliceRo) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.as_ref().unwrap().get(&file).ok_or(Error::new(EBADF))?;
@@ -283,7 +282,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         }
     }
 
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.as_ref().unwrap().get(&id).ok_or(Error::new(EBADF))?;
 
@@ -321,7 +320,8 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 ..Default::default()
             },
         })?;
-        Ok(0)
+
+        Ok(())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handles_guard = HANDLES.read();

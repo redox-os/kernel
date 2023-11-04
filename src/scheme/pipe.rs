@@ -10,11 +10,10 @@ use crate::scheme::SchemeId;
 use crate::sync::WaitCondition;
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, ESPIPE};
 use crate::syscall::flag::{EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
-use crate::syscall::scheme::{CallerCtx, Scheme};
 use crate::syscall::data::Stat;
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
 
-use super::{KernelScheme, OpenResult};
+use super::{KernelScheme, OpenResult, CallerCtx};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
@@ -65,8 +64,7 @@ impl PipeScheme {
     }
 }
 
-impl Scheme for PipeScheme {
-
+impl KernelScheme for PipeScheme {
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         let (is_writer_not_reader, key) = from_raw_id(id);
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
@@ -106,11 +104,11 @@ impl Scheme for PipeScheme {
         Err(Error::new(EBADF))
     }
 
-    fn fsync(&self, _id: usize) -> Result<usize> {
-        Ok(0)
+    fn fsync(&self, _id: usize) -> Result<()> {
+        Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
+    fn close(&self, id: usize) -> Result<()> {
         let (is_write_not_read, key) = from_raw_id(id);
 
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
@@ -136,26 +134,12 @@ impl Scheme for PipeScheme {
             let _ = PIPES.write().remove(&key);
         }
 
-        Ok(0)
+        Ok(())
     }
 
-    fn seek(&self, _id: usize, _pos: isize, _whence: usize) -> Result<isize> {
+    fn seek(&self, _id: usize, _pos: isize, _whence: usize) -> Result<usize> {
         Err(Error::new(ESPIPE))
     }
-}
-
-pub struct Pipe {
-    read_flags: AtomicUsize, // fcntl read flags
-    write_flags: AtomicUsize, // fcntl write flags
-    read_condition: WaitCondition, // signals whether there are available bytes to read
-    write_condition: WaitCondition, // signals whether there is room for additional bytes
-    queue: Mutex<VecDeque<u8>>,
-    reader_is_alive: AtomicBool, // starts set, unset when reader closes
-    writer_is_alive: AtomicBool, // starts set, unset when writer closes
-    has_run_dup: AtomicBool,
-}
-
-impl KernelScheme for PipeScheme {
     fn kdup(&self, old_id: usize, user_buf: UserSliceRo, _ctx: CallerCtx) -> Result<OpenResult> {
         let (is_writer_not_reader, key) = from_raw_id(old_id);
 
@@ -277,12 +261,23 @@ impl KernelScheme for PipeScheme {
             }
         }
     }
-    fn kfstat(&self, _id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, _id: usize, buf: UserSliceWo) -> Result<()> {
         buf.copy_exactly(&Stat {
             st_mode: MODE_FIFO | 0o666,
             ..Default::default()
         })?;
 
-        Ok(0)
+        Ok(())
     }
+}
+
+pub struct Pipe {
+    read_flags: AtomicUsize, // fcntl read flags
+    write_flags: AtomicUsize, // fcntl write flags
+    read_condition: WaitCondition, // signals whether there are available bytes to read
+    write_condition: WaitCondition, // signals whether there is room for additional bytes
+    queue: Mutex<VecDeque<u8>>,
+    reader_is_alive: AtomicBool, // starts set, unset when reader closes
+    writer_is_alive: AtomicBool, // starts set, unset when writer closes
+    has_run_dup: AtomicBool,
 }

@@ -4,19 +4,19 @@ use core::mem;
 use crate::event::{EventQueue, EventQueueId, next_queue_id, queues, queues_mut};
 use crate::syscall::data::Event;
 use crate::syscall::error::*;
-use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+
+use super::{KernelScheme, CallerCtx, OpenResult};
 
 pub struct EventScheme;
 
-impl Scheme for EventScheme {
-    fn open(&self, _path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+impl KernelScheme for EventScheme {
+    fn kopen(&self, _path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         let id = next_queue_id();
         queues_mut().insert(id, Arc::new(EventQueue::new(id)));
 
-        Ok(id.into())
+        Ok(OpenResult::SchemeLocal(id.get()))
     }
-
 
     fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
         let id = EventQueueId::from(id);
@@ -25,19 +25,17 @@ impl Scheme for EventScheme {
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
     }
 
-    fn fsync(&self, id: usize) -> Result<usize> {
+    fn fsync(&self, id: usize) -> Result<()> {
         let id = EventQueueId::from(id);
 
         let handles = queues();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
+    fn close(&self, id: usize) -> Result<()> {
         let id = EventQueueId::from(id);
-        queues_mut().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        queues_mut().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
-}
-impl crate::scheme::KernelScheme for EventScheme {
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let id = EventQueueId::from(id);
 

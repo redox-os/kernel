@@ -13,14 +13,13 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
-use syscall::{CallerCtx, MunmapFlags, SendFdFlags};
+use syscall::{MunmapFlags, SendFdFlags, EventFlags, SEEK_SET, SEEK_CUR, SEEK_END};
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::context::file::FileDescription;
 use crate::context::{memory::AddrSpace, file::FileDescriptor};
 use crate::syscall::error::*;
-use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
@@ -299,7 +298,11 @@ pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
 }
 
 #[allow(unused_variables)]
-pub trait KernelScheme: Scheme + Send + Sync + 'static {
+pub trait KernelScheme: Send + Sync + 'static {
+    fn kopen(&self, path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+        Err(Error::new(ENOENT))
+    }
+
     fn as_filetable(&self, number: usize) -> Result<Arc<RwLock<Vec<Option<FileDescriptor>>>>> {
         Err(Error::new(EBADF))
     }
@@ -317,9 +320,6 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
         Err(Error::new(EOPNOTSUPP))
     }
 
-    fn kopen(&self, path: &str, flags: usize, caller: CallerCtx) -> Result<OpenResult> {
-        self.open(path, flags, caller.uid, caller.gid).map(OpenResult::SchemeLocal)
-    }
     fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
         Err(Error::new(EOPNOTSUPP))
     }
@@ -335,15 +335,49 @@ pub trait KernelScheme: Scheme + Send + Sync + 'static {
     fn kfutimens(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         Err(Error::new(EBADF))
     }
 
     fn ksendfd(&self, id: usize, desc: Arc<RwLock<FileDescription>>, flags: SendFdFlags, arg: u64) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
+    }
+
+    fn fsync(&self, id: usize) -> Result<()> {
+        Err(Error::new(EBADF))
+    }
+    fn ftruncate(&self, id: usize, len: usize) -> Result<()> {
+        Err(Error::new(EBADF))
+    }
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
+        Err(Error::new(ESPIPE))
+    }
+    fn fchmod(&self, id: usize, new_mode: u16) -> Result<()> {
+        Err(Error::new(EBADF))
+    }
+    fn fchown(&self, id: usize, new_uid: u32, new_gid: u32) -> Result<()> {
+        Err(Error::new(EBADF))
+    }
+    fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
+        Err(Error::new(EBADF))
+    }
+    fn frename(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
+        Err(Error::new(EBADF))
+    }
+    fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
+        Err(Error::new(EBADF))
+    }
+    fn rmdir(&self, path: &str, ctx: CallerCtx) -> Result<()> {
+        Err(Error::new(ENOENT))
+    }
+    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
+        Err(Error::new(ENOENT))
+    }
+    fn close(&self, id: usize) -> Result<()> {
+        Err(Error::new(EBADF))
     }
 
     // TODO: This demonstrates why we need to transition away from a dyn trait.
@@ -355,9 +389,18 @@ pub enum OpenResult {
     SchemeLocal(usize),
     External(Arc<RwLock<FileDescription>>),
 }
+pub struct CallerCtx {
+    pub pid: usize,
+    pub uid: u32,
+    pub gid: u32,
+}
 
-pub fn current_caller_ctx() -> Result<CallerCtx> {
-    match crate::context::current()?.read() {
-        ref context => Ok(CallerCtx { pid: context.id.into(), uid: context.euid, gid: context.egid }),
+pub fn calc_seek_offset(cur_pos: usize, rel_pos: isize, whence: usize, len: usize) -> Result<usize> {
+    match whence {
+        SEEK_SET => usize::try_from(rel_pos).map_err(|_| Error::new(EINVAL)),
+        SEEK_CUR => cur_pos.checked_add_signed(rel_pos).ok_or(Error::new(EOVERFLOW)),
+        SEEK_END => len.checked_add_signed(rel_pos).ok_or(Error::new(EOVERFLOW)),
+
+        _ => return Err(Error::new(EINVAL)),
     }
 }

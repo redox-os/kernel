@@ -6,8 +6,9 @@ use spin::RwLock;
 use crate::syscall::data::ITimerSpec;
 use crate::syscall::error::*;
 use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
-use crate::syscall::scheme::Scheme;
 use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+
+use super::{KernelScheme, CallerCtx, OpenResult};
 
 pub struct ITimerScheme {
     next_id: AtomicUsize,
@@ -23,8 +24,8 @@ impl ITimerScheme {
     }
 }
 
-impl Scheme for ITimerScheme {
-    fn open(&self, path: &str, _flags: usize, _uid: u32, _gid: u32) -> Result<usize> {
+impl KernelScheme for ITimerScheme {
+    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         let clock = path.parse::<usize>().or(Err(Error::new(ENOENT)))?;
 
         match clock {
@@ -33,10 +34,10 @@ impl Scheme for ITimerScheme {
             _ => return Err(Error::new(ENOENT))
         }
 
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.handles.write().insert(id, clock);
 
-        Ok(id)
+        Ok(OpenResult::SchemeLocal(id))
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -48,16 +49,14 @@ impl Scheme for ITimerScheme {
         handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
     }
 
-    fn fsync(&self, id: usize) -> Result<usize> {
+    fn fsync(&self, id: usize) -> Result<()> {
         let handles = self.handles.read();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
-        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(0))
+    fn close(&self, id: usize) -> Result<()> {
+        self.handles.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
     }
-}
-impl crate::scheme::KernelScheme for ITimerScheme {
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let _clock = {
             let handles = self.handles.read();
