@@ -188,7 +188,9 @@ impl SchemeList {
             };
 
             if let Some(ref mut names) = self.names.get_mut(&to) {
-                assert!(names.insert(name.to_string().into_boxed_str(), id).is_none());
+                if names.insert(name.to_string().into_boxed_str(), id).is_some() {
+                    return Err(Error::new(EEXIST));
+                }
             } else {
                 panic!("scheme namespace not found");
             }
