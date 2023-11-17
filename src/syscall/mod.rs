@@ -169,9 +169,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                     UserSlice::wo(d, 16)?.none_if_null(),
                 ).map(|()| 0),
                 SYS_SIGRETURN => sigreturn(),
-                SYS_PHYSALLOC => physalloc(b),
-                SYS_PHYSALLOC3 => physalloc3(b, c, UserSlice::rw(d, core::mem::size_of::<usize>())?),
-                SYS_PHYSFREE => physfree(b, c),
                 SYS_PHYSMAP => physmap(b, c, PhysmapFlags::from_bits_truncate(d)),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
@@ -189,7 +186,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            if context.name.contains("acid") {
+            if context.name.contains("bootstrap") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {

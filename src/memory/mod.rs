@@ -2,7 +2,7 @@
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
 use core::cell::SyncUnsafeCell;
-use core::{cmp, mem};
+use core::mem;
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -19,7 +19,6 @@ use rmm::{
     FrameCount, VirtualAddress, TableKind,
 };
 use spin::RwLock;
-use crate::syscall::flag::{PartialAllocStrategy, PhysallocFlags};
 use crate::syscall::error::{ENOMEM, Error};
 
 /// A memory map area
@@ -54,22 +53,7 @@ pub fn allocate_frames(count: usize) -> Option<Frame> {
         })
     }
 }
-pub fn allocate_frames_complex(count: usize, flags: PhysallocFlags, strategy: Option<PartialAllocStrategy>, min: usize) -> Option<(Frame, usize)> {
-    //TODO: support partial allocation
-    if flags == PhysallocFlags::SPACE_64 && strategy.is_none() {
-        let actual = cmp::max(count, min);
-        return allocate_frames(actual).map(|frame| (frame, actual));
-    }
-
-    log::error!(
-        "!!!! allocate_frames_complex not implemented for count {}, flags {:?}, strategy {:?}, min {}",
-        count,
-        flags,
-        strategy,
-        min
-    );
-    None
-}
+// TODO: allocate_frames_complex
 
 /// Deallocate a range of frames frame
 // TODO: Make unsafe
