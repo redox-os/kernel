@@ -28,7 +28,7 @@ pub use self::usercopy::validate_region;
 
 use self::data::{Map, SigAction, TimeSpec};
 use self::error::{Error, Result, ENOSYS};
-use self::flag::{MapFlags, PhysmapFlags, WaitFlags};
+use self::flag::{MapFlags, WaitFlags};
 use self::number::*;
 
 use crate::context::ContextId;
@@ -169,7 +169,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, stack
                     UserSlice::wo(d, 16)?.none_if_null(),
                 ).map(|()| 0),
                 SYS_SIGRETURN => sigreturn(),
-                SYS_PHYSMAP => physmap(b, c, PhysmapFlags::from_bits_truncate(d)),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
 

@@ -3,10 +3,7 @@ use alloc::sync::Arc;
 use crate::interrupt::InterruptStack;
 use crate::paging::VirtualAddress;
 use crate::context;
-use crate::scheme::memory::{MemoryScheme, MemoryType};
 use crate::syscall::error::{Error, EFAULT, EINVAL, EPERM, ESRCH, Result};
-use crate::syscall::flag::{MapFlags, PhysmapFlags};
-
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -59,24 +56,4 @@ pub fn virttophys(virtual_address: usize) -> Result<usize> {
         Some((physical_address, _)) => Ok(physical_address.data()),
         None => Err(Error::new(EFAULT))
     }
-}
-
-// TODO: Remove:
-pub fn inner_physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
-    let mut map_flags = MapFlags::MAP_SHARED | MapFlags::PROT_READ;
-    map_flags.set(MapFlags::PROT_WRITE, flags.contains(PhysmapFlags::PHYSMAP_WRITE));
-
-    let memory_type = if flags.contains(PhysmapFlags::PHYSMAP_NO_CACHE) {
-        MemoryType::Uncacheable
-    } else if flags.contains(PhysmapFlags::PHYSMAP_WRITE_COMBINE) {
-        MemoryType::WriteCombining
-    } else {
-        MemoryType::Writeback
-    };
-
-    MemoryScheme::physmap(physical_address, size, map_flags, memory_type)
-}
-pub fn physmap(physical_address: usize, size: usize, flags: PhysmapFlags) -> Result<usize> {
-    enforce_root()?;
-    inner_physmap(physical_address, size, flags)
 }

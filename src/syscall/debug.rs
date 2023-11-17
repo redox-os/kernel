@@ -252,25 +252,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             d
         ),
-        SYS_PHYSALLOC => format!(
-            "physalloc({})",
-            b
-        ),
-        SYS_PHYSALLOC3 => format!(
-            "physalloc3({}, {}, {})",
-            b, c, d,
-        ),
-        SYS_PHYSFREE => format!(
-            "physfree({:#X}, {})",
-            b,
-            c
-        ),
-        SYS_PHYSMAP => format!(
-            "physmap({:#X}, {}, {:?})",
-            b,
-            c,
-            PhysmapFlags::from_bits(d)
-        ),
         SYS_VIRTTOPHYS => format!(
             "virttophys({:#X})",
             b
