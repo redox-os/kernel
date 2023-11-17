@@ -22,13 +22,13 @@ pub struct MemoryScheme;
 
 // TODO: Use crate that autogenerates conversion functions.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum HandleTy {
     Allocated = 0,
     PhysBorrow = 1,
 }
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MemoryType {
     Writeback = 0,
     Uncacheable = 1,
@@ -97,8 +97,6 @@ impl MemoryScheme {
         if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
-        // TODO: Check that the physical address is not owned by the frame allocator, although this
-        // requires replacing physalloc and physfree with e.g. MAP_PHYS_CONTIGUOUS.
 
         if size % PAGE_SIZE != 0 {
             log::warn!("physmap size {} is not multiple of PAGE_SIZE {}", size, PAGE_SIZE);
@@ -147,15 +145,15 @@ impl KernelScheme for MemoryScheme {
         let path = path.trim_start_matches('/');
 
         let (before_memty, memty_str) = path.split_once('@').unwrap_or((path, ""));
-        let (before_ty, type_str) = before_memty.split_once('?').unwrap_or((before_memty, ""));
+        let (before_ty, type_str) = memty_str.split_once('?').unwrap_or((memty_str, ""));
 
-        let handle_ty = match before_ty {
+        let handle_ty = match before_memty {
             "" | "zeroed" => HandleTy::Allocated,
             "physical" => HandleTy::PhysBorrow,
 
             _ => return Err(Error::new(ENOENT)),
         };
-        let mem_ty = match memty_str {
+        let mem_ty = match before_ty {
             "" | "wb" => MemoryType::Writeback,
             "wc" => MemoryType::WriteCombining,
             "uc" => MemoryType::Uncacheable,

@@ -102,6 +102,9 @@ impl AddrSpace {
                 // No, your temporary UserScheme mappings will not be kept across forks.
                 Provider::External { is_pinned_userscheme_borrow: true, .. } | Provider::AllocatedShared { is_pinned_userscheme_borrow: true, .. } => continue,
 
+                // No, physically contiguous driver memory won't either.
+                Provider::Allocated { phys_contiguous: true, .. } => continue,
+
                 Provider::PhysBorrowed { base } => Grant::physmap(
                     base.clone(),
                     PageSpan::new(grant_base, grant_info.page_count),
@@ -109,7 +112,7 @@ impl AddrSpace {
                     new_mapper,
                     (),
                 )?,
-                Provider::Allocated { ref cow_file_ref } => Grant::copy_mappings(
+                Provider::Allocated { ref cow_file_ref, phys_contiguous: false } => Grant::copy_mappings(
                     grant_base,
                     grant_base,
                     grant_info.page_count,
@@ -222,6 +225,8 @@ impl AddrSpace {
 
         let next = |grants: &mut UserGrants, span: PageSpan| grants.conflicts(span).map(|(base, info)| if info.is_pinned() && !unpin {
             Err(Error::new(EBUSY))
+        } else if !info.can_extract(unpin) {
+            Err(Error::new(EINVAL))
         } else {
             Ok(PageSpan::new(base, info.page_count))
         }).next();
@@ -339,7 +344,7 @@ impl AddrSpace {
 
         let src = src_opt.as_deref_mut().unwrap_or(&mut *dst);
 
-        if src.grants.conflicts(src_span).any(|(_, g)| g.is_pinned()) {
+        if src.grants.conflicts(src_span).any(|(_, g)| !g.can_extract(false)) {
             return Err(Error::new(EBUSY));
         }
         if src.grants.conflicts(src_span).any(|(_, g)| !g.can_have_flags(new_flags)) {
@@ -678,7 +683,7 @@ pub enum Provider {
     /// The pages this grant spans, need not necessarily be initialized right away, and can be
     /// populated either from zeroed frames, the CoW zeroed frame, or from a scheme fmap call, if
     /// mapped with MAP_LAZY. All frames must have an available PageInfo.
-    Allocated { cow_file_ref: Option<GrantFileRef> },
+    Allocated { cow_file_ref: Option<GrantFileRef>, phys_contiguous: bool },
 
     /// The grant is owned, but possibly shared.
     ///
@@ -783,7 +788,7 @@ impl Grant {
         for (i, page) in span.pages().enumerate() {
             let frame = base.next_by(i);
 
-            get_page_info(base).expect("PageInfo must exist for allocated frame").refcount.store(RefCount::One.to_raw(), Ordering::Relaxed);
+            get_page_info(frame).expect("PageInfo must exist for allocated frame").refcount.store(RefCount::One.to_raw(), Ordering::Relaxed);
 
             unsafe {
                 let result = mapper.map_phys(page.start_address(), frame.start_address(), flags).expect("TODO: page table OOM");
@@ -797,7 +802,7 @@ impl Grant {
                 page_count: span.count,
                 flags,
                 mapped: true,
-                provider: Provider::Allocated { cow_file_ref: None },
+                provider: Provider::Allocated { cow_file_ref: None, phys_contiguous: true },
             },
         })
     }
@@ -830,7 +835,7 @@ impl Grant {
                 provider: if shared {
                     Provider::AllocatedShared { is_pinned_userscheme_borrow: false }
                 } else {
-                    Provider::Allocated { cow_file_ref: None }
+                    Provider::Allocated { cow_file_ref: None, phys_contiguous: false }
                 },
             },
         })
@@ -1104,7 +1109,7 @@ impl Grant {
                 flags,
                 mapped: true,
                 provider: match mode {
-                    CopyMappingsMode::Owned { cow_file_ref } => Provider::Allocated { cow_file_ref },
+                    CopyMappingsMode::Owned { cow_file_ref } => Provider::Allocated { cow_file_ref, phys_contiguous: false },
                     CopyMappingsMode::Borrowed => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
                 },
             }
@@ -1169,6 +1174,9 @@ impl Grant {
 
             // TODO: Verify deadlock immunity
         }
+
+        let is_phys_contiguous = matches!(self.info.provider, Provider::Allocated { phys_contiguous: true, .. });
+
         let (use_info, require_info, is_fmap_shared) = match self.info.provider {
             Provider::Allocated { .. } => (true, true, Some(false)),
             Provider::AllocatedShared { .. } => (true, true, None),
@@ -1177,27 +1185,38 @@ impl Grant {
             Provider::FmapBorrowed { .. } => (true, false, Some(true)),
         };
 
-        for page in self.span().pages() {
-            // Lazy mappings do not need to be unmapped.
-            let Some((phys, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address(), true) }) else {
-                continue;
-            };
-            let frame = Frame::containing_address(phys);
+        if is_phys_contiguous {
+            let (phys, _) = mapper.translate(self.base.start_address()).unwrap();
+            let base = Frame::containing_address(phys);
 
-            // TODO: use_info IS A HACK! It shouldn't be possible to obtain *any* PhysBorrowed
-            // grants to allocator-owned memory! Replace physalloc/physfree with something like
-            // madvise(range, PHYSICALLY_CONTIGUOUS).
-
-            if use_info && let Some(info) = get_page_info(frame) {
-                if info.remove_ref() == RefCount::Zero {
-                    deallocate_frames(frame, 1);
-                };
-            } else {
-                assert!(!require_info, "allocated frame did not have an associated PageInfo");
+            for i in 0..self.info.page_count {
+                assert_eq!(get_page_info(base.next_by(i)).unwrap().refcount.swap(0, Ordering::Relaxed), RefCount::One.to_raw());
             }
 
+            deallocate_frames(Frame::containing_address(phys), self.info.page_count);
+        } else {
+            for page in self.span().pages() {
+                // Lazy mappings do not need to be unmapped.
+                let Some((phys, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address(), true) }) else {
+                    continue;
+                };
+                let frame = Frame::containing_address(phys);
 
-            flusher.consume(flush);
+                // TODO: use_info IS A HACK! It shouldn't be possible to obtain *any* PhysBorrowed
+                // grants to allocator-owned memory! Replace physalloc/physfree with something like
+                // madvise(range, PHYSICALLY_CONTIGUOUS).
+
+                if use_info && let Some(info) = get_page_info(frame) {
+                    if info.remove_ref() == RefCount::Zero {
+                        deallocate_frames(frame, 1);
+                    };
+                } else {
+                    assert!(!require_info, "allocated frame did not have an associated PageInfo");
+                }
+
+
+                flusher.consume(flush);
+            }
         }
 
         self.info.mapped = false;
@@ -1211,7 +1230,7 @@ impl Grant {
         UnmapResult {
             size: self.info.page_count * PAGE_SIZE,
             file_desc: match provider {
-                Provider::Allocated { cow_file_ref } => cow_file_ref,
+                Provider::Allocated { cow_file_ref, .. } => cow_file_ref,
                 Provider::FmapBorrowed { file_ref, .. } => Some(file_ref),
                 _ => None,
             },
@@ -1236,7 +1255,7 @@ impl Grant {
         PageSpan::new(self.base, self.info.page_count)
     }
     pub fn extract(mut self, span: PageSpan) -> Option<(Option<Grant>, Grant, Option<Grant>)> {
-        assert!(!self.info.is_pinned(), "forgot to enforce that UserScheme mappings cannot be split");
+        assert!(self.info.can_extract(false));
 
         let (before_span, this_span, after_span) = self.span().slice(span);
 
@@ -1252,7 +1271,7 @@ impl Grant {
                         src_base,
                         is_pinned_userscheme_borrow: false,
                     },
-                    Provider::Allocated { ref cow_file_ref } => Provider::Allocated { cow_file_ref: cow_file_ref.clone() },
+                    Provider::Allocated { ref cow_file_ref, .. } => Provider::Allocated { cow_file_ref: cow_file_ref.clone(), phys_contiguous: false },
                     Provider::AllocatedShared { .. }  => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
                     Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.clone() },
                     Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed { file_ref: file_ref.clone(), pin_refcount: 0 },
@@ -1264,8 +1283,8 @@ impl Grant {
 
         match self.info.provider {
             Provider::PhysBorrowed { ref mut base } => *base = base.next_by(middle_page_offset),
-            Provider::FmapBorrowed { ref mut file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref) } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
-            Provider::Allocated { cow_file_ref: None } | Provider::AllocatedShared { .. } | Provider::External { .. } => (),
+            Provider::FmapBorrowed { ref mut file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref), .. } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
+            Provider::Allocated { cow_file_ref: None, .. } | Provider::AllocatedShared { .. } | Provider::External { .. } => (),
         }
 
 
@@ -1276,12 +1295,12 @@ impl Grant {
                 mapped: self.info.mapped,
                 page_count: span.count,
                 provider: match self.info.provider {
-                    Provider::Allocated { cow_file_ref: None } => Provider::Allocated { cow_file_ref: None },
+                    Provider::Allocated { cow_file_ref: None, .. } => Provider::Allocated { cow_file_ref: None, phys_contiguous: false },
                     Provider::AllocatedShared { .. } => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
-                    Provider::Allocated { cow_file_ref: Some(ref file_ref) } => Provider::Allocated { cow_file_ref: Some(GrantFileRef {
+                    Provider::Allocated { cow_file_ref: Some(ref file_ref), .. } => Provider::Allocated { cow_file_ref: Some(GrantFileRef {
                         base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
                         description: Arc::clone(&file_ref.description),
-                    })},
+                    }), phys_contiguous: false, },
                     Provider::External { ref address_space, src_base, .. } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
@@ -1314,6 +1333,9 @@ impl GrantInfo {
                 | Provider::FmapBorrowed { pin_refcount: 1.., .. }
         )
     }
+    pub fn can_extract(&self, unpin: bool) -> bool {
+        !(self.is_pinned() && !unpin) | matches!(self.provider, Provider::Allocated { phys_contiguous: true, .. })
+    }
     pub fn unpin(&mut self) {
         if let Provider::External { ref mut is_pinned_userscheme_borrow, .. } | Provider::AllocatedShared { ref mut is_pinned_userscheme_borrow, .. } = self.provider {
             *is_pinned_userscheme_borrow = false;
@@ -1342,7 +1364,7 @@ impl GrantInfo {
         }
 
         match (&self.provider, &with.provider) {
-            (Provider::Allocated { cow_file_ref: None }, Provider::Allocated { cow_file_ref: None }) => true,
+            (Provider::Allocated { cow_file_ref: None, phys_contiguous: false }, Provider::Allocated { cow_file_ref: None, phys_contiguous: false }) => true,
             //(Provider::PhysBorrowed { base: ref lhs }, Provider::PhysBorrowed { base: ref rhs }) => lhs.next_by(self.page_count) == rhs.clone(),
             // TODO: Add merge function that merges the page array.
             //(Provider::External { address_space: ref lhs_space, src_base: ref lhs_base, cow: lhs_cow, .. }, Provider::External { address_space: ref rhs_space, src_base: ref rhs_base, cow: rhs_cow, .. }) => Arc::ptr_eq(lhs_space, rhs_space) && lhs_cow == rhs_cow && lhs_base.next_by(self.page_count) == rhs_base.clone(),
@@ -1365,9 +1387,10 @@ impl GrantInfo {
                 flags.set(GrantFlags::GRANT_PINNED, is_pinned_userscheme_borrow);
                 flags |= GrantFlags::GRANT_SHARED;
             }
-            Provider::Allocated { ref cow_file_ref } => {
+            Provider::Allocated { ref cow_file_ref, phys_contiguous } => {
                 // !GRANT_SHARED is equivalent to "GRANT_PRIVATE"
                 flags.set(GrantFlags::GRANT_SCHEME, cow_file_ref.is_some());
+                flags.set(GrantFlags::GRANT_PHYS_CONTIGUOUS, phys_contiguous);
             }
             Provider::AllocatedShared { is_pinned_userscheme_borrow } => {
                 flags |= GrantFlags::GRANT_SHARED;
@@ -1386,7 +1409,7 @@ impl GrantInfo {
     pub fn file_ref(&self) -> Option<&GrantFileRef> {
         // TODO: This would be bad for PhysBorrowed head/tail buffers, but otherwise the physical
         // base address could be included in offset, for PhysBorrowed.
-        if let Provider::FmapBorrowed { ref file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref file_ref) } = self.provider {
+        if let Provider::FmapBorrowed { ref file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref file_ref), .. } = self.provider {
             Some(file_ref)
         } else {
             None
