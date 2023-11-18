@@ -763,6 +763,13 @@ impl Grant {
     pub fn physmap(phys: Frame, span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant> {
         const MAX_EAGER_PAGES: usize = 4096;
 
+        for i in 0..span.count {
+            if let Some(info) = get_page_info(phys.next_by(i)) {
+                log::warn!("Driver tried to physmap the allocator-frame {phys:?} (info {info:?})!");
+                return Err(Error::new(EPERM));
+            }
+        }
+
         for (i, page) in span.pages().enumerate().take(MAX_EAGER_PAGES) {
             unsafe {
                 let Some(result) = mapper.map_phys(page.start_address(), phys.next_by(i).start_address(), flags.write(false)) else {
@@ -1171,18 +1178,16 @@ impl Grant {
                     _ => continue,
                 }
             }
-
-            // TODO: Verify deadlock immunity
         }
 
         let is_phys_contiguous = matches!(self.info.provider, Provider::Allocated { phys_contiguous: true, .. });
 
-        let (use_info, require_info, is_fmap_shared) = match self.info.provider {
-            Provider::Allocated { .. } => (true, true, Some(false)),
-            Provider::AllocatedShared { .. } => (true, true, None),
-            Provider::External { .. } => (true, false, None),
-            Provider::PhysBorrowed { .. } => (false, false, None),
-            Provider::FmapBorrowed { .. } => (true, false, Some(true)),
+        let (require_info, is_fmap_shared) = match self.info.provider {
+            Provider::Allocated { .. } => (Some(true), Some(false)),
+            Provider::AllocatedShared { .. } => (Some(true), None),
+            Provider::External { .. } => (None, None),
+            Provider::PhysBorrowed { .. } => (Some(false), None),
+            Provider::FmapBorrowed { .. } => (None, Some(true)),
         };
 
         if is_phys_contiguous {
@@ -1201,17 +1206,13 @@ impl Grant {
                     continue;
                 };
                 let frame = Frame::containing_address(phys);
-
-                // TODO: use_info IS A HACK! It shouldn't be possible to obtain *any* PhysBorrowed
-                // grants to allocator-owned memory! Replace physalloc/physfree with something like
-                // madvise(range, PHYSICALLY_CONTIGUOUS).
-
-                if use_info && let Some(info) = get_page_info(frame) {
+                if let Some(info) = get_page_info(frame) {
+                    assert_ne!(require_info, Some(false), "PhysBorrowed frame was allocator-owned");
                     if info.remove_ref() == RefCount::Zero {
                         deallocate_frames(frame, 1);
                     };
                 } else {
-                    assert!(!require_info, "allocated frame did not have an associated PageInfo");
+                    assert_ne!(require_info, Some(true), "allocated frame did not have an associated PageInfo");
                 }
 
 
