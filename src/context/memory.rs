@@ -16,7 +16,7 @@ use crate::arch::paging::PAGE_SIZE;
 use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames, RefKind, AddRefError, RefCount, the_zeroed_frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
-use crate::scheme;
+use crate::scheme::{self, KernelSchemes};
 
 use super::context::HardBlockedReason;
 use super::file::FileDescription;
@@ -1728,7 +1728,13 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                 ref desc => (desc.scheme, desc.number),
             };
             let user_inner = scheme::schemes()
-                .get(scheme_id).and_then(|s| s.as_user_inner().transpose().ok().flatten())
+                .get(scheme_id).and_then(|s| {
+                    if let KernelSchemes::User(user) = s {
+                        user.inner.upgrade()
+                    } else {
+                        None
+                    }
+                })
                 .ok_or(PfError::Segv)?;
 
             let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;

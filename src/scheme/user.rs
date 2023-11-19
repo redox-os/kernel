@@ -752,7 +752,7 @@ fn page_range_containing(base: usize, size: usize) -> (Page, usize, usize) {
 /// `UserInner` has to be wrapped
 #[derive(Clone)]
 pub struct UserScheme {
-    inner: Weak<UserInner>
+    pub(crate) inner: Weak<UserInner>
 }
 
 impl UserScheme {
@@ -985,10 +985,6 @@ impl KernelScheme for UserScheme {
             Response::Regular(res) => Ok(res),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
-    }
-
-    fn as_user_inner(&self) -> Option<Result<Arc<UserInner>>> {
-        Some(self.inner.upgrade().ok_or(Error::new(ENODEV)))
     }
 }
 
