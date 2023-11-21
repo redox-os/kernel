@@ -12,10 +12,9 @@ use crate::syscall::flag::{
     SEEK_CUR, SEEK_END, SEEK_SET,
 };
 use crate::syscall::data::Stat;
-use crate::syscall::scheme::Scheme;
 use crate::syscall::error::*;
 use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
-use super::KernelScheme;
+use super::{KernelScheme, OpenResult, CallerCtx};
 
 
 pub struct DtbScheme;
@@ -65,12 +64,9 @@ impl DtbScheme {
     }
 }
 
-impl Scheme for DtbScheme {
-    fn open(&self, path: &str, _flags: usize, uid: u32, _gid: u32) -> Result<usize> {
+impl KernelScheme for DtbScheme {
 
-        if uid != 0 {
-            return Err(Error::new(EACCES));
-        }
+    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
 
         let path = path.trim_matches('/');
 
@@ -84,13 +80,13 @@ impl Scheme for DtbScheme {
                 kind: HandleKind::RawData,
                 stat: _flags & O_STAT == O_STAT,
             });
-            return Ok(id)
+            return Ok(OpenResult::SchemeLocal(id))
         }
 
         Err(Error::new(ENOENT))
     }
 
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<isize> {
+    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -119,18 +115,15 @@ impl Scheme for DtbScheme {
 
         handle.offset = new_offset;
 
-        Ok(new_offset as isize)
+        Ok(new_offset as usize)
     }
 
-    fn close(&self, id: usize) -> Result<usize> {
+    fn close(&self, id: usize) -> Result<()> {
         if HANDLES.write().remove(&id).is_none() {
             return Err(Error::new(EBADF));
         }
-        Ok(0)
+        Ok(())
     }
-}
-
-impl KernelScheme for DtbScheme {
 
     fn kwrite(&self, _id: usize, _buf: UserSliceRo) -> Result<usize> {
         Err(Error::new(EBADF))
@@ -159,7 +152,7 @@ impl KernelScheme for DtbScheme {
         Ok(bytes_copied)
     }
 
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
 
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -176,6 +169,6 @@ impl KernelScheme for DtbScheme {
             }
         })?;
 
-        Ok(0)
+        Ok(())
     }
 }
