@@ -38,7 +38,7 @@ pub struct SysScheme;
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
-const FILES: [(&'static str, SysFn); 14] = [
+const FILES: &[(&'static str, SysFn)] = &[
     ("block", block::resource),
     ("context", context::resource),
     ("cpu", cpu::resource),
@@ -54,10 +54,12 @@ const FILES: [(&'static str, SysFn); 14] = [
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     ("spurious_irq", interrupt::irq::spurious_irq_resource),
     // Disabled because the debugger is inherently unsafe and probably will break the system.
+    /*
     ("trigger_debugger", || unsafe {
         crate::debugger::debugger(None);
         Ok(Vec::new())
     }),
+    */
 ];
 
 impl KernelScheme for SysScheme {
