@@ -141,11 +141,11 @@ impl UserInner {
         self.todo.send(packet);
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
-        unsafe {
-            context::switch();
-        }
-
         loop {
+            unsafe {
+                context::switch();
+            }
+
             let mut states = self.states.lock();
             match states.entry(id) {
                 // invalid state
