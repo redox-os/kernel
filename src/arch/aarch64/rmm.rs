@@ -22,7 +22,7 @@ use rmm::{
 };
 use spin::Mutex;
 
-use crate::LogicalCpuId;
+use crate::{LogicalCpuId, init::device_tree::MEMORY_MAP};
 
 use super::CurrentRmmArch as RmmA;
 
@@ -160,6 +160,7 @@ unsafe fn inner<A: Arch>(
         identity_map(initfs_base, initfs_size_aligned);
 
         //TODO: this is another hack to map our UART
+        /*
         match crate::device::serial::COM1.lock().as_ref().map(|x| x.base()) {
             Some(serial_base) => {
                 let flush = mapper.map_phys(
@@ -170,6 +171,30 @@ unsafe fn inner<A: Arch>(
                 flush.ignore(); // Not the active table
             },
             None => (),
+        }
+        */
+
+        //map dev mem
+        for mem in MEMORY_MAP {
+            if mem._type == 2 {
+                let size_aligned = ((mem.length as usize + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+                let base = mem.base_addr as usize;
+                for i in 0..size_aligned / A::PAGE_SIZE {
+                    let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
+                    let virt = A::phys_to_virt(phys);
+                    // use the same mair_el1 value with bootloader,
+                    // mair_el1 == 0x00000000000044FF
+                    // set mem_attr == device memory
+                    let flags = page_flags::<A>(virt)
+                        .custom_flag(2 << 2, true);
+                    let flush = mapper.map_phys(
+                        virt,
+                        phys,
+                        flags
+                    ).expect("failed to map frame");
+                    flush.ignore(); // Not the active table
+                }
+            }
         }
 
         // Ensure graphical debug region remains paged

@@ -56,6 +56,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
     let bootstrap = {
         let args = &*args_ptr;
 
+        /*
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
@@ -65,17 +66,21 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
+        */
         if args.dtb_base != 0 {
             // Try to find serial port prior to logging
             device::serial::init_early(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
         }
 
+        KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
+        KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
+
         // Convert env to slice
-        let env = slice::from_raw_parts((args.env_base + crate::PHYS_OFFSET) as *const u8, args.env_size);
+        let env = slice::from_raw_parts((args.env_base) as *const u8, args.env_size);
 
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]
-        graphical_debug::init(env);
+        //graphical_debug::init(env);
 
         // Initialize logger
         log::init_logger(|r| {
@@ -107,9 +112,12 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             tmp = out(reg) _,
         );
 
-        /* NOT USED WITH UEFI
-        device_tree::fill_memory_map(crate::PHYS_OFFSET + dtb_base, dtb_size);
+        if args.dtb_base != 0 {
+			//Try to read device memory map
+			device_tree::fill_memory_map(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
+        }
 
+        /* NOT USED WITH UEFI
         let env_size = device_tree::fill_env_data(crate::PHYS_OFFSET + dtb_base, dtb_size, env_base);
         */
 

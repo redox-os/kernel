@@ -116,7 +116,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
             Err(_) => return Err(Error::new(EINVAL)),
         };
         unsafe {
-            io_mmap(base, size);
+            //io_mmap(base, size);
 
             self.address = base + crate::PHYS_OFFSET;
             let mut cpuid: usize = 0;

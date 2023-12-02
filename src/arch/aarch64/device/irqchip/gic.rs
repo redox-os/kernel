@@ -85,9 +85,9 @@ impl InterruptController for GenericInterruptController {
             //TODO: do kernel memory map using node.ranges
 
             // Map in the Distributor interface
-            io_mmap(dist_addr, dist_size);
+            //io_mmap(dist_addr, dist_size);
             // Map in CPU0's interface
-            io_mmap(cpu_addr, cpu_size);
+            //io_mmap(cpu_addr, cpu_size);
 
             self.gic_cpu_if.init(crate::PHYS_OFFSET + cpu_addr);
             self.gic_dist_if.init(crate::PHYS_OFFSET + dist_addr);

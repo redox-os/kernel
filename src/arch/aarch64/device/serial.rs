@@ -35,7 +35,7 @@ pub unsafe fn init_early(dtb_base: usize, dtb_size: usize) {
         let virt = crate::PHYS_OFFSET + phys;
         {
             let mut serial_port = SerialPort::new(virt);
-            serial_port.init(false);
+            //serial_port.init(false);
             *COM1.lock() = Some(serial_port);
         }
         println!("UART at {:X}", virt);
@@ -46,7 +46,7 @@ pub unsafe fn init() {
     println!("test 1");
     if let Some(ref mut serial_port) = *COM1.lock() {
         serial_port.receive();
-        serial_port.init(true);
+        //serial_port.init(true);
     }
     println!("test 2");
     let data = DTB_BINARY.get().unwrap();

@@ -79,6 +79,65 @@ fn memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usize, 
     index
 }
 
+fn dev_memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usize, ranges: &mut [(usize, usize); 10]) -> usize {
+
+    //work around for qemu-arm64
+    // dev mem: 128MB - 1GB, see https://github.com/qemu/qemu/blob/master/hw/arm/virt.c for details
+    let root_node = dt.nodes().nth(0).unwrap();
+    let model = root_node.properties().find(|p| p.name.contains("model")).unwrap();
+    let model_str = core::str::from_utf8(model.data).unwrap();
+    if model_str.contains("linux,dummy-virt") {
+        ranges[0] = (0x08000000, 0x08000000);
+        ranges[1] = (0x10000000, 0x30000000);
+        return 2;
+    }
+
+    let (memory_node, _memory_cells) = dt.find_node("/soc").unwrap();
+    let reg = memory_node.properties().find(|p| p.name.contains("ranges")).unwrap();
+    let chunk_sz = (address_cells * 2 + size_cells) * 4;
+    let chunk_count = (reg.data.len() / chunk_sz);
+    let mut index = 0;
+    for chunk in reg.data.chunks(chunk_sz as usize) {
+        if index == chunk_count {
+            return index;
+        }
+        let child_bus_addr = {
+            if address_cells == 1 {
+                BE::read_u32(&chunk[0..4]) as u64
+            } else if address_cells == 2 {
+                BE::read_u64(&chunk[0..8])
+            } else {
+                return 0;
+            }
+        };
+
+        let parent_bus_addr = {
+            if address_cells == 1 {
+                BE::read_u32(&chunk[4..8]) as u64
+            } else if address_cells == 2 {
+                BE::read_u64(&chunk[8..16])
+            } else {
+                return 0;
+            }
+        };
+
+        let addr_size = {
+            if address_cells == 1 {
+                BE::read_u32(&chunk[8..12]) as u64
+            } else if address_cells == 2 {
+                BE::read_u64(&chunk[16..24])
+            } else {
+                return 0;
+            }
+        };
+        println!("dev mem 0x{:08x} 0x{:08x} 0x{:08x}", child_bus_addr, parent_bus_addr, addr_size);
+
+        ranges[index] = (parent_bus_addr as usize, addr_size as usize);
+        index += 1;
+    }
+    index
+}
+
 pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize)> {
     let data = unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) };
     let dt = fdt::DeviceTree::new(data).unwrap();
@@ -156,15 +215,17 @@ pub fn fill_memory_map(dtb_base: usize, dtb_size: usize) {
     let (address_cells, size_cells) = root_cell_sz(&dt).unwrap();
     let mut ranges: [(usize, usize); 10] = [(0,0); 10];
 
-    let nranges = memory_ranges(&dt, address_cells as usize, size_cells as usize, &mut ranges);
+	//in uefi boot mode, ignore memory node, just read the device memory range 
+    //let nranges = memory_ranges(&dt, address_cells as usize, size_cells as usize, &mut ranges);
+	let nranges = dev_memory_ranges(&dt, address_cells as usize, size_cells as usize, &mut ranges);
 
-    for index in (0..nranges) {
+    for index in 0..nranges {
         let (base, size) = ranges[index];
         unsafe {
             MEMORY_MAP[index] = MemoryArea {
                 base_addr: base as u64,
                 length: size as u64,
-                _type: 1,
+                _type: 2,
                 acpi: 0,
             };
         }
