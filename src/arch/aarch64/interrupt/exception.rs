@@ -126,6 +126,14 @@ unsafe fn instr_trapped_msr_mrs_inner(stack: &mut InterruptStack, from_user: boo
 exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
     if !pf_inner(stack, exception_code(stack.iret.esr_el1), "sync_exc_el1_spx") {
         println!("Synchronous exception at EL1 with SPx");
+        if exception_code(stack.iret.esr_el1) == 0b100101 {
+            let far_el1 = far_el1();
+            println!("FAR_EL1 = 0x{:08x}", far_el1);
+        }
+        else if exception_code(stack.iret.esr_el1) == 0b100100 {
+            let far_el1 = far_el1();
+            println!("USER FAR_EL1 = 0x{:08x}", far_el1);
+        }
         stack.dump();
         stack_trace();
         loop {}

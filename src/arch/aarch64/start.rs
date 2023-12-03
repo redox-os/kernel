@@ -76,7 +76,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
         // Convert env to slice
-        let env = slice::from_raw_parts((args.env_base) as *const u8, args.env_size);
+        let env = slice::from_raw_parts((crate::PHYS_OFFSET + args.env_base) as *const u8, args.env_size);
 
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]

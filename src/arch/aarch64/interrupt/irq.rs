@@ -9,7 +9,6 @@ pub struct IrqDesc {
 
 exception_stack!(irq_at_el0, |stack| {
     let irq = IRQ_CHIP.irq_ack();
-    //println!("el0 irq num {}", irq);
     if let Some(virq) = IRQ_CHIP.irq_to_virq(irq) && virq < 1024 {
         if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
             handler.irq_handler(virq as u32);
@@ -23,7 +22,6 @@ exception_stack!(irq_at_el0, |stack| {
 
 exception_stack!(irq_at_el1, |stack| {
     let irq = IRQ_CHIP.irq_ack();
-    //println!("el1 irq num {}", irq);
     if let Some(virq) = IRQ_CHIP.irq_to_virq(irq) && virq < 1024 {
         if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
             handler.irq_handler(virq as u32);

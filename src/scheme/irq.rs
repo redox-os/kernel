@@ -53,7 +53,7 @@ pub extern fn irq_trigger(irq: u8) {
             event::trigger(*scheme_id, *fd, EVENT_READ);
         }
     } else {
-        println!("Calling IRQ without triggering");
+        println!("Calling IRQ without triggering {}", irq);
     }
 }
 
