@@ -159,8 +159,19 @@ impl InterruptController for Bcm2835ArmInterruptController {
 
     fn irq_ack(&mut self) -> u32 {
         //TODO: support smp self.read(LOCAL_IRQ_PENDING + 4 * cpu)
-        let sources = unsafe { self.read(PENDING_0) & 0x3ff };
+        let sources = unsafe { self.read(PENDING_0) };
         let pending_num = ffs(sources) - 1;
+        let fast_irq = [
+            7 + 32, 9 + 32, 10 + 32, 18 + 32, 19 + 32,
+            21 + 64, 22 + 64, 23 + 64, 24 + 64, 25 + 64, 30 + 64
+        ];
+
+        //fast irq
+        if pending_num >= 10 && pending_num <= 20 {
+            return fast_irq[(pending_num - 10) as usize];
+        }
+
+        let pending_num = ffs(sources & 0x3ff) - 1;
         match pending_num {
             num@0..=7 => { 
                 println!("inner interrupt {}", num);
@@ -177,7 +188,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
                 return irq_32_63 + 64;
             },
             num => {
-                println!("unexpected irq pending in BASIC PENDING: {}", num);
+                println!("unexpected irq pending in BASIC PENDING: 0x{}, sources = 0x{:08x}", num, sources);
                 return num;
             }
         }

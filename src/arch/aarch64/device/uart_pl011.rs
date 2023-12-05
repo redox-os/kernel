@@ -9,7 +9,7 @@ use super::irqchip::InterruptHandler;
 
 bitflags! {
     /// UARTFR
-    struct UartFrFlags: u16 {
+    struct UartFrFlags: u32 {
         const TXFE = 1 << 7;
         const RXFF = 1 << 6;
         const TXFF = 1 << 5;
@@ -20,7 +20,7 @@ bitflags! {
 
 bitflags! {
     /// UARTCR
-    struct UartCrFlags: u16 {
+    struct UartCrFlags: u32 {
         const RXE = 1 << 9;
         const TXE = 1 << 8;
         const UARTEN = 1 << 0;
@@ -29,7 +29,7 @@ bitflags! {
 
 bitflags! {
     // UARTIMSC
-    struct UartImscFlags: u16 {
+    struct UartImscFlags: u32 {
         const RTIM = 1 << 6;
         const TXIM = 1 << 5;
         const RXIM = 1 << 4;
@@ -38,7 +38,7 @@ bitflags! {
 
 bitflags! {
     // UARTICR
-    struct UartIcrFlags: u16 {
+    struct UartIcrFlags: u32 {
         const RTIC = 1 << 6;
         const TXIC = 1 << 5;
         const RXIC = 1 << 4;
@@ -47,7 +47,7 @@ bitflags! {
 
 bitflags! {
     //UARTMIS
-    struct UartMisFlags: u16 {
+    struct UartMisFlags: u32 {
         const TXMIS = 1 << 5;
         const RXMIS = 1 << 4;
     }
@@ -55,7 +55,7 @@ bitflags! {
 
 bitflags! {
     //UARTLCR_H
-    struct UartLcrhFlags: u16 {
+    struct UartLcrhFlags: u32 {
         const FEN = 1 << 4;
     }
 }
@@ -102,28 +102,31 @@ impl SerialPort {
         self.base
     }
 
-    pub fn read_reg(&self, register: u8) -> u16 {
-        unsafe { ptr::read_volatile((self.base + register as usize) as *mut u16) }
+    pub fn read_reg(&self, register: u8) -> u32 {
+        unsafe { ptr::read_volatile((self.base + register as usize) as *mut u32) }
     }
 
-    pub fn write_reg(&self, register: u8, data: u16) {
-        unsafe { ptr::write_volatile((self.base + register as usize) as *mut u16, data); }
+    pub fn write_reg(&self, register: u8, data: u32) {
+        unsafe { ptr::write_volatile((self.base + register as usize) as *mut u32, data); }
     }
 
     pub fn init(&mut self, with_irq: bool) {
+        /*
         // Enable RX, TX, UART
         let flags = UartCrFlags::RXE | UartCrFlags::TXE | UartCrFlags::UARTEN;
         self.write_reg(self.ctrl_reg, flags.bits());
+        */
 
-        // Disable FIFOs (use character mode instead)
+        //Enable FIFO
+        /*
         let mut flags = UartLcrhFlags::from_bits_truncate(self.read_reg(self.line_ctrl_reg));
-        flags.remove(UartLcrhFlags::FEN);
+        flags |= UartLcrhFlags::FEN;
         self.write_reg(self.line_ctrl_reg, flags.bits());
-
+        */
         if with_irq {
             // Enable IRQs
-            let flags = UartImscFlags::RXIM;
-            self.write_reg(self.intr_mask_setclr_reg, flags.bits);
+            let flags = (1 << 4 | 1 << 6);
+            self.write_reg(self.intr_mask_setclr_reg, flags);
 
             // Clear pending interrupts
             self.write_reg(self.intr_clr_reg, 0x7ff);
@@ -136,18 +139,31 @@ impl SerialPort {
     }
 
     pub fn receive(&mut self) {
-        while self.line_sts().contains(UartFrFlags::RXFF) {
-            let c = self.read_reg(self.data_reg) as u8;
-            if c != 0 {
-                debug_input(c);
+        self.write_reg(self.intr_clr_reg, 0x00);
+        let _ = self.read_reg(self.intr_clr_reg);
+        let _ = self.read_reg(self.intr_clr_reg);
+        let mut status = self.read_reg(self.raw_intr_stat_reg) & (1 << 4 | 1 << 6);
+        while status != 0 {
+
+            for _ in 0..256 {
+                let reg_val = self.read_reg(self.flag_reg);
+                if (reg_val & 0x010) != 0 {
+                    break;
+                }
+                let c = self.read_reg(self.data_reg) as u8;
+                if c != 0 {
+                    debug_input(c);
+                    self.send(c);
+                }
             }
+            status = self.read_reg(self.raw_intr_stat_reg) & (1 << 4 | 1 << 6);
         }
         debug_notify();
     }
 
     pub fn send(&mut self, data: u8) {
         while ! self.line_sts().contains(UartFrFlags::TXFE) {}
-        self.write_reg(self.data_reg, data as u16);
+        self.write_reg(self.data_reg, data as u32);
     }
 
     pub fn clear_all_irqs(&mut self) {
