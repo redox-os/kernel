@@ -1,7 +1,7 @@
 extern crate fdt;
 extern crate byteorder;
 
-use alloc::vec::Vec;
+use crate::log::{info, debug};
 use fdt::Node;
 use core::slice;
 use crate::memory::MemoryArea;
@@ -27,7 +27,7 @@ pub fn travel_interrupt_ctrl(fdt: &fdt::DeviceTree) {
     let intr = root_node.properties().find(|p| p.name.contains("interrupt-parent")).unwrap();
 
     let root_intr_parent = BE::read_u32(&intr.data);
-    println!("root parent = 0x{:08x}", root_intr_parent);
+    debug!("root parent = 0x{:08x}", root_intr_parent);
     for node in fdt.nodes() {
         if node.properties().find(|p| p.name.contains("interrupt-controller")).is_some() {
             let compatible = node.properties().find(|p| p.name.contains("compatible")).unwrap();
@@ -37,16 +37,16 @@ pub fn travel_interrupt_ctrl(fdt: &fdt::DeviceTree) {
             let _intr_data = node.properties().find(|p| p.name.contains("interrupts"));
 
             let s = core::str::from_utf8(compatible.data).unwrap();
-            println!("{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}", node.name, s, BE::read_u32(intr_cells.data),
+            debug!("{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}", node.name, s, BE::read_u32(intr_cells.data),
                      BE::read_u32(phandle.data));
             if let Some(intr) = _intr {
                 if let Some(intr_data) = _intr_data {
-                    println!("interrupt-parent = 0x{:08x}", BE::read_u32(intr.data));
-                    println!("interrupts begin:");
+                    debug!("interrupt-parent = 0x{:08x}", BE::read_u32(intr.data));
+                    debug!("interrupts begin:");
                     for chunk in intr_data.data.chunks(4) {
-                        print!("0x{:08x}, ", BE::read_u32(chunk));
+                        debug!("0x{:08x}, ", BE::read_u32(chunk));
                     }
-                    println!("interrupts end");
+                    debug!("interrupts end");
                 }
             }
         }
@@ -81,12 +81,19 @@ fn memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usize, 
 
 fn dev_memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usize, ranges: &mut [(usize, usize); 10]) -> usize {
 
-    //work around for qemu-arm64
+    // work around for qemu-arm64
     // dev mem: 128MB - 1GB, see https://github.com/qemu/qemu/blob/master/hw/arm/virt.c for details
     let root_node = dt.nodes().nth(0).unwrap();
-    let model = root_node.properties().find(|p| p.name.contains("model")).unwrap();
-    let model_str = core::str::from_utf8(model.data).unwrap();
-    if model_str.contains("linux,dummy-virt") {
+    let is_qemu_virt = {
+        if let Some(model) = root_node.properties().find(|p| p.name.contains("model")) {
+            let model_str = core::str::from_utf8(model.data).unwrap();
+            model_str.contains("linux,dummy-virt")
+        } else {
+            true
+        }
+    };
+
+    if is_qemu_virt {
         ranges[0] = (0x08000000, 0x08000000);
         ranges[1] = (0x10000000, 0x30000000);
         return 2;
@@ -130,7 +137,7 @@ fn dev_memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usi
                 return 0;
             }
         };
-        println!("dev mem 0x{:08x} 0x{:08x} 0x{:08x}", child_bus_addr, parent_bus_addr, addr_size);
+        debug!("dev mem 0x{:08x} 0x{:08x} 0x{:08x}", child_bus_addr, parent_bus_addr, addr_size);
 
         ranges[index] = (parent_bus_addr as usize, addr_size as usize);
         index += 1;
@@ -138,7 +145,7 @@ fn dev_memory_ranges(dt: &fdt::DeviceTree, address_cells: usize, size_cells: usi
     index
 }
 
-pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize)> {
+pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize, bool, bool)> {
     let data = unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) };
     let dt = fdt::DeviceTree::new(data).unwrap();
 
@@ -151,6 +158,8 @@ pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize
     let len = uart_node_name.len();
     let uart_node_name = &uart_node_name[0..len-1];
     let uart_node = dt.nodes().find(|n| n.name.contains(uart_node_name)).unwrap();
+    let skip_init = uart_node.properties().find(|p| p.name.contains("skip-init")).is_some();
+    let cts_event_walkaround = uart_node.properties().find(|p| p.name.contains("cts-event-walkaround")).is_some();
     let reg = uart_node.properties().find(|p| p.name.contains("reg")).unwrap();
 
     let (address_cells, size_cells) = root_cell_sz(&dt).unwrap();
@@ -164,7 +173,7 @@ pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize
     for sz_chunk in size.rchunks(4) {
         s += BE::read_u32(sz_chunk);
     }
-    Some((b as usize, s as usize))
+    Some((b as usize, s as usize, skip_init, cts_event_walkaround))
 }
 
 fn compatible_node_present<'a>(dt: &fdt::DeviceTree<'a>, compat_string: &str) -> bool {

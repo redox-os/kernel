@@ -6,7 +6,8 @@ use byteorder::{ByteOrder, BE};
 use fdt::{DeviceTree, Node};
 use crate::arch::device::irqchip::IRQ_CHIP;
 
-use crate::{device::io_mmap, init::device_tree::find_compatible_node};
+use crate::init::device_tree::find_compatible_node;
+use crate::log::{info, debug, error};
 use syscall::{Result, error::{Error, EINVAL}};
 
 use super::{InterruptController, IrqDesc, InterruptHandler};
@@ -99,20 +100,20 @@ impl Bcm2835ArmInterruptController {
             }
             //PHYS_NONSECURE_PPI only
             let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_xlate(&intr_data, 0).unwrap();
-            println!("bcm2835arm_ctrl virq = {}", virq);
+            info!("bcm2835arm_ctrl virq = {}", virq);
             ret_virq = Some(virq);
         }
         Ok((base as usize, size as usize, ret_virq))
     }
 
     unsafe fn init(&mut self) {
-        println!("IRQ BCM2835 INIT");
+        debug!("IRQ BCM2835 INIT");
         //disable all interrupt
         self.write(DISABLE_0, 0xffff_ffff);
         self.write(DISABLE_1, 0xffff_ffff);
         self.write(DISABLE_2, 0xffff_ffff);
 
-        println!("IRQ BCM2835 END");
+        debug!("IRQ BCM2835 END");
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
@@ -132,8 +133,6 @@ impl InterruptController for Bcm2835ArmInterruptController {
             Err(_) => return Err(Error::new(EINVAL)),
         };
         unsafe {
-            //io_mmap(base, size);
-
             self.address = base + crate::PHYS_OFFSET;
 
             self.init();
@@ -149,7 +148,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
                 i += 1;
             }
 
-            println!("bcm2835 irq_range = ({}, {})", idx, idx + cnt);
+            info!("bcm2835 irq_range = ({}, {})", idx, idx + cnt);
             self.irq_range = (idx, idx + cnt);
             *irq_idx = idx + cnt;
         }
@@ -174,7 +173,6 @@ impl InterruptController for Bcm2835ArmInterruptController {
         let pending_num = ffs(sources & 0x3ff) - 1;
         match pending_num {
             num@0..=7 => { 
-                println!("inner interrupt {}", num);
                 return num
             },
             8 => {
@@ -188,18 +186,18 @@ impl InterruptController for Bcm2835ArmInterruptController {
                 return irq_32_63 + 64;
             },
             num => {
-                println!("unexpected irq pending in BASIC PENDING: 0x{}, sources = 0x{:08x}", num, sources);
+                error!("unexpected irq pending in BASIC PENDING: 0x{}, sources = 0x{:08x}", num, sources);
                 return num;
             }
         }
     }
 
-    fn irq_eoi(&mut self, irq_num: u32) {
+    fn irq_eoi(&mut self, _irq_num: u32) {
 
     }
 
     fn irq_enable(&mut self, irq_num: u32) {
-        println!("bcm2835 enable {} {}", irq_num, irq_num & 0x1f);
+        debug!("bcm2835 enable {} {}", irq_num, irq_num & 0x1f);
         match irq_num {
             num @0..=31 => {
                 let val = 1 << num;
@@ -261,7 +259,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
         }
     }
 
-    fn irq_handler(&mut self, irq: u32) {
+    fn irq_handler(&mut self, _irq: u32) {
 
         unsafe {
             let irq = self.irq_ack();
@@ -270,7 +268,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
                     handler.irq_handler(virq as u32);
                 }
             } else {
-                println!("unexpected irq num {}", irq);
+                error!("unexpected irq num {}", irq);
             }
             self.irq_eoi(irq);
         }
@@ -278,7 +276,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
 }
 
 impl InterruptHandler for Bcm2835ArmInterruptController {
-    fn irq_handler(&mut self, irq: u32) {
+    fn irq_handler(&mut self, _irq: u32) {
 
         unsafe {
             let irq = self.irq_ack();
@@ -287,7 +285,7 @@ impl InterruptHandler for Bcm2835ArmInterruptController {
                     handler.irq_handler(virq as u32);
                 }
             } else {
-                println!("unexpected irq num {}", irq);
+                error!("unexpected irq num {}", irq);
             }
             self.irq_eoi(irq);
         }

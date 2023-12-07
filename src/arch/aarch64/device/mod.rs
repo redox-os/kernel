@@ -3,6 +3,7 @@ use core::arch::asm;
 use crate::memory::Frame;
 use crate::paging::{KernelMapper, PhysicalAddress, Page, PageFlags, VirtualAddress};
 use crate::dtb::DTB_BINARY;
+use crate::log::info;
 
 pub mod cpu;
 pub mod irqchip;
@@ -12,21 +13,18 @@ pub mod rtc;
 pub mod uart_pl011;
 
 pub unsafe fn init() {
-    println!("IRQCHIP INIT");
+    info!("IRQCHIP INIT");
     let data = DTB_BINARY.get().unwrap();
     let fdt = fdt::DeviceTree::new(data).unwrap();
     irqchip::init(&fdt);
-    println!("GIT INIT");
+    info!("GIT INIT");
     generic_timer::init();
 }
 
 pub unsafe fn init_noncore() {
-    let mut daif: usize = 0;
-    asm!("mrs {0}, daif", out(reg) daif);
-    println!("daif = 0x{:08x}", daif);
-    println!("SERIAL INIT");
+    info!("SERIAL INIT");
     serial::init();
-    println!("RTC INIT");
+    info!("RTC INIT");
     rtc::init();
 }
 

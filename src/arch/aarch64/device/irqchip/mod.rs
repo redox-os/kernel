@@ -3,6 +3,7 @@ use byteorder::{ByteOrder, BE};
 use syscall::Result;
 use fdt::DeviceTree;
 
+use crate::log::{debug, error};
 use crate::init::device_tree::travel_interrupt_ctrl;
 
 mod gic;
@@ -68,7 +69,7 @@ impl IrqChipList {
         let intr = root_node.properties().find(|p| p.name.contains("interrupt-parent")).unwrap();
 
         let root_intr_parent = BE::read_u32(&intr.data);
-        println!("root parent = 0x{:08x}", root_intr_parent);
+        debug!("root parent = 0x{:08x}", root_intr_parent);
         self.root_phandle = root_intr_parent;
         for node in fdt.nodes() {
             if node.properties().find(|p| p.name.contains("interrupt-controller")).is_some() {
@@ -79,7 +80,7 @@ impl IrqChipList {
                 let _intr_data = node.properties().find(|p| p.name.contains("interrupts"));
 
                 let s = core::str::from_utf8(compatible.data).unwrap();
-                println!("{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}", node.name, s, BE::read_u32(intr_cells.data),
+                debug!("{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}", node.name, s, BE::read_u32(intr_cells.data),
                          BE::read_u32(phandle.data));
                 let mut item = IrqChipItem {
                     compatible: s.to_string(),
@@ -93,14 +94,14 @@ impl IrqChipList {
                 };
                 if let Some(intr) = _intr {
                     if let Some(intr_data) = _intr_data {
-                        println!("interrupt-parent = 0x{:08x}", BE::read_u32(intr.data));
+                        debug!("interrupt-parent = 0x{:08x}", BE::read_u32(intr.data));
                         item.parent_phandle = Some(BE::read_u32(intr.data));
-                        println!("interrupts begin:");
+                        debug!("interrupts begin:");
                         for chunk in intr_data.data.chunks(4) {
-                            print!("0x{:08x}, ", BE::read_u32(chunk));
+                            debug!("0x{:08x}, ", BE::read_u32(chunk));
                             item.interrupts.push(BE::read_u32(chunk));
                         }
-                        println!("interrupts end");
+                        debug!("interrupts end");
                     }
                 }
                 if item.phandle == root_intr_parent {
@@ -248,13 +249,13 @@ pub fn init(fdt: &DeviceTree) {
 
 pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
     if virq >= 1024 {
-        println!("irq {} exceed 1024!!!", virq);
+        error!("irq {} exceed 1024!!!", virq);
         return ;
     }
 
     unsafe {
-        if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq as usize].handler {
-            println!("irq {} has already been registered!", virq);
+        if IRQ_CHIP.irq_desc[virq as usize].handler.is_some() {
+            error!("irq {} has already been registered!", virq);
             return ;
         }
 

@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use crate::log::{info, debug};
 
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
@@ -49,7 +50,7 @@ pub unsafe fn init() {
         }
         //PHYS_NONSECURE_PPI only
         let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_xlate(&intr_data, 1).unwrap();
-        println!("generic_timer virq = {}", virq);
+        info!("generic_timer virq = {}", virq);
         register_irq(virq as u32, Box::new(timer));
         IRQ_CHIP.irq_enable(virq as u32);
     }

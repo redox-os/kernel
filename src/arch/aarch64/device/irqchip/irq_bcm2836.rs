@@ -3,7 +3,8 @@ use core::{ptr::{read_volatile, write_volatile}, arch::asm};
 use byteorder::{ByteOrder, BE};
 use fdt::{DeviceTree, Node};
 
-use crate::{device::io_mmap, init::device_tree::find_compatible_node};
+use crate::init::device_tree::find_compatible_node;
+use crate::log::{info, debug};
 use syscall::{Result, error::{Error, EINVAL}};
 
 use super::{InterruptController, IrqDesc};
@@ -88,15 +89,15 @@ impl Bcm2836ArmInterruptController {
     }
 
     unsafe fn init(&mut self) {
-        println!("IRQ BCM2836 INIT");
+        debug!("IRQ BCM2836 INIT");
         //init local timer freq
         self.write(LOCAL_CONTROL, 0x0);
         self.write(LOCAL_PRESCALER, 0x8000_0000);
 
         //routing all irq to core
         self.write(LOCAL_GPU_ROUTING, self.active_cpu);
-        println!("routing all irq to core {}", self.active_cpu);
-        println!("IRQ BCM2836 END");
+        debug!("routing all irq to core {}", self.active_cpu);
+        debug!("IRQ BCM2836 END");
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
@@ -116,8 +117,6 @@ impl InterruptController for Bcm2836ArmInterruptController {
             Err(_) => return Err(Error::new(EINVAL)),
         };
         unsafe {
-            //io_mmap(base, size);
-
             self.address = base + crate::PHYS_OFFSET;
             let mut cpuid: usize = 0;
             asm!("mrs {}, mpidr_el1", out(reg) cpuid);
@@ -136,7 +135,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
                 i += 1;
             }
 
-            println!("bcm2836 irq_range = ({}, {})", idx, idx + cnt);
+            info!("bcm2836 irq_range = ({}, {})", idx, idx + cnt);
             self.irq_range = (idx, idx + cnt);
             *irq_idx = idx + cnt;
         }
@@ -147,12 +146,12 @@ impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_ack(&mut self) -> u32 {
         let mut cpuid: usize = 0;
         unsafe { asm!("mrs {}, mpidr_el1", out(reg) cpuid); }
-        let mut cpu = cpuid as u32 & 0x3;
+        let cpu = cpuid as u32 & 0x3;
         let sources: u32 = unsafe { self.read(LOCAL_IRQ_PENDING + 4 * cpu) };
         ffs(sources) - 1
     }
 
-    fn irq_eoi(&mut self, irq_num: u32) {
+    fn irq_eoi(&mut self, _irq_num: u32) {
 
     }
 
@@ -160,8 +159,8 @@ impl InterruptController for Bcm2836ArmInterruptController {
         match irq_num {
             LOCAL_IRQ_CNTPNSIRQ => unsafe {
                 let mut cpuid: usize = 0;
-                unsafe { asm!("mrs {}, mpidr_el1", out(reg) cpuid); }
-                let mut cpu = cpuid as u32 & 0x3;
+                asm!("mrs {}, mpidr_el1", out(reg) cpuid);
+                let cpu = cpuid as u32 & 0x3;
                 let mut reg_val = self.read(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu);
                 reg_val |= 0x2;
                 self.write(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu, reg_val);

@@ -1,11 +1,6 @@
-use core::fmt::{self, Write};
 use core::ptr;
 
-use crate::device::irqchip::IRQ_CHIP;
-use crate::interrupt::irq::trigger;
 use crate::scheme::debug::{debug_input, debug_notify};
-
-use super::irqchip::InterruptHandler;
 
 bitflags! {
     /// UARTFR
@@ -46,6 +41,15 @@ bitflags! {
 }
 
 bitflags! {
+    // UARTRIS
+    struct UartRisFlags: u32 {
+        const RTIS = 1 << 6;
+        const TXIS = 1 << 5;
+        const RXIS = 1 << 4;
+    }
+}
+
+bitflags! {
     //UARTMIS
     struct UartMisFlags: u32 {
         const TXMIS = 1 << 5;
@@ -60,6 +64,22 @@ bitflags! {
     }
 }
 
+bitflags! {
+    //UARTIFLS
+    struct UartIflsFlags: u32 {
+        const RX1_8 = 0 << 3;
+        const RX2_8 = 1 << 3;
+        const RX4_8 = 2 << 3;
+        const RX6_8 = 3 << 3;
+        const RX7_8 = 4 << 3;
+        const TX1_8 = 0 << 0;
+        const TX2_8 = 1 << 0;
+        const TX4_8 = 2 << 0;
+        const TX6_8 = 3 << 0;
+        const TX7_8 = 4 << 0;
+    }
+}
+
 #[allow(dead_code)]
 pub struct SerialPort {
     base: usize,
@@ -70,16 +90,20 @@ pub struct SerialPort {
     frac_baud_reg: u8,
     line_ctrl_reg: u8,
     ctrl_reg: u8,
-    intr_fifo_ls_reg: u8,
+    ifls_reg: u8,
     intr_mask_setclr_reg: u8,
     raw_intr_stat_reg: u8,
     masked_intr_stat_reg: u8,
     intr_clr_reg: u8,
-    dma_ctrl_reg: u8
+    dma_ctrl_reg: u8,
+    ifls: u32,
+    fifo_size: u32,
+    skip_init: bool,
+    cts_event_walkaround: bool,
 }
 
 impl SerialPort {
-    pub const fn new(base: usize) -> SerialPort {
+    pub const fn new(base: usize, skip_init: bool, cts_event_walkaround: bool) -> SerialPort {
         SerialPort {
             base: base,
             data_reg: 0x00,
@@ -89,12 +113,16 @@ impl SerialPort {
             frac_baud_reg: 0x28,
             line_ctrl_reg: 0x2c,
             ctrl_reg: 0x30,
-            intr_fifo_ls_reg: 0x34,
+            ifls_reg: 0x34,
             intr_mask_setclr_reg: 0x38,
             raw_intr_stat_reg: 0x3c,
             masked_intr_stat_reg: 0x40,
             intr_clr_reg: 0x44,
             dma_ctrl_reg: 0x48,
+            ifls: 0x12, // RX4_8 | TX4_8
+            fifo_size: 32,
+            skip_init: skip_init,
+            cts_event_walkaround: cts_event_walkaround,
         }
     }
 
@@ -111,26 +139,30 @@ impl SerialPort {
     }
 
     pub fn init(&mut self, with_irq: bool) {
-        /*
+
+        if self.skip_init {
+            return ;
+        }
+
+        //Disable UART first
+        self.write_reg(self.ctrl_reg, 0x0);
+
+        //Setup ifls
+        self.write_reg(self.ifls_reg, self.ifls);
+
+        //Enable FIFO
+        if self.fifo_size > 1 {
+            let mut flags = UartLcrhFlags::from_bits_truncate(self.read_reg(self.line_ctrl_reg));
+            flags |= UartLcrhFlags::FEN;
+            self.write_reg(self.line_ctrl_reg, flags.bits());
+        }
+
         // Enable RX, TX, UART
         let flags = UartCrFlags::RXE | UartCrFlags::TXE | UartCrFlags::UARTEN;
         self.write_reg(self.ctrl_reg, flags.bits());
-        */
 
-        //Enable FIFO
-        /*
-        let mut flags = UartLcrhFlags::from_bits_truncate(self.read_reg(self.line_ctrl_reg));
-        flags |= UartLcrhFlags::FEN;
-        self.write_reg(self.line_ctrl_reg, flags.bits());
-        */
         if with_irq {
-            // Enable IRQs
-            let flags = (1 << 4 | 1 << 6);
-            self.write_reg(self.intr_mask_setclr_reg, flags);
-
-            // Clear pending interrupts
-            self.write_reg(self.intr_clr_reg, 0x7ff);
-
+            self.enable_irq();
         }
     }
 
@@ -138,25 +170,44 @@ impl SerialPort {
         UartFrFlags::from_bits_truncate(self.read_reg(self.flag_reg))
     }
 
+    fn intr_stats(&self) -> UartRisFlags {
+        UartRisFlags::from_bits_truncate(self.read_reg(self.raw_intr_stat_reg))
+    }
+
+    pub fn drain_fifo(&mut self) {
+        for _ in 0..self.fifo_size*2 {
+            if self.line_sts().contains(UartFrFlags::RXFE) {
+                break;
+            }
+            let _ = self.read_reg(self.data_reg);
+        }
+    }
+
     pub fn receive(&mut self) {
-        self.write_reg(self.intr_clr_reg, 0x00);
-        let _ = self.read_reg(self.intr_clr_reg);
-        let _ = self.read_reg(self.intr_clr_reg);
-        let mut status = self.read_reg(self.raw_intr_stat_reg) & (1 << 4 | 1 << 6);
-        while status != 0 {
+        let mut flags = self.intr_stats();
+        let chk_flags = UartRisFlags::RTIS | UartRisFlags::RXIS;
+        while (flags & chk_flags).bits != 0 {
+
+            if self.cts_event_walkaround {
+                self.write_reg(self.intr_clr_reg, 0x00);
+                let _ = self.read_reg(self.intr_clr_reg);
+                let _ = self.read_reg(self.intr_clr_reg);
+            }
+
+            let clr = flags & (!chk_flags);
+            self.write_reg(self.intr_clr_reg, clr.bits);
 
             for _ in 0..256 {
-                let reg_val = self.read_reg(self.flag_reg);
-                if (reg_val & 0x010) != 0 {
+                if self.line_sts().contains(UartFrFlags::RXFE) {
                     break;
                 }
                 let c = self.read_reg(self.data_reg) as u8;
                 if c != 0 {
                     debug_input(c);
-                    self.send(c);
                 }
             }
-            status = self.read_reg(self.raw_intr_stat_reg) & (1 << 4 | 1 << 6);
+
+            flags = self.intr_stats();
         }
         debug_notify();
     }
@@ -167,7 +218,7 @@ impl SerialPort {
     }
 
     pub fn clear_all_irqs(&mut self) {
-        let flags = UartIcrFlags::RXIC;
+        let flags = UartIcrFlags::RTIC | UartIcrFlags::RXIC;
         self.write_reg(self.intr_clr_reg, flags.bits());
     }
 
@@ -176,7 +227,12 @@ impl SerialPort {
     }
 
     pub fn enable_irq(&mut self) {
-        let flags = UartImscFlags::RXIM;
+
+        self.clear_all_irqs();
+
+        self.drain_fifo();
+
+        let flags = UartImscFlags::RXIM | UartImscFlags::RTIM;
         self.write_reg(self.intr_mask_setclr_reg, flags.bits());
     }
 

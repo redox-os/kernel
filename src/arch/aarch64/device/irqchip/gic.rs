@@ -3,7 +3,8 @@ use core::ptr::{read_volatile, write_volatile};
 use fdt::{DeviceTree, Node};
 use byteorder::{ByteOrder, BE};
 
-use crate::{device::io_mmap, init::device_tree::find_compatible_node};
+use crate::init::device_tree::find_compatible_node;
+use crate::log::{info, debug};
 use syscall::{Result, error::{Error, EINVAL}};
 
 use super::{InterruptController, IrqDesc};
@@ -55,7 +56,7 @@ impl GenericInterruptController {
 
         for chunk in reg.data.chunks(8) {
             let val = BE::read_u64(chunk) as usize;
-            println!("idx{} = {:08x}", idx, val);
+            debug!("idx{} = {:08x}", idx, val);
             match idx {
                 0 => regs.0 = val,
                 1 => regs.1 = val,
@@ -82,13 +83,6 @@ impl InterruptController for GenericInterruptController {
         };
 
         unsafe {
-            //TODO: do kernel memory map using node.ranges
-
-            // Map in the Distributor interface
-            //io_mmap(dist_addr, dist_size);
-            // Map in CPU0's interface
-            //io_mmap(cpu_addr, cpu_size);
-
             self.gic_cpu_if.init(crate::PHYS_OFFSET + cpu_addr);
             self.gic_dist_if.init(crate::PHYS_OFFSET + dist_addr);
 
@@ -109,7 +103,7 @@ impl InterruptController for GenericInterruptController {
             i += 1;
         }
 
-        println!("gic irq_range = ({}, {})", idx, idx + cnt);
+        info!("gic irq_range = ({}, {})", idx, idx + cnt);
         self.irq_range = (idx, idx + cnt);
         *irq_idx = idx + cnt;
         Ok(None)
@@ -150,7 +144,8 @@ impl InterruptController for GenericInterruptController {
             Some(self.irq_range.0 + hwirq as usize)
         }
     }
-    fn irq_handler(&mut self, irq: u32) {
+
+    fn irq_handler(&mut self, _irq: u32) {
 
     }
 }
@@ -171,7 +166,7 @@ impl GicDistIf {
         let typer = self.read(GICD_TYPER);
         self.ncpus = ((typer & (0x7 << 5)) >> 5) + 1;
         self.nirqs = ((typer & 0x1f) + 1) * 32;
-        println!("gic: Distributor supports {:?} CPUs and {:?} IRQs", self.ncpus, self.nirqs);
+        info!("gic: Distributor supports {:?} CPUs and {:?} IRQs", self.ncpus, self.nirqs);
 
         // Set all SPIs to level triggered
         for irq in (32..self.nirqs).step_by(16) {

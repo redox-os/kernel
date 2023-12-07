@@ -56,7 +56,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
     let bootstrap = {
         let args = &*args_ptr;
 
-        /*
         // BSS should already be zero
         {
             assert_eq!(BSS_TEST_ZERO, 0);
@@ -66,20 +65,16 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
-        */
         if args.dtb_base != 0 {
             // Try to find serial port prior to logging
             device::serial::init_early(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
         }
 
-        KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
-        KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
-
         // Convert env to slice
         let env = slice::from_raw_parts((crate::PHYS_OFFSET + args.env_base) as *const u8, args.env_size);
 
         // Set up graphical debug
-        #[cfg(feature = "graphical_debug")]
+        //#[cfg(feature = "graphical_debug")]
         //graphical_debug::init(env);
 
         // Initialize logger
@@ -145,8 +140,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         allocator::init();
 
         // Set up double buffer for grpahical debug now that heap is available
-        #[cfg(feature = "graphical_debug")]
-        graphical_debug::init_heap();
+        //#[cfg(feature = "graphical_debug")]
+        //graphical_debug::init_heap();
 
         // Activate memory logging
         log::init();
@@ -162,8 +157,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         crate::memory::init_mm();
 
         // Stop graphical debug
-        #[cfg(feature = "graphical_debug")]
-        graphical_debug::fini();
+        //#[cfg(feature = "graphical_debug")]
+        //graphical_debug::fini();
 
         BSP_READY.store(true, Ordering::SeqCst);
 
