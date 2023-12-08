@@ -32,9 +32,12 @@ pub fn exit(status: usize) -> ! {
         let context_lock = context::current().expect("exit failed to find context");
 
         let close_files;
+        let addrspace_opt;
+
         let pid = {
             let mut context = context_lock.write();
             close_files = Arc::try_unwrap(mem::take(&mut context.files)).map_or_else(|_| Vec::new(), RwLock::into_inner);
+            addrspace_opt = mem::take(&mut context.addr_space).and_then(|a| Arc::try_unwrap(a).ok());
             context.id
         };
 
@@ -60,6 +63,7 @@ pub fn exit(status: usize) -> ! {
                 let _ = file.close();
             }
         }
+        drop(addrspace_opt);
 
         // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits
         let (pgid, ppid) = {
