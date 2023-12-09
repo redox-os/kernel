@@ -9,7 +9,6 @@ use crate::memory::{free_frames, used_frames, PAGE_SIZE, Frame};
 use crate::context::memory::{AddrSpace, Grant, PageSpan, handle_notify_files};
 use crate::paging::VirtualAddress;
 
-#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::paging::entry::EntryFlags;
 
 use crate::syscall::data::{Map, StatVfs};
@@ -29,6 +28,7 @@ enum Handle {
     PhysicalWb = 1,
     PhysicalUc = 2,
     PhysicalWc = 3,
+    PhysicalDev = 4,
 
     // TODO: More/make arch-specific?
 }
@@ -36,6 +36,7 @@ pub enum MemoryType {
     Writeback,
     Uncacheable,
     WriteCombining,
+    DeviceMemory,
 }
 
 impl Handle {
@@ -46,6 +47,7 @@ impl Handle {
             1 => Self::PhysicalWb,
             2 => Self::PhysicalUc,
             3 => Self::PhysicalWc,
+            4 => Self::PhysicalDev,
 
             _ => return None,
         })
@@ -96,10 +98,13 @@ impl MemoryScheme {
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
                 MemoryType::WriteCombining => page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true),
 
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
                 MemoryType::Uncacheable => page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true),
 
                 #[cfg(target_arch = "aarch64")]
+                MemoryType::DeviceMemory => page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true),
+
+                //x86 && x86_64 MemoryType::DeviceMemory unimplemented
+                //aarch64 MemoryType::WriteCombining unimplemented
                 _ => (),
             }
 
@@ -124,6 +129,7 @@ impl KernelScheme for MemoryScheme {
             "physical" | "physical@wb" => Handle::PhysicalWb,
             "physical@uc" => Handle::PhysicalUc,
             "physical@wc" => Handle::PhysicalWc,
+            "physical@dev" => Handle::PhysicalDev,
 
             _ => return Err(Error::new(ENOENT)),
         };
@@ -148,6 +154,7 @@ impl KernelScheme for MemoryScheme {
             Handle::PhysicalWb => Self::physmap(map.offset, map.size, map.flags, MemoryType::Writeback),
             Handle::PhysicalUc => Self::physmap(map.offset, map.size, map.flags, MemoryType::Uncacheable),
             Handle::PhysicalWc => Self::physmap(map.offset, map.size, map.flags, MemoryType::WriteCombining),
+            Handle::PhysicalDev => Self::physmap(map.offset, map.size, map.flags, MemoryType::DeviceMemory),
         }
     }
     fn kfpath(&self, id: usize, dst: UserSliceWo) -> Result<usize> {
@@ -157,6 +164,7 @@ impl KernelScheme for MemoryScheme {
             Handle::PhysicalWb => "memory:physical@wb",
             Handle::PhysicalUc => "memory:physical@uc",
             Handle::PhysicalWc => "memory:physical@wc",
+            Handle::PhysicalDev => "memory:physical@dev",
         };
         dst.copy_common_bytes_from_slice(src.as_bytes())
     }

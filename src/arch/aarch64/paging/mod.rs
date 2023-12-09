@@ -20,6 +20,7 @@ pub use super::CurrentRmmArch as RmmA;
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
 pub use crate::rmm::KernelMapper;
 
+pub mod entry;
 pub mod mapper;
 
 /// Number of entries per page table

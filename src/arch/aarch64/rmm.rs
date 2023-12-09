@@ -22,7 +22,7 @@ use rmm::{
 };
 use spin::Mutex;
 
-use crate::{LogicalCpuId, init::device_tree::MEMORY_MAP};
+use crate::{LogicalCpuId, init::device_tree::MEMORY_MAP, paging::entry::EntryFlags};
 
 use super::CurrentRmmArch as RmmA;
 
@@ -186,7 +186,7 @@ unsafe fn inner<A: Arch>(
                     // mair_el1 == 0x00000000000044FF
                     // set mem_attr == device memory
                     let flags = page_flags::<A>(virt)
-                        .custom_flag(2 << 2, true);
+                        .custom_flag(EntryFlags::DEV_MEM.bits(), true);
                     let flush = mapper.map_phys(
                         virt,
                         phys,
