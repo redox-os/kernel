@@ -38,6 +38,8 @@ pub fn exit(status: usize) -> ! {
             let mut context = context_lock.write();
             close_files = Arc::try_unwrap(mem::take(&mut context.files)).map_or_else(|_| Vec::new(), RwLock::into_inner);
             addrspace_opt = mem::take(&mut context.addr_space).and_then(|a| Arc::try_unwrap(a).ok());
+            drop(context.syscall_head.take());
+            drop(context.syscall_tail.take());
             context.id
         };
 

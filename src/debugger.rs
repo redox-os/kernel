@@ -1,3 +1,5 @@
+use alloc::collections::BTreeSet;
+
 use crate::paging::{RmmA, RmmArch, TableKind, PAGE_SIZE};
 
 //TODO: combine arches into one function (aarch64 one is newest)
@@ -176,7 +178,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     use hashbrown::HashSet;
 
-    use crate::memory::{RefCount, get_page_info};
+    use crate::memory::{RefCount, get_page_info, the_zeroed_frame};
 
     unsafe { x86::bits64::rflags::stac(); }
 
@@ -186,12 +188,27 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     let mut tree = HashMap::new();
     let mut spaces = HashSet::new();
 
+    let mut temporarily_taken_htbufs = 0;
+
+    tree.insert(the_zeroed_frame().0, (1, false));
+
     let old_table = RmmA::table(TableKind::User);
 
     for (id, context_lock) in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| *id != target_id) { continue; }
         let context = context_lock.read();
         println!("{}: {}", (*id).get(), context.name);
+
+        if let Some(ref head) = context.syscall_head {
+            tree.insert(head.get(), (1, false));
+        } else {
+            temporarily_taken_htbufs += 1;
+        }
+        if let Some(ref tail) = context.syscall_tail {
+            tree.insert(tail.get(), (1, false));
+        } else {
+            temporarily_taken_htbufs += 1;
+        }
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
@@ -250,18 +267,23 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         println!();
     }
-    for (frame, count) in tree {
-        let rc = get_page_info(frame).unwrap().refcount();
+    for (frame, (count, p)) in tree {
+        let Some(info) = get_page_info(frame) else {
+            assert!(p);
+            continue;
+        };
+        let rc = info.refcount();
         let c = match rc {
             RefCount::Zero => 0,
             RefCount::One => 1,
             RefCount::Cow(c) => c.get(),
             RefCount::Shared(s) => s.get(),
         };
-        if c < count {
-            println!("undercounted frame {:?} ({} < {})", frame, c, count);
+        if c != count {
+            println!("frame refcount mismatch for {:?} ({} != {})", frame, c, count);
         }
     }
+    println!("({} kernel-owned references were not counted)", temporarily_taken_htbufs);
 
     println!("DEBUGGER END");
     unsafe { x86::bits64::rflags::clac(); }
@@ -270,9 +292,8 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 use {hashbrown::HashMap, crate::memory::Frame};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace, new_as: bool, tree: &mut HashMap<Frame, usize>) {
-
-    use crate::context::memory::PageSpan;
+pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace, new_as: bool, tree: &mut HashMap<Frame, (usize, bool)>) {
+    use crate::context::memory::{PageSpan, Provider};
     use crate::memory::{get_page_info, RefCount};
     use crate::paging::*;
 
@@ -319,22 +340,21 @@ pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpa
                     if grant.flags().write(false).data() & !EXCLUDE != flags.write(false).data() & !EXCLUDE {
                         log::error!("FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}", grant.flags(), flags, address.data() as *const u8, PageSpan::new(base, grant.page_count()));
                     }
+                    let p = matches!(grant.provider, Provider::PhysBorrowed { .. } | Provider::External { .. } | Provider::FmapBorrowed { .. });
                     let frame = Frame::containing_address(physaddr);
                     if new_as {
-                        *tree.entry(frame).or_insert(0) += 1;
+                        tree.entry(frame).or_insert((0, p)).0 += 1;
                     }
 
                     if let Some(page) = get_page_info(frame) {
                         match page.refcount() {
-                            // TODO: Remove physalloc, and ensure physmap cannot map
-                            // allocator-owned memory! This is a hack!
-
-                            //RefCount::Zero => panic!("mapped page with zero refcount"),
-                            RefCount::Zero => (),
+                            RefCount::Zero => panic!("mapped page with zero refcount"),
 
                             RefCount::One | RefCount::Shared(_) => assert!(!(flags.has_write() && !grant.flags().has_write()), "page entry has higher permissions than grant!"),
                             RefCount::Cow(_) => assert!(!flags.has_write(), "directly writable CoW page!"),
                         }
+                    } else {
+                        //println!("!OWNED {:?}", frame);
                     }
                 }
             }

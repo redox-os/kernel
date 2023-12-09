@@ -14,7 +14,7 @@ use syscall::{
 use rmm::{Arch as _, PageFlush};
 
 use crate::arch::paging::PAGE_SIZE;
-use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames, RefKind, AddRefError, RefCount, the_zeroed_frame};
+use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames, RefKind, AddRefError, RefCount, the_zeroed_frame, init_frame};
 use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
 use crate::paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
 use crate::scheme::{self, KernelSchemes};
@@ -694,13 +694,8 @@ pub enum Provider {
     AllocatedShared { is_pinned_userscheme_borrow: bool },
 
     /// The grant is not owned, but borrowed from physical memory frames that do not belong to the
-    /// frame allocator.
-    ///
-    /// This is true for MMIO, or where the frames are managed externally (UserScheme head/tail
-    /// buffers).
-    ///
-    // TODO: Stop using PhysBorrowed for head/tail pages when doing scheme calls! Force userspace
-    // to provide it, perhaps from relibc?
+    /// frame allocator. The kernel will forbid borrowing any physical memory range, that the
+    /// memory map has indicated is regular allocatable RAM.
     PhysBorrowed { base: Frame },
 
     /// The memory is borrowed directly from another address space.
@@ -735,9 +730,9 @@ impl Grant {
 
         // TODO:
         //
-        // This may not necessarily hold, as even pinned memory can remain shared (e.g.
-        // proc: borrow), but it would probably be possible to forbid borrowing memory
-        // there as well.
+        // This may not necessarily hold, as even pinned memory can remain shared (e.g. proc:
+        // borrow), but it would probably be possible to forbid borrowing memory there as well.
+        // Maybe make it exclusive first using cow(), unless that is too expensive.
         //
         // assert_eq!(info.refcount(), RefCount::One);
 
@@ -913,10 +908,6 @@ impl Grant {
                             let (_, _, flush) = guard.table.utable.remap_with_full(src_page.start_address(), |_, flags| (new_cow_frame.start_address(), flags)).expect("page did exist");
                             src.flusher.consume(flush);
 
-                            if page_info.remove_ref() == RefCount::Zero {
-                                deallocate_frames(frame, 1);
-                            }
-
                             new_cow_frame
                         }
                         Err(AddRefError::SharedToCow) => unreachable!(),
@@ -1001,8 +992,7 @@ impl Grant {
                 };
 
                 let writable = match get_page_info(Frame::containing_address(phys)) {
-                    // TODO: this is a hack for PhysBorrowed pages
-                    None => false,
+                    None => true,
                     Some(i) => {
                         if i.add_ref(RefKind::Shared).is_err() {
                             continue;
@@ -1013,7 +1003,7 @@ impl Grant {
                 };
 
                 unsafe {
-                    let flush = dst_mapper.map_phys(dst_base.next_by(i).start_address(), phys, flags.write(writable)).ok_or(Error::new(ENOMEM))?;
+                    let flush = dst_mapper.map_phys(dst_base.next_by(i).start_address(), phys, flags.write(flags.has_write() && writable)).ok_or(Error::new(ENOMEM))?;
                     dst_flusher.consume(flush);
                 }
             }
@@ -1030,7 +1020,6 @@ impl Grant {
             },
         })
     }
-    // TODO: This is limited to one grant. Should it be (if some magic new proc: API is introduced)?
     pub fn copy_mappings(
         src_base: Page,
         dst_base: Page,
@@ -1070,7 +1059,8 @@ impl Grant {
                     if let Some((phys, _)) = src_mapper.translate(src_page.start_address()) {
                         Frame::containing_address(phys)
                     } else {
-                        let new_frame = init_frame(RefCount::Shared(NonZeroUsize::new(2).unwrap())).expect("TODO: handle OOM");
+                        // TODO: Omit the unnecessary subsequent add_ref call.
+                        let new_frame = init_frame(RefCount::One).expect("TODO: handle OOM");
                         let src_flush = unsafe { src_mapper.map_phys(src_page.start_address(), new_frame.start_address(), flags).expect("TODO: handle OOM") };
                         src_flusher.consume(src_flush);
 
@@ -1350,7 +1340,7 @@ impl GrantInfo {
         self.page_count
     }
     pub fn can_have_flags(&self, flags: MapFlags) -> bool {
-        // TODO: read
+        // TODO: read (some architectures support execute-only pages)
         let is_downgrade = (self.flags.has_write() || !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() || !flags.contains(MapFlags::PROT_EXEC));
 
         match self.provider {
@@ -1367,7 +1357,6 @@ impl GrantInfo {
         match (&self.provider, &with.provider) {
             (Provider::Allocated { cow_file_ref: None, phys_contiguous: false }, Provider::Allocated { cow_file_ref: None, phys_contiguous: false }) => true,
             //(Provider::PhysBorrowed { base: ref lhs }, Provider::PhysBorrowed { base: ref rhs }) => lhs.next_by(self.page_count) == rhs.clone(),
-            // TODO: Add merge function that merges the page array.
             //(Provider::External { address_space: ref lhs_space, src_base: ref lhs_base, cow: lhs_cow, .. }, Provider::External { address_space: ref rhs_space, src_base: ref rhs_base, cow: rhs_cow, .. }) => Arc::ptr_eq(lhs_space, rhs_space) && lhs_cow == rhs_cow && lhs_base.next_by(self.page_count) == rhs_base.clone(),
 
             _ => false,
@@ -1408,8 +1397,6 @@ impl GrantInfo {
         flags
     }
     pub fn file_ref(&self) -> Option<&GrantFileRef> {
-        // TODO: This would be bad for PhysBorrowed head/tail buffers, but otherwise the physical
-        // base address could be included in offset, for PhysBorrowed.
         if let Provider::FmapBorrowed { ref file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref file_ref), .. } = self.provider {
             Some(file_ref)
         } else {
@@ -1435,7 +1422,13 @@ pub struct Table {
 
 impl Drop for AddrSpace {
     fn drop(&mut self) {
-        for grant in core::mem::take(&mut self.grants).into_iter() {
+        for mut grant in core::mem::take(&mut self.grants).into_iter() {
+            // Unpinning the grant is allowed, because pinning only occurs in UserScheme calls to
+            // prevent unmapping the mapped range twice (which would corrupt only the scheme
+            // provider), but it won't be able to double free any range after this address space
+            // has been dropped!
+            grant.info.unpin();
+
             // TODO: Optimize away clearing the actual page tables? Since this address space is no
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
@@ -1551,34 +1544,37 @@ pub enum PfError {
     RecursionLimitExceeded,
 }
 
+/// Consumes an existing reference to old_frame, and then returns an exclusive frame, with refcount
+/// either preinitialized to One or Shared(2) depending on initial_ref_kind. This may be the same
+/// frame, or (if the refcount is modified simultaneously) a new frame whereas the old frame is
+/// deallocated.
 fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Result<Frame, PfError> {
-    assert_ne!(old_info.refcount(), RefCount::Zero);
+    let old_refcount = old_info.refcount();
+    assert_ne!(old_refcount, RefCount::Zero);
 
-    if old_info.refcount() == RefCount::One {
-        old_info.add_ref(initial_ref_kind).expect("must succeed, knows current value");
+    let initial_rc = match initial_ref_kind {
+        RefKind::Cow => RefCount::One,
+        RefKind::Shared => RefCount::Shared(NonZeroUsize::new(2).unwrap()),
+    };
+
+    if old_refcount == RefCount::One {
+        // This reference, that is being copied on write, was the only reference to old_frame, so
+        // no copy is necessary.
+        if initial_ref_kind == RefKind::Shared {
+            old_info.refcount.store(initial_rc.to_raw(), Ordering::Relaxed);
+        }
         return Ok(old_frame);
     }
 
-    let new_frame = init_frame(match initial_ref_kind {
-        RefKind::Cow => RefCount::One,
-        RefKind::Shared => RefCount::Shared(NonZeroUsize::new(2).unwrap()),
-    })?;
+    let new_frame = init_frame(initial_rc)?;
 
-    // TODO: omit this step if old_frame == the_zeroed_frame()
     if old_frame != the_zeroed_frame().0 {
         unsafe { copy_frame_to_frame_directly(new_frame, old_frame); }
     }
 
-    let _ = old_info.remove_ref();
-
-    Ok(new_frame)
-}
-
-pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
-    let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
-    let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
-    assert_eq!(page_info.refcount(), RefCount::Zero);
-    page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
+    if old_info.remove_ref() == RefCount::Zero {
+        crate::memory::deallocate_frames(old_frame, 1);
+    }
 
     Ok(new_frame)
 }
@@ -1765,6 +1761,7 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                 let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
                 // TODO: Should this be called?
+                log::warn!("Mapped zero page since grant didn't exist");
                 map_zeroed(&mut guard.table.utable, src_page, grant_flags, access == AccessMode::Write)?
             }
         }

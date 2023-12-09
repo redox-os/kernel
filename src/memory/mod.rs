@@ -7,7 +7,7 @@ use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
-use crate::context::{self, memory::{init_frame, AccessMode, PfError}};
+use crate::context::{self, memory::{AccessMode, PfError}};
 use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
 use crate::paging::Page;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress, RmmA, RmmArch};
@@ -139,7 +139,6 @@ pub struct RaiiFrame {
 }
 impl RaiiFrame {
     pub fn allocate() -> Result<Self, Enomem> {
-        // TODO: Use special tag?
         init_frame(RefCount::One).map_err(|_| Enomem).map(|inner| Self { inner })
     }
     pub fn get(&self) -> Frame {
@@ -292,7 +291,7 @@ pub fn init_mm() {
     unsafe {
         let the_frame = allocate_frames(1).expect("failed to allocate static zeroed frame");
         let the_info = get_page_info(the_frame).expect("static zeroed frame had no PageInfo");
-        the_info.refcount.store(RefCount::Cow(NonZeroUsize::new(2).unwrap()).to_raw(), Ordering::Relaxed);
+        the_info.refcount.store(RefCount::One.to_raw(), Ordering::Relaxed);
 
         THE_ZEROED_FRAME.get().write(Some((the_frame, the_info)));
     }
@@ -342,7 +341,7 @@ impl PageInfo {
         RefCount::from_raw(refcount)
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RefKind {
     Cow,
     Shared,
@@ -477,4 +476,13 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
     unsafe {
         THE_ZEROED_FRAME.get().read().expect("zeroed frame must be initialized")
     }
+}
+
+pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
+    let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
+    let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
+    assert_eq!(page_info.refcount(), RefCount::Zero);
+    page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
+
+    Ok(new_frame)
 }
