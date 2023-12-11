@@ -206,19 +206,23 @@ macro_rules! pop_preserved {
     " };
 }
 
+// Must always happen after push_scratch
 macro_rules! enter_gs {
     () => { "
         // Enter kernel GS segment
-        push gs
-        push 0x18
-        pop gs
+        mov ecx, gs
+        push ecx
+        mov ecx, 0x18
+        mov gs, ecx
     " }
 }
 
+// Must always happen before pop_scratch
 macro_rules! exit_gs {
     () => { "
         // Exit kernel GS segment
-        pop gs
+        pop ecx
+        mov gs, ecx
     " }
 }
 
@@ -408,12 +412,11 @@ macro_rules! interrupt_error {
 #[naked]
 unsafe extern "C" fn usercopy_trampoline() {
     core::arch::asm!("
-        mov eax, 1
-
         pop esi
         pop edi
 
-        ret 4
+        mov eax, 1
+        ret
     ", options(noreturn));
 }
 

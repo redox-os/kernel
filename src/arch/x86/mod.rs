@@ -52,37 +52,28 @@ pub mod flags {
     pub const FLAG_SINGLESTEP: usize = 1 << SHIFT_SINGLESTEP;
     pub const FLAG_INTERRUPTS: usize = 1 << 9;
 }
-pub use arch_copy_to_user as arch_copy_from_user;
-
-#[inline(always)]
-pub unsafe fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    arch_copy_to_user_inner(len, dst, src)
-}
 
 #[naked]
 #[link_section = ".usercopy-fns"]
-#[no_mangle]
-pub unsafe extern "fastcall" fn arch_copy_to_user_inner(len: usize, dst: usize, src: usize) -> u8 {
-    // Explicitly specified __fastcall ABI:
-    //
-    // ECX = len, EDX = dst, src is pushed to the stack (earlier than the CALL return address, of
-    // course)
+pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     core::arch::asm!("
-        push edi
-        push esi
+            push edi
+            push esi
 
-        mov edi, edx
-        mov esi, [esp+12]
+            mov edi, [esp + 12] # dst
+            mov esi, [esp + 16] # src
+            mov ecx, [esp + 20] # len
+            rep movsb
 
-        xor eax, eax
-        rep movsb
+            pop esi
+            pop edi
 
-        pop esi
-        pop edi
-
-        ret 4
+            xor eax, eax
+            ret
     ", options(noreturn));
 }
+pub use arch_copy_to_user as arch_copy_from_user;
+
 pub unsafe fn bootstrap_mem(bootstrap: &Bootstrap) -> &'static [u8] {
     core::slice::from_raw_parts(CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8, bootstrap.page_count * PAGE_SIZE)
 }
