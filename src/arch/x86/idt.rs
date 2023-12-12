@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use core::mem;
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use hashbrown::HashMap;
 
 use x86::segmentation::Descriptor as X86IdtEntry;
 use x86::dtables::{self, DescriptorTablePointer};
@@ -68,7 +68,7 @@ impl Idt {
 static mut INIT_BSP_IDT: Idt = Idt::new();
 
 // TODO: VecMap?
-pub static IDTS: RwLock<Option<BTreeMap<LogicalCpuId, &'static mut Idt>>> = RwLock::new(None);
+pub static IDTS: RwLock<Option<HashMap<LogicalCpuId, &'static mut Idt>>> = RwLock::new(None);
 
 #[inline]
 pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
@@ -128,7 +128,7 @@ const fn new_idt_reservations() -> [AtomicU32; 8] {
 /// Initialize the IDT for a
 pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: LogicalCpuId) {
     let mut idts_guard = IDTS.write();
-    let idts_btree = idts_guard.get_or_insert_with(BTreeMap::new);
+    let idts_btree = idts_guard.get_or_insert_with(HashMap::new);
 
     if is_bsp {
         idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);

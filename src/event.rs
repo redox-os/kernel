@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
-use alloc::collections::BTreeMap;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use hashbrown::HashMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::context;
@@ -64,7 +64,7 @@ impl EventQueue {
     }
 }
 
-pub type EventQueueList = BTreeMap<EventQueueId, Arc<EventQueue>>;
+pub type EventQueueList = HashMap<EventQueueId, Arc<EventQueue>>;
 
 // Next queue id
 static NEXT_QUEUE_ID: AtomicUsize = AtomicUsize::new(0);
@@ -79,7 +79,7 @@ static QUEUES: Once<RwLock<EventQueueList>> = Once::new();
 
 /// Initialize queues, called if needed
 fn init_queues() -> RwLock<EventQueueList> {
-    RwLock::new(BTreeMap::new())
+    RwLock::new(HashMap::new())
 }
 
 /// Get the event queues list, const
@@ -92,20 +92,20 @@ pub fn queues_mut() -> RwLockWriteGuard<'static, EventQueueList> {
     QUEUES.call_once(init_queues).write()
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RegKey {
     pub scheme: SchemeId,
     pub number: usize,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QueueKey {
     pub queue: EventQueueId,
     pub id: usize,
     pub data: usize,
 }
 
-type Registry = BTreeMap<RegKey, BTreeMap<QueueKey, EventFlags>>;
+type Registry = HashMap<RegKey, HashMap<QueueKey, EventFlags>>;
 
 static REGISTRY: Once<RwLock<Registry>> = Once::new();
 
@@ -128,7 +128,7 @@ pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: EventFlags) {
     let mut registry = registry_mut();
 
     let entry = registry.entry(reg_key).or_insert_with(|| {
-        BTreeMap::new()
+        HashMap::new()
     });
 
     if flags.is_empty() {

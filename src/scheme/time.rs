@@ -13,6 +13,7 @@ use crate::time;
 use super::{GlobalSchemes, KernelScheme, CallerCtx, OpenResult};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+// Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, usize>> = RwLock::new(BTreeMap::new());
 
 pub struct TimeScheme;

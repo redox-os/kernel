@@ -226,6 +226,7 @@ impl Handle {
 pub struct ProcScheme<const FULL: bool>;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+// Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
 #[derive(PartialEq)]

@@ -19,14 +19,11 @@ use crate::{
 
 use alloc::{
     boxed::Box,
-    collections::{
-        BTreeMap,
-        VecDeque,
-        btree_map::Entry
-    },
+    collections::VecDeque,
     sync::Arc,
 };
 use core::cmp;
+use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 //  ____                _
@@ -110,12 +107,12 @@ impl Session {
     }
 }
 
-type SessionMap = BTreeMap<ContextId, Arc<Session>>;
+type SessionMap = HashMap<ContextId, Arc<Session>>;
 
 static SESSIONS: Once<RwLock<SessionMap>> = Once::new();
 
 fn init_sessions() -> RwLock<SessionMap> {
-    RwLock::new(BTreeMap::new())
+    RwLock::new(HashMap::new())
 }
 fn sessions() -> RwLockReadGuard<'static, SessionMap> {
     SESSIONS.call_once(init_sessions).read()

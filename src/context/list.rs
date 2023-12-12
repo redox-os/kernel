@@ -9,6 +9,7 @@ use super::context::{Context, ContextId};
 
 /// Context list type
 pub struct ContextList {
+    // Using a BTreeMap for it's range method
     map: BTreeMap<ContextId, Arc<RwLock<Context>>>,
     next_id: usize
 }

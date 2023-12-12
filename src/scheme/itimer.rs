@@ -12,6 +12,7 @@ use super::{KernelScheme, CallerCtx, OpenResult};
 pub struct ITimerScheme;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+// Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, usize>> = RwLock::new(BTreeMap::new());
 
 impl KernelScheme for ITimerScheme {

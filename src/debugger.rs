@@ -5,18 +5,18 @@ use crate::paging::{RmmA, RmmArch, TableKind, PAGE_SIZE};
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "aarch64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
-    use alloc::collections::{BTreeSet, BTreeMap};
+    use hashbrown::HashSet;
 
     use crate::memory::{RefCount, get_page_info};
 
     println!("DEBUGGER START");
     println!();
 
-    let mut tree = BTreeMap::new();
+    let mut tree = HashMap::new();
 
     let old_table = RmmA::table(TableKind::User);
 
-    let mut spaces = BTreeSet::new();
+    let mut spaces = HashSet::new();
 
     for (id, context_lock) in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| *id != target_id) { continue; }
@@ -174,7 +174,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
-    use alloc::collections::BTreeSet;
+    use hashbrown::HashSet;
 
     use crate::memory::{RefCount, get_page_info};
 
@@ -183,8 +183,8 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     println!("DEBUGGER START");
     println!();
 
-    let mut tree = BTreeMap::new();
-    let mut spaces = BTreeSet::new();
+    let mut tree = HashMap::new();
+    let mut spaces = HashSet::new();
 
     let old_table = RmmA::table(TableKind::User);
 
@@ -267,10 +267,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
     unsafe { x86::bits64::rflags::clac(); }
 }
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use {alloc::collections::BTreeMap, crate::memory::Frame};
+use {hashbrown::HashMap, crate::memory::Frame};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace, new_as: bool, tree: &mut BTreeMap<Frame, usize>) {
+pub unsafe fn check_consistency(addr_space: &mut crate::context::memory::AddrSpace, new_as: bool, tree: &mut HashMap<Frame, usize>) {
 
     use crate::context::memory::PageSpan;
     use crate::memory::{get_page_info, RefCount};

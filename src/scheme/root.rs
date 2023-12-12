@@ -1,10 +1,10 @@
 use alloc::{
     boxed::Box,
-    collections::BTreeMap,
     string::ToString,
     sync::Arc,
     vec::Vec,
 };
+use hashbrown::HashMap;
 use core::str;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
@@ -54,7 +54,7 @@ pub struct RootScheme {
     scheme_ns: SchemeNamespace,
     scheme_id: SchemeId,
     next_id: AtomicUsize,
-    handles: RwLock<BTreeMap<usize, Handle>>,
+    handles: RwLock<HashMap<usize, Handle>>,
 }
 
 impl RootScheme {
@@ -63,7 +63,7 @@ impl RootScheme {
             scheme_ns,
             scheme_id,
             next_id: AtomicUsize::new(0),
-            handles: RwLock::new(BTreeMap::new()),
+            handles: RwLock::new(HashMap::new()),
         }
     }
 }
@@ -298,7 +298,7 @@ impl KernelScheme for RootScheme {
             }
         }
     }
-    
+
     fn kfstat(&self, file: usize, buf: UserSliceWo) -> Result<()> {
         let handle = {
             let handles = self.handles.read();

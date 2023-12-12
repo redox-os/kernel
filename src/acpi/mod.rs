@@ -1,11 +1,11 @@
 //! # ACPI
 //! Code to parse the ACPI tables
 
-use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::boxed::Box;
 
+use hashbrown::HashMap;
 use spin::{Once, RwLock};
 
 use crate::log::info;
@@ -76,7 +76,7 @@ pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 pub unsafe fn init(already_supplied_rsdps: Option<(u64, u64)>) {
     {
         let mut sdt_ptrs = SDT_POINTERS.write();
-        *sdt_ptrs = Some(BTreeMap::new());
+        *sdt_ptrs = Some(HashMap::new());
     }
 
     // Search for RSDP
@@ -148,7 +148,7 @@ pub unsafe fn init(already_supplied_rsdps: Option<(u64, u64)>) {
 }
 
 pub type SdtSignature = (String, [u8; 6], [u8; 8]);
-pub static SDT_POINTERS: RwLock<Option<BTreeMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
+pub static SDT_POINTERS: RwLock<Option<HashMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
 
 pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
     let mut sdts: Vec<&'static Sdt> = vec!();

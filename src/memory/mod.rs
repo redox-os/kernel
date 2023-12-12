@@ -82,7 +82,7 @@ pub fn deallocate_frames(frame: Frame, count: usize) {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Frame {
     // On x86/x86_64, all memory below 1 MiB is reserved, and although some frames in that range
     // may end up in the paging code, it's very unlikely that frame 0x0 would.

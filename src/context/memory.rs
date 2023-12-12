@@ -1,5 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::{sync::Arc, vec::Vec};
+use hashbrown::HashMap;
 use syscall::{GrantFlags, MunmapFlags};
 use core::cmp;
 use core::fmt::Debug;
@@ -404,13 +405,15 @@ impl AddrSpace {
 
 #[derive(Debug)]
 pub struct UserGrants {
+    // Using a BTreeMap for it's range method.
     inner: BTreeMap<Page, GrantInfo>,
+    // Using a BTreeMap for it's range method.
     holes: BTreeMap<VirtualAddress, usize>,
     // TODO: Would an additional map ordered by (size,start) to allow for O(log n) allocations be
     // beneficial?
 
     //TODO: technically VirtualAddress is from a scheme's context!
-    pub funmap: BTreeMap<Page, (usize, Page)>,
+    pub funmap: HashMap<Page, (usize, Page)>,
 }
 
 #[derive(Clone, Copy)]
@@ -496,7 +499,7 @@ impl UserGrants {
         Self {
             inner: BTreeMap::new(),
             holes: core::iter::once((VirtualAddress::new(0), crate::USER_END_OFFSET)).collect::<BTreeMap<_, _>>(),
-            funmap: BTreeMap::new(),
+            funmap: HashMap::new(),
         }
     }
     /// Returns the grant, if any, which occupies the specified page

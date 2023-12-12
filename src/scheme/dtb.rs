@@ -1,7 +1,7 @@
 use core::sync::atomic::{self, AtomicUsize};
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use hashbrown::HashMap;
 use spin::{Once, RwLock};
 
 use crate::dtb::DTB_BINARY;
@@ -30,7 +30,7 @@ struct Handle {
     stat: bool,
 }
 
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, Handle>> = RwLock::new(HashMap::new());
 static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
 static DATA: Once<Box<[u8]>> = Once::new();
 static SCHEME_ID: Once<SchemeId> = Once::new();
@@ -157,7 +157,7 @@ impl KernelScheme for DtbScheme {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         buf.copy_exactly(&match handle.kind {
-            HandleKind::RawData =>  { 
+            HandleKind::RawData =>  {
                 let data = DATA.get().ok_or(Error::new(EBADFD))?;
                 Stat {
                     st_mode: MODE_FILE,

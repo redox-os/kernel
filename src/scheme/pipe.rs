@@ -19,6 +19,7 @@ use super::{KernelScheme, OpenResult, CallerCtx, GlobalSchemes};
 static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 // TODO: SLOB?
+// Using BTreeMap as hashbrown doesn't have a const constructor.
 static PIPES: RwLock<BTreeMap<usize, Arc<Pipe>>> = RwLock::new(BTreeMap::new());
 
 const MAX_QUEUE_SIZE: usize = 65536;

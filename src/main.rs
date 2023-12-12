@@ -293,7 +293,7 @@ mod kernel_executable_offsets {
 /// This is usually but not necessarily the same as the APIC ID.
 
 // TODO: Differentiate between logical CPU IDs and hardware CPU IDs (e.g. APIC IDs)
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
 // TODO: NonMaxUsize?
 // TODO: Optimize away this type if not cfg!(feature = "multi_core")
 struct LogicalCpuId(u32);

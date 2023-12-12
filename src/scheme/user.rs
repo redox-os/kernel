@@ -1,13 +1,12 @@
-use alloc::collections::btree_map::Entry;
 use alloc::sync::{Arc, Weak};
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use syscall::{SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags, SKMSG_FOBTAINFD, FobtainFdFlags, SendFdFlags};
 use core::mem::size_of;
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::{mem, usize};
+use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, RwLock};
 
 use crate::context::context::HardBlockedReason;
@@ -37,7 +36,7 @@ pub struct UserInner {
     next_id: Mutex<u64>,
     context: Weak<RwLock<Context>>,
     todo: WaitQueue<Packet>,
-    states: Mutex<BTreeMap<u64, State>>,
+    states: Mutex<HashMap<u64, State>>,
     unmounting: AtomicBool,
 }
 
@@ -71,7 +70,7 @@ impl UserInner {
             context,
             todo: WaitQueue::new(),
             unmounting: AtomicBool::new(false),
-            states: Mutex::new(BTreeMap::new()),
+            states: Mutex::new(HashMap::new()),
         }
     }
 

@@ -13,6 +13,7 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
+use hashbrown::HashMap;
 use syscall::{MunmapFlags, SendFdFlags, EventFlags, SEEK_SET, SEEK_CUR, SEEK_END};
 use core::sync::atomic::AtomicUsize;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -95,7 +96,7 @@ int_like!(SchemeId, usize);
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
 pub struct SchemeIter<'a> {
-    inner: Option<::alloc::collections::btree_map::Iter<'a, Box<str>, SchemeId>>
+    inner: Option<hashbrown::hash_map::Iter<'a, Box<str>, SchemeId>>
 }
 
 impl<'a> Iterator for SchemeIter<'a> {
@@ -108,8 +109,8 @@ impl<'a> Iterator for SchemeIter<'a> {
 
 /// Scheme list type
 pub struct SchemeList {
-    map: BTreeMap<SchemeId, KernelSchemes>,
-    pub(crate) names: BTreeMap<SchemeNamespace, BTreeMap<Box<str>, SchemeId>>,
+    map: HashMap<SchemeId, KernelSchemes>,
+    pub(crate) names: HashMap<SchemeNamespace, HashMap<Box<str>, SchemeId>>,
     next_ns: usize,
     next_id: usize,
 }
@@ -117,8 +118,8 @@ impl SchemeList {
     /// Create a new scheme list.
     pub fn new() -> Self {
         let mut list = SchemeList {
-            map: BTreeMap::new(),
-            names: BTreeMap::new(),
+            map: HashMap::new(),
+            names: HashMap::new(),
             // Scheme namespaces always start at 1. 0 is a reserved namespace, the null namespace
             next_ns: 1,
             next_id: MAX_GLOBAL_SCHEMES,
@@ -150,7 +151,7 @@ impl SchemeList {
     /// Initialize the null namespace
     fn new_null(&mut self) {
         let ns = SchemeNamespace(0);
-        self.names.insert(ns, BTreeMap::new());
+        self.names.insert(ns, HashMap::new());
 
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
@@ -163,7 +164,7 @@ impl SchemeList {
     fn new_ns(&mut self) -> SchemeNamespace {
         let ns = SchemeNamespace(self.next_ns);
         self.next_ns += 1;
-        self.names.insert(ns, BTreeMap::new());
+        self.names.insert(ns, HashMap::new());
 
         self.insert(ns, "", |scheme_id| KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))).unwrap();
         self.insert_global(ns, "event", GlobalSchemes::Event).unwrap();

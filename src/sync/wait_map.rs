@@ -6,6 +6,7 @@ use crate::sync::WaitCondition;
 
 #[derive(Debug)]
 pub struct WaitMap<K, V> {
+    // Using BTreeMap as this depends on .keys() providing elements in sorted order.
     pub inner: Mutex<BTreeMap<K, V>>,
     pub condition: WaitCondition
 }

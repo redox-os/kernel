@@ -36,6 +36,7 @@ type SysFn = fn() -> Result<Vec<u8>>;
 /// System information scheme
 pub struct SysScheme;
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+// Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
 const FILES: &[(&'static str, SysFn)] = &[

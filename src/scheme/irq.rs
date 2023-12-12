@@ -21,6 +21,7 @@ use super::{GlobalSchemes, OpenResult, CallerCtx, calc_seek_offset};
 
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
+// Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
 /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the
