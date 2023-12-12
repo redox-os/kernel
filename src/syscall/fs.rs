@@ -348,7 +348,7 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<()> {
         // for retrieving the scheme ID from a file descriptor.
         // TODO: Less hacky method.
         let st_dev = scheme_id.get().try_into().map_err(|_| Error::new(EOVERFLOW))?;
-        user_buf.advance(memoffset::offset_of!(Stat, st_dev)).and_then(|b| b.limit(8)).ok_or(Error::new(EIO))?.copy_from_slice(&u64::to_ne_bytes(st_dev))?;
+        user_buf.advance(core::mem::offset_of!(Stat, st_dev)).and_then(|b| b.limit(8)).ok_or(Error::new(EIO))?.copy_from_slice(&u64::to_ne_bytes(st_dev))?;
 
         Ok(())
     })

@@ -5,7 +5,7 @@ use crate::{
     syscall,
     syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
 };
-use memoffset::offset_of;
+use core::mem::offset_of;
 use x86::{bits64::{rflags::RFlags, task::TaskStateSegment}, msr, segmentation::SegmentSelector};
 
 pub unsafe fn init() {

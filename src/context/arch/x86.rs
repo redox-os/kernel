@@ -9,7 +9,7 @@ use crate::interrupt::handler::ScratchRegisters;
 use crate::paging::{RmmA, RmmArch, TableKind};
 use crate::syscall::FloatRegisters;
 
-use memoffset::offset_of;
+use core::mem::offset_of;
 use spin::Once;
 
 /// This must be used by the kernel to ensure that context switches are done atomically

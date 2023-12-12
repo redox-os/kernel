@@ -90,7 +90,7 @@ pub struct TssWrapper(pub TaskStateSegment);
 
 pub unsafe fn pcr() -> *mut ProcessorControlRegion {
     let mut ret: *mut ProcessorControlRegion;
-    core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(memoffset::offset_of!(ProcessorControlRegion, self_ref)));
+    core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(core::mem::offset_of!(ProcessorControlRegion, self_ref)));
     ret
 }
 

@@ -3,7 +3,7 @@ use core::arch::asm;
 use core::mem;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
-use memoffset::offset_of;
+use core::mem::offset_of;
 use spin::Once;
 
 use crate::{push_scratch, pop_scratch};

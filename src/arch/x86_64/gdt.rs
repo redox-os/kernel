@@ -85,10 +85,10 @@ pub struct ProcessorControlRegion {
 }
 
 const _: () = {
-    if memoffset::offset_of!(ProcessorControlRegion, tss) % 16 != 0 {
+    if core::mem::offset_of!(ProcessorControlRegion, tss) % 16 != 0 {
         panic!("PCR is incorrectly defined, TSS alignment is too small");
     }
-    if memoffset::offset_of!(ProcessorControlRegion, gdt) % 8 != 0 {
+    if core::mem::offset_of!(ProcessorControlRegion, gdt) % 8 != 0 {
         panic!("PCR is incorrectly defined, GDT alignment is too small");
     }
 };
@@ -98,7 +98,7 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
     // obtaining FSBASE/GSBASE using mov gs:[gs_self_ref] is faster than using the (probably
     // microcoded) instructions.
     let mut ret: *mut ProcessorControlRegion;
-    core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(memoffset::offset_of!(ProcessorControlRegion, self_ref)));
+    core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(core::mem::offset_of!(ProcessorControlRegion, self_ref)));
     ret
 }
 

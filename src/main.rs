@@ -44,10 +44,10 @@
 
 #![feature(allocator_api)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
-#![feature(const_refs_to_cell)]
 #![feature(int_roundings)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
+#![feature(offset_of)]
 #![feature(sync_unsafe_cell)]
 #![no_std]
 #![no_main]
