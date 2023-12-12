@@ -137,6 +137,9 @@ impl SchemeList {
 
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             insert_globals(&[Acpi]);
+
+            #[cfg(target_arch = "aarch64")]
+            insert_globals(&[Dtb]);
         }
 
         list.new_null();
@@ -181,7 +184,7 @@ impl SchemeList {
         // These schemes should only be available on the root
         #[cfg(all(any(target_arch = "aarch64")))]
         {
-            self.insert(ns, "kernel.dtb", |scheme_id| Arc::new(DtbScheme::new(scheme_id))).unwrap();
+            self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb).unwrap();
         }
         #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
         {
@@ -440,6 +443,9 @@ pub enum GlobalSchemes {
 
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
     Acpi,
+
+    #[cfg(target_arch = "aarch64")]
+    Dtb,
 }
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
 
@@ -477,6 +483,8 @@ impl core::ops::Deref for GlobalSchemes {
             Self::ProcRestricted => &ProcScheme::<false>,
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             Self::Acpi => &AcpiScheme,
+            #[cfg(target_arch = "aarch64")]
+            Self::Dtb => &DtbScheme,
         }
     }
 }
