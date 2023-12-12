@@ -44,7 +44,6 @@
 
 #![feature(allocator_api)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
-#![feature(const_option)]
 #![feature(const_refs_to_cell)]
 #![feature(int_roundings)]
 #![feature(let_chains)]

@@ -54,7 +54,10 @@ pub enum Response {
     Fd(Arc<RwLock<FileDescription>>),
 }
 
-const ONE: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
+    Some(one) => one,
+    None => unreachable!(),
+};
 
 impl UserInner {
     pub fn new(root_id: SchemeId, scheme_id: SchemeId, handle_id: usize, name: Box<str>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {

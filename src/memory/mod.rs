@@ -2,7 +2,6 @@
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
 use core::cell::SyncUnsafeCell;
-use core::ptr::NonNull;
 use core::{cmp, mem};
 use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -231,30 +230,6 @@ pub const MAX_SECTION_PAGE_COUNT: usize = MAX_SECTION_SIZE / PAGE_SIZE;
 const _: () = {
     assert!(mem::size_of::<PageInfo>().is_power_of_two());
 };
-
-/// Allocator that bypasses the kernel heap, instead allocating directly from physical memory.
-pub struct DirectAllocator;
-
-unsafe impl core::alloc::Allocator for DirectAllocator {
-    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
-        unreachable!();
-    }
-    // TODO: Allow zeroing out frames to be optional in RMM?
-    fn allocate_zeroed(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
-        assert!(layout.align() <= PAGE_SIZE);
-
-        let phys = allocate_frames(layout.size().div_ceil(PAGE_SIZE)).ok_or(core::alloc::AllocError)?;
-
-        Ok(unsafe {
-            let virt = RmmA::phys_to_virt(phys.start_address()).data() as *mut u8;
-
-            NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(virt as *mut u8, layout.size()))
-        })
-    }
-    fn allocate(&self, layout: core::alloc::Layout) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        self.allocate_zeroed(layout)
-    }
-}
 
 #[cold]
 fn init_sections() {
