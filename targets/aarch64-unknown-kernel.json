@@ -10,9 +10,6 @@
     "vendor": "unknown",
     "linker": "rust-lld",
     "linker-flavor": "gnu-lld",
-    "pre-link-args": {
-        "gnu-lld": ["-z", "max-page-size=0x1000"]
-    },
     "features": "+strict-align,-neon,-fp-armv8,+tpidr-el1",
     "dynamic-linking": false,
     "executables": true,

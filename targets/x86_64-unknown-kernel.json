@@ -10,9 +10,6 @@
     "vendor": "unknown",
     "linker": "rust-lld",
     "linker-flavor": "gnu-lld",
-    "pre-link-args": {
-        "gnu-lld": ["-z", "max-page-size=0x1000"]
-    },
     "features": "-mmx,-sse,-sse2,-sse3,-ssse3,-sse4.1,-sse4.2,-3dnow,-3dnowa,-avx,-avx2,+soft-float",
     "dynamic-linking": false,
     "executables": true,
