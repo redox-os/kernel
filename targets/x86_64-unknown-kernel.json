@@ -10,7 +10,6 @@
     "vendor": "unknown",
     "linker": "rust-lld",
     "linker-flavor": "gnu-lld",
-    "target-family": "redox",
     "pre-link-args": {
         "gnu-lld": ["-z", "max-page-size=0x1000"]
     },
