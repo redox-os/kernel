@@ -8,14 +8,12 @@ use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arch::rmm::LockedAllocator;
-use crate::common::try_box_slice_new;
 use crate::context::{self, memory::{init_frame, AccessMode, PfError}};
 use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
 use crate::paging::Page;
 pub use crate::paging::{PAGE_SIZE, PhysicalAddress, RmmA, RmmArch};
 use crate::rmm::areas;
 
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 use rmm::{
     FrameAllocator,
@@ -187,6 +185,7 @@ impl Drop for RaiiFrame {
 //
 // TODO: Alternatively or in conjunction, the PageInfo can store the number of used entries for
 // each page table, possibly even recursively (total number of mapped pages).
+// NOTE: init_sections depends on the default initialized value consisting of all zero bytes.
 #[derive(Debug)]
 pub struct PageInfo {
     /// Stores the reference count to this page, i.e. the number of present page table entries that
@@ -238,11 +237,7 @@ pub struct DirectAllocator;
 
 unsafe impl core::alloc::Allocator for DirectAllocator {
     unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
-        // TODO: virt_to_phys
-        let phys = (ptr.as_ptr() as usize) - RmmA::PHYS_OFFSET;
-        let frame = Frame::containing_address(PhysicalAddress::new(phys));
-
-        deallocate_frames(frame, layout.size().div_ceil(PAGE_SIZE));
+        unreachable!();
     }
     // TODO: Allow zeroing out frames to be optional in RMM?
     fn allocate_zeroed(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
@@ -289,9 +284,29 @@ fn init_sections() {
         while pages_left > 0 {
             let section_page_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
 
+            // Avoid Vec here as we are currently initializing data structures
+            // required by the global allocator.
+
+            let Ok(layout) = core::alloc::Layout::array::<PageInfo>(section_page_count) else {
+                panic!("failed to allocate static frame sections: length overflow");
+            };
+            assert!(layout.align() <= PAGE_SIZE);
+
+            // We use the fact that allocate_frames returns zeroed frames. We
+            // want every element to be the default initialized value, which
+            // consists entirely of zero bytes.
+            let phys = allocate_frames(layout.size().div_ceil(PAGE_SIZE))
+                .expect("failed to allocate static frame sections");
+
+            let mut frames = unsafe {
+                let virt = RmmA::phys_to_virt(phys.start_address()).data();
+
+                core::slice::from_raw_parts_mut(virt as *mut PageInfo, section_page_count)
+            };
+
             sections.push(Section {
                 base,
-                frames: Box::leak(try_box_slice_new(|| PageInfo::new(), section_page_count, DirectAllocator).expect("failed to allocate static frame sections")),
+                frames,
             });
 
             pages_left -= section_page_count;
@@ -329,12 +344,6 @@ pub enum AddRefError {
     SharedToCow,
 }
 impl PageInfo {
-    pub fn new() -> Self {
-        Self {
-            refcount: AtomicUsize::new(0),
-            flags: FrameFlags::NONE,
-        }
-    }
     pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
         match (self.refcount(), kind) {
             (RefCount::Zero, _) => self.refcount.store(1, Ordering::Relaxed),
