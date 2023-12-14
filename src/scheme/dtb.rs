@@ -1,7 +1,7 @@
 use core::sync::atomic::{self, AtomicUsize};
 
 use alloc::boxed::Box;
-use hashbrown::HashMap;
+use alloc::collections::BTreeMap;
 use spin::{Once, RwLock};
 
 use crate::dtb::DTB_BINARY;
@@ -30,14 +30,12 @@ struct Handle {
     stat: bool,
 }
 
-static HANDLES: RwLock<HashMap<usize, Handle>> = RwLock::new(HashMap::new());
+static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
 static DATA: Once<Box<[u8]>> = Once::new();
-static SCHEME_ID: Once<SchemeId> = Once::new();
 
 impl DtbScheme {
-    pub fn new(id: SchemeId) -> Self {
-        let mut id_init = false;
+    pub fn init() {
         let mut data_init = false;
 
         DATA.call_once(|| {
@@ -51,16 +49,9 @@ impl DtbScheme {
             Box::from(dtb)
         });
 
-        SCHEME_ID.call_once(|| {
-            id_init = true;
-
-            id
-        });
-        if !data_init || !id_init {
+        if !data_init {
             log::error!("DtbScheme::new called multiple times");
         }
-
-        Self
     }
 }
 

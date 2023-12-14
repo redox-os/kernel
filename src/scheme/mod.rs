@@ -501,5 +501,9 @@ pub fn init_globals() {
     {
         AcpiScheme::init();
     }
+    #[cfg(target_arch = "aarch64")]
+    {
+        DtbScheme::init();
+    }
     IrqScheme::init();
 }
