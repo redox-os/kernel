@@ -60,12 +60,12 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
             regs.set_singlestep(was_singlestep);
         }
 
-        context.unblock();
+        context.unblock_no_ipi();
     }
 
     // Unblock when there are pending signals
     if context.status.is_soft_blocked() && !context.pending.is_empty() {
-        context.unblock();
+        context.unblock_no_ipi();
     }
 
     // Wake from sleep
@@ -75,7 +75,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
         let current = time::monotonic();
         if current >= wake {
             context.wake = None;
-            context.unblock();
+            context.unblock_no_ipi();
         }
     }
 

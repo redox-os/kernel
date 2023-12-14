@@ -294,10 +294,7 @@ impl Context {
 
     /// Unblock context, and return true if it was blocked before being marked runnable
     pub fn unblock(&mut self) -> bool {
-        if self.status.is_soft_blocked() {
-            self.status = Status::Runnable;
-            self.status_reason = "";
-
+        if self.unblock_no_ipi() {
             if let Some(cpu_id) = self.cpu_id {
                if cpu_id != crate::cpu_id() {
                     // Send IPI if not on current CPU
