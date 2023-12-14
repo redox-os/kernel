@@ -308,6 +308,18 @@ impl Context {
         }
     }
 
+    /// Unblock context without IPI, and return true if it was blocked before being marked runnable
+    pub fn unblock_no_ipi(&mut self) -> bool {
+        if self.status.is_soft_blocked() {
+            self.status = Status::Runnable;
+            self.status_reason = "";
+
+            true
+        } else {
+            false
+        }
+    }
+
     /// Add a file to the lowest available slot.
     /// Return the file descriptor number or None if no slot was found
     pub fn add_file(&self, file: FileDescriptor) -> Option<FileHandle> {
