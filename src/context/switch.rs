@@ -26,15 +26,8 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
         return false;
     }
 
-    // Take ownership if not already owned
-    // TODO: Support unclaiming context, while still respecting the CPU affinity.
-    if context.cpu_id == None && context.sched_affinity.contains(crate::cpu_id()) {
-        context.cpu_id = Some(cpu_id);
-        // println!("{}: take {} {}", cpu_id, context.id, *context.name.read());
-    }
-
-    // Do not update anything else and return not runnable if this is owned by another CPU
-    if context.cpu_id != Some(cpu_id) {
+    // Ignore contexts assigned to other CPUs
+    if !context.sched_affinity.contains(cpu_id) {
         return false;
     }
 
@@ -181,6 +174,7 @@ pub unsafe fn switch() -> bool {
         // Set new context as running and set switch time
         let next_context = &mut *next_context_ptr;
         next_context.running = true;
+        next_context.cpu_id = Some(cpu_id);
         next_context.switch_time = switch_time;
 
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
