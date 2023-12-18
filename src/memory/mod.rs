@@ -1191,7 +1191,7 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frame().ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
-    assert_eq!(page_info.refcount(), None);
+    assert_eq!(page_info.refcount(), Some(RefCount::One));
     page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
 
     Ok(new_frame)
