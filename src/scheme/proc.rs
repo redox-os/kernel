@@ -110,6 +110,7 @@ enum Operation {
     Trace,
     Static(&'static str),
     Name,
+    SessionId,
     Sigstack,
     Attr(Attr),
     Filetable { filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>> },
@@ -148,7 +149,7 @@ enum Attr {
 }
 impl Operation {
     fn needs_child_process(&self) -> bool {
-        matches!(self, Self::Regs(_) | Self::Trace | Self::Filetable { .. } | Self::AddrSpace { .. } | Self::CurrentAddrSpace | Self::CurrentFiletable | Self::Sigactions(_) | Self::CurrentSigactions | Self::AwaitingSigactionsChange(_))
+        matches!(self, Self::Regs(_) | Self::Trace | Self::SessionId | Self::Filetable { .. } | Self::AddrSpace { .. } | Self::CurrentAddrSpace | Self::CurrentFiletable | Self::Sigactions(_) | Self::CurrentSigactions | Self::AwaitingSigactionsChange(_))
     }
     fn needs_root(&self) -> bool {
         matches!(self, Self::Attr(_))
@@ -258,6 +259,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
             Some("trace") => Operation::Trace,
             Some("exe") => Operation::Static("exe"),
             Some("name") => Operation::Name,
+            Some("session_id") => Operation::SessionId,
             Some("sigstack") => Operation::Sigstack,
             Some("uid") => Operation::Attr(Attr::Uid),
             Some("gid") => Operation::Attr(Attr::Gid),
@@ -771,6 +773,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 Ok(grants_read * mem::size_of::<GrantDesc>())
             }
             Operation::Name => read_from(buf, context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().name.as_bytes(), &mut 0),
+            Operation::SessionId => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().session_id.get().to_ne_bytes(), &mut 0),
             Operation::Sigstack => read_from(buf, &context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sigstack.unwrap_or(!0).to_ne_bytes(), &mut 0),
             Operation::Attr(attr) => {
                 let src_buf = match (attr, &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?).read()) {
@@ -945,6 +948,30 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 let utf8 = alloc::string::String::from_utf8(name_buf[..bytes_copied].to_vec()).map_err(|_| Error::new(EINVAL))?;
                 context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().name = utf8.into();
+                Ok(buf.len())
+            }
+            Operation::SessionId => {
+                let session_id = ContextId::new(buf.read_usize()?);
+
+                if session_id != info.pid {
+                    // Session ID can only be set to this process's ID
+                    return Err(Error::new(EPERM));
+                }
+
+                for (_id, context_lock) in context::contexts().iter() {
+                    if session_id == context_lock.read().pgid {
+                        // The session ID cannot match the PGID of any process
+                        return Err(Error::new(EPERM));
+                    }
+                }
+
+                let context_lock = Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?);
+                {
+                    let mut context = context_lock.write();
+                    context.pgid = session_id;
+                    context.session_id = session_id;
+                }
+
                 Ok(buf.len())
             }
             Operation::Sigstack => {
@@ -1204,6 +1231,7 @@ fn inherit_context() -> Result<ContextId> {
         new_context.rns = current_context.rns;
         new_context.ppid = current_context.id;
         new_context.pgid = current_context.pgid;
+        new_context.session_id = current_context.session_id;
         new_context.umask = current_context.umask;
 
         // TODO: Force userspace to copy sigmask. Start with "all signals blocked".

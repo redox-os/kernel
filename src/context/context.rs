@@ -138,6 +138,8 @@ pub struct Context {
     pub pgid: ContextId,
     /// The ID of the parent context
     pub ppid: ContextId,
+    /// The ID of the session
+    pub session_id: ContextId,
     /// The real user id
     pub ruid: u32,
     /// The real group id
@@ -232,6 +234,7 @@ impl Context {
             id,
             pgid: id,
             ppid: ContextId::from(0),
+            session_id: ContextId::from(0),
             ruid: 0,
             rgid: 0,
             rns: SchemeNamespace::from(0),

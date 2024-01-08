@@ -6,10 +6,11 @@ use crate::paging::PAGE_SIZE;
 use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
                              "PID",
                              "PGID",
                              "PPID",
+                             "SID",
                              "RUID",
                              "RGID",
                              "RNS",
@@ -99,10 +100,11 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
                                context.id.get(),
                                context.pgid.get(),
                                context.ppid.get(),
+                               context.session_id.get(),
                                context.ruid,
                                context.rgid,
                                context.rns.get(),
