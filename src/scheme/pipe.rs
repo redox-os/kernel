@@ -88,7 +88,7 @@ impl KernelScheme for PipeScheme {
             }
         }
 
-        Err(Error::new(EBADF))
+        Ok(EventFlags::empty())
     }
 
     fn fsync(&self, _id: usize) -> Result<()> {
