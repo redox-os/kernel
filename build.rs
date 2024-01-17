@@ -1,8 +1,6 @@
 use rustc_cfg::Cfg;
+use std::{env, path::Path, process::Command};
 use toml::Table;
-use std::env;
-use std::path::Path;
-use std::process::Command;
 
 fn parse_kconfig(arch: &str) -> Option<()> {
     println!("cargo:rerun-if-changed=config.toml");
@@ -14,9 +12,16 @@ fn parse_kconfig(arch: &str) -> Option<()> {
     let config_str = std::fs::read_to_string("config.toml").unwrap();
     let root: Table = toml::from_str(&config_str).unwrap();
 
-    let altfeatures = root.get("arch")?.as_table().unwrap()
-        .get(arch)?.as_table().unwrap()
-        .get("features")?.as_table().unwrap();
+    let altfeatures = root
+        .get("arch")?
+        .as_table()
+        .unwrap()
+        .get(arch)?
+        .as_table()
+        .unwrap()
+        .get("features")?
+        .as_table()
+        .unwrap();
 
     for (name, value) in altfeatures {
         let choice = value.as_str().unwrap();
@@ -45,30 +50,34 @@ fn main() {
                 .target("aarch64-unknown-redox")
                 .compile("early_init");
             */
-        },
+        }
         "x86" => {
             println!("cargo:rerun-if-changed=src/asm/x86/trampoline.asm");
 
             let status = Command::new("nasm")
-                .arg("-f").arg("bin")
-                .arg("-o").arg(format!("{}/trampoline", out_dir))
+                .arg("-f")
+                .arg("bin")
+                .arg("-o")
+                .arg(format!("{}/trampoline", out_dir))
                 .arg("src/asm/x86/trampoline.asm")
                 .status()
                 .expect("failed to run nasm");
-            if ! status.success() {
+            if !status.success() {
                 panic!("nasm failed with exit status {}", status);
             }
-        },
+        }
         "x86_64" => {
             println!("cargo:rerun-if-changed=src/asm/x86_64/trampoline.asm");
 
             let status = Command::new("nasm")
-                .arg("-f").arg("bin")
-                .arg("-o").arg(format!("{}/trampoline", out_dir))
+                .arg("-f")
+                .arg("bin")
+                .arg("-o")
+                .arg(format!("{}/trampoline", out_dir))
                 .arg("src/asm/x86_64/trampoline.asm")
                 .status()
                 .expect("failed to run nasm");
-            if ! status.success() {
+            if !status.success() {
                 panic!("nasm failed with exit status {}", status);
             }
         }

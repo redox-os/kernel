@@ -1,32 +1,37 @@
-use alloc::{
-    sync::Arc,
-    vec::Vec,
-};
+use alloc::{sync::Arc, vec::Vec};
 use core::mem;
 
 use spin::RwLock;
 
-use crate::context::memory::PageSpan;
-use crate::context::{ContextId, memory::AddrSpace, WaitpidKey};
+use crate::context::{
+    memory::{AddrSpace, PageSpan},
+    ContextId, WaitpidKey,
+};
 
-use crate::Bootstrap;
-use crate::context;
-use crate::interrupt;
-use crate::paging::mapper::PageFlushAll;
-use crate::paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE};
-use crate::ptrace;
-use crate::start::usermode;
-use crate::syscall::data::SigAction;
-use crate::syscall::error::*;
-use crate::syscall::flag::{wifcontinued, wifstopped, MapFlags,
-    PTRACE_STOP_EXIT, SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK,
-    SIGCONT, SIGTERM, WaitFlags, WCONTINUED, WNOHANG, WUNTRACED};
-use crate::syscall::ptrace_event;
+use crate::{
+    context, interrupt,
+    paging::{mapper::PageFlushAll, Page, PageFlags, VirtualAddress, PAGE_SIZE},
+    ptrace,
+    start::usermode,
+    syscall::{
+        data::SigAction,
+        error::*,
+        flag::{
+            wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT, SIGTERM,
+            SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK, WCONTINUED, WNOHANG, WUNTRACED,
+        },
+        ptrace_event,
+    },
+    Bootstrap,
+};
 
-use super::usercopy::{UserSliceWo, UserSliceRo};
+use super::usercopy::{UserSliceRo, UserSliceWo};
 
 pub fn exit(status: usize) -> ! {
-    ptrace::breakpoint_callback(PTRACE_STOP_EXIT, Some(ptrace_event!(PTRACE_STOP_EXIT, status)));
+    ptrace::breakpoint_callback(
+        PTRACE_STOP_EXIT,
+        Some(ptrace_event!(PTRACE_STOP_EXIT, status)),
+    );
 
     {
         let context_lock = context::current().expect("exit failed to find context");
@@ -36,8 +41,10 @@ pub fn exit(status: usize) -> ! {
 
         let pid = {
             let mut context = context_lock.write();
-            close_files = Arc::try_unwrap(mem::take(&mut context.files)).map_or_else(|_| Vec::new(), RwLock::into_inner);
-            addrspace_opt = mem::take(&mut context.addr_space).and_then(|a| Arc::try_unwrap(a).ok());
+            close_files = Arc::try_unwrap(mem::take(&mut context.files))
+                .map_or_else(|_| Vec::new(), RwLock::into_inner);
+            addrspace_opt =
+                mem::take(&mut context.addr_space).and_then(|a| Arc::try_unwrap(a).ok());
             drop(context.syscall_head.take());
             drop(context.syscall_tail.take());
             context.id
@@ -47,15 +54,19 @@ pub fn exit(status: usize) -> ! {
         if pid == ContextId::from(1) {
             println!("Main kernel thread exited with status {:X}", status);
 
-            extern {
+            extern "C" {
                 fn kreset() -> !;
                 fn kstop() -> !;
             }
 
             if status == SIGTERM {
-                unsafe { kreset(); }
+                unsafe {
+                    kreset();
+                }
             } else {
-                unsafe { kstop(); }
+                unsafe {
+                    kstop();
+                }
             }
         }
 
@@ -101,10 +112,13 @@ pub fn exit(status: usize) -> ! {
                     waitpid.send(c_pid, c_status);
                 }
 
-                waitpid.send(WaitpidKey {
-                    pid: Some(pid),
-                    pgid: Some(pgid)
-                }, (pid, status));
+                waitpid.send(
+                    WaitpidKey {
+                        pid: Some(pid),
+                        pgid: Some(pgid),
+                    },
+                    (pid, status),
+                );
             }
         }
 
@@ -158,10 +172,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             let contexts = context::contexts();
 
             let send = |context: &mut context::Context| -> bool {
-                if euid == 0
-                || euid == context.ruid
-                || ruid == context.ruid
-                {
+                if euid == 0 || euid == context.ruid || ruid == context.ruid {
                     // If sig = 0, test that process exists and can be
                     // signalled, but don't send any signal.
                     if sig != 0 {
@@ -231,7 +242,9 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             Err(Error::new(EPERM))
         } else {
             // Switch to ensure delivery to self
-            unsafe { context::switch(); }
+            unsafe {
+                context::switch();
+            }
 
             Ok(0)
         }
@@ -243,9 +256,13 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
-    let span = PageSpan::validate_nonempty(VirtualAddress::new(address), size).ok_or(Error::new(EINVAL))?;
+    let span = PageSpan::validate_nonempty(VirtualAddress::new(address), size)
+        .ok_or(Error::new(EINVAL))?;
 
-    AddrSpace::current()?.write().mprotect(span, flags).map(|()| 0)
+    AddrSpace::current()?
+        .write()
+        .mprotect(span, flags)
+        .map(|()| 0)
 }
 
 pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
@@ -276,7 +293,12 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
     }
 }
 
-pub fn sigaction(sig: usize, act_opt: Option<UserSliceRo>, oldact_opt: Option<UserSliceWo>, restorer: usize) -> Result<()> {
+pub fn sigaction(
+    sig: usize,
+    act_opt: Option<UserSliceRo>,
+    oldact_opt: Option<UserSliceWo>,
+    restorer: usize,
+) -> Result<()> {
     if sig == 0 || sig > 0x7F {
         return Err(Error::new(EINVAL));
     }
@@ -296,7 +318,11 @@ pub fn sigaction(sig: usize, act_opt: Option<UserSliceRo>, oldact_opt: Option<Us
     Ok(())
 }
 
-pub fn sigprocmask(how: usize, mask_opt: Option<UserSliceRo>, oldmask_opt: Option<UserSliceWo>) -> Result<()> {
+pub fn sigprocmask(
+    how: usize,
+    mask_opt: Option<UserSliceRo>,
+    oldmask_opt: Option<UserSliceWo>,
+) -> Result<()> {
     {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -306,26 +332,24 @@ pub fn sigprocmask(how: usize, mask_opt: Option<UserSliceRo>, oldmask_opt: Optio
 
         if let Some(oldmask) = oldmask_opt {
             // TODO: sigprocmask should be u64
-            let (lo_dst, hi_dst) = oldmask.split_at(core::mem::size_of::<u64>()).ok_or(Error::new(EINVAL))?;
+            let (lo_dst, hi_dst) = oldmask
+                .split_at(core::mem::size_of::<u64>())
+                .ok_or(Error::new(EINVAL))?;
             lo_dst.write_u64(old_lo)?;
             hi_dst.write_u64(old_hi)?;
         }
 
         if let Some(mask) = mask_opt {
-            let (lo_src, hi_src) = mask.split_at(core::mem::size_of::<u64>()).ok_or(Error::new(EINVAL))?;
+            let (lo_src, hi_src) = mask
+                .split_at(core::mem::size_of::<u64>())
+                .ok_or(Error::new(EINVAL))?;
             let lo_arg = lo_src.read_u64()?;
             let hi_arg = hi_src.read_u64()?;
 
             context.sigmask = match how {
-                SIG_BLOCK => {
-                    [old_lo | lo_arg, old_hi | hi_arg]
-                },
-                SIG_UNBLOCK => {
-                    [old_lo & !lo_arg, old_hi & !hi_arg]
-                },
-                SIG_SETMASK => {
-                    [lo_arg, hi_arg]
-                },
+                SIG_BLOCK => [old_lo | lo_arg, old_hi | hi_arg],
+                SIG_UNBLOCK => [old_lo & !lo_arg, old_hi & !hi_arg],
+                SIG_SETMASK => [lo_arg, hi_arg],
                 _ => {
                     return Err(Error::new(EINVAL));
                 }
@@ -382,19 +406,28 @@ fn reap(pid: ContextId) -> Result<ContextId> {
     }
 
     let _ = context::contexts_mut()
-        .remove(pid).ok_or(Error::new(ESRCH))?;
+        .remove(pid)
+        .ok_or(Error::new(ESRCH))?;
 
     Ok(pid)
 }
 
-pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags) -> Result<ContextId> {
+pub fn waitpid(
+    pid: ContextId,
+    status_ptr: Option<UserSliceWo>,
+    flags: WaitFlags,
+) -> Result<ContextId> {
     let (ppid, waitpid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
         (context.id, Arc::clone(&context.waitpid))
     };
-    let write_status = |value| status_ptr.map(|ptr| ptr.write_usize(value)).unwrap_or(Ok(()));
+    let write_status = |value| {
+        status_ptr
+            .map(|ptr| ptr.write_usize(value))
+            .unwrap_or(Ok(()))
+    };
 
     let grim_reaper = |w_pid: ContextId, status: usize| -> Option<Result<ContextId>> {
         if wifcontinued(status) {
@@ -429,7 +462,7 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
                     }
                 }
 
-                if ! found {
+                if !found {
                     return Err(Error::new(ECHILD));
                 }
             }
@@ -460,7 +493,7 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
                     }
                 }
 
-                if ! found {
+                if !found {
                     return Err(Error::new(ECHILD));
                 }
             }
@@ -468,17 +501,20 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
             if flags & WNOHANG == WNOHANG {
                 if let Some((w_pid, status)) = waitpid.receive_nonblock(&WaitpidKey {
                     pid: None,
-                    pgid: Some(pgid)
+                    pgid: Some(pgid),
                 }) {
                     grim_reaper(w_pid, status)
                 } else {
                     Some(Ok(ContextId::from(0)))
                 }
             } else {
-                let (w_pid, status) = waitpid.receive(&WaitpidKey {
-                    pid: None,
-                    pgid: Some(pgid)
-                }, "waitpid pgid");
+                let (w_pid, status) = waitpid.receive(
+                    &WaitpidKey {
+                        pid: None,
+                        pgid: Some(pgid),
+                    },
+                    "waitpid pgid",
+                );
                 grim_reaper(w_pid, status)
             }
         } else {
@@ -487,7 +523,12 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
                 let context_lock = contexts.get(pid).ok_or(Error::new(ECHILD))?;
                 let mut context = context_lock.write();
                 if context.ppid != ppid {
-                    println!("TODO: Hack for rustc - changing ppid of {} from {} to {}", context.id.get(), context.ppid.get(), ppid.get());
+                    println!(
+                        "TODO: Hack for rustc - changing ppid of {} from {} to {}",
+                        context.id.get(),
+                        context.ppid.get(),
+                        ppid.get()
+                    );
                     context.ppid = ppid;
                     //return Err(Error::new(ECHILD));
                     Some(context.status.clone())
@@ -499,23 +540,26 @@ pub fn waitpid(pid: ContextId, status_ptr: Option<UserSliceWo>, flags: WaitFlags
             if let Some(context::Status::Exited(status)) = hack_status {
                 let _ = waitpid.receive_nonblock(&WaitpidKey {
                     pid: Some(pid),
-                    pgid: None
+                    pgid: None,
                 });
                 grim_reaper(pid, status)
             } else if flags & WNOHANG == WNOHANG {
                 if let Some((w_pid, status)) = waitpid.receive_nonblock(&WaitpidKey {
                     pid: Some(pid),
-                    pgid: None
+                    pgid: None,
                 }) {
                     grim_reaper(w_pid, status)
                 } else {
                     Some(Ok(ContextId::from(0)))
                 }
             } else {
-                let (w_pid, status) = waitpid.receive(&WaitpidKey {
-                    pid: Some(pid),
-                    pgid: None
-                }, "waitpid pid");
+                let (w_pid, status) = waitpid.receive(
+                    &WaitpidKey {
+                        pid: Some(pid),
+                        pgid: None,
+                    },
+                    "waitpid pid",
+                );
                 grim_reaper(w_pid, status)
             }
         };
@@ -530,10 +574,14 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
     assert_ne!(bootstrap.page_count, 0);
 
     {
-        let addr_space = Arc::clone(context::contexts().current()
-            .expect("expected a context to exist when executing init")
-            .read().addr_space()
-            .expect("expected bootstrap context to have an address space"));
+        let addr_space = Arc::clone(
+            context::contexts()
+                .current()
+                .expect("expected a context to exist when executing init")
+                .read()
+                .addr_space()
+                .expect("expected bootstrap context to have an address space"),
+        );
 
         // TODO: Use AddrSpace::mmap.
         let mut addr_space = addr_space.write();
@@ -541,17 +589,19 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
 
         // TODO: Mark as owned and then support reclaiming the memory to the allocator if
         // deallocated?
-        addr_space.grants.insert(context::memory::Grant::zeroed(
-            PageSpan::new(
-                Page::containing_address(VirtualAddress::new(0)),
-                bootstrap.page_count,
-            ),
-            PageFlags::new().user(true).write(true).execute(true),
-            &mut addr_space.table.utable,
-            PageFlushAll::new(),
-            false, // is_shared
-        ).expect("failed to physmap bootstrap memory"));
-
+        addr_space.grants.insert(
+            context::memory::Grant::zeroed(
+                PageSpan::new(
+                    Page::containing_address(VirtualAddress::new(0)),
+                    bootstrap.page_count,
+                ),
+                PageFlags::new().user(true).write(true).execute(true),
+                &mut addr_space.table.utable,
+                PageFlushAll::new(),
+                false, // is_shared
+            )
+            .expect("failed to physmap bootstrap memory"),
+        );
     }
     // TODO: Not all arches do linear mapping
     UserSliceWo::new(0, bootstrap.page_count * PAGE_SIZE)

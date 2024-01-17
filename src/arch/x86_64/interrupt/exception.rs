@@ -1,17 +1,11 @@
 use x86::irq::PageFaultError;
 
-use crate::memory::GenericPfFlags;
-use crate::ptrace;
 use crate::{
-    interrupt::stack_trace,
-    paging::VirtualAddress,
-    syscall::flag::*,
-
-    interrupt_stack,
-    interrupt_error,
+    interrupt::stack_trace, interrupt_error, interrupt_stack, memory::GenericPfFlags,
+    paging::VirtualAddress, ptrace, syscall::flag::*,
 };
 
-extern {
+extern "C" {
     fn ksignal(signal: usize);
 }
 
@@ -145,11 +139,26 @@ interrupt_error!(page, |stack, code| {
     let arch_flags = PageFaultError::from_bits_truncate(code as u32);
     let mut generic_flags = GenericPfFlags::empty();
 
-    generic_flags.set(GenericPfFlags::PRESENT, arch_flags.contains(PageFaultError::P));
-    generic_flags.set(GenericPfFlags::INVOLVED_WRITE, arch_flags.contains(PageFaultError::WR));
-    generic_flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, arch_flags.contains(PageFaultError::US));
-    generic_flags.set(GenericPfFlags::INVL, arch_flags.contains(PageFaultError::RSVD));
-    generic_flags.set(GenericPfFlags::INSTR_NOT_DATA, arch_flags.contains(PageFaultError::ID));
+    generic_flags.set(
+        GenericPfFlags::PRESENT,
+        arch_flags.contains(PageFaultError::P),
+    );
+    generic_flags.set(
+        GenericPfFlags::INVOLVED_WRITE,
+        arch_flags.contains(PageFaultError::WR),
+    );
+    generic_flags.set(
+        GenericPfFlags::USER_NOT_SUPERVISOR,
+        arch_flags.contains(PageFaultError::US),
+    );
+    generic_flags.set(
+        GenericPfFlags::INVL,
+        arch_flags.contains(PageFaultError::RSVD),
+    );
+    generic_flags.set(
+        GenericPfFlags::INSTR_NOT_DATA,
+        arch_flags.contains(PageFaultError::ID),
+    );
 
     if crate::memory::page_fault_handler(stack, generic_flags, cr2).is_err() {
         println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);

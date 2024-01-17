@@ -9,11 +9,12 @@ pub mod irq;
 pub mod syscall;
 pub mod trace;
 
-pub use self::handler::InterruptStack;
-pub use self::trace::stack_trace;
+pub use self::{handler::InterruptStack, trace::stack_trace};
 
-pub use super::idt::{available_irqs_iter, is_reserved, set_reserved};
-pub use super::device::local_apic::bsp_apic_id;
+pub use super::{
+    device::local_apic::bsp_apic_id,
+    idt::{available_irqs_iter, is_reserved, set_reserved},
+};
 
 /// Clear interrupts
 #[inline(always)]
@@ -53,5 +54,7 @@ pub unsafe fn halt() {
 /// Safe because it is similar to a NOP, and has no memory effects
 #[inline(always)]
 pub fn pause() {
-    unsafe { core::arch::asm!("pause", options(nomem, nostack)); }
+    unsafe {
+        core::arch::asm!("pause", options(nomem, nostack));
+    }
 }

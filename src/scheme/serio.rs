@@ -1,15 +1,21 @@
 //! PS/2 unfortunately requires a kernel driver to prevent race conditions due
 //! to how status is utilized
-use core::str;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    str,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use spin::RwLock;
 
-use crate::event;
-use crate::scheme::*;
-use crate::sync::WaitQueue;
-use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
-use crate::syscall::usercopy::UserSliceWo;
+use crate::{
+    event,
+    scheme::*,
+    sync::WaitQueue,
+    syscall::{
+        flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK},
+        usercopy::UserSliceWo,
+    },
+};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -45,18 +51,19 @@ impl KernelScheme for SerioScheme {
             return Err(Error::new(EPERM));
         }
 
-        let index = path
-            .parse::<usize>()
-            .or(Err(Error::new(ENOENT)))?;
+        let index = path.parse::<usize>().or(Err(Error::new(ENOENT)))?;
         if index >= INPUT.len() {
             return Err(Error::new(ENOENT));
         }
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(id, Handle {
-            index,
-            flags: flags & ! O_ACCMODE
-        });
+        HANDLES.write().insert(
+            id,
+            Handle {
+                index,
+                flags: flags & !O_ACCMODE,
+            },
+        );
 
         Ok(OpenResult::SchemeLocal(id))
     }
@@ -67,10 +74,10 @@ impl KernelScheme for SerioScheme {
             match cmd {
                 F_GETFL => Ok(handle.flags),
                 F_SETFL => {
-                    handle.flags = arg & ! O_ACCMODE;
+                    handle.flags = arg & !O_ACCMODE;
                     Ok(0)
-                },
-                _ => Err(Error::new(EINVAL))
+                }
+                _ => Err(Error::new(EINVAL)),
             }
         } else {
             Err(Error::new(EBADF))
@@ -110,8 +117,11 @@ impl KernelScheme for SerioScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        INPUT[handle.index]
-            .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "SerioScheme::read")
+        INPUT[handle.index].receive_into_user(
+            buf,
+            handle.flags & O_NONBLOCK != O_NONBLOCK,
+            "SerioScheme::read",
+        )
     }
 
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {

@@ -1,28 +1,30 @@
-use core::convert::TryInto;
-use core::str;
-use core::sync::atomic::{self, AtomicUsize};
+use core::{
+    convert::TryInto,
+    str,
+    sync::atomic::{self, AtomicUsize},
+};
 
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::{boxed::Box, collections::BTreeMap};
 
 use spin::{Mutex, Once, RwLock};
 
-use crate::acpi::{RXSDT_ENUM, RxsdtEnum};
-use crate::event;
-use crate::sync::WaitCondition;
-
-use crate::syscall::data::Stat;
-use crate::syscall::error::{EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS};
-use crate::syscall::flag::{
-    EventFlags, EVENT_READ,
-    MODE_CHR, MODE_DIR, MODE_FILE,
-    O_ACCMODE, O_CREAT, O_DIRECTORY, O_EXCL, O_RDONLY, O_STAT, O_SYMLINK,
-    SEEK_SET, SEEK_CUR, SEEK_END,
+use crate::{
+    acpi::{RxsdtEnum, RXSDT_ENUM},
+    event,
+    sync::WaitCondition,
 };
-use crate::syscall::error::{Error, Result};
-use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 
-use super::{GlobalSchemes, KernelScheme, CallerCtx, OpenResult};
+use crate::syscall::{
+    data::Stat,
+    error::{Error, Result, EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS},
+    flag::{
+        EventFlags, EVENT_READ, MODE_CHR, MODE_DIR, MODE_FILE, O_ACCMODE, O_CREAT, O_DIRECTORY,
+        O_EXCL, O_RDONLY, O_STAT, O_SYMLINK, SEEK_CUR, SEEK_END, SEEK_SET,
+    },
+    usercopy::{UserSliceRo, UserSliceWo},
+};
+
+use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;
@@ -56,7 +58,10 @@ pub fn register_kstop() -> bool {
 
     let handles = HANDLES.read();
 
-    for (&fd, _) in handles.iter().filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe) {
+    for (&fd, _) in handles
+        .iter()
+        .filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe)
+    {
         event::trigger(GlobalSchemes::Acpi.scheme_id(), fd, EVENT_READ);
         waiters_awoken += 1;
     }
@@ -142,11 +147,14 @@ impl KernelScheme for AcpiScheme {
         let fd = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
         let mut handles_guard = HANDLES.write();
 
-        let _ = handles_guard.insert(fd, Handle {
-            offset: 0,
-            kind: handle_kind,
-            stat: flags & O_STAT == O_STAT,
-        });
+        let _ = handles_guard.insert(
+            fd,
+            Handle {
+                offset: 0,
+                kind: handle_kind,
+                stat: flags & O_STAT == O_STAT,
+            },
+        );
 
         Ok(OpenResult::SchemeLocal(fd))
     }
@@ -166,15 +174,24 @@ impl KernelScheme for AcpiScheme {
 
         let new_offset = match whence {
             SEEK_SET => pos as usize,
-            SEEK_CUR => if pos < 0 {
-                handle.offset.checked_sub((-pos) as usize).ok_or(Error::new(EINVAL))?
-            } else {
-                handle.offset.saturating_add(pos as usize)
+            SEEK_CUR => {
+                if pos < 0 {
+                    handle
+                        .offset
+                        .checked_sub((-pos) as usize)
+                        .ok_or(Error::new(EINVAL))?
+                } else {
+                    handle.offset.saturating_add(pos as usize)
+                }
             }
-            SEEK_END => if pos < 0 {
-                file_len.checked_sub((-pos) as usize).ok_or(Error::new(EINVAL))?
-            } else {
-                file_len
+            SEEK_END => {
+                if pos < 0 {
+                    file_len
+                        .checked_sub((-pos) as usize)
+                        .ok_or(Error::new(EINVAL))?
+                } else {
+                    file_len
+                }
             }
             _ => return Err(Error::new(EINVAL)),
         };
@@ -222,7 +239,7 @@ impl KernelScheme for AcpiScheme {
 
                     if *flag_guard {
                         break;
-                    } else if ! KSTOP_WAITCOND.wait(flag_guard, "waiting for kstop") {
+                    } else if !KSTOP_WAITCOND.wait(flag_guard, "waiting for kstop") {
                         return Err(Error::new(EINTR));
                     }
                 }
@@ -258,10 +275,13 @@ impl KernelScheme for AcpiScheme {
                     st_size: data.len().try_into().unwrap_or(u64::max_value()),
                     ..Default::default()
                 }
-            },
+            }
             HandleKind::TopLevel => Stat {
                 st_mode: MODE_DIR,
-                st_size: TOPLEVEL_CONTENTS.len().try_into().unwrap_or(u64::max_value()),
+                st_size: TOPLEVEL_CONTENTS
+                    .len()
+                    .try_into()
+                    .unwrap_or(u64::max_value()),
                 ..Default::default()
             },
             HandleKind::ShutdownPipe => Stat {

@@ -1,7 +1,6 @@
 use core::mem;
 
-use crate::memory::ArchIntCtx;
-use crate::syscall::IntRegisters;
+use crate::{memory::ArchIntCtx, syscall::IntRegisters};
 
 use super::super::flags::*;
 
@@ -50,9 +49,8 @@ pub struct IretRegisters {
     // The following will only be present if interrupt is raised from another
     // privilege ring. Otherwise, they are undefined values.
     // ----
-
     pub esp: usize,
-    pub ss: usize
+    pub ss: usize,
 }
 
 impl IretRegisters {
@@ -169,61 +167,73 @@ impl InterruptErrorStack {
 
 #[macro_export]
 macro_rules! push_scratch {
-    () => { "
+    () => {
+        "
         // Push scratch registers (minus eax)
         push ecx
         push edx
-    " };
+    "
+    };
 }
 #[macro_export]
 macro_rules! pop_scratch {
-    () => { "
+    () => {
+        "
         // Pop scratch registers
         pop edx
         pop ecx
         pop eax
-    " };
+    "
+    };
 }
 
 #[macro_export]
 macro_rules! push_preserved {
-    () => { "
+    () => {
+        "
         // Push preserved registers
         push ebx
         push edi
         push esi
         push ebp
-    " };
+    "
+    };
 }
 #[macro_export]
 macro_rules! pop_preserved {
-    () => { "
+    () => {
+        "
         // Pop preserved registers
         pop ebp
         pop esi
         pop edi
         pop ebx
-    " };
+    "
+    };
 }
 
 // Must always happen after push_scratch
 macro_rules! enter_gs {
-    () => { "
+    () => {
+        "
         // Enter kernel GS segment
         mov ecx, gs
         push ecx
         mov ecx, 0x18
         mov gs, ecx
-    " }
+    "
+    };
 }
 
 // Must always happen before pop_scratch
 macro_rules! exit_gs {
-    () => { "
+    () => {
+        "
         // Exit kernel GS segment
         pop ecx
         mov gs, ecx
-    " }
+    "
+    };
 }
 
 #[macro_export]
@@ -411,13 +421,16 @@ macro_rules! interrupt_error {
 }
 #[naked]
 unsafe extern "C" fn usercopy_trampoline() {
-    core::arch::asm!("
+    core::arch::asm!(
+        "
         pop esi
         pop edi
 
         mov eax, 1
         ret
-    ", options(noreturn));
+    ",
+        options(noreturn)
+    );
 }
 
 impl ArchIntCtx for InterruptStack {

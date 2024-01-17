@@ -1,31 +1,24 @@
-use core::{
-    cmp::Ordering,
-    mem,
-};
-use alloc::{
-    boxed::Box,
-    collections::VecDeque,
-    sync::Arc,
-    vec::Vec, borrow::Cow,
-};
+use alloc::{borrow::Cow, boxed::Box, collections::VecDeque, sync::Arc, vec::Vec};
+use core::{cmp::Ordering, mem};
 use spin::RwLock;
 
-use crate::{LogicalCpuId, LogicalCpuSet};
-use crate::arch::{interrupt::InterruptStack, paging::PAGE_SIZE};
-use crate::common::aligned_box::AlignedBox;
-use crate::common::unique::Unique;
-use crate::context::{self, arch};
-use crate::context::file::FileDescriptor;
-use crate::context::memory::AddrSpace;
-use crate::ipi::{ipi, IpiKind, IpiTarget};
-use crate::paging::{RmmA, RmmArch};
-use crate::memory::{RaiiFrame, Frame};
-use crate::scheme::{SchemeNamespace, FileHandle, CallerCtx};
-use crate::sync::WaitMap;
+use crate::{
+    arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
+    common::{aligned_box::AlignedBox, unique::Unique},
+    context::{self, arch, file::FileDescriptor, memory::AddrSpace},
+    ipi::{ipi, IpiKind, IpiTarget},
+    memory::{Frame, RaiiFrame},
+    paging::{RmmA, RmmArch},
+    scheme::{CallerCtx, FileHandle, SchemeNamespace},
+    sync::WaitMap,
+    LogicalCpuId, LogicalCpuSet,
+};
 
-use crate::syscall::data::SigAction;
-use crate::syscall::error::{Result, Error, EAGAIN, ESRCH};
-use crate::syscall::flag::{SIG_DFL, SigActionFlags};
+use crate::syscall::{
+    data::SigAction,
+    error::{Error, Result, EAGAIN, ESRCH},
+    flag::{SigActionFlags, SIG_DFL},
+};
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
@@ -40,14 +33,15 @@ pub enum Status {
     Runnable,
 
     // TODO: Rename to SoftBlocked and move status_reason to this variant.
-
     /// Not currently runnable, typically due to some blocking syscall, but it can be trivially
     /// unblocked by e.g. signals.
     Blocked,
 
     /// Not currently runnable, and cannot be runnable until manually unblocked, depending on what
     /// reason.
-    HardBlocked { reason: HardBlockedReason },
+    HardBlocked {
+        reason: HardBlockedReason,
+    },
 
     Stopped(usize),
     Exited(usize),
@@ -188,11 +182,16 @@ pub struct Context {
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
-    pub kfx: AlignedBox<[u8], {arch::KFX_ALIGN}>,
+    pub kfx: AlignedBox<[u8], { arch::KFX_ALIGN }>,
     /// Kernel stack
     pub kstack: Option<Box<[u8]>>,
     /// Kernel signal backup: Registers, Kernel FX, Kernel Stack, Signal number
-    pub ksig: Option<(arch::Context, AlignedBox<[u8], {arch::KFX_ALIGN}>, Option<Box<[u8]>>, u8)>,
+    pub ksig: Option<(
+        arch::Context,
+        AlignedBox<[u8], { arch::KFX_ALIGN }>,
+        Option<Box<[u8]>>,
+        u8,
+    )>,
     /// Restore ksig context on next switch
     pub ksig_restore: bool,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
@@ -257,7 +256,7 @@ impl Context {
             pending: VecDeque::new(),
             wake: None,
             arch: arch::Context::new(),
-            kfx: AlignedBox::<[u8], {arch::KFX_ALIGN}>::try_zeroed_slice(crate::arch::kfx_size())?,
+            kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
             kstack: None,
             ksig: None,
             ksig_restore: false,
@@ -299,10 +298,10 @@ impl Context {
     pub fn unblock(&mut self) -> bool {
         if self.unblock_no_ipi() {
             if let Some(cpu_id) = self.cpu_id {
-               if cpu_id != crate::cpu_id() {
+                if cpu_id != crate::cpu_id() {
                     // Send IPI if not on current CPU
                     ipi(IpiKind::Wakeup, IpiTarget::Other);
-               }
+                }
             }
 
             true
@@ -396,25 +395,37 @@ impl Context {
     pub fn addr_space(&self) -> Result<&Arc<RwLock<AddrSpace>>> {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
-    pub fn set_addr_space(&mut self, addr_space: Arc<RwLock<AddrSpace>>) -> Option<Arc<RwLock<AddrSpace>>> {
+    pub fn set_addr_space(
+        &mut self,
+        addr_space: Arc<RwLock<AddrSpace>>,
+    ) -> Option<Arc<RwLock<AddrSpace>>> {
         if self.id == super::context_id() {
-            unsafe { addr_space.read().table.utable.make_current(); }
+            unsafe {
+                addr_space.read().table.utable.make_current();
+            }
         }
 
         self.addr_space.replace(addr_space)
     }
     pub fn empty_actions() -> Arc<RwLock<Vec<(SigAction, usize)>>> {
-        Arc::new(RwLock::new(vec![(
-            SigAction {
-                sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                sa_mask: [0; 2],
-                sa_flags: SigActionFlags::empty(),
-            },
-            0
-        ); 128]))
+        Arc::new(RwLock::new(vec![
+            (
+                SigAction {
+                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                    sa_mask: [0; 2],
+                    sa_flags: SigActionFlags::empty(),
+                },
+                0
+            );
+            128
+        ]))
     }
     pub fn caller_ctx(&self) -> CallerCtx {
-        CallerCtx { pid: self.id.into(), uid: self.euid, gid: self.egid }
+        CallerCtx {
+            pid: self.id.into(),
+            uid: self.euid,
+            gid: self.egid,
+        }
     }
 }
 
@@ -427,21 +438,51 @@ pub struct BorrowedHtBuf {
 impl BorrowedHtBuf {
     pub fn head() -> Result<Self> {
         Ok(Self {
-            inner: Some(context::current()?.write().syscall_head.take().ok_or(Error::new(EAGAIN))?),
+            inner: Some(
+                context::current()?
+                    .write()
+                    .syscall_head
+                    .take()
+                    .ok_or(Error::new(EAGAIN))?,
+            ),
             head_and_not_tail: true,
         })
     }
     pub fn tail() -> Result<Self> {
         Ok(Self {
-            inner: Some(context::current()?.write().syscall_tail.take().ok_or(Error::new(EAGAIN))?),
+            inner: Some(
+                context::current()?
+                    .write()
+                    .syscall_tail
+                    .take()
+                    .ok_or(Error::new(EAGAIN))?,
+            ),
             head_and_not_tail: false,
         })
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
-        unsafe { &*(RmmA::phys_to_virt(self.inner.as_ref().expect("must succeed").get().start_address()).data() as *const [u8; PAGE_SIZE]) }
+        unsafe {
+            &*(RmmA::phys_to_virt(
+                self.inner
+                    .as_ref()
+                    .expect("must succeed")
+                    .get()
+                    .start_address(),
+            )
+            .data() as *const [u8; PAGE_SIZE])
+        }
     }
     pub fn buf_mut(&mut self) -> &mut [u8; PAGE_SIZE] {
-        unsafe { &mut *(RmmA::phys_to_virt(self.inner.as_mut().expect("must succeed").get().start_address()).data() as *mut [u8; PAGE_SIZE]) }
+        unsafe {
+            &mut *(RmmA::phys_to_virt(
+                self.inner
+                    .as_mut()
+                    .expect("must succeed")
+                    .get()
+                    .start_address(),
+            )
+            .data() as *mut [u8; PAGE_SIZE])
+        }
     }
     pub fn frame(&self) -> Frame {
         self.inner.as_ref().expect("must succeed").get()
@@ -477,7 +518,12 @@ impl Drop for BorrowedHtBuf {
         };
         match context.write() {
             mut context => {
-                (if self.head_and_not_tail { &mut context.syscall_head } else { &mut context.syscall_tail }).get_or_insert(inner);
+                (if self.head_and_not_tail {
+                    &mut context.syscall_head
+                } else {
+                    &mut context.syscall_tail
+                })
+                .get_or_insert(inner);
             }
         }
     }

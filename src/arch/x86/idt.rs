@@ -1,21 +1,24 @@
-use core::num::NonZeroU8;
-use core::sync::atomic::{AtomicU32, Ordering};
-use core::mem;
+use core::{
+    mem,
+    num::NonZeroU8,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use alloc::boxed::Box;
 use hashbrown::HashMap;
 
-use x86::segmentation::Descriptor as X86IdtEntry;
-use x86::dtables::{self, DescriptorTablePointer};
+use x86::{
+    dtables::{self, DescriptorTablePointer},
+    segmentation::Descriptor as X86IdtEntry,
+};
 
-use crate::{interrupt::*, LogicalCpuId};
-use crate::ipi::IpiKind;
+use crate::{interrupt::*, ipi::IpiKind, LogicalCpuId};
 
 use spin::RwLock;
 
 pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
     limit: 0,
-    base: 0 as *const X86IdtEntry
+    base: 0 as *const X86IdtEntry,
 };
 
 pub type IdtEntries = [IdtEntry; 256];
@@ -46,7 +49,8 @@ impl Idt {
         let byte_index = index / 32;
         let bit = index % 32;
 
-        { &self.reservations[usize::from(byte_index)] }.fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
+        { &self.reservations[usize::from(byte_index)] }
+            .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
     }
     #[inline]
     pub fn is_reserved_mut(&mut self, index: u8) -> bool {
@@ -61,7 +65,8 @@ impl Idt {
         let byte_index = index / 32;
         let bit = index % 32;
 
-        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() |= u32::from(reserved) << bit;
+        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() |=
+            u32::from(reserved) << bit;
     }
 }
 
@@ -75,7 +80,18 @@ pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
     let byte_index = index / 32;
     let bit = index % 32;
 
-    { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
+    {
+        &IDTS
+            .read()
+            .as_ref()
+            .unwrap()
+            .get(&cpu_id)
+            .unwrap()
+            .reservations[usize::from(byte_index)]
+    }
+    .load(Ordering::Acquire)
+        & (1 << bit)
+        != 0
 }
 
 #[inline]
@@ -83,13 +99,22 @@ pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
     let byte_index = index / 32;
     let bit = index % 32;
 
-    { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
+    {
+        &IDTS
+            .read()
+            .as_ref()
+            .unwrap()
+            .get(&cpu_id)
+            .unwrap()
+            .reservations[usize::from(byte_index)]
+    }
+    .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
 }
 
 pub fn allocate_interrupt() -> Option<NonZeroU8> {
     let cpu_id = crate::cpu_id();
     for number in 50..=254 {
-        if ! is_reserved(cpu_id, number) {
+        if !is_reserved(cpu_id, number) {
             set_reserved(cpu_id, number, true);
             return Some(unsafe { NonZeroU8::new_unchecked(number) });
         }
@@ -120,8 +145,14 @@ pub unsafe fn init() {
 
 const fn new_idt_reservations() -> [AtomicU32; 8] {
     [
-        AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0),
-        AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
+        AtomicU32::new(0),
     ]
 }
 
@@ -133,7 +164,9 @@ pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: LogicalCpuId) {
     if is_bsp {
         idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);
     } else {
-        let idt = idts_btree.entry(cpu_id).or_insert_with(|| Box::leak(Box::new(Idt::new())));
+        let idt = idts_btree
+            .entry(cpu_id)
+            .or_insert_with(|| Box::leak(Box::new(Idt::new())));
         init_generic(is_bsp, idt);
     }
 }
@@ -238,7 +271,6 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         current_idt[48].set_func(irq::lapic_timer);
         current_idt[49].set_func(irq::lapic_error);
 
-
         // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
         *current_reservations[1].get_mut() |= 0x0003_FFFF;
     } else {
@@ -309,7 +341,11 @@ impl IdtEntry {
     }
 
     pub fn set_ist(&mut self, ist: u8) {
-        assert_eq!(ist & 0x07, ist, "interrupt stack table must be within 0..=7");
+        assert_eq!(
+            ist & 0x07,
+            ist,
+            "interrupt stack table must be within 0..=7"
+        );
         self.zero &= 0xF8;
         self.zero |= ist;
     }
@@ -321,7 +357,7 @@ impl IdtEntry {
     }
 
     // A function to set the offset more easily
-    pub fn set_func(&mut self, func: unsafe extern fn()) {
+    pub fn set_func(&mut self, func: unsafe extern "C" fn()) {
         self.set_flags(IdtFlags::PRESENT | IdtFlags::RING_0 | IdtFlags::INTERRUPT);
         self.set_offset((crate::gdt::GDT_KERNEL_CODE as u16) << 3, func as usize);
     }

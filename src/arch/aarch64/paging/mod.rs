@@ -7,15 +7,8 @@ use crate::device::cpu::registers::{control_regs, tlb};
 
 use self::mapper::PageFlushAll;
 
-pub use rmm::{
-    Arch as RmmArch,
-    Flusher,
-    PageFlags,
-    PhysicalAddress,
-    TableKind,
-    VirtualAddress,
-};
 pub use super::CurrentRmmArch as RmmA;
+pub use rmm::{Arch as RmmArch, Flusher, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
 pub use crate::rmm::KernelMapper;
@@ -83,7 +76,10 @@ impl Page {
     }
 
     pub fn range_inclusive(start: Page, r#final: Page) -> PageIter {
-        PageIter { start, end: r#final.next() }
+        PageIter {
+            start,
+            end: r#final.next(),
+        }
     }
     pub fn range_exclusive(start: Page, end: Page) -> PageIter {
         PageIter { start, end }

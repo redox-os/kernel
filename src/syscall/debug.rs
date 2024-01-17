@@ -1,15 +1,17 @@
+use alloc::{string::String, vec::Vec};
 use core::{ascii, mem};
-use alloc::string::String;
-use alloc::vec::Vec;
 
-use super::data::{Map, Stat, TimeSpec};
-use super::{flag::*, copy_path_to_buf};
-use super::number::*;
-use super::usercopy::UserSlice;
+use super::{
+    copy_path_to_buf,
+    data::{Map, Stat, TimeSpec},
+    flag::*,
+    number::*,
+    usercopy::UserSlice,
+};
 
 use crate::syscall::error::Result;
 
-struct ByteStr<'a>(&'a[u8]);
+struct ByteStr<'a>(&'a [u8]);
 
 impl<'a> ::core::fmt::Debug for ByteStr<'a> {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
@@ -29,7 +31,7 @@ fn debug_path(ptr: usize, len: usize) -> Result<String> {
 }
 fn debug_buf(ptr: usize, len: usize) -> Result<Vec<u8>> {
     UserSlice::ro(ptr, len).and_then(|user| {
-        let mut buf = vec! [0_u8; 4096];
+        let mut buf = vec![0_u8; 4096];
         let count = user.copy_common_bytes_to_slice(&mut buf)?;
         buf.truncate(count);
         Ok(buf)
@@ -55,9 +57,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             "unlink({:?})",
             debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
         ),
-        SYS_CLOSE => format!(
-            "close({})", b
-        ),
+        SYS_CLOSE => format!("close({})", b),
         SYS_DUP => format!(
             "dup({}, {:?})",
             b,
@@ -69,26 +69,9 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             debug_buf(d, e).as_ref().map(|b| ByteStr(&*b)),
         ),
-        SYS_SENDFD => format!(
-            "sendfd({}, {}, {:#0x} {:#0x} {:#0x})",
-            b,
-            c,
-            d,
-            e,
-            f,
-        ),
-        SYS_READ => format!(
-            "read({}, {:#X}, {})",
-            b,
-            c,
-            d
-        ),
-        SYS_WRITE => format!(
-            "write({}, {:#X}, {})",
-            b,
-            c,
-            d
-        ),
+        SYS_SENDFD => format!("sendfd({}, {}, {:#0x} {:#0x} {:#0x})", b, c, d, e, f,),
+        SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
+        SYS_WRITE => format!("write({}, {:#X}, {})", b, c, d),
         SYS_LSEEK => format!(
             "lseek({}, {}, {} ({}))",
             b,
@@ -97,21 +80,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
                 SEEK_SET => "SEEK_SET",
                 SEEK_CUR => "SEEK_CUR",
                 SEEK_END => "SEEK_END",
-                _ => "UNKNOWN"
+                _ => "UNKNOWN",
             },
             d
         ),
-        SYS_FCHMOD => format!(
-            "fchmod({}, {:#o})",
-            b,
-            c
-        ),
-        SYS_FCHOWN => format!(
-            "fchown({}, {}, {})",
-            b,
-            c,
-            d
-        ),
+        SYS_FCHMOD => format!("fchmod({}, {:#o})", b, c),
+        SYS_FCHOWN => format!("fchown({}, {}, {})", b, c, d),
         SYS_FCNTL => format!(
             "fcntl({}, {} ({}), {:#X})",
             b,
@@ -121,7 +95,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
                 F_SETFD => "F_SETFD",
                 F_SETFL => "F_SETFL",
                 F_GETFL => "F_GETFL",
-                _ => "UNKNOWN"
+                _ => "UNKNOWN",
             },
             c,
             d
@@ -131,47 +105,22 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b,
             UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Map>() }),
         ),
-        SYS_FUNMAP => format!(
-            "funmap({:#X}, {:#X})",
-            b,
-            c,
-        ),
-        SYS_FPATH => format!(
-            "fpath({}, {:#X}, {})",
-            b,
-            c,
-            d
-        ),
-        SYS_FRENAME => format!(
-            "frename({}, {:?})",
-            b,
-            debug_path(c, d),
-        ),
+        SYS_FUNMAP => format!("funmap({:#X}, {:#X})", b, c,),
+        SYS_FPATH => format!("fpath({}, {:#X}, {})", b, c, d),
+        SYS_FRENAME => format!("frename({}, {:?})", b, debug_path(c, d),),
         SYS_FSTAT => format!(
             "fstat({}, {:?})",
             b,
             UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Stat>() }),
         ),
-        SYS_FSTATVFS => format!(
-            "fstatvfs({}, {:#X}, {})",
-            b,
-            c,
-            d
-        ),
-        SYS_FSYNC => format!(
-            "fsync({})",
-            b
-        ),
-        SYS_FTRUNCATE => format!(
-            "ftruncate({}, {})",
-            b,
-            c
-        ),
+        SYS_FSTATVFS => format!("fstatvfs({}, {:#X}, {})", b, c, d),
+        SYS_FSYNC => format!("fsync({})", b),
+        SYS_FTRUNCATE => format!("ftruncate({}, {})", b, c),
         SYS_FUTIMENS => format!(
             "futimens({}, {:?})",
             b,
             UserSlice::ro(c, d).and_then(|buf| {
-                let mut times = vec! [unsafe { buf.read_exact::<TimeSpec>()? }];
+                let mut times = vec![unsafe { buf.read_exact::<TimeSpec>()? }];
 
                 // One or two timespecs
                 if let Some(second) = buf.advance(mem::size_of::<TimeSpec>()) {
@@ -181,15 +130,10 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             }),
         ),
 
-        SYS_CLOCK_GETTIME => format!(
-            "clock_gettime({}, {:?})",
-            b,
-            unsafe { read_struct::<TimeSpec>(c) }
-        ),
-        SYS_EXIT => format!(
-            "exit({})",
-            b
-        ),
+        SYS_CLOCK_GETTIME => format!("clock_gettime({}, {:?})", b, unsafe {
+            read_struct::<TimeSpec>(c)
+        }),
+        SYS_EXIT => format!("exit({})", b),
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,
@@ -208,23 +152,10 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_GETPID => format!("getpid()"),
         SYS_GETPPID => format!("getppid()"),
         SYS_GETUID => format!("getuid()"),
-        SYS_IOPL => format!(
-            "iopl({})",
-            b
-        ),
-        SYS_KILL => format!(
-            "kill({}, {})",
-            b,
-            c
-        ),
+        SYS_IOPL => format!("iopl({})", b),
+        SYS_KILL => format!("kill({}, {})", b, c),
         SYS_SIGRETURN => format!("sigreturn()"),
-        SYS_SIGACTION => format!(
-            "sigaction({}, {:#X}, {:#X}, {:#X})",
-            b,
-            c,
-            d,
-            e
-        ),
+        SYS_SIGACTION => format!("sigaction({}, {:#X}, {:#X}, {:#X})", b, c, d, e),
         SYS_SIGPROCMASK => format!(
             "sigprocmask({}, {:?}, {:?})",
             b,
@@ -240,56 +171,23 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             b as *const u8,
             c,
         ),
-        SYS_MPROTECT => format!(
-            "mprotect({:#X}, {}, {:?})",
-            b,
-            c,
-            MapFlags::from_bits(d)
-        ),
+        SYS_MPROTECT => format!("mprotect({:#X}, {}, {:?})", b, c, MapFlags::from_bits(d)),
         SYS_NANOSLEEP => format!(
             "nanosleep({:?}, ({}, {}))",
             unsafe { read_struct::<TimeSpec>(b) },
             c,
             d
         ),
-        SYS_VIRTTOPHYS => format!(
-            "virttophys({:#X})",
-            b
-        ),
-        SYS_SETREGID => format!(
-            "setregid({}, {})",
-            b,
-            c
-        ),
-        SYS_SETRENS => format!(
-            "setrens({}, {})",
-            b,
-            c
-        ),
-        SYS_SETREUID => format!(
-            "setreuid({}, {})",
-            b,
-            c
-        ),
-        SYS_UMASK => format!(
-            "umask({:#o}",
-            b
-        ),
-        SYS_WAITPID => format!(
-            "waitpid({}, {:#X}, {:?})",
-            b,
-            c,
-            WaitFlags::from_bits(d)
-        ),
+        SYS_VIRTTOPHYS => format!("virttophys({:#X})", b),
+        SYS_SETREGID => format!("setregid({}, {})", b, c),
+        SYS_SETRENS => format!("setrens({}, {})", b, c),
+        SYS_SETREUID => format!("setreuid({}, {})", b, c),
+        SYS_UMASK => format!("umask({:#o}", b),
+        SYS_WAITPID => format!("waitpid({}, {:#X}, {:?})", b, c, WaitFlags::from_bits(d)),
         SYS_YIELD => format!("yield()"),
         _ => format!(
             "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
-            a, a,
-            b,
-            c,
-            d,
-            e,
-            f
-        )
+            a, a, b, c, d, e, f
+        ),
     }
 }

@@ -1,5 +1,5 @@
-use crate::acpi::hpet::Hpet;
 use super::pit;
+use crate::acpi::hpet::Hpet;
 
 const LEG_RT_CNF: u64 = 2;
 const ENABLE_CNF: u64 = 1;
@@ -27,7 +27,8 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
     {
         let mut config_word = hpet.base_address.read_u64(GENERAL_CONFIG_OFFSET);
         config_word &= !(LEG_RT_CNF | ENABLE_CNF);
-        hpet.base_address.write_u64(GENERAL_CONFIG_OFFSET, config_word);
+        hpet.base_address
+            .write_u64(GENERAL_CONFIG_OFFSET, config_word);
     }
 
     let capability = hpet.base_address.read_u64(CAPABILITY_OFFSET);
@@ -48,9 +49,11 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
     let counter = hpet.base_address.read_u64(MAIN_COUNTER_OFFSET);
 
     let t0_config_word: u64 = TN_VAL_SET_CNF | TN_TYPE_CNF | TN_INT_ENB_CNF;
-    hpet.base_address.write_u64(T0_CONFIG_CAPABILITY_OFFSET, t0_config_word);
+    hpet.base_address
+        .write_u64(T0_CONFIG_CAPABILITY_OFFSET, t0_config_word);
     // set accumulator value
-    hpet.base_address.write_u64(T0_COMPARATOR_OFFSET, counter + divisor);
+    hpet.base_address
+        .write_u64(T0_COMPARATOR_OFFSET, counter + divisor);
     // set interval
     hpet.base_address.write_u64(T0_COMPARATOR_OFFSET, divisor);
 
@@ -58,7 +61,8 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
     {
         let mut config_word: u64 = hpet.base_address.read_u64(GENERAL_CONFIG_OFFSET);
         config_word |= LEG_RT_CNF | ENABLE_CNF;
-        hpet.base_address.write_u64(GENERAL_CONFIG_OFFSET, config_word);
+        hpet.base_address
+            .write_u64(GENERAL_CONFIG_OFFSET, config_word);
     }
 
     println!("HPET After Init");
@@ -76,7 +80,10 @@ pub unsafe fn debug(hpet: &mut Hpet) {
         println!("    clock period: {}", (capability >> 32) as u32);
         println!("    ID: {:#x}", (capability >> 16) as u16);
         println!("    LEG_RT_CAP: {}", capability & (1 << 15) == (1 << 15));
-        println!("    COUNT_SIZE_CAP: {}", capability & (1 << 13) == (1 << 13));
+        println!(
+            "    COUNT_SIZE_CAP: {}",
+            capability & (1 << 13) == (1 << 13)
+        );
         println!("    timers: {}", (capability >> 8) as u8 & 0x1F);
         println!("    revision: {}", capability as u8);
     }
@@ -92,7 +99,10 @@ pub unsafe fn debug(hpet: &mut Hpet) {
 
     let t0_capabilities = hpet.base_address.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
     println!("  T0 caps: {:#x}", t0_capabilities);
-    println!("    interrupt routing: {:#x}", (t0_capabilities >> 32) as u32);
+    println!(
+        "    interrupt routing: {:#x}",
+        (t0_capabilities >> 32) as u32
+    );
     println!("    flags: {:#x}", t0_capabilities as u16);
 
     let t0_comparator = hpet.base_address.read_u64(T0_COMPARATOR_OFFSET);

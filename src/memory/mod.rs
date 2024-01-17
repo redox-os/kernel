@@ -1,25 +1,29 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
-use core::cell::SyncUnsafeCell;
-use core::mem;
-use core::num::NonZeroUsize;
-use core::sync::atomic::{AtomicUsize, Ordering};
-
-use crate::arch::rmm::LockedAllocator;
-use crate::context::{self, memory::{AccessMode, PfError}};
-use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
-use crate::paging::Page;
-pub use crate::paging::{PAGE_SIZE, PhysicalAddress, RmmA, RmmArch};
-use crate::rmm::areas;
-
-use alloc::vec::Vec;
-use rmm::{
-    FrameAllocator,
-    FrameCount, VirtualAddress, TableKind,
+use core::{
+    cell::SyncUnsafeCell,
+    mem,
+    num::NonZeroUsize,
+    sync::atomic::{AtomicUsize, Ordering},
 };
+
+pub use crate::paging::{PhysicalAddress, RmmA, RmmArch, PAGE_SIZE};
+use crate::{
+    arch::rmm::LockedAllocator,
+    context::{
+        self,
+        memory::{AccessMode, PfError},
+    },
+    kernel_executable_offsets::{__usercopy_end, __usercopy_start},
+    paging::Page,
+    rmm::areas,
+};
+
+use crate::syscall::error::{Error, ENOMEM};
+use alloc::vec::Vec;
+use rmm::{FrameAllocator, FrameCount, TableKind, VirtualAddress};
 use spin::RwLock;
-use crate::syscall::error::{ENOMEM, Error};
 
 /// A memory map area
 #[derive(Copy, Clone, Debug, Default)]
@@ -28,29 +32,25 @@ pub struct MemoryArea {
     pub base_addr: u64,
     pub length: u64,
     pub _type: u32,
-    pub acpi: u32
+    pub acpi: u32,
 }
 
 /// Get the number of frames available
 pub fn free_frames() -> usize {
-    unsafe {
-        LockedAllocator.usage().free().data()
-    }
+    unsafe { LockedAllocator.usage().free().data() }
 }
 
 /// Get the number of frames used
 pub fn used_frames() -> usize {
-    unsafe {
-        LockedAllocator.usage().used().data()
-    }
+    unsafe { LockedAllocator.usage().used().data() }
 }
 
 /// Allocate a range of frames
 pub fn allocate_frames(count: usize) -> Option<Frame> {
     unsafe {
-        LockedAllocator.allocate(FrameCount::new(count)).map(|phys| {
-            Frame::containing_address(PhysicalAddress::new(phys.data()))
-        })
+        LockedAllocator
+            .allocate(FrameCount::new(count))
+            .map(|phys| Frame::containing_address(PhysicalAddress::new(phys.data())))
     }
 }
 // TODO: allocate_frames_complex
@@ -61,7 +61,7 @@ pub fn deallocate_frames(frame: Frame, count: usize) {
     unsafe {
         LockedAllocator.free(
             rmm::PhysicalAddress::new(frame.start_address().data()),
-            FrameCount::new(count)
+            FrameCount::new(count),
         );
     }
 }
@@ -74,7 +74,11 @@ pub struct Frame {
 }
 impl core::fmt::Debug for Frame {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "[frame at {:p}]", self.start_address().data() as *const u8)
+        write!(
+            f,
+            "[frame at {:p}]",
+            self.start_address().data() as *const u8
+        )
     }
 }
 
@@ -97,11 +101,19 @@ impl Frame {
     }
     pub fn next_by(self, n: usize) -> Self {
         Self {
-            number: self.number.get().checked_add(n).and_then(NonZeroUsize::new).expect("overflow in Frame::next_by"),
+            number: self
+                .number
+                .get()
+                .checked_add(n)
+                .and_then(NonZeroUsize::new)
+                .expect("overflow in Frame::next_by"),
         }
     }
     pub fn offset_from(self, from: Self) -> usize {
-        self.number.get().checked_sub(from.number.get()).expect("overflow in Frame::offset_from")
+        self.number
+            .get()
+            .checked_sub(from.number.get())
+            .expect("overflow in Frame::offset_from")
     }
 }
 
@@ -139,7 +151,9 @@ pub struct RaiiFrame {
 }
 impl RaiiFrame {
     pub fn allocate() -> Result<Self, Enomem> {
-        init_frame(RefCount::One).map_err(|_| Enomem).map(|inner| Self { inner })
+        init_frame(RefCount::One)
+            .map_err(|_| Enomem)
+            .map(|inner| Self { inner })
     }
     pub fn get(&self) -> Frame {
         self.inner
@@ -150,7 +164,8 @@ impl Drop for RaiiFrame {
     fn drop(&mut self) {
         if get_page_info(self.inner)
             .expect("RaiiFrame lacking PageInfo")
-            .remove_ref() == RefCount::Zero
+            .remove_ref()
+            == RefCount::Zero
         {
             crate::memory::deallocate_frames(self.inner, 1);
         }
@@ -223,7 +238,10 @@ fn init_sections() {
 
     while let Some(mut memory_map_area) = iter.next() {
         // TODO: NonZeroUsize
-        assert_ne!(memory_map_area.size, 0, "RMM should enforce areas are not zeroed");
+        assert_ne!(
+            memory_map_area.size, 0,
+            "RMM should enforce areas are not zeroed"
+        );
 
         // TODO: Would it make sense to naturally align the sections?
         // TODO: Should RMM do this?
@@ -233,8 +251,16 @@ fn init_sections() {
             let _ = iter.next();
         }
 
-        assert_eq!(memory_map_area.base.data() % PAGE_SIZE, 0, "RMM should enforce area alignment");
-        assert_eq!(memory_map_area.size % PAGE_SIZE, 0, "RMM should enforce area length alignment");
+        assert_eq!(
+            memory_map_area.base.data() % PAGE_SIZE,
+            0,
+            "RMM should enforce area alignment"
+        );
+        assert_eq!(
+            memory_map_area.size % PAGE_SIZE,
+            0,
+            "RMM should enforce area length alignment"
+        );
 
         let mut pages_left = memory_map_area.size.div_floor(PAGE_SIZE);
         let mut base = Frame::containing_address(memory_map_area.base);
@@ -262,10 +288,7 @@ fn init_sections() {
                 core::slice::from_raw_parts_mut(virt as *mut PageInfo, section_page_count)
             };
 
-            sections.push(Section {
-                base,
-                frames,
-            });
+            sections.push(Section { base, frames });
 
             pages_left -= section_page_count;
             base = base.next_by(section_page_count);
@@ -291,7 +314,9 @@ pub fn init_mm() {
     unsafe {
         let the_frame = allocate_frames(1).expect("failed to allocate static zeroed frame");
         let the_info = get_page_info(the_frame).expect("static zeroed frame had no PageInfo");
-        the_info.refcount.store(RefCount::One.to_raw(), Ordering::Relaxed);
+        the_info
+            .refcount
+            .store(RefCount::One.to_raw(), Ordering::Relaxed);
 
         THE_ZEROED_FRAME.get().write(Some((the_frame, the_info)));
     }
@@ -306,7 +331,9 @@ impl PageInfo {
         match (self.refcount(), kind) {
             (RefCount::Zero, _) => self.refcount.store(1, Ordering::Relaxed),
             (RefCount::One, RefKind::Cow) => self.refcount.store(2, Ordering::Relaxed),
-            (RefCount::One, RefKind::Shared) => self.refcount.store(2 | RC_SHARED_NOT_COW, Ordering::Relaxed),
+            (RefCount::One, RefKind::Shared) => self
+                .refcount
+                .store(2 | RC_SHARED_NOT_COW, Ordering::Relaxed),
             (RefCount::Cow(_), RefKind::Cow) | (RefCount::Shared(_), RefKind::Shared) => {
                 self.refcount.fetch_add(1, Ordering::Relaxed);
             }
@@ -324,7 +351,9 @@ impl PageInfo {
 
                 0
             }
-            RefCount::Cow(_) | RefCount::Shared(_) => self.refcount.fetch_sub(1, Ordering::Relaxed) - 1,
+            RefCount::Cow(_) | RefCount::Shared(_) => {
+                self.refcount.fetch_sub(1, Ordering::Relaxed) - 1
+            }
         })
     }
     pub fn allows_writable(&self) -> bool {
@@ -382,8 +411,7 @@ impl RefCount {
 pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
     let sections = SECTIONS.read();
 
-    let idx_res = sections
-        .binary_search_by_key(&frame, |section| section.base);
+    let idx_res = sections.binary_search_by_key(&frame, |section| section.base);
 
     if idx_res == Err(0) || idx_res == Err(sections.len()) {
         return None;
@@ -426,7 +454,11 @@ pub trait ArchIntCtx {
     fn recover_and_efault(&mut self);
 }
 
-pub fn page_fault_handler(stack: &mut impl ArchIntCtx, code: GenericPfFlags, faulting_address: VirtualAddress) -> Result<(), Segv> {
+pub fn page_fault_handler(
+    stack: &mut impl ArchIntCtx,
+    code: GenericPfFlags,
+    faulting_address: VirtualAddress,
+) -> Result<(), Segv> {
     let faulting_page = Page::containing_address(faulting_address);
 
     let usercopy_region = __usercopy_start()..__usercopy_end();
@@ -446,7 +478,9 @@ pub fn page_fault_handler(stack: &mut impl ArchIntCtx, code: GenericPfFlags, fau
         (true, false) => AccessMode::Write,
         (false, false) => AccessMode::Read,
         (false, true) => AccessMode::InstrFetch,
-        (true, true) => unreachable!("page fault cannot be caused by both instruction fetch and write"),
+        (true, true) => {
+            unreachable!("page fault cannot be caused by both instruction fetch and write")
+        }
     };
 
     if invalid_page_tables {
@@ -470,19 +504,30 @@ pub fn page_fault_handler(stack: &mut impl ArchIntCtx, code: GenericPfFlags, fau
 
     Err(Segv)
 }
-static THE_ZEROED_FRAME: SyncUnsafeCell<Option<(Frame, &'static PageInfo)>> = SyncUnsafeCell::new(None);
+static THE_ZEROED_FRAME: SyncUnsafeCell<Option<(Frame, &'static PageInfo)>> =
+    SyncUnsafeCell::new(None);
 
 pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
     unsafe {
-        THE_ZEROED_FRAME.get().read().expect("zeroed frame must be initialized")
+        THE_ZEROED_FRAME
+            .get()
+            .read()
+            .expect("zeroed frame must be initialized")
     }
 }
 
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frames(1).ok_or(PfError::Oom)?;
-    let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
+    let page_info = get_page_info(new_frame).unwrap_or_else(|| {
+        panic!(
+            "all allocated frames need an associated page info, {:?} didn't",
+            new_frame
+        )
+    });
     assert_eq!(page_info.refcount(), RefCount::Zero);
-    page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
+    page_info
+        .refcount
+        .store(init_rc.to_raw(), Ordering::Relaxed);
 
     Ok(new_frame)
 }

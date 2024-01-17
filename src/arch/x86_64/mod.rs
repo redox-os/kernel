@@ -68,9 +68,10 @@ pub mod flags {
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     // TODO: spectre_v1
 
-    core::arch::asm!(alternative!(
-        feature: "smap",
-        then: ["
+    core::arch::asm!(
+        alternative!(
+            feature: "smap",
+            then: ["
             xor eax, eax
             mov rcx, rdx
             stac
@@ -78,19 +79,24 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
             clac
             ret
         "],
-        default: ["
+            default: ["
             xor eax, eax
             mov rcx, rdx
             rep movsb
             ret
         "]
-    ), options(noreturn));
+        ),
+        options(noreturn)
+    );
 }
 pub use arch_copy_to_user as arch_copy_from_user;
 
 // TODO: This doesn't need to be arch-specific, right?
 pub unsafe fn bootstrap_mem(bootstrap: &Bootstrap) -> &'static [u8] {
-    core::slice::from_raw_parts(CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8, bootstrap.page_count * PAGE_SIZE)
+    core::slice::from_raw_parts(
+        CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8,
+        bootstrap.page_count * PAGE_SIZE,
+    )
 }
 
 pub use alternative::kfx_size;

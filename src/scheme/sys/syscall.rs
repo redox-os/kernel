@@ -1,10 +1,7 @@
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
-use crate::context;
-use crate::syscall;
-use crate::syscall::error::Result;
+use crate::{context, syscall, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut string = String::new();
@@ -26,7 +23,11 @@ pub fn resource() -> Result<Vec<u8>> {
             let _ = writeln!(string, "{}: {}", id, name);
 
             if let Some((a, b, c, d, e, f)) = row.2 {
-                let _ = writeln!(string, "  {}", syscall::debug::format_call(a, b, c, d, e, f));
+                let _ = writeln!(
+                    string,
+                    "  {}",
+                    syscall::debug::format_call(a, b, c, d, e, f)
+                );
             }
         }
     }

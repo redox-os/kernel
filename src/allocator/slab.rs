@@ -1,6 +1,6 @@
 use core::alloc::{Alloc, AllocErr, Layout};
-use spin::Mutex;
 use slab_allocator::Heap;
+use spin::Mutex;
 
 static HEAP: Mutex<Option<Heap>> = Mutex::new(None);
 

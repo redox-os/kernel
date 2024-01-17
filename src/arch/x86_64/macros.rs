@@ -95,4 +95,3 @@ macro_rules! alternative_auto(
         ",
     ) }
 );
-

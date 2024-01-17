@@ -1,26 +1,12 @@
 use core::{
     cell::SyncUnsafeCell,
-    cmp,
-    mem,
-    slice,
+    cmp, mem, slice,
     sync::atomic::{self, AtomicUsize, Ordering},
 };
 use rmm::{
-    KILOBYTE,
+    Arch, BuddyAllocator, BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea,
+    PageEntry, PageFlags, PageMapper, PhysicalAddress, TableKind, VirtualAddress, KILOBYTE,
     MEGABYTE,
-    Arch,
-    BuddyAllocator,
-    BumpAllocator,
-    FrameAllocator,
-    FrameCount,
-    FrameUsage,
-    MemoryArea,
-    PageEntry,
-    PageFlags,
-    PageMapper,
-    PhysicalAddress,
-    TableKind,
-    VirtualAddress,
 };
 use spin::Mutex;
 
@@ -65,11 +51,16 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
 
 unsafe fn inner<A: Arch>(
     areas: &'static [MemoryArea],
-    kernel_base: usize, kernel_size_aligned: usize,
-    stack_base: usize, stack_size_aligned: usize,
-    env_base: usize, env_size_aligned: usize,
-    acpi_base: usize, acpi_size_aligned: usize,
-    initfs_base: usize, initfs_size_aligned: usize,
+    kernel_base: usize,
+    kernel_size_aligned: usize,
+    stack_base: usize,
+    stack_size_aligned: usize,
+    env_base: usize,
+    env_size_aligned: usize,
+    acpi_base: usize,
+    acpi_size_aligned: usize,
+    initfs_base: usize,
+    initfs_size_aligned: usize,
 ) -> BuddyAllocator<A> {
     // First, calculate how much memory we have
     let mut size = 0;
@@ -86,17 +77,20 @@ unsafe fn inner<A: Arch>(
     let mut bump_allocator = BumpAllocator::<A>::new(areas, 0);
 
     {
-        let mut mapper = PageMapper::<A, _>::create(
-            TableKind::Kernel,
-            &mut bump_allocator
-        ).expect("failed to create Mapper");
+        let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut bump_allocator)
+            .expect("failed to create Mapper");
 
         // Pre-allocate all kernel PD entries so that when the page table is copied,
         // these entries are synced between processes
         for i in 512..1024 {
-            let phys = mapper.allocator_mut().allocate_one().expect("failed to map page table");
+            let phys = mapper
+                .allocator_mut()
+                .allocate_one()
+                .expect("failed to map page table");
             let flags = A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_DEFAULT_TABLE;
-            mapper.table().set_entry(i, PageEntry::new(phys.data() | flags));
+            mapper
+                .table()
+                .set_entry(i, PageEntry::new(phys.data() | flags));
         }
 
         // Map all physical areas at PHYS_OFFSET
@@ -105,11 +99,9 @@ unsafe fn inner<A: Arch>(
                 let phys = area.base.add(i * A::PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
                 let flags = page_flags::<A>(virt);
-                let flush = mapper.map_phys(
-                    virt,
-                    phys,
-                    flags
-                ).expect("failed to map frame");
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
                 flush.ignore(); // Not the active table
             }
         }
@@ -119,19 +111,15 @@ unsafe fn inner<A: Arch>(
             let phys = PhysicalAddress::new(kernel_base + i * A::PAGE_SIZE);
             let virt = VirtualAddress::new(crate::KERNEL_OFFSET + i * A::PAGE_SIZE);
             let flags = page_flags::<A>(virt);
-            let flush = mapper.map_phys(
-                virt,
-                phys,
-                flags
-            ).expect("failed to map frame");
+            let flush = mapper
+                .map_phys(virt, phys, flags)
+                .expect("failed to map frame");
             flush.ignore(); // Not the active table
 
             let virt = A::phys_to_virt(phys);
-            let flush = mapper.map_phys(
-                virt,
-                phys,
-                flags
-            ).expect("failed to map frame");
+            let flush = mapper
+                .map_phys(virt, phys, flags)
+                .expect("failed to map frame");
             flush.ignore(); // Not the active table
         }
 
@@ -141,11 +129,9 @@ unsafe fn inner<A: Arch>(
                 let phys = PhysicalAddress::new(base + i * A::PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
                 let flags = page_flags::<A>(virt);
-                let flush = mapper.map_phys(
-                    virt,
-                    phys,
-                    flags
-                ).expect("failed to map frame");
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
                 flush.ignore(); // Not the active table
             }
         };
@@ -158,8 +144,8 @@ unsafe fn inner<A: Arch>(
         // Ensure graphical debug region remains paged
         #[cfg(feature = "graphical_debug")]
         {
-            use crate::devices::graphical_debug::FRAMEBUFFER;
             use super::paging::entry::EntryFlags;
+            use crate::devices::graphical_debug::FRAMEBUFFER;
 
             let (phys, virt, size) = *FRAMEBUFFER.lock();
 
@@ -167,14 +153,13 @@ unsafe fn inner<A: Arch>(
             for i in 0..pages {
                 let phys = PhysicalAddress::new(phys + i * A::PAGE_SIZE);
                 let virt = VirtualAddress::new(virt + i * A::PAGE_SIZE);
-                let flags = PageFlags::new().write(true)
+                let flags = PageFlags::new()
+                    .write(true)
                     // Write combining flag
                     .custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
-                let flush = mapper.map_phys(
-                    virt,
-                    phys,
-                    flags
-                ).expect("failed to map frame");
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
                 flush.ignore(); // Not the active table
             }
         }
@@ -194,7 +179,10 @@ unsafe fn inner<A: Arch>(
 
     // Create the physical memory map
     let offset = bump_allocator.offset();
-    log::info!("Permanently used: {} KB", (offset + (KILOBYTE - 1)) / KILOBYTE);
+    log::info!(
+        "Permanently used: {} KB",
+        (offset + (KILOBYTE - 1)) / KILOBYTE
+    );
 
     BuddyAllocator::<A>::new(bump_allocator).expect("failed to create BuddyAllocator")
 }
@@ -238,10 +226,12 @@ impl core::fmt::Debug for LockedAllocator {
     }
 }
 
-static AREAS: SyncUnsafeCell<[MemoryArea; 512]> = SyncUnsafeCell::new([MemoryArea {
-    base: PhysicalAddress::new(0),
-    size: 0,
-}; 512]);
+static AREAS: SyncUnsafeCell<[MemoryArea; 512]> = SyncUnsafeCell::new(
+    [MemoryArea {
+        base: PhysicalAddress::new(0),
+        size: 0,
+    }; 512],
+);
 static AREA_COUNT: SyncUnsafeCell<u16> = SyncUnsafeCell::new(0);
 
 pub fn areas() -> &'static [MemoryArea] {
@@ -271,7 +261,12 @@ pub struct KernelMapper {
 impl KernelMapper {
     fn lock_inner(current_processor: usize) -> bool {
         loop {
-            match LOCK_OWNER.compare_exchange_weak(NO_PROCESSOR, current_processor, Ordering::Acquire, Ordering::Relaxed) {
+            match LOCK_OWNER.compare_exchange_weak(
+                NO_PROCESSOR,
+                current_processor,
+                Ordering::Acquire,
+                Ordering::Relaxed,
+            ) {
                 Ok(_) => break,
                 // already owned by this hardware thread
                 Err(id) if id == current_processor => break,
@@ -285,15 +280,20 @@ impl KernelMapper {
 
         prev_count > 0
     }
-    pub unsafe fn lock_for_manual_mapper(current_processor: LogicalCpuId, mapper: crate::paging::PageMapper) -> Self {
+    pub unsafe fn lock_for_manual_mapper(
+        current_processor: LogicalCpuId,
+        mapper: crate::paging::PageMapper,
+    ) -> Self {
         let ro = Self::lock_inner(current_processor.get() as usize);
-        Self {
-            mapper,
-            ro,
-        }
+        Self { mapper, ro }
     }
     pub fn lock_manually(current_processor: LogicalCpuId) -> Self {
-        unsafe { Self::lock_for_manual_mapper(current_processor, PageMapper::current(TableKind::Kernel, FRAME_ALLOCATOR)) }
+        unsafe {
+            Self::lock_for_manual_mapper(
+                current_processor,
+                PageMapper::current(TableKind::Kernel, FRAME_ALLOCATOR),
+            )
+        }
     }
     pub fn lock() -> Self {
         Self::lock_manually(crate::cpu_id())
@@ -328,12 +328,18 @@ impl Drop for KernelMapper {
 }
 
 pub unsafe fn init(
-    kernel_base: usize, kernel_size: usize,
-    stack_base: usize, stack_size: usize,
-    env_base: usize, env_size: usize,
-    acpi_base: usize, acpi_size: usize,
-    areas_base: usize, areas_size: usize,
-    initfs_base: usize, initfs_size: usize,
+    kernel_base: usize,
+    kernel_size: usize,
+    stack_base: usize,
+    stack_size: usize,
+    env_base: usize,
+    env_size: usize,
+    acpi_base: usize,
+    acpi_size: usize,
+    areas_base: usize,
+    areas_size: usize,
+    initfs_base: usize,
+    initfs_size: usize,
 ) {
     type A = RmmA;
 
@@ -341,26 +347,26 @@ pub unsafe fn init(
     let real_size = 0x100000;
     let real_end = real_base + real_size;
 
-    let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
     let kernel_end = kernel_base + kernel_size_aligned;
 
-    let stack_size_aligned = ((stack_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let stack_size_aligned = ((stack_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
     let stack_end = stack_base + stack_size_aligned;
 
-    let env_size_aligned = ((env_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let env_size_aligned = ((env_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
     let env_end = env_base + env_size_aligned;
 
-    let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
     let acpi_end = acpi_base + acpi_size_aligned;
 
-    let initfs_size_aligned = ((initfs_size + (A::PAGE_SIZE - 1))/A::PAGE_SIZE) * A::PAGE_SIZE;
+    let initfs_size_aligned = ((initfs_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
     let initfs_end = initfs_base + initfs_size_aligned;
 
     let areas = &mut *AREAS.get();
 
     let bootloader_areas = slice::from_raw_parts(
         areas_base as *const BootloaderMemoryEntry,
-        areas_size / mem::size_of::<BootloaderMemoryEntry>()
+        areas_size / mem::size_of::<BootloaderMemoryEntry>(),
     );
 
     // Copy memory map from bootloader location, and page align it
@@ -393,44 +399,86 @@ pub unsafe fn init(
 
         // Ensure real-mode areas are not used
         if base < real_end && base + size > real_base {
-            log::warn!("{:X}:{:X} overlaps with real mode {:X}:{:X}", base, size, real_base, real_size);
+            log::warn!(
+                "{:X}:{:X} overlaps with real mode {:X}:{:X}",
+                base,
+                size,
+                real_base,
+                real_size
+            );
             new_base = cmp::max(new_base, real_end);
         }
 
         // Ensure kernel areas are not used
         if base < kernel_end && base + size > kernel_base {
-            log::warn!("{:X}:{:X} overlaps with kernel {:X}:{:X}", base, size, kernel_base, kernel_size);
+            log::warn!(
+                "{:X}:{:X} overlaps with kernel {:X}:{:X}",
+                base,
+                size,
+                kernel_base,
+                kernel_size
+            );
             new_base = cmp::max(new_base, kernel_end);
         }
 
         // Ensure stack areas are not used
         if base < stack_end && base + size > stack_base {
-            log::warn!("{:X}:{:X} overlaps with stack {:X}:{:X}", base, size, stack_base, stack_size);
+            log::warn!(
+                "{:X}:{:X} overlaps with stack {:X}:{:X}",
+                base,
+                size,
+                stack_base,
+                stack_size
+            );
             new_base = cmp::max(new_base, stack_end);
         }
 
         // Ensure env areas are not used
         if base < env_end && base + size > env_base {
-            log::warn!("{:X}:{:X} overlaps with env {:X}:{:X}", base, size, env_base, env_size);
+            log::warn!(
+                "{:X}:{:X} overlaps with env {:X}:{:X}",
+                base,
+                size,
+                env_base,
+                env_size
+            );
             new_base = cmp::max(new_base, env_end);
         }
 
         // Ensure acpi areas are not used
         if base < acpi_end && base + size > acpi_base {
-            log::warn!("{:X}:{:X} overlaps with acpi {:X}:{:X}", base, size, acpi_base, acpi_size);
+            log::warn!(
+                "{:X}:{:X} overlaps with acpi {:X}:{:X}",
+                base,
+                size,
+                acpi_base,
+                acpi_size
+            );
             new_base = cmp::max(new_base, acpi_end);
         }
 
         // Ensure initfs areas are not used
         if base < initfs_end && base + size > initfs_base {
-            log::warn!("{:X}:{:X} overlaps with initfs {:X}:{:X}", base, size, initfs_base, initfs_size);
+            log::warn!(
+                "{:X}:{:X} overlaps with initfs {:X}:{:X}",
+                base,
+                size,
+                initfs_base,
+                initfs_size
+            );
             new_base = cmp::max(new_base, initfs_end);
         }
 
         if new_base != base {
             let end = base + size;
             let new_size = end.checked_sub(new_base).unwrap_or(0);
-            log::info!("{:X}:{:X} moved to {:X}:{:X}", base, size, new_base, new_size);
+            log::info!(
+                "{:X}:{:X} moved to {:X}:{:X}",
+                base,
+                size,
+                new_base,
+                new_size
+            );
             base = new_base;
             size = new_size;
         }
@@ -443,7 +491,13 @@ pub unsafe fn init(
             size = 0; // Skip area
         } else if base + size > physmap_size {
             let new_size = physmap_size.checked_sub(base).unwrap_or(0);
-            log::warn!("{:X}:{:X} outside of physmap, moved to {:X}:{:X}", base, size, base, new_size);
+            log::warn!(
+                "{:X}:{:X} outside of physmap, moved to {:X}:{:X}",
+                base,
+                size,
+                base,
+                new_size
+            );
             size = new_size;
         }
 
@@ -454,8 +508,18 @@ pub unsafe fn init(
             let other_end = other_base + other.size;
             if base < other_end && base + size > other_base {
                 let new_base = cmp::min(base, other_base);
-                let new_size = cmp::max(base + size, other_end).checked_sub(new_base).unwrap_or(0);
-                log::warn!("{:X}:{:X} overlaps with area {:X}:{:X}, combining into {:X}:{:X}", base, size, other_base, other.size, new_base, new_size);
+                let new_size = cmp::max(base + size, other_end)
+                    .checked_sub(new_base)
+                    .unwrap_or(0);
+                log::warn!(
+                    "{:X}:{:X} overlaps with area {:X}:{:X}, combining into {:X}:{:X}",
+                    base,
+                    size,
+                    other_base,
+                    other.size,
+                    new_base,
+                    new_size
+                );
                 areas[other_i].base = PhysicalAddress::new(new_base);
                 areas[other_i].size = new_size;
                 size = 0; // Skip area
@@ -475,11 +539,16 @@ pub unsafe fn init(
 
     let allocator = inner::<A>(
         areas,
-        kernel_base, kernel_size_aligned,
-        stack_base, stack_size_aligned,
-        env_base, env_size_aligned,
-        acpi_base, acpi_size_aligned,
-        initfs_base, initfs_size_aligned,
+        kernel_base,
+        kernel_size_aligned,
+        stack_base,
+        stack_size_aligned,
+        env_base,
+        env_size_aligned,
+        acpi_base,
+        acpi_size_aligned,
+        initfs_base,
+        initfs_size_aligned,
     );
     *INNER_ALLOCATOR.lock() = Some(allocator);
 }

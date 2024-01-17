@@ -1,15 +1,14 @@
 use crate::{
-    arch::{interrupt::InterruptStack},
-    context,
-    syscall,
-    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
+    arch::interrupt::InterruptStack,
+    context, syscall,
+    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
 };
 
 #[no_mangle]
-pub unsafe extern fn do_exception_unhandled() {}
+pub unsafe extern "C" fn do_exception_unhandled() {}
 
 #[no_mangle]
-pub unsafe extern fn do_exception_synchronous() {}
+pub unsafe extern "C" fn do_exception_synchronous() {}
 
 #[allow(dead_code)]
 #[repr(packed)]
@@ -57,7 +56,7 @@ pub struct SyscallStack {
 #[macro_export]
 macro_rules! with_exception_stack {
     (|$stack:ident| $code:block) => {{
-            let $stack = &mut *$stack;
-            (*$stack).scratch.x0 = $code;
-    }}
+        let $stack = &mut *$stack;
+        (*$stack).scratch.x0 = $code;
+    }};
 }

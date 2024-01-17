@@ -1,27 +1,31 @@
-use alloc::{
-    boxed::Box,
-    string::ToString,
-    sync::Arc,
-    vec::Vec,
+use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use core::{
+    str,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
-use core::str;
-use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::{Mutex, RwLock};
 
-use crate::context;
-use crate::syscall::data::Stat;
-use crate::syscall::error::*;
-use crate::syscall::flag::{EventFlags, O_CREAT, MODE_FILE, MODE_DIR};
-use crate::scheme::{self, SchemeNamespace, SchemeId};
-use crate::scheme::user::{UserInner, UserScheme};
-use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+use crate::{
+    context,
+    scheme::{
+        self,
+        user::{UserInner, UserScheme},
+        SchemeId, SchemeNamespace,
+    },
+    syscall::{
+        data::Stat,
+        error::*,
+        flag::{EventFlags, MODE_DIR, MODE_FILE, O_CREAT},
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
+};
 
-use super::{KernelScheme, KernelSchemes, CallerCtx, OpenResult, calc_seek_offset};
+use super::{calc_seek_offset, CallerCtx, KernelScheme, KernelSchemes, OpenResult};
 
 struct FolderInner {
     data: Box<[u8]>,
-    pos: Mutex<usize>
+    pos: Mutex<usize>,
 }
 
 impl FolderInner {
@@ -47,7 +51,7 @@ impl FolderInner {
 enum Handle {
     Scheme(Arc<UserInner>),
     File(Arc<Box<[u8]>>),
-    Folder(Arc<FolderInner>)
+    Folder(Arc<FolderInner>),
 }
 
 pub struct RootScheme {
@@ -94,10 +98,21 @@ impl KernelScheme for RootScheme {
                 let path_box = path.to_string().into_boxed_str();
                 let mut schemes = scheme::schemes_mut();
 
-                let (_scheme_id, inner) = schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
-                    let inner = Arc::new(UserInner::new(self.scheme_id, scheme_id, id, path_box, flags, context));
-                    (KernelSchemes::User(UserScheme::new(Arc::downgrade(&inner))), inner)
-                })?;
+                let (_scheme_id, inner) =
+                    schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
+                        let inner = Arc::new(UserInner::new(
+                            self.scheme_id,
+                            scheme_id,
+                            id,
+                            path_box,
+                            flags,
+                            context,
+                        ));
+                        (
+                            KernelSchemes::User(UserScheme::new(Arc::downgrade(&inner))),
+                            inner,
+                        )
+                    })?;
 
                 inner
             };
@@ -124,16 +139,14 @@ impl KernelScheme for RootScheme {
 
             let inner = Arc::new(FolderInner {
                 data: data.into_boxed_slice(),
-                pos: Mutex::new(0)
+                pos: Mutex::new(0),
             });
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::Folder(inner));
             Ok(OpenResult::SchemeLocal(id))
         } else {
-            let inner = Arc::new(
-                path.as_bytes().to_vec().into_boxed_slice()
-            );
+            let inner = Arc::new(path.as_bytes().to_vec().into_boxed_slice());
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::File(inner));
@@ -149,22 +162,24 @@ impl KernelScheme for RootScheme {
         }
         let inner = {
             let handles = self.handles.read();
-            handles.iter().find_map(|(_id, handle)| {
-                match handle {
-                    Handle::Scheme(inner) => {
-                        if path == inner.name.as_ref() {
-                            return Some(inner.clone());
+            handles
+                .iter()
+                .find_map(|(_id, handle)| {
+                    match handle {
+                        Handle::Scheme(inner) => {
+                            if path == inner.name.as_ref() {
+                                return Some(inner.clone());
+                            }
                         }
-                    },
-                    _ => (),
-                }
-                None
-            }).ok_or(Error::new(ENOENT))?
+                        _ => (),
+                    }
+                    None
+                })
+                .ok_or(Error::new(ENOENT))?
         };
 
         inner.unmount()
     }
-
 
     fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<usize> {
         let handle = {
@@ -174,15 +189,9 @@ impl KernelScheme for RootScheme {
         };
 
         match handle {
-            Handle::Scheme(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::File(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::Folder(inner) => {
-                inner.seek(pos, whence)
-            }
+            Handle::Scheme(_) => Err(Error::new(EBADF)),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::Folder(inner) => inner.seek(pos, whence),
         }
     }
 
@@ -194,15 +203,9 @@ impl KernelScheme for RootScheme {
         };
 
         match handle {
-            Handle::Scheme(inner) => {
-                inner.fevent(flags)
-            },
-            Handle::File(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::Folder(_) => {
-                Err(Error::new(EBADF))
-            }
+            Handle::Scheme(inner) => inner.fevent(flags),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::Folder(_) => Err(Error::new(EBADF)),
         }
     }
 
@@ -219,11 +222,11 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(inner) => {
                 bytes_copied += buf.copy_common_bytes_from_slice(inner.name.as_bytes())?;
-            },
+            }
             Handle::File(inner) => {
                 bytes_copied += buf.copy_common_bytes_from_slice(&inner)?;
-            },
-            Handle::Folder(_) => ()
+            }
+            Handle::Folder(_) => (),
         }
 
         Ok(bytes_copied)
@@ -237,25 +240,23 @@ impl KernelScheme for RootScheme {
         };
 
         match handle {
-            Handle::Scheme(inner) => {
-                inner.fsync()
-            },
-            Handle::File(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::Folder(_) => {
-                Err(Error::new(EBADF))
-            }
+            Handle::Scheme(inner) => inner.fsync(),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::Folder(_) => Err(Error::new(EBADF)),
         }
     }
 
     fn close(&self, file: usize) -> Result<()> {
-        let handle = self.handles.write().remove(&file).ok_or(Error::new(EBADF))?;
+        let handle = self
+            .handles
+            .write()
+            .remove(&file)
+            .ok_or(Error::new(EBADF))?;
         match handle {
             Handle::Scheme(inner) => {
                 scheme::schemes_mut().remove(inner.scheme_id);
-            },
-            _ => ()
+            }
+            _ => (),
         }
         Ok(())
     }
@@ -267,15 +268,9 @@ impl KernelScheme for RootScheme {
         };
 
         match handle {
-            Handle::Scheme(inner) => {
-                inner.read(buf)
-            },
-            Handle::File(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::Folder(inner) => {
-                inner.read(buf)
-            }
+            Handle::Scheme(inner) => inner.read(buf),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::Folder(inner) => inner.read(buf),
         }
     }
 
@@ -287,15 +282,9 @@ impl KernelScheme for RootScheme {
         };
 
         match handle {
-            Handle::Scheme(inner) => {
-                inner.write(buf)
-            },
-            Handle::File(_) => {
-                Err(Error::new(EBADF))
-            },
-            Handle::Folder(_) => {
-                Err(Error::new(EBADF))
-            }
+            Handle::Scheme(inner) => inner.write(buf),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::Folder(_) => Err(Error::new(EBADF)),
         }
     }
 
@@ -327,10 +316,9 @@ impl KernelScheme for RootScheme {
                 st_gid: 0,
                 st_size: inner.data.len() as u64,
                 ..Default::default()
-            }
+            },
         })?;
 
         Ok(())
     }
-
 }

@@ -1,14 +1,10 @@
 #[cfg(feature = "acpi")]
-use crate::{
-    context,
-    scheme::acpi,
-    time,
-};
+use crate::{context, scheme::acpi, time};
 
 use crate::syscall::io::{Io, Pio};
 
 #[no_mangle]
-pub unsafe extern fn kreset() -> ! {
+pub unsafe extern "C" fn kreset() -> ! {
     println!("kreset");
 
     // 8042 reset
@@ -24,11 +20,14 @@ pub unsafe extern fn kreset() -> ! {
 
 pub unsafe fn emergency_reset() -> ! {
     // Use triple fault to guarantee reset
-    core::arch::asm!("
+    core::arch::asm!(
+        "
         cli
         lidt cs:0
         int $3
-    ", options(noreturn));
+    ",
+        options(noreturn)
+    );
 }
 
 #[cfg(feature = "acpi")]
@@ -36,7 +35,7 @@ fn userspace_acpi_shutdown() {
     log::info!("Notifying any potential ACPI driver");
     // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
     // shutdown).
-    if ! acpi::register_kstop() {
+    if !acpi::register_kstop() {
         // There was no context to switch to.
         log::info!("No ACPI driver was alive to handle shutdown.");
         return;
@@ -63,7 +62,7 @@ fn userspace_acpi_shutdown() {
 }
 
 #[no_mangle]
-pub unsafe extern fn kstop() -> ! {
+pub unsafe extern "C" fn kstop() -> ! {
     log::info!("Running kstop()");
 
     #[cfg(feature = "acpi")]

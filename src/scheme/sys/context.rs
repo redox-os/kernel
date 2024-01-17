@@ -1,28 +1,27 @@
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
-use crate::context;
-use crate::paging::PAGE_SIZE;
-use crate::syscall::error::Result;
+use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
-                             "PID",
-                             "PGID",
-                             "PPID",
-                             "SID",
-                             "RUID",
-                             "RGID",
-                             "RNS",
-                             "EUID",
-                             "EGID",
-                             "ENS",
-                             "STAT",
-                             "CPU",
-                             "AFF",
-                             "TIME",
-                             "MEM",
-                             "NAME");
+    let mut string = format!(
+        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+        "PID",
+        "PGID",
+        "PPID",
+        "SID",
+        "RUID",
+        "RGID",
+        "RNS",
+        "EUID",
+        "EGID",
+        "ENS",
+        "STAT",
+        "CPU",
+        "AFF",
+        "TIME",
+        "MEM",
+        "NAME"
+    );
     {
         let contexts = context::contexts();
         for (_id, context_lock) in contexts.iter() {
@@ -43,12 +42,14 @@ pub fn resource() -> Result<Vec<u8>> {
             match context.status {
                 context::Status::Runnable => {
                     stat_string.push('R');
-                },
-                context::Status::Blocked | context::Status::HardBlocked { .. } => if context.wake.is_some() {
-                    stat_string.push('S');
-                } else {
-                    stat_string.push('B');
-                },
+                }
+                context::Status::Blocked | context::Status::HardBlocked { .. } => {
+                    if context.wake.is_some() {
+                        stat_string.push('S');
+                    } else {
+                        stat_string.push('B');
+                    }
+                }
                 context::Status::Stopped(_sig) => {
                     stat_string.push('T');
                 }
@@ -65,7 +66,10 @@ pub fn resource() -> Result<Vec<u8>> {
             } else {
                 format!("?")
             };
-            let affinity = format!("{:#x}", context.sched_affinity.get() & ((1 << crate::cpu_count()) - 1));
+            let affinity = format!(
+                "{:#x}",
+                context.sched_affinity.get() & ((1 << crate::cpu_count()) - 1)
+            );
 
             let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;
             let cpu_time_ns = context.cpu_time % crate::time::NANOS_PER_SEC;
@@ -100,23 +104,25 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            string.push_str(&format!("{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
-                               context.id.get(),
-                               context.pgid.get(),
-                               context.ppid.get(),
-                               context.session_id.get(),
-                               context.ruid,
-                               context.rgid,
-                               context.rns.get(),
-                               context.euid,
-                               context.egid,
-                               context.ens.get(),
-                               stat_string,
-                               cpu_string,
-                               affinity,
-                               cpu_time_string,
-                               memory_string,
-                               context.name));
+            string.push_str(&format!(
+                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+                context.id.get(),
+                context.pgid.get(),
+                context.ppid.get(),
+                context.session_id.get(),
+                context.ruid,
+                context.rgid,
+                context.rns.get(),
+                context.euid,
+                context.egid,
+                context.ens.get(),
+                stat_string,
+                cpu_string,
+                affinity,
+                cpu_time_string,
+                memory_string,
+                context.name
+            ));
         }
     }
 

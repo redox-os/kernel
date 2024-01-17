@@ -9,7 +9,7 @@ pub struct Display {
     pub height: usize,
     pub stride: usize,
     pub onscreen: &'static mut [u32],
-    pub offscreen: Option<Box<[u32]>>
+    pub offscreen: Option<Box<[u32]>>,
 }
 
 impl Display {
@@ -46,7 +46,9 @@ impl Display {
                     let row_data = FONT[font_i + row];
                     for col in 0..8 {
                         if (row_data >> (7 - col)) & 1 == 1 {
-                            unsafe { *((dst + col * 4) as *mut u32)  = color; }
+                            unsafe {
+                                *((dst + col * 4) as *mut u32) = color;
+                            }
                         }
                     }
                     dst += self.stride * 4;
@@ -71,9 +73,7 @@ impl Display {
         if let Some(offscreen) = &self.offscreen {
             let mut offset = y * self.stride + x;
             while h > 0 {
-                self.onscreen[offset..offset+w].copy_from_slice(
-                    &offscreen[offset..offset+w]
-                );
+                self.onscreen[offset..offset + w].copy_from_slice(&offscreen[offset..offset + w]);
                 offset += self.stride;
                 h -= 1;
             }

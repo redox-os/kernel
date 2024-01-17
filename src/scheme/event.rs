@@ -1,12 +1,16 @@
 use alloc::sync::Arc;
 use core::mem;
 
-use crate::event::{EventQueue, EventQueueId, next_queue_id, queues, queues_mut};
-use crate::syscall::data::Event;
-use crate::syscall::error::*;
-use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+use crate::{
+    event::{next_queue_id, queues, queues_mut, EventQueue, EventQueueId},
+    syscall::{
+        data::Event,
+        error::*,
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
+};
 
-use super::{KernelScheme, CallerCtx, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult};
 
 pub struct EventScheme;
 
@@ -34,7 +38,10 @@ impl KernelScheme for EventScheme {
 
     fn close(&self, id: usize) -> Result<()> {
         let id = EventQueueId::from(id);
-        queues_mut().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        queues_mut()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(()))
     }
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let id = EventQueueId::from(id);

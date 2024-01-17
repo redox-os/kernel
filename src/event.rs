@@ -3,13 +3,17 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use hashbrown::HashMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::context;
-use crate::scheme::{self, SchemeId};
-use crate::sync::WaitQueue;
-use crate::syscall::data::Event;
-use crate::syscall::error::{Error, Result, EBADF, ESRCH};
-use crate::syscall::flag::EventFlags;
-use crate::syscall::usercopy::UserSliceWo;
+use crate::{
+    context,
+    scheme::{self, SchemeId},
+    sync::WaitQueue,
+    syscall::{
+        data::Event,
+        error::{Error, Result, EBADF, ESRCH},
+        flag::EventFlags,
+        usercopy::UserSliceWo,
+    },
+};
 
 int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 
@@ -22,7 +26,7 @@ impl EventQueue {
     pub fn new(id: EventQueueId) -> EventQueue {
         EventQueue {
             id,
-            queue: WaitQueue::new()
+            queue: WaitQueue::new(),
         }
     }
 
@@ -39,7 +43,7 @@ impl EventQueue {
                 let files = context.files.read();
                 match files.get(event.id).ok_or(Error::new(EBADF))? {
                     Some(file) => file.clone(),
-                    None => return Err(Error::new(EBADF))
+                    None => return Err(Error::new(EBADF)),
                 }
             };
 
@@ -50,8 +54,12 @@ impl EventQueue {
 
             register(
                 RegKey { scheme, number },
-                QueueKey { queue: self.id, id: event.id, data: event.data },
-                event.flags
+                QueueKey {
+                    queue: self.id,
+                    id: event.id,
+                    data: event.data,
+                },
+                event.flags,
             );
 
             let flags = sync(RegKey { scheme, number })?;
@@ -127,9 +135,7 @@ pub fn registry_mut() -> RwLockWriteGuard<'static, Registry> {
 pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: EventFlags) {
     let mut registry = registry_mut();
 
-    let entry = registry.entry(reg_key).or_insert_with(|| {
-        HashMap::new()
-    });
+    let entry = registry.entry(reg_key).or_insert_with(|| HashMap::new());
 
     if flags.is_empty() {
         entry.remove(&queue_key);
@@ -152,7 +158,8 @@ pub fn sync(reg_key: RegKey) -> Result<EventFlags> {
     }
 
     let scheme = scheme::schemes()
-        .get(reg_key.scheme).ok_or(Error::new(EBADF))?
+        .get(reg_key.scheme)
+        .ok_or(Error::new(EBADF))?
         .clone();
 
     scheme.fevent(reg_key.number, flags)
@@ -181,7 +188,7 @@ pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
                     queue.queue.send(Event {
                         id: queue_key.id,
                         flags: common_flags,
-                        data: queue_key.data
+                        data: queue_key.data,
                     });
                 }
             }

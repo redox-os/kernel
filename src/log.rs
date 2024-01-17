@@ -17,7 +17,7 @@ impl Log {
     pub fn new(size: usize) -> Log {
         Log {
             data: VecDeque::with_capacity(size),
-            size
+            size,
         }
     }
 
@@ -55,14 +55,16 @@ pub fn init_logger(func: fn(&log::Record)) {
         match LOGGER.initialized.load(Ordering::SeqCst) {
             false => {
                 ::log::set_max_level(::log::LevelFilter::Info);
-                    LOGGER.log_func = func;
-                    match ::log::set_logger(&LOGGER) {
-                        Ok(_) => ::log::info!("Logger initialized."),
-                        Err(e) => println!("Logger setup failed! error: {}", e),
-                    }
+                LOGGER.log_func = func;
+                match ::log::set_logger(&LOGGER) {
+                    Ok(_) => ::log::info!("Logger initialized."),
+                    Err(e) => println!("Logger setup failed! error: {}", e),
+                }
                 LOGGER.initialized.store(true, Ordering::SeqCst);
-            },
-            true => ::log::info!("Tried to reinitialize the logger, which is not possible. Ignoring."),
+            }
+            true => {
+                ::log::info!("Tried to reinitialize the logger, which is not possible. Ignoring.")
+            }
         }
     }
 }

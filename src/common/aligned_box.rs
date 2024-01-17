@@ -1,8 +1,6 @@
-use core::alloc::Layout;
-use core::alloc::GlobalAlloc;
+use core::alloc::{GlobalAlloc, Layout};
 
-use crate::common::unique::Unique;
-use crate::memory::Enomem;
+use crate::{common::unique::Unique, memory::Enomem};
 
 // Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
 // cannot be used for increased alignment directly.
@@ -24,7 +22,11 @@ impl<T: ?Sized, const ALIGN: usize> AlignedBox<T, ALIGN> {
 }
 const fn layout_upgrade_align(layout: Layout, align: usize) -> Layout {
     const fn max(a: usize, b: usize) -> usize {
-        if a > b { a } else { b }
+        if a > b {
+            a
+        } else {
+            b
+        }
     }
     let Ok(x) = Layout::from_size_align(layout.size(), max(align, layout.align())) else {
         panic!("failed to calculate layout");
@@ -39,7 +41,8 @@ impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
         T: ValidForZero,
     {
         Ok(unsafe {
-            let ptr = crate::ALLOCATOR.alloc_zeroed(layout_upgrade_align(Layout::new::<T>(), ALIGN));
+            let ptr =
+                crate::ALLOCATOR.alloc_zeroed(layout_upgrade_align(Layout::new::<T>(), ALIGN));
             if ptr.is_null() {
                 return Err(Enomem);
             }
@@ -56,7 +59,10 @@ impl<T, const ALIGN: usize> AlignedBox<[T], ALIGN> {
         T: ValidForZero,
     {
         Ok(unsafe {
-            let ptr = crate::ALLOCATOR.alloc_zeroed(layout_upgrade_align(Layout::array::<T>(len).unwrap(), ALIGN));
+            let ptr = crate::ALLOCATOR.alloc_zeroed(layout_upgrade_align(
+                Layout::array::<T>(len).unwrap(),
+                ALIGN,
+            ));
             if ptr.is_null() {
                 return Err(Enomem);
             }
@@ -69,7 +75,13 @@ impl<T, const ALIGN: usize> AlignedBox<[T], ALIGN> {
 
 impl<T: ?Sized, const ALIGN: usize> core::fmt::Debug for AlignedBox<T, ALIGN> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "[aligned box at {:p}, size {} alignment {}]", self.inner.as_ptr(), self.layout().size(), self.layout().align())
+        write!(
+            f,
+            "[aligned box at {:p}, size {} alignment {}]",
+            self.inner.as_ptr(),
+            self.layout().size(),
+            self.layout().align()
+        )
     }
 }
 impl<T: ?Sized, const ALIGN: usize> Drop for AlignedBox<T, ALIGN> {
@@ -95,14 +107,16 @@ impl<T: ?Sized, const ALIGN: usize> core::ops::DerefMut for AlignedBox<T, ALIGN>
 }
 impl<T: Clone + ValidForZero, const ALIGN: usize> Clone for AlignedBox<T, ALIGN> {
     fn clone(&self) -> Self {
-        let mut new = Self::try_zeroed().unwrap_or_else(|_| alloc::alloc::handle_alloc_error(self.layout()));
+        let mut new =
+            Self::try_zeroed().unwrap_or_else(|_| alloc::alloc::handle_alloc_error(self.layout()));
         T::clone_from(&mut new, self);
         new
     }
 }
 impl<T: Clone + ValidForZero, const ALIGN: usize> Clone for AlignedBox<[T], ALIGN> {
     fn clone(&self) -> Self {
-        let mut new = Self::try_zeroed_slice(self.len()).unwrap_or_else(|_| alloc::alloc::handle_alloc_error(self.layout()));
+        let mut new = Self::try_zeroed_slice(self.len())
+            .unwrap_or_else(|_| alloc::alloc::handle_alloc_error(self.layout()));
         for i in 0..self.len() {
             new[i].clone_from(&self[i]);
         }

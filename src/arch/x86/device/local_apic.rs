@@ -1,14 +1,16 @@
-use core::sync::atomic::{self, AtomicU32};
-use core::ptr::{read_volatile, write_volatile};
+use core::{
+    ptr::{read_volatile, write_volatile},
+    sync::atomic::{self, AtomicU32},
+};
 use x86::msr::*;
 
-use crate::paging::{KernelMapper, PhysicalAddress, PageFlags, RmmA, RmmArch, VirtualAddress};
+use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
 
 use super::super::cpuid::cpuid;
 
 pub static mut LOCAL_APIC: LocalApic = LocalApic {
     address: 0,
-    x2: false
+    x2: false,
 };
 
 pub unsafe fn init(active_table: &mut KernelMapper) {
@@ -22,7 +24,7 @@ pub unsafe fn init_ap() {
 /// Local APIC
 pub struct LocalApic {
     pub address: usize,
-    pub x2: bool
+    pub x2: bool,
 }
 
 #[derive(Debug)]
@@ -42,19 +44,21 @@ pub fn bsp_apic_id() -> Option<u32> {
 
 impl LocalApic {
     unsafe fn init(&mut self, mapper: &mut KernelMapper) {
-        let mapper = mapper.get_mut().expect("expected KernelMapper not to be locked re-entrant while initializing LAPIC");
+        let mapper = mapper
+            .get_mut()
+            .expect("expected KernelMapper not to be locked re-entrant while initializing LAPIC");
 
         let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
         let virtaddr = VirtualAddress::new(crate::LAPIC_OFFSET);
 
         self.address = virtaddr.data();
         self.x2 = cpuid().map_or(false, |cpuid| {
-            cpuid.get_feature_info().map_or(false, |feature_info| {
-                feature_info.has_x2apic()
-            })
+            cpuid
+                .get_feature_info()
+                .map_or(false, |feature_info| feature_info.has_x2apic())
         });
 
-        if ! self.x2 {
+        if !self.x2 {
             log::info!("Detected xAPIC at {:#x}", physaddr.data());
             if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr, true) {
                 // Unmap xAPIC page if already mapped
@@ -111,15 +115,15 @@ impl LocalApic {
         if self.x2 {
             unsafe { rdmsr(IA32_X2APIC_ICR) }
         } else {
-            unsafe {
-                (self.read(0x310) as u64) << 32 | self.read(0x300) as u64
-            }
+            unsafe { (self.read(0x310) as u64) << 32 | self.read(0x300) as u64 }
         }
     }
 
     pub fn set_icr(&mut self, value: u64) {
         if self.x2 {
-            unsafe { wrmsr(IA32_X2APIC_ICR, value); }
+            unsafe {
+                wrmsr(IA32_X2APIC_ICR, value);
+            }
         } else {
             unsafe {
                 const PENDING: u32 = 1 << 12;

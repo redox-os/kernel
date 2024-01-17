@@ -1,17 +1,16 @@
-use alloc::sync::Arc;
-use alloc::collections::BTreeMap;
+use alloc::{collections::BTreeMap, sync::Arc};
 use core::{iter, mem};
 
 use spin::RwLock;
 
-use crate::syscall::error::{Result, Error, EAGAIN};
 use super::context::{Context, ContextId};
+use crate::syscall::error::{Error, Result, EAGAIN};
 
 /// Context list type
 pub struct ContextList {
     // Using a BTreeMap for it's range method
     map: BTreeMap<ContextId, Arc<RwLock<Context>>>,
-    next_id: usize
+    next_id: usize,
 }
 
 impl ContextList {
@@ -19,7 +18,7 @@ impl ContextList {
     pub const fn new() -> Self {
         ContextList {
             map: BTreeMap::new(),
-            next_id: 1
+            next_id: 1,
         }
     }
 
@@ -29,12 +28,18 @@ impl ContextList {
     }
 
     /// Get an iterator of all parents
-    pub fn ancestors(&'_ self, id: ContextId) -> impl Iterator<Item = (ContextId, &Arc<RwLock<Context>>)> + '_ {
-        iter::successors(self.get(id).map(|context| (id, context)), move |(_id, context)| {
-            let context = context.read();
-            let id = context.ppid;
-            self.get(id).map(|context| (id, context))
-        })
+    pub fn ancestors(
+        &'_ self,
+        id: ContextId,
+    ) -> impl Iterator<Item = (ContextId, &Arc<RwLock<Context>>)> + '_ {
+        iter::successors(
+            self.get(id).map(|context| (id, context)),
+            move |(_id, context)| {
+                let context = context.read();
+                let id = context.ppid;
+                self.get(id).map(|context| (id, context))
+            },
+        )
     }
 
     /// Get the current context.
@@ -46,14 +51,23 @@ impl ContextList {
         self.map.iter()
     }
 
-    pub fn range(&self, range: impl core::ops::RangeBounds<ContextId>) -> ::alloc::collections::btree_map::Range<'_, ContextId, Arc<RwLock<Context>>> {
+    pub fn range(
+        &self,
+        range: impl core::ops::RangeBounds<ContextId>,
+    ) -> ::alloc::collections::btree_map::Range<'_, ContextId, Arc<RwLock<Context>>> {
         self.map.range(range)
     }
 
     pub(crate) fn insert_context_raw(&mut self, id: ContextId) -> Result<&Arc<RwLock<Context>>> {
-        assert!(self.map.insert(id, Arc::new(RwLock::new(Context::new(id)?))).is_none());
+        assert!(self
+            .map
+            .insert(id, Arc::new(RwLock::new(Context::new(id)?)))
+            .is_none());
 
-        Ok(self.map.get(&id).expect("Failed to insert new context. ID is out of bounds."))
+        Ok(self
+            .map
+            .get(&id)
+            .expect("Failed to insert new context. ID is out of bounds."))
     }
 
     /// Create a new context.
@@ -84,7 +98,7 @@ impl ContextList {
     }
 
     /// Spawn a context from a function.
-    pub fn spawn(&mut self, func: extern fn()) -> Result<&Arc<RwLock<Context>>> {
+    pub fn spawn(&mut self, func: extern "C" fn()) -> Result<&Arc<RwLock<Context>>> {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();

@@ -1,6 +1,5 @@
 //use crate::device::generic_timer::{GENTIMER};
-use crate::device::irqchip::IRQ_CHIP;
-use crate::device::serial::COM1;
+use crate::device::{irqchip::IRQ_CHIP, serial::COM1};
 
 pub struct IrqDesc {
     pub virq: u32,
@@ -33,10 +32,9 @@ exception_stack!(irq_at_el1, |stack| {
     }
 });
 
-
 //TODO
 pub unsafe fn trigger(irq: u32) {
-    extern {
+    extern "C" {
         fn irq_trigger(irq: u32);
     }
 

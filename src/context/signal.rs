@@ -1,12 +1,19 @@
 use alloc::sync::Arc;
 use core::mem;
-use syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIG_DFL, SIG_IGN, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
-use syscall::ptrace_event;
+use syscall::{
+    flag::{
+        PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP,
+        SIGTTIN, SIGTTOU, SIG_DFL, SIG_IGN,
+    },
+    ptrace_event,
+};
 
-use crate::context::{contexts, switch, Status, WaitpidKey};
-use crate::start::usermode;
-use crate::ptrace;
-use crate::syscall::usercopy::UserSlice;
+use crate::{
+    context::{contexts, switch, Status, WaitpidKey},
+    ptrace,
+    start::usermode,
+    syscall::usercopy::UserSlice,
+};
 
 pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
     let handler = handler.map(|ptr| ptr as usize).unwrap_or(0);
@@ -16,7 +23,9 @@ pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
 pub extern "C" fn signal_handler(sig: usize) {
     let ((action, restorer), sigstack) = {
         let contexts = contexts();
-        let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+        let context_lock = contexts
+            .current()
+            .expect("context::signal_handler not inside of context");
         let context = context_lock.read();
         let actions = context.actions.read();
         (actions[sig], context.sigstack)
@@ -24,8 +33,11 @@ pub extern "C" fn signal_handler(sig: usize) {
 
     let handler = action.sa_handler.map(|ptr| ptr as usize).unwrap_or(0);
 
-    let thumbs_down = ptrace::breakpoint_callback(PTRACE_STOP_SIGNAL, Some(ptrace_event!(PTRACE_STOP_SIGNAL, sig, handler)))
-        .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));
+    let thumbs_down = ptrace::breakpoint_callback(
+        PTRACE_STOP_SIGNAL,
+        Some(ptrace_event!(PTRACE_STOP_SIGNAL, sig, handler)),
+    )
+    .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));
 
     if sig != SIGKILL && thumbs_down.unwrap_or(false) {
         // If signal can be and was ignored
@@ -37,7 +49,7 @@ pub extern "C" fn signal_handler(sig: usize) {
         match sig {
             SIGCHLD => {
                 // println!("SIGCHLD");
-            },
+            }
             SIGCONT => {
                 // println!("Continue");
 
@@ -45,7 +57,9 @@ pub extern "C" fn signal_handler(sig: usize) {
                     let contexts = contexts();
 
                     let (pid, pgid, ppid) = {
-                        let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+                        let context_lock = contexts
+                            .current()
+                            .expect("context::signal_handler not inside of context");
                         let mut context = context_lock.write();
                         context.status = Status::Runnable;
                         (context.id, context.pgid, context.ppid)
@@ -57,15 +71,18 @@ pub extern "C" fn signal_handler(sig: usize) {
                             Arc::clone(&parent.waitpid)
                         };
 
-                        waitpid.send(WaitpidKey {
-                            pid: Some(pid),
-                            pgid: Some(pgid)
-                        }, (pid, 0xFFFF));
+                        waitpid.send(
+                            WaitpidKey {
+                                pid: Some(pid),
+                                pgid: Some(pgid),
+                            },
+                            (pid, 0xFFFF),
+                        );
                     } else {
                         println!("{}: {} not found for continue", pid.get(), ppid.get());
                     }
                 }
-            },
+            }
             SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU => {
                 // println!("Stop {}", sig);
 
@@ -73,7 +90,9 @@ pub extern "C" fn signal_handler(sig: usize) {
                     let contexts = contexts();
 
                     let (pid, pgid, ppid) = {
-                        let context_lock = contexts.current().expect("context::signal_handler not inside of context");
+                        let context_lock = contexts
+                            .current()
+                            .expect("context::signal_handler not inside of context");
                         let mut context = context_lock.write();
                         context.status = Status::Stopped(sig);
                         (context.id, context.pgid, context.ppid)
@@ -85,17 +104,20 @@ pub extern "C" fn signal_handler(sig: usize) {
                             Arc::clone(&parent.waitpid)
                         };
 
-                        waitpid.send(WaitpidKey {
-                            pid: Some(pid),
-                            pgid: Some(pgid)
-                        }, (pid, (sig << 8) | 0x7F));
+                        waitpid.send(
+                            WaitpidKey {
+                                pid: Some(pid),
+                                pgid: Some(pgid),
+                            },
+                            (pid, (sig << 8) | 0x7F),
+                        );
                     } else {
                         println!("{}: {} not found for stop", pid.get(), ppid.get());
                     }
                 }
 
                 unsafe { switch() };
-            },
+            }
             _ => {
                 // println!("Exit {}", sig);
                 crate::syscall::exit(sig);
@@ -108,10 +130,14 @@ pub extern "C" fn signal_handler(sig: usize) {
 
         let singlestep = {
             let contexts = contexts();
-            let context = contexts.current().expect("context::signal_handler userspace not inside of context");
+            let context = contexts
+                .current()
+                .expect("context::signal_handler userspace not inside of context");
             let context = context.read();
             unsafe {
-                ptrace::regs_for(&context).map(|s| s.is_singlestep()).unwrap_or(false)
+                ptrace::regs_for(&context)
+                    .map(|s| s.is_singlestep())
+                    .unwrap_or(false)
             }
         };
 
@@ -123,7 +149,9 @@ pub extern "C" fn signal_handler(sig: usize) {
 
             sp -= mem::size_of::<usize>();
 
-            match UserSlice::wo(sp, core::mem::size_of::<usize>()).and_then(|buf| buf.write_usize(restorer)) {
+            match UserSlice::wo(sp, core::mem::size_of::<usize>())
+                .and_then(|buf| buf.write_usize(restorer))
+            {
                 Ok(()) => usermode(handler, sp, sig, usize::from(singlestep)),
                 Err(error) => {
                     log::error!("Failed to signal: {}", error);

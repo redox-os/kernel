@@ -2,8 +2,7 @@ use alloc::boxed::Box;
 
 use crate::paging::KernelMapper;
 
-use super::sdt::Sdt;
-use super::get_sdt;
+use super::{get_sdt, sdt::Sdt};
 
 pub trait Rxsdt {
     fn iter(&self) -> Box<dyn Iterator<Item = usize>>;
@@ -15,7 +14,12 @@ pub trait Rxsdt {
         }
     }
 
-    fn find(&self, signature: [u8; 4], oem_id: [u8; 6], oem_table_id: [u8; 8]) -> Option<&'static Sdt> {
+    fn find(
+        &self,
+        signature: [u8; 4],
+        oem_id: [u8; 6],
+        oem_table_id: [u8; 8],
+    ) -> Option<&'static Sdt> {
         for sdt in self.iter() {
             let sdt = unsafe { &*(sdt as *const Sdt) };
 

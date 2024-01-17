@@ -4,15 +4,15 @@ use alloc::vec::Vec;
 use spin::Mutex;
 
 #[cfg(feature = "acpi")]
-use crate::acpi::madt::{self, Madt, MadtEntry, MadtIoApic, MadtIntSrcOverride};
+use crate::acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic};
 
-use crate::arch::interrupt::irq;
-use crate::memory::Frame;
-use crate::paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch};
-use crate::paging::entry::EntryFlags;
+use crate::{
+    arch::interrupt::irq,
+    memory::Frame,
+    paging::{entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch},
+};
 
-use super::super::cpuid::cpuid;
-use super::pic;
+use super::{super::cpuid::cpuid, pic};
 
 pub struct IoApicRegs {
     pointer: *const u32,
@@ -131,12 +131,12 @@ pub enum DestinationMode {
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
 pub enum DeliveryMode {
-    Fixed =             0b000,
-    LowestPriority =    0b001,
-    Smi =               0b010,
-    Nmi =               0b100,
-    Init =              0b101,
-    ExtInt =            0b111,
+    Fixed = 0b000,
+    LowestPriority = 0b001,
+    Smi = 0b010,
+    Nmi = 0b100,
+    Init = 0b101,
+    ExtInt = 0b111,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -176,7 +176,9 @@ impl fmt::Debug for IoApic {
                 let mut guard = self.0.lock();
 
                 let count = guard.max_redirection_table_entries();
-                f.debug_list().entries((0..count).map(|i| guard.read_ioredtbl(i))).finish()
+                f.debug_list()
+                    .entries((0..count).map(|i| guard.read_ioredtbl(i)))
+                    .finish()
             }
         }
 
@@ -219,14 +221,10 @@ static mut IOAPICS: Option<Vec<IoApic>> = None;
 static mut SRC_OVERRIDES: Option<Vec<Override>> = None;
 
 pub fn ioapics() -> &'static [IoApic] {
-    unsafe {
-        IOAPICS.as_ref().map_or(&[], |vector| &vector[..])
-    }
+    unsafe { IOAPICS.as_ref().map_or(&[], |vector| &vector[..]) }
 }
 pub fn src_overrides() -> &'static [Override] {
-    unsafe {
-        SRC_OVERRIDES.as_ref().map_or(&[], |vector| &vector[..])
-    }
+    unsafe { SRC_OVERRIDES.as_ref().map_or(&[], |vector| &vector[..]) }
 }
 
 #[cfg(feature = "acpi")]
@@ -241,14 +239,24 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static Mad
     mapper
         .get_mut()
         .expect("expected KernelMapper not to be locked re-entrant while mapping I/O APIC memory")
-        .map_phys(page.start_address(), frame.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true))
+        .map_phys(
+            page.start_address(),
+            frame.start_address(),
+            PageFlags::new()
+                .write(true)
+                .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+        )
         .expect("failed to map I/O APIC")
         .flush();
 
     let ioapic_registers = page.start_address().data() as *const u32;
     let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
 
-    assert_eq!(ioapic.regs.lock().id(), madt_ioapic.id, "mismatched ACPI MADT I/O APIC ID, and the ID reported by the I/O APIC");
+    assert_eq!(
+        ioapic.regs.lock().id(),
+        madt_ioapic.id,
+        "mismatched ACPI MADT I/O APIC ID, and the ID reported by the I/O APIC"
+    );
 
     IOAPICS.get_or_insert_with(Vec::new).push(ioapic);
 }
@@ -286,7 +294,11 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
 }
 
 pub unsafe fn init(active_table: &mut KernelMapper) {
-    let bsp_apic_id = cpuid().unwrap().get_feature_info().unwrap().initial_local_apic_id(); // TODO: remove unwraps
+    let bsp_apic_id = cpuid()
+        .unwrap()
+        .get_feature_info()
+        .unwrap()
+        .initial_local_apic_id(); // TODO: remove unwraps
 
     // search the madt for all IOAPICs.
     #[cfg(feature = "acpi")]
@@ -310,7 +322,11 @@ pub unsafe fn init(active_table: &mut KernelMapper) {
             }
         }
     }
-    println!("I/O APICs: {:?}, overrides: {:?}", ioapics(), src_overrides());
+    println!(
+        "I/O APICs: {:?}, overrides: {:?}",
+        ioapics(),
+        src_overrides()
+    );
 
     // map the legacy PC-compatible IRQs (0-15) to 32-47, just like we did with 8259 PIC (if it
     // wouldn't have been disabled due to this I/O APIC)
@@ -318,11 +334,21 @@ pub unsafe fn init(active_table: &mut KernelMapper) {
         let (gsi, trigger_mode, polarity) = match get_override(legacy_irq) {
             Some(over) => (over.gsi, over.trigger_mode, over.polarity),
             None => {
-                if src_overrides().iter().any(|over| over.gsi == u32::from(legacy_irq) && over.bus_irq != legacy_irq) && !src_overrides().iter().any(|over| over.bus_irq == legacy_irq) {
+                if src_overrides()
+                    .iter()
+                    .any(|over| over.gsi == u32::from(legacy_irq) && over.bus_irq != legacy_irq)
+                    && !src_overrides()
+                        .iter()
+                        .any(|over| over.bus_irq == legacy_irq)
+                {
                     // there's an IRQ conflict, making this legacy IRQ inaccessible.
                     continue;
                 }
-                (legacy_irq.into(), TriggerMode::ConformsToSpecs, Polarity::ConformsToSpecs)
+                (
+                    legacy_irq.into(),
+                    TriggerMode::ConformsToSpecs,
+                    Polarity::ConformsToSpecs,
+                )
             }
         };
         let apic = match find_ioapic(gsi) {
@@ -354,7 +380,11 @@ pub unsafe fn init(active_table: &mut KernelMapper) {
         };
         apic.map(redir_tbl_index, map_info);
     }
-    println!("I/O APICs: {:?}, overrides: {:?}", ioapics(), src_overrides());
+    println!(
+        "I/O APICs: {:?}, overrides: {:?}",
+        ioapics(),
+        src_overrides()
+    );
     irq::set_irq_method(irq::IrqMethod::Apic);
 
     // tell the firmware that we're using APIC rather than the default 8259 PIC.
@@ -385,7 +415,9 @@ fn resolve(irq: u8) -> u32 {
     get_override(irq).map_or(u32::from(irq), |over| over.gsi)
 }
 fn find_ioapic(gsi: u32) -> Option<&'static IoApic> {
-    ioapics().iter().find(|apic| gsi >= apic.gsi_start && gsi < apic.gsi_start + u32::from(apic.count))
+    ioapics()
+        .iter()
+        .find(|apic| gsi >= apic.gsi_start && gsi < apic.gsi_start + u32::from(apic.count))
 }
 
 pub unsafe fn mask(irq: u8) {

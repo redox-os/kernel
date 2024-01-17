@@ -1,14 +1,18 @@
 use alloc::collections::BTreeMap;
-use core::{mem, str};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    mem, str,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use spin::RwLock;
 
-use crate::syscall::data::ITimerSpec;
-use crate::syscall::error::*;
-use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
-use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+use crate::syscall::{
+    data::ITimerSpec,
+    error::*,
+    flag::{EventFlags, CLOCK_MONOTONIC, CLOCK_REALTIME},
+    usercopy::{UserSliceRo, UserSliceWo},
+};
 
-use super::{KernelScheme, CallerCtx, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult};
 pub struct ITimerScheme;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -22,7 +26,7 @@ impl KernelScheme for ITimerScheme {
         match clock {
             CLOCK_REALTIME => (),
             CLOCK_MONOTONIC => (),
-            _ => return Err(Error::new(ENOENT))
+            _ => return Err(Error::new(ENOENT)),
         }
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -35,9 +39,12 @@ impl KernelScheme for ITimerScheme {
         Ok(0)
     }
 
-    fn fevent(&self, id: usize, _flags: EventFlags) ->  Result<EventFlags> {
+    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let handles = HANDLES.read();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
+        handles
+            .get(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(EventFlags::empty()))
     }
 
     fn fsync(&self, id: usize) -> Result<()> {
@@ -45,7 +52,11 @@ impl KernelScheme for ITimerScheme {
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        HANDLES.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        HANDLES
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(()))
     }
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let _clock = {
@@ -89,5 +100,4 @@ impl KernelScheme for ITimerScheme {
 
         buf.copy_common_bytes_from_slice(format!("time:{}", clock).as_bytes())
     }
-
 }

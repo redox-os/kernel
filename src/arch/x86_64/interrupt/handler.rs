@@ -1,7 +1,6 @@
 use core::mem;
 
-use crate::memory::ArchIntCtx;
-use crate::syscall::IntRegisters;
+use crate::{memory::ArchIntCtx, syscall::IntRegisters};
 
 use super::super::flags::*;
 
@@ -65,7 +64,6 @@ pub struct IretRegisters {
     // In x86 Protected Mode, i.e. 32-bit kernels, the following two registers are conditionally
     // pushed if the privilege ring changes. In x86 Long Mode however, i.e. 64-bit kernels, they
     // are unconditionally pushed, mostly due to stack alignment requirements.
-
     pub rsp: usize,
     pub ss: usize,
 }
@@ -83,7 +81,10 @@ impl IretRegisters {
             let fsbase = x86::msr::rdmsr(x86::msr::IA32_FS_BASE);
             let gsbase = x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE);
             let kgsbase = x86::msr::rdmsr(x86::msr::IA32_GS_BASE);
-            println!("FSBASE  {:016x}\nGSBASE  {:016x}\nKGSBASE {:016x}", fsbase, gsbase, kgsbase);
+            println!(
+                "FSBASE  {:016x}\nGSBASE  {:016x}\nKGSBASE {:016x}",
+                fsbase, gsbase, kgsbase
+            );
         }
     }
 }
@@ -190,7 +191,8 @@ impl InterruptStack {
 
 #[macro_export]
 macro_rules! push_scratch {
-    () => { "
+    () => {
+        "
         // Push scratch registers
         push rcx
         push rdx
@@ -200,11 +202,13 @@ macro_rules! push_scratch {
         push r9
         push r10
         push r11
-    " };
+    "
+    };
 }
 #[macro_export]
 macro_rules! pop_scratch {
-    () => { "
+    () => {
+        "
         // Pop scratch registers
         pop r11
         pop r10
@@ -215,12 +219,14 @@ macro_rules! pop_scratch {
         pop rdx
         pop rcx
         pop rax
-    " };
+    "
+    };
 }
 
 #[macro_export]
 macro_rules! push_preserved {
-    () => { "
+    () => {
+        "
         // Push preserved registers
         push rbx
         push rbp
@@ -228,11 +234,13 @@ macro_rules! push_preserved {
         push r13
         push r14
         push r15
-    " };
+    "
+    };
 }
 #[macro_export]
 macro_rules! pop_preserved {
-    () => { "
+    () => {
+        "
         // Pop preserved registers
         pop r15
         pop r14
@@ -240,27 +248,32 @@ macro_rules! pop_preserved {
         pop r12
         pop rbp
         pop rbx
-    " };
+    "
+    };
 }
 macro_rules! swapgs_iff_ring3_fast {
     // TODO: Spectre V1: LFENCE?
-    () => { "
+    () => {
+        "
         // Check whether the last two bits RSP+8 (code segment) are equal to zero.
         test QWORD PTR [rsp + 8], 0x3
         // Skip the SWAPGS instruction if CS & 0b11 == 0b00.
         jz 1f
         swapgs
         1:
-    " };
+    "
+    };
 }
 macro_rules! swapgs_iff_ring3_fast_errorcode {
     // TODO: Spectre V1: LFENCE?
-    () => { "
+    () => {
+        "
         test QWORD PTR [rsp + 16], 0x3
         jz 1f
         swapgs
         1:
-    " };
+    "
+    };
 }
 
 macro_rules! conditional_swapgs_paranoid {
@@ -328,17 +341,21 @@ macro_rules! conditional_swapgs_paranoid {
     ) }
 }
 macro_rules! conditional_swapgs_back_paranoid {
-    () => { "
+    () => {
+        "
         test bl, bl
         jnz 1f
         swapgs
         1:
-    " }
+    "
+    };
 }
 macro_rules! nop {
-    () => { "
+    () => {
+        "
         // Unused: {IA32_GS_BASE} {PCR_GDT_OFFSET}
-        " }
+        "
+    };
 }
 
 #[macro_export]

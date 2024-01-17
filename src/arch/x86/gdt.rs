@@ -1,16 +1,15 @@
 //! Global descriptor table
 
-use core::convert::TryInto;
-use core::mem;
-use core::ptr::addr_of_mut;
+use core::{convert::TryInto, mem, ptr::addr_of_mut};
 
 use crate::LogicalCpuId;
 
-use x86::bits32::task::TaskStateSegment;
-use x86::Ring;
-use x86::dtables::{self, DescriptorTablePointer};
-use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
-use x86::task;
+use x86::{
+    bits32::task::TaskStateSegment,
+    dtables::{self, DescriptorTablePointer},
+    segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector},
+    task, Ring,
+};
 
 use crate::paging::{RmmA, RmmArch, PAGE_SIZE};
 
@@ -48,28 +47,73 @@ static INIT_GDT: [GdtEntry; 3] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // Kernel data
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
 ];
 
 const BASE_GDT: [GdtEntry; 9] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // Kernel data
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // Kernel TLS
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // User (32-bit) code
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // User data
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // User FS (for TLS)
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // User GS (for TLS)
-    GdtEntry::new(0, 0xFFFFF, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0xFFFFF,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE,
+    ),
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
 ];
@@ -96,9 +140,10 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
-    use super::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
+    use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
     addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
-    addr_of_mut!((*pcr()).tss.0.esp0).write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
+    addr_of_mut!((*pcr()).tss.0.esp0)
+        .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
     PTI_CONTEXT_STACK = stack;
 }
 
@@ -128,7 +173,8 @@ pub unsafe fn init() {
 /// Initialize GDT and configure percpu.
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR frame");
-    let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
+    let pcr =
+        &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
     pcr.self_ref = pcr as *const _ as usize;
     pcr.gdt = BASE_GDT;
@@ -179,7 +225,7 @@ pub struct GdtEntry {
     pub offsetm: u8,
     pub access: u8,
     pub flags_limith: u8,
-    pub offseth: u8
+    pub offseth: u8,
 }
 
 impl GdtEntry {
@@ -190,14 +236,12 @@ impl GdtEntry {
             offsetm: (offset >> 16) as u8,
             access,
             flags_limith: flags & 0xF0 | ((limit >> 16) as u8) & 0x0F,
-            offseth: (offset >> 24) as u8
+            offseth: (offset >> 24) as u8,
         }
     }
 
     pub fn offset(&self) -> u32 {
-        (self.offsetl as u32) |
-        ((self.offsetm as u32) << 16) |
-        ((self.offseth as u32) << 24)
+        (self.offsetl as u32) | ((self.offsetm as u32) << 16) | ((self.offseth as u32) << 24)
     }
 
     pub fn set_offset(&mut self, offset: u32) {

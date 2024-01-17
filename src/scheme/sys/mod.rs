@@ -1,16 +1,21 @@
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
-use core::str;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use alloc::{collections::BTreeMap, vec::Vec};
+use core::{
+    str,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use spin::RwLock;
 
-use crate::syscall::data::Stat;
-use crate::syscall::error::{Error, EBADF, ENOENT, Result};
-use crate::syscall::flag::{MODE_DIR, MODE_FILE};
-use crate::arch::interrupt;
-use crate::syscall::usercopy::UserSliceWo;
+use crate::{
+    arch::interrupt,
+    syscall::{
+        data::Stat,
+        error::{Error, Result, EBADF, ENOENT},
+        flag::{MODE_DIR, MODE_FILE},
+        usercopy::UserSliceWo,
+    },
+};
 
-use super::{KernelScheme, CallerCtx, OpenResult, calc_seek_offset};
+use super::{calc_seek_offset, CallerCtx, KernelScheme, OpenResult};
 
 mod block;
 mod context;
@@ -28,7 +33,7 @@ struct Handle {
     path: &'static str,
     data: Vec<u8>,
     mode: u16,
-    seek: usize
+    seek: usize,
 }
 
 type SysFn = fn() -> Result<Vec<u8>>;
@@ -70,32 +75,38 @@ impl KernelScheme for SysScheme {
         if path.is_empty() {
             let mut data = Vec::new();
             for entry in FILES.iter() {
-                if ! data.is_empty() {
+                if !data.is_empty() {
                     data.push(b'\n');
                 }
                 data.extend_from_slice(entry.0.as_bytes());
             }
 
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-            HANDLES.write().insert(id, Handle {
-                path: "",
-                data,
-                mode: MODE_DIR | 0o444,
-                seek: 0
-            });
-            return Ok(OpenResult::SchemeLocal(id))
+            HANDLES.write().insert(
+                id,
+                Handle {
+                    path: "",
+                    data,
+                    mode: MODE_DIR | 0o444,
+                    seek: 0,
+                },
+            );
+            return Ok(OpenResult::SchemeLocal(id));
         } else {
             //Have to iterate to get the path without allocation
             for entry in FILES.iter() {
                 if &entry.0 == &path {
                     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
                     let data = entry.1()?;
-                    HANDLES.write().insert(id, Handle {
-                        path: entry.0,
-                        data,
-                        mode: MODE_FILE | 0o444,
-                        seek: 0
-                    });
+                    HANDLES.write().insert(
+                        id,
+                        Handle {
+                            path: entry.0,
+                            data,
+                            mode: MODE_FILE | 0o444,
+                            seek: 0,
+                        },
+                    );
                     return Ok(OpenResult::SchemeLocal(id));
                 }
             }
@@ -118,7 +129,11 @@ impl KernelScheme for SysScheme {
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        HANDLES.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        HANDLES
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(()))
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handles = HANDLES.read();
@@ -130,7 +145,6 @@ impl KernelScheme for SysScheme {
         if let Some(remaining) = buf.advance(FIRST.len()) {
             bytes_read += remaining.copy_common_bytes_from_slice(handle.path.as_bytes())?;
         }
-
 
         Ok(bytes_read)
     }

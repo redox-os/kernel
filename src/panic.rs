@@ -2,14 +2,16 @@
 
 use core::panic::PanicInfo;
 
-use crate::{cpu_id, context, interrupt, syscall};
+use crate::{context, cpu_id, interrupt, syscall};
 
 /// Required to handle panics
 #[panic_handler]
 fn rust_begin_unwind(info: &PanicInfo) -> ! {
     println!("KERNEL PANIC: {}", info);
 
-    unsafe { interrupt::stack_trace(); }
+    unsafe {
+        interrupt::stack_trace();
+    }
 
     println!("CPU {}, PID {:?}", cpu_id(), context::context_id());
 
@@ -28,6 +30,8 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
 
     println!("HALT");
     loop {
-        unsafe { interrupt::halt(); }
+        unsafe {
+            interrupt::halt();
+        }
     }
 }

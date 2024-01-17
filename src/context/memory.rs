@@ -1,26 +1,24 @@
-use alloc::collections::BTreeMap;
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use core::{cmp, fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
 use hashbrown::HashMap;
-use syscall::{GrantFlags, MunmapFlags};
-use core::cmp;
-use core::fmt::Debug;
-use core::num::NonZeroUsize;
-use core::sync::atomic::Ordering;
-use spin::{RwLock, RwLockWriteGuard, RwLockUpgradableGuard};
-use syscall::{
-    flag::MapFlags,
-    error::*,
-};
 use rmm::{Arch as _, PageFlush};
+use spin::{RwLock, RwLockUpgradableGuard, RwLockWriteGuard};
+use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
-use crate::arch::paging::PAGE_SIZE;
-use crate::memory::{Enomem, Frame, get_page_info, PageInfo, deallocate_frames, RefKind, AddRefError, RefCount, the_zeroed_frame, init_frame};
-use crate::paging::mapper::{Flusher, InactiveFlusher, PageFlushAll};
-use crate::paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress};
-use crate::scheme::{self, KernelSchemes};
+use crate::{
+    arch::paging::PAGE_SIZE,
+    memory::{
+        deallocate_frames, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
+        PageInfo, RefCount, RefKind,
+    },
+    paging::{
+        mapper::{Flusher, InactiveFlusher, PageFlushAll},
+        Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
+    },
+    scheme::{self, KernelSchemes},
+};
 
-use super::context::HardBlockedReason;
-use super::file::FileDescription;
+use super::{context::HardBlockedReason, file::FileDescription};
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
@@ -29,12 +27,16 @@ pub fn page_flags(flags: MapFlags) -> PageFlags<RmmA> {
         .user(true)
         .execute(flags.contains(MapFlags::PROT_EXEC))
         .write(flags.contains(MapFlags::PROT_WRITE))
-        //TODO: PROT_READ
+    //TODO: PROT_READ
 }
 pub fn map_flags(page_flags: PageFlags<RmmA>) -> MapFlags {
     let mut flags = MapFlags::PROT_READ;
-    if page_flags.has_write() { flags |= MapFlags::PROT_WRITE; }
-    if page_flags.has_execute() { flags |= MapFlags::PROT_EXEC; }
+    if page_flags.has_write() {
+        flags |= MapFlags::PROT_WRITE;
+    }
+    if page_flags.has_execute() {
+        flags |= MapFlags::PROT_EXEC;
+    }
     flags
 }
 
@@ -45,7 +47,11 @@ pub struct UnmapResult {
 }
 impl UnmapResult {
     pub fn unmap(mut self) -> Result<()> {
-        let Some(GrantFileRef { base_offset, description }) = self.file_desc.take() else {
+        let Some(GrantFileRef {
+            base_offset,
+            description,
+        }) = self.file_desc.take()
+        else {
             return Ok(());
         };
 
@@ -54,7 +60,9 @@ impl UnmapResult {
         };
 
         let funmap_result = crate::scheme::schemes()
-            .get(scheme_id).cloned().ok_or(Error::new(ENODEV))
+            .get(scheme_id)
+            .cloned()
+            .ok_or(Error::new(ENODEV))
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
@@ -100,10 +108,20 @@ impl AddrSpace {
         for (grant_base, grant_info) in self.grants.iter() {
             let new_grant = match grant_info.provider {
                 // No, your temporary UserScheme mappings will not be kept across forks.
-                Provider::External { is_pinned_userscheme_borrow: true, .. } | Provider::AllocatedShared { is_pinned_userscheme_borrow: true, .. } => continue,
+                Provider::External {
+                    is_pinned_userscheme_borrow: true,
+                    ..
+                }
+                | Provider::AllocatedShared {
+                    is_pinned_userscheme_borrow: true,
+                    ..
+                } => continue,
 
                 // No, physically contiguous driver memory won't either.
-                Provider::Allocated { phys_contiguous: true, .. } => continue,
+                Provider::Allocated {
+                    phys_contiguous: true,
+                    ..
+                } => continue,
 
                 Provider::PhysBorrowed { base } => Grant::physmap(
                     base.clone(),
@@ -112,7 +130,10 @@ impl AddrSpace {
                     new_mapper,
                     (),
                 )?,
-                Provider::Allocated { ref cow_file_ref, phys_contiguous: false } => Grant::copy_mappings(
+                Provider::Allocated {
+                    ref cow_file_ref,
+                    phys_contiguous: false,
+                } => Grant::copy_mappings(
                     grant_base,
                     grant_base,
                     grant_info.page_count,
@@ -121,10 +142,14 @@ impl AddrSpace {
                     new_mapper,
                     &mut this_flusher,
                     (),
-                    CopyMappingsMode::Owned { cow_file_ref: cow_file_ref.clone() },
+                    CopyMappingsMode::Owned {
+                        cow_file_ref: cow_file_ref.clone(),
+                    },
                 )?,
                 // TODO: Merge Allocated and AllocatedShared, and make CopyMappingsMode a field?
-                Provider::AllocatedShared { is_pinned_userscheme_borrow: false } => Grant::copy_mappings(
+                Provider::AllocatedShared {
+                    is_pinned_userscheme_borrow: false,
+                } => Grant::copy_mappings(
                     grant_base,
                     grant_base,
                     grant_info.page_count,
@@ -138,7 +163,11 @@ impl AddrSpace {
 
                 // MAP_SHARED grants are retained by reference, across address space clones (across
                 // forks on monolithic kernels).
-                Provider::External { ref address_space, src_base, .. } => Grant::borrow_grant(
+                Provider::External {
+                    ref address_space,
+                    src_base,
+                    ..
+                } => Grant::borrow_grant(
                     Arc::clone(&address_space),
                     src_base,
                     grant_base,
@@ -176,31 +205,48 @@ impl AddrSpace {
         let mapper = &mut self.table.utable;
 
         // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
-        let regions = self.grants.conflicts(requested_span).map(|(base, info)| if info.is_pinned() {
-            Err(Error::new(EBUSY))
-        } else {
-            Ok(PageSpan::new(base, info.page_count))
-        }).collect::<Vec<_>>();
+        let regions = self
+            .grants
+            .conflicts(requested_span)
+            .map(|(base, info)| {
+                if info.is_pinned() {
+                    Err(Error::new(EBUSY))
+                } else {
+                    Ok(PageSpan::new(base, info.page_count))
+                }
+            })
+            .collect::<Vec<_>>();
 
         for grant_span_res in regions {
             let grant_span = grant_span_res?;
 
-            let grant = self.grants.remove(grant_span.base).expect("grant cannot magically disappear while we hold the lock!");
+            let grant = self
+                .grants
+                .remove(grant_span.base)
+                .expect("grant cannot magically disappear while we hold the lock!");
             //log::info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
             let intersection = grant_span.intersection(requested_span);
 
-            let (before, mut grant, after) = grant.extract(intersection).expect("failed to extract grant");
+            let (before, mut grant, after) = grant
+                .extract(intersection)
+                .expect("failed to extract grant");
             //log::info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
 
-            if let Some(before) = before { self.grants.insert(before); }
-            if let Some(after) = after { self.grants.insert(after); }
+            if let Some(before) = before {
+                self.grants.insert(before);
+            }
+            if let Some(after) = after {
+                self.grants.insert(after);
+            }
 
             if !grant.info.can_have_flags(flags) {
                 self.grants.insert(grant);
                 return Err(Error::new(EACCES));
             }
 
-            let new_flags = grant.info.flags()
+            let new_flags = grant
+                .info
+                .flags()
                 // TODO: Require a capability in order to map executable memory?
                 .execute(flags.contains(MapFlags::PROT_EXEC))
                 .write(flags.contains(MapFlags::PROT_WRITE));
@@ -216,25 +262,39 @@ impl AddrSpace {
         Ok(())
     }
     #[must_use = "needs to notify files"]
-    pub fn munmap(&mut self, mut requested_span: PageSpan, unpin: bool) -> Result<Vec<UnmapResult>> {
+    pub fn munmap(
+        &mut self,
+        mut requested_span: PageSpan,
+        unpin: bool,
+    ) -> Result<Vec<UnmapResult>> {
         let mut notify_files = Vec::new();
 
         let mut flusher = PageFlushAll::new();
 
         let this = &mut *self;
 
-        let next = |grants: &mut UserGrants, span: PageSpan| grants.conflicts(span).map(|(base, info)| if info.is_pinned() && !unpin {
-            Err(Error::new(EBUSY))
-        } else if !info.can_extract(unpin) {
-            Err(Error::new(EINVAL))
-        } else {
-            Ok(PageSpan::new(base, info.page_count))
-        }).next();
+        let next = |grants: &mut UserGrants, span: PageSpan| {
+            grants
+                .conflicts(span)
+                .map(|(base, info)| {
+                    if info.is_pinned() && !unpin {
+                        Err(Error::new(EBUSY))
+                    } else if !info.can_extract(unpin) {
+                        Err(Error::new(EINVAL))
+                    } else {
+                        Ok(PageSpan::new(base, info.page_count))
+                    }
+                })
+                .next()
+        };
 
         while let Some(conflicting_span_res) = next(&mut this.grants, requested_span) {
             let conflicting_span = conflicting_span_res?;
 
-            let mut grant = this.grants.remove(conflicting_span.base).expect("conflicting region didn't exist");
+            let mut grant = this
+                .grants
+                .remove(conflicting_span.base)
+                .expect("conflicting region didn't exist");
             if unpin {
                 grant.info.unpin();
             }
@@ -243,10 +303,15 @@ impl AddrSpace {
 
             requested_span = {
                 let offset = conflicting_span.base.offset_from(requested_span.base);
-                PageSpan::new(conflicting_span.end(), requested_span.count - offset - conflicting_span.count)
+                PageSpan::new(
+                    conflicting_span.end(),
+                    requested_span.count - offset - conflicting_span.count,
+                )
             };
 
-            let (before, grant, after) = grant.extract(intersection).expect("conflicting region shared no common parts");
+            let (before, grant, after) = grant
+                .extract(intersection)
+                .expect("conflicting region shared no common parts");
 
             // Keep untouched regions
             if let Some(before) = before {
@@ -267,7 +332,17 @@ impl AddrSpace {
 
         Ok(notify_files)
     }
-    pub fn mmap_anywhere(&mut self, page_count: NonZeroUsize, flags: MapFlags, map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>) -> Result<Page> {
+    pub fn mmap_anywhere(
+        &mut self,
+        page_count: NonZeroUsize,
+        flags: MapFlags,
+        map: impl FnOnce(
+            Page,
+            PageFlags<RmmA>,
+            &mut PageMapper,
+            &mut dyn Flusher<RmmA>,
+        ) -> Result<Grant>,
+    ) -> Result<Page> {
         self.mmap(None, page_count, flags, &mut Vec::new(), map)
     }
     pub fn mmap(
@@ -276,7 +351,12 @@ impl AddrSpace {
         page_count: NonZeroUsize,
         flags: MapFlags,
         notify_files_out: &mut Vec<UnmapResult>,
-        map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut dyn Flusher<RmmA>) -> Result<Grant>,
+        map: impl FnOnce(
+            Page,
+            PageFlags<RmmA>,
+            &mut PageMapper,
+            &mut dyn Flusher<RmmA>,
+        ) -> Result<Grant>,
     ) -> Result<Page> {
         let selected_span = match requested_base_opt {
             // TODO: Rename MAP_FIXED+MAP_FIXED_NOREPLACE to MAP_FIXED and
@@ -296,10 +376,15 @@ impl AddrSpace {
 
                     requested_span
                 } else {
-                    self.grants.find_free_near(self.mmap_min, page_count.get(), Some(requested_base)).ok_or(Error::new(ENOMEM))?
+                    self.grants
+                        .find_free_near(self.mmap_min, page_count.get(), Some(requested_base))
+                        .ok_or(Error::new(ENOMEM))?
                 }
             }
-            None => self.grants.find_free(self.mmap_min, page_count.get()).ok_or(Error::new(ENOMEM))?,
+            None => self
+                .grants
+                .find_free(self.mmap_min, page_count.get())
+                .ok_or(Error::new(ENOMEM))?,
         };
 
         // TODO: Threads share address spaces, so not only the inactive flusher should be sending
@@ -315,19 +400,37 @@ impl AddrSpace {
             &mut inactive as &mut dyn Flusher<RmmA>
         };
 
-        let grant = map(selected_span.base, page_flags(flags), &mut self.table.utable, flusher)?;
+        let grant = map(
+            selected_span.base,
+            page_flags(flags),
+            &mut self.table.utable,
+            flusher,
+        )?;
         self.grants.insert(grant);
 
         Ok(selected_span.base)
     }
-    pub fn r#move(dst: &mut AddrSpace, mut src_opt: Option<&mut AddrSpace>, src_span: PageSpan, requested_dst_base: Option<Page>, new_page_count: usize, new_flags: MapFlags, notify_files: &mut Vec<UnmapResult>) -> Result<Page> {
+    pub fn r#move(
+        dst: &mut AddrSpace,
+        mut src_opt: Option<&mut AddrSpace>,
+        src_span: PageSpan,
+        requested_dst_base: Option<Page>,
+        new_page_count: usize,
+        new_flags: MapFlags,
+        notify_files: &mut Vec<UnmapResult>,
+    ) -> Result<Page> {
         // TODO
         let mut src_flusher = PageFlushAll::new();
         let mut dst_flusher = PageFlushAll::new();
 
         let dst_base = match requested_dst_base {
             Some(base) if new_flags.contains(MapFlags::MAP_FIXED_NOREPLACE) => {
-                if dst.grants.conflicts(PageSpan::new(base, new_page_count)).next().is_some() {
+                if dst
+                    .grants
+                    .conflicts(PageSpan::new(base, new_page_count))
+                    .next()
+                    .is_some()
+                {
                     return Err(Error::new(EEXIST));
                 }
 
@@ -339,15 +442,28 @@ impl AddrSpace {
 
                 base
             }
-            _ => dst.grants.find_free(dst.mmap_min, core::cmp::max(new_page_count, src_span.count)).ok_or(Error::new(ENOMEM))?.base,
+            _ => {
+                dst.grants
+                    .find_free(dst.mmap_min, core::cmp::max(new_page_count, src_span.count))
+                    .ok_or(Error::new(ENOMEM))?
+                    .base
+            }
         };
 
         let src = src_opt.as_deref_mut().unwrap_or(&mut *dst);
 
-        if src.grants.conflicts(src_span).any(|(_, g)| !g.can_extract(false)) {
+        if src
+            .grants
+            .conflicts(src_span)
+            .any(|(_, g)| !g.can_extract(false))
+        {
             return Err(Error::new(EBUSY));
         }
-        if src.grants.conflicts(src_span).any(|(_, g)| !g.can_have_flags(new_flags)) {
+        if src
+            .grants
+            .conflicts(src_span)
+            .any(|(_, g)| !g.can_have_flags(new_flags))
+        {
             return Err(Error::new(EPERM));
         }
         if PageSpan::new(dst_base, new_page_count).intersects(src_span) {
@@ -356,13 +472,23 @@ impl AddrSpace {
 
         if new_page_count < src_span.count {
             let unpin = false;
-            notify_files.append(&mut src.munmap(PageSpan::new(src_span.base.next_by(new_page_count), src_span.count - new_page_count), unpin)?);
+            notify_files.append(&mut src.munmap(
+                PageSpan::new(
+                    src_span.base.next_by(new_page_count),
+                    src_span.count - new_page_count,
+                ),
+                unpin,
+            )?);
         }
 
         let mut remaining_src_span = PageSpan::new(src_span.base, new_page_count);
 
         //let next = |mut src_opt: Option<&mut AddrSpace>, dst: &mut AddrSpace, rem| { let opt = src_opt.as_deref_mut().unwrap_or(dst).grants.conflicts(rem).next(); opt.map(|(b, _)| b) };
-        let to_remap = src.grants.conflicts(remaining_src_span).map(|(b, _)| b).collect::<Vec<_>>();
+        let to_remap = src
+            .grants
+            .conflicts(remaining_src_span)
+            .map(|(b, _)| b)
+            .collect::<Vec<_>>();
 
         let mut prev_grant_end = src_span.base;
 
@@ -370,38 +496,76 @@ impl AddrSpace {
         for grant_base in to_remap {
             if prev_grant_end < grant_base {
                 let hole_page_count = grant_base.offset_from(prev_grant_end);
-                let hole_span = PageSpan::new(dst_base.next_by(prev_grant_end.offset_from(src_span.base)), hole_page_count);
-                dst.grants.insert(Grant::zeroed(hole_span, page_flags(new_flags), &mut dst.table.utable, &mut dst_flusher, false)?);
+                let hole_span = PageSpan::new(
+                    dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
+                    hole_page_count,
+                );
+                dst.grants.insert(Grant::zeroed(
+                    hole_span,
+                    page_flags(new_flags),
+                    &mut dst.table.utable,
+                    &mut dst_flusher,
+                    false,
+                )?);
             }
 
             let src = src_opt.as_deref_mut().unwrap_or(&mut *dst);
-            let grant = src.grants.remove(grant_base).expect("grant cannot disappear");
+            let grant = src
+                .grants
+                .remove(grant_base)
+                .expect("grant cannot disappear");
             let grant_span = PageSpan::new(grant.base, grant.info.page_count());
-            let (before, middle, after) = grant.extract(remaining_src_span.intersection(grant_span)).expect("called intersect(), must succeed");
+            let (before, middle, after) = grant
+                .extract(remaining_src_span.intersection(grant_span))
+                .expect("called intersect(), must succeed");
 
-            if let Some(before) = before { src.grants.insert(before); }
-            if let Some(after) = after { src.grants.insert(after); }
+            if let Some(before) = before {
+                src.grants.insert(before);
+            }
+            if let Some(after) = after {
+                src.grants.insert(after);
+            }
 
             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
             let middle_span = middle.span();
 
             dst.grants.insert(match src_opt {
-                Some(ref mut different_src) => {
-                    middle.transfer(dst_grant_base, page_flags(new_flags), &mut different_src.table.utable, Some(&mut dst.table.utable), &mut src_flusher, &mut dst_flusher)?
-                }
-                None => {
-                    middle.transfer(dst_grant_base, page_flags(new_flags), &mut dst.table.utable, None, &mut src_flusher, ())?
-                }
+                Some(ref mut different_src) => middle.transfer(
+                    dst_grant_base,
+                    page_flags(new_flags),
+                    &mut different_src.table.utable,
+                    Some(&mut dst.table.utable),
+                    &mut src_flusher,
+                    &mut dst_flusher,
+                )?,
+                None => middle.transfer(
+                    dst_grant_base,
+                    page_flags(new_flags),
+                    &mut dst.table.utable,
+                    None,
+                    &mut src_flusher,
+                    (),
+                )?,
             });
 
             prev_grant_end = middle_span.base.next_by(middle_span.count);
             let pages_advanced = prev_grant_end.offset_from(remaining_src_span.base);
-            remaining_src_span = PageSpan::new(prev_grant_end, remaining_src_span.count - pages_advanced);
-        };
+            remaining_src_span =
+                PageSpan::new(prev_grant_end, remaining_src_span.count - pages_advanced);
+        }
 
         if prev_grant_end < src_span.base.next_by(new_page_count) {
-            let last_hole_span = PageSpan::new(dst_base.next_by(prev_grant_end.offset_from(src_span.base)), new_page_count - prev_grant_end.offset_from(src_span.base));
-            dst.grants.insert(Grant::zeroed(last_hole_span, page_flags(new_flags), &mut dst.table.utable, &mut dst_flusher, false)?);
+            let last_hole_span = PageSpan::new(
+                dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
+                new_page_count - prev_grant_end.offset_from(src_span.base),
+            );
+            dst.grants.insert(Grant::zeroed(
+                last_hole_span,
+                page_flags(new_flags),
+                &mut dst.table.utable,
+                &mut dst_flusher,
+                false,
+            )?);
         }
 
         Ok(dst_base)
@@ -434,10 +598,17 @@ impl PageSpan {
         Self::validate(address, size).filter(|this| !this.is_empty())
     }
     pub fn validate(address: VirtualAddress, size: usize) -> Option<Self> {
-        if address.data() % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 { return None; }
-        if address.data().saturating_add(size) > crate::USER_END_OFFSET { return None; }
+        if address.data() % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 {
+            return None;
+        }
+        if address.data().saturating_add(size) > crate::USER_END_OFFSET {
+            return None;
+        }
 
-        Some(Self::new(Page::containing_address(address), size / PAGE_SIZE))
+        Some(Self::new(
+            Page::containing_address(address),
+            size / PAGE_SIZE,
+        ))
     }
     pub fn is_empty(&self) -> bool {
         self.count == 0
@@ -465,25 +636,22 @@ impl PageSpan {
     /// Returns the span from the start of self until the start of the specified span.
     pub fn before(self, span: Self) -> Option<Self> {
         assert!(self.base <= span.base);
-        Some(Self::between(
-            self.base,
-            span.base,
-        )).filter(|reg| !reg.is_empty())
+        Some(Self::between(self.base, span.base)).filter(|reg| !reg.is_empty())
     }
 
     /// Returns the span from the end of the given span until the end of self.
     pub fn after(self, span: Self) -> Option<Self> {
         assert!(span.end() <= self.end());
-        Some(Self::between(
-            span.end(),
-            self.end(),
-        )).filter(|reg| !reg.is_empty())
+        Some(Self::between(span.end(), self.end())).filter(|reg| !reg.is_empty())
     }
     /// Returns the span between two pages, `[start, end)`, truncating to zero if end < start.
     pub fn between(start: Page, end: Page) -> Self {
         Self::new(
             start,
-            end.start_address().data().saturating_sub(start.start_address().data()) / PAGE_SIZE,
+            end.start_address()
+                .data()
+                .saturating_sub(start.start_address().data())
+                / PAGE_SIZE,
         )
     }
 }
@@ -495,7 +663,16 @@ impl Default for UserGrants {
 }
 impl Debug for PageSpan {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "[{:p}:{:p}, {} pages]", self.base.start_address().data() as *const u8, self.base.start_address().add(self.count * PAGE_SIZE - 1).data() as *const u8, self.count)
+        write!(
+            f,
+            "[{:p}:{:p}, {} pages]",
+            self.base.start_address().data() as *const u8,
+            self.base
+                .start_address()
+                .add(self.count * PAGE_SIZE - 1)
+                .data() as *const u8,
+            self.count
+        )
     }
 }
 
@@ -503,7 +680,8 @@ impl UserGrants {
     pub fn new() -> Self {
         Self {
             inner: BTreeMap::new(),
-            holes: core::iter::once((VirtualAddress::new(0), crate::USER_END_OFFSET)).collect::<BTreeMap<_, _>>(),
+            holes: core::iter::once((VirtualAddress::new(0), crate::USER_END_OFFSET))
+                .collect::<BTreeMap<_, _>>(),
             funmap: HashMap::new(),
         }
     }
@@ -522,24 +700,29 @@ impl UserGrants {
 
         // If there is a grant that contains the base page, start searching at the base of that
         // grant, rather than the requested base here.
-        let start_span = start.map(|(base, info)| PageSpan::new(base, info.page_count)).unwrap_or(span);
+        let start_span = start
+            .map(|(base, info)| PageSpan::new(base, info.page_count))
+            .unwrap_or(span);
 
-        self
-            .inner
+        self.inner
             .range(start_span.base..)
             .take_while(move |(base, info)| PageSpan::new(**base, info.page_count).intersects(span))
             .map(|(base, info)| (*base, info))
     }
     // TODO: DEDUPLICATE CODE!
-    pub fn conflicts_mut(&mut self, span: PageSpan) -> impl Iterator<Item = (Page, &'_ mut GrantInfo)> + '_ {
+    pub fn conflicts_mut(
+        &mut self,
+        span: PageSpan,
+    ) -> impl Iterator<Item = (Page, &'_ mut GrantInfo)> + '_ {
         let start = self.contains(span.base);
 
         // If there is a grant that contains the base page, start searching at the base of that
         // grant, rather than the requested base here.
-        let start_span = start.map(|(base, info)| PageSpan::new(base, info.page_count)).unwrap_or(span);
+        let start_span = start
+            .map(|(base, info)| PageSpan::new(base, info.page_count))
+            .unwrap_or(span);
 
-        self
-            .inner
+        self.inner
             .range_mut(start_span.base..)
             .take_while(move |(base, info)| PageSpan::new(**base, info.page_count).intersects(span))
             .map(|(base, info)| (*base, info))
@@ -547,7 +730,12 @@ impl UserGrants {
     /// Return a free region with the specified size
     // TODO: Alignment (x86_64: 4 KiB, 2 MiB, or 1 GiB).
     // TODO: Support finding grant close to a requested address?
-    pub fn find_free_near(&self, min: usize, page_count: usize, _near: Option<Page>) -> Option<PageSpan> {
+    pub fn find_free_near(
+        &self,
+        min: usize,
+        page_count: usize,
+        _near: Option<Page>,
+    ) -> Option<PageSpan> {
         // Get first available hole, but do reserve the page starting from zero as most compiled
         // languages cannot handle null pointers safely even if they point to valid memory. If an
         // application absolutely needs to map the 0th page, they will have to do so explicitly via
@@ -555,18 +743,24 @@ impl UserGrants {
         // TODO: Allow explicitly allocating guard pages? Perhaps using mprotect or mmap with
         // PROT_NONE?
 
-        let (hole_start, _hole_size) = self.holes.iter()
+        let (hole_start, _hole_size) = self
+            .holes
+            .iter()
             .skip_while(|(hole_offset, hole_size)| hole_offset.data() + **hole_size <= min)
             .find(|(hole_offset, hole_size)| {
-                let avail_size = if hole_offset.data() <= min && min <= hole_offset.data() + **hole_size {
-                    **hole_size - (min - hole_offset.data())
-                } else {
-                    **hole_size
-                };
+                let avail_size =
+                    if hole_offset.data() <= min && min <= hole_offset.data() + **hole_size {
+                        **hole_size - (min - hole_offset.data())
+                    } else {
+                        **hole_size
+                    };
                 page_count * PAGE_SIZE <= avail_size
             })?;
         // Create new region
-        Some(PageSpan::new(Page::containing_address(VirtualAddress::new(cmp::max(hole_start.data(), min))), page_count))
+        Some(PageSpan::new(
+            Page::containing_address(VirtualAddress::new(cmp::max(hole_start.data(), min))),
+            page_count,
+        ))
     }
     pub fn find_free(&self, min: usize, page_count: usize) -> Option<PageSpan> {
         self.find_free_near(min, page_count, None)
@@ -593,7 +787,8 @@ impl UserGrants {
             }
             if prev_hole_end > end_address.data() {
                 // The grant is splitting this hole in two, so insert the new one at the end.
-                self.holes.insert(end_address, prev_hole_end - end_address.data());
+                self.holes
+                    .insert(end_address, prev_hole_end - end_address.data());
             }
         }
 
@@ -617,7 +812,11 @@ impl UserGrants {
         // There was a range that began exactly prior to the to-be-freed region, so simply
         // increment the size such that it occupies the grant too. If in addition there was a grant
         // directly after the grant, include it too in the size.
-        if let Some((hole_offset, hole_size)) = holes.range_mut(..start_address).next_back().filter(|(offset, size)| offset.data() + **size == start_address.data()) {
+        if let Some((hole_offset, hole_size)) = holes
+            .range_mut(..start_address)
+            .next_back()
+            .filter(|(offset, size)| offset.data() + **size == start_address.data())
+        {
             *hole_size = end_address.data() - hole_offset.data() + exactly_after_size.unwrap_or(0);
         } else {
             // There was no free region directly before the to-be-freed region, however will
@@ -627,16 +826,31 @@ impl UserGrants {
         }
     }
     pub fn insert(&mut self, mut grant: Grant) {
-        assert!(self.conflicts(PageSpan::new(grant.base, grant.info.page_count)).next().is_none());
+        assert!(self
+            .conflicts(PageSpan::new(grant.base, grant.info.page_count))
+            .next()
+            .is_none());
         self.reserve(grant.base, grant.info.page_count);
 
-        let before_region = self.inner
-            .range(..grant.base).next_back()
-            .filter(|(base, info)| base.next_by(info.page_count) == grant.base && info.can_be_merged_if_adjacent(&grant.info)).map(|(base, info)| (*base, info.page_count));
+        let before_region = self
+            .inner
+            .range(..grant.base)
+            .next_back()
+            .filter(|(base, info)| {
+                base.next_by(info.page_count) == grant.base
+                    && info.can_be_merged_if_adjacent(&grant.info)
+            })
+            .map(|(base, info)| (*base, info.page_count));
 
-        let after_region = self.inner
-            .range(grant.span().end()..).next()
-            .filter(|(base, info)| **base == grant.base.next_by(grant.info.page_count) && info.can_be_merged_if_adjacent(&grant.info)).map(|(base, info)| (*base, info.page_count));
+        let after_region = self
+            .inner
+            .range(grant.span().end()..)
+            .next()
+            .filter(|(base, info)| {
+                **base == grant.base.next_by(grant.info.page_count)
+                    && info.can_be_merged_if_adjacent(&grant.info)
+            })
+            .map(|(base, info)| (*base, info.page_count));
 
         if let Some((before_base, before_page_count)) = before_region {
             grant.base = before_base;
@@ -660,9 +874,13 @@ impl UserGrants {
     pub fn iter(&self) -> impl Iterator<Item = (Page, &GrantInfo)> + '_ {
         self.inner.iter().map(|(base, info)| (*base, info))
     }
-    pub fn is_empty(&self) -> bool { self.inner.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
     pub fn into_iter(self) -> impl Iterator<Item = Grant> {
-        self.inner.into_iter().map(|(base, info)| Grant { base, info })
+        self.inner
+            .into_iter()
+            .map(|(base, info)| Grant { base, info })
     }
 }
 
@@ -683,7 +901,10 @@ pub enum Provider {
     /// The pages this grant spans, need not necessarily be initialized right away, and can be
     /// populated either from zeroed frames, the CoW zeroed frame, or from a scheme fmap call, if
     /// mapped with MAP_LAZY. All frames must have an available PageInfo.
-    Allocated { cow_file_ref: Option<GrantFileRef>, phys_contiguous: bool },
+    Allocated {
+        cow_file_ref: Option<GrantFileRef>,
+        phys_contiguous: bool,
+    },
 
     /// The grant is owned, but possibly shared.
     ///
@@ -699,14 +920,21 @@ pub enum Provider {
     PhysBorrowed { base: Frame },
 
     /// The memory is borrowed directly from another address space.
-    External { address_space: Arc<RwLock<AddrSpace>>, src_base: Page, is_pinned_userscheme_borrow: bool },
+    External {
+        address_space: Arc<RwLock<AddrSpace>>,
+        src_base: Page,
+        is_pinned_userscheme_borrow: bool,
+    },
 
     /// The memory is MAP_SHARED borrowed from a scheme.
     ///
     /// Since the address space is not tracked here, all nonpresent pages must be present before
     /// the fmap operation completes, unless MAP_LAZY is specified. They are tracked using
     /// PageInfo, or treated as PhysBorrowed if any frame lacks a PageInfo.
-    FmapBorrowed { file_ref: GrantFileRef, pin_refcount: usize },
+    FmapBorrowed {
+        file_ref: GrantFileRef,
+        pin_refcount: usize,
+    },
 }
 
 #[derive(Debug)]
@@ -725,7 +953,14 @@ impl Grant {
     // TODO: PageCount newtype, to avoid confusion between bytes and pages?
 
     // TODO: is_pinned
-    pub fn allocated_shared_one_page(frame: Frame, page: Page, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, is_pinned: bool) -> Result<Grant> {
+    pub fn allocated_shared_one_page(
+        frame: Frame,
+        page: Page,
+        flags: PageFlags<RmmA>,
+        mapper: &mut PageMapper,
+        mut flusher: impl Flusher<RmmA>,
+        is_pinned: bool,
+    ) -> Result<Grant> {
         let info = get_page_info(frame).expect("needs page info");
 
         // TODO:
@@ -738,10 +973,15 @@ impl Grant {
 
         // Semantically, the page will be shared between the "context struct" and whatever
         // else.
-        info.add_ref(RefKind::Shared).expect("must be possible if previously Zero");
+        info.add_ref(RefKind::Shared)
+            .expect("must be possible if previously Zero");
 
         unsafe {
-            flusher.consume(mapper.map_phys(page.start_address(), frame.start_address(), flags).ok_or(Error::new(ENOMEM))?);
+            flusher.consume(
+                mapper
+                    .map_phys(page.start_address(), frame.start_address(), flags)
+                    .ok_or(Error::new(ENOMEM))?,
+            );
         }
 
         Ok(Grant {
@@ -750,12 +990,20 @@ impl Grant {
                 page_count: 1,
                 flags,
                 mapped: true,
-                provider: Provider::AllocatedShared { is_pinned_userscheme_borrow: is_pinned },
-            }
+                provider: Provider::AllocatedShared {
+                    is_pinned_userscheme_borrow: is_pinned,
+                },
+            },
         })
     }
 
-    pub fn physmap(phys: Frame, span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant> {
+    pub fn physmap(
+        phys: Frame,
+        span: PageSpan,
+        flags: PageFlags<RmmA>,
+        mapper: &mut PageMapper,
+        mut flusher: impl Flusher<RmmA>,
+    ) -> Result<Grant> {
         const MAX_EAGER_PAGES: usize = 4096;
 
         for i in 0..span.count {
@@ -767,7 +1015,11 @@ impl Grant {
 
         for (i, page) in span.pages().enumerate().take(MAX_EAGER_PAGES) {
             unsafe {
-                let Some(result) = mapper.map_phys(page.start_address(), phys.next_by(i).start_address(), flags.write(false)) else {
+                let Some(result) = mapper.map_phys(
+                    page.start_address(),
+                    phys.next_by(i).start_address(),
+                    flags.write(false),
+                ) else {
                     break;
                 };
                 flusher.consume(result);
@@ -784,16 +1036,26 @@ impl Grant {
             },
         })
     }
-    pub fn zeroed_phys_contiguous(span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Grant, Enomem> {
+    pub fn zeroed_phys_contiguous(
+        span: PageSpan,
+        flags: PageFlags<RmmA>,
+        mapper: &mut PageMapper,
+        mut flusher: impl Flusher<RmmA>,
+    ) -> Result<Grant, Enomem> {
         let base = crate::memory::allocate_frames(span.count).ok_or(Enomem)?;
 
         for (i, page) in span.pages().enumerate() {
             let frame = base.next_by(i);
 
-            get_page_info(frame).expect("PageInfo must exist for allocated frame").refcount.store(RefCount::One.to_raw(), Ordering::Relaxed);
+            get_page_info(frame)
+                .expect("PageInfo must exist for allocated frame")
+                .refcount
+                .store(RefCount::One.to_raw(), Ordering::Relaxed);
 
             unsafe {
-                let result = mapper.map_phys(page.start_address(), frame.start_address(), flags).expect("TODO: page table OOM");
+                let result = mapper
+                    .map_phys(page.start_address(), frame.start_address(), flags)
+                    .expect("TODO: page table OOM");
                 flusher.consume(result);
             }
         }
@@ -804,11 +1066,20 @@ impl Grant {
                 page_count: span.count,
                 flags,
                 mapped: true,
-                provider: Provider::Allocated { cow_file_ref: None, phys_contiguous: true },
+                provider: Provider::Allocated {
+                    cow_file_ref: None,
+                    phys_contiguous: true,
+                },
             },
         })
     }
-    pub fn zeroed(span: PageSpan, flags: PageFlags<RmmA>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, shared: bool) -> Result<Grant, Enomem> {
+    pub fn zeroed(
+        span: PageSpan,
+        flags: PageFlags<RmmA>,
+        mapper: &mut PageMapper,
+        mut flusher: impl Flusher<RmmA>,
+        shared: bool,
+    ) -> Result<Grant, Enomem> {
         const MAX_EAGER_PAGES: usize = 16;
 
         let (the_frame, the_frame_info) = the_zeroed_frame();
@@ -819,9 +1090,15 @@ impl Grant {
             // Good thing with lazy page fault handlers, is that if we fail due to ENOMEM here, we
             // can continue and let the process face the OOM killer later.
             unsafe {
-                the_frame_info.add_ref(RefKind::Cow).expect("the static zeroed frame cannot be shared!");
+                the_frame_info
+                    .add_ref(RefKind::Cow)
+                    .expect("the static zeroed frame cannot be shared!");
 
-                let Some(result) = mapper.map_phys(page.start_address(), the_frame.start_address(), flags.write(false)) else {
+                let Some(result) = mapper.map_phys(
+                    page.start_address(),
+                    the_frame.start_address(),
+                    flags.write(false),
+                ) else {
                     break;
                 };
                 flusher.consume(result);
@@ -835,9 +1112,14 @@ impl Grant {
                 flags,
                 mapped: true,
                 provider: if shared {
-                    Provider::AllocatedShared { is_pinned_userscheme_borrow: false }
+                    Provider::AllocatedShared {
+                        is_pinned_userscheme_borrow: false,
+                    }
                 } else {
-                    Provider::Allocated { cow_file_ref: None, phys_contiguous: false }
+                    Provider::Allocated {
+                        cow_file_ref: None,
+                        phys_contiguous: false,
+                    }
                 },
             },
         })
@@ -845,7 +1127,15 @@ impl Grant {
 
     // XXX: borrow_grant is needed because of the borrow checker (iterator invalidation), maybe
     // borrow_grant/borrow can be abstracted somehow?
-    pub fn borrow_grant(src_address_space_lock: Arc<RwLock<AddrSpace>>, src_base: Page, dst_base: Page, src_info: &GrantInfo, _mapper: &mut PageMapper, _dst_flusher: impl Flusher<RmmA>, _eager: bool) -> Result<Grant, Enomem> {
+    pub fn borrow_grant(
+        src_address_space_lock: Arc<RwLock<AddrSpace>>,
+        src_base: Page,
+        dst_base: Page,
+        src_info: &GrantInfo,
+        _mapper: &mut PageMapper,
+        _dst_flusher: impl Flusher<RmmA>,
+        _eager: bool,
+    ) -> Result<Grant, Enomem> {
         Ok(Grant {
             base: dst_base,
             info: GrantInfo {
@@ -856,12 +1146,19 @@ impl Grant {
                     src_base,
                     address_space: src_address_space_lock,
                     is_pinned_userscheme_borrow: false,
-                }
+                },
             },
         })
     }
 
-    pub fn borrow_fmap(span: PageSpan, new_flags: PageFlags<RmmA>, file_ref: GrantFileRef, src: Option<BorrowedFmapSource<'_>>, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> Result<Self> {
+    pub fn borrow_fmap(
+        span: PageSpan,
+        new_flags: PageFlags<RmmA>,
+        file_ref: GrantFileRef,
+        src: Option<BorrowedFmapSource<'_>>,
+        mapper: &mut PageMapper,
+        mut flusher: impl Flusher<RmmA>,
+    ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
             for dst_page in span.pages() {
@@ -874,7 +1171,14 @@ impl Grant {
                             Some((phys, _)) => Frame::containing_address(phys),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
-                                let (frame, _, new_guard) = correct_inner(src.addr_space_lock, guard, src_page, AccessMode::Read, 0).map_err(|_| Error::new(EIO))?;
+                                let (frame, _, new_guard) = correct_inner(
+                                    src.addr_space_lock,
+                                    guard,
+                                    src_page,
+                                    AccessMode::Read,
+                                    0,
+                                )
+                                .map_err(|_| Error::new(EIO))?;
                                 guard = new_guard;
                                 frame
                             }
@@ -904,18 +1208,35 @@ impl Grant {
                     match page_info.add_ref(RefKind::Shared) {
                         Ok(()) => frame,
                         Err(AddRefError::CowToShared) => unsafe {
-                            let new_cow_frame = cow(frame, page_info, RefKind::Shared).map_err(|_| Error::new(ENOMEM))?;
-                            let (_, _, flush) = guard.table.utable.remap_with_full(src_page.start_address(), |_, flags| (new_cow_frame.start_address(), flags)).expect("page did exist");
+                            let new_cow_frame = cow(frame, page_info, RefKind::Shared)
+                                .map_err(|_| Error::new(ENOMEM))?;
+                            let (_, _, flush) = guard
+                                .table
+                                .utable
+                                .remap_with_full(src_page.start_address(), |_, flags| {
+                                    (new_cow_frame.start_address(), flags)
+                                })
+                                .expect("page did exist");
                             src.flusher.consume(flush);
 
                             new_cow_frame
-                        }
+                        },
                         Err(AddRefError::SharedToCow) => unreachable!(),
                     }
-                } else { frame };
+                } else {
+                    frame
+                };
 
                 unsafe {
-                    flusher.consume(mapper.map_phys(dst_page.start_address(), frame.start_address(), new_flags.write(new_flags.has_write() && !is_cow)).unwrap());
+                    flusher.consume(
+                        mapper
+                            .map_phys(
+                                dst_page.start_address(),
+                                frame.start_address(),
+                                new_flags.write(new_flags.has_write() && !is_cow),
+                            )
+                            .unwrap(),
+                    );
                 }
             }
         }
@@ -926,8 +1247,11 @@ impl Grant {
                 page_count: span.count,
                 mapped: true,
                 flags: new_flags,
-                provider: Provider::FmapBorrowed { file_ref, pin_refcount: 0 },
-            }
+                provider: Provider::FmapBorrowed {
+                    file_ref,
+                    pin_refcount: 0,
+                },
+            },
         })
     }
 
@@ -971,7 +1295,11 @@ impl Grant {
                 return Err(Error::new(EPERM));
             }
 
-            if let Provider::FmapBorrowed { ref mut pin_refcount, .. } = src_grant.provider {
+            if let Provider::FmapBorrowed {
+                ref mut pin_refcount,
+                ..
+            } = src_grant.provider
+            {
                 *pin_refcount += 1;
             }
         }
@@ -986,8 +1314,16 @@ impl Grant {
             return Err(Error::new(EINVAL));
         }
         if eager {
-            for (i, page) in PageSpan::new(src_base, page_count).pages().enumerate().take(MAX_EAGER_PAGES) {
-                let Some((phys, _)) = src_address_space.table.utable.translate(page.start_address()) else {
+            for (i, page) in PageSpan::new(src_base, page_count)
+                .pages()
+                .enumerate()
+                .take(MAX_EAGER_PAGES)
+            {
+                let Some((phys, _)) = src_address_space
+                    .table
+                    .utable
+                    .translate(page.start_address())
+                else {
                     continue;
                 };
 
@@ -1003,12 +1339,17 @@ impl Grant {
                 };
 
                 unsafe {
-                    let flush = dst_mapper.map_phys(dst_base.next_by(i).start_address(), phys, flags.write(flags.has_write() && writable)).ok_or(Error::new(ENOMEM))?;
+                    let flush = dst_mapper
+                        .map_phys(
+                            dst_base.next_by(i).start_address(),
+                            phys,
+                            flags.write(flags.has_write() && writable),
+                        )
+                        .ok_or(Error::new(ENOMEM))?;
                     dst_flusher.consume(flush);
                 }
             }
         }
-
 
         Ok(Grant {
             base: dst_base,
@@ -1016,7 +1357,11 @@ impl Grant {
                 page_count,
                 flags,
                 mapped: true,
-                provider: Provider::External { address_space: src_address_space_lock, src_base, is_pinned_userscheme_borrow }
+                provider: Provider::External {
+                    address_space: src_address_space_lock,
+                    src_base,
+                    is_pinned_userscheme_borrow,
+                },
             },
         })
     }
@@ -1043,7 +1388,9 @@ impl Grant {
 
             let src_frame = match rk {
                 RefKind::Cow => {
-                    let Some((_, phys, flush)) = (unsafe { src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false)) }) else {
+                    let Some((_, phys, flush)) = (unsafe {
+                        src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false))
+                    }) else {
                         // Page is not mapped, let the page fault handler take care of that (initializing
                         // it to zero).
                         //
@@ -1061,7 +1408,15 @@ impl Grant {
                     } else {
                         // TODO: Omit the unnecessary subsequent add_ref call.
                         let new_frame = init_frame(RefCount::One).expect("TODO: handle OOM");
-                        let src_flush = unsafe { src_mapper.map_phys(src_page.start_address(), new_frame.start_address(), flags).expect("TODO: handle OOM") };
+                        let src_flush = unsafe {
+                            src_mapper
+                                .map_phys(
+                                    src_page.start_address(),
+                                    new_frame.start_address(),
+                                    flags,
+                                )
+                                .expect("TODO: handle OOM")
+                        };
                         src_flusher.consume(src_flush);
 
                         new_frame
@@ -1070,7 +1425,8 @@ impl Grant {
             };
 
             let src_frame = {
-                let src_page_info = get_page_info(src_frame).expect("allocated page was not present in the global page array");
+                let src_page_info = get_page_info(src_frame)
+                    .expect("allocated page was not present in the global page array");
 
                 match src_page_info.add_ref(rk) {
                     Ok(()) => src_frame,
@@ -1079,20 +1435,28 @@ impl Grant {
 
                         // TODO: Flusher
                         unsafe {
-                            src_mapper.remap_with_full(src_page.start_address(), |_, f| (new_frame.start_address(), f));
+                            src_mapper.remap_with_full(src_page.start_address(), |_, f| {
+                                (new_frame.start_address(), f)
+                            });
                         }
 
                         new_frame
-                    },
+                    }
                     // Cannot be shared and CoW simultaneously.
                     Err(AddRefError::SharedToCow) => {
                         // TODO: Copy in place, or use a zeroed page?
                         cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?
-                    },
+                    }
                 }
             };
 
-            let Some(map_result) = (unsafe { dst_mapper.map_phys(dst_page, src_frame.start_address(), flags.write(flags.has_write() && allows_writable)) }) else {
+            let Some(map_result) = (unsafe {
+                dst_mapper.map_phys(
+                    dst_page,
+                    src_frame.start_address(),
+                    flags.write(flags.has_write() && allows_writable),
+                )
+            }) else {
                 break;
             };
 
@@ -1106,14 +1470,27 @@ impl Grant {
                 flags,
                 mapped: true,
                 provider: match mode {
-                    CopyMappingsMode::Owned { cow_file_ref } => Provider::Allocated { cow_file_ref, phys_contiguous: false },
-                    CopyMappingsMode::Borrowed => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
+                    CopyMappingsMode::Owned { cow_file_ref } => Provider::Allocated {
+                        cow_file_ref,
+                        phys_contiguous: false,
+                    },
+                    CopyMappingsMode::Borrowed => Provider::AllocatedShared {
+                        is_pinned_userscheme_borrow: false,
+                    },
                 },
-            }
+            },
         })
     }
     /// Move a grant between two address spaces.
-    pub fn transfer(mut self, dst_base: Page, flags: PageFlags<RmmA>, src_mapper: &mut PageMapper, mut dst_mapper: Option<&mut PageMapper>, mut src_flusher: impl Flusher<RmmA>, mut dst_flusher: impl Flusher<RmmA>) -> Result<Grant> {
+    pub fn transfer(
+        mut self,
+        dst_base: Page,
+        flags: PageFlags<RmmA>,
+        src_mapper: &mut PageMapper,
+        mut dst_mapper: Option<&mut PageMapper>,
+        mut src_flusher: impl Flusher<RmmA>,
+        mut dst_flusher: impl Flusher<RmmA>,
+    ) -> Result<Grant> {
         assert!(!self.info.is_pinned());
 
         for src_page in self.span().pages() {
@@ -1122,7 +1499,9 @@ impl Grant {
             let unmap_parents = true;
 
             // TODO: Validate flags?
-            let Some((phys, _flags, flush)) = (unsafe { src_mapper.unmap_phys(src_page.start_address(), unmap_parents) }) else {
+            let Some((phys, _flags, flush)) =
+                (unsafe { src_mapper.unmap_phys(src_page.start_address(), unmap_parents) })
+            else {
                 continue;
             };
             src_flusher.consume(flush);
@@ -1130,7 +1509,11 @@ impl Grant {
             let dst_mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
 
             // TODO: Preallocate to handle OOM?
-            let flush = unsafe { dst_mapper.map_phys(dst_page.start_address(), phys, flags).expect("TODO: OOM") };
+            let flush = unsafe {
+                dst_mapper
+                    .map_phys(dst_page.start_address(), phys, flags)
+                    .expect("TODO: OOM")
+            };
             dst_flusher.consume(flush);
         }
 
@@ -1138,7 +1521,12 @@ impl Grant {
         Ok(self)
     }
 
-    pub fn remap(&mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>, flags: PageFlags<RmmA>) {
+    pub fn remap(
+        &mut self,
+        mapper: &mut PageMapper,
+        mut flusher: impl Flusher<RmmA>,
+        flags: PageFlags<RmmA>,
+    ) {
         assert!(self.info.mapped);
 
         for page in self.span().pages() {
@@ -1155,22 +1543,47 @@ impl Grant {
         self.info.flags = flags;
     }
     #[must_use = "will not unmap itself"]
-    pub fn unmap(mut self, mapper: &mut PageMapper, mut flusher: impl Flusher<RmmA>) -> UnmapResult {
+    pub fn unmap(
+        mut self,
+        mapper: &mut PageMapper,
+        mut flusher: impl Flusher<RmmA>,
+    ) -> UnmapResult {
         assert!(self.info.mapped);
         assert!(!self.info.is_pinned());
 
-        if let Provider::External { ref address_space, src_base, .. } = self.info.provider {
+        if let Provider::External {
+            ref address_space,
+            src_base,
+            ..
+        } = self.info.provider
+        {
             let mut guard = address_space.write();
 
-            for (_, grant) in guard.grants.conflicts_mut(PageSpan::new(src_base, self.info.page_count)) {
+            for (_, grant) in guard
+                .grants
+                .conflicts_mut(PageSpan::new(src_base, self.info.page_count))
+            {
                 match grant.provider {
-                    Provider::FmapBorrowed { ref mut pin_refcount, .. } => *pin_refcount = pin_refcount.checked_sub(1).expect("fmap pinning code is wrong"),
+                    Provider::FmapBorrowed {
+                        ref mut pin_refcount,
+                        ..
+                    } => {
+                        *pin_refcount = pin_refcount
+                            .checked_sub(1)
+                            .expect("fmap pinning code is wrong")
+                    }
                     _ => continue,
                 }
             }
         }
 
-        let is_phys_contiguous = matches!(self.info.provider, Provider::Allocated { phys_contiguous: true, .. });
+        let is_phys_contiguous = matches!(
+            self.info.provider,
+            Provider::Allocated {
+                phys_contiguous: true,
+                ..
+            }
+        );
 
         let (require_info, is_fmap_shared) = match self.info.provider {
             Provider::Allocated { .. } => (Some(true), Some(false)),
@@ -1185,26 +1598,41 @@ impl Grant {
             let base = Frame::containing_address(phys);
 
             for i in 0..self.info.page_count {
-                assert_eq!(get_page_info(base.next_by(i)).unwrap().refcount.swap(0, Ordering::Relaxed), RefCount::One.to_raw());
+                assert_eq!(
+                    get_page_info(base.next_by(i))
+                        .unwrap()
+                        .refcount
+                        .swap(0, Ordering::Relaxed),
+                    RefCount::One.to_raw()
+                );
             }
 
             deallocate_frames(Frame::containing_address(phys), self.info.page_count);
         } else {
             for page in self.span().pages() {
                 // Lazy mappings do not need to be unmapped.
-                let Some((phys, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address(), true) }) else {
+                let Some((phys, _, flush)) =
+                    (unsafe { mapper.unmap_phys(page.start_address(), true) })
+                else {
                     continue;
                 };
                 let frame = Frame::containing_address(phys);
                 if let Some(info) = get_page_info(frame) {
-                    assert_ne!(require_info, Some(false), "PhysBorrowed frame was allocator-owned");
+                    assert_ne!(
+                        require_info,
+                        Some(false),
+                        "PhysBorrowed frame was allocator-owned"
+                    );
                     if info.remove_ref() == RefCount::Zero {
                         deallocate_frames(frame, 1);
                     };
                 } else {
-                    assert_ne!(require_info, Some(true), "allocated frame did not have an associated PageInfo");
+                    assert_ne!(
+                        require_info,
+                        Some(true),
+                        "allocated frame did not have an associated PageInfo"
+                    );
                 }
-
 
                 flusher.consume(flush);
             }
@@ -1213,10 +1641,18 @@ impl Grant {
         self.info.mapped = false;
 
         // Dummy value, won't be read.
-        let provider = core::mem::replace(&mut self.info.provider, Provider::AllocatedShared { is_pinned_userscheme_borrow: false });
+        let provider = core::mem::replace(
+            &mut self.info.provider,
+            Provider::AllocatedShared {
+                is_pinned_userscheme_borrow: false,
+            },
+        );
 
         let mut munmap_flags = MunmapFlags::empty();
-        munmap_flags.set(MunmapFlags::NEEDS_SYNC, is_fmap_shared.unwrap_or(false) && self.info.flags.has_write());
+        munmap_flags.set(
+            MunmapFlags::NEEDS_SYNC,
+            is_fmap_shared.unwrap_or(false) && self.info.flags.has_write(),
+        );
 
         UnmapResult {
             size: self.info.page_count * PAGE_SIZE,
@@ -1257,16 +1693,32 @@ impl Grant {
                 mapped: self.info.mapped,
                 page_count: span.count,
                 provider: match self.info.provider {
-                    Provider::External { ref address_space, src_base, .. } => Provider::External {
+                    Provider::External {
+                        ref address_space,
+                        src_base,
+                        ..
+                    } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
                         is_pinned_userscheme_borrow: false,
                     },
-                    Provider::Allocated { ref cow_file_ref, .. } => Provider::Allocated { cow_file_ref: cow_file_ref.clone(), phys_contiguous: false },
-                    Provider::AllocatedShared { .. }  => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
-                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.clone() },
-                    Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed { file_ref: file_ref.clone(), pin_refcount: 0 },
-                }
+                    Provider::Allocated {
+                        ref cow_file_ref, ..
+                    } => Provider::Allocated {
+                        cow_file_ref: cow_file_ref.clone(),
+                        phys_contiguous: false,
+                    },
+                    Provider::AllocatedShared { .. } => Provider::AllocatedShared {
+                        is_pinned_userscheme_borrow: false,
+                    },
+                    Provider::PhysBorrowed { base } => {
+                        Provider::PhysBorrowed { base: base.clone() }
+                    }
+                    Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed {
+                        file_ref: file_ref.clone(),
+                        pin_refcount: 0,
+                    },
+                },
             },
         });
 
@@ -1274,10 +1726,19 @@ impl Grant {
 
         match self.info.provider {
             Provider::PhysBorrowed { ref mut base } => *base = base.next_by(middle_page_offset),
-            Provider::FmapBorrowed { ref mut file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref mut file_ref), .. } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
-            Provider::Allocated { cow_file_ref: None, .. } | Provider::AllocatedShared { .. } | Provider::External { .. } => (),
+            Provider::FmapBorrowed {
+                ref mut file_ref, ..
+            }
+            | Provider::Allocated {
+                cow_file_ref: Some(ref mut file_ref),
+                ..
+            } => file_ref.base_offset += middle_page_offset * PAGE_SIZE,
+            Provider::Allocated {
+                cow_file_ref: None, ..
+            }
+            | Provider::AllocatedShared { .. }
+            | Provider::External { .. } => (),
         }
-
 
         let after_grant = after_span.map(|span| Grant {
             base: span.base,
@@ -1286,19 +1747,38 @@ impl Grant {
                 mapped: self.info.mapped,
                 page_count: span.count,
                 provider: match self.info.provider {
-                    Provider::Allocated { cow_file_ref: None, .. } => Provider::Allocated { cow_file_ref: None, phys_contiguous: false },
-                    Provider::AllocatedShared { .. } => Provider::AllocatedShared { is_pinned_userscheme_borrow: false },
-                    Provider::Allocated { cow_file_ref: Some(ref file_ref), .. } => Provider::Allocated { cow_file_ref: Some(GrantFileRef {
-                        base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
-                        description: Arc::clone(&file_ref.description),
-                    }), phys_contiguous: false, },
-                    Provider::External { ref address_space, src_base, .. } => Provider::External {
+                    Provider::Allocated {
+                        cow_file_ref: None, ..
+                    } => Provider::Allocated {
+                        cow_file_ref: None,
+                        phys_contiguous: false,
+                    },
+                    Provider::AllocatedShared { .. } => Provider::AllocatedShared {
+                        is_pinned_userscheme_borrow: false,
+                    },
+                    Provider::Allocated {
+                        cow_file_ref: Some(ref file_ref),
+                        ..
+                    } => Provider::Allocated {
+                        cow_file_ref: Some(GrantFileRef {
+                            base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
+                            description: Arc::clone(&file_ref.description),
+                        }),
+                        phys_contiguous: false,
+                    },
+                    Provider::External {
+                        ref address_space,
+                        src_base,
+                        ..
+                    } => Provider::External {
                         address_space: Arc::clone(address_space),
                         src_base,
                         is_pinned_userscheme_borrow: false,
                     },
 
-                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base: base.next_by(this_span.count) },
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed {
+                        base: base.next_by(this_span.count),
+                    },
                     Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed {
                         file_ref: GrantFileRef {
                             base_offset: file_ref.base_offset + this_span.count * PAGE_SIZE,
@@ -1306,7 +1786,7 @@ impl Grant {
                         },
                         pin_refcount: 0,
                     },
-                }
+                },
             },
         });
 
@@ -1318,17 +1798,40 @@ impl Grant {
 }
 impl GrantInfo {
     pub fn is_pinned(&self) -> bool {
-        matches!(self.provider,
-            Provider::External { is_pinned_userscheme_borrow: true, .. }
-                | Provider::AllocatedShared { is_pinned_userscheme_borrow: true, .. }
-                | Provider::FmapBorrowed { pin_refcount: 1.., .. }
+        matches!(
+            self.provider,
+            Provider::External {
+                is_pinned_userscheme_borrow: true,
+                ..
+            } | Provider::AllocatedShared {
+                is_pinned_userscheme_borrow: true,
+                ..
+            } | Provider::FmapBorrowed {
+                pin_refcount: 1..,
+                ..
+            }
         )
     }
     pub fn can_extract(&self, unpin: bool) -> bool {
-        !(self.is_pinned() && !unpin) | matches!(self.provider, Provider::Allocated { phys_contiguous: true, .. })
+        !(self.is_pinned() && !unpin)
+            | matches!(
+                self.provider,
+                Provider::Allocated {
+                    phys_contiguous: true,
+                    ..
+                }
+            )
     }
     pub fn unpin(&mut self) {
-        if let Provider::External { ref mut is_pinned_userscheme_borrow, .. } | Provider::AllocatedShared { ref mut is_pinned_userscheme_borrow, .. } = self.provider {
+        if let Provider::External {
+            ref mut is_pinned_userscheme_borrow,
+            ..
+        }
+        | Provider::AllocatedShared {
+            ref mut is_pinned_userscheme_borrow,
+            ..
+        } = self.provider
+        {
             *is_pinned_userscheme_borrow = false;
         }
     }
@@ -1341,7 +1844,8 @@ impl GrantInfo {
     }
     pub fn can_have_flags(&self, flags: MapFlags) -> bool {
         // TODO: read (some architectures support execute-only pages)
-        let is_downgrade = (self.flags.has_write() || !flags.contains(MapFlags::PROT_WRITE)) && (self.flags.has_execute() || !flags.contains(MapFlags::PROT_EXEC));
+        let is_downgrade = (self.flags.has_write() || !flags.contains(MapFlags::PROT_WRITE))
+            && (self.flags.has_execute() || !flags.contains(MapFlags::PROT_EXEC));
 
         match self.provider {
             Provider::Allocated { .. } => true,
@@ -1355,10 +1859,18 @@ impl GrantInfo {
         }
 
         match (&self.provider, &with.provider) {
-            (Provider::Allocated { cow_file_ref: None, phys_contiguous: false }, Provider::Allocated { cow_file_ref: None, phys_contiguous: false }) => true,
+            (
+                Provider::Allocated {
+                    cow_file_ref: None,
+                    phys_contiguous: false,
+                },
+                Provider::Allocated {
+                    cow_file_ref: None,
+                    phys_contiguous: false,
+                },
+            ) => true,
             //(Provider::PhysBorrowed { base: ref lhs }, Provider::PhysBorrowed { base: ref rhs }) => lhs.next_by(self.page_count) == rhs.clone(),
             //(Provider::External { address_space: ref lhs_space, src_base: ref lhs_base, cow: lhs_cow, .. }, Provider::External { address_space: ref rhs_space, src_base: ref rhs_base, cow: rhs_cow, .. }) => Arc::ptr_eq(lhs_space, rhs_space) && lhs_cow == rhs_cow && lhs_base.next_by(self.page_count) == rhs_base.clone(),
-
             _ => false,
         }
     }
@@ -1373,16 +1885,24 @@ impl GrantInfo {
         // TODO: Set GRANT_LAZY
 
         match self.provider {
-            Provider::External { is_pinned_userscheme_borrow, .. } => {
+            Provider::External {
+                is_pinned_userscheme_borrow,
+                ..
+            } => {
                 flags.set(GrantFlags::GRANT_PINNED, is_pinned_userscheme_borrow);
                 flags |= GrantFlags::GRANT_SHARED;
             }
-            Provider::Allocated { ref cow_file_ref, phys_contiguous } => {
+            Provider::Allocated {
+                ref cow_file_ref,
+                phys_contiguous,
+            } => {
                 // !GRANT_SHARED is equivalent to "GRANT_PRIVATE"
                 flags.set(GrantFlags::GRANT_SCHEME, cow_file_ref.is_some());
                 flags.set(GrantFlags::GRANT_PHYS_CONTIGUOUS, phys_contiguous);
             }
-            Provider::AllocatedShared { is_pinned_userscheme_borrow } => {
+            Provider::AllocatedShared {
+                is_pinned_userscheme_borrow,
+            } => {
                 flags |= GrantFlags::GRANT_SHARED;
                 flags.set(GrantFlags::GRANT_PINNED, is_pinned_userscheme_borrow);
             }
@@ -1397,7 +1917,12 @@ impl GrantInfo {
         flags
     }
     pub fn file_ref(&self) -> Option<&GrantFileRef> {
-        if let Provider::FmapBorrowed { ref file_ref, .. } | Provider::Allocated { cow_file_ref: Some(ref file_ref), .. } = self.provider {
+        if let Provider::FmapBorrowed { ref file_ref, .. }
+        | Provider::Allocated {
+            cow_file_ref: Some(ref file_ref),
+            ..
+        } = self.provider
+        {
             Some(file_ref)
         } else {
             None
@@ -1409,7 +1934,11 @@ impl Drop for GrantInfo {
     #[track_caller]
     fn drop(&mut self) {
         // XXX: This will not show the address...
-        assert!(!self.mapped, "Grant dropped while still mapped: {:#x?}", self);
+        assert!(
+            !self.mapped,
+            "Grant dropped while still mapped: {:#x?}",
+            self
+        );
     }
 }
 
@@ -1458,11 +1987,12 @@ impl Drop for Table {
 /// Allocates a new empty utable
 #[cfg(target_arch = "aarch64")]
 pub fn setup_new_utable() -> Result<Table> {
-    let utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let utable = unsafe {
+        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
+            .ok_or(Error::new(ENOMEM))?
+    };
 
-    Ok(Table {
-        utable,
-    })
+    Ok(Table { utable })
 }
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86)
@@ -1470,13 +2000,18 @@ pub fn setup_new_utable() -> Result<Table> {
 pub fn setup_new_utable() -> Result<Table> {
     use crate::paging::KernelMapper;
 
-    let utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let utable = unsafe {
+        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
+            .ok_or(Error::new(ENOMEM))?
+    };
 
     {
         let active_ktable = KernelMapper::lock();
 
         let copy_mapping = |p4_no| unsafe {
-            let entry = active_ktable.table().entry(p4_no)
+            let entry = active_ktable
+                .table()
+                .entry(p4_no)
                 .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
 
             utable.table().set_entry(p4_no, entry)
@@ -1488,9 +2023,7 @@ pub fn setup_new_utable() -> Result<Table> {
         }
     }
 
-    Ok(Table {
-        utable,
-    })
+    Ok(Table { utable })
 }
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
@@ -1498,13 +2031,18 @@ pub fn setup_new_utable() -> Result<Table> {
 pub fn setup_new_utable() -> Result<Table> {
     use crate::paging::KernelMapper;
 
-    let utable = unsafe { PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR).ok_or(Error::new(ENOMEM))? };
+    let utable = unsafe {
+        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
+            .ok_or(Error::new(ENOMEM))?
+    };
 
     {
         let active_ktable = KernelMapper::lock();
 
         let copy_mapping = |p4_no| unsafe {
-            let entry = active_ktable.table().entry(p4_no)
+            let entry = active_ktable
+                .table()
+                .entry(p4_no)
                 .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
 
             utable.table().set_entry(p4_no, entry)
@@ -1523,9 +2061,7 @@ pub fn setup_new_utable() -> Result<Table> {
         copy_mapping(crate::PHYS_PML4);
     }
 
-    Ok(Table {
-        utable,
-    })
+    Ok(Table { utable })
 }
 #[derive(Clone, Copy, PartialEq)]
 pub enum AccessMode {
@@ -1561,7 +2097,9 @@ fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Resu
         // This reference, that is being copied on write, was the only reference to old_frame, so
         // no copy is necessary.
         if initial_ref_kind == RefKind::Shared {
-            old_info.refcount.store(initial_rc.to_raw(), Ordering::Relaxed);
+            old_info
+                .refcount
+                .store(initial_rc.to_raw(), Ordering::Relaxed);
         }
         return Ok(old_frame);
     }
@@ -1569,7 +2107,9 @@ fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Resu
     let new_frame = init_frame(initial_rc)?;
 
     if old_frame != the_zeroed_frame().0 {
-        unsafe { copy_frame_to_frame_directly(new_frame, old_frame); }
+        unsafe {
+            copy_frame_to_frame_directly(new_frame, old_frame);
+        }
     }
 
     if old_info.remove_ref() == RefCount::Zero {
@@ -1579,11 +2119,19 @@ fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Resu
     Ok(new_frame)
 }
 
-fn map_zeroed(mapper: &mut PageMapper, page: Page, page_flags: PageFlags<RmmA>, _writable: bool) -> Result<Frame, PfError> {
+fn map_zeroed(
+    mapper: &mut PageMapper,
+    page: Page,
+    page_flags: PageFlags<RmmA>,
+    _writable: bool,
+) -> Result<Frame, PfError> {
     let new_frame = init_frame(RefCount::One)?;
 
     unsafe {
-        mapper.map_phys(page.start_address(), new_frame.start_address(), page_flags).ok_or(PfError::Oom)?.ignore();
+        mapper
+            .map_phys(page.start_address(), new_frame.start_address(), page_flags)
+            .ok_or(PfError::Oom)?
+            .ignore();
     }
 
     Ok(new_frame)
@@ -1616,7 +2164,13 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
 
     Ok(())
 }
-fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space_guard: RwLockWriteGuard<'l, AddrSpace>, faulting_page: Page, access: AccessMode, recursion_level: u32) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
+fn correct_inner<'l>(
+    addr_space_lock: &'l Arc<RwLock<AddrSpace>>,
+    mut addr_space_guard: RwLockWriteGuard<'l, AddrSpace>,
+    faulting_page: Page,
+    access: AccessMode,
+    recursion_level: u32,
+) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
     let mut addr_space = &mut *addr_space_guard;
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
@@ -1646,7 +2200,9 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
     // By now, the memory at the faulting page is actually valid, but simply not yet mapped, either
     // at all, or with the required flags.
 
-    let faulting_frame_opt = addr_space.table.utable
+    let faulting_frame_opt = addr_space
+        .table
+        .utable
         .translate(faulting_page.start_address())
         .map(|(phys, _page_flags)| Frame::containing_address(phys));
     let faulting_pageinfo_opt = faulting_frame_opt.map(|frame| (frame, get_page_info(frame)));
@@ -1661,7 +2217,9 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
     let mut allow_writable = true;
 
     let frame = match grant_info.provider {
-        Provider::Allocated { .. } | Provider::AllocatedShared { .. } if access == AccessMode::Write => {
+        Provider::Allocated { .. } | Provider::AllocatedShared { .. }
+            if access == AccessMode::Write =>
+        {
             match faulting_pageinfo_opt {
                 Some((_, None)) => unreachable!("allocated page needs frame to be valid"),
                 Some((frame, Some(info))) => {
@@ -1670,8 +2228,13 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                     } else {
                         cow(frame, info, RefKind::Cow)?
                     }
-                },
-                _ => map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, true)?,
+                }
+                _ => map_zeroed(
+                    &mut addr_space.table.utable,
+                    faulting_page,
+                    grant_flags,
+                    true,
+                )?,
             }
         }
 
@@ -1692,14 +2255,21 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
 
                 None => {
                     // TODO: the zeroed page first, readonly?
-                    map_zeroed(&mut addr_space.table.utable, faulting_page, grant_flags, false)?
+                    map_zeroed(
+                        &mut addr_space.table.utable,
+                        faulting_page,
+                        grant_flags,
+                        false,
+                    )?
                 }
             }
         }
-        Provider::PhysBorrowed { base } => {
-            base.next_by(pages_from_grant_start)
-        }
-        Provider::External { address_space: ref foreign_address_space, src_base, .. } => {
+        Provider::PhysBorrowed { base } => base.next_by(pages_from_grant_start),
+        Provider::External {
+            address_space: ref foreign_address_space,
+            src_base,
+            ..
+        } => {
             let foreign_address_space = Arc::clone(foreign_address_space);
 
             if Arc::ptr_eq(addr_space_lock, &foreign_address_space) {
@@ -1710,14 +2280,19 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
             let src_page = src_base.next_by(pages_from_grant_start);
 
             if let Some(_) = guard.grants.contains(src_page) {
-                let src_frame = if let Some((phys, _)) = guard.table.utable.translate(src_page.start_address()) {
+                let src_frame = if let Some((phys, _)) =
+                    guard.table.utable.translate(src_page.start_address())
+                {
                     Frame::containing_address(phys)
                 } else {
                     // Grant was valid (TODO check), but we need to correct the underlying page.
                     // TODO: Access mode
 
                     // TODO: Reasonable maximum?
-                    let new_recursion_level = recursion_level.checked_add(1).filter(|new_lvl| *new_lvl < 16).ok_or(PfError::RecursionLimitExceeded)?;
+                    let new_recursion_level = recursion_level
+                        .checked_add(1)
+                        .filter(|new_lvl| *new_lvl < 16)
+                        .ok_or(PfError::RecursionLimitExceeded)?;
 
                     drop(guard);
                     drop(addr_space_guard);
@@ -1725,7 +2300,13 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                     let ext_addrspace = &foreign_address_space;
                     let (frame, _, _) = {
                         let g = ext_addrspace.write();
-                        correct_inner(ext_addrspace, g, src_page, AccessMode::Read, new_recursion_level)?
+                        correct_inner(
+                            ext_addrspace,
+                            g,
+                            src_page,
+                            AccessMode::Read,
+                            new_recursion_level,
+                        )?
                     };
 
                     addr_space_guard = addr_space_lock.write();
@@ -1746,7 +2327,12 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
 
                         // TODO: flusher
                         unsafe {
-                            guard.table.utable.remap_with_full(src_page.start_address(), |_, f| (new_frame.start_address(), f));
+                            guard
+                                .table
+                                .utable
+                                .remap_with_full(src_page.start_address(), |_, f| {
+                                    (new_frame.start_address(), f)
+                                });
                         }
 
                         new_frame
@@ -1762,11 +2348,15 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
 
                 // TODO: Should this be called?
                 log::warn!("Mapped zero page since grant didn't exist");
-                map_zeroed(&mut guard.table.utable, src_page, grant_flags, access == AccessMode::Write)?
+                map_zeroed(
+                    &mut guard.table.utable,
+                    src_page,
+                    grant_flags,
+                    access == AccessMode::Write,
+                )?
             }
         }
         // TODO: NonfatalInternalError if !MAP_LAZY and this page fault occurs.
-
         Provider::FmapBorrowed { ref file_ref, .. } => {
             let file_ref = file_ref.clone();
             let flags = map_flags(grant_info.flags());
@@ -1776,7 +2366,8 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                 ref desc => (desc.scheme, desc.number),
             };
             let user_inner = scheme::schemes()
-                .get(scheme_id).and_then(|s| {
+                .get(scheme_id)
+                .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
                         user.inner.upgrade()
                     } else {
@@ -1786,14 +2377,24 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
                 .ok_or(PfError::Segv)?;
 
             let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
-            user_inner.request_fmap(scheme_number, offset, 1, flags).unwrap();
+            user_inner
+                .request_fmap(scheme_number, offset, 1, flags)
+                .unwrap();
 
             let context_lock = super::current().map_err(|_| PfError::NonfatalInternalError)?;
-            context_lock.write().hard_block(HardBlockedReason::AwaitingMmap { file_ref });
+            context_lock
+                .write()
+                .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
-            unsafe { super::switch(); }
+            unsafe {
+                super::switch();
+            }
 
-            let frame = context_lock.write().fmap_ret.take().ok_or(PfError::NonfatalInternalError)?;
+            let frame = context_lock
+                .write()
+                .fmap_ret
+                .take()
+                .ok_or(PfError::NonfatalInternalError)?;
 
             addr_space_guard = addr_space_lock.write();
             addr_space = &mut *addr_space_guard;
@@ -1805,7 +2406,13 @@ fn correct_inner<'l>(addr_space_lock: &'l Arc<RwLock<AddrSpace>>, mut addr_space
     };
 
     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
-    let Some(flush) = (unsafe { addr_space.table.utable.map_phys(faulting_page.start_address(), frame.start_address(), new_flags) }) else {
+    let Some(flush) = (unsafe {
+        addr_space.table.utable.map_phys(
+            faulting_page.start_address(),
+            frame.start_address(),
+            new_flags,
+        )
+    }) else {
         // TODO
         return Err(PfError::Oom);
     };

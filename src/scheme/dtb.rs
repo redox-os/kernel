@@ -1,21 +1,19 @@
 use core::sync::atomic::{self, AtomicUsize};
 
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
+use alloc::{boxed::Box, collections::BTreeMap};
 use spin::{Once, RwLock};
 
-use crate::dtb::DTB_BINARY;
-use crate::scheme::SchemeId;
-use crate::syscall::flag::{
-    MODE_FILE,
-    O_STAT,
-    SEEK_CUR, SEEK_END, SEEK_SET,
+use super::{CallerCtx, KernelScheme, OpenResult};
+use crate::{
+    dtb::DTB_BINARY,
+    scheme::SchemeId,
+    syscall::{
+        data::Stat,
+        error::*,
+        flag::{MODE_FILE, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET},
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
 };
-use crate::syscall::data::Stat;
-use crate::syscall::error::*;
-use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
-use super::{KernelScheme, OpenResult, CallerCtx};
-
 
 pub struct DtbScheme;
 
@@ -43,7 +41,7 @@ impl DtbScheme {
 
             let dtb = match DTB_BINARY.get() {
                 Some(dtb) => dtb.as_slice(),
-                None => &[]
+                None => &[],
             };
 
             Box::from(dtb)
@@ -56,9 +54,7 @@ impl DtbScheme {
 }
 
 impl KernelScheme for DtbScheme {
-
     fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
-
         let path = path.trim_matches('/');
 
         if path.is_empty() {
@@ -66,12 +62,15 @@ impl KernelScheme for DtbScheme {
 
             let mut handles_guard = HANDLES.write();
 
-            let _ = handles_guard.insert(id, Handle {
-                offset: 0,
-                kind: HandleKind::RawData,
-                stat: _flags & O_STAT == O_STAT,
-            });
-            return Ok(OpenResult::SchemeLocal(id))
+            let _ = handles_guard.insert(
+                id,
+                Handle {
+                    offset: 0,
+                    kind: HandleKind::RawData,
+                    stat: _flags & O_STAT == O_STAT,
+                },
+            );
+            return Ok(OpenResult::SchemeLocal(id));
         }
 
         Err(Error::new(ENOENT))
@@ -91,15 +90,24 @@ impl KernelScheme for DtbScheme {
 
         let new_offset = match whence {
             SEEK_SET => pos as usize,
-            SEEK_CUR => if pos < 0 {
-                handle.offset.checked_sub((-pos) as usize).ok_or(Error::new(EINVAL))?
-            } else {
-                handle.offset.saturating_add(pos as usize)
+            SEEK_CUR => {
+                if pos < 0 {
+                    handle
+                        .offset
+                        .checked_sub((-pos) as usize)
+                        .ok_or(Error::new(EINVAL))?
+                } else {
+                    handle.offset.saturating_add(pos as usize)
+                }
             }
-            SEEK_END => if pos < 0 {
-                file_len.checked_sub((-pos) as usize).ok_or(Error::new(EINVAL))?
-            } else {
-                file_len
+            SEEK_END => {
+                if pos < 0 {
+                    file_len
+                        .checked_sub((-pos) as usize)
+                        .ok_or(Error::new(EINVAL))?
+                } else {
+                    file_len
+                }
             }
             _ => return Err(Error::new(EINVAL)),
         };
@@ -144,11 +152,10 @@ impl KernelScheme for DtbScheme {
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
-
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         buf.copy_exactly(&match handle.kind {
-            HandleKind::RawData =>  {
+            HandleKind::RawData => {
                 let data = DATA.get().ok_or(Error::new(EBADFD))?;
                 Stat {
                     st_mode: MODE_FILE,

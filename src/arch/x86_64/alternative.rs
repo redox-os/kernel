@@ -5,9 +5,11 @@ use core::mem::size_of;
 use spin::Once;
 use x86::controlregs::{Cr4, Xcr0};
 
-use crate::context::memory::PageSpan;
-use crate::cpuid::{has_ext_feat, cpuid_always, feature_info};
-use crate::paging::{KernelMapper, Page, PageFlags, PAGE_SIZE, VirtualAddress};
+use crate::{
+    context::memory::PageSpan,
+    cpuid::{cpuid_always, feature_info, has_ext_feat},
+    paging::{KernelMapper, Page, PageFlags, VirtualAddress, PAGE_SIZE},
+};
 
 #[cfg(all(cpu_feature_never = "xsave", not(cpu_feature_never = "xsaveopt")))]
 compile_error!("cannot force-disable xsave without force-disabling xsaveopt");
@@ -31,7 +33,10 @@ pub unsafe fn early_init(bsp: bool) {
     let relocs_size = crate::kernel_executable_offsets::__altrelocs_end() - relocs_offset;
 
     assert_eq!(relocs_size % size_of::<AltReloc>(), 0);
-    let relocs = core::slice::from_raw_parts(relocs_offset as *const AltReloc, relocs_size / size_of::<AltReloc>());
+    let relocs = core::slice::from_raw_parts(
+        relocs_offset as *const AltReloc,
+        relocs_size / size_of::<AltReloc>(),
+    );
 
     let mut enable = KcpuFeatures::empty();
 
@@ -62,12 +67,16 @@ pub unsafe fn early_init(bsp: bool) {
 
     #[cfg(not(cpu_feature_never = "xsave"))]
     if feature_info().has_xsave() {
-        use raw_cpuid::{ExtendedRegisterType, ExtendedRegisterStateLocation};
+        use raw_cpuid::{ExtendedRegisterStateLocation, ExtendedRegisterType};
 
-        x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_OS_XSAVE);
+        x86::controlregs::cr4_write(
+            x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_OS_XSAVE,
+        );
 
         let mut xcr0 = Xcr0::XCR0_FPU_MMX_STATE | Xcr0::XCR0_SSE_STATE;
-        let ext_state_info = cpuid_always().get_extended_state_info().expect("must be present if XSAVE is supported");
+        let ext_state_info = cpuid_always()
+            .get_extended_state_info()
+            .expect("must be present if XSAVE is supported");
 
         enable |= KcpuFeatures::XSAVE;
         enable.set(KcpuFeatures::XSAVEOPT, ext_state_info.has_xsaveopt());
@@ -77,10 +86,13 @@ pub unsafe fn early_init(bsp: bool) {
                 xcr0 |= Xcr0::XCR0_AVX_STATE;
                 x86::controlregs::xcr0_write(xcr0);
 
-                let state = ext_state_info.iter().find(|state| {
-                    state.register() == ExtendedRegisterType::Avx
-                        && state.location() == ExtendedRegisterStateLocation::Xcr0
-                }).expect("CPUID said AVX was supported but there's no state info");
+                let state = ext_state_info
+                    .iter()
+                    .find(|state| {
+                        state.register() == ExtendedRegisterType::Avx
+                            && state.location() == ExtendedRegisterStateLocation::Xcr0
+                    })
+                    .expect("CPUID said AVX was supported but there's no state info");
 
                 if state.size() as usize != 16 * core::mem::size_of::<u128>() {
                     log::warn!("Unusual AVX state size {}", state.size());
@@ -123,20 +135,37 @@ pub unsafe fn early_init(bsp: bool) {
 unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
     let mut mapper = KernelMapper::lock();
     for reloc in relocs.iter().copied() {
-        let name = core::str::from_utf8(core::slice::from_raw_parts(reloc.name_start, reloc.name_len)).expect("invalid feature name");
+        let name = core::str::from_utf8(core::slice::from_raw_parts(
+            reloc.name_start,
+            reloc.name_len,
+        ))
+        .expect("invalid feature name");
         let altcode = core::slice::from_raw_parts(reloc.altcode_start, reloc.altcode_len);
 
         let dst_pages = PageSpan::between(
             Page::containing_address(VirtualAddress::new(reloc.code_start as usize)),
-            Page::containing_address(VirtualAddress::new((reloc.code_start as usize + reloc.origcode_len).next_multiple_of(PAGE_SIZE))),
+            Page::containing_address(VirtualAddress::new(
+                (reloc.code_start as usize + reloc.origcode_len).next_multiple_of(PAGE_SIZE),
+            )),
         );
         for page in dst_pages.pages() {
-            mapper.remap(page.start_address(), PageFlags::new().write(true).execute(true).global(true)).unwrap().flush();
+            mapper
+                .remap(
+                    page.start_address(),
+                    PageFlags::new().write(true).execute(true).global(true),
+                )
+                .unwrap()
+                .flush();
         }
 
         let code = core::slice::from_raw_parts_mut(reloc.code_start, reloc.padded_len);
 
-        log::trace!("feature {} current {:x?} altcode {:x?}", name, code, altcode);
+        log::trace!(
+            "feature {} current {:x?} altcode {:x?}",
+            name,
+            code,
+            altcode
+        );
 
         let feature_is_enabled = match name {
             "smap" => enable.contains(KcpuFeatures::SMAP),
@@ -170,7 +199,9 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
             &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
             &[0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-            &[0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+            &[
+                0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ],
         ];
 
         for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
@@ -179,7 +210,13 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
         log::trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
 
         for page in dst_pages.pages() {
-            mapper.remap(page.start_address(), PageFlags::new().write(false).execute(true).global(true)).unwrap().flush();
+            mapper
+                .remap(
+                    page.start_address(),
+                    PageFlags::new().write(false).execute(true).global(true),
+                )
+                .unwrap()
+                .flush();
         }
     }
 }
@@ -208,7 +245,7 @@ mod xsave {
         pub ymm_upper_offset: Option<u32>,
         pub xsave_size: u32,
     }
-    pub(in super) static XSAVE_INFO: Once<XsaveInfo> = Once::new();
+    pub(super) static XSAVE_INFO: Once<XsaveInfo> = Once::new();
 
     pub fn info() -> Option<&'static XsaveInfo> {
         XSAVE_INFO.get()

@@ -13,9 +13,7 @@ pub struct System76Ec {
 
 impl System76Ec {
     pub fn new() -> Option<Self> {
-        let mut system76_ec = Self {
-            base: 0x0E00,
-        };
+        let mut system76_ec = Self { base: 0x0E00 };
         if system76_ec.probe() {
             Some(system76_ec)
         } else {

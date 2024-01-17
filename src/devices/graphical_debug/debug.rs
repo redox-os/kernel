@@ -1,7 +1,7 @@
 use super::Display;
 
 pub struct DebugDisplay {
-    pub (crate) display: Display,
+    pub(crate) display: Display,
     x: usize,
     y: usize,
     w: usize,
@@ -10,8 +10,8 @@ pub struct DebugDisplay {
 
 impl DebugDisplay {
     pub fn new(display: Display) -> DebugDisplay {
-        let w = display.width/8;
-        let h = display.height/16;
+        let w = display.width / 8;
+        let h = display.height / 16;
         DebugDisplay {
             display,
             x: 0,
@@ -34,18 +34,15 @@ impl DebugDisplay {
             self.display.scroll(d_y * 16);
 
             unsafe {
-                self.display.sync(0, 0, self.display.width, self.display.height);
+                self.display
+                    .sync(0, 0, self.display.width, self.display.height);
             }
 
             self.y = new_y;
         }
 
         if c != '\n' {
-            self.display.char(
-                self.x * 8, self.y * 16,
-                c,
-                0xFFFFFF
-            );
+            self.display.char(self.x * 8, self.y * 16, c, 0xFFFFFF);
 
             unsafe {
                 self.display.sync(self.x * 8, self.y * 16, 8, 16);

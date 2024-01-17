@@ -19,7 +19,6 @@
 #![allow(clippy::too_many_arguments)]
 // There is no harm in this being done
 #![allow(clippy::useless_format)]
-
 // TODO: address ocurrances and then deny
 #![warn(clippy::not_unsafe_ptr_arg_deref)]
 // TODO: address ocurrances and then deny
@@ -35,13 +34,11 @@
 // Avoid panicking in the kernel without information about the panic. Use expect
 // TODO: address ocurrances and then deny
 #![warn(clippy::result_unwrap_used)]
-
 // This is usually a serious issue - a missing import of a define where it is interpreted
 // as a catch-all variable in a match, for example
 #![deny(unreachable_patterns)]
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
-
 #![feature(allocator_api)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(int_roundings)]
@@ -97,7 +94,7 @@ mod debugger;
 mod devices;
 
 /// ELF file parsing
-#[cfg(not(feature="doc"))]
+#[cfg(not(feature = "doc"))]
 mod elf;
 
 /// Event handling
@@ -113,7 +110,7 @@ mod log;
 mod memory;
 
 /// Panic
-#[cfg(not(any(feature="doc", test)))]
+#[cfg(not(any(feature = "doc", test)))]
 mod panic;
 
 mod percpu;
@@ -202,7 +199,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
             context.ens = SchemeNamespace::from(1);
             context.status = context::Status::Runnable;
             context.name = "bootstrap".into();
-        },
+        }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
         }
@@ -261,8 +258,13 @@ fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
 
 /// Allow exception handlers to send signal to arch-independant kernel
 #[no_mangle]
-extern fn ksignal(signal: usize) {
-    info!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
+extern "C" fn ksignal(signal: usize) {
+    info!(
+        "SIGNAL {}, CPU {}, PID {:?}",
+        signal,
+        cpu_id(),
+        context::context_id()
+    );
     {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {
@@ -296,7 +298,18 @@ macro_rules! linker_offsets(
     }
 );
 mod kernel_executable_offsets {
-    linker_offsets!(__text_start, __text_end, __rodata_start, __rodata_end, __data_start, __data_end, __bss_start, __bss_end, __usercopy_start, __usercopy_end);
+    linker_offsets!(
+        __text_start,
+        __text_end,
+        __rodata_start,
+        __rodata_end,
+        __data_start,
+        __data_end,
+        __bss_start,
+        __bss_end,
+        __usercopy_start,
+        __usercopy_end
+    );
 
     #[cfg(target_arch = "x86_64")]
     linker_offsets!(__altrelocs_start, __altrelocs_end);
@@ -315,8 +328,12 @@ struct LogicalCpuId(u32);
 impl LogicalCpuId {
     const BSP: Self = Self::new(0);
 
-    const fn new(inner: u32) -> Self { Self(inner) }
-    const fn get(self) -> u32 { self.0 }
+    const fn new(inner: u32) -> Self {
+        Self(inner)
+    }
+    const fn get(self) -> u32 {
+        self.0
+    }
 }
 
 impl core::fmt::Debug for LogicalCpuId {
@@ -338,12 +355,22 @@ impl core::fmt::Display for LogicalCpuId {
 struct LogicalCpuSet(u128);
 
 impl LogicalCpuSet {
-    const fn new(inner: u128) -> Self { Self(inner) }
-    const fn get(self) -> u128 { self.0 }
+    const fn new(inner: u128) -> Self {
+        Self(inner)
+    }
+    const fn get(self) -> u128 {
+        self.0
+    }
 
-    const fn empty() -> Self { Self::new(0) }
-    const fn all() -> Self { Self::new(!0) }
-    const fn single(id: LogicalCpuId) -> Self { Self::new(1 << id.get()) }
+    const fn empty() -> Self {
+        Self::new(0)
+    }
+    const fn all() -> Self {
+        Self::new(!0)
+    }
+    const fn single(id: LogicalCpuId) -> Self {
+        Self::new(1 << id.get())
+    }
     const fn contains(&self, id: LogicalCpuId) -> bool {
         self.0 & (1 << id.get()) != 0
     }

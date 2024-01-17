@@ -56,7 +56,10 @@ pub fn init(env: &[u8]) {
         return;
     }
 
-    println!("Framebuffer {}x{} stride {} at {:X} mapped to {:X}", width, height, stride, phys, virt);
+    println!(
+        "Framebuffer {}x{} stride {} at {:X} mapped to {:X}",
+        width, height, stride, phys, virt
+    );
 
     {
         let display = Display::new(width, height, stride, virt as *mut u32);
@@ -67,9 +70,8 @@ pub fn init(env: &[u8]) {
 
 pub fn init_heap() {
     if let Some(debug_display) = &mut *DEBUG_DISPLAY.lock() {
-        debug_display.display.offscreen = Some(
-            debug_display.display.onscreen.to_vec().into_boxed_slice()
-        );
+        debug_display.display.offscreen =
+            Some(debug_display.display.onscreen.to_vec().into_boxed_slice());
     }
 }
 

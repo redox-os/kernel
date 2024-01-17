@@ -2,12 +2,12 @@ use core::{mem, ptr};
 
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::memory::Frame;
-use crate::paging::{KernelMapper, PhysicalAddress, PageFlags};
-use crate::paging::entry::EntryFlags;
+use crate::{
+    memory::Frame,
+    paging::{entry::EntryFlags, KernelMapper, PageFlags, PhysicalAddress},
+};
 
-use super::sdt::Sdt;
-use super::{ACPI_TABLE, find_sdt};
+use super::{find_sdt, sdt::Sdt, ACPI_TABLE};
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -32,7 +32,7 @@ pub struct Hpet {
 
     pub hpet_number: u8,
     pub min_periodic_clk_tick: u16,
-    pub oem_attribute: u8
+    pub oem_attribute: u8,
 }
 
 impl Hpet {
@@ -75,13 +75,21 @@ impl GenericAddressStructure {
 
         mapper
             .get_mut()
-            .expect("KernelMapper locked re-entrant while mapping memory for GenericAddressStructure")
-            .map_phys(page.start_address(), frame.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true))
+            .expect(
+                "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
+            )
+            .map_phys(
+                page.start_address(),
+                frame.start_address(),
+                PageFlags::new()
+                    .write(true)
+                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+            )
             .expect("failed to map memory for GenericAddressStructure")
             .flush();
     }
 
-    pub unsafe fn read_u64(&self, offset: usize) -> u64{
+    pub unsafe fn read_u64(&self, offset: usize) -> u64 {
         read_volatile((crate::HPET_OFFSET + offset) as *const u64)
     }
 
@@ -96,17 +104,27 @@ impl GenericAddressStructure {
         let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
         let (_, result) = mapper
             .get_mut()
-            .expect("KernelMapper locked re-entrant while mapping memory for GenericAddressStructure")
-            .map_linearly(frame.start_address(), PageFlags::new().write(true).custom_flag(EntryFlags::NO_CACHE.bits(), true))
+            .expect(
+                "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
+            )
+            .map_linearly(
+                frame.start_address(),
+                PageFlags::new()
+                    .write(true)
+                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+            )
             .expect("failed to map memory for GenericAddressStructure");
         result.flush();
     }
 
-    pub unsafe fn read_u64(&self, offset: usize) -> u64{
+    pub unsafe fn read_u64(&self, offset: usize) -> u64 {
         read_volatile((self.address as usize + offset + crate::PHYS_OFFSET) as *const u64)
     }
 
     pub unsafe fn write_u64(&mut self, offset: usize, value: u64) {
-        write_volatile((self.address as usize + offset + crate::PHYS_OFFSET) as *mut u64, value);
+        write_volatile(
+            (self.address as usize + offset + crate::PHYS_OFFSET) as *mut u64,
+            value,
+        );
     }
 }

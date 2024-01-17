@@ -1,5 +1,7 @@
-use crate::syscall::io::{Io, Pio};
-use crate::arch::interrupt::irq;
+use crate::{
+    arch::interrupt::irq,
+    syscall::io::{Io, Pio},
+};
 
 pub static mut MASTER: Pic = Pic::new(0x20);
 pub static mut SLAVE: Pic = Pic::new(0xA0);

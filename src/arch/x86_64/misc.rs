@@ -1,7 +1,9 @@
 use x86::controlregs::Cr4;
 
-use crate::LogicalCpuId;
-use crate::cpuid::{cpuid_always, has_ext_feat};
+use crate::{
+    cpuid::{cpuid_always, has_ext_feat},
+    LogicalCpuId,
+};
 
 pub unsafe fn init(cpu_id: LogicalCpuId) {
     if has_ext_feat(|feat| feat.has_umip()) {

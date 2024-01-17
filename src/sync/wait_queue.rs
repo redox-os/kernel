@@ -2,9 +2,13 @@ use alloc::collections::VecDeque;
 use spin::Mutex;
 use syscall::{EAGAIN, EINTR};
 
-use crate::sync::WaitCondition;
-use crate::syscall::usercopy::UserSliceWo;
-use crate::syscall::error::{Error, EINVAL, Result};
+use crate::{
+    sync::WaitCondition,
+    syscall::{
+        error::{Error, Result, EINVAL},
+        usercopy::UserSliceWo,
+    },
+};
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {
@@ -16,11 +20,16 @@ impl<T> WaitQueue<T> {
     pub const fn new() -> WaitQueue<T> {
         WaitQueue {
             inner: Mutex::new(VecDeque::new()),
-            condition: WaitCondition::new()
+            condition: WaitCondition::new(),
         }
     }
 
-    pub fn receive_into_user(&self, buf: UserSliceWo, block: bool, reason: &'static str) -> Result<usize> {
+    pub fn receive_into_user(
+        &self,
+        buf: UserSliceWo,
+        block: bool,
+        reason: &'static str,
+    ) -> Result<usize> {
         loop {
             let mut inner = self.inner.lock();
 
@@ -41,8 +50,18 @@ impl<T> WaitQueue<T> {
             }
 
             let (s1, s2) = inner.as_slices();
-            let s1_bytes = unsafe { core::slice::from_raw_parts(s1.as_ptr().cast::<u8>(), s1.len() * core::mem::size_of::<T>()) };
-            let s2_bytes = unsafe { core::slice::from_raw_parts(s2.as_ptr().cast::<u8>(), s2.len() * core::mem::size_of::<T>()) };
+            let s1_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    s1.as_ptr().cast::<u8>(),
+                    s1.len() * core::mem::size_of::<T>(),
+                )
+            };
+            let s2_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    s2.as_ptr().cast::<u8>(),
+                    s2.len() * core::mem::size_of::<T>(),
+                )
+            };
 
             let mut bytes_copied = buf.copy_common_bytes_from_slice(s1_bytes)?;
 

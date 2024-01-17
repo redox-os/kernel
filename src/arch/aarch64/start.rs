@@ -2,21 +2,23 @@
 /// It is increcibly unsafe, and should be minimal in nature
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
-
 use core::slice;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, AtomicU32};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-use crate::memory::{Frame};
-use crate::paging::{Page, PAGE_SIZE, PhysicalAddress, VirtualAddress};
+use crate::{
+    memory::Frame,
+    paging::{Page, PhysicalAddress, VirtualAddress, PAGE_SIZE},
+};
 
-use crate::{allocator, dtb};
-use crate::device;
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug;
-use crate::init::device_tree;
-use crate::interrupt;
-use crate::log::{self, info};
-use crate::paging::{self, KernelMapper};
+use crate::{
+    allocator, device, dtb,
+    init::device_tree,
+    interrupt,
+    log::{self, info},
+    paging::{self, KernelMapper},
+};
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -71,7 +73,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         }
 
         // Convert env to slice
-        let env = slice::from_raw_parts((crate::PHYS_OFFSET + args.env_base) as *const u8, args.env_size);
+        let env = slice::from_raw_parts(
+            (crate::PHYS_OFFSET + args.env_base) as *const u8,
+            args.env_size,
+        );
 
         // Set up graphical debug
         //#[cfg(feature = "graphical_debug")]
@@ -90,13 +95,37 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         });
 
         info!("Redox OS starting...");
-        info!("Kernel: {:X}:{:X}", {args.kernel_base}, args.kernel_base + args.kernel_size);
-        info!("Stack: {:X}:{:X}", {args.stack_base}, args.stack_base + args.stack_size);
-        info!("Env: {:X}:{:X}", {args.env_base}, args.env_base + args.env_size);
-        info!("RSDPs: {:X}:{:X}", {args.dtb_base}, args.dtb_base + args.dtb_size);
-        info!("Areas: {:X}:{:X}", {args.areas_base}, args.areas_base + args.areas_size);
-        info!("Bootstrap: {:X}:{:X}", {args.bootstrap_base}, args.bootstrap_base + args.bootstrap_size);
-        info!("Bootstrap entry point: {:X}", {args.bootstrap_entry});
+        info!(
+            "Kernel: {:X}:{:X}",
+            { args.kernel_base },
+            args.kernel_base + args.kernel_size
+        );
+        info!(
+            "Stack: {:X}:{:X}",
+            { args.stack_base },
+            args.stack_base + args.stack_size
+        );
+        info!(
+            "Env: {:X}:{:X}",
+            { args.env_base },
+            args.env_base + args.env_size
+        );
+        info!(
+            "RSDPs: {:X}:{:X}",
+            { args.dtb_base },
+            args.dtb_base + args.dtb_size
+        );
+        info!(
+            "Areas: {:X}:{:X}",
+            { args.areas_base },
+            args.areas_base + args.areas_size
+        );
+        info!(
+            "Bootstrap: {:X}:{:X}",
+            { args.bootstrap_base },
+            args.bootstrap_base + args.bootstrap_size
+        );
+        info!("Bootstrap entry point: {:X}", { args.bootstrap_entry });
 
         // Setup interrupt handlers
         core::arch::asm!(
@@ -108,8 +137,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         );
 
         if args.dtb_base != 0 {
-			//Try to read device memory map
-			device_tree::fill_memory_map(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
+            //Try to read device memory map
+            device_tree::fill_memory_map(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
         }
 
         /* NOT USED WITH UEFI
@@ -118,12 +147,18 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize RMM
         crate::arch::rmm::init(
-            args.kernel_base, args.kernel_size,
-            args.stack_base, args.stack_size,
-            args.env_base, args.env_size,
-            args.dtb_base, args.dtb_size,
-            args.areas_base, args.areas_size,
-            args.bootstrap_base, args.bootstrap_size,
+            args.kernel_base,
+            args.kernel_size,
+            args.stack_base,
+            args.stack_size,
+            args.env_base,
+            args.env_size,
+            args.dtb_base,
+            args.dtb_size,
+            args.areas_base,
+            args.areas_size,
+            args.bootstrap_base,
+            args.bootstrap_size,
         );
 
         // Initialize paging
@@ -163,7 +198,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(true, Ordering::SeqCst);
 
         crate::Bootstrap {
-            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(args.bootstrap_base)),
+            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(
+                args.bootstrap_base,
+            )),
             page_count: args.bootstrap_size / crate::memory::PAGE_SIZE,
             entry: args.bootstrap_entry,
             env,
@@ -182,8 +219,8 @@ pub struct KernelArgsAp {
 }
 
 /// Entry to rust for an AP
-pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
-    loop{}
+pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
+    loop {}
 }
 
 #[naked]

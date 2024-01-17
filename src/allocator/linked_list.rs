@@ -1,5 +1,7 @@
-use core::alloc::{GlobalAlloc, Layout};
-use core::ptr::{self, NonNull};
+use core::{
+    alloc::{GlobalAlloc, Layout},
+    ptr::{self, NonNull},
+};
 use linked_list_allocator::Heap;
 use spin::Mutex;
 
@@ -21,10 +23,18 @@ unsafe impl GlobalAlloc for Allocator {
             match heap.allocate_first_fit(layout) {
                 Err(()) => {
                     let size = heap.size();
-                    super::map_heap(&mut KernelMapper::lock(), crate::KERNEL_HEAP_OFFSET + size, crate::KERNEL_HEAP_SIZE);
+                    super::map_heap(
+                        &mut KernelMapper::lock(),
+                        crate::KERNEL_HEAP_OFFSET + size,
+                        crate::KERNEL_HEAP_SIZE,
+                    );
                     heap.extend(crate::KERNEL_HEAP_SIZE);
-                },
-                other => return other.ok().map_or(ptr::null_mut(), |allocation| allocation.as_ptr()),
+                }
+                other => {
+                    return other
+                        .ok()
+                        .map_or(ptr::null_mut(), |allocation| allocation.as_ptr())
+                }
             }
         }
         panic!("__rust_allocate: heap not initialized");

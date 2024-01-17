@@ -1,6 +1,6 @@
 use core::fmt::{Result, Write};
 
-use crate::device::cpu::registers::{control_regs};
+use crate::device::cpu::registers::control_regs;
 
 pub mod registers;
 
@@ -29,28 +29,15 @@ enum ImplementerID {
 }
 
 const IMPLEMENTERS: [&'static str; 12] = [
-    "Unknown",
-    "Arm",
-    "Broadcom",
-    "Cavium",
-    "Digital",
-    "Infineon",
-    "Motorola",
-    "Nvidia",
-    "AMCC",
-    "Qualcomm",
-    "Marvell",
-    "Intel",
+    "Unknown", "Arm", "Broadcom", "Cavium", "Digital", "Infineon", "Motorola", "Nvidia", "AMCC",
+    "Qualcomm", "Marvell", "Intel",
 ];
-
 
 enum VariantID {
     Unknown,
 }
 
-const VARIANTS: [&'static str; 1] = [
-    "Unknown",
-];
+const VARIANTS: [&'static str; 1] = ["Unknown"];
 
 enum ArchitectureID {
     Unknown,
@@ -63,16 +50,8 @@ enum ArchitectureID {
     V6,
 }
 
-const ARCHITECTURES: [&'static str; 8] = [
-    "Unknown",
-    "v4",
-    "v4T",
-    "v5",
-    "v5T",
-    "v5TE",
-    "v5TEJ",
-    "v6",
-];
+const ARCHITECTURES: [&'static str; 8] =
+    ["Unknown", "v4", "v4T", "v5", "v5T", "v5TE", "v5TEJ", "v6"];
 
 enum PartNumberID {
     Unknown,
@@ -106,11 +85,7 @@ enum RevisionID {
     Thunder1_1,
 }
 
-const REVISIONS: [&'static str; 3] = [
-    "Unknown",
-    "Thunder-1.0",
-    "Thunder-1.1",
-];
+const REVISIONS: [&'static str; 3] = ["Unknown", "Thunder-1.0", "Thunder-1.1"];
 
 struct CpuInfo {
     implementer: &'static str,
@@ -177,7 +152,7 @@ impl CpuInfo {
                     _ => REVISIONS[RevisionID::Unknown as usize],
                 };
                 val
-            },
+            }
             _ => REVISIONS[RevisionID::Unknown as usize],
         };
 

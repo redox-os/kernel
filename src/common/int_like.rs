@@ -69,7 +69,7 @@ macro_rules! int_like {
             #[inline]
             pub const fn new(x: $new_type_name) -> Self {
                 $new_atomic_type_name {
-                    container: $backing_atomic_type::new(x.get())
+                    container: $backing_atomic_type::new(x.get()),
                 }
             }
             #[allow(dead_code)]
@@ -84,23 +84,47 @@ macro_rules! int_like {
             }
             #[allow(dead_code)]
             #[inline]
-            pub fn swap(&self, val: $new_type_name, order: ::core::sync::atomic::Ordering) -> $new_type_name {
+            pub fn swap(
+                &self,
+                val: $new_type_name,
+                order: ::core::sync::atomic::Ordering,
+            ) -> $new_type_name {
                 $new_type_name::from(self.container.swap(val.into(), order))
             }
             #[allow(dead_code)]
             #[inline]
-            pub fn compare_exchange(&self, current: $new_type_name, new: $new_type_name, success: ::core::sync::atomic::Ordering, failure: ::core::sync::atomic::Ordering) -> ::core::result::Result<$new_type_name, $new_type_name> {
-                match self.container.compare_exchange(current.into(), new.into(), success, failure) {
+            pub fn compare_exchange(
+                &self,
+                current: $new_type_name,
+                new: $new_type_name,
+                success: ::core::sync::atomic::Ordering,
+                failure: ::core::sync::atomic::Ordering,
+            ) -> ::core::result::Result<$new_type_name, $new_type_name> {
+                match self
+                    .container
+                    .compare_exchange(current.into(), new.into(), success, failure)
+                {
                     Ok(result) => Ok($new_type_name::from(result)),
-                    Err(result) => Err($new_type_name::from(result))
+                    Err(result) => Err($new_type_name::from(result)),
                 }
             }
             #[allow(dead_code)]
             #[inline]
-            pub fn compare_exchange_weak(&self, current: $new_type_name, new: $new_type_name, success: ::core::sync::atomic::Ordering, failure: ::core::sync::atomic::Ordering) -> ::core::result::Result<$new_type_name, $new_type_name> {
-                match self.container.compare_exchange_weak(current.into(), new.into(), success, failure) {
+            pub fn compare_exchange_weak(
+                &self,
+                current: $new_type_name,
+                new: $new_type_name,
+                success: ::core::sync::atomic::Ordering,
+                failure: ::core::sync::atomic::Ordering,
+            ) -> ::core::result::Result<$new_type_name, $new_type_name> {
+                match self.container.compare_exchange_weak(
+                    current.into(),
+                    new.into(),
+                    success,
+                    failure,
+                ) {
                     Ok(result) => Ok($new_type_name::from(result)),
-                    Err(result) => Err($new_type_name::from(result))
+                    Err(result) => Err($new_type_name::from(result)),
                 }
             }
         }
@@ -110,23 +134,20 @@ macro_rules! int_like {
                 Self::new($new_type_name::new(0))
             }
         }
-    }
+    };
 }
 
 #[test]
 fn test() {
-    use core::mem::size_of;
     use ::core::sync::atomic::AtomicUsize;
+    use core::mem::size_of;
 
     // Generate type `usize_like`.
     int_like!(UsizeLike, usize);
     assert_eq!(size_of::<UsizeLike>(), size_of::<usize>());
-
 
     // Generate types `usize_like` and `AtomicUsize`.
     int_like!(UsizeLike2, AtomicUsizeLike, usize, AtomicUsize);
     assert_eq!(size_of::<UsizeLike2>(), size_of::<usize>());
     assert_eq!(size_of::<AtomicUsizeLike>(), size_of::<AtomicUsize>());
 }
-
-

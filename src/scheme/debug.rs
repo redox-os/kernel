@@ -1,12 +1,16 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
-use crate::arch::debug::Writer;
-use crate::event;
-use crate::scheme::*;
-use crate::sync::WaitQueue;
-use crate::syscall::flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK};
-use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
+use crate::{
+    arch::debug::Writer,
+    event,
+    scheme::*,
+    sync::WaitQueue,
+    syscall::{
+        flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK},
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
+};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -54,10 +58,13 @@ impl KernelScheme for DebugScheme {
         };
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(id, Handle {
-            flags: flags & ! O_ACCMODE,
-            num,
-        });
+        HANDLES.write().insert(
+            id,
+            Handle {
+                flags: flags & !O_ACCMODE,
+                num,
+            },
+        );
 
         Ok(OpenResult::SchemeLocal(id))
     }
@@ -68,10 +75,10 @@ impl KernelScheme for DebugScheme {
             match cmd {
                 F_GETFL => Ok(handle.flags),
                 F_SETFL => {
-                    handle.flags = arg & ! O_ACCMODE;
+                    handle.flags = arg & !O_ACCMODE;
                     Ok(0)
-                },
-                _ => Err(Error::new(EINVAL))
+                }
+                _ => Err(Error::new(EINVAL)),
             }
         } else {
             Err(Error::new(EBADF))
@@ -113,11 +120,17 @@ impl KernelScheme for DebugScheme {
 
         #[cfg(feature = "profiling")]
         if handle.num != !0 {
-            return crate::profiling::drain_buffer(crate::LogicalCpuId::new(handle.num as u32), buf);
+            return crate::profiling::drain_buffer(
+                crate::LogicalCpuId::new(handle.num as u32),
+                buf,
+            );
         }
 
-        INPUT
-            .receive_into_user(buf, handle.flags & O_NONBLOCK != O_NONBLOCK, "DebugScheme::read")
+        INPUT.receive_into_user(
+            buf,
+            handle.flags & O_NONBLOCK != O_NONBLOCK,
+            "DebugScheme::read",
+        )
     }
 
     fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
@@ -155,7 +168,9 @@ impl KernelScheme for DebugScheme {
         // TODO: Copy elsewhere in the kernel?
         const SRC: &[u8] = b"debug:";
         let byte_count = core::cmp::min(buf.len(), SRC.len());
-        buf.limit(byte_count).expect("must succeed").copy_from_slice(&SRC[..byte_count])?;
+        buf.limit(byte_count)
+            .expect("must succeed")
+            .copy_from_slice(&SRC[..byte_count])?;
 
         Ok(byte_count)
     }

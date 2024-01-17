@@ -3,7 +3,10 @@ use core::{mem, str};
 use goblin::elf::sym;
 use rustc_demangle::demangle;
 
-use crate::{paging::{KernelMapper, VirtualAddress}, USER_END_OFFSET};
+use crate::{
+    paging::{KernelMapper, VirtualAddress},
+    USER_END_OFFSET,
+};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
@@ -21,7 +24,11 @@ pub unsafe fn stack_trace() {
         if let Some(rip_rbp) = rbp.checked_add(mem::size_of::<usize>()) {
             let rbp_virt = VirtualAddress::new(rbp);
             let rip_rbp_virt = VirtualAddress::new(rip_rbp);
-            if rbp_virt.data() >= USER_END_OFFSET && rip_rbp_virt.data() >= USER_END_OFFSET && mapper.translate(rbp_virt).is_some() && mapper.translate(rip_rbp_virt).is_some() {
+            if rbp_virt.data() >= USER_END_OFFSET
+                && rip_rbp_virt.data() >= USER_END_OFFSET
+                && mapper.translate(rbp_virt).is_some()
+                && mapper.translate(rip_rbp_virt).is_some()
+            {
                 let rip = (rip_rbp as *const usize).read();
                 if rip == 0 {
                     println!(" {:>016X}: EMPTY RETURN", rbp);
@@ -45,11 +52,12 @@ pub unsafe fn stack_trace() {
 //TODO: Do not create Elf object for every symbol lookup
 #[inline(never)]
 pub unsafe fn symbol_trace(addr: usize) {
-    use core::slice;
-    use core::sync::atomic::Ordering;
+    use core::{slice, sync::atomic::Ordering};
 
-    use crate::elf::Elf;
-    use crate::start::{KERNEL_BASE, KERNEL_SIZE};
+    use crate::{
+        elf::Elf,
+        start::{KERNEL_BASE, KERNEL_SIZE},
+    };
 
     let kernel_ptr = (KERNEL_BASE.load(Ordering::SeqCst) + crate::PHYS_OFFSET) as *const u8;
     let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
@@ -65,10 +73,14 @@ pub unsafe fn symbol_trace(addr: usize) {
         if let Some(symbols) = elf.symbols() {
             for sym in symbols {
                 if sym::st_type(sym.st_info) == sym::STT_FUNC
-                && addr >= sym.st_value as usize
-                && addr < (sym.st_value + sym.st_size) as usize
+                    && addr >= sym.st_value as usize
+                    && addr < (sym.st_value + sym.st_size) as usize
                 {
-                    println!("    {:>016X}+{:>04X}", sym.st_value, addr - sym.st_value as usize);
+                    println!(
+                        "    {:>016X}+{:>04X}",
+                        sym.st_value,
+                        addr - sym.st_value as usize
+                    );
 
                     if let Some(strtab) = strtab_opt {
                         let start = strtab.sh_offset as usize + sym.st_name as usize;
@@ -82,7 +94,7 @@ pub unsafe fn symbol_trace(addr: usize) {
                         }
 
                         if end > start {
-                            let sym_slice = &elf.data[start .. end - 1];
+                            let sym_slice = &elf.data[start..end - 1];
                             if let Ok(sym_name) = str::from_utf8(sym_slice) {
                                 println!("    {:#}", demangle(sym_name));
                             }

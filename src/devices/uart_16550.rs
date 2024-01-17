@@ -1,9 +1,11 @@
-use core::convert::TryInto;
-use core::ptr::{addr_of, addr_of_mut};
+use core::{
+    convert::TryInto,
+    ptr::{addr_of, addr_of_mut},
+};
 
-use crate::syscall::io::{Io, Mmio, ReadOnly};
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::syscall::io::Pio;
+use crate::syscall::io::{Io, Mmio, ReadOnly};
 
 bitflags! {
     /// Interrupt enable flags

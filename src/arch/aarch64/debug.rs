@@ -1,15 +1,12 @@
 use core::fmt;
 use spin::MutexGuard;
 
-use crate::log::{LOG, Log};
+use crate::log::{Log, LOG};
 
-#[cfg(feature = "graphical_debug")]
-use crate::devices::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};
 #[cfg(feature = "serial_debug")]
-use super::device::{
-    serial::COM1,
-    uart_pl011::SerialPort,
-};
+use super::device::{serial::COM1, uart_pl011::SerialPort};
+#[cfg(feature = "graphical_debug")]
+use crate::devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY};
 
 pub struct Writer<'a> {
     log: MutexGuard<'a, Option<Log>>,

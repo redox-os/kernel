@@ -1,38 +1,37 @@
 //! # ACPI
 //! Code to parse the ACPI tables
 
-use alloc::string::String;
-use alloc::vec::Vec;
-use alloc::boxed::Box;
+use alloc::{boxed::Box, string::String, vec::Vec};
 
 use hashbrown::HashMap;
 use spin::{Once, RwLock};
 
-use crate::log::info;
-use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch};
+use crate::{
+    log::info,
+    paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch},
+};
 
-use self::madt::Madt;
-use self::rsdt::Rsdt;
-use self::sdt::Sdt;
-use self::xsdt::Xsdt;
-use self::hpet::Hpet;
-use self::rxsdt::Rxsdt;
-use self::rsdp::RSDP;
+use self::{hpet::Hpet, madt::Madt, rsdp::RSDP, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
 
 pub mod hpet;
 pub mod madt;
+mod rsdp;
 mod rsdt;
+mod rxsdt;
 pub mod sdt;
 mod xsdt;
-mod rxsdt;
-mod rsdp;
 
 unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::paging::PageMapper) {
     let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
     let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
 
     for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
-        let (_, flush) = mapper.map_linearly(base.add(page_idx * crate::memory::PAGE_SIZE), PageFlags::new()).expect("failed to linearly map SDT");
+        let (_, flush) = mapper
+            .map_linearly(
+                base.add(page_idx * crate::memory::PAGE_SIZE),
+                PageFlags::new(),
+            )
+            .expect("failed to linearly map SDT");
         flush.flush();
     }
 }
@@ -52,7 +51,11 @@ pub fn get_sdt(sdt_address: usize, mapper: &mut KernelMapper) -> &'static Sdt {
 
         sdt = &*(RmmA::phys_to_virt(physaddr).data() as *const Sdt);
 
-        map_linearly(physaddr.add(SDT_SIZE), sdt.length as usize - SDT_SIZE, mapper);
+        map_linearly(
+            physaddr.add(SDT_SIZE),
+            sdt.length as usize - SDT_SIZE,
+            mapper,
+        );
     }
     sdt
 }
@@ -151,7 +154,7 @@ pub type SdtSignature = (String, [u8; 6], [u8; 8]);
 pub static SDT_POINTERS: RwLock<Option<HashMap<SdtSignature, &'static Sdt>>> = RwLock::new(None);
 
 pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
-    let mut sdts: Vec<&'static Sdt> = vec!();
+    let mut sdts: Vec<&'static Sdt> = vec![];
 
     if let Some(ref ptrs) = *(SDT_POINTERS.read()) {
         for (signature, sdt) in ptrs {
@@ -165,7 +168,8 @@ pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
 }
 
 pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {
-    let signature = String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");
+    let signature =
+        String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");
     (signature, sdt.oem_id, sdt.oem_table_id)
 }
 

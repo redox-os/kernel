@@ -87,9 +87,9 @@ impl PreservedRegisters {
 #[derive(Default)]
 #[repr(packed)]
 pub struct IretRegisters {
-                            // occurred
-                            // The exception vector disambiguates at which EL the interrupt
-    pub sp_el0: usize,      // Shouldn't be used if interrupt occurred at EL1
+    // occurred
+    // The exception vector disambiguates at which EL the interrupt
+    pub sp_el0: usize, // Shouldn't be used if interrupt occurred at EL1
     pub esr_el1: usize,
     pub spsr_el1: usize,
     pub elr_el1: usize,
@@ -238,12 +238,14 @@ impl InterruptStack {
             28 => self.preserved.x28 = val,
             29 => self.preserved.x29 = val,
             30 => self.preserved.x30 = val,
-            _ => {},
+            _ => {}
         }
     }
 
     //TODO
-    pub fn is_singlestep(&self) -> bool { false }
+    pub fn is_singlestep(&self) -> bool {
+        false
+    }
     pub fn set_singlestep(&mut self, singlestep: bool) {}
 }
 
@@ -276,7 +278,8 @@ macro_rules! function {
 
 #[macro_export]
 macro_rules! push_scratch {
-    () => { "
+    () => {
+        "
         // Push scratch registers
         str     x18,      [sp, #-16]!
         stp     x16, x17, [sp, #-16]!
@@ -288,12 +291,14 @@ macro_rules! push_scratch {
         stp     x4, x5, [sp, #-16]!
         stp     x2, x3, [sp, #-16]!
         stp     x0, x1, [sp, #-16]!
-    " };
+    "
+    };
 }
 
 #[macro_export]
 macro_rules! pop_scratch {
-    () => { "
+    () => {
+        "
         // Pop scratch registers
         ldp     x0, x1, [sp], #16
         ldp     x2, x3, [sp], #16
@@ -305,12 +310,14 @@ macro_rules! pop_scratch {
         ldp     x14, x15, [sp], #16
         ldp     x16, x17, [sp], #16
         ldr     x18,      [sp], #16
-    " };
+    "
+    };
 }
 
 #[macro_export]
 macro_rules! push_preserved {
-    () => { "
+    () => {
+        "
         // Push preserved registers
         stp     x29, x30, [sp, #-16]!
         stp     x27, x28, [sp, #-16]!
@@ -318,12 +325,14 @@ macro_rules! push_preserved {
         stp     x23, x24, [sp, #-16]!
         stp     x21, x22, [sp, #-16]!
         stp     x19, x20, [sp, #-16]!
-    " };
+    "
+    };
 }
 
 #[macro_export]
 macro_rules! pop_preserved {
-    () => { "
+    () => {
+        "
         // Pop preserved registers
         ldp     x19, x20, [sp], #16
         ldp     x21, x22, [sp], #16
@@ -331,12 +340,14 @@ macro_rules! pop_preserved {
         ldp     x25, x26, [sp], #16
         ldp     x27, x28, [sp], #16
         ldp     x29, x30, [sp], #16
-    " };
+    "
+    };
 }
 
 #[macro_export]
 macro_rules! push_special {
-    () => { "
+    () => {
+        "
         mrs     x14, spsr_el1
         mrs     x15, elr_el1
         stp     x14, x15, [sp, #-16]!
@@ -344,12 +355,14 @@ macro_rules! push_special {
         mrs     x14, sp_el0
         mrs     x15, esr_el1
         stp     x14, x15, [sp, #-16]!
-    " };
+    "
+    };
 }
 
 #[macro_export]
 macro_rules! pop_special {
-    () => { "
+    () => {
+        "
         ldp     x14, x15, [sp], 16
         msr     esr_el1, x15
         msr     sp_el0, x14
@@ -357,7 +370,8 @@ macro_rules! pop_special {
         ldp     x14, x15, [sp], 16
         msr     elr_el1, x15
         msr     spsr_el1, x14
-    " };
+    "
+    };
 }
 
 #[macro_export]

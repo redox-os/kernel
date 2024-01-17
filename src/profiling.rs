@@ -1,16 +1,19 @@
-use core::cell::UnsafeCell;
-use core::mem::size_of;
-use core::sync::atomic::{AtomicUsize, Ordering, AtomicPtr, AtomicBool, AtomicU32};
+use core::{
+    cell::UnsafeCell,
+    mem::size_of,
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
+};
 
 use alloc::boxed::Box;
 
-use crate::idt::Idt;
-use crate::interrupt::irq::aux_timer;
-use crate::{LogicalCpuId, interrupt};
-use crate::interrupt::InterruptStack;
-use crate::percpu::PercpuBlock;
-use crate::syscall::error::*;
-use crate::syscall::usercopy::UserSliceWo;
+use crate::{
+    idt::Idt,
+    interrupt,
+    interrupt::{irq::aux_timer, InterruptStack},
+    percpu::PercpuBlock,
+    syscall::{error::*, usercopy::UserSliceWo},
+    LogicalCpuId,
+};
 
 const N: usize = 64 * 1024 * 1024;
 
@@ -28,10 +31,16 @@ pub struct RingBuffer {
 
 impl RingBuffer {
     unsafe fn advance_head(&self, n: usize) {
-        self.head.store(self.head.load(Ordering::Acquire).wrapping_add(n), Ordering::Release);
+        self.head.store(
+            self.head.load(Ordering::Acquire).wrapping_add(n),
+            Ordering::Release,
+        );
     }
     unsafe fn advance_tail(&self, n: usize) {
-        self.tail.store(self.tail.load(Ordering::Acquire).wrapping_add(n), Ordering::Release);
+        self.tail.store(
+            self.tail.load(Ordering::Acquire).wrapping_add(n),
+            Ordering::Release,
+        );
     }
     unsafe fn sender_owned(&self) -> [&[UnsafeCell<usize>]; 2] {
         let head = self.head.load(Ordering::Acquire) % N;
@@ -67,13 +76,13 @@ impl RingBuffer {
         n
     }
     pub unsafe fn peek(&self) -> [&[usize]; 2] {
-        self.receiver_owned().map(|slice| core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()))
+        self.receiver_owned()
+            .map(|slice| core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()))
     }
     pub unsafe fn advance(&self, n: usize) {
         self.advance_head(n)
     }
     pub fn create() -> &'static Self {
-
         Box::leak(Box::new(Self {
             head: AtomicUsize::new(0),
             tail: AtomicUsize::new(0),
@@ -103,10 +112,20 @@ pub fn serio_command(index: usize, data: u8) {
 
 pub fn drain_buffer(cpu_num: LogicalCpuId, buf: UserSliceWo) -> Result<usize> {
     unsafe {
-        let Some(src) = BUFS.get(cpu_num.get() as usize).ok_or(Error::new(EBADFD))?.load(Ordering::Relaxed).as_ref() else {
+        let Some(src) = BUFS
+            .get(cpu_num.get() as usize)
+            .ok_or(Error::new(EBADFD))?
+            .load(Ordering::Relaxed)
+            .as_ref()
+        else {
             return Ok(0);
         };
-        let byte_slices = src.peek().map(|words| core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), words.len() * size_of::<usize>()));
+        let byte_slices = src.peek().map(|words| {
+            core::slice::from_raw_parts(
+                words.as_ptr().cast::<u8>(),
+                words.len() * size_of::<usize>(),
+            )
+        });
 
         let copied_1 = buf.copy_common_bytes_from_slice(byte_slices[0])?;
         src.advance(copied_1 / size_of::<usize>());
@@ -130,17 +149,23 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
         return;
     }
     if stack.iret.cs & 0b00 == 0b11 {
-        profiling.nmi_ucount.store(profiling.nmi_ucount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+        profiling.nmi_ucount.store(
+            profiling.nmi_ucount.load(Ordering::Relaxed) + 1,
+            Ordering::Relaxed,
+        );
         return;
     } else if stack.iret.rflags & (1 << 9) != 0 {
         // Interrupts were enabled, i.e. we were in kmain, so ignore.
         return;
     } else {
-        profiling.nmi_kcount.store(profiling.nmi_kcount.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+        profiling.nmi_kcount.store(
+            profiling.nmi_kcount.load(Ordering::Relaxed) + 1,
+            Ordering::Relaxed,
+        );
     };
 
     let mut buf = [0_usize; 32];
-    buf[0] = stack.iret.rip & !(1<<63);
+    buf[0] = stack.iret.rip & !(1 << 63);
     buf[1] = x86::time::rdtsc() as usize;
 
     let mut bp = stack.preserved.rbp;
@@ -148,13 +173,17 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
     let mut len = 2;
 
     for i in 2..32 {
-        if bp.saturating_add(16) < crate::KERNEL_HEAP_OFFSET || bp >= crate::KERNEL_HEAP_OFFSET + crate::PML4_SIZE {
+        if bp.saturating_add(16) < crate::KERNEL_HEAP_OFFSET
+            || bp >= crate::KERNEL_HEAP_OFFSET + crate::PML4_SIZE
+        {
             break;
         }
         let ip = ((bp + 8) as *const usize).read();
         bp = (bp as *const usize).read();
 
-        if ip < crate::kernel_executable_offsets::__text_start() || ip >= crate::kernel_executable_offsets::__text_end() {
+        if ip < crate::kernel_executable_offsets::__text_start()
+            || ip >= crate::kernel_executable_offsets::__text_end()
+        {
             break;
         }
         buf[i] = ip;
@@ -167,12 +196,18 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
 pub unsafe fn init() {
     let percpu = PercpuBlock::current();
 
-    if percpu.cpu_id == PROFILER_CPU { return }
+    if percpu.cpu_id == PROFILER_CPU {
+        return;
+    }
 
     let profiling = RingBuffer::create();
 
-    BUFS[percpu.cpu_id.get() as usize].store(profiling as *const _ as *mut _, core::sync::atomic::Ordering::SeqCst);
-    (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>).write(Some(profiling));
+    BUFS[percpu.cpu_id.get() as usize].store(
+        profiling as *const _ as *mut _,
+        core::sync::atomic::Ordering::SeqCst,
+    );
+    (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>)
+        .write(Some(profiling));
 }
 
 static ACK: AtomicU32 = AtomicU32::new(0);
@@ -187,7 +222,14 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
     }
     unsafe {
         for i in 33..255 {
-            crate::idt::IDTS.write().as_mut().unwrap().get_mut(&cpu_id).unwrap().entries[i].set_func(crate::interrupt::ipi::wakeup);
+            crate::idt::IDTS
+                .write()
+                .as_mut()
+                .unwrap()
+                .get_mut(&cpu_id)
+                .unwrap()
+                .entries[i]
+                .set_func(crate::interrupt::ipi::wakeup);
         }
 
         let apic = &mut crate::device::local_apic::LOCAL_APIC;

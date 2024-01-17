@@ -1,10 +1,12 @@
 //! File structs
 
+use crate::{
+    event,
+    scheme::{self, SchemeId, SchemeNamespace},
+    syscall::error::{Error, Result, EBADF},
+};
 use alloc::sync::Arc;
-use crate::event;
 use spin::RwLock;
-use crate::scheme::{self, SchemeNamespace, SchemeId};
-use crate::syscall::error::{Result, Error, EBADF};
 
 /// A file description
 #[derive(Clone, Copy, Debug)]
@@ -36,7 +38,8 @@ impl FileDescription {
         event::unregister_file(self.scheme, self.number);
 
         let scheme = scheme::schemes()
-            .get(self.scheme).ok_or(Error::new(EBADF))?
+            .get(self.scheme)
+            .ok_or(Error::new(EBADF))?
             .clone();
 
         scheme.close(self.number)

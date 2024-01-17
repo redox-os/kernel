@@ -1,5 +1,5 @@
 core::arch::global_asm!(
-"
+    "
     //  Exception vector stubs
     //
     //  Unhandled exceptions spin in a wfi loop for the moment
@@ -108,4 +108,5 @@ __vec_15:
     
     .align 7
 exception_vector_end:
-");
+"
+);

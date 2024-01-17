@@ -2,24 +2,22 @@
 /// It is increcibly unsafe, and should be minimal in nature
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
-
 use core::slice;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering, AtomicU32};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-use crate::{allocator, memory, LogicalCpuId};
 #[cfg(feature = "acpi")]
 use crate::acpi;
-use crate::arch::pti;
-use crate::arch::flags::*;
-use crate::device;
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug;
-use crate::gdt;
-use crate::idt;
-use crate::interrupt;
-use crate::misc;
-use crate::log::{self, info};
-use crate::paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind};
+use crate::{
+    allocator,
+    arch::{flags::*, pti},
+    device, gdt, idt, interrupt,
+    log::{self, info},
+    memory, misc,
+    paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
+    LogicalCpuId,
+};
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -68,7 +66,7 @@ pub struct KernelArgs {
 
 /// The entry to Rust, all things must be initialized
 #[no_mangle]
-pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
+pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
     let bootstrap = {
         let args = args_ptr.read();
 
@@ -82,7 +80,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_SIZE.store(args.kernel_size as usize, Ordering::SeqCst);
 
         // Convert env to slice
-        let env = slice::from_raw_parts((args.env_base as usize + crate::PHYS_OFFSET) as *const u8, args.env_size as usize);
+        let env = slice::from_raw_parts(
+            (args.env_base as usize + crate::PHYS_OFFSET) as *const u8,
+            args.env_size as usize,
+        );
 
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]
@@ -104,12 +105,36 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         });
 
         info!("Redox OS starting...");
-        info!("Kernel: {:X}:{:X}", { args.kernel_base }, { args.kernel_base } + { args.kernel_size });
-        info!("Stack: {:X}:{:X}", { args.stack_base }, { args.stack_base } + { args.stack_size });
-        info!("Env: {:X}:{:X}", { args.env_base }, { args.env_base } + { args.env_size });
-        info!("RSDPs: {:X}:{:X}", { args.acpi_rsdps_base }, { args.acpi_rsdps_base } + { args.acpi_rsdps_size });
-        info!("Areas: {:X}:{:X}", { args.areas_base }, { args.areas_base } + { args.areas_size });
-        info!("Bootstrap: {:X}:{:X}", { args.bootstrap_base }, { args.bootstrap_base } + { args.bootstrap_size });
+        info!(
+            "Kernel: {:X}:{:X}",
+            { args.kernel_base },
+            { args.kernel_base } + { args.kernel_size }
+        );
+        info!(
+            "Stack: {:X}:{:X}",
+            { args.stack_base },
+            { args.stack_base } + { args.stack_size }
+        );
+        info!(
+            "Env: {:X}:{:X}",
+            { args.env_base },
+            { args.env_base } + { args.env_size }
+        );
+        info!(
+            "RSDPs: {:X}:{:X}",
+            { args.acpi_rsdps_base },
+            { args.acpi_rsdps_base } + { args.acpi_rsdps_size }
+        );
+        info!(
+            "Areas: {:X}:{:X}",
+            { args.areas_base },
+            { args.areas_base } + { args.areas_size }
+        );
+        info!(
+            "Bootstrap: {:X}:{:X}",
+            { args.bootstrap_base },
+            { args.bootstrap_base } + { args.bootstrap_size }
+        );
         info!("Bootstrap entry point: {:X}", { args.bootstrap_entry });
 
         // Set up GDT before paging
@@ -120,19 +145,28 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize RMM
         crate::arch::rmm::init(
-            args.kernel_base as usize, args.kernel_size as usize,
-            args.stack_base as usize, args.stack_size as usize,
-            args.env_base as usize, args.env_size as usize,
-            args.acpi_rsdps_base as usize, args.acpi_rsdps_size as usize,
-            args.areas_base as usize, args.areas_size as usize,
-            args.bootstrap_base as usize, args.bootstrap_size as usize,
+            args.kernel_base as usize,
+            args.kernel_size as usize,
+            args.stack_base as usize,
+            args.stack_size as usize,
+            args.env_base as usize,
+            args.env_size as usize,
+            args.acpi_rsdps_base as usize,
+            args.acpi_rsdps_size as usize,
+            args.areas_base as usize,
+            args.areas_size as usize,
+            args.bootstrap_base as usize,
+            args.bootstrap_size as usize,
         );
 
         // Initialize PAT
         paging::init();
 
         // Set up GDT after paging with TLS
-        gdt::init_paging(args.stack_base as usize + args.stack_size as usize, LogicalCpuId::BSP);
+        gdt::init_paging(
+            args.stack_base as usize + args.stack_size as usize,
+            LogicalCpuId::BSP,
+        );
 
         // Set up IDT
         idt::init_paging_bsp();
@@ -172,7 +206,10 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         #[cfg(feature = "acpi")]
         {
             acpi::init(if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
-                Some(((args.acpi_rsdps_base as usize + crate::PHYS_OFFSET) as u64, args.acpi_rsdps_size as u64))
+                Some((
+                    (args.acpi_rsdps_base as usize + crate::PHYS_OFFSET) as u64,
+                    args.acpi_rsdps_size as u64,
+                ))
             } else {
                 None
             });
@@ -192,7 +229,9 @@ pub unsafe extern fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(true, Ordering::SeqCst);
 
         crate::Bootstrap {
-            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(args.bootstrap_base as usize)),
+            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(
+                args.bootstrap_base as usize,
+            )),
             page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
             entry: args.bootstrap_entry as usize,
             env,
@@ -213,7 +252,7 @@ pub struct KernelArgsAp {
 }
 
 /// Entry to rust for an AP
-pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
+pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
     let cpu_id = {
         let args = &*args_ptr;
         let cpu_id = LogicalCpuId::new(args.cpu_id as u32);
@@ -259,7 +298,7 @@ pub unsafe extern fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         cpu_id
     };
 
-    while ! BSP_READY.load(Ordering::SeqCst) {
+    while !BSP_READY.load(Ordering::SeqCst) {
         interrupt::pause();
     }
 

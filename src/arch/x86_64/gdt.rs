@@ -1,17 +1,19 @@
 //! Global descriptor table
 
-use core::convert::TryInto;
-use core::mem;
+use core::{convert::TryInto, mem};
 
-use crate::LogicalCpuId;
-use crate::paging::{RmmA, RmmArch};
-use crate::percpu::PercpuBlock;
+use crate::{
+    paging::{RmmA, RmmArch},
+    percpu::PercpuBlock,
+    LogicalCpuId,
+};
 
-use x86::bits64::task::TaskStateSegment;
-use x86::Ring;
-use x86::dtables::{self, DescriptorTablePointer};
-use x86::segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector};
-use x86::task;
+use x86::{
+    bits64::task::TaskStateSegment,
+    dtables::{self, DescriptorTablePointer},
+    segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector},
+    task, Ring,
+};
 
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
@@ -44,9 +46,19 @@ static mut INIT_GDT: [GdtEntry; 3] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    GdtEntry::new(
+        0,
+        0,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_F_LONG_MODE,
+    ),
     // Kernel data
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    GdtEntry::new(
+        0,
+        0,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_LONG_MODE,
+    ),
 ];
 
 // Later copied into the actual GDT with various fields set.
@@ -54,15 +66,40 @@ const BASE_GDT: [GdtEntry; 8] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    GdtEntry::new(
+        0,
+        0,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_F_LONG_MODE,
+    ),
     // Kernel data
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    GdtEntry::new(
+        0,
+        0,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_LONG_MODE,
+    ),
     // Dummy 32-bit user code - apparently necessary for SYSRET. We restrict it to ring 0 anyway.
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_PROTECTED_MODE),
+    GdtEntry::new(
+        0,
+        0,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_F_PROTECTED_MODE,
+    ),
     // User data
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    GdtEntry::new(
+        0,
+        0,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_F_LONG_MODE,
+    ),
     // User (64-bit) code
-    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE, GDT_F_LONG_MODE),
+    GdtEntry::new(
+        0,
+        0,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_F_LONG_MODE,
+    ),
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
     // TSS must be 16 bytes long, twice the normal size
@@ -104,8 +141,9 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 
 #[cfg(feature = "pti")]
 pub unsafe fn set_tss_stack(stack: usize) {
-    use super::pti::{PTI_CPU_STACK, PTI_CONTEXT_STACK};
-    core::ptr::addr_of_mut!((*pcr()).tss.rsp[0]).write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
+    use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
+    core::ptr::addr_of_mut!((*pcr()).tss.rsp[0])
+        .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
     PTI_CONTEXT_STACK = stack;
 }
 
@@ -145,7 +183,8 @@ unsafe fn load_segments() {
 #[cold]
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR");
-    let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
+    let pcr =
+        &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
     pcr.self_ref = pcr as *mut ProcessorControlRegion as usize;
 
@@ -157,10 +196,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         .expect("main GDT way too large");
     let base = pcr.gdt.as_ptr() as *const SegmentDescriptor;
 
-    let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
-        limit,
-        base,
-    };
+    let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer { limit, base };
 
     {
         pcr.tss.iomap_base = 0xFFFF;
@@ -172,7 +208,9 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         pcr.gdt[GDT_TSS].set_offset(tss_lo);
         pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
 
-        (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry).cast::<u32>().write(tss_hi);
+        (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
+            .cast::<u32>()
+            .write(tss_hi);
     }
 
     // Load the new GDT, which is correctly located in thread local storage.
@@ -214,7 +252,7 @@ pub struct GdtEntry {
     pub offsetm: u8,
     pub access: u8,
     pub flags_limith: u8,
-    pub offseth: u8
+    pub offseth: u8,
 }
 
 impl GdtEntry {
@@ -225,7 +263,7 @@ impl GdtEntry {
             offsetm: (offset >> 16) as u8,
             access,
             flags_limith: flags & 0xF0 | ((limit >> 16) as u8) & 0x0F,
-            offseth: (offset >> 24) as u8
+            offseth: (offset >> 24) as u8,
         }
     }
 

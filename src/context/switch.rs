@@ -1,17 +1,15 @@
-use core::cell::Cell;
-use core::ops::Bound;
-use core::sync::atomic::Ordering;
+use core::{cell::Cell, ops::Bound, sync::atomic::Ordering};
 
 use alloc::sync::Arc;
 
 use spin::{RwLock, RwLockWriteGuard};
 
-use crate::context::signal::signal_handler;
-use crate::context::{arch, contexts, Context};
-use crate::{interrupt, LogicalCpuId};
-use crate::percpu::PercpuBlock;
-use crate::ptrace;
-use crate::time;
+use crate::{
+    context::{arch, contexts, signal::signal_handler, Context},
+    interrupt,
+    percpu::PercpuBlock,
+    ptrace, time, LogicalCpuId,
+};
 
 use super::ContextId;
 
@@ -33,15 +31,24 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
 
     // Restore from signal, must only be done from another context to avoid overwriting the stack!
     if context.ksig_restore {
-        let was_singlestep = ptrace::regs_for(context).map(|s| s.is_singlestep()).unwrap_or(false);
+        let was_singlestep = ptrace::regs_for(context)
+            .map(|s| s.is_singlestep())
+            .unwrap_or(false);
 
-        let ksig = context.ksig.take().expect("context::switch: ksig not set with ksig_restore");
+        let ksig = context
+            .ksig
+            .take()
+            .expect("context::switch: ksig not set with ksig_restore");
         context.arch = ksig.0;
 
         context.kfx.copy_from_slice(&*ksig.1);
 
         if let Some(ref mut kstack) = context.kstack {
-            kstack.copy_from_slice(&ksig.2.expect("context::switch: ksig kstack not set with ksig_restore"));
+            kstack.copy_from_slice(
+                &ksig
+                    .2
+                    .expect("context::switch: ksig kstack not set with ksig_restore"),
+            );
         } else {
             panic!("context::switch: kstack not set with ksig_restore");
         }
@@ -81,7 +88,6 @@ struct SwitchResult {
     next_lock: Arc<RwLock<Context>>,
 }
 
-
 pub fn tick() {
     let ticks_cell = &PercpuBlock::current().switch_internals.pit_ticks;
 
@@ -95,7 +101,11 @@ pub fn tick() {
 }
 
 pub unsafe extern "C" fn switch_finish_hook() {
-    if let Some(SwitchResult { prev_lock, next_lock }) = PercpuBlock::current().switch_internals.switch_result.take() {
+    if let Some(SwitchResult {
+        prev_lock,
+        next_lock,
+    }) = PercpuBlock::current().switch_internals.switch_result.take()
+    {
         prev_lock.force_write_unlock();
         next_lock.force_write_unlock();
     } else {
@@ -118,7 +128,10 @@ pub unsafe fn switch() -> bool {
 
     // Set the global lock to avoid the unsafe operations below from causing issues
     // TODO: Better memory orderings?
-    while arch::CONTEXT_SWITCH_LOCK.compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed).is_err() {
+    while arch::CONTEXT_SWITCH_LOCK
+        .compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed)
+        .is_err()
+    {
         interrupt::pause();
     }
 
@@ -130,20 +143,21 @@ pub unsafe fn switch() -> bool {
         let contexts = contexts();
 
         // Lock previous context
-        let prev_context_lock = contexts.current().expect("context::switch: not inside of context");
+        let prev_context_lock = contexts
+            .current()
+            .expect("context::switch: not inside of context");
         let prev_context_guard = prev_context_lock.write();
 
         // Locate next context
         for (_pid, next_context_lock) in contexts
             // Include all contexts with IDs greater than the current...
-            .range(
-                (Bound::Excluded(prev_context_guard.id), Bound::Unbounded)
+            .range((Bound::Excluded(prev_context_guard.id), Bound::Unbounded))
+            .chain(
+                contexts
+                    // ... and all contexts with IDs less than the current...
+                    .range((Bound::Unbounded, Bound::Excluded(prev_context_guard.id))),
             )
-            .chain(contexts
-                // ... and all contexts with IDs less than the current...
-                .range((Bound::Unbounded, Bound::Excluded(prev_context_guard.id)))
-            )
-            // ... but not the current context, which is already locked
+        // ... but not the current context, which is already locked
         {
             // Lock next context
             let mut next_context_guard = next_context_lock.write();
@@ -165,7 +179,9 @@ pub unsafe fn switch() -> bool {
     };
 
     // Switch process states, TSS stack pointer, and store new context ID
-    if let Some((prev_context_lock, prev_context_ptr, next_context_lock, next_context_ptr)) = switch_context_opt {
+    if let Some((prev_context_lock, prev_context_ptr, next_context_lock, next_context_ptr)) =
+        switch_context_opt
+    {
         // Set old context as not running and update CPU time
         let prev_context = &mut *prev_context_ptr;
         prev_context.running = false;
@@ -198,10 +214,13 @@ pub unsafe fn switch() -> bool {
             }
         }
 
-        percpu.switch_internals.switch_result.set(Some(SwitchResult {
-            prev_lock: prev_context_lock,
-            next_lock: next_context_lock,
-        }));
+        percpu
+            .switch_internals
+            .switch_result
+            .set(Some(SwitchResult {
+                prev_lock: prev_context_lock,
+                next_lock: next_context_lock,
+            }));
 
         arch::switch_to(prev_context, next_context);
 

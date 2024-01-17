@@ -1,5 +1,7 @@
-use crate::syscall::io::{Io, Pio};
-use crate::time;
+use crate::{
+    syscall::io::{Io, Pio},
+    time,
+};
 
 pub fn init() {
     let mut rtc = Rtc::new();

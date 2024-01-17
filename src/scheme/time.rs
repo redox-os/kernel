@@ -1,16 +1,22 @@
 use alloc::collections::BTreeMap;
-use core::{mem, str};
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    mem, str,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use spin::RwLock;
 
-use crate::context::timeout;
-use crate::syscall::data::TimeSpec;
-use crate::syscall::error::*;
-use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC, EventFlags};
-use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
-use crate::time;
+use crate::{
+    context::timeout,
+    syscall::{
+        data::TimeSpec,
+        error::*,
+        flag::{EventFlags, CLOCK_MONOTONIC, CLOCK_REALTIME},
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
+    time,
+};
 
-use super::{GlobalSchemes, KernelScheme, CallerCtx, OpenResult};
+use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
@@ -25,7 +31,7 @@ impl KernelScheme for TimeScheme {
         match clock {
             CLOCK_REALTIME => (),
             CLOCK_MONOTONIC => (),
-            _ => return Err(Error::new(ENOENT))
+            _ => return Err(Error::new(ENOENT)),
         }
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -39,7 +45,11 @@ impl KernelScheme for TimeScheme {
     }
 
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
-        HANDLES.read().get(&id).ok_or(Error::new(EBADF)).and(Ok(EventFlags::empty()))
+        HANDLES
+            .read()
+            .get(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(EventFlags::empty()))
     }
 
     fn fsync(&self, id: usize) -> Result<()> {
@@ -48,7 +58,11 @@ impl KernelScheme for TimeScheme {
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        HANDLES.write().remove(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        HANDLES
+            .write()
+            .remove(&id)
+            .ok_or(Error::new(EBADF))
+            .and(Ok(()))
     }
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let clock = *HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
@@ -59,7 +73,7 @@ impl KernelScheme for TimeScheme {
             let arch_time = match clock {
                 CLOCK_REALTIME => time::realtime(),
                 CLOCK_MONOTONIC => time::monotonic(),
-                _ => return Err(Error::new(EINVAL))
+                _ => return Err(Error::new(EINVAL)),
             };
             let time = TimeSpec {
                 tv_sec: (arch_time / time::NANOS_PER_SEC) as i64,
@@ -84,7 +98,7 @@ impl KernelScheme for TimeScheme {
             timeout::register(GlobalSchemes::Time.scheme_id(), id, clock, time);
 
             bytes_written += mem::size_of::<TimeSpec>();
-        };
+        }
 
         Ok(bytes_written)
     }
@@ -94,5 +108,4 @@ impl KernelScheme for TimeScheme {
         let scheme_path = format!("time:{}", clock).into_bytes();
         buf.copy_common_bytes_from_slice(&scheme_path)
     }
-
 }

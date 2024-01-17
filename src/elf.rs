@@ -17,22 +17,34 @@ pub use goblin::elf64::{header, program_header, section_header, sym};
 /// An ELF executable
 pub struct Elf<'a> {
     pub data: &'a [u8],
-    header: &'a header::Header
+    header: &'a header::Header,
 }
 
 impl<'a> Elf<'a> {
     /// Create a ELF executable from data
     pub fn from(data: &'a [u8]) -> Result<Elf<'a>, String> {
         if data.len() < header::SIZEOF_EHDR {
-            Err(format!("Elf: Not enough data: {} < {}", data.len(), header::SIZEOF_EHDR))
+            Err(format!(
+                "Elf: Not enough data: {} < {}",
+                data.len(),
+                header::SIZEOF_EHDR
+            ))
         } else if &data[..header::SELFMAG] != header::ELFMAG {
-            Err(format!("Elf: Invalid magic: {:?} != {:?}", &data[..header::SELFMAG], header::ELFMAG))
+            Err(format!(
+                "Elf: Invalid magic: {:?} != {:?}",
+                &data[..header::SELFMAG],
+                header::ELFMAG
+            ))
         } else if data.get(header::EI_CLASS) != Some(&header::ELFCLASS) {
-            Err(format!("Elf: Invalid architecture: {:?} != {:?}", data.get(header::EI_CLASS), header::ELFCLASS))
+            Err(format!(
+                "Elf: Invalid architecture: {:?} != {:?}",
+                data.get(header::EI_CLASS),
+                header::ELFCLASS
+            ))
         } else {
             Ok(Elf {
                 data,
-                header: unsafe { &*(data.as_ptr() as usize as *const header::Header) }
+                header: unsafe { &*(data.as_ptr() as usize as *const header::Header) },
             })
         }
     }
@@ -41,7 +53,7 @@ impl<'a> Elf<'a> {
         ElfSections {
             data: self.data,
             header: self.header,
-            i: 0
+            i: 0,
         }
     }
 
@@ -58,7 +70,7 @@ impl<'a> Elf<'a> {
             Some(ElfSymbols {
                 data: self.data,
                 symtab,
-                i: 0
+                i: 0,
             })
         } else {
             None
@@ -69,7 +81,7 @@ impl<'a> Elf<'a> {
 pub struct ElfSections<'a> {
     data: &'a [u8],
     header: &'a header::Header,
-    i: usize
+    i: usize,
 }
 
 impl<'a> Iterator for ElfSections<'a> {
@@ -77,11 +89,10 @@ impl<'a> Iterator for ElfSections<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.i < self.header.e_shnum as usize {
             let item = unsafe {
-                &* ((
-                        self.data.as_ptr() as usize
-                        + self.header.e_shoff as usize
-                        + self.i * self.header.e_shentsize as usize
-                    ) as *const section_header::SectionHeader)
+                &*((self.data.as_ptr() as usize
+                    + self.header.e_shoff as usize
+                    + self.i * self.header.e_shentsize as usize)
+                    as *const section_header::SectionHeader)
             };
             self.i += 1;
             Some(item)
@@ -94,7 +105,7 @@ impl<'a> Iterator for ElfSections<'a> {
 pub struct ElfSegments<'a> {
     data: &'a [u8],
     header: &'a header::Header,
-    i: usize
+    i: usize,
 }
 
 impl<'a> Iterator for ElfSegments<'a> {
@@ -102,11 +113,10 @@ impl<'a> Iterator for ElfSegments<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.i < self.header.e_phnum as usize {
             let item = unsafe {
-                &* ((
-                        self.data.as_ptr() as usize
-                        + self.header.e_phoff as usize
-                        + self.i * self.header.e_phentsize as usize
-                    ) as *const program_header::ProgramHeader)
+                &*((self.data.as_ptr() as usize
+                    + self.header.e_phoff as usize
+                    + self.i * self.header.e_phentsize as usize)
+                    as *const program_header::ProgramHeader)
             };
             self.i += 1;
             Some(item)
@@ -119,7 +129,7 @@ impl<'a> Iterator for ElfSegments<'a> {
 pub struct ElfSymbols<'a> {
     data: &'a [u8],
     symtab: &'a section_header::SectionHeader,
-    i: usize
+    i: usize,
 }
 
 impl<'a> Iterator for ElfSymbols<'a> {
@@ -127,11 +137,9 @@ impl<'a> Iterator for ElfSymbols<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.i < (self.symtab.sh_size as usize) / sym::SIZEOF_SYM {
             let item = unsafe {
-                &* ((
-                        self.data.as_ptr() as usize
-                        + self.symtab.sh_offset as usize
-                        + self.i * sym::SIZEOF_SYM
-                    ) as *const sym::Sym)
+                &*((self.data.as_ptr() as usize
+                    + self.symtab.sh_offset as usize
+                    + self.i * sym::SIZEOF_SYM) as *const sym::Sym)
             };
             self.i += 1;
             Some(item)

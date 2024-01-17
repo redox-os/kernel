@@ -42,9 +42,9 @@ pub mod stop;
 
 pub mod time;
 
-pub use ::rmm::X86Arch as CurrentRmmArch;
+use crate::{memory::PAGE_SIZE, Bootstrap};
 use ::rmm::Arch;
-use crate::{Bootstrap, memory::PAGE_SIZE};
+pub use ::rmm::X86Arch as CurrentRmmArch;
 
 // Flags
 pub mod flags {
@@ -56,7 +56,8 @@ pub mod flags {
 #[naked]
 #[link_section = ".usercopy-fns"]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    core::arch::asm!("
+    core::arch::asm!(
+        "
             push edi
             push esi
 
@@ -70,12 +71,17 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
 
             xor eax, eax
             ret
-    ", options(noreturn));
+    ",
+        options(noreturn)
+    );
 }
 pub use arch_copy_to_user as arch_copy_from_user;
 
 pub unsafe fn bootstrap_mem(bootstrap: &Bootstrap) -> &'static [u8] {
-    core::slice::from_raw_parts(CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8, bootstrap.page_count * PAGE_SIZE)
+    core::slice::from_raw_parts(
+        CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8,
+        bootstrap.page_count * PAGE_SIZE,
+    )
 }
 pub const KFX_SIZE: usize = 512;
 

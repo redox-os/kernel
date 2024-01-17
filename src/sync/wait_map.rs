@@ -8,14 +8,17 @@ use crate::sync::WaitCondition;
 pub struct WaitMap<K, V> {
     // Using BTreeMap as this depends on .keys() providing elements in sorted order.
     pub inner: Mutex<BTreeMap<K, V>>,
-    pub condition: WaitCondition
+    pub condition: WaitCondition,
 }
 
-impl<K, V> WaitMap<K, V> where K: Clone + Ord {
+impl<K, V> WaitMap<K, V>
+where
+    K: Clone + Ord,
+{
     pub fn new() -> WaitMap<K, V> {
         WaitMap {
             inner: Mutex::new(BTreeMap::new()),
-            condition: WaitCondition::new()
+            condition: WaitCondition::new(),
         }
     }
 

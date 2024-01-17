@@ -2,19 +2,22 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::borrow::Cow;
-use alloc::sync::Arc;
+use alloc::{borrow::Cow, sync::Arc};
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::LogicalCpuSet;
-use crate::paging::{RmmA, RmmArch, TableKind};
-use crate::percpu::PercpuBlock;
-use crate::syscall::error::{Error, ESRCH, Result};
+use crate::{
+    paging::{RmmA, RmmArch, TableKind},
+    percpu::PercpuBlock,
+    syscall::error::{Error, Result, ESRCH},
+    LogicalCpuSet,
+};
 
-pub use self::context::{BorrowedHtBuf, Context, ContextId, Status, WaitpidKey};
-pub use self::list::ContextList;
-pub use self::switch::switch;
+pub use self::{
+    context::{BorrowedHtBuf, Context, ContextId, Status, WaitpidKey},
+    list::ContextList,
+    switch::switch,
+};
 
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
@@ -65,7 +68,9 @@ pub use self::arch::empty_cr3;
 pub fn init() {
     let mut contexts = contexts_mut();
     let id = ContextId::from(crate::cpu_id().get() as usize + 1);
-    let context_lock = contexts.insert_context_raw(id).expect("could not initialize first context");
+    let context_lock = contexts
+        .insert_context_raw(id)
+        .expect("could not initialize first context");
     let mut context = context_lock.write();
     context.sched_affinity = LogicalCpuSet::single(crate::cpu_id());
     context.name = Cow::Borrowed("kmain");
@@ -77,7 +82,9 @@ pub fn init() {
     context.cpu_id = Some(crate::cpu_id());
 
     unsafe {
-        PercpuBlock::current().switch_internals.set_context_id(context.id);
+        PercpuBlock::current()
+            .switch_internals
+            .set_context_id(context.id);
     }
 }
 
@@ -96,5 +103,8 @@ pub fn context_id() -> ContextId {
 }
 
 pub fn current() -> Result<Arc<RwLock<Context>>> {
-    contexts().current().ok_or(Error::new(ESRCH)).map(Arc::clone)
+    contexts()
+        .current()
+        .ok_or(Error::new(ESRCH))
+        .map(Arc::clone)
 }

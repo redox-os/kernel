@@ -11,4 +11,3 @@ bitflags! {
         const DEV_MEM = 2 << 2;
     }
 }
-

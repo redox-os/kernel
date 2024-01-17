@@ -135,13 +135,14 @@ impl SerialPort {
     }
 
     pub fn write_reg(&self, register: u8, data: u32) {
-        unsafe { ptr::write_volatile((self.base + register as usize) as *mut u32, data); }
+        unsafe {
+            ptr::write_volatile((self.base + register as usize) as *mut u32, data);
+        }
     }
 
     pub fn init(&mut self, with_irq: bool) {
-
         if self.skip_init {
-            return ;
+            return;
         }
 
         //Disable UART first
@@ -175,7 +176,7 @@ impl SerialPort {
     }
 
     pub fn drain_fifo(&mut self) {
-        for _ in 0..self.fifo_size*2 {
+        for _ in 0..self.fifo_size * 2 {
             if self.line_sts().contains(UartFrFlags::RXFE) {
                 break;
             }
@@ -187,7 +188,6 @@ impl SerialPort {
         let mut flags = self.intr_stats();
         let chk_flags = UartRisFlags::RTIS | UartRisFlags::RXIS;
         while (flags & chk_flags).bits != 0 {
-
             if self.cts_event_walkaround {
                 self.write_reg(self.intr_clr_reg, 0x00);
                 let _ = self.read_reg(self.intr_clr_reg);
@@ -213,7 +213,7 @@ impl SerialPort {
     }
 
     pub fn send(&mut self, data: u8) {
-        while ! self.line_sts().contains(UartFrFlags::TXFE) {}
+        while !self.line_sts().contains(UartFrFlags::TXFE) {}
         self.write_reg(self.data_reg, data as u32);
     }
 
@@ -227,7 +227,6 @@ impl SerialPort {
     }
 
     pub fn enable_irq(&mut self) {
-
         self.clear_all_irqs();
 
         self.drain_fifo();

@@ -12,8 +12,7 @@ pub mod trace;
 
 use crate::LogicalCpuId;
 
-pub use self::handler::InterruptStack;
-pub use self::trace::stack_trace;
+pub use self::{handler::InterruptStack, trace::stack_trace};
 
 /// Clear interrupts
 #[inline(always)]

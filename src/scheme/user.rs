@@ -1,31 +1,47 @@
-use alloc::sync::{Arc, Weak};
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use syscall::{SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, MAP_FIXED_NOREPLACE, MunmapFlags, SKMSG_FOBTAINFD, FobtainFdFlags, SendFdFlags};
-use core::mem::size_of;
-use core::num::NonZeroUsize;
-use core::sync::atomic::{AtomicBool, Ordering};
-use core::{mem, usize};
+use alloc::{
+    boxed::Box,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
+use core::{
+    mem,
+    mem::size_of,
+    num::NonZeroUsize,
+    sync::atomic::{AtomicBool, Ordering},
+    usize,
+};
 use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, RwLock};
+use syscall::{
+    FobtainFdFlags, MunmapFlags, SendFdFlags, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD,
+    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
+};
 
-use crate::context::context::HardBlockedReason;
-use crate::context::{self, Context, BorrowedHtBuf, Status};
-use crate::context::file::{FileDescription, FileDescriptor};
-use crate::context::memory::{AddrSpace, DANGLING, Grant, GrantFileRef, PageSpan, MmapMode, BorrowedFmapSource};
-use crate::event;
-use crate::memory::Frame;
-use crate::paging::mapper::InactiveFlusher;
-use crate::paging::{PAGE_SIZE, Page, VirtualAddress};
-use crate::scheme::SchemeId;
-use crate::sync::WaitQueue;
-use crate::syscall::data::{Map, Packet};
-use crate::syscall::error::*;
-use crate::syscall::flag::{EventFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE, MapFlags};
-use crate::syscall::number::*;
-use crate::syscall::usercopy::{UserSlice, UserSliceWo, UserSliceRo};
+use crate::{
+    context::{
+        self,
+        context::HardBlockedReason,
+        file::{FileDescription, FileDescriptor},
+        memory::{
+            AddrSpace, BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, DANGLING,
+        },
+        BorrowedHtBuf, Context, Status,
+    },
+    event,
+    memory::Frame,
+    paging::{mapper::InactiveFlusher, Page, VirtualAddress, PAGE_SIZE},
+    scheme::SchemeId,
+    sync::WaitQueue,
+    syscall::{
+        data::{Map, Packet},
+        error::*,
+        flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE},
+        number::*,
+        usercopy::{UserSlice, UserSliceRo, UserSliceWo},
+    },
+};
 
-use super::{FileHandle, OpenResult, KernelScheme, CallerCtx};
+use super::{CallerCtx, FileHandle, KernelScheme, OpenResult};
 
 pub struct UserInner {
     root_id: SchemeId,
@@ -41,7 +57,10 @@ pub struct UserInner {
 }
 
 enum State {
-    Waiting { context: Weak<RwLock<Context>>, fd: Option<Arc<RwLock<FileDescription>>> },
+    Waiting {
+        context: Weak<RwLock<Context>>,
+        fd: Option<Arc<RwLock<FileDescription>>>,
+    },
     Responded(Response),
     Fmap(Weak<RwLock<Context>>),
     Placeholder,
@@ -59,7 +78,14 @@ const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
 };
 
 impl UserInner {
-    pub fn new(root_id: SchemeId, scheme_id: SchemeId, handle_id: usize, name: Box<str>, flags: usize, context: Weak<RwLock<Context>>) -> UserInner {
+    pub fn new(
+        root_id: SchemeId,
+        scheme_id: SchemeId,
+        handle_id: usize,
+        name: Box<str>,
+        flags: usize,
+        context: Weak<RwLock<Context>>,
+    ) -> UserInner {
         UserInner {
             root_id,
             handle_id,
@@ -109,20 +135,32 @@ impl UserInner {
         }
     }
 
-    pub fn call_extended(&self, ctx: CallerCtx, fd: Option<Arc<RwLock<FileDescription>>>, [a, b, c, d]: [usize; 4]) -> Result<Response> {
-        self.call_extended_inner(fd, Packet {
-            id: self.next_id(),
-            pid: ctx.pid,
-            uid: ctx.uid,
-            gid: ctx.gid,
-            a,
-            b,
-            c,
-            d
-        })
+    pub fn call_extended(
+        &self,
+        ctx: CallerCtx,
+        fd: Option<Arc<RwLock<FileDescription>>>,
+        [a, b, c, d]: [usize; 4],
+    ) -> Result<Response> {
+        self.call_extended_inner(
+            fd,
+            Packet {
+                id: self.next_id(),
+                pid: ctx.pid,
+                uid: ctx.uid,
+                gid: ctx.gid,
+                a,
+                b,
+                c,
+                d,
+            },
+        )
     }
 
-    fn call_extended_inner(&self, fd: Option<Arc<RwLock<FileDescription>>>, packet: Packet) -> Result<Response> {
+    fn call_extended_inner(
+        &self,
+        fd: Option<Arc<RwLock<FileDescription>>>,
+        packet: Packet,
+    ) -> Result<Response> {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
         }
@@ -134,7 +172,13 @@ impl UserInner {
         {
             let mut states = self.states.lock();
             current_context.write().block("UserScheme::call");
-            states.insert(id, State::Waiting { context: Arc::downgrade(&current_context), fd });
+            states.insert(
+                id,
+                State::Waiting {
+                    context: Arc::downgrade(&current_context),
+                    fd,
+                },
+            );
         }
 
         self.todo.send(packet);
@@ -166,7 +210,7 @@ impl UserInner {
                         o.remove();
                         return Ok(response);
                     }
-                }
+                },
             }
         }
     }
@@ -174,14 +218,20 @@ impl UserInner {
     /// Map a readable structure to the scheme's userspace and return the
     /// pointer
     #[must_use = "copying back to head/tail buffers can fail"]
-    pub fn capture_user<const READ: bool, const WRITE: bool>(&self, buf: UserSlice<READ, WRITE>) -> Result<CaptureGuard<READ, WRITE>> {
-        UserInner::capture_inner(
-            &self.context,
-            buf,
-        )
+    pub fn capture_user<const READ: bool, const WRITE: bool>(
+        &self,
+        buf: UserSlice<READ, WRITE>,
+    ) -> Result<CaptureGuard<READ, WRITE>> {
+        UserInner::capture_inner(&self.context, buf)
     }
     pub fn copy_and_capture_tail(&self, buf: &[u8]) -> Result<CaptureGuard<false, false>> {
-        let dst_addr_space = Arc::clone(self.context.upgrade().ok_or(Error::new(ENODEV))?.read().addr_space()?);
+        let dst_addr_space = Arc::clone(
+            self.context
+                .upgrade()
+                .ok_or(Error::new(ENODEV))?
+                .read()
+                .addr_space()?,
+        );
 
         let mut tail = BorrowedHtBuf::tail()?;
         let tail_frame = tail.frame();
@@ -191,7 +241,15 @@ impl UserInner {
         tail.buf_mut()[..buf.len()].copy_from_slice(buf);
 
         let is_pinned = true;
-        let dst_page = dst_addr_space.write().mmap_anywhere(ONE, PROT_READ, |dst_page, flags, mapper, flusher| Ok(Grant::allocated_shared_one_page(tail_frame, dst_page, flags, mapper, flusher, is_pinned)?))?;
+        let dst_page = dst_addr_space.write().mmap_anywhere(
+            ONE,
+            PROT_READ,
+            |dst_page, flags, mapper, flusher| {
+                Ok(Grant::allocated_shared_one_page(
+                    tail_frame, dst_page, flags, mapper, flusher, is_pinned,
+                )?)
+            },
+        )?;
 
         Ok(CaptureGuard {
             destroyed: false,
@@ -202,7 +260,10 @@ impl UserInner {
                 src: Some(tail),
                 dst: None,
             },
-            tail: CopyInfo { src: None, dst: None },
+            tail: CopyInfo {
+                src: None,
+                dst: None,
+            },
         })
     }
 
@@ -212,7 +273,10 @@ impl UserInner {
     /// Capture a buffer owned by userspace, mapping it contiguously onto scheme memory.
     // TODO: Hypothetical accept_head_leak, accept_tail_leak options might be useful for
     // libc-controlled buffer pools.
-    fn capture_inner<const READ: bool, const WRITE: bool>(context_weak: &Weak<RwLock<Context>>, user_buf: UserSlice<READ, WRITE>) -> Result<CaptureGuard<READ, WRITE>> {
+    fn capture_inner<const READ: bool, const WRITE: bool>(
+        context_weak: &Weak<RwLock<Context>>,
+        user_buf: UserSlice<READ, WRITE>,
+    ) -> Result<CaptureGuard<READ, WRITE>> {
         let (mode, map_flags) = match (READ, WRITE) {
             (true, false) => (Mode::Ro, PROT_READ),
             (false, true) => (Mode::Wo, PROT_WRITE),
@@ -232,13 +296,25 @@ impl UserInner {
                 base: DANGLING,
                 len: 0,
                 space: None,
-                head: CopyInfo { src: None, dst: None },
-                tail: CopyInfo { src: None, dst: None },
+                head: CopyInfo {
+                    src: None,
+                    dst: None,
+                },
+                tail: CopyInfo {
+                    src: None,
+                    dst: None,
+                },
             });
         }
 
         let cur_space_lock = AddrSpace::current()?;
-        let dst_space_lock = Arc::clone(context_weak.upgrade().ok_or(Error::new(ESRCH))?.read().addr_space()?);
+        let dst_space_lock = Arc::clone(
+            context_weak
+                .upgrade()
+                .ok_or(Error::new(ESRCH))?
+                .read()
+                .addr_space()?,
+        );
 
         if Arc::ptr_eq(&dst_space_lock, &cur_space_lock) {
             // Same address space, no need to remap anything!
@@ -247,8 +323,14 @@ impl UserInner {
                 base: user_buf.addr(),
                 len: user_buf.len(),
                 space: None,
-                head: CopyInfo { src: None, dst: None },
-                tail: CopyInfo { src: None, dst: None },
+                head: CopyInfo {
+                    src: None,
+                    dst: None,
+                },
+                tail: CopyInfo {
+                    src: None,
+                    dst: None,
+                },
             });
         }
 
@@ -261,7 +343,10 @@ impl UserInner {
 
         let mut dst_space = dst_space_lock.write();
 
-        let free_span = dst_space.grants.find_free(dst_space.mmap_min, page_count).ok_or(Error::new(ENOMEM))?;
+        let free_span = dst_space
+            .grants
+            .find_free(dst_space.mmap_min, page_count)
+            .ok_or(Error::new(ENOMEM))?;
 
         let head = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
@@ -276,19 +361,30 @@ impl UserInner {
                     array.buf_mut()[offset + len..].fill(0_u8);
 
                     let slice = &mut array.buf_mut()[offset..][..len];
-                    let head_part_of_buf = user_buf.limit(len).expect("always smaller than max len");
+                    let head_part_of_buf =
+                        user_buf.limit(len).expect("always smaller than max len");
 
-                    head_part_of_buf.reinterpret_unchecked::<true, false>().copy_to_slice(slice)?;
+                    head_part_of_buf
+                        .reinterpret_unchecked::<true, false>()
+                        .copy_to_slice(slice)?;
                 }
                 Mode::Wo => {
                     array.buf_mut().fill(0_u8);
                 }
             }
 
-            dst_space.mmap(Some(free_span.base), ONE, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
-                let is_pinned = true;
-                Ok(Grant::allocated_shared_one_page(frame, dst_page, page_flags, mapper, flusher, is_pinned)?)
-            })?;
+            dst_space.mmap(
+                Some(free_span.base),
+                ONE,
+                map_flags | MAP_FIXED_NOREPLACE,
+                &mut Vec::new(),
+                move |dst_page, page_flags, mapper, flusher| {
+                    let is_pinned = true;
+                    Ok(Grant::allocated_shared_one_page(
+                        frame, dst_page, page_flags, mapper, flusher, is_pinned,
+                    )?)
+                },
+            )?;
 
             let head = CopyInfo {
                 src: Some(array),
@@ -302,30 +398,54 @@ impl UserInner {
                 dst: None,
             }
         };
-        let (first_middle_dst_page, first_middle_src_page) = if !head_part_of_buf.is_empty() { (free_span.base.next(), src_page.next()) } else { (free_span.base, src_page) };
+        let (first_middle_dst_page, first_middle_src_page) = if !head_part_of_buf.is_empty() {
+            (free_span.base.next(), src_page.next())
+        } else {
+            (free_span.base, src_page)
+        };
 
         let middle_page_count = middle_tail_part_of_buf.len() / PAGE_SIZE;
         let tail_size = middle_tail_part_of_buf.len() % PAGE_SIZE;
 
-        let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf.split_at(middle_page_count * PAGE_SIZE).expect("split must succeed");
+        let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf
+            .split_at(middle_page_count * PAGE_SIZE)
+            .expect("split must succeed");
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
-            dst_space.mmap(Some(first_middle_dst_page), middle_page_count, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, _, mapper, flusher| {
-                let eager = true;
+            dst_space.mmap(
+                Some(first_middle_dst_page),
+                middle_page_count,
+                map_flags | MAP_FIXED_NOREPLACE,
+                &mut Vec::new(),
+                move |dst_page, _, mapper, flusher| {
+                    let eager = true;
 
-                // It doesn't make sense to allow a context, that has borrowed non-RAM physical
-                // memory, to DIRECTLY do scheme calls onto that memory.
-                //
-                // (TODO: Maybe there are some niche use cases for that, possibly PCI transfer
-                // BARs, but it doesn't make sense yet.)
-                let allow_phys = false;
+                    // It doesn't make sense to allow a context, that has borrowed non-RAM physical
+                    // memory, to DIRECTLY do scheme calls onto that memory.
+                    //
+                    // (TODO: Maybe there are some niche use cases for that, possibly PCI transfer
+                    // BARs, but it doesn't make sense yet.)
+                    let allow_phys = false;
 
-                // Deny any attempts by the scheme, to unmap these temporary pages. The only way to
-                // unmap them is to respond to the scheme socket.
-                let is_pinned_userscheme_borrow = true;
+                    // Deny any attempts by the scheme, to unmap these temporary pages. The only way to
+                    // unmap them is to respond to the scheme socket.
+                    let is_pinned_userscheme_borrow = true;
 
-                Ok(Grant::borrow(Arc::clone(&cur_space_lock), &mut *cur_space_lock.write(), first_middle_src_page, dst_page, middle_page_count.get(), map_flags, mapper, flusher, eager, allow_phys, is_pinned_userscheme_borrow)?)
-            })?;
+                    Ok(Grant::borrow(
+                        Arc::clone(&cur_space_lock),
+                        &mut *cur_space_lock.write(),
+                        first_middle_src_page,
+                        dst_page,
+                        middle_page_count.get(),
+                        map_flags,
+                        mapper,
+                        flusher,
+                        eager,
+                        allow_phys,
+                        is_pinned_userscheme_borrow,
+                    )?)
+                },
+            )?;
         }
 
         let tail = if !tail_part_of_buf.is_empty() {
@@ -342,17 +462,27 @@ impl UserInner {
                     to_zero.fill(0_u8);
 
                     // FIXME: remove reinterpret_unchecked
-                    tail_part_of_buf.reinterpret_unchecked::<true, false>().copy_to_slice(to_copy)?;
+                    tail_part_of_buf
+                        .reinterpret_unchecked::<true, false>()
+                        .copy_to_slice(to_copy)?;
                 }
                 Mode::Wo => {
                     array.buf_mut().fill(0_u8);
                 }
             }
 
-            dst_space.mmap(Some(tail_dst_page), ONE, map_flags | MAP_FIXED_NOREPLACE, &mut Vec::new(), move |dst_page, page_flags, mapper, flusher| {
-                let is_pinned = true;
-                Ok(Grant::allocated_shared_one_page(frame, dst_page, page_flags, mapper, flusher, is_pinned)?)
-            })?;
+            dst_space.mmap(
+                Some(tail_dst_page),
+                ONE,
+                map_flags | MAP_FIXED_NOREPLACE,
+                &mut Vec::new(),
+                move |dst_page, page_flags, mapper, flusher| {
+                    let is_pinned = true;
+                    Ok(Grant::allocated_shared_one_page(
+                        frame, dst_page, page_flags, mapper, flusher, is_pinned,
+                    )?)
+                },
+            )?;
 
             CopyInfo {
                 src: Some(array),
@@ -407,7 +537,13 @@ impl UserInner {
 
         Ok(packets_read * size_of::<Packet>())
     }
-    pub fn request_fmap(&self, id: usize, offset: u64, required_page_count: usize, flags: MapFlags) -> Result<()> {
+    pub fn request_fmap(
+        &self,
+        id: usize,
+        offset: u64,
+        required_page_count: usize,
+        flags: MapFlags,
+    ) -> Result<()> {
         log::info!("REQUEST FMAP");
 
         let packet_id = self.next_id();
@@ -432,8 +568,12 @@ impl UserInner {
         if packet.id == 0 {
             // TODO: Simplify logic by using SKMSG with packet.id being ignored?
             match packet.a {
-                SYS_FEVENT => event::trigger(self.scheme_id, packet.b, EventFlags::from_bits_truncate(packet.c)),
-                _ => log::warn!("Unknown scheme -> kernel message {}", packet.a)
+                SYS_FEVENT => event::trigger(
+                    self.scheme_id,
+                    packet.b,
+                    EventFlags::from_bits_truncate(packet.c),
+                ),
+                _ => log::warn!("Unknown scheme -> kernel message {}", packet.a),
             }
         } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
             // The reason why the new ESKMSG mechanism was introduced, is that passing packet IDs
@@ -442,13 +582,22 @@ impl UserInner {
                 SKMSG_FRETURNFD => {
                     let fd = packet.c;
 
-                    let desc = context::current()?.read().remove_file(FileHandle::from(fd)).ok_or(Error::new(EINVAL))?.description;
+                    let desc = context::current()?
+                        .read()
+                        .remove_file(FileHandle::from(fd))
+                        .ok_or(Error::new(EINVAL))?
+                        .description;
 
                     self.respond(packet.id, Response::Fd(desc))?;
                 }
                 SKMSG_FOBTAINFD => {
                     let flags = FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?;
-                    let description = match self.states.lock().get_mut(&packet.id).ok_or(Error::new(EINVAL))? {
+                    let description = match self
+                        .states
+                        .lock()
+                        .get_mut(&packet.id)
+                        .ok_or(Error::new(EINVAL))?
+                    {
                         State::Waiting { ref mut fd, .. } => fd.take().ok_or(Error::new(ENOENT))?,
                         _ => return Err(Error::new(ENOENT)),
                     };
@@ -456,9 +605,21 @@ impl UserInner {
                     // FIXME: Description can leak if context::current() fails, or if there is no
                     // additional file table space.
                     if flags.contains(FobtainFdFlags::MANUAL_FD) {
-                        context::current()?.read().insert_file(FileHandle::from(packet.c), FileDescriptor { description, cloexec: true });
+                        context::current()?.read().insert_file(
+                            FileHandle::from(packet.c),
+                            FileDescriptor {
+                                description,
+                                cloexec: true,
+                            },
+                        );
                     } else {
-                        let fd = context::current()?.read().add_file(FileDescriptor { description, cloexec: true }).ok_or(Error::new(EMFILE))?;
+                        let fd = context::current()?
+                            .read()
+                            .add_file(FileDescriptor {
+                                description,
+                                cloexec: true,
+                            })
+                            .ok_or(Error::new(EMFILE))?;
                         UserSlice::wo(packet.c, size_of::<usize>())?.write_usize(fd.get())?;
                     }
                 }
@@ -477,38 +638,48 @@ impl UserInner {
 
                     let page_count = packet.d;
 
-                    if page_count != 1 { return Err(Error::new(EINVAL)); }
+                    if page_count != 1 {
+                        return Err(Error::new(EINVAL));
+                    }
 
                     let context = match self.states.lock().entry(packet.id) {
-                        Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
-                            // invalid state
-                            State::Placeholder => {
-                                return Err(Error::new(EBADFD));
+                        Entry::Occupied(mut o) => {
+                            match mem::replace(o.get_mut(), State::Placeholder) {
+                                // invalid state
+                                State::Placeholder => {
+                                    return Err(Error::new(EBADFD));
+                                }
+                                // invalid kernel to scheme call
+                                old_state @ (State::Waiting { .. } | State::Responded(_)) => {
+                                    *o.get_mut() = old_state;
+                                    return Err(Error::new(EINVAL));
+                                }
+                                State::Fmap(context) => {
+                                    o.remove();
+                                    context
+                                }
                             }
-                            // invalid kernel to scheme call
-                            old_state @ (State::Waiting { .. } | State::Responded(_)) => {
-                                *o.get_mut() = old_state;
-                                return Err(Error::new(EINVAL));
-                            }
-                            State::Fmap(context) => {
-                                o.remove();
-                                context
-                            }
-                        },
+                        }
                         Entry::Vacant(_) => return Err(Error::new(EINVAL)),
                     };
 
                     let context = context.upgrade().ok_or(Error::new(ESRCH))?;
 
-                    let (frame, _) = AddrSpace::current()?.read().table.utable.translate(base_addr).ok_or(Error::new(EFAULT))?;
+                    let (frame, _) = AddrSpace::current()?
+                        .read()
+                        .table
+                        .utable
+                        .translate(base_addr)
+                        .ok_or(Error::new(EFAULT))?;
 
                     let mut context = context.write();
                     match context.status {
-                        Status::HardBlocked { reason: HardBlockedReason::AwaitingMmap { .. } } => context.status = Status::Runnable,
+                        Status::HardBlocked {
+                            reason: HardBlockedReason::AwaitingMmap { .. },
+                        } => context.status = Status::Runnable,
                         _ => (),
                     }
                     context.fmap_ret = Some(Frame::containing_address(frame));
-
                 }
                 _ => return Err(Error::new(EINVAL)),
             }
@@ -532,7 +703,9 @@ impl UserInner {
                 }
 
                 State::Waiting { context, fd } => {
-                    to_close = fd.and_then(|f| Arc::try_unwrap(f).ok()).map(RwLock::into_inner);
+                    to_close = fd
+                        .and_then(|f| Arc::try_unwrap(f).ok())
+                        .map(RwLock::into_inner);
 
                     if let Some(context) = context.upgrade() {
                         context.write().unblock();
@@ -541,7 +714,7 @@ impl UserInner {
                         o.remove();
                     }
                 }
-            }
+            },
             // invalid state
             Entry::Vacant(_) => return Err(Error::new(EBADFD)),
         }
@@ -560,7 +733,12 @@ impl UserInner {
         Ok(())
     }
 
-    fn fmap_inner(&self, dst_addr_space: Arc<RwLock<AddrSpace>>, file: usize, map: &Map) -> Result<usize> {
+    fn fmap_inner(
+        &self,
+        dst_addr_space: Arc<RwLock<AddrSpace>>,
+        file: usize,
+        map: &Map,
+    ) -> Result<usize> {
         let unaligned_size = map.size;
 
         if unaligned_size == 0 {
@@ -572,15 +750,19 @@ impl UserInner {
         if map.address % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
         };
-        let dst_base = (map.address != 0).then_some(Page::containing_address(VirtualAddress::new(map.address)));
+        let dst_base = (map.address != 0)
+            .then_some(Page::containing_address(VirtualAddress::new(map.address)));
 
         if map.offset % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
 
         let src_address_space = Arc::clone(
-            self.context.upgrade().ok_or(Error::new(ENODEV))?
-                .read().addr_space()?
+            self.context
+                .upgrade()
+                .ok_or(Error::new(ENODEV))?
+                .read()
+                .addr_space()?,
         );
         if Arc::ptr_eq(&src_address_space, &dst_addr_space) {
             return Err(Error::new(EBUSY));
@@ -605,20 +787,23 @@ impl UserInner {
             (context.id, desc.description)
         };
 
-        let response = self.call_extended_inner(None, Packet {
-            id: self.next_id(),
-            pid: pid.into(),
-            a: KSMSG_MMAP_PREP,
-            b: file,
-            c: unaligned_size,
-            d: map.flags.bits(),
-            // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
-            uid: map.offset as u32,
-            #[cfg(target_pointer_width = "64")]
-            gid: (map.offset >> 32) as u32,
-            #[cfg(target_pointer_width = "32")]
-            gid: 0,
-        })?;
+        let response = self.call_extended_inner(
+            None,
+            Packet {
+                id: self.next_id(),
+                pid: pid.into(),
+                a: KSMSG_MMAP_PREP,
+                b: file,
+                c: unaligned_size,
+                d: map.flags.bits(),
+                // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
+                uid: map.offset as u32,
+                #[cfg(target_pointer_width = "64")]
+                gid: (map.offset >> 32) as u32,
+                #[cfg(target_pointer_width = "32")]
+                gid: 0,
+            },
+        )?;
 
         // TODO: I've previously tested that this works, but because the scheme trait all of
         // Redox's schemes currently rely on doesn't allow one-way messages, there's no current
@@ -628,8 +813,7 @@ impl UserInner {
         let mapping_is_lazy = false;
 
         let base_page_opt = match response {
-            Response::Regular(code) => (!mapping_is_lazy)
-                .then_some(Error::demux(code)?),
+            Response::Regular(code) => (!mapping_is_lazy).then_some(Error::demux(code)?),
             Response::Fd(_) => {
                 log::debug!("Scheme incorrectly returned an fd for fmap.");
 
@@ -661,7 +845,7 @@ impl UserInner {
                     flusher: {
                         flusher = InactiveFlusher::new();
                         &mut flusher
-                    }
+                    },
                 }
             }),
             None => None,
@@ -669,9 +853,22 @@ impl UserInner {
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
-        let dst_base = dst_addr_space.write().mmap(dst_base, page_count_nz, map.flags, &mut notify_files, |dst_base, flags, mapper, flusher| {
-            Grant::borrow_fmap(PageSpan::new(dst_base, page_count), flags, file_ref, src, mapper, flusher)
-        })?;
+        let dst_base = dst_addr_space.write().mmap(
+            dst_base,
+            page_count_nz,
+            map.flags,
+            &mut notify_files,
+            |dst_base, flags, mapper, flusher| {
+                Grant::borrow_fmap(
+                    PageSpan::new(dst_base, page_count),
+                    flags,
+                    file_ref,
+                    src,
+                    mapper,
+                    flusher,
+                )
+            },
+        )?;
 
         for map in notify_files {
             let _ = map.unmap();
@@ -691,8 +888,12 @@ pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     tail: CopyInfo<READ, WRITE>,
 }
 impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
-    fn base(&self) -> usize { self.base }
-    fn len(&self) -> usize { self.len }
+    fn base(&self) -> usize {
+        self.base
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
 }
 struct CopyInfo<const READ: bool, const WRITE: bool> {
     src: Option<BorrowedHtBuf>,
@@ -714,10 +915,20 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         let mut result = Ok(());
 
         // TODO: Encode src and dst better using const generics.
-        if let CopyInfo { src: Some(ref src), dst: Some(ref mut dst) } = self.head {
-            result = result.and_then(|()| dst.copy_from_slice(&src.buf()[self.base % PAGE_SIZE..][..dst.len()]));
+        if let CopyInfo {
+            src: Some(ref src),
+            dst: Some(ref mut dst),
+        } = self.head
+        {
+            result = result.and_then(|()| {
+                dst.copy_from_slice(&src.buf()[self.base % PAGE_SIZE..][..dst.len()])
+            });
         }
-        if let CopyInfo { src: Some(ref src), dst: Some(ref mut dst) } = self.tail {
+        if let CopyInfo {
+            src: Some(ref src),
+            dst: Some(ref mut dst),
+        } = self.tail
+        {
             result = result.and_then(|()| dst.copy_from_slice(&src.buf()[..dst.len()]));
         }
         let Some(space) = self.space.take() else {
@@ -727,7 +938,9 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
 
         let unpin = true;
-        space.write().munmap(PageSpan::new(first_page, page_count), unpin)?;
+        space
+            .write()
+            .munmap(PageSpan::new(first_page, page_count), unpin)?;
 
         result
     }
@@ -751,7 +964,7 @@ fn page_range_containing(base: usize, size: usize) -> (Page, usize, usize) {
 /// `UserInner` has to be wrapped
 #[derive(Clone)]
 pub struct UserScheme {
-    pub(crate) inner: Weak<UserInner>
+    pub(crate) inner: Weak<UserInner>,
 }
 
 impl UserScheme {
@@ -818,7 +1031,9 @@ impl KernelScheme for UserScheme {
 
     fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FEVENT, file, flags.bits(), 0).map(EventFlags::from_bits_truncate)
+        inner
+            .call(SYS_FEVENT, file, flags.bits(), 0)
+            .map(EventFlags::from_bits_truncate)
     }
 
     /*
@@ -946,7 +1161,13 @@ impl KernelScheme for UserScheme {
         address.release()?;
         result.map(|_| ())
     }
-    fn kfmap(&self, file: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
+    fn kfmap(
+        &self,
+        file: usize,
+        addr_space: &Arc<RwLock<AddrSpace>>,
+        map: &Map,
+        _consume: bool,
+    ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         inner.fmap_inner(Arc::clone(addr_space), file, map)
@@ -954,31 +1175,44 @@ impl KernelScheme for UserScheme {
     fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let res = inner.call_extended(CallerCtx {
-            pid: context::context_id().into(),
-            uid: offset as u32,
-            #[cfg(target_pointer_width = "64")]
-            gid: (offset >> 32) as u32,
+        let res = inner.call_extended(
+            CallerCtx {
+                pid: context::context_id().into(),
+                uid: offset as u32,
+                #[cfg(target_pointer_width = "64")]
+                gid: (offset >> 32) as u32,
 
-            // TODO: saturating_shr?
-            #[cfg(not(target_pointer_width = "64"))]
-            gid: 0,
-
-        }, None, [KSMSG_MUNMAP, number, size, flags.bits()])?;
+                // TODO: saturating_shr?
+                #[cfg(not(target_pointer_width = "64"))]
+                gid: 0,
+            },
+            None,
+            [KSMSG_MUNMAP, number, size, flags.bits()],
+        )?;
 
         match res {
             Response::Regular(_) => Ok(()),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
     }
-    fn ksendfd(&self, number: usize, desc: Arc<RwLock<FileDescription>>, flags: SendFdFlags, arg: u64) -> Result<usize> {
+    fn ksendfd(
+        &self,
+        number: usize,
+        desc: Arc<RwLock<FileDescription>>,
+        flags: SendFdFlags,
+        arg: u64,
+    ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let res = inner.call_extended(CallerCtx {
-            pid: context::context_id().into(),
-            uid: arg as u32,
-            gid: (arg >> 32) as u32,
-        }, Some(desc), [SYS_SENDFD, number, flags.bits(), 0])?;
+        let res = inner.call_extended(
+            CallerCtx {
+                pid: context::context_id().into(),
+                uid: arg as u32,
+                gid: (arg >> 32) as u32,
+            },
+            Some(desc),
+            [SYS_SENDFD, number, flags.bits(), 0],
+        )?;
 
         match res {
             Response::Regular(res) => Ok(res),

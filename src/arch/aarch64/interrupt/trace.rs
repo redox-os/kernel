@@ -18,7 +18,8 @@ pub unsafe fn stack_trace() {
     for _frame in 0..64 {
         if let Some(pc_fp) = fp.checked_add(mem::size_of::<usize>()) {
             if mapper.translate(VirtualAddress::new(fp)).is_some()
-            && mapper.translate(VirtualAddress::new(pc_fp)).is_some() {
+                && mapper.translate(VirtualAddress::new(pc_fp)).is_some()
+            {
                 let pc = *(pc_fp as *const usize);
                 if pc == 0 {
                     println!(" {:>016x}: EMPTY RETURN", fp);
@@ -41,11 +42,12 @@ pub unsafe fn stack_trace() {
 //TODO: Do not create Elf object for every symbol lookup
 #[inline(never)]
 pub unsafe fn symbol_trace(addr: usize) {
-    use core::slice;
-    use core::sync::atomic::Ordering;
+    use core::{slice, sync::atomic::Ordering};
 
-    use crate::elf::Elf;
-    use crate::start::{KERNEL_BASE, KERNEL_SIZE};
+    use crate::{
+        elf::Elf,
+        start::{KERNEL_BASE, KERNEL_SIZE},
+    };
 
     let kernel_ptr = (KERNEL_BASE.load(Ordering::SeqCst) + crate::KERNEL_OFFSET) as *const u8;
     let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
@@ -70,76 +72,80 @@ pub unsafe fn symbol_trace(addr: usize) {
                 for sym in symbols {
                     if sym::st_type(sym.st_info) == sym::STT_FUNC
                         && addr >= sym.st_value as usize
-                            && addr < (sym.st_value + sym.st_size) as usize
-                            {
-                                println!("    {:>016X}+{:>04X}", sym.st_value, addr - sym.st_value as usize);
+                        && addr < (sym.st_value + sym.st_size) as usize
+                    {
+                        println!(
+                            "    {:>016X}+{:>04X}",
+                            sym.st_value,
+                            addr - sym.st_value as usize
+                        );
 
-                                if let Some(strtab) = strtab_opt {
-                                    let start = strtab.sh_offset as usize + sym.st_name as usize;
-                                    let mut end = start;
-                                    while end < elf.data.len() {
-                                        let b = elf.data[end];
-                                        end += 1;
-                                        if b == 0 {
-                                            break;
-                                        }
-                                    }
-
-                                    if end > start {
-                                        let sym_name = &elf.data[start .. end];
-
-                                        print!("    ");
-
-                                        if sym_name.starts_with(b"_ZN") {
-                                            // Skip _ZN
-                                            let mut i = 3;
-                                            let mut first = true;
-                                            while i < sym_name.len() {
-                                                // E is the end character
-                                                if sym_name[i] == b'E' {
-                                                    break;
-                                                }
-
-                                                // Parse length string
-                                                let mut len = 0;
-                                                while i < sym_name.len() {
-                                                    let b = sym_name[i];
-                                                    if b >= b'0' && b <= b'9' {
-                                                        i += 1;
-                                                        len *= 10;
-                                                        len += (b - b'0') as usize;
-                                                    } else {
-                                                        break;
-                                                    }
-                                                }
-
-                                                // Print namespace seperator, if required
-                                                if first {
-                                                    first = false;
-                                                } else {
-                                                    print!("::");
-                                                }
-
-                                                // Print name string
-                                                let end = i + len;
-                                                while i < sym_name.len() && i < end {
-                                                    print!("{}", sym_name[i] as char);
-                                                    i += 1;
-                                                }
-                                            }
-                                        } else {
-                                            for &b in sym_name.iter() {
-                                                print!("{}", b as char);
-                                            }
-                                        }
-
-                                        println!("");
-                                    }
+                        if let Some(strtab) = strtab_opt {
+                            let start = strtab.sh_offset as usize + sym.st_name as usize;
+                            let mut end = start;
+                            while end < elf.data.len() {
+                                let b = elf.data[end];
+                                end += 1;
+                                if b == 0 {
+                                    break;
                                 }
                             }
+
+                            if end > start {
+                                let sym_name = &elf.data[start..end];
+
+                                print!("    ");
+
+                                if sym_name.starts_with(b"_ZN") {
+                                    // Skip _ZN
+                                    let mut i = 3;
+                                    let mut first = true;
+                                    while i < sym_name.len() {
+                                        // E is the end character
+                                        if sym_name[i] == b'E' {
+                                            break;
+                                        }
+
+                                        // Parse length string
+                                        let mut len = 0;
+                                        while i < sym_name.len() {
+                                            let b = sym_name[i];
+                                            if b >= b'0' && b <= b'9' {
+                                                i += 1;
+                                                len *= 10;
+                                                len += (b - b'0') as usize;
+                                            } else {
+                                                break;
+                                            }
+                                        }
+
+                                        // Print namespace seperator, if required
+                                        if first {
+                                            first = false;
+                                        } else {
+                                            print!("::");
+                                        }
+
+                                        // Print name string
+                                        let end = i + len;
+                                        while i < sym_name.len() && i < end {
+                                            print!("{}", sym_name[i] as char);
+                                            i += 1;
+                                        }
+                                    }
+                                } else {
+                                    for &b in sym_name.iter() {
+                                        print!("{}", b as char);
+                                    }
+                                }
+
+                                println!("");
+                            }
+                        }
+                    }
                 }
             }
-        },
+        }
         Err(_e) => {
             println!("WTF ?");
         }

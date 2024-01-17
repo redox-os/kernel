@@ -1,11 +1,16 @@
 use core::ptr::{read_volatile, write_volatile};
 
-use fdt::{DeviceTree, Node};
 use byteorder::{ByteOrder, BE};
+use fdt::{DeviceTree, Node};
 
-use crate::init::device_tree::find_compatible_node;
-use crate::log::{info, debug};
-use syscall::{Result, error::{Error, EINVAL}};
+use crate::{
+    init::device_tree::find_compatible_node,
+    log::{debug, info},
+};
+use syscall::{
+    error::{Error, EINVAL},
+    Result,
+};
 
 use super::{InterruptController, IrqDesc};
 
@@ -35,11 +40,13 @@ impl GenericInterruptController {
             ncpus: 0,
             nirqs: 0,
         };
-        let gic_cpu_if = GicCpuIf {
-            address: 0,
-        };
+        let gic_cpu_if = GicCpuIf { address: 0 };
 
-        GenericInterruptController { gic_dist_if, gic_cpu_if, irq_range: (0, 0) }
+        GenericInterruptController {
+            gic_dist_if,
+            gic_cpu_if,
+            irq_range: (0, 0),
+        }
     }
     pub fn parse(fdt: &DeviceTree) -> Result<(usize, usize, usize, usize)> {
         if let Some(node) = find_compatible_node(fdt, "arm,cortex-a15-gic") {
@@ -76,11 +83,18 @@ impl GenericInterruptController {
 }
 
 impl InterruptController for GenericInterruptController {
-    fn irq_init(&mut self, fdt: &DeviceTree, irq_desc: &mut [IrqDesc; 1024], ic_idx: usize, irq_idx: &mut usize) -> Result<Option<usize>> {
-        let (dist_addr, dist_size, cpu_addr, cpu_size) = match GenericInterruptController::parse(fdt) {
-            Ok(regs) => regs,
-            Err(err) => return Err(err),
-        };
+    fn irq_init(
+        &mut self,
+        fdt: &DeviceTree,
+        irq_desc: &mut [IrqDesc; 1024],
+        ic_idx: usize,
+        irq_idx: &mut usize,
+    ) -> Result<Option<usize>> {
+        let (dist_addr, dist_size, cpu_addr, cpu_size) =
+            match GenericInterruptController::parse(fdt) {
+                Ok(regs) => regs,
+                Err(err) => return Err(err),
+            };
 
         unsafe {
             self.gic_cpu_if.init(crate::PHYS_OFFSET + cpu_addr);
@@ -92,7 +106,11 @@ impl InterruptController for GenericInterruptController {
             self.gic_cpu_if.write(GICC_PMR, 0xff);
         }
         let idx = *irq_idx;
-        let cnt = if self.gic_dist_if.nirqs > 1024 { 1024 } else { self.gic_dist_if.nirqs as usize };
+        let cnt = if self.gic_dist_if.nirqs > 1024 {
+            1024
+        } else {
+            self.gic_dist_if.nirqs as usize
+        };
         let mut i: usize = 0;
         //only support linear irq map now.
         while i < cnt && (idx + i < 1024) {
@@ -145,9 +163,7 @@ impl InterruptController for GenericInterruptController {
         }
     }
 
-    fn irq_handler(&mut self, _irq: u32) {
-
-    }
+    fn irq_handler(&mut self, _irq: u32) {}
 }
 
 pub struct GicDistIf {
@@ -166,7 +182,10 @@ impl GicDistIf {
         let typer = self.read(GICD_TYPER);
         self.ncpus = ((typer & (0x7 << 5)) >> 5) + 1;
         self.nirqs = ((typer & 0x1f) + 1) * 32;
-        info!("gic: Distributor supports {:?} CPUs and {:?} IRQs", self.ncpus, self.nirqs);
+        info!(
+            "gic: Distributor supports {:?} CPUs and {:?} IRQs",
+            self.ncpus, self.nirqs
+        );
 
         // Set all SPIs to level triggered
         for irq in (32..self.nirqs).step_by(16) {

@@ -1,11 +1,15 @@
 use alloc::collections::VecDeque;
-use spin::{Once, Mutex, MutexGuard};
+use spin::{Mutex, MutexGuard, Once};
 
-use crate::event;
-use crate::scheme::SchemeId;
-use crate::syscall::data::TimeSpec;
-use crate::syscall::flag::{CLOCK_MONOTONIC, CLOCK_REALTIME, EVENT_READ};
-use crate::time;
+use crate::{
+    event,
+    scheme::SchemeId,
+    syscall::{
+        data::TimeSpec,
+        flag::{CLOCK_MONOTONIC, CLOCK_REALTIME, EVENT_READ},
+    },
+    time,
+};
 
 #[derive(Debug)]
 struct Timeout {
@@ -35,7 +39,7 @@ pub fn register(scheme_id: SchemeId, event_id: usize, clock: usize, time: TimeSp
         scheme_id,
         event_id,
         clock,
-        time: (time.tv_sec as u128 * time::NANOS_PER_SEC) + (time.tv_nsec as u128)
+        time: (time.tv_sec as u128 * time::NANOS_PER_SEC) + (time.tv_nsec as u128),
     });
 }
 
@@ -51,11 +55,11 @@ pub fn trigger() {
             CLOCK_MONOTONIC => {
                 let time = registry[i].time;
                 mono >= time
-            },
+            }
             CLOCK_REALTIME => {
                 let time = registry[i].time;
                 real >= time
-            },
+            }
             clock => {
                 println!("timeout::trigger: unknown clock {}", clock);
                 true

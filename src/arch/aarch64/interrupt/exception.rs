@@ -1,13 +1,12 @@
 use rmm::VirtualAddress;
 
-use crate::memory::{ArchIntCtx, GenericPfFlags};
 use crate::{
+    exception_stack,
     interrupt::stack_trace,
+    memory::{ArchIntCtx, GenericPfFlags},
     syscall,
     syscall::flag::*,
-
     with_exception_stack,
-    exception_stack,
 };
 
 use super::InterruptStack;
@@ -32,7 +31,12 @@ unsafe fn far_el1() -> usize {
     ret
 }
 
-unsafe fn instr_data_abort_inner(stack: &mut InterruptStack, from_user: bool, instr_not_data: bool, from: &str) -> bool {
+unsafe fn instr_data_abort_inner(
+    stack: &mut InterruptStack,
+    from_user: bool,
+    instr_not_data: bool,
+    from: &str,
+) -> bool {
     let iss = iss(stack.iret.esr_el1);
     let fsc = iss & 0x3F;
     //dbg!(fsc);
@@ -46,7 +50,10 @@ unsafe fn instr_data_abort_inner(stack: &mut InterruptStack, from_user: bool, in
 
     // TODO: RMW instructions may "involve" writing to (possibly invalid) memory, but AArch64
     // doesn't appear to require that flag to be set if the read alone would trigger a fault.
-    flags.set(GenericPfFlags::INVOLVED_WRITE, write_not_read_if_data && !instr_not_data);
+    flags.set(
+        GenericPfFlags::INVOLVED_WRITE,
+        write_not_read_if_data && !instr_not_data,
+    );
     flags.set(GenericPfFlags::INSTR_NOT_DATA, instr_not_data);
     flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, from_user);
 
@@ -74,7 +81,12 @@ unsafe fn cntvct_el0() -> usize {
     ret
 }
 
-unsafe fn instr_trapped_msr_mrs_inner(stack: &mut InterruptStack, from_user: bool, instr_not_data: bool, from: &str) -> bool {
+unsafe fn instr_trapped_msr_mrs_inner(
+    stack: &mut InterruptStack,
+    from_user: bool,
+    instr_not_data: bool,
+    from: &str,
+) -> bool {
     let iss = iss(stack.iret.esr_el1);
     let res0 = (iss & 0x1C0_0000) >> 22;
     let op0 = (iss & 0x030_0000) >> 20;
@@ -99,7 +111,7 @@ unsafe fn instr_trapped_msr_mrs_inner(stack: &mut InterruptStack, from_user: boo
             stack.store_reg(rt as usize, reg_val);
             //skip faulting instruction, A64 instructions are always 32-bits
             stack.iret.elr_el1 += 4;
-            return true
+            return true;
         }
         //MRS <Xt>, CNTPCT_EL0
         (0b11, 0b011, 0b1110, 0b0000, 0b001, 0b1) => {
@@ -107,7 +119,7 @@ unsafe fn instr_trapped_msr_mrs_inner(stack: &mut InterruptStack, from_user: boo
             stack.store_reg(rt as usize, reg_val);
             //skip faulting instruction, A64 instructions are always 32-bits
             stack.iret.elr_el1 += 4;
-            return true
+            return true;
         }
         //MRS <Xt>, CNTVCT_EL0
         (0b11, 0b011, 0b1110, 0b0000, 0b010, 0b1) => {
@@ -115,22 +127,25 @@ unsafe fn instr_trapped_msr_mrs_inner(stack: &mut InterruptStack, from_user: boo
             stack.store_reg(rt as usize, reg_val);
             //skip faulting instruction, A64 instructions are always 32-bits
             stack.iret.elr_el1 += 4;
-            return true
+            return true;
         }
-        _ => {},
+        _ => {}
     }
 
     false
 }
 
 exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
-    if !pf_inner(stack, exception_code(stack.iret.esr_el1), "sync_exc_el1_spx") {
+    if !pf_inner(
+        stack,
+        exception_code(stack.iret.esr_el1),
+        "sync_exc_el1_spx",
+    ) {
         println!("Synchronous exception at EL1 with SPx");
         if exception_code(stack.iret.esr_el1) == 0b100101 {
             let far_el1 = far_el1();
             println!("FAR_EL1 = 0x{:08x}", far_el1);
-        }
-        else if exception_code(stack.iret.esr_el1) == 0b100100 {
+        } else if exception_code(stack.iret.esr_el1) == 0b100100 {
             let far_el1 = far_el1();
             println!("USER FAR_EL1 = 0x{:08x}", far_el1);
         }
@@ -160,16 +175,23 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
     match exception_code(stack.iret.esr_el1) {
         0b010101 => with_exception_stack!(|stack| {
             let scratch = &stack.scratch;
-            syscall::syscall(scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, stack)
+            syscall::syscall(
+                scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, stack,
+            )
         }),
 
-        ty => if !pf_inner(stack, ty as u8, "sync_exc_el0") {
-            log::error!("FATAL: Not an SVC induced synchronous exception (ty={:b})", ty);
-            println!("FAR_EL1: {:#0x}", far_el1());
-            //crate::debugger::debugger(None);
-            stack.dump();
-            stack_trace();
-            crate::ksignal(SIGSEGV);
+        ty => {
+            if !pf_inner(stack, ty as u8, "sync_exc_el0") {
+                log::error!(
+                    "FATAL: Not an SVC induced synchronous exception (ty={:b})",
+                    ty
+                );
+                println!("FAR_EL1: {:#0x}", far_el1());
+                //crate::debugger::debugger(None);
+                stack.dump();
+                stack_trace();
+                crate::ksignal(SIGSEGV);
+            }
         }
     }
 });

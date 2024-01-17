@@ -17,7 +17,9 @@ pub fn cpuid_always() -> CpuId {
 }
 
 pub fn feature_info() -> FeatureInfo {
-    cpuid_always().get_feature_info().expect("x86_64 requires CPUID leaf=0x01 to be present")
+    cpuid_always()
+        .get_feature_info()
+        .expect("x86_64 requires CPUID leaf=0x01 to be present")
 }
 
 pub fn has_ext_feat(feat: impl FnOnce(ExtendedFeatures) -> bool) -> bool {

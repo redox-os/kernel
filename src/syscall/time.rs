@@ -1,8 +1,12 @@
-use crate::time;
-use crate::context;
-use crate::syscall::data::TimeSpec;
-use crate::syscall::error::*;
-use crate::syscall::flag::{CLOCK_REALTIME, CLOCK_MONOTONIC};
+use crate::{
+    context,
+    syscall::{
+        data::TimeSpec,
+        error::*,
+        flag::{CLOCK_MONOTONIC, CLOCK_REALTIME},
+    },
+    time,
+};
 
 use super::usercopy::{UserSliceRo, UserSliceWo};
 
@@ -10,7 +14,7 @@ pub fn clock_gettime(clock: usize, buf: UserSliceWo) -> Result<()> {
     let arch_time = match clock {
         CLOCK_REALTIME => time::realtime(),
         CLOCK_MONOTONIC => time::monotonic(),
-        _ => return Err(Error::new(EINVAL))
+        _ => return Err(Error::new(EINVAL)),
     };
 
     buf.copy_exactly(&TimeSpec {
@@ -38,7 +42,9 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 
     //TODO: Find out wake reason
     loop {
-        unsafe { context::switch(); }
+        unsafe {
+            context::switch();
+        }
 
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -71,6 +77,8 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 }
 
 pub fn sched_yield() -> Result<()> {
-    unsafe { context::switch(); }
+    unsafe {
+        context::switch();
+    }
     Ok(())
 }

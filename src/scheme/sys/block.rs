@@ -1,9 +1,7 @@
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
-use crate::context;
-use crate::syscall::error::Result;
+use crate::{context, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut string = String::new();
@@ -24,7 +22,7 @@ pub fn resource() -> Result<Vec<u8>> {
 
             let _ = writeln!(string, "{}: {}", id, name);
 
-            if ! row.2.is_empty() {
+            if !row.2.is_empty() {
                 let _ = writeln!(string, "  {}", row.2);
             }
         }

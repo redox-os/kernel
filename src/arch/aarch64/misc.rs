@@ -1,6 +1,8 @@
-use crate::LogicalCpuId;
-use crate::paging::{RmmA, RmmArch};
-use crate::percpu::PercpuBlock;
+use crate::{
+    paging::{RmmA, RmmArch},
+    percpu::PercpuBlock,
+    LogicalCpuId,
+};
 
 impl PercpuBlock {
     pub fn current() -> &'static Self {

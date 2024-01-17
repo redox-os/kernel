@@ -1,12 +1,14 @@
 use crate::{
     arch::{gdt, interrupt::InterruptStack},
-    context,
-    ptrace,
-    syscall,
-    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_PRE_SYSCALL, PTRACE_STOP_POST_SYSCALL},
+    context, ptrace, syscall,
+    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
 };
 use core::mem::offset_of;
-use x86::{bits64::{rflags::RFlags, task::TaskStateSegment}, msr, segmentation::SegmentSelector};
+use x86::{
+    bits64::{rflags::RFlags, task::TaskStateSegment},
+    msr,
+    segmentation::SegmentSelector,
+};
 
 pub unsafe fn init() {
     // IA32_STAR[31:0] are reserved.
@@ -46,7 +48,12 @@ pub unsafe fn init() {
     // user and kernel mode), VM8086 (not used at all), and VIF/VIP (system-level status flags?).
 
     let mask_critical = RFlags::FLAGS_DF | RFlags::FLAGS_IF | RFlags::FLAGS_TF | RFlags::FLAGS_AC;
-    let mask_other = RFlags::FLAGS_CF | RFlags::FLAGS_PF | RFlags::FLAGS_AF | RFlags::FLAGS_ZF | RFlags::FLAGS_SF | RFlags::FLAGS_OF;
+    let mask_other = RFlags::FLAGS_CF
+        | RFlags::FLAGS_PF
+        | RFlags::FLAGS_AF
+        | RFlags::FLAGS_ZF
+        | RFlags::FLAGS_SF
+        | RFlags::FLAGS_OF;
     msr::wrmsr(msr::IA32_FMASK, (mask_critical | mask_other).bits());
 
     let efer = msr::rdmsr(msr::IA32_EFER);
@@ -68,7 +75,7 @@ macro_rules! with_interrupt_stack {
         }
 
         ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
-    }}
+    }};
 }
 
 #[no_mangle]
@@ -76,7 +83,15 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     let _guard = ptrace::set_process_regs(stack);
     with_interrupt_stack!(|stack| {
         let scratch = &stack.scratch;
-        syscall::syscall(scratch.rax, scratch.rdi, scratch.rsi, scratch.rdx, scratch.r10, scratch.r8, stack)
+        syscall::syscall(
+            scratch.rax,
+            scratch.rdi,
+            scratch.rsi,
+            scratch.rdx,
+            scratch.r10,
+            scratch.r8,
+            stack,
+        )
     });
 }
 
@@ -193,13 +208,24 @@ interrupt_stack!(syscall, |stack| {
             let context = contexts.current();
             if let Some(current) = context {
                 let current = current.read();
-                println!("Warning: Context {} used deprecated `int 0x80` construct", current.name);
+                println!(
+                    "Warning: Context {} used deprecated `int 0x80` construct",
+                    current.name
+                );
             } else {
                 println!("Warning: Unknown context used deprecated `int 0x80` construct");
             }
         }
 
         let scratch = &stack.scratch;
-        syscall::syscall(scratch.rax, stack.preserved.rbx, scratch.rcx, scratch.rdx, scratch.rsi, scratch.rdi, stack)
+        syscall::syscall(
+            scratch.rax,
+            stack.preserved.rbx,
+            scratch.rcx,
+            scratch.rdx,
+            scratch.rsi,
+            scratch.rdi,
+            stack,
+        )
     })
 });

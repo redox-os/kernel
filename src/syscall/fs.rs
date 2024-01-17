@@ -1,34 +1,55 @@
 //! Filesystem syscalls
-use alloc::sync::Arc;
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use spin::RwLock;
 
-use crate::context::file::{FileDescriptor, FileDescription};
-use crate::context;
-use crate::context::memory::{PageSpan, AddrSpace};
-use crate::paging::{PAGE_SIZE, VirtualAddress, Page};
-use crate::scheme::{self, FileHandle, OpenResult, KernelScheme, SchemeId, CallerCtx};
-use crate::syscall::data::Stat;
-use crate::syscall::error::*;
-use crate::syscall::flag::*;
+use crate::{
+    context,
+    context::{
+        file::{FileDescription, FileDescriptor},
+        memory::{AddrSpace, PageSpan},
+    },
+    paging::{Page, VirtualAddress, PAGE_SIZE},
+    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, SchemeId},
+    syscall::{data::Stat, error::*, flag::*},
+};
 
-use super::usercopy::{UserSlice, UserSliceWo, UserSliceRo};
+use super::usercopy::{UserSlice, UserSliceRo, UserSliceWo};
 
-pub fn file_op_generic<T>(fd: FileHandle, op: impl FnOnce(&dyn KernelScheme, &CallerCtx, usize) -> Result<T>) -> Result<T> {
+pub fn file_op_generic<T>(
+    fd: FileHandle,
+    op: impl FnOnce(&dyn KernelScheme, &CallerCtx, usize) -> Result<T>,
+) -> Result<T> {
     file_op_generic_ext(fd, |s, _, ctx, no| op(s, ctx, no))
 }
-pub fn file_op_generic_ext<T>(fd: FileHandle, op: impl FnOnce(&dyn KernelScheme, SchemeId, &CallerCtx, usize) -> Result<T>) -> Result<T> {
+pub fn file_op_generic_ext<T>(
+    fd: FileHandle,
+    op: impl FnOnce(&dyn KernelScheme, SchemeId, &CallerCtx, usize) -> Result<T>,
+) -> Result<T> {
     let (ctx, file) = match context::current()?.read() {
-        ref context => (CallerCtx { pid: context.id.into(), uid: context.euid, gid: context.egid }, context.get_file(fd).ok_or(Error::new(EBADF))?),
+        ref context => (
+            CallerCtx {
+                pid: context.id.into(),
+                uid: context.euid,
+                gid: context.egid,
+            },
+            context.get_file(fd).ok_or(Error::new(EBADF))?,
+        ),
     };
-    let FileDescription { scheme: scheme_id, number, .. } = *file.description.read();
+    let FileDescription {
+        scheme: scheme_id,
+        number,
+        ..
+    } = *file.description.read();
 
-    let scheme = scheme::schemes().get(scheme_id).ok_or(Error::new(EBADF))?.clone();
+    let scheme = scheme::schemes()
+        .get(scheme_id)
+        .ok_or(Error::new(EBADF))?
+        .clone();
 
     op(&*scheme, scheme_id, &ctx, number)
 }
 pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<alloc::string::String> {
-    let mut path_buf = vec! [0_u8; max_len];
+    let mut path_buf = vec![0_u8; max_len];
     if raw_path.len() > path_buf.len() {
         return Err(Error::new(ENAMETOOLONG));
     }
@@ -43,7 +64,13 @@ const PATH_MAX: usize = PAGE_SIZE;
 /// Open syscall
 pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let (pid, uid, gid, scheme_ns, umask) = match context::current()?.read() {
-        ref context => (context.id.into(), context.euid, context.egid, context.ens, context.umask),
+        ref context => (
+            context.id.into(),
+            context.euid,
+            context.egid,
+            context.ens,
+            context.umask,
+        ),
     };
 
     let flags = (flags & (!0o777)) | ((flags & 0o777) & (!(umask & 0o777)));
@@ -63,7 +90,9 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let description = {
         let (scheme_id, scheme) = {
             let schemes = scheme::schemes();
-            let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+            let (scheme_id, scheme) = schemes
+                .get_name(scheme_ns, scheme_name)
+                .ok_or(Error::new(ENODEV))?;
             (scheme_id, scheme.clone())
         };
 
@@ -79,10 +108,13 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     };
     //drop(path_buf);
 
-    context::current()?.read().add_file(FileDescriptor {
-        description,
-        cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-    }).ok_or(Error::new(EMFILE))
+    context::current()?
+        .read()
+        .add_file(FileDescriptor {
+            description,
+            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
+        })
+        .ok_or(Error::new(EMFILE))
 }
 
 /// rmdir syscall
@@ -103,7 +135,9 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
 
     let scheme = {
         let schemes = scheme::schemes();
-        let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+        let (_scheme_id, scheme) = schemes
+            .get_name(scheme_ns, scheme_name)
+            .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
     scheme.rmdir(reference, caller_ctx)
@@ -126,7 +160,9 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
 
     let scheme = {
         let schemes = scheme::schemes();
-        let (_scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+        let (_scheme_id, scheme) = schemes
+            .get_name(scheme_ns, scheme_name)
+            .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
     scheme.unlink(reference, caller_ctx)
@@ -146,7 +182,10 @@ pub fn close(fd: FileHandle) -> Result<()> {
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
     let (file, caller_ctx) = match context::current()?.read() {
-        ref context => (context.get_file(fd).ok_or(Error::new(EBADF))?, context.caller_ctx()),
+        ref context => (
+            context.get_file(fd).ok_or(Error::new(EBADF))?,
+            context.caller_ctx(),
+        ),
     };
 
     if user_buf.is_empty() {
@@ -159,7 +198,8 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
 
         let new_description = {
             let scheme = scheme::schemes()
-                .get(description.scheme).ok_or(Error::new(EBADF))?
+                .get(description.scheme)
+                .ok_or(Error::new(EBADF))?
                 .clone();
 
             match scheme.kdup(description.number, user_buf, caller_ctx)? {
@@ -184,7 +224,10 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
 pub fn dup(fd: FileHandle, buf: UserSliceRo) -> Result<FileHandle> {
     let new_file = duplicate_file(fd, buf)?;
 
-    context::current()?.read().add_file(new_file).ok_or(Error::new(EMFILE))
+    context::current()?
+        .read()
+        .add_file(new_file)
+        .ok_or(Error::new(EMFILE))
 }
 
 /// Duplicate file descriptor, replacing another
@@ -199,7 +242,9 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: UserSliceRo) -> Result<File
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
 
-        context.insert_file(new_fd, new_file).ok_or(Error::new(EMFILE))
+        context
+            .insert_file(new_fd, new_file)
+            .ok_or(Error::new(EMFILE))
     }
 }
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
@@ -211,12 +256,27 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
 
         // TODO: Ensure deadlocks can't happen
 
-        let (scheme, number) = match current.get_file(socket).ok_or(Error::new(EBADF))?.description.read() {
+        let (scheme, number) = match current
+            .get_file(socket)
+            .ok_or(Error::new(EBADF))?
+            .description
+            .read()
+        {
             ref desc => (desc.scheme, desc.number),
         };
-        let scheme = scheme::schemes().get(scheme).ok_or(Error::new(ENODEV))?.clone();
+        let scheme = scheme::schemes()
+            .get(scheme)
+            .ok_or(Error::new(ENODEV))?
+            .clone();
 
-        (scheme, number, current.remove_file(fd).ok_or(Error::new(EBADF))?.description)
+        (
+            scheme,
+            number,
+            current
+                .remove_file(fd)
+                .ok_or(Error::new(EBADF))?
+                .description,
+        )
     };
 
     // Inform the scheme whether there are still references to the file description to be sent,
@@ -249,7 +309,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     // Communicate fcntl with scheme
     if cmd != F_DUPFD && cmd != F_GETFD && cmd != F_SETFD {
         let scheme = scheme::schemes()
-            .get(description.scheme).ok_or(Error::new(EBADF))?
+            .get(description.scheme)
+            .ok_or(Error::new(EBADF))?
             .clone();
 
         scheme.fcntl(description.number, cmd, arg)?;
@@ -265,7 +326,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
             let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
             let context = context_lock.read();
 
-            return context.add_file_min(new_file, arg)
+            return context
+                .add_file_min(new_file, arg)
                 .ok_or(Error::new(EMFILE))
                 .map(FileHandle::into);
         }
@@ -283,32 +345,36 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
                     } else {
                         Ok(0)
                     }
-                },
+                }
                 F_SETFD => {
                     file.cloexec = arg & O_CLOEXEC == O_CLOEXEC;
                     Ok(0)
-                },
-                F_GETFL => {
-                    Ok(description.flags)
-                },
+                }
+                F_GETFL => Ok(description.flags),
                 F_SETFL => {
-                    let new_flags = (description.flags & O_ACCMODE) | (arg & ! O_ACCMODE);
+                    let new_flags = (description.flags & O_ACCMODE) | (arg & !O_ACCMODE);
                     drop(description);
                     file.description.write().flags = new_flags;
                     Ok(0)
-                },
-                _ => {
-                    Err(Error::new(EINVAL))
                 }
+                _ => Err(Error::new(EINVAL)),
             },
-            None => Err(Error::new(EBADF))
+            None => Err(Error::new(EBADF)),
         }
     }
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
     let (file, caller_ctx, scheme_ns) = match context::current()?.read() {
-        ref context => (context.get_file(fd).ok_or(Error::new(EBADF))?, CallerCtx { uid: context.euid, gid: context.egid, pid: context.id.get() }, context.ens),
+        ref context => (
+            context.get_file(fd).ok_or(Error::new(EBADF))?,
+            CallerCtx {
+                uid: context.euid,
+                gid: context.egid,
+                pid: context.id.get(),
+            },
+            context.ens,
+        ),
     };
 
     /*
@@ -323,7 +389,9 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
 
     let (scheme_id, scheme) = {
         let schemes = scheme::schemes();
-        let (scheme_id, scheme) = schemes.get_name(scheme_ns, scheme_name).ok_or(Error::new(ENODEV))?;
+        let (scheme_id, scheme) = schemes
+            .get_name(scheme_ns, scheme_name)
+            .ok_or(Error::new(ENODEV))?;
         (scheme_id, scheme.clone())
     };
 
@@ -344,8 +412,15 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<()> {
         // TODO: Ensure only the kernel can access the stat when st_dev is set, or use another API
         // for retrieving the scheme ID from a file descriptor.
         // TODO: Less hacky method.
-        let st_dev = scheme_id.get().try_into().map_err(|_| Error::new(EOVERFLOW))?;
-        user_buf.advance(core::mem::offset_of!(Stat, st_dev)).and_then(|b| b.limit(8)).ok_or(Error::new(EIO))?.copy_from_slice(&u64::to_ne_bytes(st_dev))?;
+        let st_dev = scheme_id
+            .get()
+            .try_into()
+            .map_err(|_| Error::new(EOVERFLOW))?;
+        user_buf
+            .advance(core::mem::offset_of!(Stat, st_dev))
+            .and_then(|b| b.limit(8))
+            .ok_or(Error::new(EIO))?
+            .copy_from_slice(&u64::to_ne_bytes(st_dev))?;
 
         Ok(())
     })
@@ -360,11 +435,16 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
 
     let length_aligned = length.next_multiple_of(PAGE_SIZE);
     if length != length_aligned {
-        log::warn!("funmap passed length {:#x} instead of {:#x}", length, length_aligned);
+        log::warn!(
+            "funmap passed length {:#x} instead of {:#x}",
+            length,
+            length_aligned
+        );
     }
 
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
-    let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned).ok_or(Error::new(EINVAL))?;
+    let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned)
+        .ok_or(Error::new(EINVAL))?;
     let unpin = false;
     let notify = addr_space.write().munmap(span, unpin)?;
 
@@ -375,8 +455,18 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     Ok(0)
 }
 
-pub fn mremap(old_address: usize, old_size: usize, new_address: usize, new_size: usize, flags: usize) -> Result<usize> {
-    if old_address % PAGE_SIZE != 0 || old_size % PAGE_SIZE != 0 || new_address % PAGE_SIZE != 0 || new_size % PAGE_SIZE != 0 {
+pub fn mremap(
+    old_address: usize,
+    old_size: usize,
+    new_address: usize,
+    new_size: usize,
+    flags: usize,
+) -> Result<usize> {
+    if old_address % PAGE_SIZE != 0
+        || old_size % PAGE_SIZE != 0
+        || new_address % PAGE_SIZE != 0
+        || new_size % PAGE_SIZE != 0
+    {
         return Err(Error::new(EINVAL));
     }
     if old_size == 0 || new_size == 0 {
@@ -387,7 +477,8 @@ pub fn mremap(old_address: usize, old_size: usize, new_address: usize, new_size:
     let new_base = Page::containing_address(VirtualAddress::new(new_address));
 
     let mremap_flags = MremapFlags::from_bits_truncate(flags);
-    let prot_flags = MapFlags::from_bits_truncate(flags) & (MapFlags::PROT_READ | MapFlags::PROT_WRITE | MapFlags::PROT_EXEC);
+    let prot_flags = MapFlags::from_bits_truncate(flags)
+        & (MapFlags::PROT_READ | MapFlags::PROT_WRITE | MapFlags::PROT_EXEC);
 
     let map_flags = if mremap_flags.contains(MremapFlags::FIXED_REPLACE) {
         MapFlags::MAP_FIXED
@@ -404,7 +495,15 @@ pub fn mremap(old_address: usize, old_size: usize, new_address: usize, new_size:
 
     let mut guard = addr_space.write();
 
-    let base = AddrSpace::r#move(&mut *guard, None, src_span, requested_dst_base, new_page_count, map_flags, &mut Vec::new())?;
+    let base = AddrSpace::r#move(
+        &mut *guard,
+        None,
+        src_span,
+        requested_dst_base,
+        new_page_count,
+        map_flags,
+        &mut Vec::new(),
+    )?;
 
     Ok(base.start_address().data())
 }

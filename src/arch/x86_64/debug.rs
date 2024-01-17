@@ -3,24 +3,24 @@ use core::fmt;
 use spin::Mutex;
 use spin::MutexGuard;
 
-use crate::log::{LOG, Log};
-#[cfg(feature = "qemu_debug")]
-use syscall::io::Io;
-#[cfg(any(feature = "qemu_debug", feature = "serial_debug"))]
-use crate::syscall::io::Pio;
-#[cfg(feature = "lpss_debug")]
-use crate::syscall::io::Mmio;
 #[cfg(any(feature = "lpss_debug", feature = "serial_debug"))]
 use crate::devices::uart_16550::SerialPort;
-
-#[cfg(feature = "graphical_debug")]
-use crate::devices::graphical_debug::{DEBUG_DISPLAY, DebugDisplay};
+use crate::log::{Log, LOG};
 #[cfg(feature = "lpss_debug")]
-use super::device::serial::LPSS;
+use crate::syscall::io::Mmio;
+#[cfg(any(feature = "qemu_debug", feature = "serial_debug"))]
+use crate::syscall::io::Pio;
+#[cfg(feature = "qemu_debug")]
+use syscall::io::Io;
+
 #[cfg(feature = "serial_debug")]
 use super::device::serial::COM1;
+#[cfg(feature = "lpss_debug")]
+use super::device::serial::LPSS;
 #[cfg(feature = "system76_ec_debug")]
-use super::device::system76_ec::{SYSTEM76_EC, System76Ec};
+use super::device::system76_ec::{System76Ec, SYSTEM76_EC};
+#[cfg(feature = "graphical_debug")]
+use crate::devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY};
 
 #[cfg(feature = "qemu_debug")]
 pub static QEMU: Mutex<Pio<u8>> = Mutex::new(Pio::<u8>::new(0x402));

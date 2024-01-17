@@ -1,7 +1,6 @@
 use x86::tlb;
 
-use crate::context;
-use crate::device::local_apic::LOCAL_APIC;
+use crate::{context, device::local_apic::LOCAL_APIC};
 
 interrupt!(wakeup, || {
     LOCAL_APIC.eoi();

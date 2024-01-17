@@ -1,9 +1,11 @@
 use alloc::sync::Arc;
 
-use crate::interrupt::InterruptStack;
-use crate::paging::VirtualAddress;
-use crate::context;
-use crate::syscall::error::{Error, EFAULT, EINVAL, EPERM, ESRCH, Result};
+use crate::{
+    context,
+    interrupt::InterruptStack,
+    paging::VirtualAddress,
+    syscall::error::{Error, Result, EFAULT, EINVAL, EPERM, ESRCH},
+};
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();
     let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -52,8 +54,12 @@ pub fn virttophys(virtual_address: usize) -> Result<usize> {
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
     let addr_space = addr_space.read();
 
-    match addr_space.table.utable.translate(VirtualAddress::new(virtual_address)) {
+    match addr_space
+        .table
+        .utable
+        .translate(VirtualAddress::new(virtual_address))
+    {
         Some((physical_address, _)) => Ok(physical_address.data()),
-        None => Err(Error::new(EFAULT))
+        None => Err(Error::new(EFAULT)),
     }
 }

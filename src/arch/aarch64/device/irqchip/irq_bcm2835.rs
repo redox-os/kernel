@@ -1,16 +1,20 @@
+use alloc::{boxed::Box, vec::Vec};
 use core::ptr::{read_volatile, write_volatile};
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 
+use crate::arch::device::irqchip::IRQ_CHIP;
 use byteorder::{ByteOrder, BE};
 use fdt::{DeviceTree, Node};
-use crate::arch::device::irqchip::IRQ_CHIP;
 
-use crate::init::device_tree::find_compatible_node;
-use crate::log::{info, debug, error};
-use syscall::{Result, error::{Error, EINVAL}};
+use crate::{
+    init::device_tree::find_compatible_node,
+    log::{debug, error, info},
+};
+use syscall::{
+    error::{Error, EINVAL},
+    Result,
+};
 
-use super::{InterruptController, IrqDesc, InterruptHandler};
+use super::{InterruptController, InterruptHandler, IrqDesc};
 
 #[inline(always)]
 fn ffs(num: u32) -> u32 {
@@ -39,7 +43,7 @@ fn ffs(num: u32) -> u32 {
         x >>= 1;
         r += 1;
     }
-    
+
     r
 }
 
@@ -59,10 +63,12 @@ pub struct Bcm2835ArmInterruptController {
     pub irq_range: (usize, usize),
 }
 
-
 impl Bcm2835ArmInterruptController {
     pub fn new() -> Self {
-        Bcm2835ArmInterruptController { address: 0, irq_range: (0, 0) }
+        Bcm2835ArmInterruptController {
+            address: 0,
+            irq_range: (0, 0),
+        }
     }
     pub fn parse(fdt: &DeviceTree) -> Result<(usize, usize, Option<usize>)> {
         //TODO: try to parse dtb using stable library
@@ -79,10 +85,16 @@ impl Bcm2835ArmInterruptController {
         let base = BE::read_u32(base);
         let size = BE::read_u32(size);
         let mut ret_virq = None;
-        
-        if let Some(interrupt_parent) = node.properties().find(|p| p.name.contains("interrupt-parent")) {
+
+        if let Some(interrupt_parent) = node
+            .properties()
+            .find(|p| p.name.contains("interrupt-parent"))
+        {
             let phandle = BE::read_u32(interrupt_parent.data);
-            let interrupts = node.properties().find(|p| p.name.contains("interrupts")).unwrap();
+            let interrupts = node
+                .properties()
+                .find(|p| p.name.contains("interrupts"))
+                .unwrap();
             let mut intr_data = Vec::new();
             for chunk in interrupts.data.chunks(4) {
                 let val = BE::read_u32(chunk);
@@ -99,7 +111,10 @@ impl Bcm2835ArmInterruptController {
                 i += 1;
             }
             //PHYS_NONSECURE_PPI only
-            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_xlate(&intr_data, 0).unwrap();
+            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                .ic
+                .irq_xlate(&intr_data, 0)
+                .unwrap();
             info!("bcm2835arm_ctrl virq = {}", virq);
             ret_virq = Some(virq);
         }
@@ -127,7 +142,13 @@ impl Bcm2835ArmInterruptController {
 }
 
 impl InterruptController for Bcm2835ArmInterruptController {
-    fn irq_init(&mut self, fdt: &DeviceTree, irq_desc: &mut [IrqDesc; 1024], ic_idx: usize, irq_idx: &mut usize) -> Result<Option<usize>> {
+    fn irq_init(
+        &mut self,
+        fdt: &DeviceTree,
+        irq_desc: &mut [IrqDesc; 1024],
+        ic_idx: usize,
+        irq_idx: &mut usize,
+    ) -> Result<Option<usize>> {
         let (base, size, virq) = match Bcm2835ArmInterruptController::parse(fdt) {
             Ok((a, b, c)) => (a, b, c),
             Err(_) => return Err(Error::new(EINVAL)),
@@ -161,8 +182,17 @@ impl InterruptController for Bcm2835ArmInterruptController {
         let sources = unsafe { self.read(PENDING_0) };
         let pending_num = ffs(sources) - 1;
         let fast_irq = [
-            7 + 32, 9 + 32, 10 + 32, 18 + 32, 19 + 32,
-            21 + 64, 22 + 64, 23 + 64, 24 + 64, 25 + 64, 30 + 64
+            7 + 32,
+            9 + 32,
+            10 + 32,
+            18 + 32,
+            19 + 32,
+            21 + 64,
+            22 + 64,
+            23 + 64,
+            24 + 64,
+            25 + 64,
+            30 + 64,
         ];
 
         //fast irq
@@ -172,66 +202,76 @@ impl InterruptController for Bcm2835ArmInterruptController {
 
         let pending_num = ffs(sources & 0x3ff) - 1;
         match pending_num {
-            num@0..=7 => { 
-                return num
-            },
+            num @ 0..=7 => return num,
             8 => {
                 let sources1 = unsafe { self.read(PENDING_1) };
                 let irq_0_31 = ffs(sources1) - 1;
                 return irq_0_31 + 32;
-            },
+            }
             9 => {
                 let sources2 = unsafe { self.read(PENDING_2) };
                 let irq_32_63 = ffs(sources2) - 1;
                 return irq_32_63 + 64;
-            },
+            }
             num => {
-                error!("unexpected irq pending in BASIC PENDING: 0x{}, sources = 0x{:08x}", num, sources);
+                error!(
+                    "unexpected irq pending in BASIC PENDING: 0x{}, sources = 0x{:08x}",
+                    num, sources
+                );
                 return num;
             }
         }
     }
 
-    fn irq_eoi(&mut self, _irq_num: u32) {
-
-    }
+    fn irq_eoi(&mut self, _irq_num: u32) {}
 
     fn irq_enable(&mut self, irq_num: u32) {
         debug!("bcm2835 enable {} {}", irq_num, irq_num & 0x1f);
         match irq_num {
-            num @0..=31 => {
+            num @ 0..=31 => {
                 let val = 1 << num;
-                unsafe { self.write(ENABLE_0, val); }
-            },
-            num @32..=63 => {
+                unsafe {
+                    self.write(ENABLE_0, val);
+                }
+            }
+            num @ 32..=63 => {
                 let val = 1 << (num & 0x1f);
-                unsafe { self.write(ENABLE_1, val); }
-            },
-            num @64..=95 => {
+                unsafe {
+                    self.write(ENABLE_1, val);
+                }
+            }
+            num @ 64..=95 => {
                 let val = 1 << (num & 0x1f);
-                unsafe { self.write(ENABLE_2, val); }
-            },
+                unsafe {
+                    self.write(ENABLE_2, val);
+                }
+            }
             _ => return,
         }
     }
 
     fn irq_disable(&mut self, irq_num: u32) {
         match irq_num {
-            num @0..=31 => {
+            num @ 0..=31 => {
                 let val = 1 << num;
-                unsafe { self.write(DISABLE_0, val); }
-            },
-            num @32..=63 => {
+                unsafe {
+                    self.write(DISABLE_0, val);
+                }
+            }
+            num @ 32..=63 => {
                 let val = 1 << (num & 0x1f);
-                unsafe { self.write(DISABLE_1, val); }
-            },
-            num @64..=95 => {
+                unsafe {
+                    self.write(DISABLE_1, val);
+                }
+            }
+            num @ 64..=95 => {
                 let val = 1 << (num & 0x1f);
-                unsafe { self.write(DISABLE_2, val); }
-            },
+                unsafe {
+                    self.write(DISABLE_2, val);
+                }
+            }
             _ => return,
         }
-
     }
     fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
         //assert interrupt-cells == 0x2
@@ -260,7 +300,6 @@ impl InterruptController for Bcm2835ArmInterruptController {
     }
 
     fn irq_handler(&mut self, _irq: u32) {
-
         unsafe {
             let irq = self.irq_ack();
             if let Some(virq) = self.irq_to_virq(irq) && virq < 1024 {
@@ -277,7 +316,6 @@ impl InterruptController for Bcm2835ArmInterruptController {
 
 impl InterruptHandler for Bcm2835ArmInterruptController {
     fn irq_handler(&mut self, _irq: u32) {
-
         unsafe {
             let irq = self.irq_ack();
             if let Some(virq) = self.irq_to_virq(irq) && virq < 1024 {

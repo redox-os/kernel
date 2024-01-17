@@ -1,18 +1,17 @@
-use alloc::sync::Arc;
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use spin::{Mutex, MutexGuard, RwLock};
 
 use crate::context::{self, Context};
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<Vec<Arc<RwLock<Context>>>>
+    contexts: Mutex<Vec<Arc<RwLock<Context>>>>,
 }
 
 impl WaitCondition {
     pub const fn new() -> WaitCondition {
         WaitCondition {
-            contexts: Mutex::new(Vec::new())
+            contexts: Mutex::new(Vec::new()),
         }
     }
 
@@ -57,7 +56,9 @@ impl WaitCondition {
             drop(guard);
         }
 
-        unsafe { context::switch(); }
+        unsafe {
+            context::switch();
+        }
 
         let mut waited = true;
 
@@ -86,7 +87,7 @@ impl WaitCondition {
 }
 
 impl Drop for WaitCondition {
-    fn drop(&mut self){
+    fn drop(&mut self) {
         unsafe { self.notify_signal() };
     }
 }

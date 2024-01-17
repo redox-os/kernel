@@ -1,10 +1,16 @@
-use alloc::{boxed::Box, vec::Vec, string::{String, ToString}};
+use alloc::{
+    boxed::Box,
+    string::{String, ToString},
+    vec::Vec,
+};
 use byteorder::{ByteOrder, BE};
-use syscall::Result;
 use fdt::DeviceTree;
+use syscall::Result;
 
-use crate::log::{debug, error};
-use crate::init::device_tree::travel_interrupt_ctrl;
+use crate::{
+    init::device_tree::travel_interrupt_ctrl,
+    log::{debug, error},
+};
 
 mod gic;
 mod irq_bcm2835;
@@ -18,7 +24,13 @@ pub const IRQ_TYPE_LEVEL_HIGH: u32 = 4;
 pub const IRQ_TYPE_LEVEL_LOW: u32 = 8;
 
 pub trait InterruptController {
-    fn irq_init(&mut self, fdt: &DeviceTree, irq_desc: &mut [IrqDesc; 1024], ic_idx: usize, irq_idx: &mut usize) -> Result<Option<usize>>;
+    fn irq_init(
+        &mut self,
+        fdt: &DeviceTree,
+        irq_desc: &mut [IrqDesc; 1024],
+        ic_idx: usize,
+        irq_idx: &mut usize,
+    ) -> Result<Option<usize>>;
     fn irq_ack(&mut self) -> u32;
     fn irq_eoi(&mut self, irq_num: u32);
     fn irq_enable(&mut self, irq_num: u32);
@@ -38,7 +50,7 @@ pub struct IrqChipItem {
     pub parent_phandle: Option<u32>,
     pub intr_cell_size: u32,
     pub parent: Option<usize>, //parent idx in chiplist
-    pub childs: Vec<usize>, //child idx in chiplist
+    pub childs: Vec<usize>,    //child idx in chiplist
     pub interrupts: Vec<u32>,
     pub ic: Box<dyn InterruptController>,
 }
@@ -51,10 +63,10 @@ pub struct IrqChipList {
 
 pub struct IrqDescItem {
     pub idx: usize,
-    pub ic_idx: usize, //ic idx in irq chip list
+    pub ic_idx: usize,               //ic idx in irq chip list
     pub child_ic_idx: Option<usize>, //ic idx in irq chip list
-    pub ic_irq: u32, //hwirq in ic
-    pub used: bool, 
+    pub ic_irq: u32,                 //hwirq in ic
+    pub used: bool,
 }
 
 pub struct IrqDesc {
@@ -66,27 +78,50 @@ impl IrqChipList {
     fn init_inner1(&mut self, fdt: &fdt::DeviceTree) {
         let root_node = fdt.nodes().nth(0).unwrap();
         let mut idx = 0;
-        let intr = root_node.properties().find(|p| p.name.contains("interrupt-parent")).unwrap();
+        let intr = root_node
+            .properties()
+            .find(|p| p.name.contains("interrupt-parent"))
+            .unwrap();
 
         let root_intr_parent = BE::read_u32(&intr.data);
         debug!("root parent = 0x{:08x}", root_intr_parent);
         self.root_phandle = root_intr_parent;
         for node in fdt.nodes() {
-            if node.properties().find(|p| p.name.contains("interrupt-controller")).is_some() {
-                let compatible = node.properties().find(|p| p.name.contains("compatible")).unwrap();
-                let phandle = node.properties().find(|p| p.name.contains("phandle")).unwrap();
-                let intr_cells = node.properties().find(|p| p.name.contains("#interrupt-cells")).unwrap();
-                let _intr = node.properties().find(|p| p.name.contains("interrupt-parent"));
+            if node
+                .properties()
+                .find(|p| p.name.contains("interrupt-controller"))
+                .is_some()
+            {
+                let compatible = node
+                    .properties()
+                    .find(|p| p.name.contains("compatible"))
+                    .unwrap();
+                let phandle = node
+                    .properties()
+                    .find(|p| p.name.contains("phandle"))
+                    .unwrap();
+                let intr_cells = node
+                    .properties()
+                    .find(|p| p.name.contains("#interrupt-cells"))
+                    .unwrap();
+                let _intr = node
+                    .properties()
+                    .find(|p| p.name.contains("interrupt-parent"));
                 let _intr_data = node.properties().find(|p| p.name.contains("interrupts"));
 
                 let s = core::str::from_utf8(compatible.data).unwrap();
-                debug!("{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}", node.name, s, BE::read_u32(intr_cells.data),
-                         BE::read_u32(phandle.data));
+                debug!(
+                    "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
+                    node.name,
+                    s,
+                    BE::read_u32(intr_cells.data),
+                    BE::read_u32(phandle.data)
+                );
                 let mut item = IrqChipItem {
                     compatible: s.to_string(),
                     phandle: BE::read_u32(phandle.data),
                     parent_phandle: None,
-                    intr_cell_size:  BE::read_u32(intr_cells.data),
+                    intr_cell_size: BE::read_u32(intr_cells.data),
                     parent: None,
                     childs: Vec::new(),
                     interrupts: Vec::new(),
@@ -111,7 +146,6 @@ impl IrqChipList {
                 self.chips.push(item);
 
                 idx += 1;
-                
             }
         }
     }
@@ -135,7 +169,6 @@ impl IrqChipList {
             }
             x += 1;
         }
-        
     }
 
     fn init_inner3(&mut self, fdt: &fdt::DeviceTree, irq_desc: &mut [IrqDesc; 1024]) {
@@ -146,13 +179,14 @@ impl IrqChipList {
         while !queue.is_empty() {
             let cur_idx = queue.pop().unwrap();
             queue.extend_from_slice(&self.chips[cur_idx].childs);
-            let virq = self.chips[cur_idx].ic.irq_init(fdt, irq_desc, cur_idx, &mut irq_idx);
+            let virq = self.chips[cur_idx]
+                .ic
+                .irq_init(fdt, irq_desc, cur_idx, &mut irq_idx);
             if let Ok(Some(virq)) = virq {
                 irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
             }
         }
     }
-
 }
 
 pub struct IrqChipCore {
@@ -164,7 +198,9 @@ pub struct IrqChipCore {
 
 impl IrqChipCore {
     pub fn irq_ack(&mut self) -> u32 {
-        self.irq_chip_list.chips[self.irq_chip_list.root_idx].ic.irq_ack()
+        self.irq_chip_list.chips[self.irq_chip_list.root_idx]
+            .ic
+            .irq_ack()
     }
 
     pub fn irq_eoi(&mut self, virq: u32) {
@@ -192,7 +228,9 @@ impl IrqChipCore {
     }
 
     pub fn irq_to_virq(&mut self, hwirq: u32) -> Option<usize> {
-        self.irq_chip_list.chips[self.irq_chip_list.root_idx].ic.irq_to_virq(hwirq)
+        self.irq_chip_list.chips[self.irq_chip_list.root_idx]
+            .ic
+            .irq_to_virq(hwirq)
     }
 
     pub fn init(&mut self, fdt: &DeviceTree) {
@@ -202,7 +240,6 @@ impl IrqChipCore {
         self.irq_chip_list.init_inner1(fdt);
         self.irq_chip_list.init_inner2();
         self.irq_chip_list.init_inner3(fdt, &mut self.irq_desc);
-
     }
 
     pub fn new_ic(ic_str: &str) -> Option<Box<dyn InterruptController>> {
@@ -229,7 +266,7 @@ const INIT_IRQ_DESC: IrqDesc = IrqDesc {
     },
     handler: INIT_HANDLER,
 };
-pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore { 
+pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore {
     irq_chip_list: IrqChipList {
         chips: Vec::new(),
         root_phandle: 0,
@@ -238,7 +275,6 @@ pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore {
     handlers: [INIT_HANDLER; 1024],
     irq_desc: [INIT_IRQ_DESC; 1024],
 };
-
 
 pub fn init(fdt: &DeviceTree) {
     travel_interrupt_ctrl(fdt);
@@ -250,13 +286,13 @@ pub fn init(fdt: &DeviceTree) {
 pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
     if virq >= 1024 {
         error!("irq {} exceed 1024!!!", virq);
-        return ;
+        return;
     }
 
     unsafe {
         if IRQ_CHIP.irq_desc[virq as usize].handler.is_some() {
             error!("irq {} has already been registered!", virq);
-            return ;
+            return;
         }
 
         IRQ_CHIP.irq_desc[virq as usize].handler = Some(handler);

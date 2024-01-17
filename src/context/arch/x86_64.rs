@@ -1,13 +1,17 @@
-use core::mem;
-use core::ptr::{addr_of, addr_of_mut};
-use core::sync::atomic::AtomicBool;
+use core::{
+    mem,
+    ptr::{addr_of, addr_of_mut},
+    sync::atomic::AtomicBool,
+};
 
 use alloc::sync::Arc;
 
-use crate::{push_scratch, pop_scratch};
-use crate::interrupt::handler::ScratchRegisters;
-use crate::paging::{RmmA, RmmArch, TableKind};
-use crate::syscall::FloatRegisters;
+use crate::{
+    interrupt::handler::ScratchRegisters,
+    paging::{RmmA, RmmArch, TableKind},
+    pop_scratch, push_scratch,
+    syscall::FloatRegisters,
+};
 
 use core::mem::offset_of;
 use spin::Once;
@@ -78,7 +82,7 @@ impl Context {
         self.rsp = address;
     }
 
-    pub unsafe fn signal_stack(&mut self, handler: extern fn(usize), sig: u8) {
+    pub unsafe fn signal_stack(&mut self, handler: extern "C" fn(usize), sig: u8) {
         self.push_stack(sig as usize);
         self.push_stack(handler as usize);
         self.push_stack(signal_handler_wrapper as usize);
@@ -217,16 +221,22 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         // Since Arc essentially just wraps a pointer, in this case a regular pointer (as opposed
         // to dyn or slice fat pointers), and NonNull optimization exists, map_or will hopefully be
         // optimized down to checking prev and next pointers, as next cannot be null.
-        Some(ref next_space) => if prev.addr_space.as_ref().map_or(true, |prev_space| !Arc::ptr_eq(prev_space, next_space)) {
-            // Suppose we have two sibling threads A and B. A runs on CPU 0 and B on CPU 1. A
-            // recently called yield and is now here about to switch back. Meanwhile, B is
-            // currently creating a new mapping in their shared address space, for example a
-            // message on a channel.
-            //
-            // Unless we acquire this lock, it may be possible that the TLB will not contain new
-            // entries. While this can be caught and corrected in a page fault handler, this is not
-            // true when entries are removed from a page table!
-            next_space.read().table.utable.make_current();
+        Some(ref next_space) => {
+            if prev
+                .addr_space
+                .as_ref()
+                .map_or(true, |prev_space| !Arc::ptr_eq(prev_space, next_space))
+            {
+                // Suppose we have two sibling threads A and B. A runs on CPU 0 and B on CPU 1. A
+                // recently called yield and is now here about to switch back. Meanwhile, B is
+                // currently creating a new mapping in their shared address space, for example a
+                // message on a channel.
+                //
+                // Unless we acquire this lock, it may be possible that the TLB will not contain new
+                // entries. While this can be caught and corrected in a page fault handler, this is not
+                // true when entries are removed from a page table!
+                next_space.read().table.utable.make_current();
+            }
         }
         None => {
             RmmA::set_table(TableKind::User, empty_cr3());
@@ -308,13 +318,13 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
 #[repr(packed)]
 pub struct SignalHandlerStack {
     scratch: ScratchRegisters,
-    handler: extern fn(usize),
+    handler: extern "C" fn(usize),
     sig: usize,
     rip: usize,
 }
 
 #[naked]
-unsafe extern fn signal_handler_wrapper() {
+unsafe extern "C" fn signal_handler_wrapper() {
     #[inline(never)]
     unsafe extern "C" fn inner(stack: &SignalHandlerStack) {
         (stack.handler)(stack.sig);

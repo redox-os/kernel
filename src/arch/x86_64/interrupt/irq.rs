@@ -2,14 +2,21 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::vec::Vec;
 
-use crate::{interrupt, interrupt_stack};
-use crate::context::timeout;
-use crate::device::{local_apic, ioapic, pic, pit};
-use crate::device::serial::{COM1, COM2};
-use crate::ipi::{ipi, IpiKind, IpiTarget};
-use crate::scheme::debug::{debug_input, debug_notify};
-use crate::scheme::serio::serio_input;
-use crate::{context, time};
+use crate::{
+    context,
+    context::timeout,
+    device::{
+        ioapic, local_apic, pic, pit,
+        serial::{COM1, COM2},
+    },
+    interrupt, interrupt_stack,
+    ipi::{ipi, IpiKind, IpiTarget},
+    scheme::{
+        debug::{debug_input, debug_notify},
+        serio::serio_input,
+    },
+    time,
+};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,9 +40,13 @@ pub fn spurious_count() -> usize {
 pub fn spurious_irq_resource() -> syscall::Result<Vec<u8>> {
     match irq_method() {
         IrqMethod::Apic => Ok(Vec::from(&b"(not implemented for APIC yet)"[..])),
-        IrqMethod::Pic => {
-            Ok(format!("{}\tIRQ7\n{}\tIRQ15\n{}\ttotal\n", spurious_count_irq7(), spurious_count_irq15(), spurious_count()).into_bytes())
-        }
+        IrqMethod::Pic => Ok(format!(
+            "{}\tIRQ7\n{}\tIRQ15\n{}\ttotal\n",
+            spurious_count_irq7(),
+            spurious_count_irq15(),
+            spurious_count()
+        )
+        .into_bytes()),
     }
 }
 
@@ -55,7 +66,7 @@ fn irq_method() -> IrqMethod {
     }
 }
 
-extern {
+extern "C" {
     // triggers irq scheme
     fn irq_trigger(irq: u8);
 }
@@ -64,7 +75,11 @@ extern {
 /// scheme user unmasks it ("acknowledges" it).
 unsafe fn trigger(irq: u8) {
     match irq_method() {
-        IrqMethod::Pic => if irq < 16 { pic_mask(irq) },
+        IrqMethod::Pic => {
+            if irq < 16 {
+                pic_mask(irq)
+            }
+        }
         IrqMethod::Apic => ioapic_mask(irq),
     }
     irq_trigger(irq);
@@ -74,7 +89,11 @@ unsafe fn trigger(irq: u8) {
 /// processed the IRQ.
 pub unsafe fn acknowledge(irq: usize) {
     match irq_method() {
-        IrqMethod::Pic => if irq < 16 { pic_unmask(irq) },
+        IrqMethod::Pic => {
+            if irq < 16 {
+                pic_unmask(irq)
+            }
+        }
         IrqMethod::Apic => ioapic_unmask(irq),
     }
 }
@@ -82,7 +101,11 @@ pub unsafe fn acknowledge(irq: usize) {
 /// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
 pub unsafe fn eoi(irq: u8) {
     match irq_method() {
-        IrqMethod::Pic => if irq < 16 { pic_eoi(irq) },
+        IrqMethod::Pic => {
+            if irq < 16 {
+                pic_eoi(irq)
+            }
+        }
         IrqMethod::Apic => lapic_eoi(),
     }
 }
@@ -242,7 +265,7 @@ interrupt!(ata2, || {
     if irq_method() == IrqMethod::Pic && pic::SLAVE.isr() & (1 << 7) == 0 {
         SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
         pic::MASTER.ack();
-        return
+        return;
     }
     trigger(15);
     eoi(15);
@@ -259,7 +282,10 @@ interrupt!(aux_timer, || {
 });
 
 interrupt!(lapic_error, || {
-    println!("Local apic internal error: ESR={:#0x}", local_apic::LOCAL_APIC.esr());
+    println!(
+        "Local apic internal error: ESR={:#0x}",
+        local_apic::LOCAL_APIC.esr()
+    );
     lapic_eoi();
 });
 

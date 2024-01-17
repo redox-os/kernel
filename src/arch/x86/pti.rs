@@ -4,9 +4,9 @@ use core::ptr;
 #[cfg(feature = "pti")]
 use crate::memory::Frame;
 #[cfg(feature = "pti")]
-use crate::paging::ActivePageTable;
-#[cfg(feature = "pti")]
 use crate::paging::entry::EntryFlags;
+#[cfg(feature = "pti")]
+use crate::paging::ActivePageTable;
 
 #[cfg(feature = "pti")]
 #[thread_local]
@@ -26,11 +26,7 @@ unsafe fn switch_stack(old: usize, new: usize) {
 
     let new_rsp = new - offset_rsp;
 
-    ptr::copy_nonoverlapping(
-        old_rsp as *const u8,
-        new_rsp as *mut u8,
-        offset_rsp
-    );
+    ptr::copy_nonoverlapping(old_rsp as *const u8, new_rsp as *mut u8, offset_rsp);
 
     asm!("", out("rsp") new_rsp);
 }
@@ -53,14 +49,20 @@ pub unsafe fn map() {
     // }
 
     // Switch to per-context stack
-    switch_stack(PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len(), PTI_CONTEXT_STACK);
+    switch_stack(
+        PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len(),
+        PTI_CONTEXT_STACK,
+    );
 }
 
 #[cfg(feature = "pti")]
 #[inline(always)]
 pub unsafe extern "C" fn unmap() {
     // Switch to per-CPU stack
-    switch_stack(PTI_CONTEXT_STACK, PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len());
+    switch_stack(
+        PTI_CONTEXT_STACK,
+        PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len(),
+    );
 
     // {
     //     let mut active_table = unsafe { ActivePageTable::new() };

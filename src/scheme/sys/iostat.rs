@@ -1,9 +1,6 @@
-use alloc::string::String;
-use alloc::vec::Vec;
+use crate::{context, scheme, syscall::error::Result};
+use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
-use crate::context;
-use crate::scheme;
-use crate::syscall::error::Result;
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut string = String::new();
@@ -26,7 +23,7 @@ pub fn resource() -> Result<Vec<u8>> {
             for (fd, f) in row.2.iter().enumerate() {
                 let file = match *f {
                     None => continue,
-                    Some(ref file) => file.clone()
+                    Some(ref file) => file.clone(),
                 };
 
                 let description = file.description.read();
@@ -36,7 +33,14 @@ pub fn resource() -> Result<Vec<u8>> {
                     match schemes.get(description.scheme) {
                         Some(scheme) => scheme.clone(),
                         None => {
-                            let _ = writeln!(string, "  {:>4}: {:>8} {:>8} {:>08X}: no scheme", fd, description.scheme.get(), description.number, description.flags);
+                            let _ = writeln!(
+                                string,
+                                "  {:>4}: {:>8} {:>8} {:>08X}: no scheme",
+                                fd,
+                                description.scheme.get(),
+                                description.number,
+                                description.flags
+                            );
                             continue;
                         }
                     }

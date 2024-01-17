@@ -1,22 +1,31 @@
-use core::num::NonZeroU8;
-use core::sync::atomic::{AtomicU64, Ordering};
-use core::mem;
+use core::{
+    mem,
+    num::NonZeroU8,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use alloc::boxed::Box;
 use hashbrown::HashMap;
 
-use x86::segmentation::Descriptor as X86IdtEntry;
-use x86::dtables::{self, DescriptorTablePointer};
+use x86::{
+    dtables::{self, DescriptorTablePointer},
+    segmentation::Descriptor as X86IdtEntry,
+};
 
-use crate::{interrupt::*, LogicalCpuId};
-use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
-use crate::ipi::IpiKind;
+use crate::{
+    interrupt::{
+        irq::{__generic_interrupts_end, __generic_interrupts_start},
+        *,
+    },
+    ipi::IpiKind,
+    LogicalCpuId,
+};
 
 use spin::RwLock;
 
 pub static mut INIT_IDTR: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
     limit: 0,
-    base: 0 as *const X86IdtEntry
+    base: 0 as *const X86IdtEntry,
 };
 
 pub type IdtEntries = [IdtEntry; 256];
@@ -47,7 +56,8 @@ impl Idt {
         let byte_index = index / 64;
         let bit = index % 64;
 
-        { &self.reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
+        { &self.reservations[usize::from(byte_index)] }
+            .fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
     }
     #[inline]
     pub fn is_reserved_mut(&mut self, index: u8) -> bool {
@@ -62,7 +72,8 @@ impl Idt {
         let byte_index = index / 64;
         let bit = index % 64;
 
-        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() |= u64::from(reserved) << bit;
+        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() |=
+            u64::from(reserved) << bit;
     }
 }
 
@@ -76,7 +87,18 @@ pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
     let byte_index = index / 64;
     let bit = index % 64;
 
-    { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
+    {
+        &IDTS
+            .read()
+            .as_ref()
+            .unwrap()
+            .get(&cpu_id)
+            .unwrap()
+            .reservations[usize::from(byte_index)]
+    }
+    .load(Ordering::Acquire)
+        & (1 << bit)
+        != 0
 }
 
 #[inline]
@@ -84,13 +106,22 @@ pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
     let byte_index = index / 64;
     let bit = index % 64;
 
-    { &IDTS.read().as_ref().unwrap().get(&cpu_id).unwrap().reservations[usize::from(byte_index)] }.fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
+    {
+        &IDTS
+            .read()
+            .as_ref()
+            .unwrap()
+            .get(&cpu_id)
+            .unwrap()
+            .reservations[usize::from(byte_index)]
+    }
+    .fetch_or(u64::from(reserved) << bit, Ordering::AcqRel);
 }
 
 pub fn allocate_interrupt() -> Option<NonZeroU8> {
     let cpu_id = crate::cpu_id();
     for number in 50..=254 {
-        if ! is_reserved(cpu_id, number) {
+        if !is_reserved(cpu_id, number) {
             set_reserved(cpu_id, number, true);
             return Some(unsafe { NonZeroU8::new_unchecked(number) });
         }
@@ -107,7 +138,12 @@ pub unsafe fn init() {
 }
 
 const fn new_idt_reservations() -> [AtomicU64; 4] {
-    [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)]
+    [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+    ]
 }
 
 /// Initialize the IDT for a
@@ -118,7 +154,9 @@ pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
     if cpu_id == LogicalCpuId::BSP {
         idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);
     } else {
-        let idt = idts_btree.entry(cpu_id).or_insert_with(|| Box::leak(Box::new(Idt::new())));
+        let idt = idts_btree
+            .entry(cpu_id)
+            .or_insert_with(|| Box::leak(Box::new(Idt::new())));
         init_generic(cpu_id, idt);
     }
 }
@@ -199,7 +237,10 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     current_idt[30].set_func(exception::security);
     // 31 reserved
 
-    assert_eq!(__generic_interrupts_end as usize - __generic_interrupts_start as usize, 224 * 8);
+    assert_eq!(
+        __generic_interrupts_end as usize - __generic_interrupts_start as usize,
+        224 * 8
+    );
 
     for i in 0..224 {
         current_idt[i + 32].set_func(mem::transmute(__generic_interrupts_start as usize + i * 8));
@@ -282,7 +323,7 @@ pub struct IdtEntry {
     attribute: u8,
     offsetm: u16,
     offseth: u32,
-    _zero2: u32
+    _zero2: u32,
 }
 
 impl IdtEntry {
@@ -294,7 +335,7 @@ impl IdtEntry {
             attribute: 0,
             offsetm: 0,
             offseth: 0,
-            _zero2: 0
+            _zero2: 0,
         }
     }
 
@@ -303,7 +344,11 @@ impl IdtEntry {
     }
 
     pub fn set_ist(&mut self, ist: u8) {
-        assert_eq!(ist & 0x07, ist, "interrupt stack table must be within 0..=7");
+        assert_eq!(
+            ist & 0x07,
+            ist,
+            "interrupt stack table must be within 0..=7"
+        );
         self.zero &= 0xF8;
         self.zero |= ist;
     }
@@ -316,7 +361,7 @@ impl IdtEntry {
     }
 
     // A function to set the offset more easily
-    pub fn set_func(&mut self, func: unsafe extern fn()) {
+    pub fn set_func(&mut self, func: unsafe extern "C" fn()) {
         self.set_flags(IdtFlags::PRESENT | IdtFlags::RING_0 | IdtFlags::INTERRUPT);
         self.set_offset((crate::gdt::GDT_KERNEL_CODE as u16) << 3, func as usize);
     }

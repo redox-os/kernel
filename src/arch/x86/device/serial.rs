@@ -1,7 +1,6 @@
-use crate::devices::uart_16550::SerialPort;
 #[cfg(feature = "lpss_debug")]
 use crate::syscall::io::Mmio;
-use crate::syscall::io::Pio;
+use crate::{devices::uart_16550::SerialPort, syscall::io::Pio};
 use spin::Mutex;
 
 pub static COM1: Mutex<SerialPort<Pio<u8>>> = Mutex::new(SerialPort::<Pio<u8>>::new(0x3F8));
@@ -22,19 +21,24 @@ pub unsafe fn init() {
         let address = crate::PHYS_OFFSET + 0xFE032000;
 
         {
-            use crate::paging::{ActivePageTable, Page, VirtualAddress, entry::EntryFlags};
-            use crate::memory::{Frame, PhysicalAddress};
+            use crate::{
+                memory::{Frame, PhysicalAddress},
+                paging::{entry::EntryFlags, ActivePageTable, Page, VirtualAddress},
+            };
 
             let mut active_table = ActivePageTable::new();
             let page = Page::containing_address(VirtualAddress::new(address));
-            let frame = Frame::containing_address(PhysicalAddress::new(address - crate::PHYS_OFFSET));
-            let result = active_table.map_to(page, frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
+            let frame =
+                Frame::containing_address(PhysicalAddress::new(address - crate::PHYS_OFFSET));
+            let result = active_table.map_to(
+                page,
+                frame,
+                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+            );
             result.flush(&mut active_table);
         }
 
-        let lpss = SerialPort::<Mmio<u32>>::new(
-            crate::PHYS_OFFSET + 0xFE032000
-        );
+        let lpss = SerialPort::<Mmio<u32>>::new(crate::PHYS_OFFSET + 0xFE032000);
         lpss.init();
 
         *LPSS.lock() = Some(lpss);

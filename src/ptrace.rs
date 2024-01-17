@@ -9,19 +9,10 @@ use crate::{
     event,
     scheme::GlobalSchemes,
     sync::WaitCondition,
-    syscall::{
-        data::PtraceEvent,
-        error::*,
-        flag::*,
-        ptrace_event
-    },
+    syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
 };
 
-use alloc::{
-    boxed::Box,
-    collections::VecDeque,
-    sync::Arc,
-};
+use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
 use core::cmp;
 use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -54,7 +45,7 @@ impl SessionData {
     pub fn set_breakpoint(&mut self, flags: Option<PtraceFlags>) {
         self.breakpoint = flags.map(|flags| Breakpoint {
             reached: false,
-            flags
+            flags,
         });
     }
 
@@ -215,7 +206,7 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
 #[derive(Debug, Clone, Copy)]
 struct Breakpoint {
     reached: bool,
-    flags: PtraceFlags
+    flags: PtraceFlags,
 }
 
 /// Wait for the tracee to stop, or return immediately if there's an unread
@@ -230,7 +221,7 @@ pub fn wait(pid: ContextId) -> Result<()> {
 
             match sessions.get(&pid) {
                 Some(session) => Arc::clone(session),
-                _ => return Ok(())
+                _ => return Ok(()),
             }
         };
 
@@ -260,7 +251,10 @@ pub fn wait(pid: ContextId) -> Result<()> {
 ///
 /// Note: Don't call while holding any locks or allocated data, this
 /// will switch contexts and may in fact just never terminate.
-pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>) -> Option<PtraceFlags> {
+pub fn breakpoint_callback(
+    match_flags: PtraceFlags,
+    event: Option<PtraceEvent>,
+) -> Option<PtraceFlags> {
     loop {
         let session = {
             let contexts = context::contexts();
@@ -282,7 +276,8 @@ pub fn breakpoint_callback(match_flags: PtraceFlags, event: Option<PtraceEvent>)
         }
 
         // In case no tracer is waiting, make sure the next one gets the memo
-        data.breakpoint.as_mut()
+        data.breakpoint
+            .as_mut()
             .expect("already checked that breakpoint isn't None")
             .reached = true;
 
@@ -362,7 +357,7 @@ impl Drop for ProcessRegsGuard {
 /// stack instead of the original.
 pub unsafe fn rebase_regs_ptr(
     regs: Option<(usize, Unique<InterruptStack>)>,
-    kstack: Option<&Box<[u8]>>
+    kstack: Option<&Box<[u8]>>,
 ) -> Option<*const InterruptStack> {
     let (old_base, ptr) = regs?;
     let new_base = kstack?.as_ptr() as usize;
@@ -372,7 +367,7 @@ pub unsafe fn rebase_regs_ptr(
 /// stack instead of the original.
 pub unsafe fn rebase_regs_ptr_mut(
     regs: Option<(usize, Unique<InterruptStack>)>,
-    kstack: Option<&mut Box<[u8]>>
+    kstack: Option<&mut Box<[u8]>>,
 ) -> Option<*mut InterruptStack> {
     let (old_base, ptr) = regs?;
     let new_base = kstack?.as_mut_ptr() as usize;

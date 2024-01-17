@@ -6,40 +6,30 @@
 //! The kernel validates paths and file descriptors before they are passed to schemes,
 //! also stripping the scheme identifier of paths if necessary.
 
-use alloc::{
-    boxed::Box,
-    collections::BTreeMap,
-    string::ToString,
-    sync::Arc,
-    vec::Vec,
-};
-use hashbrown::HashMap;
-use syscall::{MunmapFlags, SendFdFlags, EventFlags, SEEK_SET, SEEK_CUR, SEEK_END};
+use alloc::{boxed::Box, collections::BTreeMap, string::ToString, sync::Arc, vec::Vec};
 use core::sync::atomic::AtomicUsize;
+use hashbrown::HashMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use syscall::{EventFlags, MunmapFlags, SendFdFlags, SEEK_CUR, SEEK_END, SEEK_SET};
 
-use crate::context::file::FileDescription;
-use crate::context::memory::AddrSpace;
-use crate::syscall::error::*;
-use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
+use crate::{
+    context::{file::FileDescription, memory::AddrSpace},
+    syscall::{
+        error::*,
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
+};
 
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 use self::acpi::AcpiScheme;
 #[cfg(all(any(target_arch = "aarch64")))]
 use self::dtb::DtbScheme;
 
-use self::debug::DebugScheme;
-use self::event::EventScheme;
-use self::irq::IrqScheme;
-use self::itimer::ITimerScheme;
-use self::memory::MemoryScheme;
-use self::pipe::PipeScheme;
-use self::proc::ProcScheme;
-use self::root::RootScheme;
-use self::serio::SerioScheme;
-use self::sys::SysScheme;
-use self::time::TimeScheme;
-use self::user::UserScheme;
+use self::{
+    debug::DebugScheme, event::EventScheme, irq::IrqScheme, itimer::ITimerScheme,
+    memory::MemoryScheme, pipe::PipeScheme, proc::ProcScheme, root::RootScheme, serio::SerioScheme,
+    sys::SysScheme, time::TimeScheme, user::UserScheme,
+};
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
@@ -96,7 +86,7 @@ int_like!(SchemeId, usize);
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
 pub struct SchemeIter<'a> {
-    inner: Option<hashbrown::hash_map::Iter<'a, Box<str>, SchemeId>>
+    inner: Option<hashbrown::hash_map::Iter<'a, Box<str>, SchemeId>>,
 }
 
 impl<'a> Iterator for SchemeIter<'a> {
@@ -127,14 +117,27 @@ impl SchemeList {
 
         let mut insert_globals = |globals: &[GlobalSchemes]| {
             for &g in globals {
-                list.map.insert(SchemeId::from(g as usize), KernelSchemes::Global(g));
+                list.map
+                    .insert(SchemeId::from(g as usize), KernelSchemes::Global(g));
             }
         };
 
         // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
         {
             use GlobalSchemes::*;
-            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, ITimer, Sys, ProcFull, ProcRestricted]);
+            insert_globals(&[
+                Debug,
+                Event,
+                Memory,
+                Pipe,
+                Serio,
+                Irq,
+                Time,
+                ITimer,
+                Sys,
+                ProcFull,
+                ProcRestricted,
+            ]);
 
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             insert_globals(&[Acpi]);
@@ -155,8 +158,10 @@ impl SchemeList {
 
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
-        self.insert_global(ns, "memory", GlobalSchemes::Memory).unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted).unwrap();
+        self.insert_global(ns, "memory", GlobalSchemes::Memory)
+            .unwrap();
+        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
+            .unwrap();
         self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
     }
 
@@ -166,10 +171,16 @@ impl SchemeList {
         self.next_ns += 1;
         self.names.insert(ns, HashMap::new());
 
-        self.insert(ns, "", |scheme_id| KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))).unwrap();
-        self.insert_global(ns, "event", GlobalSchemes::Event).unwrap();
-        self.insert_global(ns, "itimer", GlobalSchemes::ITimer).unwrap();
-        self.insert_global(ns, "memory", GlobalSchemes::Memory).unwrap();
+        self.insert(ns, "", |scheme_id| {
+            KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))
+        })
+        .unwrap();
+        self.insert_global(ns, "event", GlobalSchemes::Event)
+            .unwrap();
+        self.insert_global(ns, "itimer", GlobalSchemes::ITimer)
+            .unwrap();
+        self.insert_global(ns, "memory", GlobalSchemes::Memory)
+            .unwrap();
         self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
         self.insert_global(ns, "sys", GlobalSchemes::Sys).unwrap();
         self.insert_global(ns, "time", GlobalSchemes::Time).unwrap();
@@ -185,20 +196,30 @@ impl SchemeList {
         // These schemes should only be available on the root
         #[cfg(all(any(target_arch = "aarch64")))]
         {
-            self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb).unwrap();
+            self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb)
+                .unwrap();
         }
         #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
         {
-            self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi).unwrap();
+            self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi)
+                .unwrap();
         }
-        self.insert_global(ns, "debug", GlobalSchemes::Debug).unwrap();
+        self.insert_global(ns, "debug", GlobalSchemes::Debug)
+            .unwrap();
         self.insert_global(ns, "irq", GlobalSchemes::Irq).unwrap();
-        self.insert_global(ns, "proc", GlobalSchemes::ProcFull).unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted).unwrap();
-        self.insert_global(ns, "serio", GlobalSchemes::Serio).unwrap();
+        self.insert_global(ns, "proc", GlobalSchemes::ProcFull)
+            .unwrap();
+        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
+            .unwrap();
+        self.insert_global(ns, "serio", GlobalSchemes::Serio)
+            .unwrap();
     }
 
-    pub fn make_ns(&mut self, from: SchemeNamespace, names: impl IntoIterator<Item = Box<str>>) -> Result<SchemeNamespace> {
+    pub fn make_ns(
+        &mut self,
+        from: SchemeNamespace,
+        names: impl IntoIterator<Item = Box<str>>,
+    ) -> Result<SchemeNamespace> {
         // Create an empty namespace
         let to = self.new_ns();
 
@@ -209,7 +230,10 @@ impl SchemeList {
             };
 
             if let Some(ref mut names) = self.names.get_mut(&to) {
-                if names.insert(name.to_string().into_boxed_str(), id).is_some() {
+                if names
+                    .insert(name.to_string().into_boxed_str(), id)
+                    .is_some()
+                {
                     return Err(Error::new(EEXIST));
                 }
             } else {
@@ -222,7 +246,7 @@ impl SchemeList {
 
     pub fn iter_name(&self, ns: SchemeNamespace) -> SchemeIter {
         SchemeIter {
-            inner: self.names.get(&ns).map(|names| names.iter())
+            inner: self.names.get(&ns).map(|names| names.iter()),
         }
     }
 
@@ -240,8 +264,17 @@ impl SchemeList {
         None
     }
 
-    pub fn insert_global(&mut self, ns: SchemeNamespace, name: &str, global: GlobalSchemes) -> Result<()> {
-        let prev = self.names.get_mut(&ns).ok_or(Error::new(ENODEV))?.insert(name.into(), global.scheme_id());
+    pub fn insert_global(
+        &mut self,
+        ns: SchemeNamespace,
+        name: &str,
+        global: GlobalSchemes,
+    ) -> Result<()> {
+        let prev = self
+            .names
+            .get_mut(&ns)
+            .ok_or(Error::new(ENODEV))?
+            .insert(name.into(), global.scheme_id());
 
         if prev.is_some() {
             return Err(Error::new(EEXIST));
@@ -251,11 +284,22 @@ impl SchemeList {
     }
 
     /// Create a new scheme.
-    pub fn insert(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: impl FnOnce(SchemeId) -> KernelSchemes) -> Result<SchemeId> {
-        self.insert_and_pass(ns, name, |id| (scheme_fn(id), ())).map(|(id, ())| id)
+    pub fn insert(
+        &mut self,
+        ns: SchemeNamespace,
+        name: &str,
+        scheme_fn: impl FnOnce(SchemeId) -> KernelSchemes,
+    ) -> Result<SchemeId> {
+        self.insert_and_pass(ns, name, |id| (scheme_fn(id), ()))
+            .map(|(id, ())| id)
     }
 
-    pub fn insert_and_pass<T>(&mut self, ns: SchemeNamespace, name: &str, scheme_fn: impl FnOnce(SchemeId) -> (KernelSchemes, T)) -> Result<(SchemeId, T)> {
+    pub fn insert_and_pass<T>(
+        &mut self,
+        ns: SchemeNamespace,
+        name: &str,
+        scheme_fn: impl FnOnce(SchemeId) -> (KernelSchemes, T),
+    ) -> Result<(SchemeId, T)> {
         if let Some(names) = self.names.get(&ns) {
             if names.contains_key(name) {
                 return Err(Error::new(EEXIST));
@@ -283,7 +327,9 @@ impl SchemeList {
 
         assert!(self.map.insert(id, new_scheme).is_none());
         if let Some(ref mut names) = self.names.get_mut(&ns) {
-            assert!(names.insert(name.to_string().into_boxed_str(), id).is_none());
+            assert!(names
+                .insert(name.to_string().into_boxed_str(), id)
+                .is_none());
         } else {
             // Nonexistent namespace, posssibly null namespace
             return Err(Error::new(ENODEV));
@@ -332,7 +378,13 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(ENOENT))
     }
 
-    fn kfmap(&self, number: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
+    fn kfmap(
+        &self,
+        number: usize,
+        addr_space: &Arc<RwLock<AddrSpace>>,
+        map: &crate::syscall::data::Map,
+        consume: bool,
+    ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
     fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
@@ -361,7 +413,13 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EBADF))
     }
 
-    fn ksendfd(&self, id: usize, desc: Arc<RwLock<FileDescription>>, flags: SendFdFlags, arg: u64) -> Result<usize> {
+    fn ksendfd(
+        &self,
+        id: usize,
+        desc: Arc<RwLock<FileDescription>>,
+        flags: SendFdFlags,
+        arg: u64,
+    ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
 
@@ -411,10 +469,17 @@ pub struct CallerCtx {
     pub gid: u32,
 }
 
-pub fn calc_seek_offset(cur_pos: usize, rel_pos: isize, whence: usize, len: usize) -> Result<usize> {
+pub fn calc_seek_offset(
+    cur_pos: usize,
+    rel_pos: isize,
+    whence: usize,
+    len: usize,
+) -> Result<usize> {
     match whence {
         SEEK_SET => usize::try_from(rel_pos).map_err(|_| Error::new(EINVAL)),
-        SEEK_CUR => cur_pos.checked_add_signed(rel_pos).ok_or(Error::new(EOVERFLOW)),
+        SEEK_CUR => cur_pos
+            .checked_add_signed(rel_pos)
+            .ok_or(Error::new(EOVERFLOW)),
         SEEK_END => len.checked_add_signed(rel_pos).ok_or(Error::new(EOVERFLOW)),
 
         _ => return Err(Error::new(EINVAL)),

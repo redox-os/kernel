@@ -1,22 +1,25 @@
 use core::num::NonZeroUsize;
 
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use rmm::PhysicalAddress;
-use alloc::vec::Vec;
 use spin::RwLock;
 
-use crate::memory::{free_frames, used_frames, PAGE_SIZE, Frame};
-use crate::context::memory::{AddrSpace, Grant, PageSpan, handle_notify_files};
-use crate::paging::VirtualAddress;
+use crate::{
+    context::memory::{handle_notify_files, AddrSpace, Grant, PageSpan},
+    memory::{free_frames, used_frames, Frame, PAGE_SIZE},
+    paging::VirtualAddress,
+};
 
 use crate::paging::entry::EntryFlags;
 
-use crate::syscall::data::{Map, StatVfs};
-use crate::syscall::flag::MapFlags;
-use crate::syscall::error::*;
-use crate::syscall::usercopy::UserSliceWo;
+use crate::syscall::{
+    data::{Map, StatVfs},
+    error::*,
+    flag::MapFlags,
+    usercopy::UserSliceWo,
+};
 
-use super::{KernelScheme, CallerCtx, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult};
 
 pub struct MemoryScheme;
 
@@ -59,14 +62,18 @@ fn from_raw(raw: u32) -> Option<(HandleTy, MemoryType, HandleFlags)> {
 
             _ => return None,
         },
-        HandleFlags::from_bits_truncate((raw >> 16) as u16)
+        HandleFlags::from_bits_truncate((raw >> 16) as u16),
     ))
-
 }
 
 impl MemoryScheme {
-    pub fn fmap_anonymous(addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, is_phys_contiguous: bool) -> Result<usize> {
-        let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size).ok_or(Error::new(EINVAL))?;
+    pub fn fmap_anonymous(
+        addr_space: &Arc<RwLock<AddrSpace>>,
+        map: &Map,
+        is_phys_contiguous: bool,
+    ) -> Result<usize> {
+        let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size)
+            .ok_or(Error::new(EINVAL))?;
         let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;
 
         let mut notify_files = Vec::new();
@@ -76,65 +83,93 @@ impl MemoryScheme {
             return Err(Error::new(EOPNOTSUPP));
         }
 
-        let page = addr_space
-            .write()
-            .mmap((map.address != 0).then_some(span.base), page_count, map.flags, &mut notify_files, |dst_page, flags, mapper, flusher| {
+        let page = addr_space.write().mmap(
+            (map.address != 0).then_some(span.base),
+            page_count,
+            map.flags,
+            &mut notify_files,
+            |dst_page, flags, mapper, flusher| {
                 let span = PageSpan::new(dst_page, page_count.get());
                 if is_phys_contiguous {
                     Ok(Grant::zeroed_phys_contiguous(span, flags, mapper, flusher)?)
                 } else {
-                    Ok(Grant::zeroed(span, flags, mapper, flusher, map.flags.contains(MapFlags::MAP_SHARED))?)
+                    Ok(Grant::zeroed(
+                        span,
+                        flags,
+                        mapper,
+                        flusher,
+                        map.flags.contains(MapFlags::MAP_SHARED),
+                    )?)
                 }
-            })?;
+            },
+        )?;
 
         handle_notify_files(notify_files);
 
         Ok(page.start_address().data())
     }
-    pub fn physmap(physical_address: usize, size: usize, flags: MapFlags, memory_type: MemoryType) -> Result<usize> {
+    pub fn physmap(
+        physical_address: usize,
+        size: usize,
+        flags: MapFlags,
+        memory_type: MemoryType,
+    ) -> Result<usize> {
         // TODO: Check physical_address against the real MAXPHYADDR.
         let end = 1 << 52;
-        if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0 {
+        if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0
+        {
             return Err(Error::new(EINVAL));
         }
 
         if size % PAGE_SIZE != 0 {
-            log::warn!("physmap size {} is not multiple of PAGE_SIZE {}", size, PAGE_SIZE);
+            log::warn!(
+                "physmap size {} is not multiple of PAGE_SIZE {}",
+                size,
+                PAGE_SIZE
+            );
             return Err(Error::new(EINVAL));
         }
         let page_count = NonZeroUsize::new(size.div_ceil(PAGE_SIZE)).ok_or(Error::new(EINVAL))?;
 
-        AddrSpace::current()?.write().mmap_anywhere(page_count, flags, |dst_page, mut page_flags, dst_mapper, dst_flusher| {
-            match memory_type {
-                // Default
-                MemoryType::Writeback => (),
+        AddrSpace::current()?
+            .write()
+            .mmap_anywhere(
+                page_count,
+                flags,
+                |dst_page, mut page_flags, dst_mapper, dst_flusher| {
+                    match memory_type {
+                        // Default
+                        MemoryType::Writeback => (),
 
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
-                MemoryType::WriteCombining => page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true),
+                        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
+                        MemoryType::WriteCombining => {
+                            page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true)
+                        }
 
-                MemoryType::Uncacheable => page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true),
+                        MemoryType::Uncacheable => {
+                            page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true)
+                        }
 
-                // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
-                // uncacheable, write-combining, write-through, write-protect, and write-back.
+                        // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
+                        // uncacheable, write-combining, write-through, write-protect, and write-back.
+                        #[cfg(target_arch = "aarch64")]
+                        MemoryType::DeviceMemory => {
+                            page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true)
+                        }
 
-                #[cfg(target_arch = "aarch64")]
-                MemoryType::DeviceMemory => page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true),
+                        _ => (),
+                    }
 
-                _ => (),
-            }
-
-            Grant::physmap(
-                Frame::containing_address(PhysicalAddress::new(physical_address)),
-                PageSpan::new(
-                    dst_page,
-                    page_count.get(),
-                ),
-                page_flags,
-                dst_mapper,
-                dst_flusher,
+                    Grant::physmap(
+                        Frame::containing_address(PhysicalAddress::new(physical_address)),
+                        PageSpan::new(dst_page, page_count.get()),
+                        page_flags,
+                        dst_mapper,
+                        dst_flusher,
+                    )
+                },
             )
-        }).map(|page| page.start_address().data())
-
+            .map(|page| page.start_address().data())
     }
 }
 impl KernelScheme for MemoryScheme {
@@ -162,19 +197,31 @@ impl KernelScheme for MemoryScheme {
             _ => return Err(Error::new(ENOENT)),
         };
 
-        let flags = type_str.split(',').filter_map(|ty_str| match ty_str {
-            //"32" => HandleFlags::BELOW_4G,
-            "phys_contiguous" => Some(Some(HandleFlags::PHYS_CONTIGUOUS)),
-            "" => None,
-            _ => Some(None),
-        }).collect::<Option<HandleFlags>>().ok_or(Error::new(ENOENT))?;
+        let flags = type_str
+            .split(',')
+            .filter_map(|ty_str| match ty_str {
+                //"32" => HandleFlags::BELOW_4G,
+                "phys_contiguous" => Some(Some(HandleFlags::PHYS_CONTIGUOUS)),
+                "" => None,
+                _ => Some(None),
+            })
+            .collect::<Option<HandleFlags>>()
+            .ok_or(Error::new(ENOENT))?;
 
         // TODO: Support arches with other default memory types?
-        if ctx.uid != 0 && (!flags.is_empty() || !matches!((handle_ty, mem_ty), (HandleTy::Allocated, MemoryType::Writeback))) {
+        if ctx.uid != 0
+            && (!flags.is_empty()
+                || !matches!(
+                    (handle_ty, mem_ty),
+                    (HandleTy::Allocated, MemoryType::Writeback)
+                ))
+        {
             return Err(Error::new(EACCES));
         }
 
-        Ok(OpenResult::SchemeLocal((handle_ty as usize) | ((mem_ty as usize) << 8) | (usize::from(flags.bits()) << 16)))
+        Ok(OpenResult::SchemeLocal(
+            (handle_ty as usize) | ((mem_ty as usize) << 8) | (usize::from(flags.bits()) << 16),
+        ))
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -184,11 +231,24 @@ impl KernelScheme for MemoryScheme {
     fn close(&self, _id: usize) -> Result<()> {
         Ok(())
     }
-    fn kfmap(&self, id: usize, addr_space: &Arc<RwLock<AddrSpace>>, map: &Map, _consume: bool) -> Result<usize> {
-        let (handle_ty, mem_ty, flags) = u32::try_from(id).ok().and_then(from_raw).ok_or(Error::new(EBADF))?;
+    fn kfmap(
+        &self,
+        id: usize,
+        addr_space: &Arc<RwLock<AddrSpace>>,
+        map: &Map,
+        _consume: bool,
+    ) -> Result<usize> {
+        let (handle_ty, mem_ty, flags) = u32::try_from(id)
+            .ok()
+            .and_then(from_raw)
+            .ok_or(Error::new(EBADF))?;
 
         match handle_ty {
-            HandleTy::Allocated => Self::fmap_anonymous(addr_space, map, flags.contains(HandleFlags::PHYS_CONTIGUOUS)),
+            HandleTy::Allocated => Self::fmap_anonymous(
+                addr_space,
+                map,
+                flags.contains(HandleFlags::PHYS_CONTIGUOUS),
+            ),
             HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty),
         }
     }

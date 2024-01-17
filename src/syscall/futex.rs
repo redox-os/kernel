@@ -2,20 +2,23 @@
 //! Futex or Fast Userspace Mutex is "a method for waiting until a certain condition becomes true."
 //!
 //! For more information about futexes, please read [this](https://eli.thegreenplace.net/2018/basics-of-futexes/) blog post, and the [futex(2)](http://man7.org/linux/man-pages/man2/futex.2.html) man page
-use alloc::collections::VecDeque;
-use alloc::sync::Arc;
-use rmm::Arch;
+use alloc::{collections::VecDeque, sync::Arc};
 use core::sync::atomic::{AtomicU32, Ordering};
+use rmm::Arch;
 use spin::RwLock;
 
-use crate::context::{self, memory::AddrSpace, Context};
-use crate::memory::PhysicalAddress;
-use crate::paging::{Page, VirtualAddress};
-use crate::time;
+use crate::{
+    context::{self, memory::AddrSpace, Context},
+    memory::PhysicalAddress,
+    paging::{Page, VirtualAddress},
+    time,
+};
 
-use crate::syscall::data::TimeSpec;
-use crate::syscall::error::{Error, Result, EAGAIN, EFAULT, EINVAL, ESRCH};
-use crate::syscall::flag::{FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE};
+use crate::syscall::{
+    data::TimeSpec,
+    error::{Error, Result, EAGAIN, EFAULT, EINVAL, ESRCH},
+    flag::{FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE},
+};
 
 use super::usercopy::UserSlice;
 
@@ -58,8 +61,10 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
     match op {
         // TODO: FUTEX_WAIT_MULTIPLE?
         FUTEX_WAIT | FUTEX_WAIT64 => {
-            let timeout_opt = UserSlice::ro(val2, core::mem::size_of::<TimeSpec>())?.none_if_null()
-                .map(|buf| unsafe { buf.read_exact::<TimeSpec>() }).transpose()?;
+            let timeout_opt = UserSlice::ro(val2, core::mem::size_of::<TimeSpec>())?
+                .none_if_null()
+                .map(|buf| unsafe { buf.read_exact::<TimeSpec>() })
+                .transpose()?;
 
             {
                 let mut futexes = FUTEXES.write();
@@ -75,7 +80,8 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
 
                     // On systems where virtual memory is not abundant, we might instead add an
                     // atomic usercopy function.
-                    let accessible_addr = unsafe { crate::paging::RmmA::phys_to_virt(target_physaddr) }.data();
+                    let accessible_addr =
+                        unsafe { crate::paging::RmmA::phys_to_virt(target_physaddr) }.data();
 
                     (
                         u64::from(unsafe {
@@ -93,7 +99,9 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                             return Err(Error::new(EINVAL));
                         }
                         (
-                            u64::from(unsafe { (*(addr as *const AtomicU64)).load(Ordering::SeqCst) }),
+                            u64::from(unsafe {
+                                (*(addr as *const AtomicU64)).load(Ordering::SeqCst)
+                            }),
                             val as u64,
                         )
                     }

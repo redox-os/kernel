@@ -1,18 +1,26 @@
-use core::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use alloc::sync::Arc;
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::{
+    collections::{BTreeMap, VecDeque},
+    sync::Arc,
+};
 
 use spin::{Mutex, RwLock};
 
-use crate::event;
-use crate::sync::WaitCondition;
-use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, ESPIPE};
-use crate::syscall::flag::{EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK, MODE_FIFO};
-use crate::syscall::data::Stat;
-use crate::syscall::usercopy::{UserSliceWo, UserSliceRo};
+use crate::{
+    event,
+    sync::WaitCondition,
+    syscall::{
+        data::Stat,
+        error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, ESPIPE},
+        flag::{
+            EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, MODE_FIFO, O_ACCMODE, O_NONBLOCK,
+        },
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
+};
 
-use super::{KernelScheme, OpenResult, CallerCtx, GlobalSchemes};
+use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
@@ -35,16 +43,19 @@ fn from_raw_id(id: usize) -> (bool, usize) {
 pub fn pipe(flags: usize) -> Result<(usize, usize)> {
     let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-    PIPES.write().insert(id, Arc::new(Pipe {
-        read_flags: AtomicUsize::new(flags),
-        write_flags: AtomicUsize::new(flags),
-        queue: Mutex::new(VecDeque::new()),
-        read_condition: WaitCondition::new(),
-        write_condition: WaitCondition::new(),
-        writer_is_alive: AtomicBool::new(true),
-        reader_is_alive: AtomicBool::new(true),
-        has_run_dup: AtomicBool::new(false),
-    }));
+    PIPES.write().insert(
+        id,
+        Arc::new(Pipe {
+            read_flags: AtomicUsize::new(flags),
+            write_flags: AtomicUsize::new(flags),
+            queue: Mutex::new(VecDeque::new()),
+            read_condition: WaitCondition::new(),
+            write_condition: WaitCondition::new(),
+            writer_is_alive: AtomicBool::new(true),
+            reader_is_alive: AtomicBool::new(true),
+            has_run_dup: AtomicBool::new(false),
+        }),
+    );
 
     Ok((id, id | WRITE_NOT_READ_BIT))
 }
@@ -56,15 +67,19 @@ impl KernelScheme for PipeScheme {
         let (is_writer_not_reader, key) = from_raw_id(id);
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
 
-        let flags = if is_writer_not_reader { &pipe.write_flags } else { &pipe.read_flags };
+        let flags = if is_writer_not_reader {
+            &pipe.write_flags
+        } else {
+            &pipe.read_flags
+        };
 
         match cmd {
             F_GETFL => Ok(flags.load(Ordering::SeqCst)),
             F_SETFL => {
                 flags.store(arg & !O_ACCMODE, Ordering::SeqCst);
                 Ok(0)
-            },
-            _ => Err(Error::new(EINVAL))
+            }
+            _ => Err(Error::new(EINVAL)),
         }
     }
 
@@ -172,17 +187,26 @@ impl KernelScheme for PipeScheme {
             let (s1, s2) = vec.as_slices();
             let s1_count = core::cmp::min(user_buf.len(), s1.len());
 
-            let (s1_dst, s2_buf) = user_buf.split_at(s1_count).expect("s1_count <= user_buf.len()");
+            let (s1_dst, s2_buf) = user_buf
+                .split_at(s1_count)
+                .expect("s1_count <= user_buf.len()");
             s1_dst.copy_from_slice(&s1[..s1_count])?;
 
             let s2_count = core::cmp::min(s2_buf.len(), s2.len());
-            s2_buf.limit(s2_count).expect("s2_count <= s2_buf.len()").copy_from_slice(&s2[..s2_count])?;
+            s2_buf
+                .limit(s2_count)
+                .expect("s2_count <= s2_buf.len()")
+                .copy_from_slice(&s2[..s2_count])?;
 
             let bytes_read = s1_count + s2_count;
             let _ = vec.drain(..bytes_read);
 
             if bytes_read > 0 {
-                event::trigger(GlobalSchemes::Pipe.scheme_id(), key | WRITE_NOT_READ_BIT, EVENT_WRITE);
+                event::trigger(
+                    GlobalSchemes::Pipe.scheme_id(),
+                    key | WRITE_NOT_READ_BIT,
+                    EVENT_WRITE,
+                );
                 pipe.write_condition.notify();
 
                 return Ok(bytes_read);
@@ -212,7 +236,9 @@ impl KernelScheme for PipeScheme {
 
             let bytes_left = MAX_QUEUE_SIZE.saturating_sub(vec.len());
             let bytes_to_write = core::cmp::min(bytes_left, user_buf.len());
-            let src_buf = user_buf.limit(bytes_to_write).expect("bytes_to_write <= user_buf.len()");
+            let src_buf = user_buf
+                .limit(bytes_to_write)
+                .expect("bytes_to_write <= user_buf.len()");
 
             const TMPBUF_SIZE: usize = 512;
             let mut tmp_buf = [0_u8; TMPBUF_SIZE];
@@ -259,9 +285,9 @@ impl KernelScheme for PipeScheme {
 }
 
 pub struct Pipe {
-    read_flags: AtomicUsize, // fcntl read flags
-    write_flags: AtomicUsize, // fcntl write flags
-    read_condition: WaitCondition, // signals whether there are available bytes to read
+    read_flags: AtomicUsize,        // fcntl read flags
+    write_flags: AtomicUsize,       // fcntl write flags
+    read_condition: WaitCondition,  // signals whether there are available bytes to read
     write_condition: WaitCondition, // signals whether there is room for additional bytes
     queue: Mutex<VecDeque<u8>>,
     reader_is_alive: AtomicBool, // starts set, unset when reader closes

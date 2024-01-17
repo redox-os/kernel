@@ -1,7 +1,4 @@
-use alloc::{
-    string::String,
-    vec::Vec,
-};
+use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
 use crate::syscall::error::Result;
