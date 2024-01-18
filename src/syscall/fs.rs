@@ -1,5 +1,6 @@
 //! Filesystem syscalls
 use alloc::{sync::Arc, vec::Vec};
+use redox_path::RedoxPath;
 use spin::RwLock;
 
 use crate::{
@@ -81,22 +82,20 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let mut path_buf = BorrowedHtBuf::head()?;
     let path = path_buf.use_for_string(raw_path)?;
     */
-    let path = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let mut parts = path.splitn(2, ':');
-    let scheme_name = parts.next().ok_or(Error::new(EINVAL))?;
-    let reference = parts.next().unwrap_or("");
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
+    let (scheme_name, reference) = path.as_parts();
 
     let description = {
         let (scheme_id, scheme) = {
             let schemes = scheme::schemes();
             let (scheme_id, scheme) = schemes
-                .get_name(scheme_ns, scheme_name)
+                .get_name(scheme_ns, scheme_name.as_ref())
                 .ok_or(Error::new(ENODEV))?;
             (scheme_id, scheme.clone())
         };
 
-        match scheme.kopen(reference, flags, CallerCtx { uid, gid, pid })? {
+        match scheme.kopen(reference.as_ref(), flags, CallerCtx { uid, gid, pid })? {
             OpenResult::SchemeLocal(number) => Arc::new(RwLock::new(FileDescription {
                 namespace: scheme_ns,
                 scheme: scheme_id,
