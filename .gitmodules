@@ -9,3 +9,7 @@
 	path = rmm
 	url = https://gitlab.redox-os.org/redox-os/rmm.git
 	branch = master
+[submodule "redox-path"]
+	path = redox-path
+	url = https://gitlab.redox-os.org/redox-os/redox-path.git
+	branch = main
