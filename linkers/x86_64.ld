@@ -23,6 +23,7 @@ SECTIONS {
         __altcode_start = .;
         KEEP(*(.altcode*))
         __altcode_end = .;
+        . = ALIGN(8);
         __altrelocs_start = .;
         KEEP(*(.altrelocs*))
         __altrelocs_end = .;
