@@ -23,9 +23,15 @@ fn parse_kconfig(arch: &str) -> Option<()> {
         .as_table()
         .unwrap();
 
+    let self_modifying = env::var("CARGO_FEATURE_SELF_MODIFYING").is_ok();
+
     for (name, value) in altfeatures {
-        let choice = value.as_str().unwrap();
+        let mut choice = value.as_str().unwrap();
         assert!(matches!(choice, "always" | "never" | "auto"));
+
+        if !self_modifying && choice == "auto" {
+            choice = "never";
+        }
 
         println!("cargo:rustc-cfg=cpu_feature_{choice}=\"{name}\"");
     }
