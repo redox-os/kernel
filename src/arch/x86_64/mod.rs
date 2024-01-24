@@ -2,6 +2,8 @@ use crate::Bootstrap;
 
 use self::paging::PAGE_SIZE;
 
+pub use crate::arch::x86_shared::*;
+
 pub mod alternative;
 
 #[macro_use]
@@ -45,11 +47,6 @@ pub mod rmm;
 
 /// Initialization and start function
 pub mod start;
-
-/// Stop function
-pub mod stop;
-
-pub mod time;
 
 use ::rmm::Arch;
 pub use ::rmm::X8664Arch as CurrentRmmArch;

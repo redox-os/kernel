@@ -1,3 +1,5 @@
+pub use crate::arch::x86_shared::*;
+
 #[macro_use]
 pub mod macros;
 
@@ -36,11 +38,6 @@ pub mod rmm;
 
 /// Initialization and start function
 pub mod start;
-
-/// Stop function
-pub mod stop;
-
-pub mod time;
 
 use crate::{memory::PAGE_SIZE, Bootstrap};
 use ::rmm::Arch;
