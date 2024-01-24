@@ -1,14 +1,6 @@
-pub mod cpu;
-#[cfg(feature = "acpi")]
-pub mod hpet;
+pub use crate::arch::x86_shared::device::*;
 pub mod ioapic;
 pub mod local_apic;
-pub mod pic;
-pub mod pit;
-pub mod rtc;
-pub mod serial;
-#[cfg(feature = "system76_ec_debug")]
-pub mod system76_ec;
 
 use crate::paging::KernelMapper;
 

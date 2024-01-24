@@ -1,6 +1,6 @@
 use core::fmt::{Result, Write};
 
-use super::super::cpuid::cpuid;
+use crate::arch::cpuid::cpuid;
 
 pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     let cpuid = match cpuid() {

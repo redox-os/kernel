@@ -1,0 +1,9 @@
+pub mod cpu;
+#[cfg(feature = "acpi")]
+pub mod hpet;
+pub mod pic;
+pub mod pit;
+pub mod rtc;
+pub mod serial;
+#[cfg(feature = "system76_ec_debug")]
+pub mod system76_ec;
