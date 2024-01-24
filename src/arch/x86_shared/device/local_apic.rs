@@ -4,9 +4,9 @@ use core::{
 };
 use x86::msr::*;
 
-use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
+use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch};
 
-use super::super::cpuid::cpuid;
+use crate::arch::cpuid::cpuid;
 
 pub static mut LOCAL_APIC: LocalApic = LocalApic {
     address: 0,
@@ -36,7 +36,7 @@ static BSP_APIC_ID: AtomicU32 = AtomicU32::new(u32::max_value());
 pub fn bsp_apic_id() -> Option<u32> {
     let value = BSP_APIC_ID.load(atomic::Ordering::SeqCst);
     if value < u32::max_value() {
-        Some(value as u32)
+        Some(value)
     } else {
         None
     }
@@ -49,7 +49,7 @@ impl LocalApic {
             .expect("expected KernelMapper not to be locked re-entrant while initializing LAPIC");
 
         let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
-        let virtaddr = VirtualAddress::new(crate::LAPIC_OFFSET);
+        let virtaddr = RmmA::phys_to_virt(physaddr);
 
         self.address = virtaddr.data();
         self.x2 = cpuid().map_or(false, |cpuid| {

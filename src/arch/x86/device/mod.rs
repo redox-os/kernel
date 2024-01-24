@@ -1,6 +1,4 @@
 pub use crate::arch::x86_shared::device::*;
-pub mod ioapic;
-pub mod local_apic;
 
 use crate::paging::KernelMapper;
 

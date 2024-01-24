@@ -1,6 +1,8 @@
 pub mod cpu;
 #[cfg(feature = "acpi")]
 pub mod hpet;
+pub mod ioapic;
+pub mod local_apic;
 pub mod pic;
 pub mod pit;
 pub mod rtc;
