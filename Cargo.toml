@@ -63,9 +63,6 @@ slab = ["slab_allocator"]
 # Avoids having to define the eh_personality lang item and reduces kernel size
 panic = "abort"
 
-# Kernel doesn't yet work great with debug mode :(
-opt-level = 3
-
 [profile.release]
 # Avoids having to define the eh_personality lang item and reduces kernel size
 panic = "abort"
