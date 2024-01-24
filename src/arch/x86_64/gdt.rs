@@ -143,14 +143,14 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 pub unsafe fn set_tss_stack(stack: usize) {
     use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
     core::ptr::addr_of_mut!((*pcr()).tss.rsp[0])
-        .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
+        .write_unaligned((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
     PTI_CONTEXT_STACK = stack;
 }
 
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
     // TODO: If this increases performance, read gs:[offset] directly
-    core::ptr::addr_of_mut!((*pcr()).tss.rsp[0]).write(stack as u64);
+    core::ptr::addr_of_mut!((*pcr()).tss.rsp[0]).write_unaligned(stack as u64);
 }
 
 // Initialize startup GDT
