@@ -12,9 +12,6 @@ pub mod cpuid;
 /// Debugging support
 pub mod debug;
 
-/// Devices
-pub mod device;
-
 /// Global descriptor table
 pub mod gdt;
 
