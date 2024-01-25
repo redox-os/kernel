@@ -9,9 +9,6 @@ pub mod consts;
 /// CPUID wrapper
 pub mod cpuid;
 
-/// Debugging support
-pub mod debug;
-
 /// Global descriptor table
 pub mod gdt;
 
@@ -22,14 +19,8 @@ pub mod interrupt;
 /// Interrupt descriptor table
 pub mod idt;
 
-/// Inter-processor interrupts
-pub mod ipi;
-
 /// Paging
 pub mod paging;
-
-/// Page table isolation
-pub mod pti;
 
 pub mod rmm;
 
