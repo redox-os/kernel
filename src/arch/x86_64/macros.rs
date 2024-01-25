@@ -72,16 +72,16 @@ macro_rules! alternative2(
 macro_rules! alternative_auto(
     ($first_digit:literal, $feature:literal, [$($then:expr),*]) => { concat!(
         ".if ", expand_bool!(cfg!(cpu_feature_auto = $feature)), "
-        .pushsection .altcode.", $feature, "
+        .pushsection .altcode.", $feature, ",\"a\"
         ", $first_digit, "0:
         ", $($then,)* "
         ", $first_digit, "1:
         .popsection
-        .pushsection .altfeatures.", $feature, "
+        .pushsection .altfeatures.", $feature, ",\"a\"
         70: .ascii \"", $feature, "\"
         71:
         .popsection
-        .pushsection .altrelocs.", $feature, "
+        .pushsection .altrelocs.", $feature, ",\"a\"
         .quad 70b
         .quad 71b - 70b
         .quad 40b
