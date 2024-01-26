@@ -242,8 +242,7 @@ impl Context {
             ens: SchemeNamespace::from(0),
             sig: SignalState {
                 pending: 0,
-                procmask: 0,
-
+                procmask: !0,
                 handler: None,
             },
             umask: 0o022,

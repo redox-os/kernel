@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::mem::{self, size_of};
+use core::mem::size_of;
 use syscall::{
     flag::{
         PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP,
@@ -14,12 +14,7 @@ use crate::{
     syscall::usercopy::UserSlice,
 };
 
-pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
-    let handler = handler.map(|ptr| ptr as usize).unwrap_or(0);
-    handler != SIG_DFL && handler != SIG_IGN
-}
-
-// TODO: Move everything but SIGKILL to userspace. SIGCONT and SIGSTOP does not necessarily need to
+// TODO: Move everything but SIGKILL to userspace. SIGCONT and SIGSTOP do not necessarily need to
 // be done from this current context.
 pub fn signal_handler() {
     let (action, sig) = {
@@ -29,6 +24,9 @@ pub fn signal_handler() {
 
         // Lowest-numbered signal first.
         // TODO: randomly?
+        if context.sig.deliverable() == 0 {
+            return;
+        }
         let selected = context.sig.deliverable().trailing_zeros() as usize + 1;
         context.sig.pending &= !(1 << (selected - 1));
 
@@ -46,8 +44,7 @@ pub fn signal_handler() {
 
     if sig != SIGKILL && thumbs_down.unwrap_or(false) {
         // If signal can be and was ignored
-        crate::syscall::sigreturn().unwrap();
-        unreachable!();
+        return;
     }
 
     if handler == SIG_DFL {
@@ -166,7 +163,7 @@ pub fn signal_handler() {
         context.sig.procmask |= action.sa_mask;
 
         if !action.sa_flags.contains(SigActionFlags::SA_NODEFER) {
-            context.sig.procmask &= !(1 << (sig - 1));
+            context.sig.procmask |= 1 << (sig - 1);
         }
 
         let Some(regs) = context.regs_mut() else {

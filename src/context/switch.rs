@@ -12,30 +12,37 @@ use crate::{
 
 use super::{ContextId, Status};
 
-unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
+enum UpdateResult {
+    CanSwitch { signal: bool },
+    Skip,
+}
+
+unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> UpdateResult {
     // Ignore already running contexts
     if context.running {
-        return false;
+        return UpdateResult::Skip;
     }
 
     // Ignore contexts stopped by ptrace
     if context.ptrace_stop {
-        return false;
+        return UpdateResult::Skip;
     }
 
     // Ignore contexts assigned to other CPUs
     if !context.sched_affinity.contains(cpu_id) {
-        return false;
+        return UpdateResult::Skip;
     }
 
     //TODO: HACK TO WORKAROUND HANGS BY PINNING TO ONE CPU
     if !context.cpu_id.map_or(true, |x| x == cpu_id) {
-        return false;
+        return UpdateResult::Skip;
     }
 
+    let signal = context.sig.deliverable() != 0;
+
     // Unblock when there are pending nonmasked signals.
-    if matches!(context.status, Status::Blocked) && context.sig.deliverable() != 0 {
-        context.unblock();
+    if matches!(context.status, Status::Blocked) && signal {
+        context.unblock_no_ipi();
     }
 
     // Wake from sleep
@@ -50,7 +57,11 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
     }
 
     // Switch to context if it needs to run
-    context.status.is_runnable()
+    if context.status.is_runnable() {
+        UpdateResult::CanSwitch { signal }
+    } else {
+        UpdateResult::Skip
+    }
 }
 
 struct SwitchResult {
@@ -144,9 +155,10 @@ pub unsafe fn switch() -> bool {
             let mut next_context_guard = next_context_lock.write_arc();
 
             // Update state of next context and check if runnable
-            if update_runnable(&mut *next_context_guard, cpu_id) {
+            if let UpdateResult::CanSwitch { signal } = update_runnable(&mut *next_context_guard, cpu_id) {
                 // Store locks for previous and next context
                 switch_context_opt = Some((prev_context_guard, next_context_guard));
+                percpu.switch_internals.switch_signal.set(signal);
                 break;
             } else {
                 continue;
@@ -186,6 +198,10 @@ pub unsafe fn switch() -> bool {
 
         arch::switch_to(prev_context, next_context);
 
+        if percpu.switch_internals.switch_signal.replace(false) {
+            crate::context::signal::signal_handler();
+        }
+
         // NOTE: After switch_to is called, the return address can even be different from the
         // current return address, meaning that we cannot use local variables here, and that we
         // need to use the `switch_finish_hook` to be able to release the locks.
@@ -209,6 +225,7 @@ pub struct ContextSwitchPercpu {
 
     // The ID of the idle process
     idle_id: Cell<ContextId>,
+    switch_signal: Cell<bool>,
 }
 impl ContextSwitchPercpu {
     pub fn context_id(&self) -> ContextId {

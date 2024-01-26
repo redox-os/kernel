@@ -11,7 +11,7 @@ use crate::{
     scheme::{self, FileHandle, KernelScheme},
     syscall::{
         self,
-        data::{GrantDesc, Map, PtraceEvent, SigAction, Stat},
+        data::{GrantDesc, Map, PtraceEvent, SigAction, SetSighandlerData, Stat},
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
@@ -934,15 +934,17 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 &mut 0,
             ),
 
-            // TODO: Struct
             Operation::Sighandler => {
                 let handler = context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sig.handler;
-                let [entry, altstack_base, altstack_len] = buf.in_exact_chunks(mem::size_of::<usize>()).next_chunk().map_err(|_| Error::new(EINVAL))?;
-                entry.write_usize(handler.map_or(0, |h| h.handler.get()))?;
                 let altstack = handler.and_then(|h| h.altstack);
-                altstack_base.write_usize(altstack.map_or(0, |a| a.base.get()))?;
-                altstack_len.write_usize(altstack.map_or(0, |a| a.len.get()))?;
-                Ok(3 * mem::size_of::<usize>())
+                let data = SetSighandlerData {
+                    entry: handler.map_or(0, |h| h.handler.get()),
+                    altstack_base: altstack.map_or(0, |a| a.base.get()),
+                    altstack_len: altstack.map_or(0, |a| a.len.get()),
+                };
+                buf.copy_exactly(&data)?;
+
+                Ok(mem::size_of::<SetSighandlerData>())
             }
             Operation::Sigprocmask => {
                 let procmask = context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sig.procmask;
@@ -1190,14 +1192,13 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 Ok(buf.len())
             }
-            // TODO: Struct
             Operation::Sighandler => {
-                let [handler, altstack_base, altstack_len] = buf.usizes().next_chunk().map_err(|_| Error::new(EINVAL))?;
+                let data = unsafe { buf.read_exact::<SetSighandlerData>()? };
 
-                let new_handler = match NonZeroUsize::new(handler?) {
+                let new_handler = match NonZeroUsize::new(data.entry) {
                     Some(handler) => Some(SignalHandler {
                         handler,
-                        altstack: match (NonZeroUsize::new(altstack_base?), NonZeroUsize::new(altstack_len?)) {
+                        altstack: match (NonZeroUsize::new(data.altstack_base), NonZeroUsize::new(data.altstack_len)) {
                             (Some(base), Some(len)) => Some(Altstack { base, len }),
                             _ => None,
                         }
@@ -1207,7 +1208,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig.handler = new_handler;
 
-                Ok(3 * mem::size_of::<usize>())
+                Ok(mem::size_of::<SetSighandlerData>())
             }
             Operation::Sigprocmask => {
                 let new_procmask = buf.read_u64()?;
@@ -1535,6 +1536,8 @@ fn inherit_context() -> Result<ContextId> {
         let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
         let new_context_lock = Arc::clone(context::contexts_mut().spawn(true, clone_handler)?);
 
+        // (Starts with "all signals blocked".)
+
         let current_context = current_context_lock.read();
         let mut new_context = new_context_lock.write();
 
@@ -1553,13 +1556,6 @@ fn inherit_context() -> Result<ContextId> {
         new_context.pgid = current_context.pgid;
         new_context.session_id = current_context.session_id;
         new_context.umask = current_context.umask;
-
-        // Start with "all signals blocked".
-        new_context.sig = SignalState {
-            pending: 0,
-            procmask: !0,
-            handler: None,
-        };
 
         new_context.id
     };

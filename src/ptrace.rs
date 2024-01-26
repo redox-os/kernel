@@ -10,7 +10,7 @@ use crate::{
     syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
 };
 
-use alloc::{boxed::Box, collections::VecDeque, sync::Arc};
+use alloc::{collections::VecDeque, sync::Arc};
 use core::cmp;
 use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
