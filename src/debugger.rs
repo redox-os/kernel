@@ -99,7 +99,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         println!();
     }
-    for (frame, count) in tree {
+    for (frame, (count, p)) in tree {
         let rc = get_page_info(frame).unwrap().refcount();
         let c = match rc {
             RefCount::Zero => 0,
