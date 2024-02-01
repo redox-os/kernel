@@ -126,20 +126,18 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
     let mut path_buf = BorrowedHtBuf::head()?;
     let path = path_buf.use_for_string(raw_path)?;
     */
-    let path = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let mut parts = path.splitn(2, ':');
-    let scheme_name = parts.next().ok_or(Error::new(EINVAL))?;
-    let reference = parts.next().unwrap_or("");
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
+    let (scheme_name, reference) = path.as_parts();
 
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name)
+            .get_name(scheme_ns, scheme_name.as_ref())
             .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
-    scheme.rmdir(reference, caller_ctx)
+    scheme.rmdir(reference.as_ref(), caller_ctx)
 }
 
 /// Unlink syscall
@@ -151,20 +149,18 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
     let mut path_buf = BorrowedHtBuf::head()?;
     let path = path_buf.use_for_string(raw_path)?;
     */
-    let path = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let mut parts = path.splitn(2, ':');
-    let scheme_name = parts.next().ok_or(Error::new(EINVAL))?;
-    let reference = parts.next().unwrap_or("");
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
+    let (scheme_name, reference) = path.as_parts();
 
     let scheme = {
         let schemes = scheme::schemes();
         let (_scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name)
+            .get_name(scheme_ns, scheme_name.as_ref())
             .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
-    scheme.unlink(reference, caller_ctx)
+    scheme.unlink(reference.as_ref(), caller_ctx)
 }
 
 /// Close syscall
@@ -380,16 +376,14 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
     let mut path_buf = BorrowedHtBuf::head()?;
     let path = path_buf.use_for_string(raw_path)?;
     */
-    let path = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let mut parts = path.splitn(2, ':');
-    let scheme_name = parts.next().ok_or(Error::new(ENOENT))?;
-    let reference = parts.next().unwrap_or("");
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
+    let (scheme_name, reference) = path.as_parts();
 
     let (scheme_id, scheme) = {
         let schemes = scheme::schemes();
         let (scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name)
+            .get_name(scheme_ns, scheme_name.as_ref())
             .ok_or(Error::new(ENODEV))?;
         (scheme_id, scheme.clone())
     };
@@ -400,7 +394,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
         return Err(Error::new(EXDEV));
     }
 
-    scheme.frename(description.number, reference, caller_ctx)
+    scheme.frename(description.number, reference.as_ref(), caller_ctx)
 }
 
 /// File status
