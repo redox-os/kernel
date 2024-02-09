@@ -1,5 +1,5 @@
 use alloc::{collections::BTreeMap, sync::Arc};
-use core::{iter, mem};
+use core::iter;
 
 use spinning_top::RwSpinlock;
 

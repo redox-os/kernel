@@ -10,9 +10,7 @@ use spin::Once;
 
 use crate::{
     device::cpu::registers::{control_regs, tlb},
-    interrupt::handler::ScratchRegisters,
     paging::{RmmA, RmmArch, TableKind},
-    pop_scratch, push_scratch,
     syscall::FloatRegisters,
     percpu::PercpuBlock,
 };
@@ -95,33 +93,6 @@ impl Context {
 
     pub fn get_context_handle(&mut self) -> usize {
         self.tpidrro_el0
-    }
-
-    pub unsafe fn signal_stack(&mut self, handler: extern "C" fn(usize), sig: u8) {
-        let lr = self.lr.clone();
-        self.push_pair((sig as usize, lr));
-        self.push_pair((0 as usize, handler as usize));
-        self.set_lr(signal_handler_wrapper as usize);
-    }
-
-    // It isn't possible to implement "just push one value to stack" on aarch64
-    // https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/using-the-stack-in-aarch32-and-aarch64
-    // Looks like QEMU TCG doesn't care about it, so it works in it, but not on bare metal or kvm
-    // Reverese to be compatible with ldp and stp instructions
-    // TODO: optimize?
-    pub unsafe fn push_pair(&mut self, pair: (usize, usize)) {
-        self.sp -= 1 * mem::size_of::<usize>();
-        *(self.sp as *mut usize) = pair.1;
-        self.sp -= 1 * mem::size_of::<usize>();
-        *(self.sp as *mut usize) = pair.0;
-    }
-
-    pub unsafe fn pop_pair(&mut self) -> (usize, usize) {
-        let a = *(self.sp as *const usize);
-        self.sp += 1 * mem::size_of::<usize>();
-        let b = *(self.sp as *const usize);
-        self.sp += 1 * mem::size_of::<usize>();
-        (a, b)
     }
 
     pub fn dump(&self) {
@@ -333,43 +304,6 @@ unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
         off_sp = const(offset_of!(Context, sp)),
 
         switch_hook = sym crate::context::switch_finish_hook,
-        options(noreturn),
-    );
-}
-
-#[allow(dead_code)]
-#[repr(packed)]
-pub struct SignalHandlerStack {
-    scratch: ScratchRegisters,
-    padding: usize,
-    handler: extern "C" fn(usize),
-    sig: usize,
-    lr: usize,
-}
-
-#[naked]
-unsafe extern "C" fn signal_handler_wrapper() {
-    #[inline(never)]
-    unsafe extern "C" fn inner(stack: &SignalHandlerStack) {
-        (stack.handler)(stack.sig);
-    }
-
-    // Push scratch registers
-    core::arch::asm!(
-        concat!(
-            push_scratch!(),
-            "
-            mov x0, sp
-            bl {inner}
-            ",
-            pop_scratch!(),
-            "
-            add sp, sp, 32
-            ldr x30, [sp, #-8]
-            ret
-            "
-        ),
-        inner = sym inner,
         options(noreturn),
     );
 }

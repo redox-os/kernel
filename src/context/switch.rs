@@ -3,11 +3,11 @@ use core::{cell::Cell, mem, ops::Bound, sync::atomic::Ordering};
 use spinning_top::guard::ArcRwSpinlockWriteGuard;
 
 use crate::{
-    context::{arch, contexts, signal::signal_handler, Context},
+    context::{self, arch, contexts, Context},
     cpu_set::LogicalCpuId,
     interrupt,
     percpu::PercpuBlock,
-    ptrace, time,
+    time,
 };
 
 use super::{ContextId, Status};
@@ -24,6 +24,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
     }
 
     // Ignore contexts stopped by ptrace
+    // TODO: ContextStatus::HardBlocked?
     if context.ptrace_stop {
         return UpdateResult::Skip;
     }
@@ -198,13 +199,17 @@ pub unsafe fn switch() -> bool {
 
         arch::switch_to(prev_context, next_context);
 
-        if percpu.switch_internals.switch_signal.replace(false) {
-            crate::context::signal::signal_handler();
-        }
-
         // NOTE: After switch_to is called, the return address can even be different from the
         // current return address, meaning that we cannot use local variables here, and that we
-        // need to use the `switch_finish_hook` to be able to release the locks.
+        // need to use the `switch_finish_hook` to be able to release the locks. Newly created
+        // contexts will return directly to the function pointer passed to context::spawn, and not
+        // reach this code until the next context switch back.
+
+        // We can't reuse the `percpu` variable, since it's from the stack before the last
+        // context::switch, and can thus point to another CPU's percpu block.
+        if PercpuBlock::current().switch_internals.switch_signal.replace(false) {
+            context::signal::signal_handler();
+        }
 
         true
     } else {

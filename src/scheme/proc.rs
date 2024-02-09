@@ -4,7 +4,7 @@ use crate::{
         self,
         file::FileDescriptor,
         memory::{handle_notify_files, Grant, PageSpan, AddrSpaceWrapper},
-        Context, ContextId, Status, context::{SignalState, HardBlockedReason, Altstack, SignalHandler},
+        Context, ContextId, Status, context::{HardBlockedReason, Altstack, SignalHandler},
     },
     memory::PAGE_SIZE,
     ptrace,

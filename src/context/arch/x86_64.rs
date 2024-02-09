@@ -1,14 +1,9 @@
 use core::{
-    mem,
     ptr::{addr_of, addr_of_mut},
     sync::atomic::AtomicBool,
 };
 
-use crate::{
-    interrupt::handler::ScratchRegisters,
-    pop_scratch, push_scratch,
-    syscall::FloatRegisters, percpu::PercpuBlock,
-};
+use crate::{syscall::FloatRegisters, percpu::PercpuBlock};
 
 use core::mem::offset_of;
 use spin::Once;
@@ -83,23 +78,6 @@ impl Context {
 
     pub fn set_stack(&mut self, address: usize) {
         self.rsp = address;
-    }
-
-    pub unsafe fn signal_stack(&mut self, handler: extern "C" fn(usize), sig: u8) {
-        self.push_stack(sig as usize);
-        self.push_stack(handler as usize);
-        self.push_stack(signal_handler_wrapper as usize);
-    }
-
-    pub unsafe fn push_stack(&mut self, value: usize) {
-        self.rsp -= mem::size_of::<usize>();
-        *(self.rsp as *mut usize) = value;
-    }
-
-    pub unsafe fn pop_stack(&mut self) -> usize {
-        let value = *(self.rsp as *const usize);
-        self.rsp += mem::size_of::<usize>();
-        value
     }
 }
 impl super::Context {
@@ -297,40 +275,5 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
 
         switch_hook = sym crate::context::switch_finish_hook,
         options(noreturn),
-    );
-}
-#[allow(dead_code)]
-#[repr(packed)]
-pub struct SignalHandlerStack {
-    scratch: ScratchRegisters,
-    handler: extern "C" fn(usize),
-    sig: usize,
-    rip: usize,
-}
-
-#[naked]
-unsafe extern "C" fn signal_handler_wrapper() {
-    #[inline(never)]
-    unsafe extern "C" fn inner(stack: &SignalHandlerStack) {
-        (stack.handler)(stack.sig);
-    }
-
-    // Push scratch registers
-    core::arch::asm!(
-        concat!(
-            "push rax",
-            push_scratch!(),
-            "
-            mov rdi, rsp
-            call {inner}
-            ",
-            pop_scratch!(),
-            "
-            add rsp, 16
-            ret
-            "
-        ),
-        inner = sym inner,
-        options(noreturn)
     );
 }

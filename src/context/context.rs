@@ -1,10 +1,10 @@
-use alloc::{borrow::Cow, boxed::Box, collections::VecDeque, sync::Arc, vec::Vec};
+use alloc::{borrow::Cow, sync::Arc, vec::Vec};
 use core::{cmp::Ordering, mem, num::NonZeroUsize};
 use spin::RwLock;
 
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
-    common::{aligned_box::AlignedBox, unique::Unique},
+    common::aligned_box::AlignedBox,
     context::{self, arch, file::FileDescriptor, memory::AddrSpace},
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     ipi::{ipi, IpiKind, IpiTarget},
