@@ -84,7 +84,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts();
+    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let description = {
         let (scheme_id, scheme) = {
@@ -128,7 +128,7 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts();
+    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let scheme = {
         let schemes = scheme::schemes();
@@ -151,7 +151,7 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts();
+    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let scheme = {
         let schemes = scheme::schemes();
@@ -378,7 +378,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts();
+    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let (scheme_id, scheme) = {
         let schemes = scheme::schemes();
