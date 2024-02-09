@@ -40,6 +40,7 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 #![feature(allocator_api)]
+#![feature(array_methods)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(int_roundings)]
 #![feature(let_chains)]
@@ -83,6 +84,9 @@ mod acpi;
 
 #[cfg(all(any(target_arch = "aarch64")))]
 mod dtb;
+
+/// Logical CPU ID and bitset types
+mod cpu_set;
 
 /// Context management
 mod context;
@@ -143,7 +147,7 @@ static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// Get the current CPU's scheduling ID
 #[inline(always)]
-fn cpu_id() -> LogicalCpuId {
+fn cpu_id() -> crate::cpu_set::LogicalCpuId {
     crate::percpu::PercpuBlock::current().cpu_id
 }
 
@@ -220,7 +224,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
 
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables)]
-fn kmain_ap(cpu_id: LogicalCpuId) -> ! {
+fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
@@ -313,65 +317,4 @@ mod kernel_executable_offsets {
 
     #[cfg(target_arch = "x86_64")]
     linker_offsets!(__altrelocs_start, __altrelocs_end);
-}
-
-/// A unique number used internally by the kernel to identify CPUs.
-///
-/// This is usually but not necessarily the same as the APIC ID.
-
-// TODO: Differentiate between logical CPU IDs and hardware CPU IDs (e.g. APIC IDs)
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
-// TODO: NonMaxUsize?
-// TODO: Optimize away this type if not cfg!(feature = "multi_core")
-struct LogicalCpuId(u32);
-
-impl LogicalCpuId {
-    const BSP: Self = Self::new(0);
-
-    const fn new(inner: u32) -> Self {
-        Self(inner)
-    }
-    const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-impl core::fmt::Debug for LogicalCpuId {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "[logical cpu #{}]", self.0)
-    }
-}
-impl core::fmt::Display for LogicalCpuId {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "#{}", self.0)
-    }
-}
-
-// TODO: Support more than 128 CPUs.
-// The maximum number of CPUs on Linux is configurable, and the type for LogicalCpuSet and
-// LogicalCpuId may be optimized accordingly. In that case, box the mask if it's larger than some
-// base size (probably 256 bytes).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct LogicalCpuSet(u128);
-
-impl LogicalCpuSet {
-    const fn new(inner: u128) -> Self {
-        Self(inner)
-    }
-    const fn get(self) -> u128 {
-        self.0
-    }
-
-    const fn empty() -> Self {
-        Self::new(0)
-    }
-    const fn all() -> Self {
-        Self::new(!0)
-    }
-    const fn single(id: LogicalCpuId) -> Self {
-        Self::new(1 << id.get())
-    }
-    const fn contains(&self, id: LogicalCpuId) -> bool {
-        self.0 & (1 << id.get()) != 0
-    }
 }

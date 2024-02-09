@@ -6,12 +6,12 @@ use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
     common::{aligned_box::AlignedBox, unique::Unique},
     context::{self, arch, file::FileDescriptor, memory::AddrSpace},
+    cpu_set::{LogicalCpuId, LogicalCpuSet},
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     scheme::{CallerCtx, FileHandle, SchemeNamespace},
     sync::WaitMap,
-    LogicalCpuId, LogicalCpuSet,
 };
 
 use crate::syscall::{

@@ -2,7 +2,7 @@ use x86::controlregs::Cr4;
 
 use crate::{
     cpuid::{cpuid, has_ext_feat},
-    LogicalCpuId,
+    cpu_set::LogicalCpuId,
 };
 
 pub unsafe fn init(cpu_id: LogicalCpuId) {

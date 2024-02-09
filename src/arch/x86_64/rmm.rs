@@ -9,7 +9,7 @@ use rmm::{
 };
 use spin::Mutex;
 
-use crate::LogicalCpuId;
+use crate::cpu_set::LogicalCpuId;
 
 use super::CurrentRmmArch as RmmA;
 

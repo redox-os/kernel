@@ -3,9 +3,9 @@
 use core::{convert::TryInto, mem};
 
 use crate::{
+    cpu_set::LogicalCpuId,
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    LogicalCpuId,
 };
 
 use x86::{

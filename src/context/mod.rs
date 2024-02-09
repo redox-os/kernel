@@ -8,10 +8,10 @@ use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use spinning_top::RwSpinlock;
 
 use crate::{
+    cpu_set::LogicalCpuSet,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     syscall::error::{Error, Result, ESRCH},
-    LogicalCpuSet,
 };
 
 pub use self::{
@@ -73,7 +73,8 @@ pub fn init() {
         .insert_context_raw(id)
         .expect("could not initialize first context");
     let mut context = context_lock.write();
-    context.sched_affinity = LogicalCpuSet::single(crate::cpu_id());
+    context.sched_affinity = LogicalCpuSet::empty();
+    context.sched_affinity.atomic_set(crate::cpu_id());
     context.name = Cow::Borrowed("kmain");
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });

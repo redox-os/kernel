@@ -11,6 +11,7 @@ use spin::{Mutex, Once, RwLock};
 use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved};
 
 use crate::{
+    cpu_set::LogicalCpuId,
     event,
     interrupt::irq::acknowledge,
     syscall::{
@@ -19,7 +20,6 @@ use crate::{
         flag::{EventFlags, EVENT_READ, MODE_CHR, MODE_DIR, O_CREAT, O_DIRECTORY, O_STAT},
         usercopy::{UserSliceRo, UserSliceWo},
     },
-    LogicalCpuId,
 };
 
 use super::{calc_seek_offset, CallerCtx, GlobalSchemes, OpenResult};

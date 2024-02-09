@@ -1,4 +1,4 @@
-use crate::{context::switch::ContextSwitchPercpu, LogicalCpuId};
+use crate::{context::switch::ContextSwitchPercpu, cpu_set::LogicalCpuId};
 
 /// The percpu block, that stored all percpu variables.
 pub struct PercpuBlock {

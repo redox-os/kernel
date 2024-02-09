@@ -4,9 +4,10 @@ use spinning_top::guard::ArcRwSpinlockWriteGuard;
 
 use crate::{
     context::{arch, contexts, signal::signal_handler, Context},
+    cpu_set::LogicalCpuId,
     interrupt,
     percpu::PercpuBlock,
-    ptrace, time, LogicalCpuId,
+    ptrace, time,
 };
 
 use super::ContextId;

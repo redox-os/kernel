@@ -14,7 +14,7 @@ use x86::{
 
 #[cfg(target_arch = "x86_64")]
 use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
-use crate::{interrupt::*, ipi::IpiKind, LogicalCpuId};
+use crate::{interrupt::*, ipi::IpiKind, cpu_set::LogicalCpuId};
 
 use spin::RwLock;
 

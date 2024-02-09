@@ -17,7 +17,6 @@ use crate::{
         usercopy::{UserSliceRo, UserSliceWo},
         EnvRegisters, FloatRegisters, IntRegisters,
     },
-    LogicalCpuId, LogicalCpuSet,
 };
 
 use alloc::{
@@ -986,21 +985,15 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 Ok(mem::size_of::<usize>())
             }
             Operation::SchedAffinity => {
-                // TODO: Improve the sched_affinity interface to allow a full mask.
-                let set = context::contexts()
+                let mask = context::contexts()
                     .get(info.pid)
                     .ok_or(Error::new(EBADFD))?
                     .read()
-                    .sched_affinity;
+                    .sched_affinity
+                    .to_raw();
 
-                let id = if set == LogicalCpuSet::empty() {
-                    usize::MAX
-                } else {
-                    set.get().trailing_zeros() as usize
-                };
-
-                buf.write_usize(id as usize)?;
-                Ok(mem::size_of::<usize>())
+                buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
+                Ok(mem::size_of_val(&mask))
             }
             // TODO: Replace write() with SYS_DUP_FORWARD.
             // TODO: Find a better way to switch address spaces, since they also require switching
@@ -1314,21 +1307,17 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 addrspace.write().mmap_min = val;
                 Ok(mem::size_of::<usize>())
             }
-            // TODO: Deduplicate code.
             Operation::SchedAffinity => {
-                // TODO: read_u32
-                let val = u32::try_from(buf.read_usize()?).map_err(|_| Error::new(EINVAL))?;
+                let mask = unsafe { buf.read_exact::<crate::cpu_set::RawMask>()? };
 
                 context::contexts()
                     .get(info.pid)
                     .ok_or(Error::new(EBADFD))?
                     .write()
-                    .sched_affinity = if val == u32::MAX {
-                    LogicalCpuSet::all()
-                } else {
-                    LogicalCpuSet::single(LogicalCpuId::new(val % crate::cpu_count()))
-                };
-                Ok(mem::size_of::<usize>())
+                    .sched_affinity
+                    .override_from(&mask);
+
+                Ok(mem::size_of_val(&mask))
             }
 
             _ => Err(Error::new(EBADF)),

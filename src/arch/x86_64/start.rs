@@ -12,11 +12,11 @@ use crate::devices::graphical_debug;
 use crate::{
     allocator,
     arch::{flags::*, pti},
+    cpu_set::LogicalCpuId,
     device, gdt, idt, interrupt,
     log::{self, info},
     memory, misc,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
-    LogicalCpuId,
 };
 
 /// Test of zero values in BSS.

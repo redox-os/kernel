@@ -1,3 +1,4 @@
+use alloc::string::ToString;
 use alloc::{string::String, vec::Vec};
 
 use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
@@ -66,10 +67,7 @@ pub fn resource() -> Result<Vec<u8>> {
             } else {
                 format!("?")
             };
-            let affinity = format!(
-                "{:#x}",
-                context.sched_affinity.get() & ((1 << crate::cpu_count()) - 1)
-            );
+            let affinity = context.sched_affinity.to_string();
 
             let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;
             let cpu_time_ns = context.cpu_time % crate::time::NANOS_PER_SEC;
