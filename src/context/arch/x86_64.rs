@@ -221,6 +221,8 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         );
     }
 
+    let this_cpu = crate::cpu_id();
+
     match next.addr_space {
         // Since Arc essentially just wraps a pointer, in this case a regular pointer (as opposed
         // to dyn or slice fat pointers), and NonNull optimization exists, map_or will hopefully be
@@ -231,18 +233,25 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
                 .as_ref()
                 .map_or(true, |prev_space| !Arc::ptr_eq(prev_space, next_space))
             {
-                // Suppose we have two sibling threads A and B. A runs on CPU 0 and B on CPU 1. A
-                // recently called yield and is now here about to switch back. Meanwhile, B is
-                // currently creating a new mapping in their shared address space, for example a
-                // message on a channel.
-                //
-                // Unless we acquire this lock, it may be possible that the TLB will not contain new
-                // entries. While this can be caught and corrected in a page fault handler, this is not
-                // true when entries are removed from a page table!
-                next_space.read().table.utable.make_current();
+                if let Some(ref prev_space) = prev.addr_space {
+                    prev_space.read().used_by.atomic_clear(this_cpu);
+                }
+                // This lock needs to be held, because if the address space is write-locked by some
+                // context that is e.g. unmapping memory, we either need to switch after its
+                // changes have been made, or it needs to know this context is potentially using
+                // this address space, at that time.
+                let next_space = next_space.read();
+
+                next_space.used_by.atomic_set(this_cpu);
+                next_space.table.utable.make_current();
             }
         }
         None => {
+            // The next context is kernel-only, so switch to the page table without any user
+            // mappings.
+            if let Some(ref prev_space) = prev.addr_space {
+                prev_space.read().used_by.atomic_clear(this_cpu);
+            }
             RmmA::set_table(TableKind::User, empty_cr3());
         }
     }

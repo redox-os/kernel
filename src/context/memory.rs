@@ -15,7 +15,7 @@ use crate::{
         mapper::{Flusher, InactiveFlusher, PageFlushAll},
         Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
     },
-    scheme::{self, KernelSchemes},
+    scheme::{self, KernelSchemes}, cpu_set::LogicalCpuSet,
 };
 
 use super::{context::HardBlockedReason, file::FileDescription};
@@ -82,6 +82,7 @@ pub fn new_addrspace() -> Result<Arc<RwLock<AddrSpace>>> {
 pub struct AddrSpace {
     pub table: Table,
     pub grants: UserGrants,
+    pub used_by: LogicalCpuSet,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
     /// (using MAP_FIXED/MAP_FIXED_NOREPLACE). Cf. Linux's `/proc/sys/vm/mmap_min_addr`, but with
     /// the exception that we have a memory safe kernel which doesn't have to protect itself
@@ -188,6 +189,7 @@ impl AddrSpace {
             grants: UserGrants::new(),
             table: setup_new_utable()?,
             mmap_min: MMAP_MIN_DEFAULT,
+            used_by: LogicalCpuSet::empty(),
         })
     }
     pub fn is_current(&self) -> bool {
