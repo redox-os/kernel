@@ -293,10 +293,6 @@ pub fn syscall(
         }
     }
 
-    if result == Err(Error::new(EINTR)) {
-        crate::context::signal::signal_handler();
-    }
-
     if debug {
         let debug_duration = crate::time::monotonic() - debug_start;
 
