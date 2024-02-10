@@ -29,6 +29,11 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
         return false;
     }
 
+    //TODO: HACK TO WORKAROUND HANGS BY PINNING TO ONE CPU
+    if !context.cpu_id.map_or(true, |x| x == cpu_id) {
+        return false;
+    }
+
     // Restore from signal, must only be done from another context to avoid overwriting the stack!
     if context.ksig_restore {
         let was_singlestep = ptrace::regs_for(context)
