@@ -153,8 +153,11 @@ pub unsafe fn switch() -> bool {
             .expect("context::switch: not inside of context");
         let prev_context_guard = prev_context_lock.write();
 
+        let idle_id = percpu.switch_internals.idle_id();
+        let mut skip_idle = true;
+
         // Locate next context
-        for (_pid, next_context_lock) in contexts
+        for (pid, next_context_lock) in contexts
             // Include all contexts with IDs greater than the current...
             .range((Bound::Excluded(prev_context_guard.id), Bound::Unbounded))
             .chain(
@@ -162,8 +165,19 @@ pub unsafe fn switch() -> bool {
                     // ... and all contexts with IDs less than the current...
                     .range((Bound::Unbounded, Bound::Excluded(prev_context_guard.id))),
             )
+            .chain(
+                contexts
+                    // ... and finally the idle ID
+                    .range((Bound::Included(idle_id), Bound::Included(idle_id))),
+            )
         // ... but not the current context, which is already locked
         {
+            if pid == &idle_id && skip_idle {
+                // Skip idle process the first time it shows up
+                skip_idle = false;
+                continue;
+            }
+
             // Lock next context
             let mut next_context_guard = next_context_lock.write();
 
@@ -249,6 +263,9 @@ pub struct ContextSwitchPercpu {
 
     /// Unique ID of the currently running context.
     context_id: Cell<ContextId>,
+
+    // The ID of the idle process
+    idle_id: Cell<ContextId>
 }
 impl ContextSwitchPercpu {
     pub fn context_id(&self) -> ContextId {
@@ -256,5 +273,11 @@ impl ContextSwitchPercpu {
     }
     pub unsafe fn set_context_id(&self, new: ContextId) {
         self.context_id.set(new)
+    }
+    pub fn idle_id(&self) -> ContextId {
+        self.idle_id.get()
+    }
+    pub unsafe fn set_idle_id(&self, new: ContextId) {
+        self.idle_id.set(new)
     }
 }

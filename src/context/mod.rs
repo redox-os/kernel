@@ -82,9 +82,13 @@ pub fn init() {
     context.cpu_id = Some(crate::cpu_id());
 
     unsafe {
-        PercpuBlock::current()
+        let percpu = PercpuBlock::current();
+        percpu
             .switch_internals
             .set_context_id(context.id);
+        percpu
+            .switch_internals
+            .set_idle_id(context.id);
     }
 }
 
