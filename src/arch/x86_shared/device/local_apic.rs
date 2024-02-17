@@ -4,7 +4,7 @@ use core::{
 };
 use x86::msr::*;
 
-use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch};
+use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
 
 use crate::arch::cpuid::cpuid;
 
@@ -49,7 +49,11 @@ impl LocalApic {
             .expect("expected KernelMapper not to be locked re-entrant while initializing LAPIC");
 
         let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
-        let virtaddr = RmmA::phys_to_virt(physaddr);
+        let virtaddr = if cfg!(target_arch = "x86") {
+            VirtualAddress::new(crate::LAPIC_OFFSET)
+        } else {
+            RmmA::phys_to_virt(physaddr)
+        };
 
         self.address = virtaddr.data();
         self.x2 = cpuid().map_or(false, |cpuid| {
