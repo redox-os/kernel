@@ -49,11 +49,10 @@ impl LocalApic {
             .expect("expected KernelMapper not to be locked re-entrant while initializing LAPIC");
 
         let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
-        let virtaddr = if cfg!(target_arch = "x86") {
-            VirtualAddress::new(crate::LAPIC_OFFSET)
-        } else {
-            RmmA::phys_to_virt(physaddr)
-        };
+        #[cfg(target_arch = "x86")]
+        let virtaddr = VirtualAddress::new(crate::LAPIC_OFFSET);
+        #[cfg(target_arch = "x86_64")]
+        let virtaddr = RmmA::phys_to_virt(physaddr);
 
         self.address = virtaddr.data();
         self.x2 = cpuid().map_or(false, |cpuid| {

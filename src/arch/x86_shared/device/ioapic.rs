@@ -236,11 +236,10 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static Mad
     // map the I/O APIC registers
 
     let frame = Frame::containing_address(PhysicalAddress::new(madt_ioapic.address as usize));
-    let page = Page::containing_address(if cfg!(target_arch = "x86") {
-        VirtualAddress::new(crate::IOAPIC_OFFSET)
-    } else {
-        RmmA::phys_to_virt(frame.start_address())
-    });
+    #[cfg(target_arch = "x86")]
+    let page = Page::containing_address(VirtualAddress::new(crate::IOAPIC_OFFSET));
+    #[cfg(target_arch = "x86_64")]
+    let page = Page::containing_address(RmmA::phys_to_virt(frame.start_address()));
 
     assert!(mapper.translate(page.start_address()).is_none());
 
