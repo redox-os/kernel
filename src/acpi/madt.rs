@@ -193,7 +193,11 @@ impl Madt {
         if &sdt.signature == b"APIC" && sdt.data_len() >= 8 {
             //Not valid if no local address and flags
             let local_address = unsafe { (sdt.data_address() as *const u32).read_unaligned() };
-            let flags = unsafe { (sdt.data_address() as *const u32).offset(1).read_unaligned() };
+            let flags = unsafe {
+                (sdt.data_address() as *const u32)
+                    .offset(1)
+                    .read_unaligned()
+            };
 
             Some(Madt {
                 sdt,

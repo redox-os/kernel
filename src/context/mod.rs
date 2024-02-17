@@ -83,12 +83,8 @@ pub fn init() {
 
     unsafe {
         let percpu = PercpuBlock::current();
-        percpu
-            .switch_internals
-            .set_context_id(context.id);
-        percpu
-            .switch_internals
-            .set_idle_id(context.id);
+        percpu.switch_internals.set_context_id(context.id);
+        percpu.switch_internals.set_idle_id(context.id);
     }
 }
 

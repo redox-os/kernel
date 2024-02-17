@@ -12,8 +12,8 @@ use crate::{
     paging::{entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch},
 };
 
-use crate::arch::cpuid::cpuid;
 use super::pic;
+use crate::arch::cpuid::cpuid;
 
 pub struct IoApicRegs {
     pointer: *const u32,

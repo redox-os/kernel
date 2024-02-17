@@ -265,7 +265,7 @@ pub struct ContextSwitchPercpu {
     context_id: Cell<ContextId>,
 
     // The ID of the idle process
-    idle_id: Cell<ContextId>
+    idle_id: Cell<ContextId>,
 }
 impl ContextSwitchPercpu {
     pub fn context_id(&self) -> ContextId {
