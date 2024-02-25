@@ -1,7 +1,7 @@
 use x86::controlregs::Cr4;
 
 use crate::{
-    cpuid::{cpuid_always, has_ext_feat},
+    cpuid::{cpuid, has_ext_feat},
     LogicalCpuId,
 };
 
@@ -19,7 +19,7 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
         x86::controlregs::cr4_write(x86::controlregs::cr4() | Cr4::CR4_ENABLE_SMEP);
     }
 
-    if let Some(feats) = cpuid_always().get_extended_processor_and_feature_identifiers() && feats.has_rdtscp() {
+    if let Some(feats) = cpuid().get_extended_processor_and_feature_identifiers() && feats.has_rdtscp() {
         x86::msr::wrmsr(x86::msr::IA32_TSC_AUX, cpu_id.get().into());
     }
 }

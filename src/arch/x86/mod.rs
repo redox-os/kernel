@@ -6,9 +6,6 @@ pub mod macros;
 /// Constants like memory locations
 pub mod consts;
 
-/// CPUID wrapper
-pub mod cpuid;
-
 /// Global descriptor table
 pub mod gdt;
 

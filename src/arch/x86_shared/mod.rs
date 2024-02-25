@@ -1,3 +1,6 @@
+/// CPUID wrapper
+pub mod cpuid;
+
 /// Debugging support
 pub mod debug;
 

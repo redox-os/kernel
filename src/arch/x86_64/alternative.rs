@@ -7,7 +7,7 @@ use x86::controlregs::{Cr4, Xcr0};
 
 use crate::{
     context::memory::PageSpan,
-    cpuid::{cpuid_always, feature_info, has_ext_feat},
+    cpuid::{cpuid, feature_info, has_ext_feat},
     paging::{KernelMapper, Page, PageFlags, VirtualAddress, PAGE_SIZE},
 };
 
@@ -55,7 +55,7 @@ pub unsafe fn early_init(bsp: bool) {
     }
 
     if cfg!(not(cpu_feature_never = "fsgsbase"))
-        && let Some(f) = cpuid_always().get_extended_feature_info()
+        && let Some(f) = cpuid().get_extended_feature_info()
         && f.has_fsgsbase()
     {
         x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
@@ -74,7 +74,7 @@ pub unsafe fn early_init(bsp: bool) {
         );
 
         let mut xcr0 = Xcr0::XCR0_FPU_MMX_STATE | Xcr0::XCR0_SSE_STATE;
-        let ext_state_info = cpuid_always()
+        let ext_state_info = cpuid()
             .get_extended_state_info()
             .expect("must be present if XSAVE is supported");
 

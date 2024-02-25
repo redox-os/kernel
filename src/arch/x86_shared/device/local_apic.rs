@@ -55,11 +55,9 @@ impl LocalApic {
         let virtaddr = RmmA::phys_to_virt(physaddr);
 
         self.address = virtaddr.data();
-        self.x2 = cpuid().map_or(false, |cpuid| {
-            cpuid
-                .get_feature_info()
-                .map_or(false, |feature_info| feature_info.has_x2apic())
-        });
+        self.x2 = cpuid()
+            .get_feature_info()
+            .map_or(false, |feature_info| feature_info.has_x2apic());
 
         if !self.x2 {
             log::info!("Detected xAPIC at {:#x}", physaddr.data());

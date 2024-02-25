@@ -3,13 +3,7 @@ use core::fmt::{Result, Write};
 use crate::arch::cpuid::cpuid;
 
 pub fn cpu_info<W: Write>(w: &mut W) -> Result {
-    let cpuid = match cpuid() {
-        Some(some) => some,
-        None => {
-            writeln!(w, "CPUID instruction not supported")?;
-            return Ok(());
-        }
-    };
+    let cpuid = cpuid();
 
     if let Some(info) = cpuid.get_vendor_info() {
         writeln!(w, "Vendor: {}", info.as_str())?;
