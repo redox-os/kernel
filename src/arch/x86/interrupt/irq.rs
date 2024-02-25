@@ -168,7 +168,7 @@ interrupt_stack!(pit_stack, |_stack| {
     // Any better way of doing this?
     timeout::trigger();
 
-    // Switch after a sufficent amount of time since the last switch.
+    // Switch after a sufficient amount of time since the last switch.
     context::switch::tick();
 });
 
