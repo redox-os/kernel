@@ -254,12 +254,6 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
-#[derive(PartialEq)]
-pub enum Access {
-    OtherProcesses,
-    Restricted,
-}
-
 fn new_handle(handle: Handle) -> Result<usize> {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let _ = HANDLES.write().insert(id, handle);

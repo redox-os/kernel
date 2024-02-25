@@ -12,9 +12,6 @@ pub unsafe trait ValidForZero {}
 unsafe impl<const N: usize> ValidForZero for [u8; N] {}
 unsafe impl ValidForZero for u8 {}
 
-unsafe impl ValidForZero for crate::syscall::data::Stat {}
-unsafe impl ValidForZero for crate::syscall::data::StatVfs {}
-
 impl<T: ?Sized, const ALIGN: usize> AlignedBox<T, ALIGN> {
     fn layout(&self) -> Layout {
         layout_upgrade_align(Layout::for_value::<T>(&*self), ALIGN)
