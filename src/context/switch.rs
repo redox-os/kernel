@@ -198,12 +198,6 @@ pub unsafe fn switch() -> bool {
         next_context.cpu_id = Some(cpu_id);
         next_context.switch_time = switch_time;
 
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        {
-            if let Some(ref stack) = next_context.kstack {
-                crate::gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
-            }
-        }
         let percpu = PercpuBlock::current();
         percpu.switch_internals.context_id.set(next_context.id);
 

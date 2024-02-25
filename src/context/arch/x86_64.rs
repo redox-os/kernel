@@ -143,6 +143,10 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
+    if let Some(ref stack) = next.kstack {
+        crate::gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
+    }
+
     core::arch::asm!(
         alternative2!(
             feature1: "xsaveopt",
