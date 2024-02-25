@@ -1,8 +1,6 @@
-use core::{cell::Cell, ops::Bound, sync::atomic::Ordering};
+use core::{cell::Cell, mem, ops::Bound, sync::atomic::Ordering};
 
-use alloc::sync::Arc;
-
-use spin::{RwLock, RwLockWriteGuard};
+use spinning_top::guard::ArcRwSpinlockWriteGuard;
 
 use crate::{
     context::{arch, contexts, signal::signal_handler, Context},
@@ -89,8 +87,8 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
 }
 
 struct SwitchResult {
-    prev_lock: Arc<RwLock<Context>>,
-    next_lock: Arc<RwLock<Context>>,
+    _prev_guard: ArcRwSpinlockWriteGuard<Context>,
+    _next_guard: ArcRwSpinlockWriteGuard<Context>,
 }
 
 pub fn tick() {
@@ -106,13 +104,8 @@ pub fn tick() {
 }
 
 pub unsafe extern "C" fn switch_finish_hook() {
-    if let Some(SwitchResult {
-        prev_lock,
-        next_lock,
-    }) = PercpuBlock::current().switch_internals.switch_result.take()
-    {
-        prev_lock.force_write_unlock();
-        next_lock.force_write_unlock();
+    if let Some(switch_result) = PercpuBlock::current().switch_internals.switch_result.take() {
+        drop(switch_result);
     } else {
         // TODO: unreachable_unchecked()?
         crate::arch::stop::emergency_reset();
@@ -151,7 +144,7 @@ pub unsafe fn switch() -> bool {
         let prev_context_lock = contexts
             .current()
             .expect("context::switch: not inside of context");
-        let prev_context_guard = prev_context_lock.write();
+        let prev_context_guard = prev_context_lock.write_arc();
 
         let idle_id = percpu.switch_internals.idle_id();
         let mut skip_idle = true;
@@ -179,17 +172,12 @@ pub unsafe fn switch() -> bool {
             }
 
             // Lock next context
-            let mut next_context_guard = next_context_lock.write();
+            let mut next_context_guard = next_context_lock.write_arc();
 
             // Update state of next context and check if runnable
             if update_runnable(&mut *next_context_guard, cpu_id) {
                 // Store locks for previous and next context
-                switch_context_opt = Some((
-                    Arc::clone(prev_context_lock),
-                    RwLockWriteGuard::leak(prev_context_guard) as *mut Context,
-                    Arc::clone(next_context_lock),
-                    RwLockWriteGuard::leak(next_context_guard) as *mut Context,
-                ));
+                switch_context_opt = Some((prev_context_guard, next_context_guard));
                 break;
             } else {
                 continue;
@@ -198,16 +186,14 @@ pub unsafe fn switch() -> bool {
     };
 
     // Switch process states, TSS stack pointer, and store new context ID
-    if let Some((prev_context_lock, prev_context_ptr, next_context_lock, next_context_ptr)) =
-        switch_context_opt
-    {
+    if let Some((mut prev_context_guard, mut next_context_guard)) = switch_context_opt {
         // Set old context as not running and update CPU time
-        let prev_context = &mut *prev_context_ptr;
+        let prev_context = &mut *prev_context_guard;
         prev_context.running = false;
         prev_context.cpu_time += switch_time.saturating_sub(prev_context.switch_time);
 
         // Set new context as running and set switch time
-        let next_context = &mut *next_context_ptr;
+        let next_context = &mut *next_context_guard;
         next_context.running = true;
         next_context.cpu_id = Some(cpu_id);
         next_context.switch_time = switch_time;
@@ -233,12 +219,18 @@ pub unsafe fn switch() -> bool {
             }
         }
 
+        // FIXME set th switch result in arch::switch_to instead
+        let prev_context =
+            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard);
+        let next_context =
+            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard);
+
         percpu
             .switch_internals
             .switch_result
             .set(Some(SwitchResult {
-                prev_lock: prev_context_lock,
-                next_lock: next_context_lock,
+                _prev_guard: prev_context_guard,
+                _next_guard: next_context_guard,
             }));
 
         arch::switch_to(prev_context, next_context);

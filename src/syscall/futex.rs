@@ -6,6 +6,7 @@ use alloc::{collections::VecDeque, sync::Arc};
 use core::sync::atomic::{AtomicU32, Ordering};
 use rmm::Arch;
 use spin::RwLock;
+use spinning_top::RwSpinlock;
 
 use crate::{
     context::{self, memory::AddrSpace, Context},
@@ -26,7 +27,7 @@ type FutexList = VecDeque<FutexEntry>;
 
 pub struct FutexEntry {
     target_physaddr: PhysicalAddress,
-    context_lock: Arc<RwLock<Context>>,
+    context_lock: Arc<RwSpinlock<Context>>,
 }
 
 // TODO: Process-private futexes? In that case, put the futex table in each AddrSpace.

@@ -5,6 +5,7 @@
 use alloc::{borrow::Cow, sync::Arc};
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spinning_top::RwSpinlock;
 
 use crate::{
     paging::{RmmA, RmmArch, TableKind},
@@ -102,7 +103,7 @@ pub fn context_id() -> ContextId {
     PercpuBlock::current().switch_internals.context_id()
 }
 
-pub fn current() -> Result<Arc<RwLock<Context>>> {
+pub fn current() -> Result<Arc<RwSpinlock<Context>>> {
     contexts()
         .current()
         .ok_or(Error::new(ESRCH))

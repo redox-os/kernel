@@ -1,11 +1,12 @@
 use alloc::{sync::Arc, vec::Vec};
-use spin::{Mutex, MutexGuard, RwLock};
+use spin::{Mutex, MutexGuard};
+use spinning_top::RwSpinlock;
 
 use crate::context::{self, Context};
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<Vec<Arc<RwLock<Context>>>>,
+    contexts: Mutex<Vec<Arc<RwSpinlock<Context>>>>,
 }
 
 impl WaitCondition {

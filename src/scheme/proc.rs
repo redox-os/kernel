@@ -34,6 +34,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use spin::RwLock;
+use spinning_top::RwSpinlock;
 
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 
@@ -265,7 +266,7 @@ fn new_handle(handle: Handle) -> Result<usize> {
     Ok(id)
 }
 
-fn get_context(id: ContextId) -> Result<Arc<RwLock<Context>>> {
+fn get_context(id: ContextId) -> Result<Arc<RwSpinlock<Context>>> {
     context::contexts()
         .get(id)
         .ok_or(Error::new(ENOENT))

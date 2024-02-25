@@ -1,7 +1,7 @@
 use alloc::{collections::BTreeMap, sync::Arc};
 use core::{iter, mem};
 
-use spin::RwLock;
+use spinning_top::RwSpinlock;
 
 use super::context::{Context, ContextId};
 use crate::syscall::error::{Error, Result, EAGAIN};
@@ -9,7 +9,7 @@ use crate::syscall::error::{Error, Result, EAGAIN};
 /// Context list type
 pub struct ContextList {
     // Using a BTreeMap for it's range method
-    map: BTreeMap<ContextId, Arc<RwLock<Context>>>,
+    map: BTreeMap<ContextId, Arc<RwSpinlock<Context>>>,
     next_id: usize,
 }
 
@@ -23,7 +23,7 @@ impl ContextList {
     }
 
     /// Get the nth context.
-    pub fn get(&self, id: ContextId) -> Option<&Arc<RwLock<Context>>> {
+    pub fn get(&self, id: ContextId) -> Option<&Arc<RwSpinlock<Context>>> {
         self.map.get(&id)
     }
 
@@ -31,7 +31,7 @@ impl ContextList {
     pub fn ancestors(
         &'_ self,
         id: ContextId,
-    ) -> impl Iterator<Item = (ContextId, &Arc<RwLock<Context>>)> + '_ {
+    ) -> impl Iterator<Item = (ContextId, &Arc<RwSpinlock<Context>>)> + '_ {
         iter::successors(
             self.get(id).map(|context| (id, context)),
             move |(_id, context)| {
@@ -43,25 +43,30 @@ impl ContextList {
     }
 
     /// Get the current context.
-    pub fn current(&self) -> Option<&Arc<RwLock<Context>>> {
+    pub fn current(&self) -> Option<&Arc<RwSpinlock<Context>>> {
         self.map.get(&super::context_id())
     }
 
-    pub fn iter(&self) -> ::alloc::collections::btree_map::Iter<ContextId, Arc<RwLock<Context>>> {
+    pub fn iter(
+        &self,
+    ) -> ::alloc::collections::btree_map::Iter<ContextId, Arc<RwSpinlock<Context>>> {
         self.map.iter()
     }
 
     pub fn range(
         &self,
         range: impl core::ops::RangeBounds<ContextId>,
-    ) -> ::alloc::collections::btree_map::Range<'_, ContextId, Arc<RwLock<Context>>> {
+    ) -> ::alloc::collections::btree_map::Range<'_, ContextId, Arc<RwSpinlock<Context>>> {
         self.map.range(range)
     }
 
-    pub(crate) fn insert_context_raw(&mut self, id: ContextId) -> Result<&Arc<RwLock<Context>>> {
+    pub(crate) fn insert_context_raw(
+        &mut self,
+        id: ContextId,
+    ) -> Result<&Arc<RwSpinlock<Context>>> {
         assert!(self
             .map
-            .insert(id, Arc::new(RwLock::new(Context::new(id)?)))
+            .insert(id, Arc::new(RwSpinlock::new(Context::new(id)?)))
             .is_none());
 
         Ok(self
@@ -71,7 +76,7 @@ impl ContextList {
     }
 
     /// Create a new context.
-    pub fn new_context(&mut self) -> Result<&Arc<RwLock<Context>>> {
+    pub fn new_context(&mut self) -> Result<&Arc<RwSpinlock<Context>>> {
         // Zero is not a valid context ID, therefore add 1.
         //
         // FIXME: Ensure the number of CPUs can't switch between new_context calls.
@@ -98,7 +103,7 @@ impl ContextList {
     }
 
     /// Spawn a context from a function.
-    pub fn spawn(&mut self, func: extern "C" fn()) -> Result<&Arc<RwLock<Context>>> {
+    pub fn spawn(&mut self, func: extern "C" fn()) -> Result<&Arc<RwSpinlock<Context>>> {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
@@ -129,7 +134,7 @@ impl ContextList {
         Ok(context_lock)
     }
 
-    pub fn remove(&mut self, id: ContextId) -> Option<Arc<RwLock<Context>>> {
+    pub fn remove(&mut self, id: ContextId) -> Option<Arc<RwSpinlock<Context>>> {
         self.map.remove(&id)
     }
 }

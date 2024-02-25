@@ -12,6 +12,7 @@ use core::{
 };
 use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, RwLock};
+use spinning_top::RwSpinlock;
 use syscall::{
     FobtainFdFlags, MunmapFlags, SendFdFlags, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD,
     SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
@@ -50,7 +51,7 @@ pub struct UserInner {
     pub flags: usize,
     pub scheme_id: SchemeId,
     next_id: Mutex<u64>,
-    context: Weak<RwLock<Context>>,
+    context: Weak<RwSpinlock<Context>>,
     todo: WaitQueue<Packet>,
     states: Mutex<HashMap<u64, State>>,
     unmounting: AtomicBool,
@@ -58,11 +59,11 @@ pub struct UserInner {
 
 enum State {
     Waiting {
-        context: Weak<RwLock<Context>>,
+        context: Weak<RwSpinlock<Context>>,
         fd: Option<Arc<RwLock<FileDescription>>>,
     },
     Responded(Response),
-    Fmap(Weak<RwLock<Context>>),
+    Fmap(Weak<RwSpinlock<Context>>),
     Placeholder,
 }
 
@@ -84,7 +85,7 @@ impl UserInner {
         handle_id: usize,
         name: Box<str>,
         flags: usize,
-        context: Weak<RwLock<Context>>,
+        context: Weak<RwSpinlock<Context>>,
     ) -> UserInner {
         UserInner {
             root_id,
@@ -274,7 +275,7 @@ impl UserInner {
     // TODO: Hypothetical accept_head_leak, accept_tail_leak options might be useful for
     // libc-controlled buffer pools.
     fn capture_inner<const READ: bool, const WRITE: bool>(
-        context_weak: &Weak<RwLock<Context>>,
+        context_weak: &Weak<RwSpinlock<Context>>,
         user_buf: UserSlice<READ, WRITE>,
     ) -> Result<CaptureGuard<READ, WRITE>> {
         let (mode, map_flags) = match (READ, WRITE) {
