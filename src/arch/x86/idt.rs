@@ -157,28 +157,28 @@ const fn new_idt_reservations() -> [AtomicU32; 8] {
 }
 
 /// Initialize the IDT for a
-pub unsafe fn init_paging_post_heap(is_bsp: bool, cpu_id: LogicalCpuId) {
+pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
     let mut idts_guard = IDTS.write();
     let idts_btree = idts_guard.get_or_insert_with(HashMap::new);
 
-    if is_bsp {
+    if cpu_id == LogicalCpuId::BSP {
         idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);
     } else {
         let idt = idts_btree
             .entry(cpu_id)
             .or_insert_with(|| Box::leak(Box::new(Idt::new())));
-        init_generic(is_bsp, idt);
+        init_generic(cpu_id, idt);
     }
 }
 
 /// Initializes a fully functional IDT for use before it be moved into the map. This is ONLY called
 /// on the BSP, since the kernel heap is ready for the APs.
 pub unsafe fn init_paging_bsp() {
-    init_generic(true, &mut INIT_BSP_IDT);
+    init_generic(LogicalCpuId::BSP, &mut INIT_BSP_IDT);
 }
 
 /// Initializes an IDT for any type of processor.
-pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
+pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
 
     let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
@@ -250,7 +250,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
     // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
     *current_reservations[0].get_mut() |= 0x0000_0000_FFFF_FFFF;
 
-    if is_bsp {
+    if cpu_id == LogicalCpuId::BSP {
         // Set up IRQs
         current_idt[32].set_func(irq::pit_stack);
         current_idt[33].set_func(irq::keyboard);
@@ -278,7 +278,7 @@ pub unsafe fn init_generic(is_bsp: bool, idt: &mut Idt) {
         current_idt[49].set_func(irq::lapic_error);
 
         // reserve bit 49
-        *current_reservations[1].get_mut() |= (1 << 17);
+        *current_reservations[1].get_mut() |= 1 << 17;
     }
 
     use_default_irqs!(current_idt);

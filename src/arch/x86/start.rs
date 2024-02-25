@@ -185,7 +185,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init_heap();
 
-        idt::init_paging_post_heap(true, LogicalCpuId::BSP);
+        idt::init_paging_post_heap(LogicalCpuId::BSP);
 
         // Activate memory logging
         log::init();
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         gdt::init_paging(stack_end, cpu_id);
 
         // Set up IDT for AP
-        idt::init_paging_post_heap(false, cpu_id);
+        idt::init_paging_post_heap(cpu_id);
 
         // Set up syscall instruction
         interrupt::syscall::init();
