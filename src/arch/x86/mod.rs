@@ -13,9 +13,6 @@ pub mod gdt;
 #[macro_use]
 pub mod interrupt;
 
-/// Interrupt descriptor table
-pub mod idt;
-
 /// Paging
 pub mod paging;
 

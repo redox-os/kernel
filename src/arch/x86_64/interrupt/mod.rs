@@ -10,8 +10,3 @@ pub mod irq;
 pub mod syscall;
 
 pub use self::handler::InterruptStack;
-
-pub use super::{
-    device::local_apic::bsp_apic_id,
-    idt::{available_irqs_iter, is_reserved, set_reserved},
-};

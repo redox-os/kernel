@@ -12,6 +12,8 @@ use x86::{
     segmentation::Descriptor as X86IdtEntry,
 };
 
+#[cfg(target_arch = "x86_64")]
+use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
 use crate::{interrupt::*, ipi::IpiKind, LogicalCpuId};
 
 use spin::RwLock;
@@ -126,12 +128,14 @@ pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + '
     (32..=254).filter(move |&index| !is_reserved(cpu_id, index))
 }
 
+#[cfg(target_arch = "x86")]
 macro_rules! use_irq(
     ( $idt: expr, $number:literal, $func:ident ) => {{
         $idt[$number].set_func($func);
     }}
 );
 
+#[cfg(target_arch = "x86")]
 macro_rules! use_default_irqs(
     ($idt:expr) => {{
         use crate::interrupt::irq::*;
@@ -212,7 +216,10 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
         let address = base_address.data() + BACKUP_STACK_SIZE;
 
         // Put them in the 1st entry of the IST.
-        //TODO: x86: crate::gdt::KPCR.tss.0.ist[usize::from(index - 1)] = address as u64;
+        #[cfg(target_arch = "x86_64")] // TODO: x86
+        {
+            (*crate::gdt::pcr()).tss.ist[usize::from(index - 1)] = address as u64;
+        }
 
         index
     };
@@ -246,6 +253,17 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     // 21 through 29 reserved
     current_idt[30].set_func(exception::security);
     // 31 reserved
+
+    #[cfg(target_arch = "x86_64")]
+    assert_eq!(
+        __generic_interrupts_end as usize - __generic_interrupts_start as usize,
+        224 * 8
+    );
+
+    #[cfg(target_arch = "x86_64")]
+    for i in 0..224 {
+        current_idt[i + 32].set_func(mem::transmute(__generic_interrupts_start as usize + i * 8));
+    }
 
     // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
     *current_reservations[0].get_mut() |= 0x0000_0000_FFFF_FFFF;
@@ -281,6 +299,7 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
         *current_reservations[1].get_mut() |= 1 << 17;
     }
 
+    #[cfg(target_arch = "x86")]
     use_default_irqs!(current_idt);
 
     // Set IPI handlers
@@ -298,6 +317,9 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     current_idt[0x80].set_func(syscall::syscall);
     current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
     idt.set_reserved_mut(0x80, true);
+
+    #[cfg(feature = "profiling")]
+    crate::profiling::maybe_setup_timer(idt, cpu_id);
 
     dtables::lidt(&idtr);
 }
@@ -323,6 +345,10 @@ pub struct IdtEntry {
     zero: u8,
     attribute: u8,
     offsetm: u16,
+    #[cfg(target_arch = "x86_64")]
+    offseth: u32,
+    #[cfg(target_arch = "x86_64")]
+    _zero2: u32,
 }
 
 impl IdtEntry {
@@ -333,6 +359,10 @@ impl IdtEntry {
             zero: 0,
             attribute: 0,
             offsetm: 0,
+            #[cfg(target_arch = "x86_64")]
+            offseth: 0,
+            #[cfg(target_arch = "x86_64")]
+            _zero2: 0,
         }
     }
 
@@ -354,6 +384,10 @@ impl IdtEntry {
         self.selector = selector;
         self.offsetl = base as u16;
         self.offsetm = (base >> 16) as u16;
+        #[cfg(target_arch = "x86_64")]
+        {
+            self.offseth = ((base as u64) >> 32) as u32;
+        }
     }
 
     // A function to set the offset more easily

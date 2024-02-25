@@ -7,6 +7,9 @@ pub mod debug;
 /// Devices
 pub mod device;
 
+/// Interrupt descriptor table
+pub mod idt;
+
 /// Interrupt instructions
 #[macro_use]
 pub mod interrupt;
