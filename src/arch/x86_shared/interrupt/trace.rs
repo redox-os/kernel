@@ -3,39 +3,49 @@ use core::{mem, str};
 use goblin::elf::sym;
 use rustc_demangle::demangle;
 
-use crate::paging::{KernelMapper, VirtualAddress};
+use crate::{
+    paging::{KernelMapper, VirtualAddress},
+    USER_END_OFFSET,
+};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing
 #[inline(never)]
 pub unsafe fn stack_trace() {
-    let mut ebp: usize;
-    core::arch::asm!("mov {}, ebp", out(reg) ebp);
+    let mut sp: usize;
+    #[cfg(target_arch = "x86")]
+    core::arch::asm!("mov {}, ebp", out(reg) sp);
+    #[cfg(target_arch = "x86_64")]
+    core::arch::asm!("mov {}, rbp", out(reg) sp);
 
-    println!("TRACE: {:>016X}", ebp);
+    println!("TRACE: {:>016X}", sp);
     //Maximum 64 frames
 
     let mapper = KernelMapper::lock();
 
     for _frame in 0..64 {
-        if let Some(eip_ebp) = ebp.checked_add(mem::size_of::<usize>()) {
-            let ebp_virt = VirtualAddress::new(ebp);
-            let eip_ebp_virt = VirtualAddress::new(eip_ebp);
-            if mapper.translate(ebp_virt).is_some() && mapper.translate(eip_ebp_virt).is_some() {
-                let eip = *(eip_ebp as *const usize);
-                if eip == 0 {
-                    println!(" {:>016X}: EMPTY RETURN", ebp);
+        if let Some(ip_bp) = sp.checked_add(mem::size_of::<usize>()) {
+            let bp_virt = VirtualAddress::new(sp);
+            let ip_bp_virt = VirtualAddress::new(ip_bp);
+            if bp_virt.data() >= USER_END_OFFSET
+                && ip_bp_virt.data() >= USER_END_OFFSET
+                && mapper.translate(bp_virt).is_some()
+                && mapper.translate(ip_bp_virt).is_some()
+            {
+                let ip = (ip_bp as *const usize).read();
+                if ip == 0 {
+                    println!(" {:>016X}: EMPTY RETURN", sp);
                     break;
                 }
-                println!("  {:>016X}: {:>016X}", ebp, eip);
-                ebp = *(ebp as *const usize);
-                symbol_trace(eip);
+                println!("  {:>016X}: {:>016X}", sp, ip);
+                sp = (sp as *const usize).read();
+                symbol_trace(ip);
             } else {
-                println!("  {:>016X}: GUARD PAGE", ebp);
+                println!("  {:>016X}: GUARD PAGE", sp);
                 break;
             }
         } else {
-            println!("  {:>016X}: EBP OVERFLOW", ebp);
+            println!("  {:>016X}: RBP OVERFLOW", sp);
             break;
         }
     }

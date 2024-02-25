@@ -1,5 +1,7 @@
 //! Interrupt instructions
 
+pub use crate::arch::x86_shared::interrupt::*;
+
 #[macro_use]
 pub mod handler;
 
@@ -7,9 +9,8 @@ pub mod exception;
 pub mod ipi;
 pub mod irq;
 pub mod syscall;
-pub mod trace;
 
-pub use self::{handler::InterruptStack, trace::stack_trace};
+pub use self::handler::InterruptStack;
 
 pub use super::{
     device::local_apic::bsp_apic_id,

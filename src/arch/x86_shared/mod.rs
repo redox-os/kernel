@@ -4,6 +4,10 @@ pub mod debug;
 /// Devices
 pub mod device;
 
+/// Interrupt instructions
+#[macro_use]
+pub mod interrupt;
+
 /// Inter-processor interrupts
 pub mod ipi;
 
