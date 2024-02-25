@@ -79,7 +79,7 @@ pub fn syscall(
                 let fd = FileHandle::from(b);
                 match a & SYS_ARG {
                     SYS_ARG_SLICE => match a {
-                        SYS_WRITE => file_op_generic(fd, |scheme, _, number| {
+                        SYS_WRITE => file_op_generic(fd, |scheme, number| {
                             scheme.kwrite(number, UserSlice::ro(c, d)?)
                         }),
                         SYS_FMAP => {
@@ -88,27 +88,27 @@ pub fn syscall(
                             if b == !0 {
                                 MemoryScheme::fmap_anonymous(&addrspace, &map, false)
                             } else {
-                                file_op_generic(fd, |scheme, _, number| {
+                                file_op_generic(fd, |scheme, number| {
                                     scheme.kfmap(number, &addrspace, &map, false)
                                 })
                             }
                         }
                         // SYS_FMAP_OLD is ignored
-                        SYS_FUTIMENS => file_op_generic(fd, |scheme, _, number| {
+                        SYS_FUTIMENS => file_op_generic(fd, |scheme, number| {
                             scheme.kfutimens(number, UserSlice::ro(c, d)?)
                         }),
 
                         _ => return Err(Error::new(ENOSYS)),
                     },
                     SYS_ARG_MSLICE => match a {
-                        SYS_READ => file_op_generic(fd, |scheme, _, number| {
+                        SYS_READ => file_op_generic(fd, |scheme, number| {
                             scheme.kread(number, UserSlice::wo(c, d)?)
                         }),
-                        SYS_FPATH => file_op_generic(fd, |scheme, _, number| {
+                        SYS_FPATH => file_op_generic(fd, |scheme, number| {
                             scheme.kfpath(number, UserSlice::wo(c, d)?)
                         }),
                         SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?).map(|()| 0),
-                        SYS_FSTATVFS => file_op_generic(fd, |scheme, _, number| {
+                        SYS_FSTATVFS => file_op_generic(fd, |scheme, number| {
                             scheme.kfstatvfs(number, UserSlice::wo(c, d)?).map(|()| 0)
                         }),
 
@@ -127,17 +127,17 @@ pub fn syscall(
                         #[cfg(target_pointer_width = "64")]
                         SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64),
 
-                        SYS_LSEEK => file_op_generic(fd, |scheme, _, number| {
-                            scheme.seek(number, c as isize, d)
-                        }),
-                        SYS_FCHMOD => file_op_generic(fd, |scheme, _, number| {
+                        SYS_LSEEK => {
+                            file_op_generic(fd, |scheme, number| scheme.seek(number, c as isize, d))
+                        }
+                        SYS_FCHMOD => file_op_generic(fd, |scheme, number| {
                             scheme.fchmod(number, c as u16).map(|()| 0)
                         }),
-                        SYS_FCHOWN => file_op_generic(fd, |scheme, _, number| {
+                        SYS_FCHOWN => file_op_generic(fd, |scheme, number| {
                             scheme.fchown(number, c as u32, d as u32).map(|()| 0)
                         }),
                         SYS_FCNTL => fcntl(fd, c, d),
-                        SYS_FEVENT => file_op_generic(fd, |scheme, _, number| {
+                        SYS_FEVENT => file_op_generic(fd, |scheme, number| {
                             Ok(scheme
                                 .fevent(number, EventFlags::from_bits_truncate(c))?
                                 .bits())
@@ -145,11 +145,11 @@ pub fn syscall(
                         SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?).map(|()| 0),
                         SYS_FUNMAP => funmap(b, c),
 
-                        SYS_FSYNC => file_op_generic(fd, |scheme, _, number| {
-                            scheme.fsync(number).map(|()| 0)
-                        }),
+                        SYS_FSYNC => {
+                            file_op_generic(fd, |scheme, number| scheme.fsync(number).map(|()| 0))
+                        }
                         // TODO: 64-bit lengths on 32-bit platforms
-                        SYS_FTRUNCATE => file_op_generic(fd, |scheme, _, number| {
+                        SYS_FTRUNCATE => file_op_generic(fd, |scheme, number| {
                             scheme.ftruncate(number, c).map(|()| 0)
                         }),
 

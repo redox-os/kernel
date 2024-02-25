@@ -18,24 +18,18 @@ use super::usercopy::{UserSlice, UserSliceRo, UserSliceWo};
 
 pub fn file_op_generic<T>(
     fd: FileHandle,
-    op: impl FnOnce(&dyn KernelScheme, &CallerCtx, usize) -> Result<T>,
+    op: impl FnOnce(&dyn KernelScheme, usize) -> Result<T>,
 ) -> Result<T> {
-    file_op_generic_ext(fd, |s, _, ctx, no| op(s, ctx, no))
+    file_op_generic_ext(fd, |s, _, no| op(s, no))
 }
 pub fn file_op_generic_ext<T>(
     fd: FileHandle,
-    op: impl FnOnce(&dyn KernelScheme, SchemeId, &CallerCtx, usize) -> Result<T>,
+    op: impl FnOnce(&dyn KernelScheme, SchemeId, usize) -> Result<T>,
 ) -> Result<T> {
-    let (ctx, file) = match context::current()?.read() {
-        ref context => (
-            CallerCtx {
-                pid: context.id.into(),
-                uid: context.euid,
-                gid: context.egid,
-            },
-            context.get_file(fd).ok_or(Error::new(EBADF))?,
-        ),
-    };
+    let file = context::current()?
+        .read()
+        .get_file(fd)
+        .ok_or(Error::new(EBADF))?;
     let FileDescription {
         scheme: scheme_id,
         number,
@@ -47,7 +41,7 @@ pub fn file_op_generic_ext<T>(
         .ok_or(Error::new(EBADF))?
         .clone();
 
-    op(&*scheme, scheme_id, &ctx, number)
+    op(&*scheme, scheme_id, number)
 }
 pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<alloc::string::String> {
     let mut path_buf = vec![0_u8; max_len];
@@ -399,7 +393,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
 
 /// File status
 pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<()> {
-    file_op_generic_ext(fd, |scheme, scheme_id, _, number| {
+    file_op_generic_ext(fd, |scheme, scheme_id, number| {
         scheme.kfstat(number, user_buf)?;
 
         // TODO: Ensure only the kernel can access the stat when st_dev is set, or use another API
