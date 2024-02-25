@@ -2,6 +2,7 @@ use alloc::{sync::Arc, vec::Vec};
 use core::mem;
 
 use spin::RwLock;
+use rmm::Arch;
 
 use crate::context::{
     memory::{AddrSpace, PageSpan},
@@ -22,7 +23,7 @@ use crate::{
         },
         ptrace_event,
     },
-    Bootstrap,
+    Bootstrap, CurrentRmmArch,
 };
 
 use super::usercopy::{UserSliceRo, UserSliceWo};
@@ -606,9 +607,16 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
     // TODO: Not all arches do linear mapping
     UserSliceWo::new(0, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
-        .copy_from_slice(unsafe { crate::arch::bootstrap_mem(bootstrap) })
+        .copy_from_slice(unsafe { bootstrap_mem(bootstrap) })
         .expect("failed to copy memory to bootstrap");
 
     // Start in a minimal environment without any stack.
     usermode(bootstrap.entry, 0, 0, 0);
+}
+
+pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
+    core::slice::from_raw_parts(
+        CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8,
+        bootstrap.page_count * PAGE_SIZE,
+    )
 }

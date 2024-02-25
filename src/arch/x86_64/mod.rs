@@ -1,7 +1,3 @@
-use crate::Bootstrap;
-
-use self::paging::PAGE_SIZE;
-
 pub use crate::arch::x86_shared::*;
 
 pub mod alternative;
@@ -33,7 +29,6 @@ pub mod rmm;
 /// Initialization and start function
 pub mod start;
 
-use ::rmm::Arch;
 pub use ::rmm::X8664Arch as CurrentRmmArch;
 
 // Flags
@@ -72,13 +67,5 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
     );
 }
 pub use arch_copy_to_user as arch_copy_from_user;
-
-// TODO: This doesn't need to be arch-specific, right?
-pub unsafe fn bootstrap_mem(bootstrap: &Bootstrap) -> &'static [u8] {
-    core::slice::from_raw_parts(
-        CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8,
-        bootstrap.page_count * PAGE_SIZE,
-    )
-}
 
 pub use alternative::kfx_size;
