@@ -284,13 +284,6 @@ interrupt!(lapic_error, || {
     lapic_eoi();
 });
 
-interrupt!(calib_pit, || {
-    {
-        *time::OFFSET.lock() += pit::RATE;
-    }
-
-    eoi(0);
-});
 // XXX: This would look way prettier using const generics.
 
 macro_rules! allocatable_irq(
