@@ -6,7 +6,6 @@ pub use crate::arch::x86_shared::interrupt::*;
 pub mod handler;
 
 pub mod exception;
-pub mod ipi;
 pub mod irq;
 pub mod syscall;
 
