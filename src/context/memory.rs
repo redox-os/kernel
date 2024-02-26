@@ -12,7 +12,6 @@ use crate::{
         PageInfo, RefCount, RefKind,
     },
     paging::{
-        mapper::{Flusher, InactiveFlusher, PageFlushAll},
         Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
     },
     scheme::{self, KernelSchemes}, cpu_set::LogicalCpuSet,
@@ -104,7 +103,7 @@ impl AddrSpace {
 
         let this_mapper = &mut self.table.utable;
         let new_mapper = &mut new_guard.table.utable;
-        let mut this_flusher = PageFlushAll::new();
+        let mut this_flusher = Flusher::with_cpu_set(&mut self.used_by);
 
         for (grant_base, grant_info) in self.grants.iter() {
             let new_grant = match grant_info.provider {
@@ -129,7 +128,7 @@ impl AddrSpace {
                     PageSpan::new(grant_base, grant_info.page_count),
                     grant_info.flags,
                     new_mapper,
-                    (),
+                    &mut NopFlusher,
                 )?,
                 Provider::Allocated {
                     ref cow_file_ref,
@@ -142,7 +141,7 @@ impl AddrSpace {
                     this_mapper,
                     new_mapper,
                     &mut this_flusher,
-                    (),
+                    &mut NopFlusher,
                     CopyMappingsMode::Owned {
                         cow_file_ref: cow_file_ref.clone(),
                     },
@@ -158,12 +157,12 @@ impl AddrSpace {
                     this_mapper,
                     new_mapper,
                     &mut this_flusher,
-                    (),
+                    &mut NopFlusher,
                     CopyMappingsMode::Borrowed,
                 )?,
 
-                // MAP_SHARED grants are retained by reference, across address space clones (across
-                // forks on monolithic kernels).
+                // MAP_SHARED grants are retained by reference, across address space clones (the
+                // "fork" analogue from monolithic kernels).
                 Provider::External {
                     ref address_space,
                     src_base,
@@ -174,7 +173,7 @@ impl AddrSpace {
                     grant_base,
                     grant_info,
                     new_mapper,
-                    (),
+                    &mut NopFlusher,
                     false,
                 )?,
                 Provider::FmapBorrowed { .. } => continue,
@@ -196,15 +195,8 @@ impl AddrSpace {
         self.table.utable.is_current()
     }
     pub fn mprotect(&mut self, requested_span: PageSpan, flags: MapFlags) -> Result<()> {
-        let (mut active, mut inactive);
-        let mut flusher = if self.is_current() {
-            active = PageFlushAll::new();
-            &mut active as &mut dyn Flusher<RmmA>
-        } else {
-            inactive = InactiveFlusher::new();
-            &mut inactive as &mut dyn Flusher<RmmA>
-        };
         let mapper = &mut self.table.utable;
+        let mut flusher = Flusher::with_cpu_set(&mut self.used_by);
 
         // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
         let regions = self
@@ -269,11 +261,17 @@ impl AddrSpace {
         mut requested_span: PageSpan,
         unpin: bool,
     ) -> Result<Vec<UnmapResult>> {
+        let mut flusher = Flusher::with_cpu_set(&mut self.used_by);
+        Self::munmap_inner(&mut self.grants, &mut self.table.utable, &mut flusher, requested_span, unpin)
+    }
+    fn munmap_inner(
+        this_grants: &mut UserGrants,
+        this_mapper: &mut PageMapper,
+        this_flusher: &mut Flusher,
+        mut requested_span: PageSpan,
+        unpin: bool,
+    ) -> Result<Vec<UnmapResult>> {
         let mut notify_files = Vec::new();
-
-        let mut flusher = PageFlushAll::new();
-
-        let this = &mut *self;
 
         let next = |grants: &mut UserGrants, span: PageSpan| {
             grants
@@ -290,11 +288,10 @@ impl AddrSpace {
                 .next()
         };
 
-        while let Some(conflicting_span_res) = next(&mut this.grants, requested_span) {
+        while let Some(conflicting_span_res) = next(this_grants, requested_span) {
             let conflicting_span = conflicting_span_res?;
 
-            let mut grant = this
-                .grants
+            let mut grant = this_grants
                 .remove(conflicting_span.base)
                 .expect("conflicting region didn't exist");
             if unpin {
@@ -317,14 +314,14 @@ impl AddrSpace {
 
             // Keep untouched regions
             if let Some(before) = before {
-                this.grants.insert(before);
+                this_grants.insert(before);
             }
             if let Some(after) = after {
-                this.grants.insert(after);
+                this_grants.insert(after);
             }
 
             // Remove irrelevant region
-            let unmap_result = grant.unmap(&mut this.table.utable, &mut flusher);
+            let unmap_result = grant.unmap(this_mapper, this_flusher);
 
             // Notify scheme that holds grant
             if unmap_result.file_desc.is_some() {
@@ -342,7 +339,7 @@ impl AddrSpace {
             Page,
             PageFlags<RmmA>,
             &mut PageMapper,
-            &mut dyn Flusher<RmmA>,
+            &mut Flusher,
         ) -> Result<Grant>,
     ) -> Result<Page> {
         self.mmap(None, page_count, flags, &mut Vec::new(), map)
@@ -357,7 +354,7 @@ impl AddrSpace {
             Page,
             PageFlags<RmmA>,
             &mut PageMapper,
-            &mut dyn Flusher<RmmA>,
+            &mut Flusher,
         ) -> Result<Grant>,
     ) -> Result<Page> {
         let selected_span = match requested_base_opt {
@@ -393,20 +390,12 @@ impl AddrSpace {
         // out IPIs. IPIs will only be sent when downgrading mappings (i.e. when a stale TLB entry
         // will not be corrected by a page fault), and will furthermore require proper
         // synchronization.
-        let (mut active, mut inactive);
-        let flusher = if self.is_current() {
-            active = PageFlushAll::new();
-            &mut active as &mut dyn Flusher<RmmA>
-        } else {
-            inactive = InactiveFlusher::new();
-            &mut inactive as &mut dyn Flusher<RmmA>
-        };
 
         let grant = map(
             selected_span.base,
             page_flags(flags),
             &mut self.table.utable,
-            flusher,
+            &mut Flusher::with_cpu_set(&mut self.used_by),
         )?;
         self.grants.insert(grant);
 
@@ -421,9 +410,9 @@ impl AddrSpace {
         new_flags: MapFlags,
         notify_files: &mut Vec<UnmapResult>,
     ) -> Result<Page> {
-        // TODO
-        let mut src_flusher = PageFlushAll::new();
-        let mut dst_flusher = PageFlushAll::new();
+        let mut src_owned_opt = src_opt.as_mut().map(|a| (&mut a.grants, &mut a.table.utable, Flusher::with_cpu_set(&mut a.used_by)));
+        let mut src_opt = src_owned_opt.as_mut().map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
+        let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by);
 
         let dst_base = match requested_dst_base {
             Some(base) if new_flags.contains(MapFlags::MAP_FIXED_NOREPLACE) => {
@@ -440,7 +429,7 @@ impl AddrSpace {
             }
             Some(base) if new_flags.contains(MapFlags::MAP_FIXED) => {
                 let unpin = false;
-                notify_files.append(&mut dst.munmap(PageSpan::new(base, new_page_count), unpin)?);
+                notify_files.append(&mut Self::munmap_inner(&mut dst.grants, &mut dst.table.utable, &mut dst_flusher, PageSpan::new(base, new_page_count), unpin)?);
 
                 base
             }
@@ -452,17 +441,15 @@ impl AddrSpace {
             }
         };
 
-        let src = src_opt.as_deref_mut().unwrap_or(&mut *dst);
+        let (src_grants, src_mapper, src_flusher) = src_opt.as_mut().map_or((&mut dst.grants, &mut dst.table.utable, &mut dst_flusher), |(g, m, f)| (&mut *g, &mut *m, &mut *f));
 
-        if src
-            .grants
+        if src_grants
             .conflicts(src_span)
             .any(|(_, g)| !g.can_extract(false))
         {
             return Err(Error::new(EBUSY));
         }
-        if src
-            .grants
+        if src_grants
             .conflicts(src_span)
             .any(|(_, g)| !g.can_have_flags(new_flags))
         {
@@ -474,7 +461,10 @@ impl AddrSpace {
 
         if new_page_count < src_span.count {
             let unpin = false;
-            notify_files.append(&mut src.munmap(
+            notify_files.append(&mut Self::munmap_inner(
+                src_grants,
+                src_mapper,
+                src_flusher,
                 PageSpan::new(
                     src_span.base.next_by(new_page_count),
                     src_span.count - new_page_count,
@@ -485,9 +475,7 @@ impl AddrSpace {
 
         let mut remaining_src_span = PageSpan::new(src_span.base, new_page_count);
 
-        //let next = |mut src_opt: Option<&mut AddrSpace>, dst: &mut AddrSpace, rem| { let opt = src_opt.as_deref_mut().unwrap_or(dst).grants.conflicts(rem).next(); opt.map(|(b, _)| b) };
-        let to_remap = src
-            .grants
+        let to_remap = src_grants
             .conflicts(remaining_src_span)
             .map(|(b, _)| b)
             .collect::<Vec<_>>();
@@ -511,9 +499,8 @@ impl AddrSpace {
                 )?);
             }
 
-            let src = src_opt.as_deref_mut().unwrap_or(&mut *dst);
-            let grant = src
-                .grants
+        let (src_grants, _, _) = src_opt.as_mut().map_or((&mut dst.grants, &mut dst.table.utable, &mut dst_flusher), |(g, m, f)| (&mut *g, &mut *m, &mut *f));
+            let grant = src_grants
                 .remove(grant_base)
                 .expect("grant cannot disappear");
             let grant_span = PageSpan::new(grant.base, grant.info.page_count());
@@ -522,22 +509,24 @@ impl AddrSpace {
                 .expect("called intersect(), must succeed");
 
             if let Some(before) = before {
-                src.grants.insert(before);
+                src_grants.insert(before);
             }
             if let Some(after) = after {
-                src.grants.insert(after);
+                src_grants.insert(after);
             }
 
             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
             let middle_span = middle.span();
 
-            dst.grants.insert(match src_opt {
-                Some(ref mut different_src) => middle.transfer(
+            let mut src_opt = src_opt.as_mut().map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
+
+            dst.grants.insert(match src_opt.as_mut() {
+                Some((_, other_mapper, other_flusher)) => middle.transfer(
                     dst_grant_base,
                     page_flags(new_flags),
-                    &mut different_src.table.utable,
+                    other_mapper,
                     Some(&mut dst.table.utable),
-                    &mut src_flusher,
+                    other_flusher,
                     &mut dst_flusher,
                 )?,
                 None => middle.transfer(
@@ -545,8 +534,8 @@ impl AddrSpace {
                     page_flags(new_flags),
                     &mut dst.table.utable,
                     None,
-                    &mut src_flusher,
-                    (),
+                    &mut dst_flusher,
+                    &mut NopFlusher,
                 )?,
             });
 
@@ -960,7 +949,7 @@ impl Grant {
         page: Page,
         flags: PageFlags<RmmA>,
         mapper: &mut PageMapper,
-        mut flusher: impl Flusher<RmmA>,
+        flusher: &mut Flusher,
         is_pinned: bool,
     ) -> Result<Grant> {
         let info = get_page_info(frame).expect("needs page info");
@@ -1004,7 +993,7 @@ impl Grant {
         span: PageSpan,
         flags: PageFlags<RmmA>,
         mapper: &mut PageMapper,
-        mut flusher: impl Flusher<RmmA>,
+        flusher: &mut impl GenericFlusher,
     ) -> Result<Grant> {
         const MAX_EAGER_PAGES: usize = 4096;
 
@@ -1042,7 +1031,7 @@ impl Grant {
         span: PageSpan,
         flags: PageFlags<RmmA>,
         mapper: &mut PageMapper,
-        mut flusher: impl Flusher<RmmA>,
+        flusher: &mut Flusher,
     ) -> Result<Grant, Enomem> {
         let base = crate::memory::allocate_frames(span.count).ok_or(Enomem)?;
 
@@ -1079,7 +1068,7 @@ impl Grant {
         span: PageSpan,
         flags: PageFlags<RmmA>,
         mapper: &mut PageMapper,
-        mut flusher: impl Flusher<RmmA>,
+        flusher: &mut Flusher,
         shared: bool,
     ) -> Result<Grant, Enomem> {
         const MAX_EAGER_PAGES: usize = 16;
@@ -1135,7 +1124,7 @@ impl Grant {
         dst_base: Page,
         src_info: &GrantInfo,
         _mapper: &mut PageMapper,
-        _dst_flusher: impl Flusher<RmmA>,
+        _dst_flusher: &mut impl GenericFlusher,
         _eager: bool,
     ) -> Result<Grant, Enomem> {
         Ok(Grant {
@@ -1159,17 +1148,19 @@ impl Grant {
         file_ref: GrantFileRef,
         src: Option<BorrowedFmapSource<'_>>,
         mapper: &mut PageMapper,
-        mut flusher: impl Flusher<RmmA>,
+        mut flusher: &mut Flusher,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
+            let mut src_addrspace = &mut *guard;
+            let mut src_flusher_state = Flusher::with_cpu_set(&mut src_addrspace.used_by).detach();
             for dst_page in span.pages() {
                 let src_page = src.src_base.next_by(dst_page.offset_from(span.base));
 
                 let (frame, is_cow) = match src.mode {
                     MmapMode::Shared => {
                         // TODO: Error code for "scheme responded with unmapped page"?
-                        let frame = match guard.table.utable.translate(src_page.start_address()) {
+                        let frame = match src_addrspace.table.utable.translate(src_page.start_address()) {
                             Some((phys, _)) => Frame::containing_address(phys),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
@@ -1188,6 +1179,7 @@ impl Grant {
 
                         (frame, false)
                     }
+
                     /*
                     MmapMode::Cow => unsafe {
                         let frame = match guard.table.utable.remap_with(src_page.start_address(), |flags| flags.write(false)) {
@@ -1205,6 +1197,7 @@ impl Grant {
                     */
                     MmapMode::Cow => return Err(Error::new(EOPNOTSUPP)),
                 };
+                src_addrspace = &mut *guard;
 
                 let frame = if let Some(page_info) = get_page_info(frame) {
                     match page_info.add_ref(RefKind::Shared) {
@@ -1212,14 +1205,17 @@ impl Grant {
                         Err(AddRefError::CowToShared) => unsafe {
                             let new_cow_frame = cow(frame, page_info, RefKind::Shared)
                                 .map_err(|_| Error::new(ENOMEM))?;
-                            let (_, _, flush) = guard
+                            let (_, _, flush) = src_addrspace
                                 .table
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, flags| {
                                     (new_cow_frame.start_address(), flags)
                                 })
                                 .expect("page did exist");
-                            src.flusher.consume(flush);
+
+                            let mut src_flusher = Flusher { active_cpus: &mut src_addrspace.used_by, state: src_flusher_state };
+                            src_flusher.consume(flush);
+                            src_flusher_state = src_flusher.detach();
 
                             new_cow_frame
                         },
@@ -1269,7 +1265,7 @@ impl Grant {
         page_count: usize,
         map_flags: MapFlags,
         dst_mapper: &mut PageMapper,
-        mut dst_flusher: impl Flusher<RmmA>,
+        mut dst_flusher: &mut Flusher,
         eager: bool,
         _allow_phys: bool,
         is_pinned_userscheme_borrow: bool,
@@ -1374,8 +1370,8 @@ impl Grant {
         flags: PageFlags<RmmA>,
         src_mapper: &mut PageMapper,
         dst_mapper: &mut PageMapper,
-        mut src_flusher: impl Flusher<RmmA>,
-        mut dst_flusher: impl Flusher<RmmA>,
+        src_flusher: &mut Flusher,
+        dst_flusher: &mut impl GenericFlusher,
         mode: CopyMappingsMode,
     ) -> Result<Grant, Enomem> {
         let (allows_writable, rk) = match mode {
@@ -1490,8 +1486,8 @@ impl Grant {
         flags: PageFlags<RmmA>,
         src_mapper: &mut PageMapper,
         mut dst_mapper: Option<&mut PageMapper>,
-        mut src_flusher: impl Flusher<RmmA>,
-        mut dst_flusher: impl Flusher<RmmA>,
+        mut src_flusher: &mut Flusher,
+        mut dst_flusher: &mut impl GenericFlusher,
     ) -> Result<Grant> {
         assert!(!self.info.is_pinned());
 
@@ -1526,7 +1522,7 @@ impl Grant {
     pub fn remap(
         &mut self,
         mapper: &mut PageMapper,
-        mut flusher: impl Flusher<RmmA>,
+        mut flusher: &mut Flusher,
         flags: PageFlags<RmmA>,
     ) {
         assert!(self.info.mapped);
@@ -1548,7 +1544,7 @@ impl Grant {
     pub fn unmap(
         mut self,
         mapper: &mut PageMapper,
-        mut flusher: impl Flusher<RmmA>,
+        mut flusher: &mut impl GenericFlusher,
     ) -> UnmapResult {
         assert!(self.info.mapped);
         assert!(!self.info.is_pinned());
@@ -1964,7 +1960,7 @@ impl Drop for AddrSpace {
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
-            let res = grant.unmap(&mut self.table.utable, ());
+            let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
 
             let _ = res.unmap();
         }
@@ -2299,6 +2295,7 @@ fn correct_inner<'l>(
                     drop(guard);
                     drop(addr_space_guard);
 
+                    // FIXME: Can this result in invalid address space state?
                     let ext_addrspace = &foreign_address_space;
                     let (frame, _, _) = {
                         let g = ext_addrspace.write();
@@ -2434,7 +2431,6 @@ pub struct BorrowedFmapSource<'a> {
     // TODO: There should be a method that obtains the lock from the guard.
     pub addr_space_lock: &'a Arc<RwLock<AddrSpace>>,
     pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
-    pub flusher: &'a mut dyn Flusher<RmmA>,
 }
 
 pub fn handle_notify_files(notify_files: Vec<UnmapResult>) {
@@ -2446,4 +2442,50 @@ pub fn handle_notify_files(notify_files: Vec<UnmapResult>) {
 pub enum CopyMappingsMode {
     Owned { cow_file_ref: Option<GrantFileRef> },
     Borrowed,
+}
+
+// TODO: Check if polymorphism is worth it in terms of code size performance penalty vs optimized
+// away checks.
+pub trait GenericFlusher {
+    fn consume(&mut self, flush: PageFlush<RmmA>);
+}
+pub struct NopFlusher;
+impl GenericFlusher for NopFlusher {
+    fn consume(&mut self, flush: PageFlush<RmmA>) {
+        core::mem::forget(flush);
+    }
+}
+impl GenericFlusher for Flusher<'_> {
+    fn consume(&mut self, flush: PageFlush<RmmA>) {
+    }
+}
+struct FlusherState {
+    // TODO: Track *which* pages shall be flushed, to avoid expensive cr3 reloads. Linux defaults
+    // to approx. 32 INVLPGs before a CR3 reload is worth it.
+    dirty: bool,
+}
+
+pub struct Flusher<'asp> {
+    active_cpus: &'asp mut LogicalCpuSet,
+    state: FlusherState,
+}
+impl<'asp> Flusher<'asp> {
+    fn with_cpu_set(set: &'asp mut LogicalCpuSet) -> Self {
+        Self {
+            active_cpus: set,
+            state: FlusherState {
+                dirty: false,
+            },
+        }
+    }
+    fn detach(mut self) -> FlusherState {
+        let state = core::mem::replace(&mut self.state, FlusherState { dirty: false });
+        core::mem::forget(self);
+        state
+    }
+}
+impl Drop for Flusher<'_> {
+    fn drop(&mut self) {
+        todo!()
+    }
 }

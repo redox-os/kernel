@@ -826,7 +826,6 @@ impl UserInner {
             description: desc,
             base_offset: map.offset,
         };
-        let mut flusher;
 
         let src = match base_page_opt {
             Some(base_addr) => Some({
@@ -842,10 +841,6 @@ impl UserInner {
                         MmapMode::Shared
                     } else {
                         MmapMode::Cow
-                    },
-                    flusher: {
-                        flusher = InactiveFlusher::new();
-                        &mut flusher
                     },
                 }
             }),

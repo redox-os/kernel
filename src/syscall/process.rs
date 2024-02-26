@@ -1,11 +1,11 @@
 use alloc::{sync::Arc, vec::Vec};
-use core::mem;
+use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, PageSpan},
+    memory::{AddrSpace, PageSpan, Grant},
     ContextId, WaitpidKey,
 };
 
@@ -584,26 +584,18 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
                 .expect("expected bootstrap context to have an address space"),
         );
 
-        // TODO: Use AddrSpace::mmap.
-        let mut addr_space = addr_space.write();
-        let addr_space = &mut *addr_space;
+        let base = Page::containing_address(VirtualAddress::new(0));
+        let flags = MapFlags::PROT_EXEC | MapFlags::PROT_READ | MapFlags::PROT_WRITE;
 
-        // TODO: Mark as owned and then support reclaiming the memory to the allocator if
-        // deallocated?
-        addr_space.grants.insert(
-            context::memory::Grant::zeroed(
-                PageSpan::new(
-                    Page::containing_address(VirtualAddress::new(0)),
-                    bootstrap.page_count,
-                ),
-                PageFlags::new().user(true).write(true).execute(true),
-                &mut addr_space.table.utable,
-                PageFlushAll::new(),
-                false, // is_shared
-            )
-            .expect("failed to physmap bootstrap memory"),
-        );
+        let page_count = NonZeroUsize::new(bootstrap.page_count)
+            .expect("bootstrap contained no pages!");
+
+        let _base_page = addr_space.write().mmap(Some(base), page_count, flags, &mut Vec::new(), |page, flags, mapper, flusher| {
+            let shared = false;
+            Ok(Grant::zeroed(PageSpan::new(page, bootstrap.page_count), flags, mapper, flusher, shared)?)
+        });
     }
+
     // TODO: Not all arches do linear mapping
     UserSliceWo::new(0, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
