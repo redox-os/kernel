@@ -13,7 +13,7 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::{EventFlags, MunmapFlags, SendFdFlags, SEEK_CUR, SEEK_END, SEEK_SET};
 
 use crate::{
-    context::{file::FileDescription, memory::AddrSpace},
+    context::{file::FileDescription, memory::{AddrSpace, AddrSpaceWrapper}},
     syscall::{
         error::*,
         usercopy::{UserSliceRo, UserSliceWo},
@@ -381,7 +381,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfmap(
         &self,
         number: usize,
-        addr_space: &Arc<RwLock<AddrSpace>>,
+        addr_space: &Arc<AddrSpaceWrapper>,
         map: &crate::syscall::data::Map,
         consume: bool,
     ) -> Result<usize> {

@@ -23,7 +23,7 @@ use crate::syscall::{
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
 
-use super::memory::GrantFileRef;
+use super::memory::{GrantFileRef, AddrSpaceWrapper};
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
@@ -198,7 +198,7 @@ pub struct Context {
     /// but can be None while the context is being reaped or when a new context is created but has
     /// not yet had its address space changed. Note that these are only for user mappings; kernel
     /// mappings are universal and independent on address spaces or contexts.
-    pub addr_space: Option<Arc<RwLock<AddrSpace>>>,
+    pub addr_space: Option<Arc<AddrSpaceWrapper>>,
     /// The name of the context
     // TODO: fixed size ArrayString?
     pub name: Cow<'static, str>,
@@ -392,16 +392,16 @@ impl Context {
         }
     }
 
-    pub fn addr_space(&self) -> Result<&Arc<RwLock<AddrSpace>>> {
+    pub fn addr_space(&self) -> Result<&Arc<AddrSpaceWrapper>> {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
     pub fn set_addr_space(
         &mut self,
-        addr_space: Arc<RwLock<AddrSpace>>,
-    ) -> Option<Arc<RwLock<AddrSpace>>> {
+        addr_space: Arc<AddrSpaceWrapper>,
+    ) -> Option<Arc<AddrSpaceWrapper>> {
         if self.id == super::context_id() {
             unsafe {
-                addr_space.read().table.utable.make_current();
+                addr_space.inner.read().table.utable.make_current();
             }
         }
 

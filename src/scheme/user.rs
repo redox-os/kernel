@@ -24,7 +24,7 @@ use crate::{
         context::HardBlockedReason,
         file::{FileDescription, FileDescriptor},
         memory::{
-            AddrSpace, BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, DANGLING,
+            AddrSpace, BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, DANGLING, AddrSpaceWrapper,
         },
         BorrowedHtBuf, Context, Status,
     },
@@ -242,7 +242,7 @@ impl UserInner {
         tail.buf_mut()[..buf.len()].copy_from_slice(buf);
 
         let is_pinned = true;
-        let dst_page = dst_addr_space.write().mmap_anywhere(
+        let dst_page = dst_addr_space.inner.write().mmap_anywhere(
             ONE,
             PROT_READ,
             |dst_page, flags, mapper, flusher| {
@@ -342,7 +342,7 @@ impl UserInner {
             .split_at(core::cmp::min(align_offset, user_buf.len()))
             .expect("split must succeed");
 
-        let mut dst_space = dst_space_lock.write();
+        let mut dst_space = dst_space_lock.inner.write();
 
         let free_span = dst_space
             .grants
@@ -434,7 +434,7 @@ impl UserInner {
 
                     Ok(Grant::borrow(
                         Arc::clone(&cur_space_lock),
-                        &mut *cur_space_lock.write(),
+                        &mut *cur_space_lock.inner.write(),
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -667,6 +667,7 @@ impl UserInner {
                     let context = context.upgrade().ok_or(Error::new(ESRCH))?;
 
                     let (frame, _) = AddrSpace::current()?
+                        .inner
                         .read()
                         .table
                         .utable
@@ -736,7 +737,7 @@ impl UserInner {
 
     fn fmap_inner(
         &self,
-        dst_addr_space: Arc<RwLock<AddrSpace>>,
+        dst_addr_space: Arc<AddrSpaceWrapper>,
         file: usize,
         map: &Map,
     ) -> Result<usize> {
@@ -836,7 +837,7 @@ impl UserInner {
                 BorrowedFmapSource {
                     src_base: Page::containing_address(VirtualAddress::new(base_addr)),
                     addr_space_lock,
-                    addr_space_guard: addr_space_lock.write(),
+                    addr_space_guard: addr_space_lock.inner.write(),
                     mode: if map.flags.contains(MapFlags::MAP_SHARED) {
                         MmapMode::Shared
                     } else {
@@ -849,7 +850,7 @@ impl UserInner {
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
-        let dst_base = dst_addr_space.write().mmap(
+        let dst_base = dst_addr_space.inner.write().mmap(
             dst_base,
             page_count_nz,
             map.flags,
@@ -878,7 +879,7 @@ pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     base: usize,
     len: usize,
 
-    space: Option<Arc<RwLock<AddrSpace>>>,
+    space: Option<Arc<AddrSpaceWrapper>>,
 
     head: CopyInfo<READ, WRITE>,
     tail: CopyInfo<READ, WRITE>,
@@ -935,6 +936,7 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         let unpin = true;
         space
+            .inner
             .write()
             .munmap(PageSpan::new(first_page, page_count), unpin)?;
 
@@ -1160,7 +1162,7 @@ impl KernelScheme for UserScheme {
     fn kfmap(
         &self,
         file: usize,
-        addr_space: &Arc<RwLock<AddrSpace>>,
+        addr_space: &Arc<AddrSpaceWrapper>,
         map: &Map,
         _consume: bool,
     ) -> Result<usize> {

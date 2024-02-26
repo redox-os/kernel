@@ -52,7 +52,7 @@ pub fn virttophys(virtual_address: usize) -> Result<usize> {
     enforce_root()?;
 
     let addr_space = Arc::clone(context::current()?.read().addr_space()?);
-    let addr_space = addr_space.read();
+    let addr_space = addr_space.inner.read();
 
     match addr_space
         .table

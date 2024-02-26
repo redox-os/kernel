@@ -244,9 +244,9 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
-            let was_new = spaces.insert(space.read().table.utable.table().phys().data());
-            RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
-            check_consistency(&mut space.write(), was_new, &mut tree);
+            let was_new = spaces.insert(space.inner.read().table.utable.table().phys().data());
+            RmmA::set_table(TableKind::User, space.inner.read().table.utable.table().phys());
+            check_consistency(&mut space.inner.write(), was_new, &mut tree);
         }
 
         println!("status: {:?}", context.status);
@@ -260,7 +260,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             );
         }
         if let Some(ref addr_space) = context.addr_space {
-            let addr_space = addr_space.read();
+            let addr_space = addr_space.inner.read();
             if !addr_space.grants.is_empty() {
                 println!("grants:");
                 for (base, info) in addr_space.grants.iter() {
@@ -285,6 +285,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             for _ in 0..64 {
                 if context.addr_space.as_ref().map_or(false, |space| {
                     space
+                        .inner
                         .read()
                         .table
                         .utable

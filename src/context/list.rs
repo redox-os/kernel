@@ -4,6 +4,7 @@ use core::{iter, mem};
 use spinning_top::RwSpinlock;
 
 use super::context::{Context, ContextId};
+use super::memory::{AddrSpaceWrapper, AddrSpace};
 use crate::syscall::error::{Error, Result, EAGAIN};
 
 /// Context list type
@@ -107,7 +108,7 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let _ = context.set_addr_space(super::memory::new_addrspace()?);
+            let _ = context.set_addr_space(AddrSpaceWrapper::new()?);
 
             let mut stack = vec![0; 65_536].into_boxed_slice();
             let mut offset = stack.len();

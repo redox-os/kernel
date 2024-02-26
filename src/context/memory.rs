@@ -1,5 +1,5 @@
 use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
-use core::{cmp, fmt::Debug, num::NonZeroUsize, sync::atomic::Ordering};
+use core::{cmp, fmt::Debug, num::NonZeroUsize, sync::atomic::{Ordering, AtomicU32}};
 use hashbrown::HashMap;
 use rmm::{Arch as _, PageFlush};
 use spin::{RwLock, RwLockUpgradableGuard, RwLockWriteGuard};
@@ -73,8 +73,18 @@ impl UnmapResult {
     }
 }
 
-pub fn new_addrspace() -> Result<Arc<RwLock<AddrSpace>>> {
-    Arc::try_new(RwLock::new(AddrSpace::new()?)).map_err(|_| Error::new(ENOMEM))
+#[derive(Debug)]
+pub struct AddrSpaceWrapper {
+    pub inner: RwLock<AddrSpace>,
+    pub tlb_ack: AtomicU32,
+}
+impl AddrSpaceWrapper {
+    pub fn new() -> Result<Arc<Self>> {
+        Arc::try_new(Self {
+            inner: RwLock::new(AddrSpace::new()?),
+            tlb_ack: AtomicU32::new(0),
+        }).map_err(|_| Error::new(ENOMEM))
+    }
 }
 
 #[derive(Debug)]
@@ -89,20 +99,18 @@ pub struct AddrSpace {
     pub mmap_min: usize,
 }
 impl AddrSpace {
-    pub fn current() -> Result<Arc<RwLock<Self>>> {
+    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
         Ok(Arc::clone(super::current()?.read().addr_space()?))
     }
 
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    pub fn try_clone(&mut self) -> Result<Arc<RwLock<Self>>> {
-        let mut new = new_addrspace()?;
+    pub fn try_clone(&mut self) -> Result<Arc<AddrSpaceWrapper>> {
+        let mut new_arc = AddrSpaceWrapper::new()?;
 
-        let new_guard = Arc::get_mut(&mut new)
-            .expect("expected new address space Arc not to be aliased")
-            .get_mut();
+        let new = Arc::get_mut(&mut new_arc)
+            .expect("expected new address space Arc not to be aliased");
 
         let this_mapper = &mut self.table.utable;
-        let new_mapper = &mut new_guard.table.utable;
         let mut this_flusher = Flusher::with_cpu_set(&mut self.used_by);
 
         for (grant_base, grant_info) in self.grants.iter() {
@@ -127,7 +135,7 @@ impl AddrSpace {
                     base.clone(),
                     PageSpan::new(grant_base, grant_info.page_count),
                     grant_info.flags,
-                    new_mapper,
+                    &mut new.inner.get_mut().table.utable,
                     &mut NopFlusher,
                 )?,
                 Provider::Allocated {
@@ -139,7 +147,7 @@ impl AddrSpace {
                     grant_info.page_count,
                     grant_info.flags,
                     this_mapper,
-                    new_mapper,
+                    &mut new.inner.get_mut().table.utable,
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Owned {
@@ -155,7 +163,7 @@ impl AddrSpace {
                     grant_info.page_count,
                     grant_info.flags,
                     this_mapper,
-                    new_mapper,
+                    &mut new.inner.get_mut().table.utable,
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Borrowed,
@@ -172,16 +180,16 @@ impl AddrSpace {
                     src_base,
                     grant_base,
                     grant_info,
-                    new_mapper,
+                    &mut new.inner.get_mut().table.utable,
                     &mut NopFlusher,
                     false,
                 )?,
                 Provider::FmapBorrowed { .. } => continue,
             };
 
-            new_guard.grants.insert(new_grant);
+            new.inner.get_mut().grants.insert(new_grant);
         }
-        Ok(new)
+        Ok(new_arc)
     }
     pub fn new() -> Result<Self> {
         Ok(Self {
@@ -912,7 +920,7 @@ pub enum Provider {
 
     /// The memory is borrowed directly from another address space.
     External {
-        address_space: Arc<RwLock<AddrSpace>>,
+        address_space: Arc<AddrSpaceWrapper>,
         src_base: Page,
         is_pinned_userscheme_borrow: bool,
     },
@@ -1119,7 +1127,7 @@ impl Grant {
     // XXX: borrow_grant is needed because of the borrow checker (iterator invalidation), maybe
     // borrow_grant/borrow can be abstracted somehow?
     pub fn borrow_grant(
-        src_address_space_lock: Arc<RwLock<AddrSpace>>,
+        src_address_space_lock: Arc<AddrSpaceWrapper>,
         src_base: Page,
         dst_base: Page,
         src_info: &GrantInfo,
@@ -1258,7 +1266,7 @@ impl Grant {
     /// the page tables of the source pages, but once present in the destination address space,
     /// pages that are unmaped or moved will not be made visible to the destination address space.
     pub fn borrow(
-        src_address_space_lock: Arc<RwLock<AddrSpace>>,
+        src_address_space_lock: Arc<AddrSpaceWrapper>,
         src_address_space: &mut AddrSpace,
         src_base: Page,
         dst_base: Page,
@@ -1555,7 +1563,7 @@ impl Grant {
             ..
         } = self.info.provider
         {
-            let mut guard = address_space.write();
+            let mut guard = address_space.inner.write();
 
             for (_, grant) in guard
                 .grants
@@ -2156,14 +2164,14 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
     };
 
     let lock = &addr_space_lock;
-    let (_, flush, _) = correct_inner(lock, lock.write(), faulting_page, access, 0)?;
+    let (_, flush, _) = correct_inner(lock, lock.inner.write(), faulting_page, access, 0)?;
 
     flush.flush();
 
     Ok(())
 }
 fn correct_inner<'l>(
-    addr_space_lock: &'l Arc<RwLock<AddrSpace>>,
+    addr_space_lock: &'l Arc<AddrSpaceWrapper>,
     mut addr_space_guard: RwLockWriteGuard<'l, AddrSpace>,
     faulting_page: Page,
     access: AccessMode,
@@ -2274,7 +2282,7 @@ fn correct_inner<'l>(
                 return Err(PfError::NonfatalInternalError);
             }
 
-            let mut guard = foreign_address_space.upgradeable_read();
+            let mut guard = foreign_address_space.inner.upgradeable_read();
             let src_page = src_base.next_by(pages_from_grant_start);
 
             if let Some(_) = guard.grants.contains(src_page) {
@@ -2298,7 +2306,7 @@ fn correct_inner<'l>(
                     // FIXME: Can this result in invalid address space state?
                     let ext_addrspace = &foreign_address_space;
                     let (frame, _, _) = {
-                        let g = ext_addrspace.write();
+                        let g = ext_addrspace.inner.write();
                         correct_inner(
                             ext_addrspace,
                             g,
@@ -2308,9 +2316,9 @@ fn correct_inner<'l>(
                         )?
                     };
 
-                    addr_space_guard = addr_space_lock.write();
+                    addr_space_guard = addr_space_lock.inner.write();
                     addr_space = &mut *addr_space_guard;
-                    guard = foreign_address_space.upgradeable_read();
+                    guard = foreign_address_space.inner.upgradeable_read();
 
                     frame
                 };
@@ -2395,7 +2403,7 @@ fn correct_inner<'l>(
                 .take()
                 .ok_or(PfError::NonfatalInternalError)?;
 
-            addr_space_guard = addr_space_lock.write();
+            addr_space_guard = addr_space_lock.inner.write();
             addr_space = &mut *addr_space_guard;
 
             log::info!("Got frame {:?} from external fmap", frame);
@@ -2429,7 +2437,7 @@ pub struct BorrowedFmapSource<'a> {
     pub src_base: Page,
     pub mode: MmapMode,
     // TODO: There should be a method that obtains the lock from the guard.
-    pub addr_space_lock: &'a Arc<RwLock<AddrSpace>>,
+    pub addr_space_lock: &'a Arc<AddrSpaceWrapper>,
     pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
 }
 

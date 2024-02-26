@@ -234,13 +234,13 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
                 .map_or(true, |prev_space| !Arc::ptr_eq(prev_space, next_space))
             {
                 if let Some(ref prev_space) = prev.addr_space {
-                    prev_space.read().used_by.atomic_clear(this_cpu);
+                    prev_space.inner.read().used_by.atomic_clear(this_cpu);
                 }
                 // This lock needs to be held, because if the address space is write-locked by some
                 // context that is e.g. unmapping memory, we either need to switch after its
                 // changes have been made, or it needs to know this context is potentially using
                 // this address space, at that time.
-                let next_space = next_space.read();
+                let next_space = next_space.inner.read();
 
                 next_space.used_by.atomic_set(this_cpu);
                 next_space.table.utable.make_current();
@@ -250,7 +250,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             // The next context is kernel-only, so switch to the page table without any user
             // mappings.
             if let Some(ref prev_space) = prev.addr_space {
-                prev_space.read().used_by.atomic_clear(this_cpu);
+                prev_space.inner.read().used_by.atomic_clear(this_cpu);
             }
             RmmA::set_table(TableKind::User, empty_cr3());
         }

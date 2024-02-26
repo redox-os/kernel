@@ -3,7 +3,7 @@ use crate::{
     context::{
         self,
         file::FileDescriptor,
-        memory::{handle_notify_files, new_addrspace, AddrSpace, Grant, PageSpan},
+        memory::{handle_notify_files, AddrSpace, Grant, PageSpan, AddrSpaceWrapper},
         Context, ContextId, Status,
     },
     memory::PAGE_SIZE,
@@ -127,7 +127,7 @@ enum Operation {
         filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     },
     AddrSpace {
-        addrspace: Arc<RwLock<AddrSpace>>,
+        addrspace: Arc<AddrSpaceWrapper>,
     },
     CurrentAddrSpace,
 
@@ -135,7 +135,7 @@ enum Operation {
     // types, is that we would rather want the actual switch to occur when closing, as opposed to
     // when writing. This is so that we can actually guarantee that no file descriptors are leaked.
     AwaitingAddrSpaceChange {
-        new: Arc<RwLock<AddrSpace>>,
+        new: Arc<AddrSpaceWrapper>,
         new_sp: usize,
         new_ip: usize,
     },
@@ -153,7 +153,7 @@ enum Operation {
     CurrentSigactions,
     AwaitingSigactionsChange(Arc<RwLock<Vec<(SigAction, usize)>>>),
 
-    MmapMinAddr(Arc<RwLock<AddrSpace>>),
+    MmapMinAddr(Arc<AddrSpaceWrapper>),
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -692,7 +692,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn kfmap(
         &self,
         id: usize,
-        dst_addr_space: &Arc<RwLock<AddrSpace>>,
+        dst_addr_space: &Arc<AddrSpaceWrapper>,
         map: &crate::syscall::data::Map,
         consume: bool,
     ) -> Result<usize> {
@@ -717,8 +717,8 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
 
-                let mut src_addr_space = addrspace.write();
-                let mut dst_addr_space = dst_addr_space.write();
+                let mut src_addr_space = addrspace.inner.write();
+                let mut dst_addr_space = dst_addr_space.inner.write();
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -901,7 +901,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 for (dst, (grant_base, grant_info)) in dst
                     .iter_mut()
-                    .zip(addrspace.read().grants.iter().skip(orig_offset))
+                    .zip(addrspace.inner.read().grants.iter().skip(orig_offset))
                 {
                     *dst = GrantDesc {
                         base: grant_base.start_address().data(),
@@ -981,7 +981,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 read_from(buf, &data.buf, &mut data.offset)
             }
             Operation::MmapMinAddr(ref addrspace) => {
-                buf.write_usize(addrspace.read().mmap_min)?;
+                buf.write_usize(addrspace.inner.read().mmap_min)?;
                 Ok(mem::size_of::<usize>())
             }
             Operation::SchedAffinity => {
@@ -1053,7 +1053,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                         let unpin = false;
                         addrspace
-                            .write()
+                            .inner.write()
                             .munmap(PageSpan::new(page, page_count), unpin)?;
                     }
                     ADDRSPACE_OP_MPROTECT => {
@@ -1062,7 +1062,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
                         addrspace
-                            .write()
+                            .inner.write()
                             .mprotect(PageSpan::new(page, page_count), flags)?;
                     }
                     _ => return Err(Error::new(EINVAL)),
@@ -1304,7 +1304,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
                     return Err(Error::new(EINVAL));
                 }
-                addrspace.write().mmap_min = val;
+                addrspace.inner.write().mmap_min = val;
                 Ok(mem::size_of::<usize>())
             }
             Operation::SchedAffinity => {
@@ -1441,10 +1441,10 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     // TODO: Better way to obtain new empty address spaces, perhaps using SYS_OPEN. But
                     // in that case, what scheme?
                     b"empty" => Operation::AddrSpace {
-                        addrspace: new_addrspace()?,
+                        addrspace: AddrSpaceWrapper::new()?,
                     },
                     b"exclusive" => Operation::AddrSpace {
-                        addrspace: addrspace.write().try_clone()?,
+                        addrspace: addrspace.inner.write().try_clone()?,
                     },
                     b"mmap-min-addr" => Operation::MmapMinAddr(Arc::clone(addrspace)),
 
@@ -1461,7 +1461,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         let page = Page::containing_address(VirtualAddress::new(page_addr));
 
                         match addrspace
-                            .read()
+                            .inner.read()
                             .grants
                             .contains(page)
                             .ok_or(Error::new(EINVAL))?

@@ -5,7 +5,7 @@ use rmm::PhysicalAddress;
 use spin::RwLock;
 
 use crate::{
-    context::memory::{handle_notify_files, AddrSpace, Grant, PageSpan},
+    context::memory::{handle_notify_files, AddrSpace, Grant, PageSpan, AddrSpaceWrapper},
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
     paging::VirtualAddress,
 };
@@ -68,7 +68,7 @@ fn from_raw(raw: u32) -> Option<(HandleTy, MemoryType, HandleFlags)> {
 
 impl MemoryScheme {
     pub fn fmap_anonymous(
-        addr_space: &Arc<RwLock<AddrSpace>>,
+        addr_space: &Arc<AddrSpaceWrapper>,
         map: &Map,
         is_phys_contiguous: bool,
     ) -> Result<usize> {
@@ -83,7 +83,7 @@ impl MemoryScheme {
             return Err(Error::new(EOPNOTSUPP));
         }
 
-        let page = addr_space.write().mmap(
+        let page = addr_space.inner.write().mmap(
             (map.address != 0).then_some(span.base),
             page_count,
             map.flags,
@@ -132,6 +132,7 @@ impl MemoryScheme {
         let page_count = NonZeroUsize::new(size.div_ceil(PAGE_SIZE)).ok_or(Error::new(EINVAL))?;
 
         AddrSpace::current()?
+            .inner
             .write()
             .mmap_anywhere(
                 page_count,
@@ -234,7 +235,7 @@ impl KernelScheme for MemoryScheme {
     fn kfmap(
         &self,
         id: usize,
-        addr_space: &Arc<RwLock<AddrSpace>>,
+        addr_space: &Arc<AddrSpaceWrapper>,
         map: &Map,
         _consume: bool,
     ) -> Result<usize> {
