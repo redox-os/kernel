@@ -222,6 +222,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
 }
 
 bitflags! {
+    #[derive(Clone, Copy, Debug)]
     pub struct KcpuFeatures: usize {
         const SMAP = 1;
         const FSGSBASE = 2;

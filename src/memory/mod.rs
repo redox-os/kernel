@@ -204,6 +204,7 @@ const RC_SHARED_NOT_COW: usize = 1 << (usize::BITS - 1);
 // userspace data page, or kernel heap page). This could be done only when debug assertions are
 // enabled.
 bitflags::bitflags! {
+    #[derive(Debug)]
     pub struct FrameFlags: usize {
         const NONE = 0;
     }

@@ -10,7 +10,7 @@ rustc-cfg = "0.3.0"
 toml = "0.7"
 
 [dependencies]
-bitflags = "1.2.1"
+bitflags = "2"
 bitfield = "0.13.2"
 hashbrown = { version = "0.14.3", default-features = false, features = ["ahash", "inline-more"] }
 linked_list_allocator = "0.9.0"

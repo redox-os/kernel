@@ -1,5 +1,7 @@
+use core::cell::Cell;
 use core::sync::atomic::{AtomicUsize, AtomicPtr, Ordering};
 
+use crate::context::memory::AddrSpaceWrapper;
 use crate::cpu_set::MAX_CPU_COUNT;
 use crate::{context::switch::ContextSwitchPercpu, cpu_set::LogicalCpuId};
 
@@ -18,6 +20,8 @@ pub struct PercpuBlock {
     // flag to be cleared if it was already set.
     pub nmi_flags_lock: AtomicUsize,
 
+    pub current_addrspace: Cell<*const AddrSpaceWrapper>,
+
     // TODO: Put mailbox queues here, e.g. for TLB shootdown? Just be sure to 128-byte align it
     // first to avoid cache invalidation.
     #[cfg(feature = "profiling")]
@@ -30,7 +34,8 @@ static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] = [NU
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
 
 bitflags::bitflags! {
-    struct NmiReasons: usize {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct NmiReasons: usize {
         const TLB_SHOOTDOWN = 1;
 
         // TODO: Profiling code wakes all CPUs up, so use a global and percpu ack counter for that.
@@ -57,6 +62,8 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
                 core::hint::spin_loop();
             }
         }
+
+        crate::arch::send_tlb_nmi(target);
     } else {
         for id in 0..crate::cpu_count() {
             // TODO: Optimize: use global counter and percpu ack counters.

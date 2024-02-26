@@ -582,7 +582,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
         );
 
         let base = Page::containing_address(VirtualAddress::new(0));
-        let flags = MapFlags::PROT_EXEC | MapFlags::PROT_READ | MapFlags::PROT_WRITE;
+        let flags = MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_EXEC | MapFlags::PROT_READ | MapFlags::PROT_WRITE;
 
         let page_count = NonZeroUsize::new(bootstrap.page_count)
             .expect("bootstrap contained no pages!");

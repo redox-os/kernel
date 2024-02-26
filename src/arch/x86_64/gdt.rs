@@ -1,6 +1,6 @@
 //! Global descriptor table
 
-use core::{convert::TryInto, mem, sync::atomic::AtomicUsize};
+use core::{convert::TryInto, mem, sync::atomic::AtomicUsize, cell::Cell};
 
 use crate::{
     cpu_set::LogicalCpuId,
@@ -140,17 +140,17 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 }
 
 #[cfg(feature = "pti")]
-pub unsafe fn set_tss_stack(stack: usize) {
+pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
-    core::ptr::addr_of_mut!((*pcr()).tss.rsp[0])
+    core::ptr::addr_of_mut!((*pcr).tss.rsp[0])
         .write_unaligned((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
     PTI_CONTEXT_STACK = stack;
 }
 
 #[cfg(not(feature = "pti"))]
-pub unsafe fn set_tss_stack(stack: usize) {
+pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     // TODO: If this increases performance, read gs:[offset] directly
-    core::ptr::addr_of_mut!((*pcr()).tss.rsp[0]).write_unaligned(stack as u64);
+    core::ptr::addr_of_mut!((*pcr).tss.rsp[0]).write_unaligned(stack as u64);
 }
 
 // Initialize startup GDT
@@ -231,7 +231,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
 
     // Set the stack pointer to use when coming back from userspace.
-    set_tss_stack(stack_offset);
+    set_tss_stack(pcr, stack_offset);
 
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
@@ -240,6 +240,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         cpu_id,
         switch_internals: Default::default(),
         nmi_flags_lock: AtomicUsize::new(0),
+        current_addrspace: Cell::new(core::ptr::null_mut()),
 
         #[cfg(feature = "profiling")]
         profiling: None,

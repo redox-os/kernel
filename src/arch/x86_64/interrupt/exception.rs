@@ -1,5 +1,8 @@
+use core::sync::atomic::Ordering;
+
 use x86::irq::PageFaultError;
 
+use crate::percpu::{PercpuBlock, NmiReasons};
 use crate::{
     interrupt::stack_trace, interrupt_error, interrupt_stack, memory::GenericPfFlags,
     paging::VirtualAddress, ptrace, syscall::flag::*,
@@ -40,13 +43,26 @@ interrupt_stack!(debug, @paranoid, |stack| {
 });
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
-    #[cfg(feature = "profiling")]
-    crate::profiling::nmi_handler(stack);
+    let percpu = PercpuBlock::current();
 
-    #[cfg(not(feature = "profiling"))]
-    {
-        println!("Non-maskable interrupt");
-        stack.dump();
+    let reasons = NmiReasons::from_bits_retain(percpu.nmi_flags_lock.load(Ordering::Relaxed));
+
+    if let Some(reason) = reasons.iter().next() {
+        if reason == NmiReasons::TLB_SHOOTDOWN && let Some(addrsp) = percpu.current_addrspace.get().as_ref() {
+            core::arch::asm!("mov rax, cr3; mov cr3, rax", out("rax") _);
+            addrsp.tlb_ack.fetch_add(1, Ordering::Relaxed);
+        }
+
+        percpu.nmi_flags_lock.fetch_and(!reason.bits(), Ordering::Relaxed);
+    } else {
+        #[cfg(feature = "profiling")]
+        crate::profiling::nmi_handler(stack);
+
+        #[cfg(not(feature = "profiling"))]
+        {
+            println!("Non-maskable interrupt");
+            stack.dump();
+        }
     }
 });
 

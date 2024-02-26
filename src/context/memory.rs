@@ -2521,6 +2521,10 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
         let mut affected_cpu_count = 0;
 
         for cpu_id in self.active_cpus.iter_mut() {
+            if cpu_id == crate::cpu_id() {
+                continue;
+            }
+
             crate::percpu::shootdown_tlb_ipi(Some(cpu_id));
             affected_cpu_count += 1;
         }

@@ -367,7 +367,7 @@ impl IdtEntry {
     }
 
     pub fn set_flags(&mut self, flags: IdtFlags) {
-        self.attribute = flags.bits;
+        self.attribute = flags.bits();
     }
 
     pub fn set_ist(&mut self, ist: u8) {

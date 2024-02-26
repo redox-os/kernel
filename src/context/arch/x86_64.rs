@@ -143,9 +143,12 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
+    let pcr = crate::gdt::pcr();
+
     if let Some(ref stack) = next.kstack {
-        crate::gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
+        crate::gdt::set_tss_stack(pcr, stack.as_ptr() as usize + stack.len());
     }
+    let percpu_block = &*core::ptr::addr_of!((*pcr).percpu);
 
     core::arch::asm!(
         alternative2!(
@@ -228,6 +231,8 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         // to dyn or slice fat pointers), and NonNull optimization exists, map_or will hopefully be
         // optimized down to checking prev and next pointers, as next cannot be null.
         Some(ref next_space) => {
+            percpu_block.current_addrspace.set(Arc::as_ptr(next_space));
+
             if prev
                 .addr_space
                 .as_ref()
