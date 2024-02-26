@@ -98,22 +98,21 @@ pub struct AddrSpace {
     /// against null pointers, so fixed mmaps to address zero are still allowed.
     pub mmap_min: usize,
 }
-impl AddrSpace {
-    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
-        Ok(Arc::clone(super::current()?.read().addr_space()?))
-    }
-
+impl AddrSpaceWrapper {
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    pub fn try_clone(&mut self) -> Result<Arc<AddrSpaceWrapper>> {
+    pub fn try_clone(&self) -> Result<Arc<AddrSpaceWrapper>> {
+        let mut guard = self.inner.write();
+        let guard = &mut *guard;
+
         let mut new_arc = AddrSpaceWrapper::new()?;
 
         let new = Arc::get_mut(&mut new_arc)
             .expect("expected new address space Arc not to be aliased");
 
-        let this_mapper = &mut self.table.utable;
-        let mut this_flusher = Flusher::with_cpu_set(&mut self.used_by);
+        let this_mapper = &mut guard.table.utable;
+        let mut this_flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
 
-        for (grant_base, grant_info) in self.grants.iter() {
+        for (grant_base, grant_info) in guard.grants.iter() {
             let new_grant = match grant_info.provider {
                 // No, your temporary UserScheme mappings will not be kept across forks.
                 Provider::External {
@@ -191,23 +190,15 @@ impl AddrSpace {
         }
         Ok(new_arc)
     }
-    pub fn new() -> Result<Self> {
-        Ok(Self {
-            grants: UserGrants::new(),
-            table: setup_new_utable()?,
-            mmap_min: MMAP_MIN_DEFAULT,
-            used_by: LogicalCpuSet::empty(),
-        })
-    }
-    pub fn is_current(&self) -> bool {
-        self.table.utable.is_current()
-    }
-    pub fn mprotect(&mut self, requested_span: PageSpan, flags: MapFlags) -> Result<()> {
-        let mapper = &mut self.table.utable;
-        let mut flusher = Flusher::with_cpu_set(&mut self.used_by);
+    pub fn mprotect(&self, requested_span: PageSpan, flags: MapFlags) -> Result<()> {
+        let mut guard = self.inner.write();
+        let guard = &mut *guard;
+
+        let mapper = &mut guard.table.utable;
+        let mut flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
 
         // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
-        let regions = self
+        let regions = guard
             .grants
             .conflicts(requested_span)
             .map(|(base, info)| {
@@ -222,7 +213,7 @@ impl AddrSpace {
         for grant_span_res in regions {
             let grant_span = grant_span_res?;
 
-            let grant = self
+            let grant = guard
                 .grants
                 .remove(grant_span.base)
                 .expect("grant cannot magically disappear while we hold the lock!");
@@ -235,14 +226,14 @@ impl AddrSpace {
             //log::info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
 
             if let Some(before) = before {
-                self.grants.insert(before);
+                guard.grants.insert(before);
             }
             if let Some(after) = after {
-                self.grants.insert(after);
+                guard.grants.insert(after);
             }
 
             if !grant.info.can_have_flags(flags) {
-                self.grants.insert(grant);
+                guard.grants.insert(grant);
                 return Err(Error::new(EACCES));
             }
 
@@ -259,18 +250,38 @@ impl AddrSpace {
 
             grant.remap(mapper, &mut flusher, new_flags);
             //log::info!("Mprotect grant became {:#?}", grant);
-            self.grants.insert(grant);
+            guard.grants.insert(grant);
         }
         Ok(())
     }
     #[must_use = "needs to notify files"]
     pub fn munmap(
-        &mut self,
+        &self,
         mut requested_span: PageSpan,
         unpin: bool,
     ) -> Result<Vec<UnmapResult>> {
-        let mut flusher = Flusher::with_cpu_set(&mut self.used_by);
-        Self::munmap_inner(&mut self.grants, &mut self.table.utable, &mut flusher, requested_span, unpin)
+        let mut guard = self.inner.write();
+        let guard = &mut *guard;
+
+        let mut flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
+        AddrSpace::munmap_inner(&mut guard.grants, &mut guard.table.utable, &mut flusher, requested_span, unpin)
+    }
+}
+impl AddrSpace {
+    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
+        Ok(Arc::clone(super::current()?.read().addr_space()?))
+    }
+
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            grants: UserGrants::new(),
+            table: setup_new_utable()?,
+            mmap_min: MMAP_MIN_DEFAULT,
+            used_by: LogicalCpuSet::empty(),
+        })
+    }
+    pub fn is_current(&self) -> bool {
+        self.table.utable.is_current()
     }
     fn munmap_inner(
         this_grants: &mut UserGrants,
@@ -341,6 +352,7 @@ impl AddrSpace {
     }
     pub fn mmap_anywhere(
         &mut self,
+        dst_lock: &AddrSpaceWrapper,
         page_count: NonZeroUsize,
         flags: MapFlags,
         map: impl FnOnce(
@@ -350,10 +362,11 @@ impl AddrSpace {
             &mut Flusher,
         ) -> Result<Grant>,
     ) -> Result<Page> {
-        self.mmap(None, page_count, flags, &mut Vec::new(), map)
+        self.mmap(dst_lock, None, page_count, flags, &mut Vec::new(), map)
     }
     pub fn mmap(
         &mut self,
+        dst_lock: &AddrSpaceWrapper,
         requested_base_opt: Option<Page>,
         page_count: NonZeroUsize,
         flags: MapFlags,
@@ -378,7 +391,7 @@ impl AddrSpace {
                     requested_span
                 } else if flags.contains(MapFlags::MAP_FIXED) {
                     let unpin = false;
-                    let mut notify_files = self.munmap(requested_span, unpin)?;
+                    let mut notify_files = Self::munmap_inner(&mut self.grants, &mut self.table.utable, &mut Flusher::with_cpu_set(&mut self.used_by, &dst_lock.tlb_ack), requested_span, unpin)?;
                     notify_files_out.append(&mut notify_files);
 
                     requested_span
@@ -403,24 +416,25 @@ impl AddrSpace {
             selected_span.base,
             page_flags(flags),
             &mut self.table.utable,
-            &mut Flusher::with_cpu_set(&mut self.used_by),
+            &mut Flusher::with_cpu_set(&mut self.used_by, &dst_lock.tlb_ack),
         )?;
         self.grants.insert(grant);
 
         Ok(selected_span.base)
     }
     pub fn r#move(
+        dst_lock: &AddrSpaceWrapper,
         dst: &mut AddrSpace,
-        mut src_opt: Option<&mut AddrSpace>,
+        mut src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
         src_span: PageSpan,
         requested_dst_base: Option<Page>,
         new_page_count: usize,
         new_flags: MapFlags,
         notify_files: &mut Vec<UnmapResult>,
     ) -> Result<Page> {
-        let mut src_owned_opt = src_opt.as_mut().map(|a| (&mut a.grants, &mut a.table.utable, Flusher::with_cpu_set(&mut a.used_by)));
+        let mut src_owned_opt = src_opt.as_mut().map(|(aw, a)| (&mut a.grants, &mut a.table.utable, Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack)));
         let mut src_opt = src_owned_opt.as_mut().map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
-        let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by);
+        let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by, &dst_lock.tlb_ack);
 
         let dst_base = match requested_dst_base {
             Some(base) if new_flags.contains(MapFlags::MAP_FIXED_NOREPLACE) => {
@@ -1155,13 +1169,14 @@ impl Grant {
         new_flags: PageFlags<RmmA>,
         file_ref: GrantFileRef,
         src: Option<BorrowedFmapSource<'_>>,
+        lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
         mut flusher: &mut Flusher,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
             let mut src_addrspace = &mut *guard;
-            let mut src_flusher_state = Flusher::with_cpu_set(&mut src_addrspace.used_by).detach();
+            let mut src_flusher_state = Flusher::with_cpu_set(&mut src_addrspace.used_by, &lock.tlb_ack).detach();
             for dst_page in span.pages() {
                 let src_page = src.src_base.next_by(dst_page.offset_from(span.base));
 
@@ -2463,37 +2478,62 @@ impl GenericFlusher for NopFlusher {
         core::mem::forget(flush);
     }
 }
-impl GenericFlusher for Flusher<'_> {
+impl GenericFlusher for Flusher<'_, '_> {
     fn consume(&mut self, flush: PageFlush<RmmA>) {
+        self.state.dirty = true;
+
+        unsafe {
+            flush.ignore();
+        }
     }
 }
-struct FlusherState {
+struct FlusherState<'addrsp> {
     // TODO: Track *which* pages shall be flushed, to avoid expensive cr3 reloads. Linux defaults
     // to approx. 32 INVLPGs before a CR3 reload is worth it.
     dirty: bool,
+    ackword: &'addrsp AtomicU32,
 }
 
-pub struct Flusher<'asp> {
-    active_cpus: &'asp mut LogicalCpuSet,
-    state: FlusherState,
+pub struct Flusher<'guard, 'addrsp> {
+    active_cpus: &'guard mut LogicalCpuSet,
+    state: FlusherState<'addrsp>,
 }
-impl<'asp> Flusher<'asp> {
-    fn with_cpu_set(set: &'asp mut LogicalCpuSet) -> Self {
+impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
+    fn with_cpu_set(set: &'guard mut LogicalCpuSet, ackword: &'addrsp AtomicU32) -> Self {
         Self {
             active_cpus: set,
             state: FlusherState {
                 dirty: false,
+                ackword,
             },
         }
     }
-    fn detach(mut self) -> FlusherState {
-        let state = core::mem::replace(&mut self.state, FlusherState { dirty: false });
+    fn detach(mut self) -> FlusherState<'addrsp> {
+        static DUMMY: AtomicU32 = AtomicU32::new(0);
+        let state = core::mem::replace(&mut self.state, FlusherState { dirty: false, ackword: &DUMMY });
         core::mem::forget(self);
         state
     }
+    // NOTE: Lock must be held, which must be guaranteed by the caller.
+    fn flush(&mut self) {
+        self.state.ackword.store(0, Ordering::Relaxed);
+
+        let mut affected_cpu_count = 0;
+
+        for cpu_id in self.active_cpus.iter_mut() {
+            crate::percpu::shootdown_tlb_ipi(Some(cpu_id));
+            affected_cpu_count += 1;
+        }
+
+        while self.state.ackword.load(Ordering::Relaxed) < affected_cpu_count {
+            core::hint::spin_loop();
+        }
+
+        self.state.dirty = false;
+    }
 }
-impl Drop for Flusher<'_> {
+impl Drop for Flusher<'_, '_> {
     fn drop(&mut self) {
-        todo!()
+        self.flush();
     }
 }

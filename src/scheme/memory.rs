@@ -84,6 +84,7 @@ impl MemoryScheme {
         }
 
         let page = addr_space.inner.write().mmap(
+            &addr_space,
             (map.address != 0).then_some(span.base),
             page_count,
             map.flags,
@@ -131,10 +132,12 @@ impl MemoryScheme {
         }
         let page_count = NonZeroUsize::new(size.div_ceil(PAGE_SIZE)).ok_or(Error::new(EINVAL))?;
 
-        AddrSpace::current()?
-            .inner
+        let current_addrsp = AddrSpace::current()?;
+
+        let base_page = current_addrsp.inner
             .write()
             .mmap_anywhere(
+                &current_addrsp,
                 page_count,
                 flags,
                 |dst_page, mut page_flags, dst_mapper, dst_flusher| {
@@ -169,8 +172,8 @@ impl MemoryScheme {
                         dst_flusher,
                     )
                 },
-            )
-            .map(|page| page.start_address().data())
+            )?;
+        Ok(base_page.start_address().data())
     }
 }
 impl KernelScheme for MemoryScheme {

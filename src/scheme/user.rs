@@ -243,6 +243,7 @@ impl UserInner {
 
         let is_pinned = true;
         let dst_page = dst_addr_space.inner.write().mmap_anywhere(
+            &dst_addr_space,
             ONE,
             PROT_READ,
             |dst_page, flags, mapper, flusher| {
@@ -375,6 +376,7 @@ impl UserInner {
             }
 
             dst_space.mmap(
+                &dst_space_lock,
                 Some(free_span.base),
                 ONE,
                 map_flags | MAP_FIXED_NOREPLACE,
@@ -413,7 +415,9 @@ impl UserInner {
             .expect("split must succeed");
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
+            let cur_space_lock_clone = Arc::clone(&cur_space_lock);
             dst_space.mmap(
+                &cur_space_lock,
                 Some(first_middle_dst_page),
                 middle_page_count,
                 map_flags | MAP_FIXED_NOREPLACE,
@@ -433,8 +437,8 @@ impl UserInner {
                     let is_pinned_userscheme_borrow = true;
 
                     Ok(Grant::borrow(
-                        Arc::clone(&cur_space_lock),
-                        &mut *cur_space_lock.inner.write(),
+                        Arc::clone(&cur_space_lock_clone),
+                        &mut *cur_space_lock_clone.inner.write(),
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -473,6 +477,7 @@ impl UserInner {
             }
 
             dst_space.mmap(
+                &dst_space_lock,
                 Some(tail_dst_page),
                 ONE,
                 map_flags | MAP_FIXED_NOREPLACE,
@@ -851,6 +856,7 @@ impl UserInner {
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
         let dst_base = dst_addr_space.inner.write().mmap(
+            &dst_addr_space,
             dst_base,
             page_count_nz,
             map.flags,
@@ -861,6 +867,7 @@ impl UserInner {
                     flags,
                     file_ref,
                     src,
+                    &dst_addr_space,
                     mapper,
                     flusher,
                 )
@@ -935,10 +942,7 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
 
         let unpin = true;
-        space
-            .inner
-            .write()
-            .munmap(PageSpan::new(first_page, page_count), unpin)?;
+        space.munmap(PageSpan::new(first_page, page_count), unpin)?;
 
         result
     }

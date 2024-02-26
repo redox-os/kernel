@@ -254,17 +254,13 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     }
 }
 
-pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<usize> {
+pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
     let span = PageSpan::validate_nonempty(VirtualAddress::new(address), size)
         .ok_or(Error::new(EINVAL))?;
 
-    AddrSpace::current()?
-        .inner
-        .write()
-        .mprotect(span, flags)
-        .map(|()| 0)
+    AddrSpace::current()?.mprotect(span, flags)
 }
 
 pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
@@ -591,7 +587,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
         let page_count = NonZeroUsize::new(bootstrap.page_count)
             .expect("bootstrap contained no pages!");
 
-        let _base_page = addr_space.inner.write().mmap(Some(base), page_count, flags, &mut Vec::new(), |page, flags, mapper, flusher| {
+        let _base_page = addr_space.inner.write().mmap(&addr_space, Some(base), page_count, flags, &mut Vec::new(), |page, flags, mapper, flusher| {
             let shared = false;
             Ok(Grant::zeroed(PageSpan::new(page, bootstrap.page_count), flags, mapper, flusher, shared)?)
         });

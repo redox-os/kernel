@@ -1,6 +1,6 @@
 //! Global descriptor table
 
-use core::{convert::TryInto, mem};
+use core::{convert::TryInto, mem, sync::atomic::AtomicUsize};
 
 use crate::{
     cpu_set::LogicalCpuId,
@@ -239,6 +239,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     pcr.percpu = PercpuBlock {
         cpu_id,
         switch_internals: Default::default(),
+        nmi_flags_lock: AtomicUsize::new(0),
 
         #[cfg(feature = "profiling")]
         profiling: None,

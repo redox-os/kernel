@@ -200,7 +200,7 @@ pub fn syscall(
                 SYS_GETGID => getgid(),
                 SYS_GETNS => getns(),
                 SYS_GETUID => getuid(),
-                SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)),
+                SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
                 SYS_MKNS => mkns(UserSlice::ro(
                     b,
                     c.checked_mul(core::mem::size_of::<[usize; 2]>())

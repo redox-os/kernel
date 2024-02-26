@@ -718,7 +718,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
 
                 let mut src_addr_space = addrspace.inner.write();
-                let mut dst_addr_space = dst_addr_space.inner.write();
+                let mut dst_addrsp_guard = dst_addr_space.inner.write();
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -727,8 +727,9 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 // TODO: Validate flags
                 let result_base = if consume {
                     AddrSpace::r#move(
-                        &mut *dst_addr_space,
-                        Some(&mut *src_addr_space),
+                        &*dst_addr_space,
+                        &mut *dst_addrsp_guard,
+                        Some((&addrspace, &mut *src_addr_space)),
                         src_span,
                         requested_dst_base,
                         src_page_count.get(),
@@ -736,7 +737,8 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         &mut notify_files,
                     )?
                 } else {
-                    dst_addr_space.mmap(
+                    dst_addrsp_guard.mmap(
+                        &dst_addr_space,
                         requested_dst_base,
                         src_page_count,
                         map.flags,
@@ -1052,18 +1054,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                             crate::syscall::validate_region(next()??, next()??)?;
 
                         let unpin = false;
-                        addrspace
-                            .inner.write()
-                            .munmap(PageSpan::new(page, page_count), unpin)?;
+                        addrspace.munmap(PageSpan::new(page, page_count), unpin)?;
                     }
                     ADDRSPACE_OP_MPROTECT => {
                         let (page, page_count) =
                             crate::syscall::validate_region(next()??, next()??)?;
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
-                        addrspace
-                            .inner.write()
-                            .mprotect(PageSpan::new(page, page_count), flags)?;
+                        addrspace.mprotect(PageSpan::new(page, page_count), flags)?;
                     }
                     _ => return Err(Error::new(EINVAL)),
                 }
@@ -1444,7 +1442,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         addrspace: AddrSpaceWrapper::new()?,
                     },
                     b"exclusive" => Operation::AddrSpace {
-                        addrspace: addrspace.inner.write().try_clone()?,
+                        addrspace: addrspace.try_clone()?,
                     },
                     b"mmap-min-addr" => Operation::MmapMinAddr(Arc::clone(addrspace)),
 

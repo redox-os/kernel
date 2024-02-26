@@ -433,7 +433,7 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
     let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned)
         .ok_or(Error::new(EINVAL))?;
     let unpin = false;
-    let notify = addr_space.inner.write().munmap(span, unpin)?;
+    let notify = addr_space.munmap(span, unpin)?;
 
     for map in notify {
         let _ = map.unmap();
@@ -483,6 +483,7 @@ pub fn mremap(
     let mut guard = addr_space.inner.write();
 
     let base = AddrSpace::r#move(
+        &addr_space,
         &mut *guard,
         None,
         src_span,

@@ -35,10 +35,10 @@ impl core::fmt::Display for LogicalCpuId {
 }
 
 #[cfg(target_pointer_width = "64")]
-const MAX_CPU_COUNT: u32 = 128;
+pub const MAX_CPU_COUNT: u32 = 128;
 
 #[cfg(target_pointer_width = "32")]
-const MAX_CPU_COUNT: u32 = 32;
+pub const MAX_CPU_COUNT: u32 = 32;
 
 const SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;
 
@@ -85,6 +85,15 @@ impl LogicalCpuSet {
     }
     pub fn to_raw(&self) -> RawMask {
         self.0.each_ref().map(|w| w.load(Ordering::Acquire))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = LogicalCpuId> + '_ {
+        // TODO: Will this be optimized away?
+        self.0.iter_mut().enumerate().flat_map(move |(i, w)| (0..usize::BITS).filter_map(move |b| if *w.get_mut() & 1 << b != 0 {
+            Some(LogicalCpuId::new(i as u32 * usize::BITS + b))
+        } else {
+            None
+        }))
     }
 }
 
