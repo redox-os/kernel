@@ -31,6 +31,10 @@ pub struct PercpuBlock {
 const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] = [NULL; MAX_CPU_COUNT as usize];
 
+pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
+    ALL_PERCPU_BLOCKS[id.get() as usize].store(block, Ordering::Release)
+}
+
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
 
 bitflags::bitflags! {
@@ -52,6 +56,7 @@ pub fn shootdown_tlb_ipi(_target: Option<LogicalCpuId>) {}
 pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
     if let Some(target) = target {
         let Some(percpublock) = (unsafe { ALL_PERCPU_BLOCKS[target.get() as usize].load(Ordering::Acquire).as_ref() }) else {
+            log::warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };
         let bit = NmiReasons::TLB_SHOOTDOWN.bits();

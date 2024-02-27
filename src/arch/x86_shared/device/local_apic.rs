@@ -149,7 +149,6 @@ impl LocalApic {
         }
         self.set_icr(icr);
     }
-    // Not used just yet, but allows triggering an NMI to another processor.
     pub fn ipi_nmi(&mut self, apic_id: u32) {
         let shift = if self.x2 { 32 } else { 56 };
         self.set_icr((u64::from(apic_id) << shift) | (1 << 14) | (0b100 << 8));

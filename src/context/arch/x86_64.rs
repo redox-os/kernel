@@ -231,31 +231,38 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         // to dyn or slice fat pointers), and NonNull optimization exists, map_or will hopefully be
         // optimized down to checking prev and next pointers, as next cannot be null.
         Some(ref next_space) => {
-            percpu_block.current_addrspace.set(Arc::as_ptr(next_space));
-
             if prev
                 .addr_space
                 .as_ref()
                 .map_or(true, |prev_space| !Arc::ptr_eq(prev_space, next_space))
             {
-                if let Some(ref prev_space) = prev.addr_space {
-                    prev_space.inner.read().used_by.atomic_clear(this_cpu);
-                }
+                let prev_space_guard = prev.addr_space.as_ref().map(|asp| asp.inner.read());
                 // This lock needs to be held, because if the address space is write-locked by some
                 // context that is e.g. unmapping memory, we either need to switch after its
                 // changes have been made, or it needs to know this context is potentially using
                 // this address space, at that time.
-                let next_space = next_space.inner.read();
+                let next_space_guard = next_space.inner.read();
 
-                next_space.used_by.atomic_set(this_cpu);
-                next_space.table.utable.make_current();
+                if let Some(prev_space_guard) = prev_space_guard.as_deref() {
+                    prev_space_guard.used_by.atomic_clear(this_cpu);
+                }
+
+                percpu_block.current_addrspace.set(Arc::as_ptr(&next_space));
+                next_space_guard.used_by.atomic_set(this_cpu);
+                next_space_guard.table.utable.make_current();
             }
         }
         None => {
             // The next context is kernel-only, so switch to the page table without any user
             // mappings.
             if let Some(ref prev_space) = prev.addr_space {
-                prev_space.inner.read().used_by.atomic_clear(this_cpu);
+                let prev_space = prev_space.inner.read();
+                prev_space.used_by.atomic_clear(this_cpu);
+
+                // Do this while the lock is held, to prevent deadlocks.
+                percpu_block.current_addrspace.set(core::ptr::null());
+            } else {
+                percpu_block.current_addrspace.set(core::ptr::null());
             }
             RmmA::set_table(TableKind::User, empty_cr3());
         }

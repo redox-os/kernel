@@ -245,6 +245,8 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         #[cfg(feature = "profiling")]
         profiling: None,
     };
+
+    crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
 }
 #[derive(Copy, Clone, Debug)]
 #[repr(packed)]
