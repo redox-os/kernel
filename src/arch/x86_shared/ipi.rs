@@ -37,18 +37,3 @@ pub fn ipi(kind: IpiKind, target: IpiTarget) {
     let icr = (target as u64) << 18 | 1 << 14 | (kind as u64);
     unsafe { LOCAL_APIC.set_icr(icr) };
 }
-#[cfg(feature = "multi_core")]
-#[inline(always)]
-pub fn ipi_single(kind: IpiKind, target: u32) {
-    use crate::device::local_apic::LOCAL_APIC;
-
-    #[cfg(feature = "profiling")]
-    if matches!(kind, IpiKind::Profile) {
-        let icr = (target as u64) << 18 | 1 << 14 | 0b100 << 8;
-        unsafe { LOCAL_APIC.set_icr(icr) };
-        return;
-    }
-
-    let icr = u64::from(target) << 18 | 1 << 14 | (kind as u64);
-    unsafe { LOCAL_APIC.set_icr(icr) };
-}

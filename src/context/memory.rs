@@ -2520,13 +2520,19 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
 
         let mut affected_cpu_count = 0;
 
+        let current_cpu_id = crate::cpu_id();
+
         for cpu_id in self.active_cpus.iter_mut() {
-            if cpu_id == crate::cpu_id() {
+            if cpu_id == current_cpu_id {
                 continue;
             }
 
             crate::percpu::shootdown_tlb_ipi(Some(cpu_id));
             affected_cpu_count += 1;
+        }
+
+        if self.active_cpus.contains(current_cpu_id) {
+            rmm::PageFlushAll::<RmmA>::new().flush();
         }
 
         while self.state.ackword.load(Ordering::Relaxed) < affected_cpu_count {

@@ -49,7 +49,7 @@ interrupt_stack!(non_maskable, @paranoid, |stack| {
 
     if let Some(reason) = reasons.iter().next() {
         if reason == NmiReasons::TLB_SHOOTDOWN && let Some(addrsp) = percpu.current_addrspace.get().as_ref() {
-            core::arch::asm!("mov rax, cr3; mov cr3, rax", out("rax") _);
+            rmm::PageFlushAll::<crate::paging::RmmA>::new().flush();
             addrsp.tlb_ack.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -60,6 +60,7 @@ interrupt_stack!(non_maskable, @paranoid, |stack| {
 
         #[cfg(not(feature = "profiling"))]
         {
+            // TODO: This will likely deadlock
             println!("Non-maskable interrupt");
             stack.dump();
         }
