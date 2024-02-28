@@ -4,7 +4,7 @@ use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut string = format!(
-        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
         "PID",
         "PGID",
         "PPID",
@@ -17,7 +17,7 @@ pub fn resource() -> Result<Vec<u8>> {
         "ENS",
         "STAT",
         "CPU",
-        "AFF",
+        "AFFINITY",
         "TIME",
         "MEM",
         "NAME"
@@ -105,7 +105,7 @@ pub fn resource() -> Result<Vec<u8>> {
             };
 
             string.push_str(&format!(
-                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<12}{:<8}{}\n",
+                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
                 context.id.get(),
                 context.pgid.get(),
                 context.ppid.get(),
