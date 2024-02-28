@@ -266,6 +266,170 @@ impl AddrSpaceWrapper {
         let mut flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
         AddrSpace::munmap_inner(&mut guard.grants, &mut guard.table.utable, &mut flusher, requested_span, unpin)
     }
+    pub fn r#move(
+        &self,
+        mut src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
+        src_span: PageSpan,
+        requested_dst_base: Option<Page>,
+        new_page_count: usize,
+        new_flags: MapFlags,
+        notify_files: &mut Vec<UnmapResult>,
+    ) -> Result<Page> {
+        let dst_lock = self;
+        let mut dst = dst_lock.inner.write();
+        let dst = &mut *dst;
+
+        let mut src_owned_opt = src_opt.as_mut().map(|(aw, a)| (&mut a.grants, &mut a.table.utable, Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack)));
+        let mut src_opt = src_owned_opt.as_mut().map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
+        let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by, &dst_lock.tlb_ack);
+
+        let dst_base = match requested_dst_base {
+            Some(base) if new_flags.contains(MapFlags::MAP_FIXED_NOREPLACE) => {
+                if dst
+                    .grants
+                    .conflicts(PageSpan::new(base, new_page_count))
+                    .next()
+                    .is_some()
+                {
+                    return Err(Error::new(EEXIST));
+                }
+
+                base
+            }
+            Some(base) if new_flags.contains(MapFlags::MAP_FIXED) => {
+                let unpin = false;
+                notify_files.append(&mut AddrSpace::munmap_inner(&mut dst.grants, &mut dst.table.utable, &mut dst_flusher, PageSpan::new(base, new_page_count), unpin)?);
+
+                base
+            }
+            _ => {
+                dst.grants
+                    .find_free(dst.mmap_min, core::cmp::max(new_page_count, src_span.count))
+                    .ok_or(Error::new(ENOMEM))?
+                    .base
+            }
+        };
+
+        let (src_grants, src_mapper, src_flusher) = src_opt.as_mut().map_or((&mut dst.grants, &mut dst.table.utable, &mut dst_flusher), |(g, m, f)| (&mut *g, &mut *m, &mut *f));
+
+        if src_grants
+            .conflicts(src_span)
+            .any(|(_, g)| !g.can_extract(false))
+        {
+            return Err(Error::new(EBUSY));
+        }
+        if src_grants
+            .conflicts(src_span)
+            .any(|(_, g)| !g.can_have_flags(new_flags))
+        {
+            return Err(Error::new(EPERM));
+        }
+        if PageSpan::new(dst_base, new_page_count).intersects(src_span) {
+            return Err(Error::new(EBUSY));
+        }
+
+        if new_page_count < src_span.count {
+            let unpin = false;
+            notify_files.append(&mut AddrSpace::munmap_inner(
+                src_grants,
+                src_mapper,
+                src_flusher,
+                PageSpan::new(
+                    src_span.base.next_by(new_page_count),
+                    src_span.count - new_page_count,
+                ),
+                unpin,
+            )?);
+        }
+
+        let mut remaining_src_span = PageSpan::new(src_span.base, new_page_count);
+
+        let to_remap = src_grants
+            .conflicts(remaining_src_span)
+            .map(|(b, _)| b)
+            .collect::<Vec<_>>();
+
+        let mut prev_grant_end = src_span.base;
+
+        //while let Some(grant_base) = next(src_opt.as_mut().map(|s| &mut **s), dst, remaining_src_span) {
+        for grant_base in to_remap {
+            if prev_grant_end < grant_base {
+                let hole_page_count = grant_base.offset_from(prev_grant_end);
+                let hole_span = PageSpan::new(
+                    dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
+                    hole_page_count,
+                );
+                dst.grants.insert(Grant::zeroed(
+                    hole_span,
+                    page_flags(new_flags),
+                    &mut dst.table.utable,
+                    &mut dst_flusher,
+                    false,
+                )?);
+            }
+
+        let (src_grants, _, _) = src_opt.as_mut().map_or((&mut dst.grants, &mut dst.table.utable, &mut dst_flusher), |(g, m, f)| (&mut *g, &mut *m, &mut *f));
+            let grant = src_grants
+                .remove(grant_base)
+                .expect("grant cannot disappear");
+            let grant_span = PageSpan::new(grant.base, grant.info.page_count());
+            let (before, middle, after) = grant
+                .extract(remaining_src_span.intersection(grant_span))
+                .expect("called intersect(), must succeed");
+
+            if let Some(before) = before {
+                src_grants.insert(before);
+            }
+            if let Some(after) = after {
+                src_grants.insert(after);
+            }
+
+            let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
+            let middle_span = middle.span();
+
+            let mut src_opt = src_opt.as_mut().map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
+
+            dst.grants.insert(match src_opt.as_mut() {
+                Some((_, other_mapper, other_flusher)) => middle.transfer(
+                    dst_grant_base,
+                    page_flags(new_flags),
+                    other_mapper,
+                    Some(&mut dst.table.utable),
+                    other_flusher,
+                    &mut dst_flusher,
+                )?,
+                None => middle.transfer(
+                    dst_grant_base,
+                    page_flags(new_flags),
+                    &mut dst.table.utable,
+                    None,
+                    &mut dst_flusher,
+                    &mut NopFlusher,
+                )?,
+            });
+
+            prev_grant_end = middle_span.base.next_by(middle_span.count);
+            let pages_advanced = prev_grant_end.offset_from(remaining_src_span.base);
+            remaining_src_span =
+                PageSpan::new(prev_grant_end, remaining_src_span.count - pages_advanced);
+        }
+
+        if prev_grant_end < src_span.base.next_by(new_page_count) {
+            let last_hole_span = PageSpan::new(
+                dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
+                new_page_count - prev_grant_end.offset_from(src_span.base),
+            );
+            dst.grants.insert(Grant::zeroed(
+                last_hole_span,
+                page_flags(new_flags),
+                &mut dst.table.utable,
+                &mut dst_flusher,
+                false,
+            )?);
+        }
+
+        Ok(dst_base)
+    }
 }
 impl AddrSpace {
     pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
@@ -378,6 +542,8 @@ impl AddrSpace {
             &mut Flusher,
         ) -> Result<Grant>,
     ) -> Result<Page> {
+        debug_assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
+
         let selected_span = match requested_base_opt {
             // TODO: Rename MAP_FIXED+MAP_FIXED_NOREPLACE to MAP_FIXED and
             // MAP_FIXED_REPLACE/MAP_REPLACE?
@@ -421,167 +587,6 @@ impl AddrSpace {
         self.grants.insert(grant);
 
         Ok(selected_span.base)
-    }
-    pub fn r#move(
-        dst_lock: &AddrSpaceWrapper,
-        dst: &mut AddrSpace,
-        mut src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
-        src_span: PageSpan,
-        requested_dst_base: Option<Page>,
-        new_page_count: usize,
-        new_flags: MapFlags,
-        notify_files: &mut Vec<UnmapResult>,
-    ) -> Result<Page> {
-        let mut src_owned_opt = src_opt.as_mut().map(|(aw, a)| (&mut a.grants, &mut a.table.utable, Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack)));
-        let mut src_opt = src_owned_opt.as_mut().map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
-        let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by, &dst_lock.tlb_ack);
-
-        let dst_base = match requested_dst_base {
-            Some(base) if new_flags.contains(MapFlags::MAP_FIXED_NOREPLACE) => {
-                if dst
-                    .grants
-                    .conflicts(PageSpan::new(base, new_page_count))
-                    .next()
-                    .is_some()
-                {
-                    return Err(Error::new(EEXIST));
-                }
-
-                base
-            }
-            Some(base) if new_flags.contains(MapFlags::MAP_FIXED) => {
-                let unpin = false;
-                notify_files.append(&mut Self::munmap_inner(&mut dst.grants, &mut dst.table.utable, &mut dst_flusher, PageSpan::new(base, new_page_count), unpin)?);
-
-                base
-            }
-            _ => {
-                dst.grants
-                    .find_free(dst.mmap_min, core::cmp::max(new_page_count, src_span.count))
-                    .ok_or(Error::new(ENOMEM))?
-                    .base
-            }
-        };
-
-        let (src_grants, src_mapper, src_flusher) = src_opt.as_mut().map_or((&mut dst.grants, &mut dst.table.utable, &mut dst_flusher), |(g, m, f)| (&mut *g, &mut *m, &mut *f));
-
-        if src_grants
-            .conflicts(src_span)
-            .any(|(_, g)| !g.can_extract(false))
-        {
-            return Err(Error::new(EBUSY));
-        }
-        if src_grants
-            .conflicts(src_span)
-            .any(|(_, g)| !g.can_have_flags(new_flags))
-        {
-            return Err(Error::new(EPERM));
-        }
-        if PageSpan::new(dst_base, new_page_count).intersects(src_span) {
-            return Err(Error::new(EBUSY));
-        }
-
-        if new_page_count < src_span.count {
-            let unpin = false;
-            notify_files.append(&mut Self::munmap_inner(
-                src_grants,
-                src_mapper,
-                src_flusher,
-                PageSpan::new(
-                    src_span.base.next_by(new_page_count),
-                    src_span.count - new_page_count,
-                ),
-                unpin,
-            )?);
-        }
-
-        let mut remaining_src_span = PageSpan::new(src_span.base, new_page_count);
-
-        let to_remap = src_grants
-            .conflicts(remaining_src_span)
-            .map(|(b, _)| b)
-            .collect::<Vec<_>>();
-
-        let mut prev_grant_end = src_span.base;
-
-        //while let Some(grant_base) = next(src_opt.as_mut().map(|s| &mut **s), dst, remaining_src_span) {
-        for grant_base in to_remap {
-            if prev_grant_end < grant_base {
-                let hole_page_count = grant_base.offset_from(prev_grant_end);
-                let hole_span = PageSpan::new(
-                    dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
-                    hole_page_count,
-                );
-                dst.grants.insert(Grant::zeroed(
-                    hole_span,
-                    page_flags(new_flags),
-                    &mut dst.table.utable,
-                    &mut dst_flusher,
-                    false,
-                )?);
-            }
-
-        let (src_grants, _, _) = src_opt.as_mut().map_or((&mut dst.grants, &mut dst.table.utable, &mut dst_flusher), |(g, m, f)| (&mut *g, &mut *m, &mut *f));
-            let grant = src_grants
-                .remove(grant_base)
-                .expect("grant cannot disappear");
-            let grant_span = PageSpan::new(grant.base, grant.info.page_count());
-            let (before, middle, after) = grant
-                .extract(remaining_src_span.intersection(grant_span))
-                .expect("called intersect(), must succeed");
-
-            if let Some(before) = before {
-                src_grants.insert(before);
-            }
-            if let Some(after) = after {
-                src_grants.insert(after);
-            }
-
-            let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
-            let middle_span = middle.span();
-
-            let mut src_opt = src_opt.as_mut().map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
-
-            dst.grants.insert(match src_opt.as_mut() {
-                Some((_, other_mapper, other_flusher)) => middle.transfer(
-                    dst_grant_base,
-                    page_flags(new_flags),
-                    other_mapper,
-                    Some(&mut dst.table.utable),
-                    other_flusher,
-                    &mut dst_flusher,
-                )?,
-                None => middle.transfer(
-                    dst_grant_base,
-                    page_flags(new_flags),
-                    &mut dst.table.utable,
-                    None,
-                    &mut dst_flusher,
-                    &mut NopFlusher,
-                )?,
-            });
-
-            prev_grant_end = middle_span.base.next_by(middle_span.count);
-            let pages_advanced = prev_grant_end.offset_from(remaining_src_span.base);
-            remaining_src_span =
-                PageSpan::new(prev_grant_end, remaining_src_span.count - pages_advanced);
-        }
-
-        if prev_grant_end < src_span.base.next_by(new_page_count) {
-            let last_hole_span = PageSpan::new(
-                dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
-                new_page_count - prev_grant_end.offset_from(src_span.base),
-            );
-            dst.grants.insert(Grant::zeroed(
-                last_hole_span,
-                page_flags(new_flags),
-                &mut dst.table.utable,
-                &mut dst_flusher,
-                false,
-            )?);
-        }
-
-        Ok(dst_base)
     }
 }
 

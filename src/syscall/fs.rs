@@ -480,11 +480,7 @@ pub fn mremap(
     let new_page_count = new_size.div_ceil(PAGE_SIZE);
     let requested_dst_base = Some(new_base).filter(|_| new_address != 0);
 
-    let mut guard = addr_space.inner.write();
-
-    let base = AddrSpace::r#move(
-        &addr_space,
-        &mut *guard,
+    let base = addr_space.r#move(
         None,
         src_span,
         requested_dst_base,

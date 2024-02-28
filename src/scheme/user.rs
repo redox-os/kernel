@@ -415,9 +415,8 @@ impl UserInner {
             .expect("split must succeed");
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
-            let cur_space_lock_clone = Arc::clone(&cur_space_lock);
             dst_space.mmap(
-                &cur_space_lock,
+                &dst_space_lock,
                 Some(first_middle_dst_page),
                 middle_page_count,
                 map_flags | MAP_FIXED_NOREPLACE,
@@ -437,8 +436,8 @@ impl UserInner {
                     let is_pinned_userscheme_borrow = true;
 
                     Ok(Grant::borrow(
-                        Arc::clone(&cur_space_lock_clone),
-                        &mut *cur_space_lock_clone.inner.write(),
+                        Arc::clone(&cur_space_lock),
+                        &mut *cur_space_lock.inner.write(),
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),

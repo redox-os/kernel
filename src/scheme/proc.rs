@@ -718,7 +718,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
 
                 let mut src_addr_space = addrspace.inner.write();
-                let mut dst_addrsp_guard = dst_addr_space.inner.write();
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -726,9 +725,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 // TODO: Validate flags
                 let result_base = if consume {
-                    AddrSpace::r#move(
-                        &*dst_addr_space,
-                        &mut *dst_addrsp_guard,
+                    dst_addr_space.r#move(
                         Some((&addrspace, &mut *src_addr_space)),
                         src_span,
                         requested_dst_base,
@@ -737,6 +734,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         &mut notify_files,
                     )?
                 } else {
+                    let mut dst_addrsp_guard = dst_addr_space.inner.write();
                     dst_addrsp_guard.mmap(
                         &dst_addr_space,
                         requested_dst_base,
