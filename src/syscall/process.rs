@@ -1,8 +1,8 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::mem;
 
-use spin::RwLock;
 use rmm::Arch;
+use spin::RwLock;
 
 use crate::context::{
     memory::{AddrSpace, PageSpan},
