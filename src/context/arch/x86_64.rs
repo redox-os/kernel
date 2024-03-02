@@ -10,7 +10,7 @@ use crate::{
     interrupt::handler::ScratchRegisters,
     paging::{RmmA, RmmArch, TableKind},
     pop_scratch, push_scratch,
-    syscall::FloatRegisters,
+    syscall::FloatRegisters, percpu::PercpuBlock,
 };
 
 use core::mem::offset_of;
@@ -148,7 +148,6 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     if let Some(ref stack) = next.kstack {
         crate::gdt::set_tss_stack(pcr, stack.as_ptr() as usize + stack.len());
     }
-    let percpu_block = &*core::ptr::addr_of!((*pcr).percpu);
 
     core::arch::asm!(
         alternative2!(
@@ -224,49 +223,9 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         );
     }
 
-    let this_cpu = crate::cpu_id();
-
-    match next.addr_space {
-        // Since Arc essentially just wraps a pointer, in this case a regular pointer (as opposed
-        // to dyn or slice fat pointers), and NonNull optimization exists, map_or will hopefully be
-        // optimized down to checking prev and next pointers, as next cannot be null.
-        Some(ref next_space) => {
-            if prev
-                .addr_space
-                .as_ref()
-                .map_or(true, |prev_space| !Arc::ptr_eq(prev_space, next_space))
-            {
-                let prev_space_guard = prev.addr_space.as_ref().map(|asp| asp.inner.read());
-                // This lock needs to be held, because if the address space is write-locked by some
-                // context that is e.g. unmapping memory, we either need to switch after its
-                // changes have been made, or it needs to know this context is potentially using
-                // this address space, at that time.
-                let next_space_guard = next_space.inner.read();
-
-                if let Some(prev_space_guard) = prev_space_guard.as_deref() {
-                    prev_space_guard.used_by.atomic_clear(this_cpu);
-                }
-
-                percpu_block.current_addrspace.set(Arc::as_ptr(&next_space));
-                next_space_guard.used_by.atomic_set(this_cpu);
-                next_space_guard.table.utable.make_current();
-            }
-        }
-        None => {
-            // The next context is kernel-only, so switch to the page table without any user
-            // mappings.
-            if let Some(ref prev_space) = prev.addr_space {
-                let prev_space = prev_space.inner.read();
-                prev_space.used_by.atomic_clear(this_cpu);
-
-                // Do this while the lock is held, to prevent deadlocks.
-                percpu_block.current_addrspace.set(core::ptr::null());
-            } else {
-                percpu_block.current_addrspace.set(core::ptr::null());
-            }
-            RmmA::set_table(TableKind::User, empty_cr3());
-        }
-    }
+    let percpu = PercpuBlock::current();
+    *percpu.current_addrsp.borrow_mut() = next.addr_space.clone();
+    *percpu.old_addrsp_tmp.borrow_mut() = prev.addr_space.clone();
 
     switch_to_inner(&mut prev.arch, &mut next.arch)
 }
@@ -373,4 +332,30 @@ unsafe extern "C" fn signal_handler_wrapper() {
         inner = sym inner,
         options(noreturn)
     );
+}
+pub unsafe fn switch_arch_hook() {
+    let percpu = PercpuBlock::current();
+
+    let prev_addrsp = percpu.old_addrsp_tmp.borrow();
+    let next_addrsp = percpu.current_addrsp.borrow();
+
+    let retain_pgtbl = match (&*prev_addrsp, &*next_addrsp) {
+        (Some(ref p), Some(ref n)) => Arc::ptr_eq(p, n),
+        (Some(_), None) | (None, Some(_)) => false,
+        (None, None) => true,
+    };
+    if retain_pgtbl {
+        // If we are not switching to a different address space, we can simply return early.
+    }
+    if let Some(ref prev_addrsp) = &*prev_addrsp {
+        prev_addrsp.inner.read().used_by.atomic_clear(percpu.cpu_id);
+    }
+
+    if let Some(next_addrsp) = &*next_addrsp {
+        let next = next_addrsp.inner.read();
+        next.used_by.atomic_set(percpu.cpu_id);
+        next.table.utable.make_current();
+    } else {
+        RmmA::set_table(TableKind::User, empty_cr3());
+    }
 }

@@ -4,7 +4,7 @@ use core::{
 };
 use x86::msr::*;
 
-use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress};
+use crate::{paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress}, ipi::IpiKind};
 
 use crate::arch::cpuid::cpuid;
 
@@ -140,12 +140,12 @@ impl LocalApic {
         }
     }
 
-    pub fn ipi(&mut self, apic_id: usize) {
-        let mut icr = 0x4040;
+    pub fn ipi(&mut self, apic_id: u32, kind: IpiKind) {
+        let mut icr = 0x40 | kind as u64;
         if self.x2 {
-            icr |= (apic_id as u64) << 32;
+            icr |= u64::from(apic_id) << 32;
         } else {
-            icr |= (apic_id as u64) << 56;
+            icr |= u64::from(apic_id) << 56;
         }
         self.set_icr(icr);
     }

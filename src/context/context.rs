@@ -399,26 +399,25 @@ impl Context {
         &mut self,
         addr_space: Arc<AddrSpaceWrapper>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
-        if let Some(ref addrsp) = self.addr_space && Arc::ptr_eq(addrsp, &addr_space) {
+        if let Some(ref old) = self.addr_space && Arc::ptr_eq(old, &addr_space) {
             return Some(addr_space);
-        }
+        };
 
-        let current_context_id = super::context_id();
-        let current_cpu_id = crate::cpu_id();
+        if self.id == super::context_id() {
+            let this_percpu = PercpuBlock::current();
 
-        if self.id == current_context_id {
+            if let Some(ref prev_addrsp) = self.addr_space {
+                assert!(Arc::ptr_eq(&this_percpu.current_addrsp.borrow().as_ref().unwrap(), prev_addrsp));
+                prev_addrsp.inner.read().used_by.atomic_clear(this_percpu.cpu_id);
+            }
+
+            *this_percpu.current_addrsp.borrow_mut() = Some(Arc::clone(&addr_space));
+
+            let new_addrsp = addr_space.inner.read();
+            new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
+
             unsafe {
-                let guard = addr_space.inner.read();
-
-                let prev_addrsp = self.addr_space.as_ref().map(|asp| asp.inner.read());
-
-                if let Some(prev_addrsp) = prev_addrsp.as_deref() {
-                    prev_addrsp.used_by.atomic_clear(current_cpu_id);
-                }
-
-                guard.used_by.atomic_set(current_cpu_id);
-                PercpuBlock::current().current_addrspace.set(Arc::as_ptr(&addr_space));
-                guard.table.utable.make_current();
+                new_addrsp.table.utable.make_current();
             }
         }
 

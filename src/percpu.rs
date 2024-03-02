@@ -1,5 +1,7 @@
-use core::cell::Cell;
-use core::sync::atomic::{AtomicUsize, AtomicPtr, Ordering};
+use core::cell::{Cell, RefCell};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+
+use alloc::sync::Arc;
 
 use crate::context::memory::AddrSpaceWrapper;
 use crate::cpu_set::MAX_CPU_COUNT;
@@ -13,14 +15,9 @@ pub struct PercpuBlock {
     /// Context management
     pub switch_internals: ContextSwitchPercpu,
 
-    // TODO: This lock can probably be relaxed further, but verify correctness first.
-
-    // The NMI lock. Can be set by any CPU, but can only be cleared by the CPU this percpu block
-    // refers to. Multiple flags can be set simultaneously, but NMI senders need to wait for the
-    // flag to be cleared if it was already set.
-    pub nmi_flags_lock: AtomicUsize,
-
-    pub current_addrspace: Cell<*const AddrSpaceWrapper>,
+    pub current_addrsp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
+    pub old_addrsp_tmp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
+    pub wants_tlb_shootdown: AtomicBool,
 
     // TODO: Put mailbox queues here, e.g. for TLB shootdown? Just be sure to 128-byte align it
     // first to avoid cache invalidation.
@@ -37,41 +34,34 @@ pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
 
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub struct NmiReasons: usize {
-        const TLB_SHOOTDOWN = 1;
-
-        // TODO: Profiling code wakes all CPUs up, so use a global and percpu ack counter for that.
-        //
-        //#[cfg(feature = "profiling")]
-        //const PROFILING = 1 << 32;
-    }
-}
-
 #[cfg(not(feature = "multi_core"))]
 pub fn shootdown_tlb_ipi(_target: Option<LogicalCpuId>) {}
 
 #[cfg(feature = "multi_core")]
 pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
     if let Some(target) = target {
+        let my_percpublock = PercpuBlock::current();
+        assert_ne!(target, my_percpublock.cpu_id);
+
         let Some(percpublock) = (unsafe { ALL_PERCPU_BLOCKS[target.get() as usize].load(Ordering::Acquire).as_ref() }) else {
             log::warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };
-        let bit = NmiReasons::TLB_SHOOTDOWN.bits();
-
-        while percpublock.nmi_flags_lock.fetch_or(bit, Ordering::Release) & bit == bit {
+        while percpublock.wants_tlb_shootdown.swap(true, Ordering::Release) == true {
             // Load is faster than CAS or on x86, LOCK BTS
-            while percpublock.nmi_flags_lock.load(Ordering::Relaxed) & bit == bit {
+            while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) == true {
+                if my_percpublock.wants_tlb_shootdown.swap(false, Ordering::Release) == true {
+                    log::warn!("oops");
+                }
                 core::hint::spin_loop();
             }
         }
 
-        crate::arch::send_tlb_nmi(target);
+        crate::ipi::ipi_single(crate::ipi::IpiKind::Tlb, target);
     } else {
         for id in 0..crate::cpu_count() {
-            // TODO: Optimize: use global counter and percpu ack counters.
+            // TODO: Optimize: use global counter and percpu ack counters, send IPI using
+            // destination shorthand "all CPUs".
             shootdown_tlb_ipi(Some(LogicalCpuId::new(id)));
         }
     }

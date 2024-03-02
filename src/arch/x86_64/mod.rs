@@ -70,10 +70,3 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
 pub use arch_copy_to_user as arch_copy_from_user;
 
 pub use alternative::kfx_size;
-
-pub fn send_tlb_nmi(target: LogicalCpuId) {
-    // TODO: Logical to APIC ID translation
-    unsafe {
-        device::local_apic::LOCAL_APIC.ipi_nmi(target.get());
-    }
-}

@@ -4,7 +4,7 @@ use core::{iter, mem};
 use spinning_top::RwSpinlock;
 
 use super::context::{Context, ContextId};
-use super::memory::{AddrSpaceWrapper, AddrSpace};
+use super::memory::AddrSpaceWrapper;
 use crate::syscall::error::{Error, Result, EAGAIN};
 
 /// Context list type
