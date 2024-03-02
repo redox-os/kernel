@@ -419,6 +419,8 @@ impl Context {
             unsafe {
                 new_addrsp.table.utable.make_current();
             }
+        } else {
+            assert!(!self.running);
         }
 
         self.addr_space.replace(addr_space)

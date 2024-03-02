@@ -1,7 +1,7 @@
 use core::{
     mem,
     ptr::{addr_of, addr_of_mut},
-    sync::atomic::AtomicBool,
+    sync::atomic::AtomicBool, borrow::BorrowMut,
 };
 
 use alloc::sync::Arc;
@@ -351,8 +351,15 @@ pub unsafe fn switch_arch_hook() {
         prev_addrsp.acquire_read().used_by.atomic_clear(percpu.cpu_id);
     }
 
+    drop(prev_addrsp);
+
+    // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
+    // space.
+    *percpu.old_addrsp_tmp.borrow_mut() = None;
+
     if let Some(next_addrsp) = &*next_addrsp {
         let next = next_addrsp.acquire_read();
+
         next.used_by.atomic_set(percpu.cpu_id);
         next.table.utable.make_current();
     } else {

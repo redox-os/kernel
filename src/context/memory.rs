@@ -98,6 +98,19 @@ impl AddrSpaceWrapper {
             }
         }
     }
+    pub fn acquire_upgradeable_read(&self) -> RwLockUpgradableGuard<'_, AddrSpace> {
+        let my_percpu = PercpuBlock::current();
+
+        loop {
+            match self.inner.try_upgradeable_read() {
+                Some(g) => return g,
+                None => {
+                    my_percpu.maybe_handle_tlb_shootdown();
+                    core::hint::spin_loop();
+                }
+            }
+        }
+    }
     pub fn acquire_write(&self) -> RwLockWriteGuard<'_, AddrSpace> {
         let my_percpu = PercpuBlock::current();
 
@@ -127,7 +140,7 @@ pub struct AddrSpace {
 impl AddrSpaceWrapper {
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
     pub fn try_clone(&self) -> Result<Arc<AddrSpaceWrapper>> {
-        let mut guard = self.inner.write();
+        let mut guard = self.acquire_write();
         let guard = &mut *guard;
 
         let mut new_arc = AddrSpaceWrapper::new()?;
@@ -217,7 +230,7 @@ impl AddrSpaceWrapper {
         Ok(new_arc)
     }
     pub fn mprotect(&self, requested_span: PageSpan, flags: MapFlags) -> Result<()> {
-        let mut guard = self.inner.write();
+        let mut guard = self.acquire_write();
         let guard = &mut *guard;
 
         let mapper = &mut guard.table.utable;
@@ -286,7 +299,7 @@ impl AddrSpaceWrapper {
         mut requested_span: PageSpan,
         unpin: bool,
     ) -> Result<Vec<UnmapResult>> {
-        let mut guard = self.inner.write();
+        let mut guard = self.acquire_write();
         let guard = &mut *guard;
 
         let mut flusher = Flusher::with_cpu_set(&mut guard.used_by, &self.tlb_ack);
@@ -302,7 +315,7 @@ impl AddrSpaceWrapper {
         notify_files: &mut Vec<UnmapResult>,
     ) -> Result<Page> {
         let dst_lock = self;
-        let mut dst = dst_lock.inner.write();
+        let mut dst = dst_lock.acquire_write();
         let dst = &mut *dst;
 
         let mut src_owned_opt = src_opt.as_mut().map(|(aw, a)| (&mut a.grants, &mut a.table.utable, Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack)));
@@ -459,7 +472,7 @@ impl AddrSpaceWrapper {
 }
 impl AddrSpace {
     pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
-        Ok(Arc::clone(super::current()?.read().addr_space()?))
+        PercpuBlock::current().current_addrsp.borrow().clone().ok_or(Error::new(ESRCH))
     }
 
     pub fn new() -> Result<Self> {
@@ -469,9 +482,6 @@ impl AddrSpace {
             mmap_min: MMAP_MIN_DEFAULT,
             used_by: LogicalCpuSet::empty(),
         })
-    }
-    pub fn is_current(&self) -> bool {
-        self.table.utable.is_current()
     }
     fn munmap_inner(
         this_grants: &mut UserGrants,
@@ -1609,7 +1619,7 @@ impl Grant {
             ..
         } = self.info.provider
         {
-            let mut guard = address_space.inner.write();
+            let mut guard = address_space.acquire_write();
 
             for (_, grant) in guard
                 .grants
@@ -2210,7 +2220,7 @@ pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Re
     };
 
     let lock = &addr_space_lock;
-    let (_, flush, _) = correct_inner(lock, lock.inner.write(), faulting_page, access, 0)?;
+    let (_, flush, _) = correct_inner(lock, lock.acquire_write(), faulting_page, access, 0)?;
 
     flush.flush();
 
@@ -2328,7 +2338,7 @@ fn correct_inner<'l>(
                 return Err(PfError::NonfatalInternalError);
             }
 
-            let mut guard = foreign_address_space.inner.upgradeable_read();
+            let mut guard = foreign_address_space.acquire_upgradeable_read();
             let src_page = src_base.next_by(pages_from_grant_start);
 
             if let Some(_) = guard.grants.contains(src_page) {
@@ -2352,7 +2362,7 @@ fn correct_inner<'l>(
                     // FIXME: Can this result in invalid address space state?
                     let ext_addrspace = &foreign_address_space;
                     let (frame, _, _) = {
-                        let g = ext_addrspace.inner.write();
+                        let g = ext_addrspace.acquire_write();
                         correct_inner(
                             ext_addrspace,
                             g,
@@ -2362,9 +2372,9 @@ fn correct_inner<'l>(
                         )?
                     };
 
-                    addr_space_guard = addr_space_lock.inner.write();
+                    addr_space_guard = addr_space_lock.acquire_write();
                     addr_space = &mut *addr_space_guard;
-                    guard = foreign_address_space.inner.upgradeable_read();
+                    guard = foreign_address_space.acquire_upgradeable_read();
 
                     frame
                 };
@@ -2449,7 +2459,7 @@ fn correct_inner<'l>(
                 .take()
                 .ok_or(PfError::NonfatalInternalError)?;
 
-            addr_space_guard = addr_space_lock.inner.write();
+            addr_space_guard = addr_space_lock.acquire_write();
             addr_space = &mut *addr_space_guard;
 
             log::info!("Got frame {:?} from external fmap", frame);
@@ -2547,7 +2557,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
     }
     // NOTE: Lock must be held, which must be guaranteed by the caller.
     fn flush(&mut self) {
-        self.state.ackword.store(0, Ordering::Relaxed);
+        self.state.ackword.store(0, Ordering::SeqCst);
 
         let mut affected_cpu_count = 0;
 
@@ -2566,7 +2576,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
             rmm::PageFlushAll::<RmmA>::new().flush();
         }
 
-        while self.state.ackword.load(Ordering::Relaxed) < affected_cpu_count {
+        while self.state.ackword.load(Ordering::SeqCst) < affected_cpu_count {
             core::hint::spin_loop();
         }
 

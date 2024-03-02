@@ -76,8 +76,12 @@ impl PercpuBlock {
         }
 
         {
+            let old = self.old_addrsp_tmp.borrow();
             let addrsp = self.current_addrsp.borrow();
-            if let Some(ref addrsp) = &*addrsp {
+
+            if let Some(ref old) = &*old {
+                old.tlb_ack.fetch_add(1, Ordering::Release);
+            } else if let Some(ref addrsp) = &*addrsp {
                 addrsp.tlb_ack.fetch_add(1, Ordering::Release);
             }
         }
