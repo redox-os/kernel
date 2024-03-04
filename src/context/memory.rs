@@ -2,7 +2,7 @@ use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{cmp, fmt::Debug, num::NonZeroUsize, sync::atomic::{Ordering, AtomicU32}};
 use hashbrown::HashMap;
 use rmm::{Arch as _, PageFlush};
-use spin::{RwLock, RwLockUpgradableGuard, RwLockWriteGuard};
+use spin::{RwLock, RwLockUpgradableGuard, RwLockWriteGuard, RwLockReadGuard};
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
@@ -14,7 +14,7 @@ use crate::{
     paging::{
         Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
     },
-    scheme::{self, KernelSchemes}, cpu_set::LogicalCpuSet,
+    scheme::{self, KernelSchemes}, cpu_set::LogicalCpuSet, percpu::PercpuBlock,
 };
 
 use super::{context::HardBlockedReason, file::FileDescription};
@@ -75,7 +75,7 @@ impl UnmapResult {
 
 #[derive(Debug)]
 pub struct AddrSpaceWrapper {
-    pub inner: RwLock<AddrSpace>,
+    inner: RwLock<AddrSpace>,
     pub tlb_ack: AtomicU32,
 }
 impl AddrSpaceWrapper {
@@ -84,6 +84,32 @@ impl AddrSpaceWrapper {
             inner: RwLock::new(AddrSpace::new()?),
             tlb_ack: AtomicU32::new(0),
         }).map_err(|_| Error::new(ENOMEM))
+    }
+    pub fn acquire_read(&self) -> RwLockReadGuard<'_, AddrSpace> {
+        let my_percpu = PercpuBlock::current();
+
+        loop {
+            match self.inner.try_read() {
+                Some(g) => return g,
+                None => {
+                    my_percpu.maybe_handle_tlb_shootdown();
+                    core::hint::spin_loop();
+                }
+            }
+        }
+    }
+    pub fn acquire_write(&self) -> RwLockWriteGuard<'_, AddrSpace> {
+        let my_percpu = PercpuBlock::current();
+
+        loop {
+            match self.inner.try_write() {
+                Some(g) => return g,
+                None => {
+                    my_percpu.maybe_handle_tlb_shootdown();
+                    core::hint::spin_loop();
+                }
+            }
+        }
     }
 }
 

@@ -53,7 +53,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it
     // before context switching.
-    let addr_space_guard = addr_space_lock.inner.read();
+    let addr_space_guard = addr_space_lock.acquire_read();
 
     let target_physaddr =
         validate_and_translate_virt(&*addr_space_guard, VirtualAddress::new(addr))

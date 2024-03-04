@@ -50,9 +50,7 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
         while percpublock.wants_tlb_shootdown.swap(true, Ordering::Release) == true {
             // Load is faster than CAS or on x86, LOCK BTS
             while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) == true {
-                if my_percpublock.wants_tlb_shootdown.swap(false, Ordering::Release) == true {
-                    log::warn!("oops");
-                }
+                my_percpublock.maybe_handle_tlb_shootdown();
                 core::hint::spin_loop();
             }
         }
@@ -63,6 +61,25 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
             // TODO: Optimize: use global counter and percpu ack counters, send IPI using
             // destination shorthand "all CPUs".
             shootdown_tlb_ipi(Some(LogicalCpuId::new(id)));
+        }
+    }
+}
+impl PercpuBlock {
+    pub fn maybe_handle_tlb_shootdown(&self) {
+        if self.wants_tlb_shootdown.swap(false, Ordering::Relaxed) == false {
+            return;
+        }
+
+        // TODO: Finer-grained flush
+        unsafe {
+            x86::tlb::flush_all();
+        }
+
+        {
+            let addrsp = self.current_addrsp.borrow();
+            if let Some(ref addrsp) = &*addrsp {
+                addrsp.tlb_ack.fetch_add(1, Ordering::Release);
+            }
         }
     }
 }

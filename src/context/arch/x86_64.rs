@@ -348,11 +348,11 @@ pub unsafe fn switch_arch_hook() {
         // If we are not switching to a different address space, we can simply return early.
     }
     if let Some(ref prev_addrsp) = &*prev_addrsp {
-        prev_addrsp.inner.read().used_by.atomic_clear(percpu.cpu_id);
+        prev_addrsp.acquire_read().used_by.atomic_clear(percpu.cpu_id);
     }
 
     if let Some(next_addrsp) = &*next_addrsp {
-        let next = next_addrsp.inner.read();
+        let next = next_addrsp.acquire_read();
         next.used_by.atomic_set(percpu.cpu_id);
         next.table.utable.make_current();
     } else {

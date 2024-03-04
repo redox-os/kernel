@@ -242,7 +242,7 @@ impl UserInner {
         tail.buf_mut()[..buf.len()].copy_from_slice(buf);
 
         let is_pinned = true;
-        let dst_page = dst_addr_space.inner.write().mmap_anywhere(
+        let dst_page = dst_addr_space.acquire_write().mmap_anywhere(
             &dst_addr_space,
             ONE,
             PROT_READ,
@@ -343,7 +343,7 @@ impl UserInner {
             .split_at(core::cmp::min(align_offset, user_buf.len()))
             .expect("split must succeed");
 
-        let mut dst_space = dst_space_lock.inner.write();
+        let mut dst_space = dst_space_lock.acquire_write();
 
         let free_span = dst_space
             .grants
@@ -437,7 +437,7 @@ impl UserInner {
 
                     Ok(Grant::borrow(
                         Arc::clone(&cur_space_lock),
-                        &mut *cur_space_lock.inner.write(),
+                        &mut *cur_space_lock.acquire_write(),
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -671,8 +671,7 @@ impl UserInner {
                     let context = context.upgrade().ok_or(Error::new(ESRCH))?;
 
                     let (frame, _) = AddrSpace::current()?
-                        .inner
-                        .read()
+                        .acquire_read()
                         .table
                         .utable
                         .translate(base_addr)
@@ -841,7 +840,7 @@ impl UserInner {
                 BorrowedFmapSource {
                     src_base: Page::containing_address(VirtualAddress::new(base_addr)),
                     addr_space_lock,
-                    addr_space_guard: addr_space_lock.inner.write(),
+                    addr_space_guard: addr_space_lock.acquire_write(),
                     mode: if map.flags.contains(MapFlags::MAP_SHARED) {
                         MmapMode::Shared
                     } else {
@@ -854,7 +853,7 @@ impl UserInner {
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
-        let dst_base = dst_addr_space.inner.write().mmap(
+        let dst_base = dst_addr_space.acquire_write().mmap(
             &dst_addr_space,
             dst_base,
             page_count_nz,

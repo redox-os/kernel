@@ -587,7 +587,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
         let page_count = NonZeroUsize::new(bootstrap.page_count)
             .expect("bootstrap contained no pages!");
 
-        let _base_page = addr_space.inner.write().mmap(&addr_space, Some(base), page_count, flags, &mut Vec::new(), |page, flags, mapper, flusher| {
+        let _base_page = addr_space.acquire_write().mmap(&addr_space, Some(base), page_count, flags, &mut Vec::new(), |page, flags, mapper, flusher| {
             let shared = false;
             Ok(Grant::zeroed(PageSpan::new(page, bootstrap.page_count), flags, mapper, flusher, shared)?)
         });

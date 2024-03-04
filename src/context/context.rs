@@ -408,12 +408,12 @@ impl Context {
 
             if let Some(ref prev_addrsp) = self.addr_space {
                 assert!(Arc::ptr_eq(&this_percpu.current_addrsp.borrow().as_ref().unwrap(), prev_addrsp));
-                prev_addrsp.inner.read().used_by.atomic_clear(this_percpu.cpu_id);
+                prev_addrsp.acquire_read().used_by.atomic_clear(this_percpu.cpu_id);
             }
 
             *this_percpu.current_addrsp.borrow_mut() = Some(Arc::clone(&addr_space));
 
-            let new_addrsp = addr_space.inner.read();
+            let new_addrsp = addr_space.acquire_read();
             new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
 
             unsafe {

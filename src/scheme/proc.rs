@@ -717,7 +717,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
 
-                let mut src_addr_space = addrspace.inner.write();
+                let mut src_addr_space = addrspace.acquire_write();
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -734,7 +734,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         &mut notify_files,
                     )?
                 } else {
-                    let mut dst_addrsp_guard = dst_addr_space.inner.write();
+                    let mut dst_addrsp_guard = dst_addr_space.acquire_write();
                     dst_addrsp_guard.mmap(
                         &dst_addr_space,
                         requested_dst_base,
@@ -901,7 +901,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 for (dst, (grant_base, grant_info)) in dst
                     .iter_mut()
-                    .zip(addrspace.inner.read().grants.iter().skip(orig_offset))
+                    .zip(addrspace.acquire_read().grants.iter().skip(orig_offset))
                 {
                     *dst = GrantDesc {
                         base: grant_base.start_address().data(),
@@ -981,7 +981,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 read_from(buf, &data.buf, &mut data.offset)
             }
             Operation::MmapMinAddr(ref addrspace) => {
-                buf.write_usize(addrspace.inner.read().mmap_min)?;
+                buf.write_usize(addrspace.acquire_read().mmap_min)?;
                 Ok(mem::size_of::<usize>())
             }
             Operation::SchedAffinity => {
@@ -1300,7 +1300,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
                     return Err(Error::new(EINVAL));
                 }
-                addrspace.inner.write().mmap_min = val;
+                addrspace.acquire_write().mmap_min = val;
                 Ok(mem::size_of::<usize>())
             }
             Operation::SchedAffinity => {
@@ -1457,7 +1457,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         let page = Page::containing_address(VirtualAddress::new(page_addr));
 
                         match addrspace
-                            .inner.read()
+                            .acquire_read()
                             .grants
                             .contains(page)
                             .ok_or(Error::new(EINVAL))?
