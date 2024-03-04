@@ -241,7 +241,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         cpu_id,
         switch_internals: Default::default(),
         current_addrsp: RefCell::new(None),
-        old_addrsp_tmp: RefCell::new(None),
+        new_addrsp_tmp: Cell::new(None),
         wants_tlb_shootdown: AtomicBool::new(false),
 
         #[cfg(feature = "profiling")]

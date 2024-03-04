@@ -223,9 +223,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         );
     }
 
-    let percpu = PercpuBlock::current();
-    *percpu.current_addrsp.borrow_mut() = next.addr_space.clone();
-    *percpu.old_addrsp_tmp.borrow_mut() = prev.addr_space.clone();
+    PercpuBlock::current().new_addrsp_tmp.set(next.addr_space.clone());
 
     switch_to_inner(&mut prev.arch, &mut next.arch)
 }
@@ -336,10 +334,10 @@ unsafe extern "C" fn signal_handler_wrapper() {
 pub unsafe fn switch_arch_hook() {
     let percpu = PercpuBlock::current();
 
-    let prev_addrsp = percpu.old_addrsp_tmp.borrow();
-    let next_addrsp = percpu.current_addrsp.borrow();
+    let cur_addrsp = percpu.current_addrsp.borrow();
+    let next_addrsp = percpu.new_addrsp_tmp.take();
 
-    let retain_pgtbl = match (&*prev_addrsp, &*next_addrsp) {
+    let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
         (Some(ref p), Some(ref n)) => Arc::ptr_eq(p, n),
         (Some(_), None) | (None, Some(_)) => false,
         (None, None) => true,
@@ -347,17 +345,17 @@ pub unsafe fn switch_arch_hook() {
     if retain_pgtbl {
         // If we are not switching to a different address space, we can simply return early.
     }
-    if let Some(ref prev_addrsp) = &*prev_addrsp {
+    if let Some(ref prev_addrsp) = &*cur_addrsp {
         prev_addrsp.acquire_read().used_by.atomic_clear(percpu.cpu_id);
     }
 
-    drop(prev_addrsp);
+    drop(cur_addrsp);
 
     // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
     // space.
-    *percpu.old_addrsp_tmp.borrow_mut() = None;
+    *percpu.current_addrsp.borrow_mut() = next_addrsp;
 
-    if let Some(next_addrsp) = &*next_addrsp {
+    if let Some(next_addrsp) = &*percpu.current_addrsp.borrow() {
         let next = next_addrsp.acquire_read();
 
         next.used_by.atomic_set(percpu.cpu_id);

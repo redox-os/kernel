@@ -133,6 +133,7 @@ pub unsafe fn switch() -> bool {
         .is_err()
     {
         interrupt::pause();
+        percpu.maybe_handle_tlb_shootdown();
     }
 
     let cpu_id = crate::cpu_id();

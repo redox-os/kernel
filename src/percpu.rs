@@ -16,7 +16,7 @@ pub struct PercpuBlock {
     pub switch_internals: ContextSwitchPercpu,
 
     pub current_addrsp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
-    pub old_addrsp_tmp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
+    pub new_addrsp_tmp: Cell<Option<Arc<AddrSpaceWrapper>>>,
     pub wants_tlb_shootdown: AtomicBool,
 
     // TODO: Put mailbox queues here, e.g. for TLB shootdown? Just be sure to 128-byte align it
@@ -75,15 +75,8 @@ impl PercpuBlock {
             x86::tlb::flush_all();
         }
 
-        {
-            let old = self.old_addrsp_tmp.borrow();
-            let addrsp = self.current_addrsp.borrow();
-
-            if let Some(ref old) = &*old {
-                old.tlb_ack.fetch_add(1, Ordering::Release);
-            } else if let Some(ref addrsp) = &*addrsp {
-                addrsp.tlb_ack.fetch_add(1, Ordering::Release);
-            }
+        if let Some(ref addrsp) = &*self.current_addrsp.borrow() {
+            addrsp.tlb_ack.fetch_add(1, Ordering::Release);
         }
     }
 }
