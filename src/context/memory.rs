@@ -1703,29 +1703,30 @@ impl Grant {
             }
         );
 
-        let (require_info, is_fmap_shared) = match self.info.provider {
-            Provider::Allocated { .. } => (Some(true), Some(false)),
-            Provider::AllocatedShared { .. } => (Some(true), None),
-            Provider::External { .. } => (None, None),
-            Provider::PhysBorrowed { .. } => (Some(false), None),
-            Provider::FmapBorrowed { .. } => (None, Some(true)),
+        // TODO: Add old debug assertions back, into Flusher.
+        let is_fmap_shared = match self.info.provider {
+            Provider::Allocated { .. } => Some(false),
+            Provider::AllocatedShared { .. } => None,
+            Provider::External { .. } => None,
+            Provider::PhysBorrowed { .. } => None,
+            Provider::FmapBorrowed { .. } => Some(true),
         };
 
         if is_phys_contiguous {
-            let (phys, _) = mapper.translate(self.base.start_address()).unwrap();
-            let base = Frame::containing_address(phys);
+            let (phys_base, _) = mapper.translate(self.base.start_address()).unwrap();
+            let base_frame = Frame::containing_address(phys_base);
 
             for i in 0..self.info.page_count {
-                assert_eq!(
-                    get_page_info(base.next_by(i))
-                        .unwrap()
-                        .refcount
-                        .swap(0, Ordering::Relaxed),
-                    RefCount::One.to_raw()
-                );
+                unsafe {
+                    let (phys, _, flush) = mapper.unmap_phys(self.base.next_by(i).start_address(), true)
+                        .expect("all physborrowed grants must be fully Present in the page tables");
+                    flush.ignore();
+
+                    assert_eq!(phys, base_frame.next_by(i).start_address());
+                }
             }
 
-            deallocate_frames(Frame::containing_address(phys), self.info.page_count);
+            flusher.queue(base_frame, Some(NonZeroUsize::new(self.info.page_count).unwrap()), TlbShootdownActions::FREE);
         } else {
             for page in self.span().pages() {
                 // Lazy mappings do not need to be unmapped.
@@ -1735,24 +1736,6 @@ impl Grant {
                     continue;
                 };
                 unsafe { flush.ignore(); }
-                /*
-                let frame = Frame::containing_address(phys);
-                if let Some(info) = get_page_info(frame) {
-                    assert_ne!(
-                        require_info,
-                        Some(false),
-                        "PhysBorrowed frame was allocator-owned"
-                    );
-                    if info.remove_ref() == RefCount::Zero {
-                        deallocate_frames(frame, 1);
-                    };
-                } else {
-                    assert_ne!(
-                        require_info,
-                        Some(true),
-                        "allocated frame did not have an associated PageInfo"
-                    );
-                }*/
 
                 flusher.queue(Frame::containing_address(phys), None, TlbShootdownActions::FREE);
             }
