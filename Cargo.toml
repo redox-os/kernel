@@ -21,6 +21,7 @@ slab_allocator = { path = "slab_allocator", optional = true }
 spin = "0.9.8"
 spinning_top = { version = "0.3", features = ["arc_lock"] }
 rmm = { path = "rmm", default-features = false }
+arrayvec = { version = "0.7.4", default-features = false }
 
 [dependencies.goblin]
 version = "0.2.1"
