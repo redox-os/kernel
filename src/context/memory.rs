@@ -1275,9 +1275,10 @@ impl Grant {
                     match page_info.add_ref(RefKind::Shared) {
                         Ok(()) => frame,
                         Err(AddRefError::CowToShared) => unsafe {
-                            let new_cow_frame = cow(frame, page_info, RefKind::Shared)
+                            let CowResult { new_frame: new_cow_frame, old_frame } = cow(frame, page_info, RefKind::Shared)
                                 .map_err(|_| Error::new(ENOMEM))?;
-                            let (old_flags, _, flush) = src_addrspace
+
+                            let (old_flags, _, _flush) = src_addrspace
                                 .table
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, flags| {
@@ -1285,8 +1286,17 @@ impl Grant {
                                 })
                                 .expect("page did exist");
 
+                            // TODO: flush.ignore() is correct, but seems to be amplifying a
+                            // userspace race condition
+                            //
+                            //flush.ignore();
+
                             let mut src_flusher = Flusher { active_cpus: &mut src_addrspace.used_by, state: src_flusher_state };
                             src_flusher.queue(frame, None, TlbShootdownActions::change_of_flags(old_flags, new_flags));
+
+                            if let Some(old_frame) = old_frame {
+                                src_flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                            }
                             src_flusher_state = src_flusher.detach();
 
                             new_cow_frame
@@ -1510,13 +1520,25 @@ impl Grant {
                 match src_page_info.add_ref(rk) {
                     Ok(()) => src_frame,
                     Err(AddRefError::CowToShared) => {
-                        let new_frame = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
+                        let CowResult { new_frame, old_frame } = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
+                        if let Some(old_frame) = old_frame {
+                            src_flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                        }
 
                         // TODO: Flusher
                         unsafe {
-                            src_mapper.remap_with_full(src_page.start_address(), |_, f| {
+                            if let Some((_flags, phys, flush)) = src_mapper.remap_with_full(src_page.start_address(), |_, f| {
                                 (new_frame.start_address(), f)
-                            });
+                            }) {
+                                // TODO: flush.ignore() is correct, but seems to be amplifying a
+                                // userspace race condition
+                                //
+                                //flush.ignore();
+                                flush.flush();
+
+                                // FIXME: Is MOVE correct?
+                                src_flusher.queue(Frame::containing_address(phys), None, TlbShootdownActions::MOVE);
+                            }
                         }
 
                         new_frame
@@ -1524,7 +1546,11 @@ impl Grant {
                     // Cannot be shared and CoW simultaneously.
                     Err(AddRefError::SharedToCow) => {
                         // TODO: Copy in place, or use a zeroed page?
-                        cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?
+                        let CowResult { new_frame, old_frame } = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
+                        if let Some(old_frame) = old_frame {
+                            src_flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                        }
+                        new_frame
                     }
                 }
             };
@@ -2174,11 +2200,20 @@ pub enum PfError {
     RecursionLimitExceeded,
 }
 
+pub struct CowResult {
+    /// New frame, which has been given an exclusive reference the caller can use.
+    pub new_frame: Frame,
+
+    /// Old frame. The caller must decrease its refcount if present, after it has shot down the TLB
+    /// of other CPUs properly.
+    pub old_frame: Option<Frame>,
+}
+
 /// Consumes an existing reference to old_frame, and then returns an exclusive frame, with refcount
 /// either preinitialized to One or Shared(2) depending on initial_ref_kind. This may be the same
 /// frame, or (if the refcount is modified simultaneously) a new frame whereas the old frame is
 /// deallocated.
-fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Result<Frame, PfError> {
+fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Result<CowResult, PfError> {
     let old_refcount = old_info.refcount();
     assert_ne!(old_refcount, RefCount::Zero);
 
@@ -2188,14 +2223,19 @@ fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Resu
     };
 
     if old_refcount == RefCount::One {
-        // This reference, that is being copied on write, was the only reference to old_frame, so
-        // no copy is necessary.
+        // We were lucky; the frame was already exclusively owned, so the refcount cannot be
+        // modified unless we modify it. This is the special case where the old_frame returned is
+        // None.
+
         if initial_ref_kind == RefKind::Shared {
             old_info
                 .refcount
                 .store(initial_rc.to_raw(), Ordering::Relaxed);
         }
-        return Ok(old_frame);
+        return Ok(CowResult {
+            new_frame: old_frame,
+            old_frame: None,
+        });
     }
 
     let new_frame = init_frame(initial_rc)?;
@@ -2206,11 +2246,10 @@ fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Resu
         }
     }
 
-    if old_info.remove_ref() == RefCount::Zero {
-        crate::memory::deallocate_frames(old_frame, 1);
-    }
-
-    Ok(new_frame)
+    Ok(CowResult {
+        new_frame,
+        old_frame: Some(old_frame),
+    })
 }
 
 fn map_zeroed(
@@ -2266,6 +2305,7 @@ fn correct_inner<'l>(
     recursion_level: u32,
 ) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
     let mut addr_space = &mut *addr_space_guard;
+    let mut flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
         log::debug!("Lacks grant");
@@ -2320,7 +2360,11 @@ fn correct_inner<'l>(
                     if info.allows_writable() {
                         frame
                     } else {
-                        cow(frame, info, RefKind::Cow)?
+                        let result = cow(frame, info, RefKind::Cow)?;
+                        if let Some(old_frame) = result.old_frame {
+                            flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                        }
+                        result.new_frame
                     }
                 }
                 _ => map_zeroed(
@@ -2389,6 +2433,7 @@ fn correct_inner<'l>(
                         .ok_or(PfError::RecursionLimitExceeded)?;
 
                     drop(guard);
+                    drop(flusher);
                     drop(addr_space_guard);
 
                     // FIXME: Can this result in invalid address space state?
@@ -2406,6 +2451,7 @@ fn correct_inner<'l>(
 
                     addr_space_guard = addr_space_lock.acquire_write();
                     addr_space = &mut *addr_space_guard;
+                    flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
                     guard = foreign_address_space.acquire_upgradeable_read();
 
                     frame
@@ -2416,7 +2462,12 @@ fn correct_inner<'l>(
                 match info.add_ref(RefKind::Shared) {
                     Ok(()) => src_frame,
                     Err(AddRefError::CowToShared) => {
-                        let new_frame = cow(src_frame, info, RefKind::Shared)?;
+                        let CowResult { new_frame, old_frame } = cow(src_frame, info, RefKind::Shared)?;
+
+                        if let Some(old_frame) = old_frame {
+                            flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                            flusher.flush();
+                        }
 
                         let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
@@ -2455,6 +2506,7 @@ fn correct_inner<'l>(
         Provider::FmapBorrowed { ref file_ref, .. } => {
             let file_ref = file_ref.clone();
             let flags = map_flags(grant_info.flags());
+            drop(flusher);
             drop(addr_space_guard);
 
             let (scheme_id, scheme_number) = match file_ref.description.read() {
@@ -2493,6 +2545,7 @@ fn correct_inner<'l>(
 
             addr_space_guard = addr_space_lock.acquire_write();
             addr_space = &mut *addr_space_guard;
+            flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
 
             log::info!("Got frame {:?} from external fmap", frame);
 
@@ -2512,6 +2565,7 @@ fn correct_inner<'l>(
         return Err(PfError::Oom);
     };
 
+    drop(flusher);
     Ok((frame, flush, addr_space_guard))
 }
 
@@ -2543,6 +2597,7 @@ pub enum CopyMappingsMode {
 // TODO: Check if polymorphism is worth it in terms of code size performance penalty vs optimized
 // away checks.
 pub trait GenericFlusher {
+    // TODO: Don't require a frame unless FREE, require Page otherwise
     fn queue(&mut self, frame: Frame, phys_contiguous_count: Option<NonZeroUsize>, actions: TlbShootdownActions);
 }
 pub struct NopFlusher;
@@ -2671,7 +2726,7 @@ bitflags::bitflags! {
         // Delay the deallocation of one or more contiguous frames.
         const FREE = 1;
 
-        // Revoke various access flags on a page
+        // Revoke various access flags from a page
         const REVOKE_READ = 1 << 1;
         const REVOKE_WRITE = 1 << 2;
         const REVOKE_EXEC = 1 << 3;
