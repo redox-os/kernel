@@ -140,29 +140,8 @@ impl InterruptStack {
         all.rip = self.iret.rip;
         all.cs = self.iret.cs;
         all.rflags = self.iret.rflags;
-
-        // Set rsp and ss:
-
-        const CPL_MASK: usize = 0b11;
-
-        let cs: usize;
-        unsafe {
-            core::arch::asm!("mov {}, cs", out(reg) cs);
-        }
-
-        // FIXME: This code is wrong.
-        if self.iret.cs & CPL_MASK == cs & CPL_MASK {
-            // Privilege ring didn't change, so neither did the stack
-            all.rsp = self as *const Self as usize // rsp after Self was pushed to the stack
-                + mem::size_of::<Self>() // disregard Self
-                - mem::size_of::<usize>() * 2; // well, almost: rsp and ss need to be excluded as they aren't present
-            unsafe {
-                core::arch::asm!("mov {}, ss", out(reg) all.ss);
-            }
-        } else {
-            all.rsp = self.iret.rsp;
-            all.ss = self.iret.ss;
-        }
+        all.rsp = self.iret.rsp;
+        all.ss = self.iret.ss;
     }
     /// Loads all registers from a struct used by the proc:
     /// scheme to read/write registers.
@@ -185,10 +164,15 @@ impl InterruptStack {
         self.iret.rip = all.rip;
         self.iret.rsp = all.rsp;
 
-        // CS and SS are immutable
+        // CS and SS are immutable, at least their privilege levels.
 
-        // TODO: RFLAGS should be restricted before being changeable
-        // self.iret.rflags = all.eflags;
+        // OF, DF, 0, TF => D
+        // SF, ZF, 0, AF => D
+        // 0, PF, 1, CF => 5
+        const ALLOWED_RFLAGS: usize = 0xDD5;
+
+        self.iret.rflags &= !ALLOWED_RFLAGS;
+        self.iret.rflags |= all.rflags & ALLOWED_RFLAGS;
     }
     /// Enables the "Trap Flag" in the FLAGS register, causing the CPU
     /// to send a Debug exception after the next instruction. This is
