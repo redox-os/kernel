@@ -246,7 +246,7 @@ impl Context {
                 handler: None,
             },
             umask: 0o022,
-            status: Status::Blocked,
+            status: Status::HardBlocked { reason: HardBlockedReason::NotYetStarted },
             status_reason: "",
             running: false,
             cpu_id: None,
