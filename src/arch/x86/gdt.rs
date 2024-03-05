@@ -1,8 +1,10 @@
 //! Global descriptor table
 
-use core::{convert::TryInto, mem, ptr::addr_of_mut};
+use core::ptr::addr_of_mut;
+use core::{convert::TryInto, mem, cell::{Cell, RefCell}};
+use core::sync::atomic::AtomicBool;
 
-use crate::LogicalCpuId;
+use crate::cpu_set::LogicalCpuId;
 
 use x86::{
     bits32::task::TaskStateSegment,
@@ -214,7 +216,11 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     pcr.percpu = crate::percpu::PercpuBlock {
         cpu_id,
         switch_internals: Default::default(),
+        current_addrsp: RefCell::new(None),
+        new_addrsp_tmp: Cell::new(None),
+        wants_tlb_shootdown: AtomicBool::new(false),
     };
+    crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
 }
 
 #[derive(Copy, Clone, Debug)]

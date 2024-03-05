@@ -132,7 +132,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
-            RmmA::set_table(TableKind::User, space.read().table.utable.table().phys());
+            RmmA::set_table(TableKind::User, space.acquire_read().table.utable.table().phys());
             //TODO check_consistency(&mut space.write());
         }
 
@@ -147,7 +147,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             );
         }
         if let Some(ref addr_space) = context.addr_space {
-            let addr_space = addr_space.read();
+            let addr_space = addr_space.acquire_read();
             if !addr_space.grants.is_empty() {
                 println!("grants:");
                 for (base, grant) in addr_space.grants.iter() {
@@ -171,7 +171,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             for _ in 0..64 {
                 if context.addr_space.as_ref().map_or(false, |space| {
                     space
-                        .read()
+                        .acquire_read()
                         .table
                         .utable
                         .translate(crate::paging::VirtualAddress::new(sp))

@@ -16,7 +16,7 @@ use crate::{
     log::{self, info},
     memory,
     paging::{self, KernelMapper, PhysicalAddress, RmmA, RmmArch, TableKind},
-    LogicalCpuId,
+    cpu_set::LogicalCpuId,
 };
 
 /// Test of zero values in BSS.

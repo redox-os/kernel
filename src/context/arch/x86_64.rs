@@ -1,14 +1,11 @@
 use core::{
     mem,
     ptr::{addr_of, addr_of_mut},
-    sync::atomic::AtomicBool, borrow::BorrowMut,
+    sync::atomic::AtomicBool,
 };
-
-use alloc::sync::Arc;
 
 use crate::{
     interrupt::handler::ScratchRegisters,
-    paging::{RmmA, RmmArch, TableKind},
     pop_scratch, push_scratch,
     syscall::FloatRegisters, percpu::PercpuBlock,
 };
@@ -330,37 +327,4 @@ unsafe extern "C" fn signal_handler_wrapper() {
         inner = sym inner,
         options(noreturn)
     );
-}
-pub unsafe fn switch_arch_hook() {
-    let percpu = PercpuBlock::current();
-
-    let cur_addrsp = percpu.current_addrsp.borrow();
-    let next_addrsp = percpu.new_addrsp_tmp.take();
-
-    let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
-        (Some(ref p), Some(ref n)) => Arc::ptr_eq(p, n),
-        (Some(_), None) | (None, Some(_)) => false,
-        (None, None) => true,
-    };
-    if retain_pgtbl {
-        // If we are not switching to a different address space, we can simply return early.
-    }
-    if let Some(ref prev_addrsp) = &*cur_addrsp {
-        prev_addrsp.acquire_read().used_by.atomic_clear(percpu.cpu_id);
-    }
-
-    drop(cur_addrsp);
-
-    // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
-    // space.
-    *percpu.current_addrsp.borrow_mut() = next_addrsp;
-
-    if let Some(next_addrsp) = &*percpu.current_addrsp.borrow() {
-        let next = next_addrsp.acquire_read();
-
-        next.used_by.atomic_set(percpu.cpu_id);
-        next.table.utable.make_current();
-    } else {
-        RmmA::set_table(TableKind::User, empty_cr3());
-    }
 }

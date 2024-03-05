@@ -2,7 +2,9 @@ use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use alloc::sync::Arc;
+use rmm::Arch;
 
+use crate::context::empty_cr3;
 use crate::context::memory::AddrSpaceWrapper;
 use crate::cpu_set::MAX_CPU_COUNT;
 use crate::{context::switch::ContextSwitchPercpu, cpu_set::LogicalCpuId};
@@ -78,5 +80,38 @@ impl PercpuBlock {
         if let Some(ref addrsp) = &*self.current_addrsp.borrow() {
             addrsp.tlb_ack.fetch_add(1, Ordering::Release);
         }
+    }
+}
+pub unsafe fn switch_arch_hook() {
+    let percpu = PercpuBlock::current();
+
+    let cur_addrsp = percpu.current_addrsp.borrow();
+    let next_addrsp = percpu.new_addrsp_tmp.take();
+
+    let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
+        (Some(ref p), Some(ref n)) => Arc::ptr_eq(p, n),
+        (Some(_), None) | (None, Some(_)) => false,
+        (None, None) => true,
+    };
+    if retain_pgtbl {
+        // If we are not switching to a different address space, we can simply return early.
+    }
+    if let Some(ref prev_addrsp) = &*cur_addrsp {
+        prev_addrsp.acquire_read().used_by.atomic_clear(percpu.cpu_id);
+    }
+
+    drop(cur_addrsp);
+
+    // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
+    // space.
+    *percpu.current_addrsp.borrow_mut() = next_addrsp;
+
+    if let Some(next_addrsp) = &*percpu.current_addrsp.borrow() {
+        let next = next_addrsp.acquire_read();
+
+        next.used_by.atomic_set(percpu.cpu_id);
+        next.table.utable.make_current();
+    } else {
+        crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
     }
 }

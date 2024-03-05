@@ -6,6 +6,7 @@ use crate::{
     gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
     interrupt::handler::ScratchRegisters,
     paging::{RmmA, RmmArch, TableKind},
+    percpu::PercpuBlock,
     pop_scratch, push_scratch,
     syscall::FloatRegisters,
 };
@@ -148,32 +149,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         prev.arch.gsbase = gdt[GDT_USER_GS].offset() as usize;
         gdt[GDT_USER_GS].set_offset(next.arch.gsbase as u32);
     }
-
-    match next.addr_space {
-        // Since Arc is essentially just wraps a pointer, in this case a regular pointer (as
-        // opposed to dyn or slice fat pointers), and NonNull optimization exists, map_or will
-        // hopefully be optimized down to checking prev and next pointers, as next cannot be null.
-        Some(ref next_space) => {
-            if prev
-                .addr_space
-                .as_ref()
-                .map_or(true, |prev_space| !Arc::ptr_eq(&prev_space, &next_space))
-            {
-                // Suppose we have two sibling threads A and B. A runs on CPU 0 and B on CPU 1. A
-                // recently called yield and is now here about to switch back. Meanwhile, B is
-                // currently creating a new mapping in their shared address space, for example a
-                // message on a channel.
-                //
-                // Unless we acquire this lock, it may be possible that the TLB will not contain new
-                // entries. While this can be caught and corrected in a page fault handler, this is not
-                // true when entries are removed from a page table!
-                next_space.read().table.utable.make_current();
-            }
-        }
-        None => {
-            RmmA::set_table(TableKind::User, empty_cr3());
-        }
-    }
+    PercpuBlock::current().new_addrsp_tmp.set(next.addr_space.clone());
 
     core::arch::asm!(
         "call {inner}",

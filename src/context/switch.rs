@@ -111,7 +111,7 @@ pub unsafe extern "C" fn switch_finish_hook() {
         // TODO: unreachable_unchecked()?
         crate::arch::stop::emergency_reset();
     }
-    super::arch::switch_arch_hook();
+    crate::percpu::switch_arch_hook();
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 }
 
