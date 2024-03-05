@@ -9,7 +9,7 @@ use rmm::{
 };
 use spin::Mutex;
 
-use crate::{init::device_tree::MEMORY_MAP, paging::entry::EntryFlags, LogicalCpuId};
+use crate::{init::device_tree::MEMORY_MAP, paging::entry::EntryFlags, cpu_set::LogicalCpuId};
 
 use super::CurrentRmmArch as RmmA;
 

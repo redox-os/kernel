@@ -74,7 +74,7 @@ impl PercpuBlock {
 
         // TODO: Finer-grained flush
         unsafe {
-            x86::tlb::flush_all();
+            crate::paging::RmmA::invalidate_all();
         }
 
         if let Some(ref addrsp) = &*self.current_addrsp.borrow() {

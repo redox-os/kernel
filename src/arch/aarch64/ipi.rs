@@ -22,3 +22,11 @@ pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
 #[cfg(feature = "multi_core")]
 #[inline(always)]
 pub fn ipi(kind: IpiKind, target: IpiTarget) {}
+
+#[cfg(not(feature = "multi_core"))]
+#[inline(always)]
+pub fn ipi_single(_kind: IpiKind, _target: crate::cpu_set::LogicalCpuId) {}
+
+#[cfg(feature = "multi_core")]
+#[inline(always)]
+pub fn ipi_single(kind: IpiKind, target: crate::cpu_set::LogicalCpuId) {}

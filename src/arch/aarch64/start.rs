@@ -164,7 +164,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Initialize paging
         paging::init();
 
-        crate::misc::init(crate::LogicalCpuId(0));
+        crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
         // Reset AP variables
         CPU_COUNT.store(1, Ordering::SeqCst);

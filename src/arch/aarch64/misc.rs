@@ -1,7 +1,10 @@
+use core::cell::{Cell, RefCell};
+use core::sync::atomic::AtomicBool;
+
 use crate::{
+    cpu_set::LogicalCpuId,
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    LogicalCpuId,
 };
 
 impl PercpuBlock {
@@ -18,6 +21,9 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
     virt.write(PercpuBlock {
         cpu_id,
         switch_internals: crate::context::switch::ContextSwitchPercpu::default(),
+        current_addrsp: RefCell::new(None),
+        new_addrsp_tmp: Cell::new(None),
+        wants_tlb_shootdown: AtomicBool::new(false),
     });
 
     crate::device::cpu::registers::control_regs::tpidr_el1_write(virt as u64);

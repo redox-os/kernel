@@ -4,6 +4,7 @@ use crate::scheme::debug::{debug_input, debug_notify};
 
 bitflags! {
     /// UARTFR
+    #[derive(Clone, Copy, Debug)]
     struct UartFrFlags: u32 {
         const TXFE = 1 << 7;
         const RXFF = 1 << 6;
@@ -15,6 +16,7 @@ bitflags! {
 
 bitflags! {
     /// UARTCR
+    #[derive(Clone, Copy, Debug)]
     struct UartCrFlags: u32 {
         const RXE = 1 << 9;
         const TXE = 1 << 8;
@@ -24,6 +26,7 @@ bitflags! {
 
 bitflags! {
     // UARTIMSC
+    #[derive(Clone, Copy, Debug)]
     struct UartImscFlags: u32 {
         const RTIM = 1 << 6;
         const TXIM = 1 << 5;
@@ -33,6 +36,7 @@ bitflags! {
 
 bitflags! {
     // UARTICR
+    #[derive(Clone, Copy, Debug)]
     struct UartIcrFlags: u32 {
         const RTIC = 1 << 6;
         const TXIC = 1 << 5;
@@ -42,6 +46,7 @@ bitflags! {
 
 bitflags! {
     // UARTRIS
+    #[derive(Clone, Copy, Debug)]
     struct UartRisFlags: u32 {
         const RTIS = 1 << 6;
         const TXIS = 1 << 5;
@@ -51,6 +56,7 @@ bitflags! {
 
 bitflags! {
     //UARTMIS
+    #[derive(Clone, Copy, Debug)]
     struct UartMisFlags: u32 {
         const TXMIS = 1 << 5;
         const RXMIS = 1 << 4;
@@ -59,6 +65,7 @@ bitflags! {
 
 bitflags! {
     //UARTLCR_H
+    #[derive(Clone, Copy, Debug)]
     struct UartLcrhFlags: u32 {
         const FEN = 1 << 4;
     }
@@ -66,6 +73,7 @@ bitflags! {
 
 bitflags! {
     //UARTIFLS
+    #[derive(Clone, Copy, Debug)]
     struct UartIflsFlags: u32 {
         const RX1_8 = 0 << 3;
         const RX2_8 = 1 << 3;
@@ -187,7 +195,7 @@ impl SerialPort {
     pub fn receive(&mut self) {
         let mut flags = self.intr_stats();
         let chk_flags = UartRisFlags::RTIS | UartRisFlags::RXIS;
-        while (flags & chk_flags).bits != 0 {
+        while (flags & chk_flags).bits() != 0 {
             if self.cts_event_walkaround {
                 self.write_reg(self.intr_clr_reg, 0x00);
                 let _ = self.read_reg(self.intr_clr_reg);
@@ -195,7 +203,7 @@ impl SerialPort {
             }
 
             let clr = flags & (!chk_flags);
-            self.write_reg(self.intr_clr_reg, clr.bits);
+            self.write_reg(self.intr_clr_reg, clr.bits());
 
             for _ in 0..256 {
                 if self.line_sts().contains(UartFrFlags::RXFE) {
