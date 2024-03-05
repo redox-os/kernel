@@ -15,7 +15,7 @@ use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
     FobtainFdFlags, MunmapFlags, SendFdFlags, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD,
-    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
+    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, KSMSG_CANCEL,
 };
 
 use crate::{
@@ -61,6 +61,7 @@ enum State {
     Waiting {
         context: Weak<RwSpinlock<Context>>,
         fd: Option<Arc<RwLock<FileDescription>>>,
+        canceling: bool,
     },
     Responded(Response),
     Fmap(Weak<RwSpinlock<Context>>),
@@ -178,6 +179,7 @@ impl UserInner {
                 State::Waiting {
                     context: Arc::downgrade(&current_context),
                     fd,
+                    canceling: false,
                 },
             );
         }
@@ -195,9 +197,25 @@ impl UserInner {
                 // invalid state
                 Entry::Vacant(_) => return Err(Error::new(EBADFD)),
                 Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
-                    // spurious wakeup, TODO: EINTR
-                    old_state @ State::Waiting { .. } => {
+                    // signal wakeup while awaiting cancelation
+                    old_state @ State::Waiting { canceling: true, .. } => {
                         *o.get_mut() = old_state;
+                        continue;
+                    }
+                    // spurious wakeup
+                    State::Waiting { canceling: false, fd, context } => {
+                        log::info!("EINTR");
+                        *o.get_mut() = State::Waiting { canceling: true, fd, context };
+
+                        // TODO: Is this too dangerous when the states lock is held?
+                        self.todo.send(Packet {
+                            id: 0,
+                            a: KSMSG_CANCEL,
+                            b: packet.id as usize,
+                            c: (packet.id >> 32) as usize,
+                            ..packet
+                        });
+                        event::trigger(self.root_id, self.handle_id, EVENT_READ);
                         continue;
                     }
 
@@ -570,6 +588,10 @@ impl UserInner {
         Ok(())
     }
     fn handle_packet(&self, packet: &Packet) -> Result<()> {
+        if packet.a == KSMSG_CANCEL {
+            log::warn!("Context {} did KSMSG_CANCEL", context::current().unwrap().read().name);
+        }
+
         if packet.id == 0 {
             // TODO: Simplify logic by using SKMSG with packet.id being ignored?
             match packet.a {
@@ -712,7 +734,7 @@ impl UserInner {
                     return Err(Error::new(EINVAL));
                 }
 
-                State::Waiting { context, fd } => {
+                State::Waiting { context, fd, .. } => {
                     to_close = fd
                         .and_then(|f| Arc::try_unwrap(f).ok())
                         .map(RwLock::into_inner);
