@@ -1674,9 +1674,7 @@ impl Grant {
                 let Some((old_flags, phys, flush)) = mapper.remap_with(page.start_address(), |_| flags) else {
                     continue;
                 };
-                unsafe {
-                    flush.ignore();
-                }
+                flush.ignore();
                 //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing_address(mapper.translate(page.start_address()).unwrap().0));
                 flusher.queue(Frame::containing_address(phys), None, TlbShootdownActions::change_of_flags(old_flags, flags));
             }
@@ -2540,9 +2538,7 @@ fn correct_inner<'l>(
                 .write()
                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
-            unsafe {
-                super::switch();
-            }
+            super::switch();
 
             let frame = context_lock
                 .write()

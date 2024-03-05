@@ -35,9 +35,9 @@ pub unsafe fn init() {
     // TF needs to be cleared, as enabling userspace-rflags-controlled singlestep in the kernel
     // would be a bad idea.
     //
-    // AC is not currently used, but when SMAP is enabled, it should always be cleared when
-    // entering the kernel (and never be set except in usercopy functions), if for some reason AC
-    // was set before entering userspace (AC can only be modified by kernel code).
+    // AC it should always be cleared when entering the kernel (and never be set except in usercopy
+    // functions), if for some reason AC was set before entering userspace (AC can only be modified
+    // by kernel code).
     //
     // The other flags could indeed be preserved and excluded from FMASK, but since they are not
     // used to pass data to the kernel, they might as well be masked with *marginal* security

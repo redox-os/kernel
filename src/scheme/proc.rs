@@ -87,9 +87,7 @@ where
 
     // Wait until stopped
     while running {
-        unsafe {
-            context::switch();
-        }
+        context::switch();
 
         running = with_context(pid, |context| Ok(context.running))?;
     }

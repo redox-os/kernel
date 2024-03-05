@@ -40,7 +40,7 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 
     // TODO: The previous wakeup reason was most likely signals, but is there any other possible
     // reason?
-    unsafe { context::switch(); }
+    context::switch();
 
     if current_context.write().wake.take().is_some() {
         return Err(Error::new(EINTR));
@@ -67,8 +67,6 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 }
 
 pub fn sched_yield() -> Result<()> {
-    unsafe {
-        context::switch();
-    }
+    context::switch();
     Ok(())
 }

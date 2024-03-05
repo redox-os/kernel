@@ -61,6 +61,7 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::context::switch::SwitchResult;
 use crate::scheme::SchemeNamespace;
 
 use crate::consts::*;
@@ -208,17 +209,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
         }
     }
 
-    loop {
-        unsafe {
-            interrupt::disable();
-            if context::switch() {
-                interrupt::enable_and_nop();
-            } else {
-                // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                interrupt::enable_and_halt();
-            }
-        }
-    }
+    run_userspace()
 }
 
 /// This is the main kernel entry point for secondary CPUs
@@ -227,33 +218,36 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    if cfg!(feature = "multi_core") {
-        context::init();
-
-        let pid = syscall::getpid();
-        info!("AP {}: {:?}", cpu_id, pid);
-
-        #[cfg(feature = "profiling")]
-        profiling::ready_for_profiling();
-
-        loop {
-            unsafe {
-                interrupt::disable();
-                if context::switch() {
-                    interrupt::enable_and_nop();
-                } else {
-                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                    interrupt::enable_and_halt();
-                }
-            }
-        }
-    } else {
+    if !cfg!(feature = "multi_core") {
         info!("AP {}: Disabled", cpu_id);
 
         loop {
             unsafe {
                 interrupt::disable();
                 interrupt::halt();
+            }
+        }
+    }
+    context::init();
+
+    let pid = syscall::getpid();
+    info!("AP {}: {:?}", cpu_id, pid);
+
+    #[cfg(feature = "profiling")]
+    profiling::ready_for_profiling();
+
+    run_userspace();
+}
+fn run_userspace() -> ! {
+    loop {
+        unsafe {
+            interrupt::disable();
+            match context::switch() {
+                SwitchResult::Switched { .. } => interrupt::enable_and_nop(),
+                SwitchResult::AllContextsIdle => {
+                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
+                    interrupt::enable_and_halt();
+                }
             }
         }
     }

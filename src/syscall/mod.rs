@@ -14,16 +14,16 @@ pub use self::{
 
 use self::{
     data::{Map, SigAction, TimeSpec},
-    error::{Error, Result, EOVERFLOW, ENOSYS},
+    error::{Error, Result, EINTR, EOVERFLOW, ENOSYS},
     flag::{EventFlags, MapFlags, WaitFlags},
     number::*,
+    usercopy::UserSlice,
 };
 
 use crate::{
     context::{memory::AddrSpace, ContextId},
     interrupt::InterruptStack,
     scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
-    syscall::usercopy::UserSlice,
 };
 
 /// Debug
@@ -284,6 +284,14 @@ pub fn syscall(
     }
 
     let result = inner(a, b, c, d, e, f, stack);
+
+    if result == Err(Error::new(EINTR)) {
+        // Although it would be cleaner to simply run the signal trampoline right after switching
+        // back to any given context, where the signal set/queue is nonempty, syscalls need to
+        // complete *before* any signal is delivered. Otherwise the return value would probably be
+        // overwritten.
+        crate::context::signal::signal_handler();
+    }
 
     {
         let contexts = crate::context::contexts();

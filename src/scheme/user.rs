@@ -188,9 +188,7 @@ impl UserInner {
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         loop {
-            unsafe {
-                context::switch();
-            }
+            context::switch();
 
             let mut states = self.states.lock();
             match states.entry(id) {
@@ -204,7 +202,6 @@ impl UserInner {
                     }
                     // spurious wakeup
                     State::Waiting { canceling: false, fd, context } => {
-                        log::info!("EINTR");
                         *o.get_mut() = State::Waiting { canceling: true, fd, context };
 
                         // TODO: Is this too dangerous when the states lock is held?

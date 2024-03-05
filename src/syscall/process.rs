@@ -247,7 +247,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         Err(Error::new(EPERM))
     } else {
         // Switch to ensure delivery to self
-        unsafe { context::switch(); }
+        context::switch();
 
         Ok(0)
     }

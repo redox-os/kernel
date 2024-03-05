@@ -118,7 +118,7 @@ pub fn signal_handler() {
                     }
                 }
 
-                unsafe { switch() };
+                switch();
             }
             _ => {
                 // println!("Exit {}", sig);

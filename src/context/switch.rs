@@ -3,7 +3,7 @@ use core::{cell::Cell, mem, ops::Bound, sync::atomic::Ordering};
 use spinning_top::guard::ArcRwSpinlockWriteGuard;
 
 use crate::{
-    context::{self, arch, contexts, Context},
+    context::{arch, contexts, Context},
     cpu_set::LogicalCpuId,
     interrupt,
     percpu::PercpuBlock,
@@ -65,7 +65,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
     }
 }
 
-struct SwitchResult {
+struct SwitchResultInner {
     _prev_guard: ArcRwSpinlockWriteGuard<Context>,
     _next_guard: ArcRwSpinlockWriteGuard<Context>,
 }
@@ -78,7 +78,12 @@ pub fn tick() {
 
     // Switch after 3 ticks (about 6.75 ms)
     if new_ticks >= 3 {
-        let _ = unsafe { switch() };
+        match switch() {
+            SwitchResult::Switched { signal: true } => {
+                crate::context::signal::signal_handler();
+            },
+            _ => (),
+        }
     }
 }
 
@@ -93,12 +98,16 @@ pub unsafe extern "C" fn switch_finish_hook() {
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 }
 
-/// Switch to the next context
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SwitchResult {
+    Switched { signal: bool },
+    AllContextsIdle,
+}
+
+/// Switch to the next context, picked by the scheduler.
 ///
-/// # Safety
-///
-/// Do not call this while holding locks!
-pub unsafe fn switch() -> bool {
+/// This is not memory-unsafe to call, but do NOT call this while holding locks!
+pub fn switch() -> SwitchResult {
     let percpu = PercpuBlock::current();
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
@@ -156,7 +165,7 @@ pub unsafe fn switch() -> bool {
             let mut next_context_guard = next_context_lock.write_arc();
 
             // Update state of next context and check if runnable
-            if let UpdateResult::CanSwitch { signal } = update_runnable(&mut *next_context_guard, cpu_id) {
+            if let UpdateResult::CanSwitch { signal } = unsafe { update_runnable(&mut *next_context_guard, cpu_id) } {
                 // Store locks for previous and next context
                 switch_context_opt = Some((prev_context_guard, next_context_guard));
                 percpu.switch_internals.switch_signal.set(signal);
@@ -169,6 +178,8 @@ pub unsafe fn switch() -> bool {
 
     // Switch process states, TSS stack pointer, and store new context ID
     if let Some((mut prev_context_guard, mut next_context_guard)) = switch_context_opt {
+        // TODO: Update timestamps in switch_to
+
         // Set old context as not running and update CPU time
         let prev_context = &mut *prev_context_guard;
         prev_context.running = false;
@@ -184,20 +195,24 @@ pub unsafe fn switch() -> bool {
         percpu.switch_internals.context_id.set(next_context.id);
 
         // FIXME set th switch result in arch::switch_to instead
-        let prev_context =
-            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard);
-        let next_context =
-            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard);
+        let prev_context = unsafe {
+            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard)
+        };
+        let next_context = unsafe {
+            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard)
+        };
 
         percpu
             .switch_internals
             .switch_result
-            .set(Some(SwitchResult {
+            .set(Some(SwitchResultInner {
                 _prev_guard: prev_context_guard,
                 _next_guard: next_context_guard,
             }));
 
-        arch::switch_to(prev_context, next_context);
+        unsafe {
+            arch::switch_to(prev_context, next_context);
+        }
 
         // NOTE: After switch_to is called, the return address can even be different from the
         // current return address, meaning that we cannot use local variables here, and that we
@@ -205,24 +220,21 @@ pub unsafe fn switch() -> bool {
         // contexts will return directly to the function pointer passed to context::spawn, and not
         // reach this code until the next context switch back.
 
-        // We can't reuse the `percpu` variable, since it's from the stack before the last
-        // context::switch, and can thus point to another CPU's percpu block.
-        if PercpuBlock::current().switch_internals.switch_signal.replace(false) {
-            context::signal::signal_handler();
-        }
+        let new_percpu = PercpuBlock::current();
+        // For the same reason, we obviously can't reuse the percpu block
 
-        true
+        SwitchResult::Switched { signal: new_percpu.switch_internals.switch_signal.get() }
     } else {
         // No target was found, unset global lock and return
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
-        false
+        SwitchResult::AllContextsIdle
     }
 }
 
 #[derive(Default)]
 pub struct ContextSwitchPercpu {
-    switch_result: Cell<Option<SwitchResult>>,
+    switch_result: Cell<Option<SwitchResultInner>>,
     pit_ticks: Cell<usize>,
 
     /// Unique ID of the currently running context.
