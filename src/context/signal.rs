@@ -151,10 +151,10 @@ pub fn signal_handler() {
         // TODO: 16 bytes alignment is sufficient unless XSAVE is enabled.
         const STACK_ALIGN: usize = 64;
 
-        let new_sp_unless_altstack = (regs.stack_pointer() - STACK_ADJUST) & usize::wrapping_neg(STACK_ALIGN);
+        let new_sp_unless_altstack = (regs.stack_pointer() - STACK_ADJUST) / STACK_ALIGN * STACK_ALIGN;
 
         let new_sp = match handler.altstack {
-            Some(altstack) if !(altstack.base.get()..altstack.base.get() + altstack.base.get() + altstack.len.get()).contains(&regs.stack_pointer()) => altstack.base.get() + altstack.len.get(),
+            Some(altstack) if !(altstack.base.get()..altstack.base.get() + altstack.len.get()).contains(&regs.stack_pointer()) => altstack.base.get() + altstack.len.get(),
             _ => new_sp_unless_altstack,
         } - size_of::<SignalStack>();
 
