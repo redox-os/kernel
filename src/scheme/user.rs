@@ -708,17 +708,12 @@ impl UserInner {
                 _ => return Err(Error::new(EINVAL)),
             }
         } else {
-            let response = if Error::demux(packet.a) == Err(Error::new(EINTR)) {
-                Error::mux(Err(Error::new(EIO)))
-            } else {
-                packet.a
-            };
-            self.respond(packet.id, Response::Regular(response))?;
+            self.respond(packet.id, Response::Regular(packet.a))?;
         }
 
         Ok(())
     }
-    fn respond(&self, id: u64, response: Response) -> Result<()> {
+    fn respond(&self, id: u64, mut response: Response) -> Result<()> {
         let to_close;
 
         match self.states.lock().entry(id) {
@@ -731,7 +726,16 @@ impl UserInner {
                     return Err(Error::new(EINVAL));
                 }
 
-                State::Waiting { context, fd, .. } => {
+                State::Waiting { context, fd, canceling } => {
+                    if let Response::Regular(ref mut code) = response && !canceling && *code == Error::mux(Err(Error::new(EINTR))) {
+                        // EINTR is valid after cancelation has been requested, but not otherwise.
+                        // This is because the kernel-assisted signal trampoline will be invoked
+                        // after a syscall returns EINTR.
+                        //
+                        // TODO: Reserve another error code for user-caused vs kernel-caused EINTR?
+                        *code = Error::mux(Err(Error::new(EIO)));
+                    }
+
                     to_close = fd
                         .and_then(|f| Arc::try_unwrap(f).ok())
                         .map(RwLock::into_inner);

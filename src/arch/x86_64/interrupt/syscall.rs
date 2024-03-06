@@ -67,7 +67,7 @@ macro_rules! with_interrupt_stack {
 
         if allowed.unwrap_or(true) {
             let $stack = &mut *$stack;
-            (*$stack).scratch.rax = $code;
+            $code
         }
 
         ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
@@ -86,7 +86,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
             scratch.r10,
             scratch.r8,
             stack,
-        )
+        );
     });
 }
 
@@ -231,6 +231,6 @@ interrupt_stack!(syscall, |stack| {
             scratch.rsi,
             scratch.rdi,
             stack,
-        )
+        );
     })
 });

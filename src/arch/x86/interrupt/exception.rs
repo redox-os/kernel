@@ -6,6 +6,8 @@ use crate::{
     ksignal,
     ptrace,
     syscall::flag::*,
+    memory::GenericPfFlags,
+    paging::VirtualAddress,
 
     interrupt_stack,
     interrupt_error,

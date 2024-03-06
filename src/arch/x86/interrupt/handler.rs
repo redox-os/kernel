@@ -76,6 +76,13 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
+    pub fn setup_minimal(&mut self, eip: usize, singlestep: bool) {
+        // Always enable interrupts!
+        self.iret.eflags = x86::bits32::eflags::EFlags::FLAGS_IF.bits() as usize;
+
+        self.set_instr_pointer(eip);
+        self.set_singlestep(singlestep);
+    }
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
@@ -117,6 +124,19 @@ impl InterruptStack {
             all.ss = self.iret.ss;
         }
     }
+    pub fn set_stack_pointer(&mut self, esp: usize) {
+        self.iret.esp = esp;
+    }
+    pub fn stack_pointer(&self) -> usize {
+        self.iret.esp
+    }
+    pub fn set_instr_pointer(&mut self, eip: usize) {
+        self.iret.eip = eip;
+    }
+    // TODO: This can maybe be done in userspace?
+    pub fn set_syscall_ret_reg(&mut self, ret: usize) {
+        self.scratch.eax = ret;
+    }
     /// Loads all registers from a struct used by the proc:
     /// scheme to read/write registers.
     pub fn load(&mut self, all: &IntRegisters) {
@@ -131,9 +151,19 @@ impl InterruptStack {
         self.scratch.eax = all.eax;
         self.iret.eip = all.eip;
 
+        // FIXME: The interrupt stack on which this is called, is always from userspace, but make
+        // the API safer.
+        self.iret.esp = all.esp;
+
+        // OF, DF, 0, TF => D
+        // SF, ZF, 0, AF => D
+        // 0, PF, 1, CF => 5
+        const ALLOWED_EFLAGS: usize = 0xDD5;
+
         // These should probably be restricted
         // self.iret.cs = all.cs;
-        // self.iret.eflags = all.eflags;
+        self.iret.eflags &= !ALLOWED_EFLAGS;
+        self.iret.eflags |= all.eflags & ALLOWED_EFLAGS;
     }
     /// Enables the "Trap Flag" in the FLAGS register, causing the CPU
     /// to send a Debug exception after the next instruction. This is
@@ -240,19 +270,10 @@ macro_rules! exit_gs {
 macro_rules! interrupt_stack {
     // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
     // use idents directly instead.
-    ($name:ident, is_paranoid: $is_paranoid:expr, |$stack:ident| $code:block) => {
+    ($name:ident, |$stack:ident| $code:block) => {
         #[naked]
         pub unsafe extern "C" fn $name() {
-            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86::interrupt::InterruptStack) {
-                let _guard;
-
-                if !$is_paranoid {
-                    // Deadlock safety: (non-paranoid) interrupts are not normally enabled in the
-                    // kernel, except in kmain. However, no locks for context list nor even
-                    // individual context locks, are ever meant to be acquired there.
-                    _guard = $crate::ptrace::set_process_regs($stack);
-                }
-
+            unsafe extern "fastcall" fn inner($stack: &mut $crate::arch::x86::interrupt::InterruptStack) {
                 // TODO: Force the declarations to specify unsafe?
 
                 #[allow(unused_unsafe)]
@@ -274,9 +295,8 @@ macro_rules! interrupt_stack {
 
                 // Call inner function with pointer to stack
                 "
-                push esp
+                mov ecx, esp
                 call {inner}
-                pop esp
                 ",
 
                 // TODO: Unmap PTI
@@ -299,8 +319,8 @@ macro_rules! interrupt_stack {
             );
         }
     };
-    ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, is_paranoid: false, |$stack| $code); };
-    ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, is_paranoid: true, |$stack| $code); }
+    ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, |$stack| $code); };
+    ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, |$stack| $code); }
 }
 
 #[macro_export]
@@ -352,19 +372,6 @@ macro_rules! interrupt_error {
         #[naked]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86::interrupt::handler::InterruptErrorStack) {
-                let _guard;
-
-                // Only set_ptrace_process_regs if this error occured from userspace. If this fault
-                // originated from kernel mode, we have no idea what it might have locked (and
-                // kernel mode faults are never meant to occur unless something is wrong, and will
-                // not context switch anyway, rendering that statement useless in such a case
-                // anyway).
-                //
-                // Check the privilege level of CS against ring 3.
-                if $stack.inner.iret.cs & 0b11 == 0b11 {
-                    _guard = $crate::ptrace::set_process_regs(&mut $stack.inner);
-                }
-
                 #[allow(unused_unsafe)]
                 unsafe {
                     $code
@@ -448,4 +455,21 @@ impl ArchIntCtx for InterruptStack {
         // pushes preserved registers to the stack.
         self.iret.eip = usercopy_trampoline as usize;
     }
+}
+
+#[naked]
+pub unsafe extern "C" fn enter_usermode() {
+    core::arch::asm!(concat!(
+        // TODO: Unmap PTI
+        // $crate::arch::x86::pti::unmap();
+
+        // Exit kernel TLS segment
+        exit_gs!(),
+
+        // Restore all userspace registers
+        pop_preserved!(),
+        pop_scratch!(),
+
+        "iretd\n",
+    ), options(noreturn))
 }

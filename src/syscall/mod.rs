@@ -60,7 +60,7 @@ pub fn syscall(
     e: usize,
     f: usize,
     stack: &mut InterruptStack,
-) -> usize {
+) {
     #[inline(always)]
     fn inner(
         a: usize,
@@ -220,7 +220,7 @@ pub fn syscall(
                     UserSlice::ro(c, 8)?.none_if_null(),
                     UserSlice::wo(d, 8)?.none_if_null(),
                 ).map(|()| 0),
-                SYS_SIGRETURN => sigreturn(),
+                SYS_SIGRETURN => sigreturn().map(|()| 0),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
 
@@ -285,14 +285,6 @@ pub fn syscall(
 
     let result = inner(a, b, c, d, e, f, stack);
 
-    if result == Err(Error::new(EINTR)) {
-        // Although it would be cleaner to simply run the signal trampoline right after switching
-        // back to any given context, where the signal set/queue is nonempty, syscalls need to
-        // complete *before* any signal is delivered. Otherwise the return value would probably be
-        // overwritten.
-        crate::context::signal::signal_handler();
-    }
-
     {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
@@ -327,6 +319,16 @@ pub fn syscall(
         println!(" in {} ns", debug_duration);
     }
 
-    // errormux turns Result<usize> into -errno
-    Error::mux(result)
+    if a != SYS_SIGRETURN {
+        // errormux turns Result<usize> into -errno
+        stack.set_syscall_ret_reg(Error::mux(result));
+
+        if result == Err(Error::new(EINTR)) {
+            // Although it would be cleaner to simply run the signal trampoline right after switching
+            // back to any given context, where the signal set/queue is nonempty, syscalls need to
+            // complete *before* any signal is delivered. Otherwise the return value would probably be
+            // overwritten.
+            crate::context::signal::signal_handler(true);
+        }
+    }
 }

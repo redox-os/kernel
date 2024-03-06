@@ -80,7 +80,7 @@ pub fn tick() {
     if new_ticks >= 3 {
         match switch() {
             SwitchResult::Switched { signal: true } => {
-                crate::context::signal::signal_handler();
+                crate::context::signal::signal_handler(false);
             },
             _ => (),
         }

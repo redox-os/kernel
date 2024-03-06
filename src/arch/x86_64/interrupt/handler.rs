@@ -114,6 +114,11 @@ impl InterruptStack {
     pub fn set_instr_pointer(&mut self, rip: usize) {
         self.iret.rip = rip;
     }
+    // TODO: This can maybe be done in userspace?
+    pub fn set_syscall_ret_reg(&mut self, ret: usize) {
+        self.scratch.rax = ret;
+    }
+
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();

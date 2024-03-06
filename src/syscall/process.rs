@@ -344,7 +344,7 @@ pub fn sigprocmask(how: usize, mask_ref_opt: Option<UserSliceRo>, oldmask_out_op
     Ok(())
 }
 
-pub fn sigreturn() -> Result<usize> {
+pub fn sigreturn() -> Result<()> {
     let context = context::current()?;
 
     let mut stack = SignalStack::default();
@@ -359,7 +359,7 @@ pub fn sigreturn() -> Result<usize> {
     context.regs_mut().ok_or(Error::new(EINVAL))?.load(&stack.intregs);
     context.sig.procmask = stack.old_procmask;
 
-    Ok(0)
+    Ok(())
 }
 
 pub fn umask(mask: usize) -> Result<usize> {

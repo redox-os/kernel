@@ -1244,7 +1244,7 @@ impl Grant {
         src: Option<BorrowedFmapSource<'_>>,
         lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
-        mut flusher: &mut Flusher,
+        flusher: &mut Flusher,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
@@ -1372,7 +1372,7 @@ impl Grant {
         page_count: usize,
         map_flags: MapFlags,
         dst_mapper: &mut PageMapper,
-        mut dst_flusher: &mut Flusher,
+        dst_flusher: &mut Flusher,
         eager: bool,
         _allow_phys: bool,
         is_pinned_userscheme_borrow: bool,
@@ -1620,8 +1620,8 @@ impl Grant {
         flags: PageFlags<RmmA>,
         src_mapper: &mut PageMapper,
         mut dst_mapper: Option<&mut PageMapper>,
-        mut src_flusher: &mut Flusher,
-        mut dst_flusher: &mut impl GenericFlusher,
+        src_flusher: &mut Flusher,
+        dst_flusher: &mut impl GenericFlusher,
     ) -> Result<Grant> {
         assert!(!self.info.is_pinned());
 
@@ -1663,7 +1663,7 @@ impl Grant {
     pub fn remap(
         &mut self,
         mapper: &mut PageMapper,
-        mut flusher: &mut Flusher,
+        flusher: &mut Flusher,
         flags: PageFlags<RmmA>,
     ) {
         assert!(self.info.mapped);
@@ -1686,7 +1686,7 @@ impl Grant {
     pub fn unmap(
         mut self,
         mapper: &mut PageMapper,
-        mut flusher: &mut impl GenericFlusher,
+        flusher: &mut impl GenericFlusher,
     ) -> UnmapResult {
         assert!(self.info.mapped);
         assert!(!self.info.is_pinned());

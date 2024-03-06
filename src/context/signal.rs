@@ -5,7 +5,7 @@ use syscall::{
         PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP,
         SIGTTIN, SIGTTOU, SIG_DFL, SIG_IGN,
     },
-    ptrace_event, SignalStack, SigActionFlags, IntRegisters,
+    ptrace_event, SignalStack, SigActionFlags, IntRegisters, Error, EINTR,
 };
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
 
 // TODO: Move everything but SIGKILL to userspace. SIGCONT and SIGSTOP do not necessarily need to
 // be done from this current context.
-pub fn signal_handler() {
+pub fn signal_handler(eintr: bool) {
     let (action, sig) = {
         // FIXME: Can any low-level state become corrupt if a panic occurs here?
         let context_lock = context::current().expect("context::signal_handler not inside of context");
@@ -143,7 +143,6 @@ pub fn signal_handler() {
             log::warn!("cannot send signal to context without userspace registers");
             return;
         };
-
         let mut intregs = IntRegisters::default();
         regs.save(&mut intregs);
 
