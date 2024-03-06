@@ -76,12 +76,12 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
-    pub fn setup_minimal(&mut self, eip: usize, singlestep: bool) {
+    pub fn init(&mut self) {
         // Always enable interrupts!
         self.iret.eflags = x86::bits32::eflags::EFlags::FLAGS_IF.bits() as usize;
-
-        self.set_instr_pointer(eip);
-        self.set_singlestep(singlestep);
+        self.iret.ss = (crate::gdt::GDT_USER_DATA << 3) | 3;
+        self.iret.cs = (crate::gdt::GDT_USER_CODE << 3) | 3;
+        self.gs = (crate::gdt::GDT_USER_GS << 3) | 3;
     }
     pub fn dump(&self) {
         self.iret.dump();

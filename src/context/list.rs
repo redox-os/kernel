@@ -7,6 +7,7 @@ use super::arch::KSTACK_SIZE;
 use super::context::{Context, ContextId};
 use super::memory::AddrSpaceWrapper;
 use crate::common::aligned_box::AlignedBox;
+use crate::interrupt::InterruptStack;
 use crate::syscall::error::{Error, Result, EAGAIN};
 
 /// Context list type
@@ -122,6 +123,7 @@ impl ContextList {
                     const INT_REGS_SIZE: usize = core::mem::size_of::<crate::interrupt::InterruptStack>();
                     stack_top = stack_top.sub(INT_REGS_SIZE);
                     stack_top.write_bytes(0_u8, INT_REGS_SIZE);
+                    (&mut *stack_top.cast::<InterruptStack>()).init();
 
                     stack_top = stack_top.sub(core::mem::size_of::<usize>());
                     stack_top.cast::<usize>().write(crate::interrupt::syscall::enter_usermode as usize);

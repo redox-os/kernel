@@ -199,12 +199,12 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 
     // Reload the segment descriptors
     segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
-    segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_ds(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
+    segmentation::load_es(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
     // TODO: Use FS for kernel TLS on i686?
-    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    segmentation::load_fs(SegmentSelector::new(GDT_USER_FS as u16, Ring::Ring3));
     segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_PERCPU as u16, Ring::Ring0));
 
     // Set the stack pointer to use when coming back from userspace.

@@ -98,12 +98,11 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
-    pub fn setup_minimal(&mut self, rip: usize, singlestep: bool) {
+    pub fn init(&mut self) {
         // Always enable interrupts!
         self.iret.rflags = x86::bits64::rflags::RFlags::FLAGS_IF.bits() as usize;
-
-        self.set_instr_pointer(rip);
-        self.set_singlestep(singlestep);
+        self.iret.cs = (crate::gdt::GDT_USER_CODE << 3) | 3;
+        self.iret.ss = (crate::gdt::GDT_USER_DATA << 3) | 3;
     }
     pub fn set_stack_pointer(&mut self, rsp: usize) {
         self.iret.rsp = rsp;

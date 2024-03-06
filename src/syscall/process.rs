@@ -592,10 +592,15 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
 
     // Start in a minimal environment without any stack.
 
-    context::current()
+    match context::current()
         .expect("bootstrap was not running inside any context").write()
         .regs_mut().expect("bootstrap needs registers to be available")
-        .setup_minimal(bootstrap_entry.try_into().unwrap(), false);
+    {
+        ref mut regs => {
+            regs.init();
+            regs.set_instr_pointer(bootstrap_entry.try_into().unwrap());
+        }
+    }
 }
 
 pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
