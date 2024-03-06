@@ -52,11 +52,4 @@ pub struct SyscallStack {
     pub x1: usize,
     pub x0: usize,
 }
-
-#[macro_export]
-macro_rules! with_exception_stack {
-    (|$stack:ident| $code:block) => {{
-        let $stack = &mut *$stack;
-        (*$stack).scratch.x0 = $code;
-    }};
-}
+pub use super::handler::enter_usermode;

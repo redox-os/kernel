@@ -6,7 +6,6 @@ use crate::{
     memory::{ArchIntCtx, GenericPfFlags},
     syscall,
     syscall::flag::*,
-    with_exception_stack,
 };
 
 use super::InterruptStack;
@@ -173,12 +172,12 @@ unsafe fn pf_inner(stack: &mut InterruptStack, ty: u8, from: &str) -> bool {
 
 exception_stack!(synchronous_exception_at_el0, |stack| {
     match exception_code(stack.iret.esr_el1) {
-        0b010101 => with_exception_stack!(|stack| {
+        0b010101 => {
             let scratch = &stack.scratch;
             syscall::syscall(
                 scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, stack,
-            )
-        }),
+            );
+        }
 
         ty => {
             if !pf_inner(stack, ty as u8, "sync_exc_el0") {

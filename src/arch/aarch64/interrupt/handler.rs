@@ -113,6 +113,22 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
+    pub fn setup_minimal(&mut self, ip: usize, _singlestep: bool) {
+        self.set_instr_pointer(ip);
+    }
+    pub fn set_stack_pointer(&mut self, sp: usize) {
+        self.iret.sp_el0 = sp;
+    }
+    pub fn stack_pointer(&self) -> usize {
+        self.iret.sp_el0
+    }
+    pub fn set_instr_pointer(&mut self, ip: usize) {
+        self.iret.elr_el1 = ip;
+    }
+    // TODO: This can maybe be done in userspace?
+    pub fn set_syscall_ret_reg(&mut self, ret: usize) {
+        self.scratch.x0 = ret;
+    }
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
@@ -259,24 +275,6 @@ macro_rules! aarch64_asm {
 }
 
 #[macro_export]
-macro_rules! function {
-    ($name:ident => { $($body:expr,)+ }) => {
-        aarch64_asm!(
-            ".global ", stringify!($name), "\n",
-            ".type ", stringify!($name), ", @function\n",
-            ".section .text.", stringify!($name), ", \"ax\", @progbits\n",
-            stringify!($name), ":\n",
-            $($body),+,
-            ".size ", stringify!($name), ", . - ", stringify!($name), "\n",
-            ".text\n",
-        );
-        extern "C" {
-            pub fn $name();
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! push_scratch {
     () => {
         "
@@ -377,21 +375,12 @@ macro_rules! pop_special {
 #[macro_export]
 macro_rules! exception_stack {
     ($name:ident, |$stack:ident| $code:block) => {
-        paste::item! {
-            #[no_mangle]
-            unsafe extern "C" fn [<__exception_ $name>](stack: *mut $crate::arch::aarch64::interrupt::InterruptStack) {
-                // This inner function is needed because macros are buggy:
-                // https://github.com/dtolnay/paste/issues/7
-                #[inline(always)]
-                unsafe fn inner($stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
-                    let _guard = $crate::ptrace::set_process_regs($stack);
-
-                    $code
-                }
-                inner(&mut *stack);
+        #[naked]
+        unsafe extern "C" fn $name(stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
+            unsafe extern "C" fn inner($stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
+                $code
             }
-
-            function!($name => {
+            core::arch::asm!(concat!(
                 // Backup all userspace registers to stack
                 push_preserved!(),
                 push_scratch!(),
@@ -400,7 +389,7 @@ macro_rules! exception_stack {
                 // Call inner function with pointer to stack
                 "mov x29, sp\n",
                 "mov x0, sp\n",
-                "bl __exception_", stringify!($name), "\n",
+                "bl {}",
 
                 // Restore all userspace registers
                 pop_special!(),
@@ -408,7 +397,18 @@ macro_rules! exception_stack {
                 pop_preserved!(),
 
                 "eret\n",
-            });
+            ), sym inner, options(noreturn));
         }
     };
+}
+#[naked]
+pub unsafe extern "C" fn enter_usermode() -> ! {
+    core::arch::asm!(concat!(
+        // Restore all userspace registers
+        pop_special!(),
+        pop_scratch!(),
+        pop_preserved!(),
+
+        "eret\n",
+    ), options(noreturn));
 }
