@@ -376,7 +376,8 @@ macro_rules! pop_special {
 macro_rules! exception_stack {
     ($name:ident, |$stack:ident| $code:block) => {
         #[naked]
-        unsafe extern "C" fn $name(stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
                 $code
             }
