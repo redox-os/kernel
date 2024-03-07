@@ -80,6 +80,10 @@ impl Context {
         self.sp = address;
     }
 
+    pub fn set_x28(&mut self, x28: usize) {
+        self.x28 = x28;
+    }
+
     pub fn set_lr(&mut self, address: usize) {
         self.lr = address;
     }

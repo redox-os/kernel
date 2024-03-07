@@ -117,14 +117,19 @@ impl ContextList {
 
             let mut stack_top = unsafe { stack.as_mut_ptr().add(KSTACK_SIZE) };
 
-            unsafe {
-                if userspace_allowed {
+            const INT_REGS_SIZE: usize = core::mem::size_of::<crate::interrupt::InterruptStack>();
+
+            if userspace_allowed {
+                unsafe {
                     // Zero-initialize InterruptStack registers.
-                    const INT_REGS_SIZE: usize = core::mem::size_of::<crate::interrupt::InterruptStack>();
                     stack_top = stack_top.sub(INT_REGS_SIZE);
                     stack_top.write_bytes(0_u8, INT_REGS_SIZE);
                     (&mut *stack_top.cast::<InterruptStack>()).init();
-
+                }
+            }
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            unsafe {
+                if userspace_allowed {
                     stack_top = stack_top.sub(core::mem::size_of::<usize>());
                     stack_top.cast::<usize>().write(crate::interrupt::syscall::enter_usermode as usize);
                 }
@@ -134,8 +139,9 @@ impl ContextList {
             }
 
             #[cfg(target_arch = "aarch64")]
-            {
-                context.arch.set_lr(func as usize);
+            unsafe {
+                context.arch.set_lr(crate::interrupt::syscall::enter_usermode as usize);
+                context.arch.set_x28(func as usize);
                 context.arch.set_context_handle();
             }
 

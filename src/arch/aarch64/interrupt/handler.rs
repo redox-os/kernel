@@ -113,9 +113,7 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
-    pub fn setup_minimal(&mut self, ip: usize, _singlestep: bool) {
-        self.set_instr_pointer(ip);
-    }
+    pub fn init(&mut self) {}
     pub fn set_stack_pointer(&mut self, sp: usize) {
         self.iret.sp_el0 = sp;
     }
@@ -405,6 +403,7 @@ macro_rules! exception_stack {
 #[naked]
 pub unsafe extern "C" fn enter_usermode() -> ! {
     core::arch::asm!(concat!(
+        "blr x28\n",
         // Restore all userspace registers
         pop_special!(),
         pop_scratch!(),
