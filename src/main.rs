@@ -243,7 +243,12 @@ fn run_userspace() -> ! {
         unsafe {
             interrupt::disable();
             match context::switch() {
-                SwitchResult::Switched { .. } => interrupt::enable_and_nop(),
+                SwitchResult::Switched { signal } => {
+                    if signal {
+                        crate::context::signal::kmain_signal_handler();
+                    }
+                    interrupt::enable_and_nop();
+                }
                 SwitchResult::AllContextsIdle => {
                     // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
                     interrupt::enable_and_halt();

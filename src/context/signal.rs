@@ -5,14 +5,40 @@ use syscall::{
         PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP,
         SIGTTIN, SIGTTOU, SIG_DFL, SIG_IGN,
     },
-    ptrace_event, SignalStack, SigActionFlags, IntRegisters, Error, EINTR,
+    ptrace_event, SignalStack, SigActionFlags, IntRegisters, Error, EINTR, SIGTERM,
 };
 
 use crate::{
     context::{self, switch, Status, WaitpidKey},
     ptrace,
-    syscall::usercopy::UserSlice,
+    syscall::usercopy::UserSlice, stop::{kstop, kreset},
 };
+
+use super::ContextId;
+
+pub fn kmain_signal_handler() {
+    if context::context_id() != ContextId::new(1) {
+        log::warn!("kmain signal didn't target PID 1, ignoring");
+        return;
+    }
+
+    let deliverable = context::current().expect("context::kmain_signal_handler not inside of context");
+    let kstop_bit = 1 << (SIGKILL - 1);
+    let kreset_bit = 1 << (SIGTERM - 1);
+    let bits = deliverable.read().sig.deliverable();
+
+    if bits & kstop_bit == kstop_bit {
+        unsafe {
+            kstop();
+        }
+    } else if bits & kreset_bit == kreset_bit {
+        unsafe {
+            kreset();
+        }
+    } else {
+        log::warn!("Spurious kmain signal, bitmask {bits:#0x}.");
+    }
+}
 
 // TODO: Move everything but SIGKILL to userspace. SIGCONT and SIGSTOP do not necessarily need to
 // be done from this current context.
