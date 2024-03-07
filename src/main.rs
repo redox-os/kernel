@@ -269,7 +269,7 @@ pub fn ksignal(signal: usize) {
             context.sig.pending |= 1 << (signal - 1);
         }
     }
-    crate::context::signal::signal_handler(false);
+    crate::context::signal::signal_handler();
 }
 
 // TODO: Use this macro on aarch64 too.

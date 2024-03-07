@@ -80,7 +80,7 @@ pub fn tick() {
     if new_ticks >= 3 {
         match switch() {
             SwitchResult::Switched { signal: true } => {
-                crate::context::signal::signal_handler(false);
+                crate::context::signal::signal_handler();
             },
             _ => (),
         }
@@ -94,8 +94,8 @@ pub unsafe extern "C" fn switch_finish_hook() {
         // TODO: unreachable_unchecked()?
         crate::arch::stop::emergency_reset();
     }
-    crate::percpu::switch_arch_hook();
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+    crate::percpu::switch_arch_hook();
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

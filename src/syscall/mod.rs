@@ -328,7 +328,7 @@ pub fn syscall(
             // back to any given context, where the signal set/queue is nonempty, syscalls need to
             // complete *before* any signal is delivered. Otherwise the return value would probably be
             // overwritten.
-            crate::context::signal::signal_handler(true);
+            crate::context::signal::signal_handler();
         }
     }
 }

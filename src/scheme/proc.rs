@@ -637,7 +637,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
 
-                    Ok(context.set_addr_space(new))
+                    Ok(context.set_addr_space(Some(new)))
                 })?;
                 let _ = ptrace::send_event(crate::syscall::ptrace_event!(
                     PTRACE_EVENT_ADDRSPACE_SWITCH,

@@ -113,7 +113,7 @@ impl ContextList {
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
-            let _ = context.set_addr_space(AddrSpaceWrapper::new()?);
+            let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));
 
             let mut stack_top = unsafe { stack.as_mut_ptr().add(KSTACK_SIZE) };
 

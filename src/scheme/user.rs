@@ -15,7 +15,7 @@ use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
     FobtainFdFlags, MunmapFlags, SendFdFlags, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD,
-    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, KSMSG_CANCEL,
+    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, KSMSG_CANCEL, SIGKILL,
 };
 
 use crate::{
@@ -190,6 +190,14 @@ impl UserInner {
         loop {
             context::switch();
 
+            let eintr_if_sigkill = || if context::current()?.read().sig.deliverable() & (1 << (SIGKILL - 1)) != 0 {
+                // EINTR directly if SIGKILL was found without waiting for scheme. Data loss
+                // doesn't matter.
+                Err(Error::new(EINTR))
+            } else {
+                Ok(())
+            };
+
             let mut states = self.states.lock();
             match states.entry(id) {
                 // invalid state
@@ -198,11 +206,16 @@ impl UserInner {
                     // signal wakeup while awaiting cancelation
                     old_state @ State::Waiting { canceling: true, .. } => {
                         *o.get_mut() = old_state;
-                        continue;
+                        drop(states);
+                        eintr_if_sigkill()?;
+                        context::current()?.write().block("UserInner::call");
                     }
                     // spurious wakeup
                     State::Waiting { canceling: false, fd, context } => {
                         *o.get_mut() = State::Waiting { canceling: true, fd, context };
+
+                        drop(states);
+                        eintr_if_sigkill()?;
 
                         // TODO: Is this too dangerous when the states lock is held?
                         self.todo.send(Packet {
@@ -213,7 +226,7 @@ impl UserInner {
                             ..packet
                         });
                         event::trigger(self.root_id, self.handle_id, EVENT_READ);
-                        continue;
+                        context::current()?.write().block("UserInner::call");
                     }
 
                     // invalid state
@@ -585,10 +598,6 @@ impl UserInner {
         Ok(())
     }
     fn handle_packet(&self, packet: &Packet) -> Result<()> {
-        if packet.a == KSMSG_CANCEL {
-            log::warn!("Context {} did KSMSG_CANCEL", context::current().unwrap().read().name);
-        }
-
         if packet.id == 0 {
             // TODO: Simplify logic by using SKMSG with packet.id being ignored?
             match packet.a {
@@ -597,7 +606,7 @@ impl UserInner {
                     packet.b,
                     EventFlags::from_bits_truncate(packet.c),
                 ),
-                _ => log::warn!("Unknown scheme -> kernel message {}", packet.a),
+                _ => log::warn!("Unknown scheme -> kernel message {} from {}", packet.a, context::current().unwrap().read().name),
             }
         } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
             // The reason why the new ESKMSG mechanism was introduced, is that passing packet IDs

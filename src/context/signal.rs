@@ -42,7 +42,7 @@ pub fn kmain_signal_handler() {
 
 // TODO: Move everything but SIGKILL to userspace. SIGCONT and SIGSTOP do not necessarily need to
 // be done from this current context.
-pub fn signal_handler(eintr: bool) {
+pub fn signal_handler() {
     let (action, sig) = {
         // FIXME: Can any low-level state become corrupt if a panic occurs here?
         let context_lock = context::current().expect("context::signal_handler not inside of context");
@@ -53,7 +53,18 @@ pub fn signal_handler(eintr: bool) {
         if context.sig.deliverable() == 0 {
             return;
         }
-        let selected = context.sig.deliverable().trailing_zeros() as usize + 1;
+        let bits = context.sig.deliverable();
+
+        // Always prioritize SIGKILL and SIGSTOP, so processes can't simply keep themselves alive
+        // by killing themselves.
+        let selected = if bits & (1 << (SIGKILL - 1)) != 0 {
+            SIGKILL
+        } else if bits & (1 << (SIGSTOP - 1)) != 0 {
+            SIGSTOP
+        } else {
+            bits.trailing_zeros() as usize + 1
+        };
+
         context.sig.pending &= !(1 << (selected - 1));
 
         let actions = context.actions.read();
@@ -111,6 +122,7 @@ pub fn signal_handler(eintr: bool) {
                     }
                 }
             }
+            // FIXME: SIGSTOP shouldn't be overridable
             SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU => {
                 // println!("Stop {}", sig);
 

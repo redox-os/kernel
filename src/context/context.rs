@@ -1,4 +1,5 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
+use syscall::{SIGKILL, SIGSTOP};
 use core::{cmp::Ordering, mem, num::NonZeroUsize};
 use spin::RwLock;
 
@@ -23,7 +24,7 @@ use crate::syscall::{
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
 
-use super::memory::{GrantFileRef, AddrSpaceWrapper};
+use super::{memory::{GrantFileRef, AddrSpaceWrapper}, empty_cr3};
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
@@ -396,13 +397,14 @@ impl Context {
     }
     pub fn set_addr_space(
         &mut self,
-        addr_space: Arc<AddrSpaceWrapper>,
+        addr_space: Option<Arc<AddrSpaceWrapper>>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
-        if let Some(ref old) = self.addr_space && Arc::ptr_eq(old, &addr_space) {
-            return Some(addr_space);
+        if let (Some(ref old), Some(ref new)) = (&self.addr_space, &addr_space) && Arc::ptr_eq(old, new) {
+            return addr_space;
         };
 
         if self.id == super::context_id() {
+            // TODO: Share more code with context::arch::switch_to.
             let this_percpu = PercpuBlock::current();
 
             if let Some(ref prev_addrsp) = self.addr_space {
@@ -410,19 +412,25 @@ impl Context {
                 prev_addrsp.acquire_read().used_by.atomic_clear(this_percpu.cpu_id);
             }
 
-            *this_percpu.current_addrsp.borrow_mut() = Some(Arc::clone(&addr_space));
+            let _old_addrsp = core::mem::replace(&mut *this_percpu.current_addrsp.borrow_mut(), addr_space.clone());
 
-            let new_addrsp = addr_space.acquire_read();
-            new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
+            if let Some(ref new) = addr_space {
+                let new_addrsp = new.acquire_read();
+                new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
 
-            unsafe {
-                new_addrsp.table.utable.make_current();
+                unsafe {
+                    new_addrsp.table.utable.make_current();
+                }
+            } else {
+                unsafe {
+                    crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+                }
             }
         } else {
             assert!(!self.running);
         }
 
-        self.addr_space.replace(addr_space)
+        core::mem::replace(&mut self.addr_space, addr_space)
     }
     pub fn empty_actions() -> Arc<RwLock<Vec<(SigAction, usize)>>> {
         Arc::new(RwLock::new(vec![(
@@ -470,7 +478,8 @@ impl Context {
 
 impl SignalState {
     pub fn deliverable(&self) -> u64 {
-        self.pending & !self.procmask
+        const CANT_BLOCK: u64 = (1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1));
+        self.pending & (CANT_BLOCK | !self.procmask)
     }
 }
 
