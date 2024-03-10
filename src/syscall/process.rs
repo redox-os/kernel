@@ -581,7 +581,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
                 .expect("expected bootstrap context to have an address space"),
         );
 
-        let base = Page::containing_address(VirtualAddress::new(0));
+        let base = Page::containing_address(VirtualAddress::new(4096));
         let flags = MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_EXEC | MapFlags::PROT_READ | MapFlags::PROT_WRITE;
 
         let page_count = NonZeroUsize::new(bootstrap.page_count)
@@ -594,7 +594,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
     }
 
     // TODO: Not all arches do linear mapping
-    UserSliceWo::new(0, bootstrap.page_count * PAGE_SIZE)
+    UserSliceWo::new(4096, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
         .copy_from_slice(unsafe { bootstrap_mem(bootstrap) })
         .expect("failed to copy memory to bootstrap");
