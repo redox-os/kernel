@@ -594,13 +594,18 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) -> ! {
     }
 
     // TODO: Not all arches do linear mapping
+    let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
     UserSliceWo::new(PAGE_SIZE, bootstrap.page_count * PAGE_SIZE)
         .expect("failed to create bootstrap user slice")
-        .copy_from_slice(unsafe { bootstrap_mem(bootstrap) })
+        .copy_from_slice(bootstrap_slice)
         .expect("failed to copy memory to bootstrap");
 
+    let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
+    log::info!("Bootstrap entry point: {:X}", bootstrap_entry);
+    assert_ne!(bootstrap_entry, 0);
+
     // Start in a minimal environment without any stack.
-    usermode(bootstrap.entry, 0, 0, 0);
+    usermode(bootstrap_entry.try_into().unwrap(), 0, 0, 0);
 }
 
 pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {

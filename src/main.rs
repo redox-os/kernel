@@ -172,7 +172,6 @@ extern "C" fn userspace_init() {
 struct Bootstrap {
     base: crate::memory::Frame,
     page_count: usize,
-    entry: usize,
     env: &'static [u8],
 }
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();

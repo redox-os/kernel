@@ -60,8 +60,8 @@ pub struct KernelArgs {
     bootstrap_base: u64,
     /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
     bootstrap_size: u64,
-    /// Entry point the kernel will jump to.
-    bootstrap_entry: u64,
+    /// Entry point the kernel will jump to. (deprecated)
+    _bootstrap_entry: u64,
 }
 
 /// The entry to Rust, all things must be initialized
@@ -135,7 +135,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             { args.bootstrap_base },
             { args.bootstrap_base } + { args.bootstrap_size }
         );
-        info!("Bootstrap entry point: {:X}", { args.bootstrap_entry });
 
         // Set up GDT before paging
         gdt::init();
@@ -224,7 +223,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 args.bootstrap_base as usize,
             )),
             page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
-            entry: args.bootstrap_entry as usize,
             env,
         }
     };
