@@ -521,11 +521,32 @@ impl AddrSpace {
             let intersection = conflicting_span.intersection(requested_span);
 
             requested_span = {
-                let offset = conflicting_span.base.offset_from(requested_span.base);
-                PageSpan::new(
-                    conflicting_span.end(),
-                    requested_span.count - offset - conflicting_span.count,
-                )
+                // In the following diagrams [---> indicates a range of
+                // base..base+count where the [ is at the base and > is at
+                // base+count. In other words, the [ is part of the range and
+                // the > is not part of the range.
+                if conflicting_span.end() < requested_span.end() {
+                    // [------>     conflicting_span
+                    //    [-------> requested_span
+                    //        [---> next requested_span
+                    // or
+                    //    [---->    conflicting_span
+                    // [----------> requested_span
+                    //         [--> next requested_span
+                    PageSpan::new(
+                        conflicting_span.end(),
+                        requested_span.end().offset_from(conflicting_span.end()),
+                    )
+                } else {
+                    // [----------> conflicting_span
+                    //    [----->   requested_span
+                    //              next requested_span
+                    // or
+                    //   [--------> conflicting_span
+                    // [-------->   requested_span
+                    //              next requested_span
+                    PageSpan::empty()
+                }
             };
 
             let (before, grant, after) = grant
@@ -648,6 +669,9 @@ pub struct PageSpan {
 impl PageSpan {
     pub fn new(base: Page, count: usize) -> Self {
         Self { base, count }
+    }
+    pub fn empty() -> Self {
+        Self { base: Page::containing_address(VirtualAddress::new(0)), count: 0 }
     }
     pub fn validate_nonempty(address: VirtualAddress, size: usize) -> Option<Self> {
         Self::validate(address, size).filter(|this| !this.is_empty())
