@@ -1,5 +1,3 @@
-use core::{convert::TryFrom, mem};
-
 use crate::{
     memory::Frame,
     paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress},
@@ -7,7 +5,7 @@ use crate::{
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct RSDP {
     signature: [u8; 8],
     _checksum: u8,
@@ -21,77 +19,16 @@ pub struct RSDP {
 }
 
 impl RSDP {
-    fn is_acpi_1_0(&self) -> bool {
-        self.revision == 0
-    }
-    fn is_acpi_2_0(&self) -> bool {
-        self.revision == 2
-    }
-    fn get_already_supplied_rsdps(area: &[u8]) -> Option<RSDP> {
-        // the bootloader has already checked all the checksums for us, but we still need to
-        // double-check.
-        struct Iter<'a> {
-            buf: &'a [u8],
-        }
-        impl<'a> Iterator for Iter<'a> {
-            type Item = &'a [u8];
-
-            fn next(&mut self) -> Option<Self::Item> {
-                if self.buf.len() < 4 {
-                    return None;
-                }
-
-                let length_bytes = <[u8; 4]>::try_from(&self.buf[..4]).ok()?;
-                let length = u32::from_ne_bytes(length_bytes) as usize;
-
-                if (4 + length as usize) > self.buf.len() {
-                    return None;
-                }
-
-                let buf = &self.buf[4..4 + length];
-                self.buf = &self.buf[4 + length..];
-
-                Some(buf)
-            }
-        }
-        fn slice_to_rsdp(slice: &[u8]) -> Option<&RSDP> {
-            let ptr = slice.as_ptr() as usize;
-
-            if slice.len() >= mem::size_of::<RSDP>() && ptr & (!0x3) == ptr {
-                let rsdp = unsafe { &*(slice.as_ptr() as *const RSDP) };
+    fn get_already_supplied_rsdp(rsdp_ptr: *const u8) -> RSDP {
                 // TODO: Validate
-                Some(rsdp)
-            } else {
-                None
-            }
-        }
-
-        // first, find an RSDP for ACPI 2.0
-        if let Some(rsdp_2_0) = (Iter { buf: area }
-            .filter_map(slice_to_rsdp)
-            .find(|rsdp| rsdp.is_acpi_2_0()))
-        {
-            return Some(*rsdp_2_0);
-        }
-
-        // secondly, find an RSDP for ACPI 1.0
-        if let Some(rsdp_1_0) = (Iter { buf: area }
-            .filter_map(slice_to_rsdp)
-            .find(|rsdp| rsdp.is_acpi_1_0()))
-        {
-            return Some(*rsdp_1_0);
-        }
-
-        None
+        unsafe { *(rsdp_ptr as *const RSDP) }
     }
     pub fn get_rsdp(
         mapper: &mut KernelMapper,
-        already_supplied_rsdps: Option<(u64, u64)>,
+        already_supplied_rsdp: Option<*const u8>,
     ) -> Option<RSDP> {
-        if let Some((base, size)) = already_supplied_rsdps {
-            let area =
-                unsafe { core::slice::from_raw_parts(base as usize as *const u8, size as usize) };
-            Self::get_already_supplied_rsdps(area).or_else(|| Self::get_rsdp_by_searching(mapper))
+        if let Some(rsdp_ptr) = already_supplied_rsdp {
+            Some(Self::get_already_supplied_rsdp(rsdp_ptr))
         } else {
             Self::get_rsdp_by_searching(mapper)
         }

@@ -76,14 +76,14 @@ impl Rxsdt for RxsdtEnum {
 pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(already_supplied_rsdps: Option<(u64, u64)>) {
+pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
     {
         let mut sdt_ptrs = SDT_POINTERS.write();
         *sdt_ptrs = Some(HashMap::new());
     }
 
     // Search for RSDP
-    let rsdp_opt = RSDP::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdps);
+    let rsdp_opt = RSDP::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
 
     if let Some(rsdp) = rsdp_opt {
         info!("RSDP: {:?}", rsdp);

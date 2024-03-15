@@ -42,16 +42,14 @@ pub struct KernelArgs {
     env_base: u64,
     env_size: u64,
 
-    /// The base 64-bit pointer to an array of saved RSDPs. It's up to the kernel (and possibly
-    /// userspace), to decide which RSDP to use. The buffer will be a linked list containing a
-    /// 32-bit relative (to this field) next, and the actual struct afterwards.
+    /// The base pointer to the saved RSDP.
     ///
     /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
     /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
-    /// memory instead. On UEFI systems, BIOS-like searching is not guaranteed to actually work though.
-    acpi_rsdps_base: u64,
-    /// The size of the RSDPs region.
-    acpi_rsdps_size: u64,
+    /// memory instead. On UEFI systems, searching is not guaranteed to actually work though.
+    acpi_rsdp_base: u64,
+    /// The size of the RSDP region.
+    acpi_rsdp_size: u64,
 
     areas_base: u64,
     areas_size: u64,
@@ -119,9 +117,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             { args.env_base } + { args.env_size }
         );
         info!(
-            "RSDPs: {:X}:{:X}",
-            { args.acpi_rsdps_base },
-            { args.acpi_rsdps_base } + { args.acpi_rsdps_size }
+            "RSDP: {:X}:{:X}",
+            { args.acpi_rsdp_base },
+            { args.acpi_rsdp_base } + { args.acpi_rsdp_size }
         );
         info!(
             "Areas: {:X}:{:X}",
@@ -148,8 +146,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             args.stack_size as usize,
             args.env_base as usize,
             args.env_size as usize,
-            args.acpi_rsdps_base as usize,
-            args.acpi_rsdps_size as usize,
+            args.acpi_rsdp_base as usize,
+            args.acpi_rsdp_size as usize,
             args.areas_base as usize,
             args.areas_size as usize,
             args.bootstrap_base as usize,
@@ -193,11 +191,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Read ACPI tables, starts APs
         #[cfg(feature = "acpi")]
         {
-            acpi::init(if args.acpi_rsdps_base != 0 && args.acpi_rsdps_size > 0 {
-                Some((
-                    (args.acpi_rsdps_base as usize + crate::PHYS_OFFSET) as u64,
-                    args.acpi_rsdps_size as u64,
-                ))
+            acpi::init(if args.acpi_rsdp_base != 0 {
+                Some((args.acpi_rsdp_base as usize + crate::PHYS_OFFSET) as u64)
             } else {
                 None
             });
