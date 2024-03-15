@@ -60,8 +60,6 @@ pub struct KernelArgs {
     bootstrap_base: u64,
     /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
     bootstrap_size: u64,
-    /// Entry point the kernel will jump to. (deprecated)
-    _bootstrap_entry: u64,
 }
 
 /// The entry to Rust, all things must be initialized
