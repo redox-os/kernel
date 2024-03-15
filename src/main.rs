@@ -98,7 +98,6 @@ mod debugger;
 mod devices;
 
 /// ELF file parsing
-#[cfg(not(feature = "doc"))]
 mod elf;
 
 /// Event handling
@@ -114,7 +113,7 @@ mod log;
 mod memory;
 
 /// Panic
-#[cfg(not(any(feature = "doc", test)))]
+#[cfg(not(test))]
 mod panic;
 
 mod percpu;
