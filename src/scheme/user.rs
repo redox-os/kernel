@@ -15,7 +15,7 @@ use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
     FobtainFdFlags, MunmapFlags, SendFdFlags, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD,
-    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
+    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, KSMSG_CANCEL, SIGKILL,
 };
 
 use crate::{
@@ -61,6 +61,7 @@ enum State {
     Waiting {
         context: Weak<RwSpinlock<Context>>,
         fd: Option<Arc<RwLock<FileDescription>>>,
+        canceling: bool,
     },
     Responded(Response),
     Fmap(Weak<RwSpinlock<Context>>),
@@ -178,6 +179,7 @@ impl UserInner {
                 State::Waiting {
                     context: Arc::downgrade(&current_context),
                     fd,
+                    canceling: false,
                 },
             );
         }
@@ -186,19 +188,45 @@ impl UserInner {
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         loop {
-            unsafe {
-                context::switch();
-            }
+            context::switch();
+
+            let eintr_if_sigkill = || if context::current()?.read().sig.deliverable() & (1 << (SIGKILL - 1)) != 0 {
+                // EINTR directly if SIGKILL was found without waiting for scheme. Data loss
+                // doesn't matter.
+                Err(Error::new(EINTR))
+            } else {
+                Ok(())
+            };
 
             let mut states = self.states.lock();
             match states.entry(id) {
                 // invalid state
                 Entry::Vacant(_) => return Err(Error::new(EBADFD)),
                 Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
-                    // spurious wakeup, TODO: EINTR
-                    old_state @ State::Waiting { .. } => {
+                    // signal wakeup while awaiting cancelation
+                    old_state @ State::Waiting { canceling: true, .. } => {
                         *o.get_mut() = old_state;
-                        continue;
+                        drop(states);
+                        eintr_if_sigkill()?;
+                        context::current()?.write().block("UserInner::call");
+                    }
+                    // spurious wakeup
+                    State::Waiting { canceling: false, fd, context } => {
+                        *o.get_mut() = State::Waiting { canceling: true, fd, context };
+
+                        drop(states);
+                        eintr_if_sigkill()?;
+
+                        // TODO: Is this too dangerous when the states lock is held?
+                        self.todo.send(Packet {
+                            id: 0,
+                            a: KSMSG_CANCEL,
+                            b: packet.id as usize,
+                            c: (packet.id >> 32) as usize,
+                            ..packet
+                        });
+                        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+                        context::current()?.write().block("UserInner::call");
                     }
 
                     // invalid state
@@ -578,7 +606,7 @@ impl UserInner {
                     packet.b,
                     EventFlags::from_bits_truncate(packet.c),
                 ),
-                _ => log::warn!("Unknown scheme -> kernel message {}", packet.a),
+                _ => log::warn!("Unknown scheme -> kernel message {} from {}", packet.a, context::current().unwrap().read().name),
             }
         } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
             // The reason why the new ESKMSG mechanism was introduced, is that passing packet IDs
@@ -694,7 +722,7 @@ impl UserInner {
 
         Ok(())
     }
-    fn respond(&self, id: u64, response: Response) -> Result<()> {
+    fn respond(&self, id: u64, mut response: Response) -> Result<()> {
         let to_close;
 
         match self.states.lock().entry(id) {
@@ -707,7 +735,16 @@ impl UserInner {
                     return Err(Error::new(EINVAL));
                 }
 
-                State::Waiting { context, fd } => {
+                State::Waiting { context, fd, canceling } => {
+                    if let Response::Regular(ref mut code) = response && !canceling && *code == Error::mux(Err(Error::new(EINTR))) {
+                        // EINTR is valid after cancelation has been requested, but not otherwise.
+                        // This is because the kernel-assisted signal trampoline will be invoked
+                        // after a syscall returns EINTR.
+                        //
+                        // TODO: Reserve another error code for user-caused vs kernel-caused EINTR?
+                        *code = Error::mux(Err(Error::new(EIO)));
+                    }
+
                     to_close = fd
                         .and_then(|f| Arc::try_unwrap(f).ok())
                         .map(RwLock::into_inner);

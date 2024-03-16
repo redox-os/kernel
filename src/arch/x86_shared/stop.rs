@@ -3,9 +3,8 @@ use crate::{context, scheme::acpi, time};
 
 use crate::syscall::io::{Io, Pio};
 
-#[no_mangle]
-pub unsafe extern "C" fn kreset() -> ! {
-    println!("kreset");
+pub unsafe fn kreset() -> ! {
+    log::info!("kreset");
 
     // 8042 reset
     {
@@ -51,7 +50,7 @@ fn userspace_acpi_shutdown() {
         // TODO: Switch directly to whichever process is handling the kstop pipe. We would add an
         // event flag like EVENT_DIRECT, which has already been suggested for IRQs.
         // TODO: Waitpid with timeout? Because, what if the ACPI driver would crash?
-        let _ = unsafe { context::switch() };
+        let _ = context::switch();
 
         let current = time::monotonic();
         if current - initial > time::NANOS_PER_SEC {
@@ -61,8 +60,7 @@ fn userspace_acpi_shutdown() {
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn kstop() -> ! {
+pub unsafe fn kstop() -> ! {
     log::info!("Running kstop()");
 
     #[cfg(feature = "acpi")]

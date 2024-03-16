@@ -3,72 +3,46 @@ use core::{cell::Cell, mem, ops::Bound, sync::atomic::Ordering};
 use spinning_top::guard::ArcRwSpinlockWriteGuard;
 
 use crate::{
-    context::{arch, contexts, signal::signal_handler, Context},
+    context::{arch, contexts, Context},
     cpu_set::LogicalCpuId,
     interrupt,
     percpu::PercpuBlock,
-    ptrace, time,
+    time,
 };
 
-use super::ContextId;
+use super::{ContextId, Status};
 
-unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
+enum UpdateResult {
+    CanSwitch { signal: bool },
+    Skip,
+}
+
+unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> UpdateResult {
     // Ignore already running contexts
     if context.running {
-        return false;
+        return UpdateResult::Skip;
     }
 
     // Ignore contexts stopped by ptrace
+    // TODO: ContextStatus::HardBlocked?
     if context.ptrace_stop {
-        return false;
+        return UpdateResult::Skip;
     }
 
     // Ignore contexts assigned to other CPUs
     if !context.sched_affinity.contains(cpu_id) {
-        return false;
+        return UpdateResult::Skip;
     }
 
     //TODO: HACK TO WORKAROUND HANGS BY PINNING TO ONE CPU
     if !context.cpu_id.map_or(true, |x| x == cpu_id) {
-        return false;
+        return UpdateResult::Skip;
     }
 
-    // Restore from signal, must only be done from another context to avoid overwriting the stack!
-    if context.ksig_restore {
-        let was_singlestep = ptrace::regs_for(context)
-            .map(|s| s.is_singlestep())
-            .unwrap_or(false);
+    let signal = context.sig.deliverable() != 0;
 
-        let ksig = context
-            .ksig
-            .take()
-            .expect("context::switch: ksig not set with ksig_restore");
-        context.arch = ksig.0;
-
-        context.kfx.copy_from_slice(&*ksig.1);
-
-        if let Some(ref mut kstack) = context.kstack {
-            kstack.copy_from_slice(
-                &ksig
-                    .2
-                    .expect("context::switch: ksig kstack not set with ksig_restore"),
-            );
-        } else {
-            panic!("context::switch: kstack not set with ksig_restore");
-        }
-
-        context.ksig_restore = false;
-
-        // Keep singlestep flag across jumps
-        if let Some(regs) = ptrace::regs_for_mut(context) {
-            regs.set_singlestep(was_singlestep);
-        }
-
-        context.unblock_no_ipi();
-    }
-
-    // Unblock when there are pending signals
-    if context.status.is_soft_blocked() && !context.pending.is_empty() {
+    // Unblock when there are pending nonmasked signals.
+    if matches!(context.status, Status::Blocked) && signal {
         context.unblock_no_ipi();
     }
 
@@ -84,10 +58,14 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> bool {
     }
 
     // Switch to context if it needs to run
-    context.status.is_runnable()
+    if context.status.is_runnable() {
+        UpdateResult::CanSwitch { signal }
+    } else {
+        UpdateResult::Skip
+    }
 }
 
-struct SwitchResult {
+struct SwitchResultInner {
     _prev_guard: ArcRwSpinlockWriteGuard<Context>,
     _next_guard: ArcRwSpinlockWriteGuard<Context>,
 }
@@ -100,7 +78,12 @@ pub fn tick() {
 
     // Switch after 3 ticks (about 6.75 ms)
     if new_ticks >= 3 {
-        let _ = unsafe { switch() };
+        match switch() {
+            SwitchResult::Switched { signal: true } => {
+                crate::context::signal::signal_handler();
+            },
+            _ => (),
+        }
     }
 }
 
@@ -111,16 +94,20 @@ pub unsafe extern "C" fn switch_finish_hook() {
         // TODO: unreachable_unchecked()?
         crate::arch::stop::emergency_reset();
     }
-    crate::percpu::switch_arch_hook();
     arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+    crate::percpu::switch_arch_hook();
 }
 
-/// Switch to the next context
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SwitchResult {
+    Switched { signal: bool },
+    AllContextsIdle,
+}
+
+/// Switch to the next context, picked by the scheduler.
 ///
-/// # Safety
-///
-/// Do not call this while holding locks!
-pub unsafe fn switch() -> bool {
+/// This is not memory-unsafe to call, but do NOT call this while holding locks!
+pub fn switch() -> SwitchResult {
     let percpu = PercpuBlock::current();
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
@@ -178,9 +165,10 @@ pub unsafe fn switch() -> bool {
             let mut next_context_guard = next_context_lock.write_arc();
 
             // Update state of next context and check if runnable
-            if update_runnable(&mut *next_context_guard, cpu_id) {
+            if let UpdateResult::CanSwitch { signal } = unsafe { update_runnable(&mut *next_context_guard, cpu_id) } {
                 // Store locks for previous and next context
                 switch_context_opt = Some((prev_context_guard, next_context_guard));
+                percpu.switch_internals.switch_signal.set(signal);
                 break;
             } else {
                 continue;
@@ -190,6 +178,8 @@ pub unsafe fn switch() -> bool {
 
     // Switch process states, TSS stack pointer, and store new context ID
     if let Some((mut prev_context_guard, mut next_context_guard)) = switch_context_opt {
+        // TODO: Update timestamps in switch_to
+
         // Set old context as not running and update CPU time
         let prev_context = &mut *prev_context_guard;
         prev_context.running = false;
@@ -204,50 +194,47 @@ pub unsafe fn switch() -> bool {
         let percpu = PercpuBlock::current();
         percpu.switch_internals.context_id.set(next_context.id);
 
-        if next_context.ksig.is_none() {
-            //TODO: Allow nested signals
-            if let Some(sig) = next_context.pending.pop_front() {
-                // Signal was found, run signal handler
-                let arch = next_context.arch.clone();
-                let kfx = next_context.kfx.clone();
-                let kstack = next_context.kstack.clone();
-                next_context.ksig = Some((arch, kfx, kstack, sig));
-                next_context.arch.signal_stack(signal_handler, sig);
-            }
-        }
-
         // FIXME set th switch result in arch::switch_to instead
-        let prev_context =
-            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard);
-        let next_context =
-            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard);
+        let prev_context = unsafe {
+            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard)
+        };
+        let next_context = unsafe {
+            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard)
+        };
 
         percpu
             .switch_internals
             .switch_result
-            .set(Some(SwitchResult {
+            .set(Some(SwitchResultInner {
                 _prev_guard: prev_context_guard,
                 _next_guard: next_context_guard,
             }));
 
-        arch::switch_to(prev_context, next_context);
+        unsafe {
+            arch::switch_to(prev_context, next_context);
+        }
 
         // NOTE: After switch_to is called, the return address can even be different from the
         // current return address, meaning that we cannot use local variables here, and that we
-        // need to use the `switch_finish_hook` to be able to release the locks.
+        // need to use the `switch_finish_hook` to be able to release the locks. Newly created
+        // contexts will return directly to the function pointer passed to context::spawn, and not
+        // reach this code until the next context switch back.
 
-        true
+        let new_percpu = PercpuBlock::current();
+        // For the same reason, we obviously can't reuse the percpu block
+
+        SwitchResult::Switched { signal: new_percpu.switch_internals.switch_signal.get() }
     } else {
         // No target was found, unset global lock and return
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
-        false
+        SwitchResult::AllContextsIdle
     }
 }
 
 #[derive(Default)]
 pub struct ContextSwitchPercpu {
-    switch_result: Cell<Option<SwitchResult>>,
+    switch_result: Cell<Option<SwitchResultInner>>,
     pit_ticks: Cell<usize>,
 
     /// Unique ID of the currently running context.
@@ -255,6 +242,7 @@ pub struct ContextSwitchPercpu {
 
     // The ID of the idle process
     idle_id: Cell<ContextId>,
+    switch_signal: Cell<bool>,
 }
 impl ContextSwitchPercpu {
     pub fn context_id(&self) -> ContextId {

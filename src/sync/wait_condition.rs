@@ -57,9 +57,7 @@ impl WaitCondition {
             drop(guard);
         }
 
-        unsafe {
-            context::switch();
-        }
+        context::switch();
 
         let mut waited = true;
 

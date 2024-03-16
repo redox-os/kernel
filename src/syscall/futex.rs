@@ -137,9 +137,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
 
             drop(addr_space_guard);
 
-            unsafe {
-                context::switch();
-            }
+            context::switch();
 
             if timeout_opt.is_some() {
                 let context_lock = {

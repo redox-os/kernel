@@ -4,8 +4,6 @@
 
 extern crate syscall;
 
-use syscall::{EventFlags, EOVERFLOW};
-
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
@@ -16,16 +14,16 @@ pub use self::{
 
 use self::{
     data::{Map, SigAction, TimeSpec},
-    error::{Error, Result, ENOSYS},
-    flag::{MapFlags, WaitFlags},
+    error::{Error, Result, EINTR, EOVERFLOW, ENOSYS},
+    flag::{EventFlags, MapFlags, WaitFlags},
     number::*,
+    usercopy::UserSlice,
 };
 
 use crate::{
     context::{memory::AddrSpace, ContextId},
     interrupt::InterruptStack,
     scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
-    syscall::usercopy::UserSlice,
 };
 
 /// Debug
@@ -62,7 +60,7 @@ pub fn syscall(
     e: usize,
     f: usize,
     stack: &mut InterruptStack,
-) -> usize {
+) {
     #[inline(always)]
     fn inner(
         a: usize,
@@ -219,11 +217,10 @@ pub fn syscall(
                 .map(|()| 0),
                 SYS_SIGPROCMASK => sigprocmask(
                     b,
-                    UserSlice::ro(c, 16)?.none_if_null(),
-                    UserSlice::wo(d, 16)?.none_if_null(),
-                )
-                .map(|()| 0),
-                SYS_SIGRETURN => sigreturn(),
+                    UserSlice::ro(c, 8)?.none_if_null(),
+                    UserSlice::wo(d, 8)?.none_if_null(),
+                ).map(|()| 0),
+                SYS_SIGRETURN => sigreturn().map(|()| 0),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
 
@@ -322,6 +319,16 @@ pub fn syscall(
         println!(" in {} ns", debug_duration);
     }
 
-    // errormux turns Result<usize> into -errno
-    Error::mux(result)
+    if a != SYS_SIGRETURN {
+        // errormux turns Result<usize> into -errno
+        stack.set_syscall_ret_reg(Error::mux(result));
+
+        if result == Err(Error::new(EINTR)) {
+            // Although it would be cleaner to simply run the signal trampoline right after switching
+            // back to any given context, where the signal set/queue is nonempty, syscalls need to
+            // complete *before* any signal is delivered. Otherwise the return value would probably be
+            // overwritten.
+            crate::context::signal::signal_handler();
+        }
+    }
 }

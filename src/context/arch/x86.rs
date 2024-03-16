@@ -4,10 +4,8 @@ use alloc::sync::Arc;
 
 use crate::{
     gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
-    interrupt::handler::ScratchRegisters,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
-    pop_scratch, push_scratch,
     syscall::FloatRegisters,
 };
 
@@ -23,6 +21,8 @@ pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
 pub const KFX_ALIGN: usize = 16;
+pub const KSTACK_SIZE: usize = 65536;
+pub const KSTACK_ALIGN: usize = 16;
 
 #[derive(Clone, Debug)]
 #[repr(C)]
@@ -67,23 +67,6 @@ impl Context {
 
     pub fn set_stack(&mut self, address: usize) {
         self.esp = address;
-    }
-
-    pub unsafe fn signal_stack(&mut self, handler: extern "C" fn(usize), sig: u8) {
-        self.push_stack(sig as usize);
-        self.push_stack(handler as usize);
-        self.push_stack(signal_handler_wrapper as usize);
-    }
-
-    pub unsafe fn push_stack(&mut self, value: usize) {
-        self.esp -= mem::size_of::<usize>();
-        *(self.esp as *mut usize) = value;
-    }
-
-    pub unsafe fn pop_stack(&mut self) -> usize {
-        let value = *(self.esp as *const usize);
-        self.esp += mem::size_of::<usize>();
-        value
     }
 }
 impl super::Context {
@@ -218,42 +201,6 @@ unsafe extern "cdecl" fn switch_to_inner() {
         off_esp = const(offset_of!(Cx, esp)),
 
         switch_hook = sym crate::context::switch_finish_hook,
-        options(noreturn),
-    );
-}
-#[allow(dead_code)]
-#[repr(packed)]
-pub struct SignalHandlerStack {
-    scratch: ScratchRegisters,
-    handler: extern "C" fn(usize),
-    sig: usize,
-    eip: usize,
-}
-
-#[naked]
-unsafe extern "C" fn signal_handler_wrapper() {
-    #[inline(never)]
-    unsafe extern "C" fn inner(stack: &SignalHandlerStack) {
-        (stack.handler)(stack.sig);
-    }
-
-    // Push scratch registers
-    core::arch::asm!(
-        concat!(
-            "push eax",
-            push_scratch!(),
-            "
-            push esp
-            call {inner}
-            pop esp
-            ",
-            pop_scratch!(),
-            "
-            add esp, 8
-            ret
-            ",
-        ),
-        inner = sym inner,
         options(noreturn),
     );
 }

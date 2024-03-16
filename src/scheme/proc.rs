@@ -3,15 +3,15 @@ use crate::{
     context::{
         self,
         file::FileDescriptor,
-        memory::{handle_notify_files, AddrSpace, Grant, PageSpan, AddrSpaceWrapper},
-        Context, ContextId, Status,
+        memory::{handle_notify_files, Grant, PageSpan, AddrSpaceWrapper},
+        Context, ContextId, Status, context::{HardBlockedReason, Altstack, SignalHandler},
     },
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme},
     syscall::{
         self,
-        data::{GrantDesc, Map, PtraceEvent, SigAction, Stat},
+        data::{GrantDesc, Map, PtraceEvent, SigAction, SetSighandlerData, Stat},
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
@@ -87,9 +87,7 @@ where
 
     // Wait until stopped
     while running {
-        unsafe {
-            context::switch();
-        }
+        context::switch();
 
         running = with_context(pid, |context| Ok(context.running))?;
     }
@@ -121,7 +119,8 @@ enum Operation {
     Static(&'static str),
     Name,
     SessionId,
-    Sigstack,
+    Sighandler,
+    Start,
     Attr(Attr),
     Filetable {
         filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
@@ -150,6 +149,11 @@ enum Operation {
 
     SchedAffinity,
     Sigactions(Arc<RwLock<Vec<(SigAction, usize)>>>),
+    Sigprocmask,
+
+    // TODO: REMOVE
+    Sigignmask,
+
     CurrentSigactions,
     AwaitingSigactionsChange(Arc<RwLock<Vec<(SigAction, usize)>>>),
 
@@ -175,6 +179,9 @@ impl Operation {
                 | Self::Sigactions(_)
                 | Self::CurrentSigactions
                 | Self::AwaitingSigactionsChange(_)
+                | Self::Sighandler
+                | Self::Sigprocmask
+                | Self::Sigignmask
         )
     }
     fn needs_root(&self) -> bool {
@@ -296,7 +303,10 @@ impl<const FULL: bool> ProcScheme<FULL> {
             Some("exe") => Operation::Static("exe"),
             Some("name") => Operation::Name,
             Some("session_id") => Operation::SessionId,
-            Some("sigstack") => Operation::Sigstack,
+            Some("sighandler") => Operation::Sighandler,
+            Some("sigprocmask") => Operation::Sigprocmask,
+            Some("sigignmask") => Operation::Sigignmask,
+            Some("start") => Operation::Start,
             Some("uid") => Operation::Attr(Attr::Uid),
             Some("gid") => Operation::Attr(Attr::Gid),
             Some("open_via_dup") => Operation::OpenViaDup,
@@ -621,35 +631,13 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         };
 
         match handle.info.operation {
-            Operation::AwaitingAddrSpaceChange {
-                new,
-                new_sp,
-                new_ip,
-            } => {
-                let _ = stop_context(handle.info.pid, |context: &mut Context| unsafe {
-                    if let Some(saved_regs) = ptrace::regs_for_mut(context) {
-                        #[cfg(target_arch = "aarch64")]
-                        {
-                            saved_regs.iret.elr_el1 = new_ip;
-                            saved_regs.iret.sp_el0 = new_sp;
-                        }
+            Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => {
+                let _ = stop_context(handle.info.pid, |context: &mut Context| {
+                    let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
+                    regs.set_instr_pointer(new_ip);
+                    regs.set_stack_pointer(new_sp);
 
-                        #[cfg(target_arch = "x86")]
-                        {
-                            saved_regs.iret.eip = new_ip;
-                            saved_regs.iret.esp = new_sp;
-                        }
-
-                        #[cfg(target_arch = "x86_64")]
-                        {
-                            saved_regs.iret.rip = new_ip;
-                            saved_regs.iret.rsp = new_sp;
-                        }
-                    } else {
-                        context.clone_entry = Some([new_ip, new_sp]);
-                    }
-
-                    Ok(context.set_addr_space(new))
+                    Ok(context.set_addr_space(Some(new)))
                 })?;
                 let _ = ptrace::send_event(crate::syscall::ptrace_event!(
                     PTRACE_EVENT_ADDRSPACE_SWITCH,
@@ -803,22 +791,16 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                             mem::size_of::<FloatRegisters>(),
                         ))
                     })?,
-                    RegsKind::Int => try_stop_context(info.pid, |context| {
-                        match unsafe { ptrace::regs_for(context) } {
-                            None => {
-                                assert!(!context.running, "try_stop_context is broken, clearly");
-                                println!(
-                                    "{}:{}: Couldn't read registers from stopped process",
-                                    file!(),
-                                    line!()
-                                );
-                                Err(Error::new(ENOTRECOVERABLE))
-                            }
-                            Some(stack) => {
-                                let mut regs = IntRegisters::default();
-                                stack.save(&mut regs);
-                                Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
-                            }
+                    RegsKind::Int => try_stop_context(info.pid, |context| match context.regs() {
+                        None => {
+                            assert!(!context.running, "try_stop_context is broken, clearly");
+                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            Err(Error::new(ENOTRECOVERABLE))
+                        },
+                        Some(stack) => {
+                            let mut regs = IntRegisters::default();
+                            stack.save(&mut regs);
+                            Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
                         }
                     })?,
                     RegsKind::Env => (
@@ -949,17 +931,41 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     .to_ne_bytes(),
                 &mut 0,
             ),
-            Operation::Sigstack => read_from(
-                buf,
-                &context::contexts()
-                    .get(info.pid)
-                    .ok_or(Error::new(ESRCH))?
-                    .read()
-                    .sigstack
-                    .unwrap_or(!0)
-                    .to_ne_bytes(),
-                &mut 0,
-            ),
+
+            Operation::Sighandler => {
+                let handler = context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sig.handler;
+                let altstack = handler.and_then(|h| h.altstack);
+                let data = SetSighandlerData {
+                    entry: handler.map_or(0, |h| h.handler.get()),
+                    altstack_base: altstack.map_or(0, |a| a.base.get()),
+                    altstack_len: altstack.map_or(0, |a| a.len.get()),
+                };
+                buf.copy_exactly(&data)?;
+
+                Ok(mem::size_of::<SetSighandlerData>())
+            }
+            Operation::Sigprocmask => {
+                let procmask = context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sig.procmask;
+                buf.write_u64(procmask)?;
+                Ok(8)
+            }
+            Operation::Sigignmask => {
+                let mut ignmask = 0_u64;
+
+                {
+                    let contexts = context::contexts();
+                    let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
+                    let context = context.read();
+                    let actions = context.actions.read();
+                    for (idx, (action, _)) in actions.iter().enumerate() {
+                        if action.sa_handler == unsafe { core::mem::transmute(SIG_IGN) } {
+                            ignmask |= 1 << idx;
+                        }
+                    }
+                }
+                buf.write_u64(ignmask)?;
+                Ok(8)
+            }
             Operation::Attr(attr) => {
                 let src_buf = match (
                     attr,
@@ -1082,21 +1088,15 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 RegsKind::Int => {
                     let regs = unsafe { buf.read_exact::<IntRegisters>()? };
 
-                    try_stop_context(info.pid, |context| {
-                        match unsafe { ptrace::regs_for_mut(context) } {
-                            None => {
-                                println!(
-                                    "{}:{}: Couldn't read registers from stopped process",
-                                    file!(),
-                                    line!()
-                                );
-                                Err(Error::new(ENOTRECOVERABLE))
-                            }
-                            Some(stack) => {
-                                stack.load(&regs);
+                    try_stop_context(info.pid, |context| match context.regs_mut() {
+                        None => {
+                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            Err(Error::new(ENOTRECOVERABLE))
+                        },
+                        Some(stack) => {
+                            stack.load(&regs);
 
-                                Ok(mem::size_of::<IntRegisters>())
-                            }
+                            Ok(mem::size_of::<IntRegisters>())
                         }
                     })
                 }
@@ -1120,7 +1120,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
                     try_stop_context(info.pid, |context| {
-                        match unsafe { ptrace::regs_for_mut(context) } {
+                        match context.regs_mut() {
                             None => {
                                 println!(
                                     "{}:{}: Couldn't read registers from stopped process",
@@ -1190,14 +1190,51 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 Ok(buf.len())
             }
-            Operation::Sigstack => {
-                let sigstack = buf.read_usize()?;
-                context::contexts()
-                    .get(info.pid)
-                    .ok_or(Error::new(ESRCH))?
-                    .write()
-                    .sigstack = (sigstack != !0).then(|| sigstack);
-                Ok(buf.len())
+            Operation::Sighandler => {
+                let data = unsafe { buf.read_exact::<SetSighandlerData>()? };
+
+                let new_handler = match NonZeroUsize::new(data.entry) {
+                    Some(handler) => Some(SignalHandler {
+                        handler,
+                        altstack: match (NonZeroUsize::new(data.altstack_base), NonZeroUsize::new(data.altstack_len)) {
+                            (Some(base), Some(len)) => Some(Altstack { base, len }),
+                            _ => None,
+                        }
+                    }),
+                    None => None,
+                };
+
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig.handler = new_handler;
+
+                Ok(mem::size_of::<SetSighandlerData>())
+            }
+            Operation::Sigprocmask => {
+                let new_procmask = buf.read_u64()?;
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig.procmask = new_procmask;
+                Ok(8)
+            }
+            // TODO: Remove!
+            Operation::Sigignmask => {
+                let new_ignmask = buf.read_u64()?;
+                let contexts = context::contexts();
+                let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
+                let context = context.read();
+                let mut actions = context.actions.write();
+                for bit in (0..64).filter(|bit| new_ignmask & (1 << bit) != 0) {
+                    actions[bit] = (SigAction {
+                        sa_flags: SigActionFlags::empty(),
+                        sa_mask: 0,
+                        sa_handler: unsafe { core::mem::transmute(SIG_IGN) },
+                    }, 0);
+                }
+                Ok(8)
+            }
+            Operation::Start => match context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().status {
+                ref mut status @ Status::HardBlocked { reason: HardBlockedReason::NotYetStarted } => {
+                    *status = Status::Runnable;
+                    Ok(buf.len())
+                }
+                _ => return Err(Error::new(EINVAL)),
             }
             Operation::Attr(attr) => {
                 // TODO: What limit?
@@ -1323,28 +1360,25 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let path = format!(
-            "proc:{}/{}",
-            handle.info.pid.get(),
-            match handle.info.operation {
-                Operation::Regs(RegsKind::Float) => "regs/float",
-                Operation::Regs(RegsKind::Int) => "regs/int",
-                Operation::Regs(RegsKind::Env) => "regs/env",
-                Operation::Trace => "trace",
-                Operation::Static(path) => path,
-                Operation::Name => "name",
-                Operation::Sigstack => "sigstack",
-                Operation::Attr(Attr::Uid) => "uid",
-                Operation::Attr(Attr::Gid) => "gid",
-                Operation::Filetable { .. } => "filetable",
-                Operation::AddrSpace { .. } => "addrspace",
-                Operation::Sigactions(_) => "sigactions",
-                Operation::CurrentAddrSpace => "current-addrspace",
-                Operation::CurrentFiletable => "current-filetable",
-                Operation::CurrentSigactions => "current-sigactions",
-                Operation::OpenViaDup => "open-via-dup",
-                Operation::MmapMinAddr(_) => "mmap-min-addr",
-                Operation::SchedAffinity => "sched-affinity",
+        let path = format!("proc:{}/{}", handle.info.pid.get(), match handle.info.operation {
+            Operation::Regs(RegsKind::Float) => "regs/float",
+            Operation::Regs(RegsKind::Int) => "regs/int",
+            Operation::Regs(RegsKind::Env) => "regs/env",
+            Operation::Trace => "trace",
+            Operation::Static(path) => path,
+            Operation::Name => "name",
+            Operation::Sighandler => "sighandler",
+            Operation::Attr(Attr::Uid) => "uid",
+            Operation::Attr(Attr::Gid) => "gid",
+            Operation::Filetable { .. } => "filetable",
+            Operation::AddrSpace { .. } => "addrspace",
+            Operation::Sigactions(_) => "sigactions",
+            Operation::CurrentAddrSpace => "current-addrspace",
+            Operation::CurrentFiletable => "current-filetable",
+            Operation::CurrentSigactions => "current-sigactions",
+            Operation::OpenViaDup => "open-via-dup",
+            Operation::MmapMinAddr(_) => "mmap-min-addr",
+            Operation::SchedAffinity => "sched-affinity",
 
                 _ => return Err(Error::new(EOPNOTSUPP)),
             }
@@ -1491,38 +1525,25 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     }
 }
 extern "C" fn clone_handler() {
-    let context_lock = Arc::clone(
-        context::contexts()
-            .current()
-            .expect("expected the current context to be set in a spawn closure"),
-    );
-
-    loop {
-        unsafe {
-            let Some([ip, sp]) = ({ context_lock.read().clone_entry }) else {
-                context_lock.write().status = Status::Stopped(SIGSTOP);
-                continue;
-            };
-            let [arg, is_singlestep] = [0; 2];
-
-            crate::start::usermode(ip, sp, arg, is_singlestep);
-        }
-    }
+    // This function will return to the syscall return assembly, and subsequently transition to
+    // usermode.
 }
 
 fn inherit_context() -> Result<ContextId> {
     let new_id = {
-        let current_context_lock =
-            Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
-        let new_context_lock = Arc::clone(context::contexts_mut().spawn(clone_handler)?);
+        let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
+        let new_context_lock = Arc::clone(context::contexts_mut().spawn(true, clone_handler)?);
+
+        // (Starts with "all signals blocked".)
 
         let current_context = current_context_lock.read();
         let mut new_context = new_context_lock.write();
 
-        new_context.status = Status::Stopped(SIGSTOP);
+        new_context.status = Status::HardBlocked { reason: HardBlockedReason::NotYetStarted };
 
-        // TODO: Move all of these IDs into somewhere in userspace. Processes as an abstraction
-        // needs not be in the kernel; contexts are sufficient.
+        // TODO: Move all of these IDs into somewhere in userspace, file descriptors as
+        // capabilities. A userspace daemon can manage process hierarchies etc. whereas the kernel
+        // only needs to manage contexts.
         new_context.euid = current_context.euid;
         new_context.egid = current_context.egid;
         new_context.ruid = current_context.ruid;
@@ -1533,9 +1554,6 @@ fn inherit_context() -> Result<ContextId> {
         new_context.pgid = current_context.pgid;
         new_context.session_id = current_context.session_id;
         new_context.umask = current_context.umask;
-
-        // TODO: Force userspace to copy sigmask. Start with "all signals blocked".
-        new_context.sigmask = current_context.sigmask;
 
         new_context.id
     };

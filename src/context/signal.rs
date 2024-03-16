@@ -1,34 +1,74 @@
 use alloc::sync::Arc;
-use core::mem;
+use core::mem::size_of;
 use syscall::{
     flag::{
         PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP,
         SIGTTIN, SIGTTOU, SIG_DFL, SIG_IGN,
     },
-    ptrace_event,
+    ptrace_event, SignalStack, SigActionFlags, IntRegisters, Error, EINTR, SIGTERM,
 };
 
 use crate::{
-    context::{contexts, switch, Status, WaitpidKey},
+    context::{self, switch, Status, WaitpidKey},
     ptrace,
-    start::usermode,
-    syscall::usercopy::UserSlice,
+    syscall::usercopy::UserSlice, stop::{kstop, kreset},
 };
 
-pub fn is_user_handled(handler: Option<extern "C" fn(usize)>) -> bool {
-    let handler = handler.map(|ptr| ptr as usize).unwrap_or(0);
-    handler != SIG_DFL && handler != SIG_IGN
+use super::ContextId;
+
+pub fn kmain_signal_handler() {
+    if context::context_id() != ContextId::new(1) {
+        log::warn!("kmain signal didn't target PID 1, ignoring");
+        return;
+    }
+
+    let deliverable = context::current().expect("context::kmain_signal_handler not inside of context");
+    let kstop_bit = 1 << (SIGKILL - 1);
+    let kreset_bit = 1 << (SIGTERM - 1);
+    let bits = deliverable.read().sig.deliverable();
+
+    if bits & kstop_bit == kstop_bit {
+        unsafe {
+            kstop();
+        }
+    } else if bits & kreset_bit == kreset_bit {
+        unsafe {
+            kreset();
+        }
+    } else {
+        log::warn!("Spurious kmain signal, bitmask {bits:#0x}.");
+    }
 }
 
-pub extern "C" fn signal_handler(sig: usize) {
-    let ((action, restorer), sigstack) = {
-        let contexts = contexts();
-        let context_lock = contexts
-            .current()
-            .expect("context::signal_handler not inside of context");
-        let context = context_lock.read();
+// TODO: Move everything but SIGKILL to userspace. SIGCONT and SIGSTOP do not necessarily need to
+// be done from this current context.
+pub fn signal_handler() {
+    let (action, sig) = {
+        // FIXME: Can any low-level state become corrupt if a panic occurs here?
+        let context_lock = context::current().expect("context::signal_handler not inside of context");
+        let mut context = context_lock.write();
+
+        // Lowest-numbered signal first.
+        // TODO: randomly?
+        if context.sig.deliverable() == 0 {
+            return;
+        }
+        let bits = context.sig.deliverable();
+
+        // Always prioritize SIGKILL and SIGSTOP, so processes can't simply keep themselves alive
+        // by killing themselves.
+        let selected = if bits & (1 << (SIGKILL - 1)) != 0 {
+            SIGKILL
+        } else if bits & (1 << (SIGSTOP - 1)) != 0 {
+            SIGSTOP
+        } else {
+            bits.trailing_zeros() as usize + 1
+        };
+
+        context.sig.pending &= !(1 << (selected - 1));
+
         let actions = context.actions.read();
-        (actions[sig], context.sigstack)
+        (actions[selected - 1].0, selected)
     };
 
     let handler = action.sa_handler.map(|ptr| ptr as usize).unwrap_or(0);
@@ -41,8 +81,7 @@ pub extern "C" fn signal_handler(sig: usize) {
 
     if sig != SIGKILL && thumbs_down.unwrap_or(false) {
         // If signal can be and was ignored
-        crate::syscall::sigreturn().unwrap();
-        unreachable!();
+        return;
     }
 
     if handler == SIG_DFL {
@@ -54,7 +93,7 @@ pub extern "C" fn signal_handler(sig: usize) {
                 // println!("Continue");
 
                 {
-                    let contexts = contexts();
+                    let contexts = context::contexts();
 
                     let (pid, pgid, ppid) = {
                         let context_lock = contexts
@@ -83,11 +122,12 @@ pub extern "C" fn signal_handler(sig: usize) {
                     }
                 }
             }
+            // FIXME: SIGSTOP shouldn't be overridable
             SIGSTOP | SIGTSTP | SIGTTIN | SIGTTOU => {
                 // println!("Stop {}", sig);
 
                 {
-                    let contexts = contexts();
+                    let contexts = context::contexts();
 
                     let (pid, pgid, ppid) = {
                         let context_lock = contexts
@@ -116,7 +156,7 @@ pub extern "C" fn signal_handler(sig: usize) {
                     }
                 }
 
-                unsafe { switch() };
+                switch();
             }
             _ => {
                 // println!("Exit {}", sig);
@@ -128,37 +168,63 @@ pub extern "C" fn signal_handler(sig: usize) {
     } else {
         // println!("Call {:X}", handler);
 
-        let singlestep = {
-            let contexts = contexts();
-            let context = contexts
-                .current()
-                .expect("context::signal_handler userspace not inside of context");
-            let context = context.read();
-            unsafe {
-                ptrace::regs_for(&context)
-                    .map(|s| s.is_singlestep())
-                    .unwrap_or(false)
-            }
+        // TODO: Move more of this to userspace
+        let context_lock = context::current()
+            .expect("context::signal_handler not inside of context");
+        let mut context = context_lock.write();
+
+        let Some(handler) = context.sig.handler else {
+            log::debug!("signal ignored since context did not setup sighandler");
+            return;
+        };
+        let Some(regs) = context.regs_mut() else {
+            log::warn!("cannot send signal to context without userspace registers");
+            return;
+        };
+        let mut intregs = IntRegisters::default();
+        regs.save(&mut intregs);
+
+        const STACK_ADJUST: usize = 256;
+        // TODO: 16 bytes alignment is sufficient unless XSAVE is enabled.
+        const STACK_ALIGN: usize = 64;
+
+        let new_sp_unless_altstack = (regs.stack_pointer() - STACK_ADJUST) / STACK_ALIGN * STACK_ALIGN;
+
+        let new_sp = match handler.altstack {
+            Some(altstack) if !(altstack.base.get()..altstack.base.get() + altstack.len.get()).contains(&regs.stack_pointer()) => altstack.base.get() + altstack.len.get(),
+            _ => new_sp_unless_altstack,
+        } - size_of::<SignalStack>();
+
+        let old_procmask = context.sig.procmask;
+
+        context.sig.procmask |= action.sa_mask;
+
+        if !action.sa_flags.contains(SigActionFlags::SA_NODEFER) {
+            context.sig.procmask |= 1 << (sig - 1);
+        }
+
+        let Some(regs) = context.regs_mut() else {
+            return;
         };
 
-        unsafe {
-            const REDZONE_SIZE: usize = 256;
-            let mut sp = sigstack.expect("sigaction was set while sigstack was not") - REDZONE_SIZE;
+        regs.set_stack_pointer(new_sp);
+        regs.set_instr_pointer(handler.handler.get());
 
-            sp = (sp / 16) * 16;
+        drop(context);
 
-            sp -= mem::size_of::<usize>();
-
-            match UserSlice::wo(sp, core::mem::size_of::<usize>())
-                .and_then(|buf| buf.write_usize(restorer))
-            {
-                Ok(()) => usermode(handler, sp, sig, usize::from(singlestep)),
-                Err(error) => {
-                    log::error!("Failed to signal: {}", error);
-                }
-            }
-        }
+        let Ok(slice) = UserSlice::wo(new_sp, size_of::<SignalStack>()) else {
+            return;
+        };
+        let stack = SignalStack {
+            intregs,
+            old_procmask,
+            sa_mask: action.sa_mask,
+            sa_flags: action.sa_flags.bits() as u32,
+            sig_num: sig as u32,
+            sa_handler: action.sa_handler.map_or(0, |h| h as usize),
+        };
+        let Ok(()) = slice.copy_from_slice(&stack) else {
+            return;
+        };
     }
-
-    crate::syscall::sigreturn().unwrap();
 }

@@ -5,7 +5,7 @@ use crate::{memory::ArchIntCtx, syscall::IntRegisters};
 use super::super::flags::*;
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C)]
 pub struct ScratchRegisters {
     pub r11: usize,
     pub r10: usize,
@@ -33,7 +33,7 @@ impl ScratchRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C)]
 pub struct PreservedRegisters {
     pub r15: usize,
     pub r14: usize,
@@ -55,7 +55,7 @@ impl PreservedRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C)]
 pub struct IretRegisters {
     pub rip: usize,
     pub cs: usize,
@@ -90,7 +90,7 @@ impl IretRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C)]
 pub struct InterruptStack {
     pub preserved: PreservedRegisters,
     pub scratch: ScratchRegisters,
@@ -98,6 +98,26 @@ pub struct InterruptStack {
 }
 
 impl InterruptStack {
+    pub fn init(&mut self) {
+        // Always enable interrupts!
+        self.iret.rflags = x86::bits64::rflags::RFlags::FLAGS_IF.bits() as usize;
+        self.iret.cs = (crate::gdt::GDT_USER_CODE << 3) | 3;
+        self.iret.ss = (crate::gdt::GDT_USER_DATA << 3) | 3;
+    }
+    pub fn set_stack_pointer(&mut self, rsp: usize) {
+        self.iret.rsp = rsp;
+    }
+    pub fn stack_pointer(&self) -> usize {
+        self.iret.rsp
+    }
+    pub fn set_instr_pointer(&mut self, rip: usize) {
+        self.iret.rip = rip;
+    }
+    // TODO: This can maybe be done in userspace?
+    pub fn set_syscall_ret_reg(&mut self, ret: usize) {
+        self.scratch.rax = ret;
+    }
+
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
@@ -124,28 +144,8 @@ impl InterruptStack {
         all.rip = self.iret.rip;
         all.cs = self.iret.cs;
         all.rflags = self.iret.rflags;
-
-        // Set rsp and ss:
-
-        const CPL_MASK: usize = 0b11;
-
-        let cs: usize;
-        unsafe {
-            core::arch::asm!("mov {}, cs", out(reg) cs);
-        }
-
-        if self.iret.cs & CPL_MASK == cs & CPL_MASK {
-            // Privilege ring didn't change, so neither did the stack
-            all.rsp = self as *const Self as usize // rsp after Self was pushed to the stack
-                + mem::size_of::<Self>() // disregard Self
-                - mem::size_of::<usize>() * 2; // well, almost: rsp and ss need to be excluded as they aren't present
-            unsafe {
-                core::arch::asm!("mov {}, ss", out(reg) all.ss);
-            }
-        } else {
-            all.rsp = self.iret.rsp;
-            all.ss = self.iret.ss;
-        }
+        all.rsp = self.iret.rsp;
+        all.ss = self.iret.ss;
     }
     /// Loads all registers from a struct used by the proc:
     /// scheme to read/write registers.
@@ -168,10 +168,15 @@ impl InterruptStack {
         self.iret.rip = all.rip;
         self.iret.rsp = all.rsp;
 
-        // CS and SS are immutable
+        // CS and SS are immutable, at least their privilege levels.
 
-        // TODO: RFLAGS should be restricted before being changeable
-        // self.iret.rflags = all.eflags;
+        // OF, DF, 0, TF => D
+        // SF, ZF, 0, AF => D
+        // 0, PF, 1, CF => 5
+        const ALLOWED_RFLAGS: usize = 0xDD5;
+
+        self.iret.rflags &= !ALLOWED_RFLAGS;
+        self.iret.rflags |= all.rflags & ALLOWED_RFLAGS;
     }
     /// Enables the "Trap Flag" in the FLAGS register, causing the CPU
     /// to send a Debug exception after the next instruction. This is
@@ -366,20 +371,6 @@ macro_rules! interrupt_stack {
         #[naked]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                let _guard;
-
-                if !$is_paranoid {
-                    // Deadlock safety: (non-paranoid) interrupts are not normally enabled in the
-                    // kernel, except in kmain. However, no locks for context list nor even
-                    // individual context locks, are ever meant to be acquired there.
-                    _guard = $crate::ptrace::set_process_regs($stack);
-                }
-
-                // TODO: Force the declarations to specify unsafe? For example, accessing a global
-                // core::cell::Cell is safe when running at the "bottom level" (interrupt from
-                // userspace or prior to entering userspace), but UB if simultaneously accessed
-                // from an interrupt.
-
                 #[allow(unused_unsafe)]
                 unsafe {
                     $code
@@ -481,19 +472,6 @@ macro_rules! interrupt_error {
         #[naked]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptStack, $error_code: usize) {
-                let _guard;
-
-                // Only set_ptrace_process_regs if this error occured from userspace. If this fault
-                // originated from kernel mode, we have no idea what it might have locked (and
-                // kernel mode faults are never meant to occur unless something is wrong, and will
-                // not context switch anyway, rendering that statement useless in such a case
-                // anyway).
-                //
-                // Check the privilege level of CS against ring 3.
-                if $stack.iret.cs & 0b11 == 0b11 {
-                    _guard = $crate::ptrace::set_process_regs($stack);
-                }
-
                 #[allow(unused_unsafe)]
                 unsafe {
                     $code

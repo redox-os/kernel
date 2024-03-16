@@ -43,6 +43,7 @@
 #![feature(array_methods)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
 #![feature(int_roundings)]
+#![feature(iter_next_chunk)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
 #![feature(new_uninit)]
@@ -60,6 +61,7 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
+use crate::context::switch::SwitchResult;
 use crate::scheme::SchemeNamespace;
 
 use crate::consts::*;
@@ -194,7 +196,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    match context::contexts_mut().spawn(userspace_init) {
+    match context::contexts_mut().spawn(true, userspace_init) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
             context.rns = SchemeNamespace::from(1);
@@ -207,17 +209,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
         }
     }
 
-    loop {
-        unsafe {
-            interrupt::disable();
-            if context::switch() {
-                interrupt::enable_and_nop();
-            } else {
-                // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                interrupt::enable_and_halt();
-            }
-        }
-    }
+    run_userspace()
 }
 
 /// This is the main kernel entry point for secondary CPUs
@@ -226,27 +218,7 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    if cfg!(feature = "multi_core") {
-        context::init();
-
-        let pid = syscall::getpid();
-        info!("AP {}: {:?}", cpu_id, pid);
-
-        #[cfg(feature = "profiling")]
-        profiling::ready_for_profiling();
-
-        loop {
-            unsafe {
-                interrupt::disable();
-                if context::switch() {
-                    interrupt::enable_and_nop();
-                } else {
-                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                    interrupt::enable_and_halt();
-                }
-            }
-        }
-    } else {
+    if !cfg!(feature = "multi_core") {
         info!("AP {}: Disabled", cpu_id);
 
         loop {
@@ -256,31 +228,48 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
             }
         }
     }
+    context::init();
+
+    let pid = syscall::getpid();
+    info!("AP {}: {:?}", cpu_id, pid);
+
+    #[cfg(feature = "profiling")]
+    profiling::ready_for_profiling();
+
+    run_userspace();
+}
+fn run_userspace() -> ! {
+    loop {
+        unsafe {
+            interrupt::disable();
+            match context::switch() {
+                SwitchResult::Switched { signal } => {
+                    if signal {
+                        crate::context::signal::kmain_signal_handler();
+                    }
+                    interrupt::enable_and_nop();
+                }
+                SwitchResult::AllContextsIdle => {
+                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
+                    interrupt::enable_and_halt();
+                }
+            }
+        }
+    }
 }
 
-/// Allow exception handlers to send signal to arch-independant kernel
-#[no_mangle]
-extern "C" fn ksignal(signal: usize) {
-    info!(
-        "SIGNAL {}, CPU {}, PID {:?}",
-        signal,
-        cpu_id(),
-        context::context_id()
-    );
+/// Allow exception handlers to send signal to arch-independent kernel
+pub fn ksignal(signal: usize) {
+    info!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
     {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
+            let mut context = context_lock.write();
             info!("NAME {}", context.name);
+            context.sig.pending |= 1 << (signal - 1);
         }
     }
-
-    // Try running kill(getpid(), signal), but fallback to exiting
-    syscall::getpid()
-        .and_then(|pid| syscall::kill(pid, signal).map(|_| ()))
-        .unwrap_or_else(|_| {
-            syscall::exit(signal & 0x7F);
-        });
+    crate::context::signal::signal_handler();
 }
 
 // TODO: Use this macro on aarch64 too.

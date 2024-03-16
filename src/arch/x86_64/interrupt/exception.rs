@@ -1,13 +1,9 @@
 use x86::irq::PageFaultError;
 
 use crate::{
-    interrupt::stack_trace, interrupt_error, interrupt_stack, memory::GenericPfFlags,
+    interrupt::stack_trace, interrupt_error, interrupt_stack, ksignal, memory::GenericPfFlags,
     paging::VirtualAddress, ptrace, syscall::flag::*,
 };
-
-extern "C" {
-    fn ksignal(signal: usize);
-}
 
 interrupt_stack!(divide_by_zero, |stack| {
     println!("Divide by zero");

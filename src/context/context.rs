@@ -1,10 +1,11 @@
-use alloc::{borrow::Cow, boxed::Box, collections::VecDeque, sync::Arc, vec::Vec};
-use core::{cmp::Ordering, mem};
+use alloc::{borrow::Cow, sync::Arc, vec::Vec};
+use syscall::{SIGKILL, SIGSTOP};
+use core::{cmp::Ordering, mem, num::NonZeroUsize};
 use spin::RwLock;
 
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
-    common::{aligned_box::AlignedBox, unique::Unique},
+    common::aligned_box::AlignedBox,
     context::{self, arch, file::FileDescriptor, memory::AddrSpace},
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     ipi::{ipi, IpiKind, IpiTarget},
@@ -23,7 +24,7 @@ use crate::syscall::{
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
 
-use super::memory::{GrantFileRef, AddrSpaceWrapper};
+use super::{memory::{GrantFileRef, AddrSpaceWrapper}, empty_cr3};
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
@@ -60,7 +61,7 @@ impl Status {
 pub enum HardBlockedReason {
     AwaitingMmap { file_ref: GrantFileRef },
     // TODO: PageFaultOom?
-    // TODO: NotYetStarted/ManuallyBlocked (when new contexts are created)
+    NotYetStarted,
     // TODO: ptrace_stop?
 }
 
@@ -146,8 +147,9 @@ pub struct Context {
     pub egid: u32,
     /// The effective namespace id
     pub ens: SchemeNamespace,
-    /// Signal mask
-    pub sigmask: [u64; 2],
+
+    pub sig: SignalState,
+
     /// Process umask
     pub umask: usize,
     /// Status of context
@@ -175,25 +177,14 @@ pub struct Context {
     pub syscall_tail: Option<RaiiFrame>,
     /// Context is being waited on
     pub waitpid: Arc<WaitMap<WaitpidKey, (ContextId, usize)>>,
-    /// Context should handle pending signals
-    pub pending: VecDeque<u8>,
     /// Context should wake up at specified time
     pub wake: Option<u128>,
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch
     pub kfx: AlignedBox<[u8], { arch::KFX_ALIGN }>,
-    /// Kernel stack
-    pub kstack: Option<Box<[u8]>>,
-    /// Kernel signal backup: Registers, Kernel FX, Kernel Stack, Signal number
-    pub ksig: Option<(
-        arch::Context,
-        AlignedBox<[u8], { arch::KFX_ALIGN }>,
-        Option<Box<[u8]>>,
-        u8,
-    )>,
-    /// Restore ksig context on next switch
-    pub ksig_restore: bool,
+    /// Kernel stack, if located on the heap.
+    pub kstack: Option<AlignedBox<[u8; arch::KSTACK_SIZE], { arch::KSTACK_ALIGN }>>,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
     /// but can be None while the context is being reaped or when a new context is created but has
     /// not yet had its address space changed. Note that these are only for user mappings; kernel
@@ -206,25 +197,35 @@ pub struct Context {
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// Signal actions
     pub actions: Arc<RwLock<Vec<(SigAction, usize)>>>,
-    /// The pointer to the user-space registers, saved after certain
-    /// interrupts. This pointer is somewhere inside kstack, and the
-    /// kstack address at the time of creation is the first element in
-    /// this tuple.
-    pub regs: Option<(usize, Unique<InterruptStack>)>,
+    /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
+    /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
+    pub userspace: bool,
     /// A somewhat hacky way to initially stop a context when creating
     /// a new instance of the proc: scheme, entirely separate from
     /// signals or any other way to restart a process.
     pub ptrace_stop: bool,
-    /// A pointer to the signal stack. If this is unset, none of the sigactions can be anything
-    /// else than SIG_DFL, otherwise signals will not be delivered. Userspace is responsible for
-    /// setting this.
-    pub sigstack: Option<usize>,
-    /// An even hackier way to pass the return entry point and stack pointer to new contexts while
-    /// implementing clone. Before a context has returned to userspace, its IntRegisters cannot be
-    /// set since there is no interrupt stack (unless the kernel stack is copied, but that is in my
-    /// opinion hackier and less efficient than this (and UB to do in Rust)).
-    pub clone_entry: Option<[usize; 2]>,
     pub fmap_ret: Option<Frame>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SignalState {
+    /// Bitset of pending signals.
+    pub pending: u64,
+    /// Bitset of procmasked signals.
+    pub procmask: u64,
+
+    /// A function pointer to the userspace signal handler.
+    pub handler: Option<SignalHandler>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct SignalHandler {
+    pub handler: NonZeroUsize,
+    pub altstack: Option<Altstack>,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Altstack {
+    pub base: NonZeroUsize,
+    pub len: NonZeroUsize,
 }
 
 impl Context {
@@ -240,9 +241,13 @@ impl Context {
             euid: 0,
             egid: 0,
             ens: SchemeNamespace::from(0),
-            sigmask: [0; 2],
+            sig: SignalState {
+                pending: 0,
+                procmask: !0,
+                handler: None,
+            },
             umask: 0o022,
-            status: Status::Blocked,
+            status: Status::HardBlocked { reason: HardBlockedReason::NotYetStarted },
             status_reason: "",
             running: false,
             cpu_id: None,
@@ -253,21 +258,16 @@ impl Context {
             syscall_head: Some(RaiiFrame::allocate()?),
             syscall_tail: Some(RaiiFrame::allocate()?),
             waitpid: Arc::new(WaitMap::new()),
-            pending: VecDeque::new(),
             wake: None,
             arch: arch::Context::new(),
             kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
             kstack: None,
-            ksig: None,
-            ksig_restore: false,
             addr_space: None,
             name: Cow::Borrowed(""),
             files: Arc::new(RwLock::new(Vec::new())),
             actions: Self::empty_actions(),
-            regs: None,
+            userspace: false,
             ptrace_stop: false,
-            sigstack: None,
-            clone_entry: None,
             fmap_ret: None,
         };
         Ok(this)
@@ -397,13 +397,14 @@ impl Context {
     }
     pub fn set_addr_space(
         &mut self,
-        addr_space: Arc<AddrSpaceWrapper>,
+        addr_space: Option<Arc<AddrSpaceWrapper>>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
-        if let Some(ref old) = self.addr_space && Arc::ptr_eq(old, &addr_space) {
-            return Some(addr_space);
+        if let (Some(ref old), Some(ref new)) = (&self.addr_space, &addr_space) && Arc::ptr_eq(old, new) {
+            return addr_space;
         };
 
         if self.id == super::context_id() {
+            // TODO: Share more code with context::arch::switch_to.
             let this_percpu = PercpuBlock::current();
 
             if let Some(ref prev_addrsp) = self.addr_space {
@@ -411,32 +412,35 @@ impl Context {
                 prev_addrsp.acquire_read().used_by.atomic_clear(this_percpu.cpu_id);
             }
 
-            *this_percpu.current_addrsp.borrow_mut() = Some(Arc::clone(&addr_space));
+            let _old_addrsp = core::mem::replace(&mut *this_percpu.current_addrsp.borrow_mut(), addr_space.clone());
 
-            let new_addrsp = addr_space.acquire_read();
-            new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
+            if let Some(ref new) = addr_space {
+                let new_addrsp = new.acquire_read();
+                new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
 
-            unsafe {
-                new_addrsp.table.utable.make_current();
+                unsafe {
+                    new_addrsp.table.utable.make_current();
+                }
+            } else {
+                unsafe {
+                    crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+                }
             }
         } else {
             assert!(!self.running);
         }
 
-        self.addr_space.replace(addr_space)
+        core::mem::replace(&mut self.addr_space, addr_space)
     }
     pub fn empty_actions() -> Arc<RwLock<Vec<(SigAction, usize)>>> {
-        Arc::new(RwLock::new(vec![
-            (
-                SigAction {
-                    sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                    sa_mask: [0; 2],
-                    sa_flags: SigActionFlags::empty(),
-                },
-                0
-            );
-            128
-        ]))
+        Arc::new(RwLock::new(vec![(
+            SigAction {
+                sa_handler: unsafe { mem::transmute(SIG_DFL) },
+                sa_mask: 0,
+                sa_flags: SigActionFlags::empty(),
+            },
+            0
+        ); 128]))
     }
     pub fn caller_ctx(&self) -> CallerCtx {
         CallerCtx {
@@ -444,6 +448,38 @@ impl Context {
             uid: self.euid,
             gid: self.egid,
         }
+    }
+
+    fn can_access_regs(&self) -> bool {
+        self.userspace
+    }
+
+    pub fn regs(&self) -> Option<&InterruptStack> {
+        if !self.can_access_regs() {
+            return None;
+        }
+        let Some(ref kstack) = self.kstack else {
+            return None;
+        };
+        let range = kstack.len().checked_sub(mem::size_of::<InterruptStack>())?..;
+        Some(unsafe { &*kstack.get(range)?.as_ptr().cast() })
+    }
+    pub fn regs_mut(&mut self) -> Option<&mut InterruptStack> {
+        if !self.can_access_regs() {
+            return None;
+        }
+        let Some(ref mut kstack) = self.kstack else {
+            return None;
+        };
+        let range = kstack.len().checked_sub(mem::size_of::<InterruptStack>())?..;
+        Some(unsafe { &mut *kstack.get_mut(range)?.as_mut_ptr().cast() })
+    }
+}
+
+impl SignalState {
+    pub fn deliverable(&self) -> u64 {
+        const CANT_BLOCK: u64 = (1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1));
+        self.pending & (CANT_BLOCK | !self.procmask)
     }
 }
 
