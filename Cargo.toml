@@ -48,7 +48,6 @@ default = ["acpi", "multi_core", "graphical_debug", "serial_debug", "self_modify
 self_modifying = []
 
 acpi = []
-doc = []
 graphical_debug = []
 lpss_debug = []
 multi_core = ["acpi"]
