@@ -2,7 +2,6 @@ use alloc::sync::Arc;
 
 use crate::{
     context,
-    interrupt::InterruptStack,
     paging::VirtualAddress,
     syscall::error::{Error, Result, EFAULT, EINVAL, EPERM, ESRCH},
 };
@@ -18,32 +17,15 @@ fn enforce_root() -> Result<()> {
 }
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
+pub fn iopl(level: usize) -> Result<usize> {
     Err(Error::new(syscall::error::ENOSYS))
 }
 
-#[cfg(target_arch = "x86")]
-pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub fn iopl(level: usize) -> Result<usize> {
     enforce_root()?;
 
-    if level > 3 {
-        return Err(Error::new(EINVAL));
-    }
-
-    stack.iret.eflags = (stack.iret.eflags & !(3 << 12)) | ((level & 3) << 12);
-
-    Ok(0)
-}
-
-#[cfg(target_arch = "x86_64")]
-pub fn iopl(level: usize, stack: &mut InterruptStack) -> Result<usize> {
-    enforce_root()?;
-
-    if level > 3 {
-        return Err(Error::new(EINVAL));
-    }
-
-    stack.iret.rflags = (stack.iret.rflags & !(3 << 12)) | ((level & 3) << 12);
+    context::current()?.write().set_userspace_io_allowed(level >= 3);
 
     Ok(0)
 }

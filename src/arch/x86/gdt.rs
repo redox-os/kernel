@@ -124,9 +124,11 @@ const BASE_GDT: [GdtEntry; 9] = [
 pub struct ProcessorControlRegion {
     pub self_ref: usize,
     pub user_rsp_tmp: usize,
-    pub tss: TssWrapper,
     pub gdt: [GdtEntry; 9],
     percpu: crate::percpu::PercpuBlock,
+    pub tss: TssWrapper,
+    pub pio_bitmap: [u8; 8192],
+    pub all_ones: u8,
 }
 
 // NOTE: Despite not using #[repr(packed)], we do know that while there may be some padding
@@ -154,6 +156,9 @@ pub unsafe fn set_tss_stack(stack: usize) {
     addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
     addr_of_mut!((*pcr()).tss.0.esp0).write(stack as u32);
 }
+pub unsafe fn set_userspace_io_allowed(allowed: bool) {
+    addr_of_mut!((*pcr()).tss.0.iobp_offset).write(if allowed { mem::size_of::<TaskStateSegment>() as u16 } else { 0xFFFF });
+}
 
 /// Initialize a minimal GDT without configuring percpu.
 pub unsafe fn init() {
@@ -174,7 +179,7 @@ pub unsafe fn init() {
 
 /// Initialize GDT and configure percpu.
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
-    let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR frame");
+    let pcr_frame = crate::memory::allocate_frames(mem::size_of::<ProcessorControlRegion>().div_ceil(PAGE_SIZE)).expect("failed to allocate PCR frame");
     let pcr =
         &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
@@ -188,10 +193,12 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     };
 
     {
+        pcr.all_ones = 0xFF;
+        pcr.tss.0.iobp_offset = 0xFFFF;
         let tss = &pcr.tss.0 as *const _ as usize as u32;
 
         pcr.gdt[GDT_TSS].set_offset(tss);
-        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
+        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32 + 8192);
     }
 
     // Load the new GDT, which is correctly located in thread local storage.
@@ -203,8 +210,8 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     segmentation::load_es(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
     segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
-    // TODO: Use FS for kernel TLS on i686?
-    segmentation::load_fs(SegmentSelector::new(GDT_USER_FS as u16, Ring::Ring3));
+    // TODO: Use FS for kernel percpu on i686?
+    segmentation::load_fs(SegmentSelector::new(GDT_USER_FS as u16, Ring::Ring0));
     segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_PERCPU as u16, Ring::Ring0));
 
     // Set the stack pointer to use when coming back from userspace.

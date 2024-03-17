@@ -20,9 +20,9 @@ use self::{
     usercopy::UserSlice,
 };
 
+use crate::interrupt::InterruptStack;
 use crate::{
     context::{memory::AddrSpace, ContextId},
-    interrupt::InterruptStack,
     scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
 };
 
@@ -69,7 +69,6 @@ pub fn syscall(
         d: usize,
         e: usize,
         f: usize,
-        stack: &mut InterruptStack,
     ) -> Result<usize> {
         //SYS_* is declared in kernel/syscall/src/number.rs
         match a & SYS_CLASS {
@@ -191,7 +190,7 @@ pub fn syscall(
                     WaitFlags::from_bits_truncate(d),
                 )
                 .map(ContextId::into),
-                SYS_IOPL => iopl(b, stack),
+                SYS_IOPL => iopl(b),
                 SYS_GETEGID => getegid(),
                 SYS_GETENS => getens(),
                 SYS_GETEUID => geteuid(),
@@ -283,7 +282,7 @@ pub fn syscall(
         }
     }
 
-    let result = inner(a, b, c, d, e, f, stack);
+    let result = inner(a, b, c, d, e, f);
 
     {
         let contexts = crate::context::contexts();

@@ -225,7 +225,7 @@ checksum = "64072665120942deff5fd5425d6c1811b854f4939e7f1c01ce755f64432bbea7"
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "bitflags 2.4.2",
 ]

@@ -1,11 +1,11 @@
 //! Global descriptor table
 
-use core::{convert::TryInto, mem, cell::{Cell, RefCell}};
+use core::{cell::{Cell, RefCell}, convert::TryInto, mem::{self, size_of}};
 use core::sync::atomic::AtomicBool;
 
 use crate::{
     cpu_set::LogicalCpuId,
-    paging::{RmmA, RmmArch},
+    paging::{RmmA, RmmArch, PAGE_SIZE},
     percpu::PercpuBlock,
 };
 
@@ -42,6 +42,8 @@ pub const GDT_A_TSS_BUSY: u8 = 0xB;
 pub const GDT_F_PAGE_SIZE: u8 = 1 << 7;
 pub const GDT_F_PROTECTED_MODE: u8 = 1 << 6;
 pub const GDT_F_LONG_MODE: u8 = 1 << 5;
+
+const IOBITMAP_SIZE: u32 = 65536 / 8;
 
 static mut INIT_GDT: [GdtEntry; 3] = [
     // Null
@@ -114,12 +116,13 @@ pub struct ProcessorControlRegion {
     pub self_ref: usize,
 
     pub user_rsp_tmp: usize,
-    // TODO: The I/O permissions bitmap can require more than 8192 bytes of space.
-    pub tss: TaskStateSegment,
     // The GDT *must* be stored in the PCR! The paranoid interrupt handler, lacking a reliable way
     // to correctly obtain GSBASE, uses SGDT to calculate the PCR offset.
     pub gdt: [GdtEntry; 8],
     pub percpu: PercpuBlock,
+    pub tss: TaskStateSegment,
+    pub iobitmap: [u8; IOBITMAP_SIZE as usize],
+    pub all_ones: u8,
 }
 
 const _: () = {
@@ -154,13 +157,22 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     core::ptr::addr_of_mut!((*pcr).tss.rsp[0]).write_unaligned(stack as u64);
 }
 
+pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed: bool) {
+    let offset = if allowed {
+        u16::try_from(size_of::<TaskStateSegment>()).unwrap()
+    } else {
+        0xFFFF
+    };
+    core::ptr::addr_of_mut!((*pcr).tss.iomap_base).write(offset);
+}
+
 // Initialize startup GDT
 #[cold]
 pub unsafe fn init() {
     // Before the kernel can remap itself, it needs to switch to a GDT it controls. Start with a
     // minimal kernel-only GDT.
     dtables::lgdt(&DescriptorTablePointer {
-        limit: (INIT_GDT.len() * mem::size_of::<GdtEntry>() - 1) as u16,
+        limit: (INIT_GDT.len() * size_of::<GdtEntry>() - 1) as u16,
         base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
     });
 
@@ -183,7 +195,7 @@ unsafe fn load_segments() {
 /// Initialize GDT and PCR.
 #[cold]
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
-    let pcr_frame = crate::memory::allocate_frames(1).expect("failed to allocate PCR");
+    let pcr_frame = crate::memory::allocate_frames(size_of::<ProcessorControlRegion>().div_ceil(PAGE_SIZE)).expect("failed to allocate PCR");
     let pcr =
         &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
@@ -192,7 +204,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     // Setup the GDT.
     pcr.gdt = BASE_GDT;
 
-    let limit = (pcr.gdt.len() * mem::size_of::<GdtEntry>() - 1)
+    let limit = (pcr.gdt.len() * size_of::<GdtEntry>() - 1)
         .try_into()
         .expect("main GDT way too large");
     let base = pcr.gdt.as_ptr() as *const SegmentDescriptor;
@@ -201,13 +213,14 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 
     {
         pcr.tss.iomap_base = 0xFFFF;
+        pcr.all_ones = 0xFF;
 
         let tss = &mut pcr.tss as *mut TaskStateSegment as usize as u64;
         let tss_lo = (tss & 0xFFFF_FFFF) as u32;
         let tss_hi = (tss >> 32) as u32;
 
         pcr.gdt[GDT_TSS].set_offset(tss_lo);
-        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32);
+        pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
 
         (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
             .cast::<u32>()
