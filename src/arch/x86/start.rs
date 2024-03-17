@@ -192,7 +192,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         #[cfg(feature = "acpi")]
         {
             acpi::init(if args.acpi_rsdp_base != 0 {
-                Some((args.acpi_rsdp_base as usize + crate::PHYS_OFFSET) as u64)
+                Some((args.acpi_rsdp_base as usize + crate::PHYS_OFFSET) as *const u8)
             } else {
                 None
             });
