@@ -28,7 +28,7 @@ pub fn root_cell_sz(dt: &fdt::DeviceTree) -> Option<(u32, u32)> {
         .unwrap();
 
     Some((
-        BE::read_u32(&size_cells.data),
+        BE::read_u32(&address_cells.data),
         BE::read_u32(&size_cells.data),
     ))
 }
@@ -177,6 +177,7 @@ fn dev_memory_ranges(
         };
 
         let addr_size = {
+            // FIXME offsets incorrect if address_cells != size_cells
             if address_cells == 1 {
                 BE::read_u32(&chunk[8..12]) as u64
             } else if address_cells == 2 {
@@ -233,6 +234,7 @@ pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize
     let chunk_sz = (address_cells + size_cells) * 4;
     let (base, size) = reg.data.split_at((address_cells * 4) as usize);
     let mut b = 0;
+    // FIXME likely needs shifting before addition
     for base_chunk in base.rchunks(4) {
         b += BE::read_u32(base_chunk);
     }

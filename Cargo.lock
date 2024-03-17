@@ -77,7 +77,7 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 [[package]]
 name = "fdt"
 version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/thomhuds/fdt.git#7358607679114ccab5f97e14894ed3b59c5d42d6"
+source = "git+https://gitlab.redox-os.org/rosehuds/fdt.git#7358607679114ccab5f97e14894ed3b59c5d42d6"
 dependencies = [
  "byteorder",
 ]
