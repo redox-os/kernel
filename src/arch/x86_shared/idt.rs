@@ -313,10 +313,13 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     idt.set_reserved_mut(IpiKind::Pit as u8, true);
     let current_idt = &mut idt.entries;
 
-    // Set syscall function
-    current_idt[0x80].set_func(syscall::syscall);
-    current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
-    idt.set_reserved_mut(0x80, true);
+    #[cfg(target_arch = "x86")]
+    {
+        // Set syscall function
+        current_idt[0x80].set_func(syscall::syscall);
+        current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
+        idt.set_reserved_mut(0x80, true);
+    }
 
     #[cfg(feature = "profiling")]
     crate::profiling::maybe_setup_timer(idt, cpu_id);

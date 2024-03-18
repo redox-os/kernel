@@ -1,13 +1,11 @@
 use core::{cell::Cell, mem, ops::Bound, sync::atomic::Ordering};
 
+use alloc::sync::Arc;
 use spinning_top::guard::ArcRwSpinlockWriteGuard;
+use syscall::PtraceFlags;
 
 use crate::{
-    context::{arch, contexts, Context},
-    cpu_set::LogicalCpuId,
-    interrupt,
-    percpu::PercpuBlock,
-    time,
+    context::{arch, contexts, Context}, cpu_set::LogicalCpuId, interrupt, percpu::PercpuBlock, ptrace, time
 };
 
 use super::{ContextId, Status};
@@ -209,6 +207,13 @@ pub fn switch() -> SwitchResult {
                 _prev_guard: prev_context_guard,
                 _next_guard: next_context_guard,
             }));
+
+        let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions().get(&next_context.id).map(|s| (Arc::downgrade(s), s.data.lock().breakpoint)) {
+            (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
+        } else { (None, PtraceFlags::empty()) };
+
+        *percpu.ptrace_session.borrow_mut() = ptrace_session;
+        percpu.ptrace_flags.set(ptrace_flags);
 
         unsafe {
             arch::switch_to(prev_context, next_context);

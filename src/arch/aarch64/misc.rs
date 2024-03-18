@@ -18,13 +18,7 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
     let frame = crate::memory::allocate_frames(1).expect("failed to allocate percpu memory");
     let virt = RmmA::phys_to_virt(frame.start_address()).data() as *mut PercpuBlock;
 
-    virt.write(PercpuBlock {
-        cpu_id,
-        switch_internals: crate::context::switch::ContextSwitchPercpu::default(),
-        current_addrsp: RefCell::new(None),
-        new_addrsp_tmp: Cell::new(None),
-        wants_tlb_shootdown: AtomicBool::new(false),
-    });
+    virt.write(PercpuBlock::init(cpu_id));
 
     crate::device::cpu::registers::control_regs::tpidr_el1_write(virt as u64);
 }
