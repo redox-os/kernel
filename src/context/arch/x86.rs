@@ -49,6 +49,7 @@ pub struct Context {
     /// running. With fsgsbase, this is neither saved nor restored upon every syscall (there is no
     /// need to!), and thus it must be re-read from the register before copying this struct.
     pub(crate) gsbase: usize,
+    userspace_io_allowed: bool,
 }
 
 impl Context {
@@ -62,6 +63,7 @@ impl Context {
             esp: 0,
             fsbase: 0,
             gsbase: 0,
+            userspace_io_allowed: false,
         }
     }
 
@@ -101,6 +103,15 @@ impl super::Context {
             self.kfx.as_mut_ptr().cast::<FloatRegisters>().write(new);
         }
     }
+    pub fn set_userspace_io_allowed(&mut self, allowed: bool) {
+        self.arch.userspace_io_allowed = allowed;
+
+        if self.id == super::context_id() {
+            unsafe {
+                crate::gdt::set_userspace_io_allowed(allowed);
+            }
+        }
+    }
 }
 
 pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
@@ -116,6 +127,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     if let Some(ref stack) = next.kstack {
         crate::gdt::set_tss_stack(stack.as_ptr() as usize + stack.len());
     }
+    crate::gdt::set_userspace_io_allowed(next.arch.userspace_io_allowed);
 
     core::arch::asm!("
         fxsave [{prev_fx}]
