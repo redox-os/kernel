@@ -200,7 +200,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         let tss = &pcr.tss.0 as *const _ as usize as u32;
 
         pcr.gdt[GDT_TSS].set_offset(tss);
-        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
+        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE as u32);
     }
 
     // Load the new GDT, which is correctly located in thread local storage.
