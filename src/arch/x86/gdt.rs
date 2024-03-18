@@ -120,6 +120,8 @@ const BASE_GDT: [GdtEntry; 9] = [
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
 ];
 
+const IOBITMAP_SIZE: usize = 8192;
+
 #[repr(C, align(4096))]
 pub struct ProcessorControlRegion {
     pub self_ref: usize,
@@ -127,8 +129,8 @@ pub struct ProcessorControlRegion {
     pub gdt: [GdtEntry; 9],
     percpu: crate::percpu::PercpuBlock,
     pub tss: TssWrapper,
-    pub pio_bitmap: [u8; 8192],
-    pub all_ones: u8,
+    pub _pio_bitmap: [u8; IOBITMAP_SIZE],
+    pub _all_ones: u8,
 }
 
 // NOTE: Despite not using #[repr(packed)], we do know that while there may be some padding
@@ -193,12 +195,12 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     };
 
     {
-        pcr.all_ones = 0xFF;
+        pcr._all_ones = 0xFF;
         pcr.tss.0.iobp_offset = 0xFFFF;
         let tss = &pcr.tss.0 as *const _ as usize as u32;
 
         pcr.gdt[GDT_TSS].set_offset(tss);
-        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32 + 8192);
+        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
     }
 
     // Load the new GDT, which is correctly located in thread local storage.

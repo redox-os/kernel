@@ -121,8 +121,12 @@ pub struct ProcessorControlRegion {
     pub gdt: [GdtEntry; 8],
     pub percpu: PercpuBlock,
     pub tss: TaskStateSegment,
-    pub iobitmap: [u8; IOBITMAP_SIZE as usize],
-    pub all_ones: u8,
+
+    // These two fields are read by the CPU, but not currently modified by the kernel. Instead, the
+    // kernel sets the `iomap_base` field in the TSS, to either point to this bitmap, or outside
+    // the TSS, in which case userspace is not granted port IO access.
+    pub _iobitmap: [u8; IOBITMAP_SIZE as usize],
+    pub _all_ones: u8,
 }
 
 const _: () = {
@@ -213,7 +217,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 
     {
         pcr.tss.iomap_base = 0xFFFF;
-        pcr.all_ones = 0xFF;
+        pcr._all_ones = 0xFF;
 
         let tss = &mut pcr.tss as *mut TaskStateSegment as usize as u64;
         let tss_lo = (tss & 0xFFFF_FFFF) as u32;
