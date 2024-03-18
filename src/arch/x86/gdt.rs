@@ -222,13 +222,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
 
-    pcr.percpu = crate::percpu::PercpuBlock {
-        cpu_id,
-        switch_internals: Default::default(),
-        current_addrsp: RefCell::new(None),
-        new_addrsp_tmp: Cell::new(None),
-        wants_tlb_shootdown: AtomicBool::new(false),
-    };
+    pcr.percpu = crate::percpu::PercpuBlock::init(cpu_id);
     crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
 }
 

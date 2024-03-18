@@ -60,24 +60,14 @@ pub unsafe fn init() {
     msr::wrmsr(msr::IA32_EFER, efer | 1);
 }
 
-macro_rules! with_interrupt_stack {
-    (|$stack:ident| $code:block) => {{
-        let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
-            .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
-
-        if allowed.unwrap_or(true) {
-            let $stack = &mut *$stack;
-            $code
-        }
-
-        ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
-    }};
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
-    with_interrupt_stack!(|stack| {
-        let scratch = &stack.scratch;
+    let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
+        .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
+
+    if allowed.unwrap_or(true) {
+        let scratch = &(*stack).scratch;
+
         syscall::syscall(
             scratch.rax,
             scratch.rdi,
@@ -85,9 +75,11 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
             scratch.rdx,
             scratch.r10,
             scratch.r8,
-            stack,
+            &mut *stack,
         );
-    });
+    }
+
+    ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
 }
 
 #[naked]
@@ -205,32 +197,3 @@ extern "C" {
     // TODO: macro?
     pub fn enter_usermode();
 }
-
-interrupt_stack!(syscall, |stack| {
-    with_interrupt_stack!(|stack| {
-        {
-            let contexts = context::contexts();
-            let context = contexts.current();
-            if let Some(current) = context {
-                let current = current.read();
-                println!(
-                    "Warning: Context {} used deprecated `int 0x80` construct",
-                    current.name
-                );
-            } else {
-                println!("Warning: Unknown context used deprecated `int 0x80` construct");
-            }
-        }
-
-        let scratch = &stack.scratch;
-        syscall::syscall(
-            scratch.rax,
-            stack.preserved.rbx,
-            scratch.rcx,
-            scratch.rdx,
-            scratch.rsi,
-            scratch.rdi,
-            stack,
-        );
-    })
-});

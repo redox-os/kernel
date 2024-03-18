@@ -1,12 +1,14 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use rmm::Arch;
+use syscall::PtraceFlags;
 
 use crate::context::empty_cr3;
 use crate::context::memory::AddrSpaceWrapper;
 use crate::cpu_set::MAX_CPU_COUNT;
+use crate::ptrace::Session;
 use crate::{context::switch::ContextSwitchPercpu, cpu_set::LogicalCpuId};
 
 /// The percpu block, that stored all percpu variables.
@@ -25,6 +27,9 @@ pub struct PercpuBlock {
     // first to avoid cache invalidation.
     #[cfg(feature = "profiling")]
     pub profiling: Option<&'static crate::profiling::RingBuffer>,
+
+    pub ptrace_flags: Cell<PtraceFlags>,
+    pub ptrace_session: RefCell<Option<Weak<Session>>>,
 }
 
 const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
@@ -113,5 +118,21 @@ pub unsafe fn switch_arch_hook() {
         next.table.utable.make_current();
     } else {
         crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+    }
+}
+impl PercpuBlock {
+    pub fn init(cpu_id: LogicalCpuId) -> Self {
+        Self {
+            cpu_id,
+            switch_internals: Default::default(),
+            current_addrsp: RefCell::new(None),
+            new_addrsp_tmp: Cell::new(None),
+            wants_tlb_shootdown: AtomicBool::new(false),
+            ptrace_flags: Cell::new(Default::default()),
+            ptrace_session: RefCell::new(None),
+
+            #[cfg(feature = "profiling")]
+            profiling: None,
+        }
     }
 }

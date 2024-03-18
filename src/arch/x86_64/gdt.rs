@@ -120,6 +120,7 @@ pub struct ProcessorControlRegion {
     // to correctly obtain GSBASE, uses SGDT to calculate the PCR offset.
     pub gdt: [GdtEntry; 8],
     pub percpu: PercpuBlock,
+    _rsvd: usize,
     pub tss: TaskStateSegment,
 
     // These two fields are read by the CPU, but not currently modified by the kernel. Instead, the
@@ -254,16 +255,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     // Load the task register
     task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
 
-    pcr.percpu = PercpuBlock {
-        cpu_id,
-        switch_internals: Default::default(),
-        current_addrsp: RefCell::new(None),
-        new_addrsp_tmp: Cell::new(None),
-        wants_tlb_shootdown: AtomicBool::new(false),
-
-        #[cfg(feature = "profiling")]
-        profiling: None,
-    };
+    pcr.percpu = PercpuBlock::init(cpu_id);
 
     crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
 }

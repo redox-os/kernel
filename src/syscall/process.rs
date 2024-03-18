@@ -111,10 +111,7 @@ pub fn exit(status: usize) -> ! {
 }
 
 pub fn getpid() -> Result<ContextId> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    Ok(context.id)
+    Ok(context::context_id())
 }
 
 pub fn getpgid(pid: ContextId) -> Result<ContextId> {

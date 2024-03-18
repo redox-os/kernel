@@ -3,11 +3,7 @@
 //! of the scheme.
 
 use crate::{
-    context::{self, ContextId},
-    event,
-    scheme::GlobalSchemes,
-    sync::WaitCondition,
-    syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
+    context::{self, ContextId}, event, percpu::PercpuBlock, scheme::GlobalSchemes, sync::WaitCondition, syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event}
 };
 
 use alloc::{collections::VecDeque, sync::Arc};
@@ -23,7 +19,7 @@ use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 #[derive(Debug)]
 pub struct SessionData {
-    breakpoint: Option<Breakpoint>,
+    pub(crate) breakpoint: Option<Breakpoint>,
     events: VecDeque<PtraceEvent>,
     file_id: usize,
 }
@@ -103,7 +99,7 @@ static SESSIONS: Once<RwLock<SessionMap>> = Once::new();
 fn init_sessions() -> RwLock<SessionMap> {
     RwLock::new(HashMap::new())
 }
-fn sessions() -> RwLockReadGuard<'static, SessionMap> {
+pub(crate) fn sessions() -> RwLockReadGuard<'static, SessionMap> {
     SESSIONS.call_once(init_sessions).read()
 }
 fn sessions_mut() -> RwLockWriteGuard<'static, SessionMap> {
@@ -202,9 +198,9 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
 //                           |_|
 
 #[derive(Debug, Clone, Copy)]
-struct Breakpoint {
+pub(crate) struct Breakpoint {
     reached: bool,
-    flags: PtraceFlags,
+    pub(crate) flags: PtraceFlags,
 }
 
 /// Wait for the tracee to stop, or return immediately if there's an unread
@@ -254,24 +250,18 @@ pub fn breakpoint_callback(
     event: Option<PtraceEvent>,
 ) -> Option<PtraceFlags> {
     loop {
-        let session = {
-            let contexts = context::contexts();
-            let context = contexts.current()?;
-            let context = context.read();
+        let percpu = PercpuBlock::current();
 
-            let sessions = sessions();
-            let session = sessions.get(&context.id)?;
+        // TODO: Some or all flags?
+        // Only stop if the tracer have asked for this breakpoint
+        if percpu.ptrace_flags.get().contains(match_flags) {
+            return None;
+        }
 
-            Arc::clone(session)
-        };
+        let session = percpu.ptrace_session.borrow().as_ref()?.upgrade()?;
 
         let mut data = session.data.lock();
         let breakpoint = data.breakpoint?; // only go to sleep if there's a breakpoint
-
-        // Only stop if the tracer have asked for this breakpoint
-        if breakpoint.flags & match_flags != match_flags {
-            return None;
-        }
 
         // In case no tracer is waiting, make sure the next one gets the memo
         data.breakpoint
