@@ -11,6 +11,9 @@ use crate::cpu_set::MAX_CPU_COUNT;
 use crate::ptrace::Session;
 use crate::{context::switch::ContextSwitchPercpu, cpu_set::LogicalCpuId};
 
+#[cfg(feature = "syscall_debug")]
+use crate::syscall::debug::SyscallDebugInfo;
+
 /// The percpu block, that stored all percpu variables.
 pub struct PercpuBlock {
     /// A unique immutable number that identifies the current CPU - used for scheduling
@@ -30,6 +33,10 @@ pub struct PercpuBlock {
 
     pub ptrace_flags: Cell<PtraceFlags>,
     pub ptrace_session: RefCell<Option<Weak<Session>>>,
+    pub inside_syscall: Cell<bool>,
+
+    #[cfg(feature = "syscall_debug")]
+    pub syscall_debug_info: Cell<SyscallDebugInfo>,
 }
 
 const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
@@ -130,6 +137,10 @@ impl PercpuBlock {
             wants_tlb_shootdown: AtomicBool::new(false),
             ptrace_flags: Cell::new(Default::default()),
             ptrace_session: RefCell::new(None),
+            inside_syscall: Cell::new(false),
+
+            #[cfg(feature = "syscall_debug")]
+            syscall_debug_info: Cell::new(SyscallDebugInfo::default()),
 
             #[cfg(feature = "profiling")]
             profiling: None,

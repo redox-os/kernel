@@ -9,7 +9,7 @@ use super::{
     usercopy::UserSlice,
 };
 
-use crate::syscall::error::Result;
+use crate::{percpu::PercpuBlock, syscall::error::Result, time};
 
 struct ByteStr<'a>(&'a [u8]);
 
@@ -190,4 +190,98 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             a, a, b, c, d, e, f
         ),
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[cfg(feature = "syscall_debug")]
+pub struct SyscallDebugInfo {
+    this_switch_time: u128,
+    accumulated_time: u128,
+    do_debug: bool,
+}
+#[cfg(feature = "syscall_debug")]
+impl SyscallDebugInfo {
+    pub fn on_switch_from(&mut self) {
+        let now = time::monotonic();
+        self.accumulated_time += now - core::mem::replace(&mut self.this_switch_time, now);
+    }
+    pub fn on_switch_to(&mut self) {
+        self.this_switch_time = time::monotonic();
+    }
+}
+#[cfg(feature = "syscall_debug")]
+pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
+    let do_debug = {
+        let contexts = crate::context::contexts();
+        if let Some(context_lock) = contexts.current() {
+            let context = context_lock.read();
+            if context.name.contains("bootstrap") {
+                if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
+                    false
+                } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+
+    let debug_start = if do_debug {
+        let contexts = crate::context::contexts();
+        if let Some(context_lock) = contexts.current() {
+            let context = context_lock.read();
+            print!("{} ({}): ", context.name, context.id.get());
+        }
+
+        // Do format_call outside print! so possible exception handlers cannot reentrantly
+        // deadlock.
+        let string = format_call(a, b, c, d, e, f);
+        println!("{}", string);
+
+        crate::time::monotonic()
+    } else {
+        0
+    };
+
+    PercpuBlock::current().syscall_debug_info.set(SyscallDebugInfo {
+        accumulated_time: 0,
+        this_switch_time: debug_start,
+        do_debug,
+    });
+}
+#[cfg(feature = "syscall_debug")]
+pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
+    let debug_info = PercpuBlock::current().syscall_debug_info.take();
+
+    if !debug_info.do_debug {
+        return;
+    }
+    let debug_duration = debug_info.accumulated_time + (crate::time::monotonic() - debug_info.this_switch_time);
+
+    let contexts = crate::context::contexts();
+    if let Some(context_lock) = contexts.current() {
+        let context = context_lock.read();
+        print!("{} ({}): ", context.name, context.id.get());
+    }
+
+    // Do format_call outside print! so possible exception handlers cannot reentrantly
+    // deadlock.
+    let string = format_call(a, b, c, d, e, f);
+    print!("{} = ", string);
+
+    match result {
+        Ok(ref ok) => {
+            print!("Ok({} ({:#X}))", ok, ok);
+        }
+        Err(ref err) => {
+            print!("Err({} ({:#X}))", err, err.errno);
+        }
+    }
+
+    println!(" in {} ns", debug_duration);
 }

@@ -21,6 +21,8 @@ use self::{
 };
 
 use crate::interrupt::InterruptStack;
+use crate::percpu::PercpuBlock;
+
 use crate::{
     context::{memory::AddrSpace, ContextId},
     scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
@@ -28,6 +30,9 @@ use crate::{
 
 /// Debug
 pub mod debug;
+
+#[cfg(feature = "syscall_debug")]
+use self::debug::{debug_end, debug_start};
 
 /// Driver syscalls
 pub mod driver;
@@ -230,93 +235,17 @@ pub fn syscall(
         }
     }
 
-    let mut debug = false;
+    PercpuBlock::current().inside_syscall.set(true);
 
-    debug = debug && {
-        let contexts = crate::context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
-            if context.name.contains("bootstrap") {
-                if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
-                    false
-                } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
-                    false
-                } else {
-                    true
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    };
-
-    let debug_start = if debug {
-        let contexts = crate::context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
-            print!("{} ({}): ", context.name, context.id.get());
-        }
-
-        // Do format_call outside print! so possible exception handlers cannot reentrantly
-        // deadlock.
-        let string = debug::format_call(a, b, c, d, e, f);
-        println!("{}", string);
-
-        crate::time::monotonic()
-    } else {
-        0
-    };
-
-    // The next lines set the current syscall in the context struct, then once the inner() function
-    // completes, we set the current syscall to none.
-    //
-    // When the code below falls out of scope it will release the lock
-    // see the spin crate for details
-    {
-        let contexts = crate::context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let mut context = context_lock.write();
-            context.syscall = Some((a, b, c, d, e, f));
-        }
-    }
+    #[cfg(feature = "syscall_debug")]
+    debug_start([a, b, c, d, e, f]);
 
     let result = inner(a, b, c, d, e, f);
 
-    {
-        let contexts = crate::context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let mut context = context_lock.write();
-            context.syscall = None;
-        }
-    }
+    #[cfg(feature = "syscall_debug")]
+    debug_end([a, b, c, d, e, f], result);
 
-    if debug {
-        let debug_duration = crate::time::monotonic() - debug_start;
-
-        let contexts = crate::context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
-            print!("{} ({}): ", context.name, context.id.get());
-        }
-
-        // Do format_call outside print! so possible exception handlers cannot reentrantly
-        // deadlock.
-        let string = debug::format_call(a, b, c, d, e, f);
-        print!("{} = ", string);
-
-        match result {
-            Ok(ref ok) => {
-                print!("Ok({} ({:#X}))", ok, ok);
-            }
-            Err(ref err) => {
-                print!("Err({} ({:#X}))", err, err.errno);
-            }
-        }
-
-        println!(" in {} ns", debug_duration);
-    }
+    PercpuBlock::current().inside_syscall.set(false);
 
     if a != SYS_SIGRETURN {
         // errormux turns Result<usize> into -errno

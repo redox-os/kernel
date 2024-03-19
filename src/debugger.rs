@@ -39,7 +39,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
             RmmA::set_table(TableKind::User, space.acquire_read().table.utable.table().phys());
             check_consistency(&mut *space.acquire_write(), new_as, &mut tree);
 
-            if let Some((a, b, c, d, e, f)) = context.syscall {
+            if let Some([a, b, c, d, e, f]) = context.current_syscall() {
                 println!(
                     "syscall: {}",
                     crate::syscall::debug::format_call(a, b, c, d, e, f)
@@ -140,7 +140,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         if !context.status_reason.is_empty() {
             println!("reason: {}", context.status_reason);
         }
-        if let Some((a, b, c, d, e, f)) = context.syscall {
+        if let Some([a, b, c, d, e, f]) = context.current_syscall() {
             println!(
                 "syscall: {}",
                 crate::syscall::debug::format_call(a, b, c, d, e, f)
@@ -253,7 +253,7 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         if !context.status_reason.is_empty() {
             println!("reason: {}", context.status_reason);
         }
-        if let Some((a, b, c, d, e, f)) = context.syscall {
+        if let Some([a, b, c, d, e, f]) = context.current_syscall() {
             println!(
                 "syscall: {}",
                 crate::syscall::debug::format_call(a, b, c, d, e, f)
