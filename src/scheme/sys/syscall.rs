@@ -12,7 +12,7 @@ pub fn resource() -> Result<Vec<u8>> {
             let contexts = context::contexts();
             for (id, context_lock) in contexts.iter() {
                 let context = context_lock.read();
-                rows.push((*id, context.name.clone(), context.syscall));
+                rows.push((*id, context.name.clone(), context.current_syscall()));
             }
         }
 
@@ -22,7 +22,7 @@ pub fn resource() -> Result<Vec<u8>> {
 
             let _ = writeln!(string, "{}: {}", id, name);
 
-            if let Some((a, b, c, d, e, f)) = row.2 {
+            if let Some([a, b, c, d, e, f]) = row.2 {
                 let _ = writeln!(
                     string,
                     "  {}",

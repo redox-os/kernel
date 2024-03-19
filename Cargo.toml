@@ -58,6 +58,9 @@ serial_debug = []
 system76_ec_debug = []
 slab = ["slab_allocator"]
 
+debugger = ["syscall_debug"]
+syscall_debug = []
+
 [profile.dev]
 # Avoids having to define the eh_personality lang item and reduces kernel size
 panic = "abort"

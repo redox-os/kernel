@@ -94,6 +94,7 @@ mod cpu_set;
 mod context;
 
 /// Debugger
+#[cfg(feature = "debugger")]
 mod debugger;
 
 /// Architecture-independent devices

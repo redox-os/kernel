@@ -214,6 +214,14 @@ pub fn switch() -> SwitchResult {
 
         *percpu.ptrace_session.borrow_mut() = ptrace_session;
         percpu.ptrace_flags.set(ptrace_flags);
+        prev_context.inside_syscall = percpu.inside_syscall.replace(next_context.inside_syscall);
+
+        #[cfg(feature = "syscall_debug")]
+        {
+            prev_context.syscall_debug_info = percpu.syscall_debug_info.replace(next_context.syscall_debug_info);
+            prev_context.syscall_debug_info.on_switch_from();
+            next_context.syscall_debug_info.on_switch_to();
+        }
 
         unsafe {
             arch::switch_to(prev_context, next_context);

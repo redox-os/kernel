@@ -22,7 +22,7 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
             let context = context_lock.read();
             println!("NAME: {}", context.name);
 
-            if let Some((a, b, c, d, e, f)) = context.syscall {
+            if let Some([a, b, c, d, e, f]) = context.current_syscall() {
                 println!("SYSCALL: {}", syscall::debug::format_call(a, b, c, d, e, f));
             }
         }

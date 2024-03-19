@@ -4,15 +4,7 @@ use core::{cmp::Ordering, mem, num::NonZeroUsize};
 use spin::RwLock;
 
 use crate::{
-    arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
-    common::aligned_box::AlignedBox,
-    context::{self, arch, file::FileDescriptor, memory::AddrSpace},
-    cpu_set::{LogicalCpuId, LogicalCpuSet},
-    ipi::{ipi, IpiKind, IpiTarget},
-    memory::{Frame, RaiiFrame},
-    paging::{RmmA, RmmArch},
-    scheme::{CallerCtx, FileHandle, SchemeNamespace},
-    sync::WaitMap, percpu::PercpuBlock,
+    arch::{interrupt::InterruptStack, paging::PAGE_SIZE}, common::aligned_box::AlignedBox, context::{self, arch, file::FileDescriptor, memory::AddrSpace}, cpu_set::{LogicalCpuId, LogicalCpuSet}, ipi::{ipi, IpiKind, IpiTarget}, memory::{Frame, RaiiFrame}, paging::{RmmA, RmmArch}, percpu::PercpuBlock, scheme::{CallerCtx, FileHandle, SchemeNamespace}, sync::WaitMap,
 };
 
 use crate::syscall::{
@@ -165,10 +157,14 @@ pub struct Context {
     pub cpu_time: u128,
     /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything else than
     /// this value.
-    // TODO: bitmask (selection of multiple allowed CPUs)?
     pub sched_affinity: LogicalCpuSet,
-    /// Current system call
-    pub syscall: Option<(usize, usize, usize, usize, usize, usize)>,
+    /// Keeps track of whether this context is currently handling a syscall. Only up-to-date when
+    /// not running.
+    pub inside_syscall: bool,
+
+    #[cfg(feature = "syscall_debug")]
+    pub syscall_debug_info: crate::syscall::debug::SyscallDebugInfo,
+
     /// Head buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
     pub syscall_head: Option<RaiiFrame>,
@@ -254,7 +250,7 @@ impl Context {
             switch_time: 0,
             cpu_time: 0,
             sched_affinity: LogicalCpuSet::all(),
-            syscall: None,
+            inside_syscall: false,
             syscall_head: Some(RaiiFrame::allocate()?),
             syscall_tail: Some(RaiiFrame::allocate()?),
             waitpid: Arc::new(WaitMap::new()),
@@ -269,6 +265,9 @@ impl Context {
             userspace: false,
             ptrace_stop: false,
             fmap_ret: None,
+
+            #[cfg(feature = "syscall_debug")]
+            syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
         };
         Ok(this)
     }

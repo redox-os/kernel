@@ -112,6 +112,13 @@ impl super::Context {
             }
         }
     }
+    pub fn current_syscall(&self) -> Option<[usize; 6]> {
+        if !self.inside_syscall {
+            return None;
+        }
+        let regs = self.regs()?;
+        Some([regs.scratch.eax, regs.preserved.ebx, regs.scratch.ecx, regs.scratch.edx, regs.preserved.esi, regs.preserved.edi])
+    }
 }
 
 pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();

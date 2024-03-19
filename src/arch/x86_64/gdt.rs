@@ -109,6 +109,9 @@ const BASE_GDT: [GdtEntry; 8] = [
     GdtEntry::new(0, 0, 0, 0),
 ];
 
+#[repr(C, align(16))]
+struct Align([usize; 2]);
+
 #[repr(C, align(4096))]
 pub struct ProcessorControlRegion {
     // TODO: When both KASLR and KPTI are implemented, the PCR may need to be split into two pages,
@@ -120,7 +123,7 @@ pub struct ProcessorControlRegion {
     // to correctly obtain GSBASE, uses SGDT to calculate the PCR offset.
     pub gdt: [GdtEntry; 8],
     pub percpu: PercpuBlock,
-    _rsvd: usize,
+    _rsvd: Align,
     pub tss: TaskStateSegment,
 
     // These two fields are read by the CPU, but not currently modified by the kernel. Instead, the
