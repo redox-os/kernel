@@ -6,9 +6,11 @@ pub(super) struct Display {
     pub(super) width: usize,
     pub(super) height: usize,
     pub(super) stride: usize,
-    onscreen: &'static mut [u32],
+    onscreen_ptr: *mut u32,
     offscreen: Option<Box<[u32]>>,
 }
+
+unsafe impl Send for Display {}
 
 impl Display {
     pub(super) fn new(
@@ -17,28 +19,28 @@ impl Display {
         stride: usize,
         onscreen_ptr: *mut u32,
     ) -> Display {
-        let size = stride * height;
-        let onscreen = unsafe {
-            ptr::write_bytes(onscreen_ptr, 0, size);
-            slice::from_raw_parts_mut(onscreen_ptr, size)
-        };
+        unsafe {
+            ptr::write_bytes(onscreen_ptr, 0, stride * height);
+        }
         Display {
             width,
             height,
             stride,
-            onscreen,
+            onscreen_ptr,
             offscreen: None,
         }
     }
 
     pub(super) fn heap_init(&mut self) {
-        self.offscreen = Some(self.onscreen.to_vec().into_boxed_slice());
+        let onscreen =
+            unsafe { slice::from_raw_parts(self.onscreen_ptr, self.stride * self.height) };
+        self.offscreen = Some(onscreen.to_vec().into_boxed_slice());
     }
 
-    pub(super) fn data_mut(&mut self) -> &mut [u32] {
+    pub(super) fn data_mut(&mut self) -> *mut u32 {
         match &mut self.offscreen {
-            Some(offscreen) => offscreen,
-            None => self.onscreen,
+            Some(offscreen) => offscreen.as_mut_ptr(),
+            None => self.onscreen_ptr,
         }
     }
 
@@ -47,7 +49,11 @@ impl Display {
         if let Some(offscreen) = &self.offscreen {
             let mut offset = y * self.stride + x;
             while h > 0 {
-                self.onscreen[offset..offset + w].copy_from_slice(&offscreen[offset..offset + w]);
+                ptr::copy(
+                    offscreen.as_ptr().add(offset),
+                    self.onscreen_ptr.add(offset),
+                    w,
+                );
                 offset += self.stride;
                 h -= 1;
             }

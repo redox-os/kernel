@@ -65,12 +65,7 @@ impl DebugDisplay {
     /// Draw a character
     fn char(&mut self, x: usize, y: usize, character: char, color: u32) {
         if x + 8 <= self.display.width && y + 16 <= self.display.height {
-            let mut dst = unsafe {
-                self.display
-                    .data_mut()
-                    .as_mut_ptr()
-                    .add(y * self.display.stride + x)
-            };
+            let mut dst = unsafe { self.display.data_mut().add(y * self.display.stride + x) };
 
             let font_i = 16 * (character as usize);
             if font_i + 16 <= FONT.len() {
@@ -94,7 +89,7 @@ impl DebugDisplay {
         let offset = cmp::min(self.display.height, lines) * self.display.stride;
         let size = (self.display.stride * self.display.height) - offset;
         unsafe {
-            let ptr = self.display.data_mut().as_mut_ptr();
+            let ptr = self.display.data_mut();
             ptr::copy(ptr.add(offset), ptr, size);
             ptr::write_bytes(ptr.add(size), 0, offset);
         }
