@@ -1,25 +1,25 @@
-use core::{ptr, slice};
+use core::ptr;
 
 /// A display
 pub struct Display {
     pub width: usize,
     pub height: usize,
     pub stride: usize,
-    pub onscreen: &'static mut [u32],
+    pub onscreen_ptr: *mut u32,
 }
+
+unsafe impl Send for Display {}
 
 impl Display {
     pub fn new(width: usize, height: usize, stride: usize, onscreen_ptr: *mut u32) -> Display {
-        let size = stride * height;
-        let onscreen = unsafe {
-            ptr::write_bytes(onscreen_ptr, 0, size);
-            slice::from_raw_parts_mut(onscreen_ptr, size)
-        };
+        unsafe {
+            ptr::write_bytes(onscreen_ptr, 0, stride * height);
+        }
         Display {
             width,
             height,
             stride,
-            onscreen,
+            onscreen_ptr,
         }
     }
 }
