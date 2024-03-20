@@ -65,8 +65,12 @@ impl DebugDisplay {
     /// Draw a character
     pub fn char(&mut self, x: usize, y: usize, character: char, color: u32) {
         if x + 8 <= self.display.width && y + 16 <= self.display.height {
-            let mut dst =
-                self.display.data_mut().as_mut_ptr() as usize + (y * self.display.stride + x) * 4;
+            let mut dst = unsafe {
+                self.display
+                    .data_mut()
+                    .as_mut_ptr()
+                    .add(y * self.display.stride + x)
+            };
 
             let font_i = 16 * (character as usize);
             if font_i + 16 <= FONT.len() {
@@ -75,11 +79,11 @@ impl DebugDisplay {
                     for col in 0..8 {
                         if (row_data >> (7 - col)) & 1 == 1 {
                             unsafe {
-                                *((dst + col * 4) as *mut u32) = color;
+                                *dst.add(col) = color;
                             }
                         }
                     }
-                    dst += self.display.stride * 4;
+                    dst = unsafe { dst.add(self.display.stride) };
                 }
             }
         }
