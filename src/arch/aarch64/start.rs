@@ -77,8 +77,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         );
 
         // Set up graphical debug
-        //#[cfg(feature = "graphical_debug")]
-        //graphical_debug::init(env);
+        #[cfg(feature = "graphical_debug")]
+        graphical_debug::init(env);
 
         // Initialize logger
         crate::log::init_logger(|r| {
@@ -187,8 +187,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         device::init_noncore();
 
         // Stop graphical debug
-        //#[cfg(feature = "graphical_debug")]
-        //graphical_debug::fini();
+        #[cfg(feature = "graphical_debug")]
+        graphical_debug::fini();
 
         BSP_READY.store(true, Ordering::SeqCst);
 
