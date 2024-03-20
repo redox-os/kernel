@@ -5,7 +5,7 @@ use super::Display;
 static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
 
 pub struct DebugDisplay {
-    pub(crate) display: Display,
+    pub(super) display: Display,
     x: usize,
     y: usize,
     w: usize,
@@ -13,7 +13,7 @@ pub struct DebugDisplay {
 }
 
 impl DebugDisplay {
-    pub fn new(display: Display) -> DebugDisplay {
+    pub(super) fn new(display: Display) -> DebugDisplay {
         let w = display.width / 8;
         let h = display.height / 16;
         DebugDisplay {
@@ -25,7 +25,7 @@ impl DebugDisplay {
         }
     }
 
-    pub fn write_char(&mut self, c: char) {
+    fn write_char(&mut self, c: char) {
         if self.x >= self.w || c == '\n' {
             self.x = 0;
             self.y += 1;
@@ -63,7 +63,7 @@ impl DebugDisplay {
     }
 
     /// Draw a character
-    pub fn char(&mut self, x: usize, y: usize, character: char, color: u32) {
+    fn char(&mut self, x: usize, y: usize, character: char, color: u32) {
         if x + 8 <= self.display.width && y + 16 <= self.display.height {
             let mut dst = unsafe {
                 self.display
@@ -90,7 +90,7 @@ impl DebugDisplay {
     }
 
     /// Scroll the screen
-    pub fn scroll(&mut self, lines: usize) {
+    fn scroll(&mut self, lines: usize) {
         let offset = cmp::min(self.display.height, lines) * self.display.stride;
         let size = (self.display.stride * self.display.height) - offset;
         unsafe {

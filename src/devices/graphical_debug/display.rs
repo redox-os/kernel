@@ -2,16 +2,21 @@ use alloc::boxed::Box;
 use core::{ptr, slice};
 
 /// A display
-pub struct Display {
-    pub width: usize,
-    pub height: usize,
-    pub stride: usize,
-    pub onscreen: &'static mut [u32],
-    pub offscreen: Option<Box<[u32]>>,
+pub(super) struct Display {
+    pub(super) width: usize,
+    pub(super) height: usize,
+    pub(super) stride: usize,
+    onscreen: &'static mut [u32],
+    offscreen: Option<Box<[u32]>>,
 }
 
 impl Display {
-    pub fn new(width: usize, height: usize, stride: usize, onscreen_ptr: *mut u32) -> Display {
+    pub(super) fn new(
+        width: usize,
+        height: usize,
+        stride: usize,
+        onscreen_ptr: *mut u32,
+    ) -> Display {
         let size = stride * height;
         let onscreen = unsafe {
             ptr::write_bytes(onscreen_ptr, 0, size);
@@ -26,7 +31,11 @@ impl Display {
         }
     }
 
-    pub fn data_mut(&mut self) -> &mut [u32] {
+    pub(super) fn heap_init(&mut self) {
+        self.offscreen = Some(self.onscreen.to_vec().into_boxed_slice());
+    }
+
+    pub(super) fn data_mut(&mut self) -> &mut [u32] {
         match &mut self.offscreen {
             Some(offscreen) => offscreen,
             None => self.onscreen,
@@ -34,7 +43,7 @@ impl Display {
     }
 
     /// Sync from offscreen to onscreen, unsafe because it trusts provided x, y, w, h
-    pub unsafe fn sync(&mut self, x: usize, y: usize, w: usize, mut h: usize) {
+    pub(super) unsafe fn sync(&mut self, x: usize, y: usize, w: usize, mut h: usize) {
         if let Some(offscreen) = &self.offscreen {
             let mut offset = y * self.stride + x;
             while h > 0 {
