@@ -25,6 +25,11 @@ pub unsafe fn init_after_acpi() {
 unsafe fn init_hpet() -> bool {
     use crate::acpi::ACPI_TABLE;
     if let Some(ref mut hpet) = *ACPI_TABLE.hpet.write() {
+        if cfg!(target_arch = "x86") {
+            //TODO: fix HPET on i686
+            log::warn!("HPET found but implemented on i686");
+            return false;
+        }
         hpet::init(hpet)
     } else {
         false
