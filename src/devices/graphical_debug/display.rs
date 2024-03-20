@@ -11,7 +11,7 @@ pub struct Display {
 unsafe impl Send for Display {}
 
 impl Display {
-    pub fn new(width: usize, height: usize, stride: usize, onscreen_ptr: *mut u32) -> Display {
+    pub(super) fn new(width: usize, height: usize, stride: usize, onscreen_ptr: *mut u32) -> Display {
         unsafe {
             ptr::write_bytes(onscreen_ptr, 0, stride * height);
         }
