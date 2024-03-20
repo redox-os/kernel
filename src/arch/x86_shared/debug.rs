@@ -66,7 +66,7 @@ impl<'a> Writer<'a> {
         #[cfg(feature = "graphical_debug")]
         {
             if let Some(ref mut display) = *self.display {
-                let _ = display.write(buf);
+                display.write(buf);
             }
         }
 
