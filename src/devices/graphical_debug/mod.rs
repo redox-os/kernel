@@ -7,8 +7,6 @@ use self::display::Display;
 pub mod debug;
 pub mod display;
 
-pub static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
-
 pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
 
 pub static FRAMEBUFFER: Mutex<(usize, usize, usize)> = Mutex::new((0, 0, 0));
