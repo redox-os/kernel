@@ -33,20 +33,11 @@ impl DebugDisplay {
 
             self.display.scroll(d_y * 16);
 
-            unsafe {
-                self.display
-                    .sync(0, 0, self.display.width, self.display.height);
-            }
-
             self.y = new_y;
         }
 
         if c != '\n' {
             self.display.char(self.x * 8, self.y * 16, c, 0xFFFFFF);
-
-            unsafe {
-                self.display.sync(self.x * 8, self.y * 16, 8, 16);
-            }
 
             self.x += 1;
         }

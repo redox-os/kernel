@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use core::{cmp, ptr, slice};
 
 use super::FONT;
@@ -9,7 +8,6 @@ pub struct Display {
     pub height: usize,
     pub stride: usize,
     pub onscreen: &'static mut [u32],
-    pub offscreen: Option<Box<[u32]>>,
 }
 
 impl Display {
@@ -24,15 +22,11 @@ impl Display {
             height,
             stride,
             onscreen,
-            offscreen: None,
         }
     }
 
     pub fn data_mut(&mut self) -> &mut [u32] {
-        match &mut self.offscreen {
-            Some(offscreen) => offscreen,
-            None => self.onscreen,
-        }
+        self.onscreen
     }
 
     /// Draw a character
@@ -65,18 +59,6 @@ impl Display {
             let ptr = self.data_mut().as_mut_ptr();
             ptr::copy(ptr.add(offset), ptr, size);
             ptr::write_bytes(ptr.add(size), 0, offset);
-        }
-    }
-
-    /// Sync from offscreen to onscreen, unsafe because it trusts provided x, y, w, h
-    pub unsafe fn sync(&mut self, x: usize, y: usize, w: usize, mut h: usize) {
-        if let Some(offscreen) = &self.offscreen {
-            let mut offset = y * self.stride + x;
-            while h > 0 {
-                self.onscreen[offset..offset + w].copy_from_slice(&offscreen[offset..offset + w]);
-                offset += self.stride;
-                h -= 1;
-            }
         }
     }
 }
