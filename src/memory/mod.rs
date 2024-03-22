@@ -52,14 +52,6 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
     let min_order = min.next_power_of_two().trailing_zeros();
     let _req_order = count.next_power_of_two().trailing_zeros();
 
-    /*if DEBUG.load(Ordering::Relaxed) > 0 {
-        log::info!("BEFORE");
-        log::info!("PREALLOC 2^{min_order}");
-        debug_freelist();
-    }*/
-    let before = get_freelist_pagecount();
-    //debug_freelist();
-
     let mut freelist = FREELIST.lock();
 
     let Some((frame_order, frame)) = freelist.iter().enumerate().skip(min_order as usize).find_map(|(i, f)| f.map(|f| (i as u32, f))) else {
@@ -76,17 +68,17 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
     let next_free = info.next();
     //log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
 
-    assert_eq!(next_free.order(), frame_order, "{frame:?}->next {next_free:?}.order != {frame_order}");
+    debug_assert_eq!(next_free.order(), frame_order, "{frame:?}->next {next_free:?}.order != {frame_order}");
     if let Some(next) = next_free.frame() {
         let f = get_free_alloc_page_info(next);
-        assert_eq!(f.prev().frame(), Some(frame));
-        assert_ne!(next, frame);
-        assert!(next.is_aligned_to_order(frame_order), "NEXT {next:?} UNALIGNED");
+        debug_assert_eq!(f.prev().frame(), Some(frame));
+        debug_assert_ne!(next, frame);
+        debug_assert!(next.is_aligned_to_order(frame_order), "NEXT {next:?} UNALIGNED");
         f.set_prev(P2Frame::new(None, frame_order));
     }
 
-    assert!(frame.is_aligned_to_order(frame_order));
-    assert_eq!(next_free.order(), frame_order);
+    debug_assert!(frame.is_aligned_to_order(frame_order));
+    debug_assert_eq!(next_free.order(), frame_order);
     freelist[frame_order as usize] = next_free.frame();
 
     // TODO: Is this LIFO cache optimal?
@@ -98,79 +90,37 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         let hi = frame.next_by(order_page_count);
         //log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
-        assert_eq!(freelist[order as usize], None);
+        debug_assert_eq!(freelist[order as usize], None);
 
-        /*if let Some(old_head) = freelist[order as usize].replace(hi) {
-            hi_info.set_next(P2Frame::new(Some(old_head), order));
-            hi_info.set_prev(P2Frame::new(None, order));
-            //
-            let _ = get_free_alloc_page_info(hi);
-            //
-
-            let old_head_info = get_free_alloc_page_info(old_head);
-            assert_eq!(old_head_info.prev().frame(), None);
-            old_head_info.set_prev(P2Frame::new(Some(hi), order));
-        }*/
         let hi_info = get_page_info(hi).expect("sub-p2frame of split p2flame lacked PageInfo").make_free(order);
-        assert!(!hi.is_aligned_to_order(frame_order));
-        assert!(hi.is_aligned_to_order(order));
+        debug_assert!(!hi.is_aligned_to_order(frame_order));
+        debug_assert!(hi.is_aligned_to_order(order));
         hi_info.set_next(P2Frame::new(None, order));
         hi_info.set_prev(P2Frame::new(None, order));
         freelist[order as usize] = Some(hi);
     }
 
     drop(freelist);
-    _get_freelist_pagecount(false, min_order, frame_order, true);
-    _get_freelist_pagecount(false, min_order, frame_order, false);
     info.mark_used();
-    _get_freelist_pagecount(false, min_order, frame_order, false);
-    _get_freelist_pagecount(false, min_order, frame_order, true);
 
     unsafe {
         (RmmA::phys_to_virt(frame.start_address()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
     }
 
-    assert!(frame.start_address().data() >= unsafe { ALLOCATOR_DATA.abs_off });
-
-    //log::info!("ALLOCATED {frame:?}+2^{min_order}");
-    /*unsafe {
-        let mut found = false;
-        for area in AREAS {
-            if frame.start_address() >= area.base && frame.next_by(1 << min_order).start_address() < area.base.add(area.size) {
-                found = true;
-                break;
-            }
-        }
-        assert!(found);
-    }*/
-    let after = _get_freelist_pagecount(false, min_order, frame_order, false);
-    assert_eq!(after, before - (1 << min_order), "wrong freelist count for order {min_order} fr {frame_order}, before={before}");
-
-    //if DEBUG.load(Ordering::Relaxed) > 0 {
-        //log::info!("ALLOCED {frame:?}+2^{min_order}");
-        //log::info!("AFTER");
-        //debug_freelist();
-    //}
+    debug_assert!(frame.start_address().data() >= unsafe { ALLOCATOR_DATA.abs_off });
 
     Some((frame, PAGE_SIZE << min_order))
 }
 
 /// Deallocate a range of frames
 pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
-    log::info!("DEALLOC{frame:?}+{count}");
-    let before = get_freelist_pagecount();
-    debug_freelist();
     deallocate_frames_inner(frame, count);
-    debug_freelist();
-    //loop {}
-    let after = get_freelist_pagecount();
 }
 unsafe fn deallocate_frames_inner(frame: Frame, count: usize) {
     if count == 0 {
         log::warn!("Count == 0 (frame {frame:?}");
         return;
     }
-    //log::info!("DEALLOCATE {frame:?}+{count}");
 
     let max_order = core::cmp::min(MAX_ORDER, count.next_power_of_two().trailing_zeros());
 
@@ -185,7 +135,6 @@ unsafe fn deallocate_frames_inner(frame: Frame, count: usize) {
 
     for i in 0..number_of_chunks {
         let p2frame = Frame::containing_address(PhysicalAddress::new(first_aligned + i * (PAGE_SIZE << chunk_order)));
-        //log::info!("P2DEALLOCATE {frame:?}+2^{chunk_order}");
         deallocate_p2frame(p2frame, chunk_order);
     }
 
@@ -193,93 +142,12 @@ unsafe fn deallocate_frames_inner(frame: Frame, count: usize) {
     let lo_subblock_page_count = first_aligned_frame.offset_from(frame);
     let hi_subblock_page_count = count - (number_of_chunks << chunk_order) - lo_subblock_page_count;
     if lo_subblock_page_count > 0 {
-        //log::info!("SUBDEALLOCATE LO {frame:?}+{lo_subblock_page_count}");
         deallocate_frames_inner(frame, lo_subblock_page_count);
     }
     if hi_subblock_page_count > 0 {
         let hi_frame = first_aligned_frame.next_by(number_of_chunks << chunk_order);
-        //log::info!("SUBDEALLOCATE HI {hi_frame:?}+{hi_subblock_page_count}");
         deallocate_frames_inner(hi_frame, hi_subblock_page_count);
     }
-}
-fn get_freelist_pagecount() -> usize {
-    _get_freelist_pagecount(false, 100, 100, false)
-}
-pub static DEBUG: AtomicUsize = AtomicUsize::new(0);
-fn _get_freelist_pagecount(debug: bool, o: u32, f: u32, set_not_clear: bool) -> usize {
-    let mut pagecount = 0;
-    let freelist = FREELIST.lock();
-
-    let abs_off = unsafe { ALLOCATOR_DATA.abs_off };
-
-    for order in 0..=MAX_ORDER {
-        if debug {
-            log::info!("ORDER{order}");
-        }
-        let Some(mut p2frame) = freelist[order as usize] else {
-            continue;
-        };
-        assert!(p2frame.is_aligned_to_order(order));
-        assert!(p2frame.start_address().data() >= abs_off);
-
-        pagecount += 1 << order;
-
-        let mut i = 0;
-        loop {
-            if debug {
-                log::info!("FRAME {p2frame:?}");
-            }
-            //let next_info = get_free_alloc_page_info(p2frame);
-            let Some(next_info) = get_page_info(p2frame).unwrap().as_free() else {
-                drop(freelist);
-                if !debug {
-                    log::info!("M{o}F{f}");
-                    //_get_freelist_pagecount(true, o, f, false);
-                    debug_freelist();
-                }
-                panic!("i{i}o{order}");
-            };
-            if set_not_clear {
-                assert!(next_info.next.fetch_or(RC_USED_NOT_FREE, Ordering::Relaxed) & RC_USED_NOT_FREE == 0);
-            } else {
-                next_info.next.fetch_and(!RC_USED_NOT_FREE, Ordering::Relaxed);
-            }
-            if i == 0 {
-                assert!(next_info.prev().frame().is_none());
-            } else {
-                assert!(next_info.prev().frame().is_some());
-            }
-            let next_frame = next_info.next().frame();
-            assert_eq!(next_info.next().order(), order, "order mismatch for frame {p2frame:?} i{i} f{next_frame:?}");
-            assert_eq!(next_info.prev().order(), order);
-            //assert_eq!(next_info.next().order(), order);
-            /*if next_info.order() != order {
-                log::info!("BAD ORDER FOR {next_frame:?}");
-            }*/
-            let Some(next) = next_frame else {
-                break;
-            };
-            assert!(next.start_address().data() >= abs_off);
-            pagecount += 1 << order;
-            p2frame = next;
-            i += 1;
-        }
-    }
-
-    for (frame, info) in unsafe { ALLOCATOR_DATA.sections.iter().flat_map(|s| s.frames.iter().enumerate().map(|(i, f)| (s.base.next_by(i), f))) } {
-        let Some(free) = info.as_free() else {
-            break;
-        };
-        let order = free.next().order();
-        assert_eq!(free.prev().order(), order);
-        if free.prev().frame().is_none() {
-            assert_eq!(freelist[order as usize], Some(frame));
-        } else {
-            assert!(free.next().frame().is_some());
-        }
-    }
-
-    pagecount
 }
 
 unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
@@ -316,15 +184,15 @@ unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         if sib_info.next().order() < merge_order {
             break;
         }
-        assert!(!(sib_info.next().order() > merge_order), "sibling page has unaligned order or contains current page");
+        debug_assert!(!(sib_info.next().order() > merge_order), "sibling page has unaligned order or contains current page");
         //log::info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
 
         if let Some(sib_prev) = sib_info.prev().frame() {
             get_free_alloc_page_info(sib_prev).set_next(sib_info.next());
         } else {
-            assert_eq!(freelist[merge_order as usize], Some(sibling));
-            assert!(sib_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
-            assert_eq!(sib_info.next().order(), merge_order);
+            debug_assert_eq!(freelist[merge_order as usize], Some(sibling));
+            debug_assert!(sib_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
+            debug_assert_eq!(sib_info.next().order(), merge_order);
             freelist[merge_order as usize] = sib_info.next().frame();
         }
         if let Some(sib_next) = sib_info.next().frame() {
@@ -340,7 +208,7 @@ unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         .make_free(largest_order);
 
     let new_head = current;
-    assert!(new_head.is_aligned_to_order(largest_order));
+    debug_assert!(new_head.is_aligned_to_order(largest_order));
 
     if let Some(old_head) = freelist[largest_order as usize].replace(new_head) {
         //log::info!("HEAD {:p} FREED {:p} BARRIER {:p}", get_page_info(old_head).unwrap(), get_page_info(frame).unwrap(), unsafe { ALLOCATOR_DATA.abs_off as *const u8 });
@@ -383,7 +251,6 @@ impl P2Frame {
         )
     }
     fn get(self) -> (Option<Frame>, u32) {
-        //assert_ne!(self.0 & RC_USED_NOT_FREE, RC_USED_NOT_FREE);
         let page_off_mask = PAGE_SIZE - 1;
         (NonZeroUsize::new(self.0 & !page_off_mask & !(RC_USED_NOT_FREE)).map(|physaddr| Frame { physaddr }), (self.0 & page_off_mask) as u32)
     }
@@ -706,18 +573,18 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         if page.start_address() < allocator.abs_offset() {
             return;
         }
-        assert!(info.as_free().is_some());
-        assert!(this_page.0.is_aligned_to_order(order));
-        assert_eq!(info.next.load(Ordering::Relaxed), 0);
-        assert_eq!(info.refcount.load(Ordering::Relaxed), 0);
+        debug_assert!(info.as_free().is_some());
+        debug_assert!(this_page.0.is_aligned_to_order(order));
+        debug_assert_eq!(info.next.load(Ordering::Relaxed), 0);
+        debug_assert_eq!(info.refcount.load(Ordering::Relaxed), 0);
 
         let last_page = last_pages[order as usize].replace(this_page);
 
         if let Some((last_frame, last_page_info)) = last_page {
             let last_info = last_page_info.as_free().unwrap();
 
-            //assert_eq!(last_info.next().order(), order);
-            assert_eq!(last_info.next().frame(), None);
+            debug_assert_eq!(last_info.next().order(), order);
+            debug_assert_eq!(last_info.next().frame(), None);
 
             last_info.set_next(P2Frame::new(Some(page), order));
             info.as_free().unwrap().set_prev(P2Frame::new(Some(last_frame), order));
@@ -739,6 +606,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             let pages_for_current_order = 1 << order;
 
             if !frames.is_empty() && order != MAX_ORDER && !base.is_aligned_to_order(order + 1) {
+                frames[0].next.store(order as usize, Ordering::Relaxed);
                 // The first section page is not aligned to the next order size.
 
                 //log::info!("ORDER {order}: FIRST {base:?}");
@@ -756,6 +624,8 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 let off = frames.len() - pages_for_current_order;
                 let final_page = base.next_by(off);
 
+                frames[off].next.store(order as usize, Ordering::Relaxed);
+
                 //log::info!("ORDER {order}: LAST {final_page:?}");
                 append_page(final_page, &frames[off], order);
 
@@ -765,10 +635,11 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             }
 
             if order == MAX_ORDER {
-                assert_eq!(frames.len() % pages_for_current_order, 0);
-                assert!(base.is_aligned_to_order(MAX_ORDER));
+                debug_assert_eq!(frames.len() % pages_for_current_order, 0);
+                debug_assert!(base.is_aligned_to_order(MAX_ORDER));
 
                 for (off, info) in frames.iter().enumerate().step_by(pages_for_current_order) {
+                    info.next.store(MAX_ORDER as usize, Ordering::Relaxed);
                     append_page(base.next_by(off), info, MAX_ORDER);
                 }
             }
@@ -778,37 +649,17 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
     }
     for (order, tuple_opt) in last_pages.iter().enumerate() {
         let Some((frame, info)) = tuple_opt else { continue; };
-        assert!(frame.is_aligned_to_order(order as u32));
+        debug_assert!(frame.is_aligned_to_order(order as u32));
         let free = info.as_free().unwrap();
-        assert_eq!(free.prev().order(), order as u32);
+        debug_assert_eq!(free.prev().order(), order as u32);
         free.set_next(P2Frame::new(None, order as u32));
     }
 
     *FREELIST.lock() = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
-    debug_freelist();
+    //debug_freelist();
     log::info!("Initial freelist consistent");
 
-}
-fn debug_freelist() {
-    let freelist = FREELIST.lock();
-
-    for order in 0..=MAX_ORDER {
-        let Some(first_frame) = freelist[order as usize] else {
-            continue;
-        };
-        log::info!("ORDER {order} FIRST {first_frame:?}");
-        let mut frame = first_frame;
-
-        if order == MAX_ORDER { break }
-        let mut count = 1;
-        while let p2next = get_page_info(frame).unwrap_or_else(|| panic!("no page info: {frame:?}")).as_free().expect("not free").next() && let _ = assert_eq!(p2next.order(), order) && let Some(next) = p2next.frame() {
-            log::info!("ORDER {order} THEN {next:?}");
-            frame = next;
-            count += 1;
-        }
-        log::info!("ORDER {order}: {count} p2frames");
-    }
 }
 
 #[cold]
@@ -925,14 +776,14 @@ impl PageInfoFree<'_> {
     }
     #[track_caller]
     fn set_next(&self, next: P2Frame) {
-        assert!(next.frame().map_or(true, |f| f.is_aligned_to_order(next.order())));
+        debug_assert!(next.frame().map_or(true, |f| f.is_aligned_to_order(next.order())));
         self.next.store(next.0, Ordering::Relaxed)
     }
     fn prev(&self) -> P2Frame {
         P2Frame(self.prev.load(Ordering::Relaxed))
     }
     fn set_prev(&self, prev: P2Frame) {
-        assert!(prev.frame().map_or(true, |f| f.is_aligned_to_order(prev.order())));
+        debug_assert!(prev.frame().map_or(true, |f| f.is_aligned_to_order(prev.order())));
         self.prev.store(prev.0, Ordering::Relaxed)
     }
     fn mark_used(&self) {
@@ -1109,7 +960,7 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let new_frame = crate::memory::allocate_frame().ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
-    assert_eq!(page_info.refcount(), Some(RefCount::One));
+    debug_assert_eq!(page_info.refcount(), Some(RefCount::One));
     page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
 
     Ok(new_frame)
