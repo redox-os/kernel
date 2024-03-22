@@ -78,9 +78,10 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
 
     assert_eq!(next_free.order(), frame_order, "{frame:?}->next {next_free:?}.order != {frame_order}");
     if let Some(next) = next_free.frame() {
+        let f = get_free_alloc_page_info(next);
+        assert_eq!(f.prev().frame(), Some(frame));
         assert_ne!(next, frame);
         assert!(next.is_aligned_to_order(frame_order), "NEXT {next:?} UNALIGNED");
-        let f = get_free_alloc_page_info(next);
         f.set_prev(P2Frame::new(None, frame_order));
     }
 
@@ -143,7 +144,7 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         assert!(found);
     }*/
     let after = _get_freelist_pagecount(false, min_order, frame_order, false);
-    assert_eq!(after, before - (1 << min_order));
+    assert_eq!(after, before - (1 << min_order), "wrong freelist count for order {min_order} fr {frame_order}, before={before}");
 
     //if DEBUG.load(Ordering::Relaxed) > 0 {
         //log::info!("ALLOCED {frame:?}+2^{min_order}");
@@ -281,14 +282,11 @@ fn _get_freelist_pagecount(debug: bool, o: u32, f: u32, set_not_clear: bool) -> 
     pagecount
 }
 
-unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
+unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     let mut freelist = FREELIST.lock();
-    let mut largest_order = 0;
+    let mut largest_order = order;
 
-    get_page_info(frame)
-        .expect("freeing frame without PageInfo")
-        .as_used().expect("deallocating free frame")
-        .make_free(order);
+    let mut current = orig_frame;
 
     for merge_order in order..MAX_ORDER {
         // Because there's a PageInfo, this frame must be allocator-owned. We need to be very
@@ -296,132 +294,52 @@ unsafe fn deallocate_p2frame(mut frame: Frame, order: u32) {
         // 2^addrwidth - 1. However, allocation and deallocation must be synchronized (the "next"
         // word of the PageInfo).
 
-        let (lo, hi) = if frame.is_aligned_to_order(merge_order + 1) {
-            (frame, frame.next_by(1 << merge_order))
-        } else if frame.start_address().data() >= PAGE_SIZE << merge_order {
-            (frame.prev_by(1 << merge_order), frame)
-        } else {
-            break;
-        };
-        assert!(lo.is_aligned_to_order(merge_order + 1));
-        assert!(!hi.is_aligned_to_order(merge_order + 1));
+        let sibling = Frame::containing_address(PhysicalAddress::new(current.start_address().data() ^ (PAGE_SIZE << merge_order)));
 
-        // TODO
-        let Some(lo_info) = get_page_info(lo) else {
+        let Some(cur_info) = get_page_info(current) else {
+            unreachable!("attempting to free non-allocator-owned page");
+        };
+
+        let Some(sib_info) = get_page_info(sibling) else {
+            // The frame that was deallocated, was at the unaligned start or end of its section
+            // (i.e. there aren't 1 << merge_order additional pages).
             break;
         };
 
-        let Some(hi_info) = get_page_info(hi) else {
-            // The frame that was deallocated, was at the "end" of its section (i.e. there aren't 1
-            // << merge_order additional pages).
-            break;
-        };
-
-        let PageInfoKind::Free(lo_info) = lo_info.kind() else {
-            break;
-        };
-        let PageInfoKind::Free(hi_info) = hi_info.kind() else {
+        let PageInfoKind::Free(sib_info) = sib_info.kind() else {
             // The frame is currently in use (refcounted). It cannot be merged!
             break;
         };
 
-        // Whether or not there's a linked frame, the order is nevertheless stored.
-        if lo_info.next().order() != merge_order || hi_info.next().order() != merge_order {
+        // If the sibling p2frame has lower order than merge_order, it cannot be merged into
+        // current.
+        if sib_info.next().order() < merge_order {
             break;
         }
+        assert!(!(sib_info.next().order() > merge_order), "sibling page has unaligned order or contains current page");
         //log::info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
 
-        let lo_next = lo_info.next();
-        let lo_prev = lo_info.prev();
-        assert_eq!(lo_prev.order(), merge_order);
-
-        /*if freelist[merge_order as usize] == Some(lo) {
-        } else if freelist[merge_order as usize] == Some(hi) {
-        }*/
-
-        // There are now three possible scenarios:
-        if lo_next.frame() == Some(hi) {
-            // (1) lo->next == hi (lo->prev != hi, hi->next != lo, hi->prev == lo)
-            //      => link lo->prev <=> hi->next
-            assert_eq!(lo_info.prev().order(), merge_order);
-            assert_ne!(lo_info.prev().frame(), Some(hi));
-            assert_eq!(hi_info.next().order(), merge_order);
-
-            if let Some(lo_prev) = lo_prev.frame() {
-                get_free_alloc_page_info(lo_prev).set_next(hi_info.next());
-            } else {
-                assert_eq!(freelist[merge_order as usize], Some(lo));
-                assert!(lo_next.frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
-                assert_eq!(lo_next.order(), merge_order);
-                freelist[merge_order as usize] = hi_info.next().frame();
-            }
-            if let Some(hi_next) = hi_info.next().frame() {
-                get_free_alloc_page_info(hi_next).set_prev(lo_prev);
-            }
-        } else if lo_prev.frame() == Some(hi) {
-            // (2) lo->prev == hi (lo->next != hi, hi->prev != lo, hi->next == lo)
-            //      => link hi->prev <=> lo->next
-            assert_eq!(lo_info.prev().order(), merge_order);
-            assert_eq!(lo_info.next().order(), merge_order);
-            assert_ne!(lo_info.next().frame(), Some(hi));
-
-            if let Some(hi_prev) = hi_info.prev().frame() {
-                get_free_alloc_page_info(hi_prev).set_next(lo_next);
-            } else {
-                assert_eq!(freelist[merge_order as usize], Some(hi));
-                assert!(hi_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
-                assert_eq!(hi_info.next().order(), merge_order);
-                freelist[merge_order as usize] = lo_next.frame();
-            }
-            if let Some(lo_next) = lo_next.frame() {
-                get_free_alloc_page_info(lo_next).set_prev(hi_info.prev());
-            }
+        if let Some(sib_prev) = sib_info.prev().frame() {
+            get_free_alloc_page_info(sib_prev).set_next(sib_info.next());
         } else {
-            assert_eq!(lo_info.next().order(), merge_order);
-            assert_eq!(lo_info.prev().order(), merge_order);
-
-            // (3) lo->next != hi and lo->prev != hi (equivalent with hi->next != lo and hi->prev != 0)
-            //     => link lo->prev <=> lo->next and hi->prev <=> hi->next
-            if let Some(lo_prev) = lo_prev.frame() {
-                get_free_alloc_page_info(lo_prev).set_next(lo_next);
-            } else {
-                assert!(hi_info.prev().frame().is_some(), "{:?} {:?}", hi_info.next(), lo_info.next());
-
-                assert_eq!(freelist[merge_order as usize], Some(lo));
-                assert!(lo_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
-                assert_eq!(lo_info.next().order(), merge_order);
-
-                freelist[merge_order as usize] = lo_next.frame();
-            }
-            if let Some(lo_next) = lo_next.frame() {
-                get_free_alloc_page_info(lo_next).set_prev(lo_prev);
-            }
-
-            let hi_next = hi_info.next();
-            let hi_prev = hi_info.prev();
-
-            if let Some(hi_prev) = hi_prev.frame() {
-                get_free_alloc_page_info(hi_prev).set_next(hi_next);
-            } else {
-                assert!(lo_prev.frame().is_some());
-
-                assert_eq!(freelist[merge_order as usize], Some(hi));
-                assert!(hi_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
-                assert_eq!(hi_info.next().order(), merge_order);
-
-                freelist[merge_order as usize] = hi_next.frame();
-            }
-            if let Some(hi_next) = hi_next.frame() {
-                get_free_alloc_page_info(hi_next).set_prev(hi_prev);
-            }
+            assert_eq!(freelist[merge_order as usize], Some(sibling));
+            assert!(sib_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
+            assert_eq!(sib_info.next().order(), merge_order);
+            freelist[merge_order as usize] = sib_info.next().frame();
+        }
+        if let Some(sib_next) = sib_info.next().frame() {
+            get_free_alloc_page_info(sib_next).set_prev(sib_info.prev());
         }
 
-        frame = lo;
+        current = Frame::containing_address(PhysicalAddress::new(current.start_address().data() & !(PAGE_SIZE << merge_order)));
 
         largest_order = merge_order + 1;
     }
+    get_page_info(current)
+        .expect("freeing frame without PageInfo")
+        .make_free(largest_order);
 
-    let new_head = frame;
+    let new_head = current;
     assert!(new_head.is_aligned_to_order(largest_order));
 
     if let Some(old_head) = freelist[largest_order as usize].replace(new_head) {
