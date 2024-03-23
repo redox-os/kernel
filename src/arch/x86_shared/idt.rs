@@ -25,7 +25,7 @@ pub type IdtReservations = [AtomicU32; 8];
 
 #[repr(C)]
 pub struct Idt {
-    entries: IdtEntries,
+    pub(crate) entries: IdtEntries,
     reservations: IdtReservations,
 }
 impl Idt {

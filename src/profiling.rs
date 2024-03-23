@@ -12,7 +12,7 @@ use crate::{
     interrupt::{irq::aux_timer, InterruptStack},
     percpu::PercpuBlock,
     syscall::{error::*, usercopy::UserSliceWo},
-    LogicalCpuId,
+    cpu_set::LogicalCpuId,
 };
 
 const N: usize = 64 * 1024 * 1024;
@@ -96,14 +96,16 @@ const NULL: AtomicPtr<RingBuffer> = AtomicPtr::new(core::ptr::null_mut());
 pub static BUFS: [AtomicPtr<RingBuffer>; 4] = [NULL; 4];
 
 pub const PROFILE_TOGGLEABLE: bool = true;
-pub static IS_PROFILING: AtomicBool = AtomicBool::new(false);
+pub static IS_PROFILING: AtomicBool = AtomicBool::new(true);
 
 pub fn serio_command(index: usize, data: u8) {
     if PROFILE_TOGGLEABLE {
         if index == 0 && data == 30 {
+            // "a" key in QEMU
             log::info!("Enabling profiling");
             IS_PROFILING.store(true, Ordering::SeqCst);
         } else if index == 0 && data == 48 {
+            // "b" key
             log::info!("Disabling profiling");
             IS_PROFILING.store(false, Ordering::SeqCst);
         }
