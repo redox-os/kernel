@@ -14,7 +14,6 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
     }
 
     println!("CPU {}, PID {:?}", cpu_id(), context::context_id());
-    loop {}
 
     // This could deadlock, but at this point we are going to halt anyways
     {

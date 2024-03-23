@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use crate::{
     context,
     paging::VirtualAddress,
-    syscall::error::{Error, Result, EFAULT, EINVAL, EPERM, ESRCH},
+    syscall::error::{Error, Result, EFAULT, EPERM, ESRCH},
 };
 fn enforce_root() -> Result<()> {
     let contexts = context::contexts();

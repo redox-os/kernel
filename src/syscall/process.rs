@@ -11,13 +11,13 @@ use crate::context::{
 
 use crate::{
     context, interrupt,
-    paging::{mapper::PageFlushAll, Page, PageFlags, VirtualAddress, PAGE_SIZE},
+    paging::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
     syscall::{
         data::{SigAction, SignalStack},
         error::*,
         flag::{
-            wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT, SIGTERM,
+            wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT,
             SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK, WCONTINUED, WNOHANG, WUNTRACED,
         },
         ptrace_event,

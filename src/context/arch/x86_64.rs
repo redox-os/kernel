@@ -3,12 +3,10 @@ use core::{
     sync::atomic::AtomicBool,
 };
 
-use crate::{percpu::PercpuBlock, ptrace, syscall::FloatRegisters};
+use crate::syscall::FloatRegisters;
 
 use core::mem::offset_of;
-use alloc::sync::Arc;
 use spin::Once;
-use syscall::PtraceFlags;
 use x86::msr;
 
 /// This must be used by the kernel to ensure that context switches are done atomically

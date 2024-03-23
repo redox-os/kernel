@@ -230,10 +230,6 @@ pub unsafe fn deallocate_frame(frame: Frame) {
 const ORDER_COUNT: u32 = 11;
 const MAX_ORDER: u32 = ORDER_COUNT - 1;
 
-pub struct FreeList {
-    for_orders: [Option<Frame>; ORDER_COUNT as usize],
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Frame {
     // On x86/x86_64, all memory below 1 MiB is reserved, and although some frames in that range
@@ -282,7 +278,12 @@ impl Frame {
     /// Get the address of this frame
     // TODO: Remove
     pub fn start_address(&self) -> PhysicalAddress {
-        PhysicalAddress::new(self.physaddr.get())
+        self.base()
+    }
+    /// Create a frame containing `address`
+    // TODO: Remove
+    pub fn containing_address(address: PhysicalAddress) -> Frame {
+        Self::containing(address)
     }
 
     /// Create a frame containing `address`
@@ -290,10 +291,6 @@ impl Frame {
         Frame {
             physaddr: NonZeroUsize::new(address.data() & !PAGE_MASK).expect("frame 0x0 is reserved"),
         }
-    }
-    // TODO: Remove
-    pub fn containing_address(address: PhysicalAddress) -> Frame {
-        Self::containing(address)
     }
     pub fn base(self) -> PhysicalAddress {
         PhysicalAddress::new(self.physaddr.get())
@@ -303,6 +300,7 @@ impl Frame {
     pub fn range_inclusive(start: Frame, end: Frame) -> impl Iterator<Item = Frame> {
         (start.physaddr.get()..=end.physaddr.get()).step_by(PAGE_SIZE).map(|number| Frame { physaddr: NonZeroUsize::new(number).unwrap() })
     }
+    #[track_caller]
     pub fn next_by(self, n: usize) -> Self {
         Self {
             physaddr: self
@@ -310,16 +308,8 @@ impl Frame {
                 .get()
                 .checked_add(n * PAGE_SIZE)
                 .and_then(NonZeroUsize::new)
-                .expect("overflow in Frame::next_by"),
+                .expect("overflow or null in Frame::next_by")
         }
-    }
-    pub fn prev_by(self, n: usize) -> Self {
-        Self {
-            physaddr: self.physaddr.get().checked_sub(n.checked_mul(PAGE_SIZE).expect("unreasonable n")).and_then(NonZeroUsize::new).expect("overflow in Frame::prev_by"),
-        }
-    }
-    pub fn align_down_to_order(self, order: u32) -> Option<Self> {
-        Some(Self { physaddr: NonZeroUsize::new(self.physaddr.get() / (PAGE_SIZE << order) * (PAGE_SIZE << order))? })
     }
     pub fn offset_from(self, from: Self) -> usize {
         self.physaddr
@@ -399,7 +389,7 @@ enum PageInfoKind<'info> {
     Free(PageInfoFree<'info>),
 }
 struct PageInfoUsed<'info> {
-    refcount: &'info AtomicUsize,
+    _refcount: &'info AtomicUsize,
     _misc: &'info AtomicUsize,
 }
 struct PageInfoFree<'info> {
@@ -552,6 +542,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             base = base.next_by(page_info_count);
         }
     }
+    let sections = &mut sections[..i];
 
     sections.sort_unstable_by_key(|s| s.base);
 
@@ -624,7 +615,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 //log::info!("ORDER {order}: FIRST SKIP");
             }
 
-            if order != MAX_ORDER && !base.next_by(frames.len()).is_aligned_to_order(order + 1) {
+            if !frames.is_empty() && order != MAX_ORDER && !base.next_by(frames.len()).is_aligned_to_order(order + 1) {
                 // The last section page is not aligned to the next order size.
 
                 let off = frames.len() - pages_for_current_order;
@@ -689,17 +680,11 @@ pub enum AddRefError {
     RcOverflow,
 }
 impl PageInfo {
-    pub fn new() -> Self {
-        Self {
-            refcount: AtomicUsize::new(0),
-            next: AtomicUsize::new(0),
-        }
-    }
     fn kind(&self) -> PageInfoKind<'_> {
         let prev = self.refcount.load(Ordering::Relaxed);
 
         if prev & RC_USED_NOT_FREE == RC_USED_NOT_FREE {
-            PageInfoKind::Used(PageInfoUsed { refcount: &self.refcount, _misc: &self.next })
+            PageInfoKind::Used(PageInfoUsed { _refcount: &self.refcount, _misc: &self.next })
         } else {
             PageInfoKind::Free(PageInfoFree { prev: &self.refcount, next: &self.next })
         }
@@ -708,12 +693,6 @@ impl PageInfo {
         match self.kind() {
             PageInfoKind::Free(f) => Some(f),
             PageInfoKind::Used(_) => None,
-        }
-    }
-    fn as_used(&self) -> Option<PageInfoUsed<'_>> {
-        match self.kind() {
-            PageInfoKind::Used(f) => Some(f),
-            PageInfoKind::Free(_) => None,
         }
     }
     pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
@@ -796,18 +775,6 @@ impl PageInfoFree<'_> {
         // Order is irrelevant if marked "used"
         self.prev.store(RC_USED_NOT_FREE, Ordering::Relaxed);
         self.next.store(0, Ordering::Relaxed);
-    }
-}
-impl<'a> PageInfoUsed<'a> {
-    fn make_free(self, order: u32) -> PageInfoFree<'a> {
-        // !RC_USED_NOT_FREE
-        self.refcount.store(order as usize, Ordering::Relaxed);
-        self._misc.store(order as usize, Ordering::Relaxed);
-
-        PageInfoFree {
-            next: &self._misc,
-            prev: &self.refcount,
-        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -983,12 +950,5 @@ impl FrameAllocator for TheFrameAllocator {
     }
     unsafe fn usage(&self) -> rmm::FrameUsage {
         todo!()
-    }
-}
-impl FreeList {
-    pub fn new() -> Self {
-        Self {
-            for_orders: [None; ORDER_COUNT as usize],
-        }
     }
 }

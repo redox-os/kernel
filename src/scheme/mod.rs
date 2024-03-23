@@ -13,7 +13,7 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::{EventFlags, MunmapFlags, SendFdFlags, SEEK_CUR, SEEK_END, SEEK_SET};
 
 use crate::{
-    context::{file::FileDescription, memory::{AddrSpace, AddrSpaceWrapper}},
+    context::{file::FileDescription, memory::AddrSpaceWrapper},
     syscall::{
         error::*,
         usercopy::{UserSliceRo, UserSliceWo},

@@ -5,7 +5,7 @@ use syscall::{
         PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP,
         SIGTTIN, SIGTTOU, SIG_DFL, SIG_IGN,
     },
-    ptrace_event, SignalStack, SigActionFlags, IntRegisters, Error, EINTR, SIGTERM,
+    ptrace_event, SignalStack, SigActionFlags, IntRegisters, SIGTERM,
 };
 
 use crate::{
