@@ -10,7 +10,7 @@ use self::mapper::PageFlushAll;
 pub use super::CurrentRmmArch as RmmA;
 pub use rmm::{Arch as RmmArch, Flusher, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 
-pub type PageMapper = rmm::PageMapper<RmmA, crate::arch::rmm::LockedAllocator>;
+pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 pub use crate::rmm::KernelMapper;
 
 pub mod entry;
@@ -21,6 +21,7 @@ pub const ENTRY_COUNT: usize = RmmA::PAGE_ENTRIES;
 
 /// Size of pages
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
+pub const PAGE_MASK: usize = RmmA::PAGE_OFFSET_MASK;
 
 /// Setup Memory Access Indirection Register
 #[cold]

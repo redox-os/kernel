@@ -2117,7 +2117,7 @@ impl Drop for Table {
 #[cfg(target_arch = "aarch64")]
 pub fn setup_new_utable() -> Result<Table> {
     let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
+        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
             .ok_or(Error::new(ENOMEM))?
     };
 
