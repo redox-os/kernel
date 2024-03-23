@@ -495,6 +495,12 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
     while let Some(mut memory_map_area) = iter.next() {
         // TODO: NonZeroUsize
+
+        // TODO: x86_32 fails without this check
+        if memory_map_area.size == 0 {
+            continue;
+        }
+
         assert_ne!(
             memory_map_area.size, 0,
             "RMM should enforce areas are not zeroed"

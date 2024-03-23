@@ -4,8 +4,8 @@ use core::{
     sync::atomic::{self, AtomicUsize, Ordering},
 };
 use rmm::{
-    Arch, BuddyAllocator, BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea,
-    PageFlags, PageMapper, PhysicalAddress, TableKind, VirtualAddress, KILOBYTE, MEGABYTE,
+    Arch, BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea, PageFlags, PageMapper,
+    PhysicalAddress, TableKind, VirtualAddress, KILOBYTE, MEGABYTE,
 };
 use spin::Mutex;
 
