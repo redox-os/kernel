@@ -15,8 +15,7 @@ use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
 use crate::paging::Page;
 pub use crate::paging::{PAGE_SIZE, PAGE_MASK, PhysicalAddress, RmmA, RmmArch};
 use rmm::{
-    FrameAllocator,
-    FrameCount, VirtualAddress, TableKind, BumpAllocator,
+    BumpAllocator, FrameAllocator, FrameCount, FrameUsage, TableKind, VirtualAddress
 };
 use crate::syscall::error::{ENOMEM, Error};
 
@@ -32,12 +31,17 @@ pub struct MemoryArea {
 
 /// Get the number of frames available
 pub fn free_frames() -> usize {
-    0
+    total_frames() - used_frames()
 }
 
 /// Get the number of frames used
 pub fn used_frames() -> usize {
-    0
+    // TODO: Include bump allocator static pages?
+    FREELIST.lock().used_frames
+}
+pub fn total_frames() -> usize {
+    // TODO: Include bump allocator static pages?
+    sections().iter().map(|section| section.frames.len()).sum()
 }
 
 /// Allocate a range of frames
@@ -48,13 +52,16 @@ pub fn allocate_frame() -> Option<Frame> {
     allocate_frames(1)
 }
 pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, min: usize) -> Option<(Frame, usize)> {
-    // TODO: Split into sub-power of two allocations.
+    if !min.is_power_of_two() || !count.is_power_of_two() {
+        log::warn!("Attemped non-power-of-two allocation (allowed sizes {min}..={count})");
+    }
+
     let min_order = min.next_power_of_two().trailing_zeros();
     let _req_order = count.next_power_of_two().trailing_zeros();
 
     let mut freelist = FREELIST.lock();
 
-    let Some((frame_order, frame)) = freelist.iter().enumerate().skip(min_order as usize).find_map(|(i, f)| f.map(|f| (i as u32, f))) else {
+    let Some((frame_order, frame)) = freelist.for_orders.iter().enumerate().skip(min_order as usize).find_map(|(i, f)| f.map(|f| (i as u32, f))) else {
         // TODO: For larger sizes than the max order, split into power of two allocations.
         log::error!("COUNT {min}");
         log::error!("FREELIST {freelist:#?}");
@@ -79,7 +86,7 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
 
     debug_assert!(frame.is_aligned_to_order(frame_order));
     debug_assert_eq!(next_free.order(), frame_order);
-    freelist[frame_order as usize] = next_free.frame();
+    freelist.for_orders[frame_order as usize] = next_free.frame();
 
     // TODO: Is this LIFO cache optimal?
     //log::info!("MIN{min_order}FRAMEORD{frame_order}");
@@ -90,15 +97,17 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
         let hi = frame.next_by(order_page_count);
         //log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
-        debug_assert_eq!(freelist[order as usize], None);
+        debug_assert_eq!(freelist.for_orders[order as usize], None);
 
         let hi_info = get_page_info(hi).expect("sub-p2frame of split p2flame lacked PageInfo").make_free(order);
         debug_assert!(!hi.is_aligned_to_order(frame_order));
         debug_assert!(hi.is_aligned_to_order(order));
         hi_info.set_next(P2Frame::new(None, order));
         hi_info.set_prev(P2Frame::new(None, order));
-        freelist[order as usize] = Some(hi);
+        freelist.for_orders[order as usize] = Some(hi);
     }
+
+    freelist.used_frames += 1 << min_order;
 
     drop(freelist);
     info.mark_used();
@@ -190,10 +199,10 @@ unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         if let Some(sib_prev) = sib_info.prev().frame() {
             get_free_alloc_page_info(sib_prev).set_next(sib_info.next());
         } else {
-            debug_assert_eq!(freelist[merge_order as usize], Some(sibling));
+            debug_assert_eq!(freelist.for_orders[merge_order as usize], Some(sibling));
             debug_assert!(sib_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
             debug_assert_eq!(sib_info.next().order(), merge_order);
-            freelist[merge_order as usize] = sib_info.next().frame();
+            freelist.for_orders[merge_order as usize] = sib_info.next().frame();
         }
         if let Some(sib_next) = sib_info.next().frame() {
             get_free_alloc_page_info(sib_next).set_prev(sib_info.prev());
@@ -210,7 +219,7 @@ unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     let new_head = current;
     debug_assert!(new_head.is_aligned_to_order(largest_order));
 
-    if let Some(old_head) = freelist[largest_order as usize].replace(new_head) {
+    if let Some(old_head) = freelist.for_orders[largest_order as usize].replace(new_head) {
         //log::info!("HEAD {:p} FREED {:p} BARRIER {:p}", get_page_info(old_head).unwrap(), get_page_info(frame).unwrap(), unsafe { ALLOCATOR_DATA.abs_off as *const u8 });
         let old_head_info = get_free_alloc_page_info(old_head);
         let new_head_info = get_free_alloc_page_info(new_head);
@@ -221,6 +230,7 @@ unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     }
 
     //log::info!("FREED {frame:?}+2^{order}");
+    freelist.used_frames -= 1 << order;
 }
 
 pub unsafe fn deallocate_frame(frame: Frame) {
@@ -436,7 +446,12 @@ struct AllocatorData {
     sections: &'static [Section],
     abs_off: usize,
 }
-static FREELIST: Mutex<[Option<Frame>; ORDER_COUNT as usize]> = Mutex::new([None; ORDER_COUNT as usize]);
+#[derive(Debug)]
+struct FreeList {
+    for_orders: [Option<Frame>; ORDER_COUNT as usize],
+    used_frames: usize,
+}
+static FREELIST: Mutex<FreeList> = Mutex::new(FreeList { for_orders: [None; ORDER_COUNT as usize], used_frames: 0 });
 
 pub struct Section {
     base: Frame,
@@ -652,7 +667,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         free.set_next(P2Frame::new(None, order as u32));
     }
 
-    *FREELIST.lock() = first_pages.map(|pair| pair.map(|(frame, _)| frame));
+    FREELIST.lock().for_orders = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
     //debug_freelist();
     log::info!("Initial freelist consistent");
@@ -814,8 +829,12 @@ impl RefCount {
         }
     }
 }
+#[inline]
+fn sections() -> &'static [Section] {
+    unsafe { ALLOCATOR_DATA.sections }
+}
 pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
-    let sections = unsafe { ALLOCATOR_DATA.sections };
+    let sections = sections();
 
     let idx_res = sections.binary_search_by_key(&frame, |section| section.base);
 
@@ -948,7 +967,10 @@ impl FrameAllocator for TheFrameAllocator {
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
         deallocate_frames(Frame::containing_address(address), count.data())
     }
-    unsafe fn usage(&self) -> rmm::FrameUsage {
-        todo!()
+    unsafe fn usage(&self) -> FrameUsage {
+        FrameUsage::new(
+            FrameCount::new(used_frames()),
+            FrameCount::new(total_frames()),
+        )
     }
 }
