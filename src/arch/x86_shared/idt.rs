@@ -228,10 +228,8 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
         let index = 1_u8;
 
         // Allocate 64 KiB of stack space for the backup stack.
-        const BACKUP_STACK_SIZE: usize = 65536;
-        assert_eq!(BACKUP_STACK_SIZE % crate::memory::PAGE_SIZE, 0);
-        let page_count = BACKUP_STACK_SIZE / crate::memory::PAGE_SIZE;
-        let frames = crate::memory::allocate_frames(page_count)
+        const BACKUP_STACK_SIZE: usize = 4096 << 6;
+        let frames = crate::memory::allocate_p2frame(6)
             .expect("failed to allocate pages for backup interrupt stack");
 
         use crate::paging::{RmmA, RmmArch};

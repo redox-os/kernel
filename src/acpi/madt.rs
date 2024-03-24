@@ -1,7 +1,7 @@
 use core::mem;
 
 use crate::{
-    memory::{allocate_frames, Frame},
+    memory::{allocate_p2frame, Frame},
     paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress},
 };
 
@@ -92,7 +92,7 @@ impl Madt {
                                     CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 
                                     // Allocate a stack
-                                    let stack_start = allocate_frames(64)
+                                    let stack_start = allocate_p2frame(6)
                                         .expect("no more frames in acpi stack_start")
                                         .start_address()
                                         .data()

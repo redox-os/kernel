@@ -8,7 +8,7 @@ use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
     arch::paging::PAGE_SIZE, cpu_set::LogicalCpuSet, memory::{
-        deallocate_frame, deallocate_frames, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame, PageInfo, RefCount, RefKind
+        deallocate_frame, deallocate_p2frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame, PageInfo, RefCount, RefKind
     }, paging::{
         Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
     }, percpu::PercpuBlock, scheme::{self, KernelSchemes}
@@ -1121,7 +1121,12 @@ impl Grant {
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
     ) -> Result<Grant, Enomem> {
-        let base = crate::memory::allocate_frames(span.count).ok_or(Enomem)?;
+        if !span.count.is_power_of_two() {
+            log::warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
+        }
+
+        let alloc_order = span.count.next_power_of_two().trailing_zeros();
+        let base = crate::memory::allocate_p2frame(alloc_order).ok_or(Enomem)?;
 
         for (i, page) in span.pages().enumerate() {
             let frame = base.next_by(i);
@@ -2694,7 +2699,8 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
                     assert_eq!(new_rc, None);
                 }
                 unsafe {
-                    deallocate_frames(base, count.get());
+                    let order = count.get().next_power_of_two().trailing_zeros();
+                    deallocate_p2frame(base, order);
                 }
             } else {
                 let Some(info) = get_page_info(base) else {
@@ -2702,7 +2708,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
                 };
                 if info.remove_ref() == None {
                     unsafe {
-                        deallocate_frames(base, 1);
+                        deallocate_frame(base);
                     }
                 }
             }

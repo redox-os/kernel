@@ -45,27 +45,17 @@ pub fn total_frames() -> usize {
 }
 
 /// Allocate a range of frames
-pub fn allocate_frames(count: usize) -> Option<Frame> {
-    allocate_frames_complex(count, (), None, count).map(|(f, _)| f)
+pub fn allocate_p2frame(order: u32) -> Option<Frame> {
+    allocate_p2frame_complex(order, (), None, order).map(|(f, _)| f)
 }
 pub fn allocate_frame() -> Option<Frame> {
-    allocate_frames(1)
+    allocate_p2frame(0)
 }
-pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, min: usize) -> Option<(Frame, usize)> {
-    if !min.is_power_of_two() || !count.is_power_of_two() {
-        log::warn!("Attemped non-power-of-two allocation (allowed sizes {min}..={count})");
-    }
-
-    let min_order = min.next_power_of_two().trailing_zeros();
-    let _req_order = count.next_power_of_two().trailing_zeros();
-
+// TODO: Flags, strategy
+pub fn allocate_p2frame_complex(_req_order: u32, flags: (), strategy: Option<()>, min_order: u32) -> Option<(Frame, usize)> {
     let mut freelist = FREELIST.lock();
 
     let Some((frame_order, frame)) = freelist.for_orders.iter().enumerate().skip(min_order as usize).find_map(|(i, f)| f.map(|f| (i as u32, f))) else {
-        // TODO: For larger sizes than the max order, split into power of two allocations.
-        log::error!("COUNT {min}");
-        log::error!("FREELIST {freelist:#?}");
-        log::error!(":(");
         return None;
     };
 
@@ -121,45 +111,7 @@ pub fn allocate_frames_complex(count: usize, flags: (), strategy: Option<()>, mi
     Some((frame, PAGE_SIZE << min_order))
 }
 
-/// Deallocate a range of frames
-pub unsafe fn deallocate_frames(frame: Frame, count: usize) {
-    deallocate_frames_inner(frame, count);
-}
-unsafe fn deallocate_frames_inner(frame: Frame, count: usize) {
-    if count == 0 {
-        log::warn!("Count == 0 (frame {frame:?}");
-        return;
-    }
-
-    let max_order = core::cmp::min(MAX_ORDER, count.next_power_of_two().trailing_zeros());
-
-    let (first_aligned, chunk_order, number_of_chunks) = (0..=max_order).rev().find_map(|order| {
-        let bytes_for_order = PAGE_SIZE << order;
-        let first_aligned = frame.start_address().data().next_multiple_of(bytes_for_order);
-        let last_aligned = (frame.start_address().data() + count * PAGE_SIZE) / bytes_for_order * bytes_for_order;
-        let chunks = (last_aligned - first_aligned) / bytes_for_order;
-
-        (first_aligned < last_aligned).then_some((first_aligned, order, chunks))
-    }).expect("must succeed at least for order=0");
-
-    for i in 0..number_of_chunks {
-        let p2frame = Frame::containing_address(PhysicalAddress::new(first_aligned + i * (PAGE_SIZE << chunk_order)));
-        deallocate_p2frame(p2frame, chunk_order);
-    }
-
-    let first_aligned_frame = Frame::containing_address(PhysicalAddress::new(first_aligned));
-    let lo_subblock_page_count = first_aligned_frame.offset_from(frame);
-    let hi_subblock_page_count = count - (number_of_chunks << chunk_order) - lo_subblock_page_count;
-    if lo_subblock_page_count > 0 {
-        deallocate_frames_inner(frame, lo_subblock_page_count);
-    }
-    if hi_subblock_page_count > 0 {
-        let hi_frame = first_aligned_frame.next_by(number_of_chunks << chunk_order);
-        deallocate_frames_inner(hi_frame, hi_subblock_page_count);
-    }
-}
-
-unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
+pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     let mut freelist = FREELIST.lock();
     let mut largest_order = order;
 
@@ -363,7 +315,7 @@ impl Drop for RaiiFrame {
             .remove_ref() == None
         {
             unsafe {
-                crate::memory::deallocate_frames(self.inner, 1);
+                crate::memory::deallocate_frame(self.inner);
             }
         }
     }
@@ -962,10 +914,12 @@ pub struct TheFrameAllocator;
 
 impl FrameAllocator for TheFrameAllocator {
     unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
-        allocate_frames(count.data()).map(|f| f.start_address())
+        let order = count.data().next_power_of_two().trailing_zeros();
+        allocate_p2frame(order).map(|f| f.start_address())
     }
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
-        deallocate_frames(Frame::containing_address(address), count.data())
+        let order = count.data().next_power_of_two().trailing_zeros();
+        deallocate_p2frame(Frame::containing_address(address), order)
     }
     unsafe fn usage(&self) -> FrameUsage {
         FrameUsage::new(
