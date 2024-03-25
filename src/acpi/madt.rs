@@ -2,7 +2,7 @@ use core::mem;
 
 use crate::{
     memory::{allocate_p2frame, Frame},
-    paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress},
+    paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
 };
 
 use super::{find_sdt, sdt::Sdt};
@@ -92,12 +92,12 @@ impl Madt {
                                     CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 
                                     // Allocate a stack
-                                    let stack_start = allocate_p2frame(6)
+                                    let stack_start = allocate_p2frame(4)
                                         .expect("no more frames in acpi stack_start")
                                         .start_address()
                                         .data()
                                         + crate::PHYS_OFFSET;
-                                    let stack_end = stack_start + 64 * 4096;
+                                    let stack_end = stack_start + (PAGE_SIZE << 4);
 
                                     let ap_ready = (TRAMPOLINE + 8) as *mut u64;
                                     let ap_cpu_id = unsafe { ap_ready.add(1) };

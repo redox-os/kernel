@@ -181,7 +181,8 @@ pub unsafe fn init() {
 
 /// Initialize GDT and configure percpu.
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
-    let pcr_frame = crate::memory::allocate_frames(mem::size_of::<ProcessorControlRegion>().div_ceil(PAGE_SIZE)).expect("failed to allocate PCR frame");
+    let alloc_order = mem::size_of::<ProcessorControlRegion>().div_ceil(PAGE_SIZE).next_power_of_two().trailing_zeros();
+    let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR frame");
     let pcr =
         &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 

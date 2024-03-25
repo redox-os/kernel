@@ -14,7 +14,7 @@ use x86::{
 
 #[cfg(target_arch = "x86_64")]
 use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
-use crate::{interrupt::*, ipi::IpiKind, cpu_set::LogicalCpuId};
+use crate::{cpu_set::LogicalCpuId, interrupt::*, ipi::IpiKind, paging::PAGE_SIZE};
 
 use spin::RwLock;
 
@@ -228,8 +228,8 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
         let index = 1_u8;
 
         // Allocate 64 KiB of stack space for the backup stack.
-        const BACKUP_STACK_SIZE: usize = 4096 << 6;
-        let frames = crate::memory::allocate_p2frame(6)
+        const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
+        let frames = crate::memory::allocate_p2frame(4)
             .expect("failed to allocate pages for backup interrupt stack");
 
         use crate::paging::{RmmA, RmmArch};
