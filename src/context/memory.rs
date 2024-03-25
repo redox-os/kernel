@@ -7,15 +7,11 @@ use spin::{RwLock, RwLockUpgradableGuard, RwLockWriteGuard, RwLockReadGuard};
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
-    arch::paging::PAGE_SIZE,
-    memory::{
-        deallocate_frames, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
-        PageInfo, RefCount, RefKind,
-    },
-    paging::{
+    arch::paging::PAGE_SIZE, cpu_set::LogicalCpuSet, memory::{
+        deallocate_frame, deallocate_p2frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame, PageInfo, RefCount, RefKind
+    }, paging::{
         Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
-    },
-    scheme::{self, KernelSchemes}, cpu_set::LogicalCpuSet, percpu::PercpuBlock,
+    }, percpu::PercpuBlock, scheme::{self, KernelSchemes}
 };
 
 use super::{context::HardBlockedReason, file::FileDescription};
@@ -1125,7 +1121,12 @@ impl Grant {
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
     ) -> Result<Grant, Enomem> {
-        let base = crate::memory::allocate_frames(span.count).ok_or(Enomem)?;
+        if !span.count.is_power_of_two() {
+            log::warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
+        }
+
+        let alloc_order = span.count.next_power_of_two().trailing_zeros();
+        let base = crate::memory::allocate_p2frame(alloc_order).ok_or(Enomem)?;
 
         for (i, page) in span.pages().enumerate() {
             let frame = base.next_by(i);
@@ -1323,9 +1324,14 @@ impl Grant {
                             }
                             src_flusher_state = src_flusher.detach();
 
+                            if page_info.remove_ref().is_none() {
+                                deallocate_frame(frame);
+                            }
+
                             new_cow_frame
                         },
                         Err(AddRefError::SharedToCow) => unreachable!(),
+                        Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
                     }
                 } else {
                     frame
@@ -1576,6 +1582,7 @@ impl Grant {
                         }
                         new_frame
                     }
+                    Err(AddRefError::RcOverflow) => return Err(Enomem),
                 }
             };
 
@@ -2105,7 +2112,9 @@ impl Drop for Table {
                 RmmA::set_table(TableKind::User, super::empty_cr3());
             }
         }
-        crate::memory::deallocate_frames(Frame::containing_address(self.utable.table().phys()), 1);
+        unsafe {
+            crate::memory::deallocate_frame(Frame::containing_address(self.utable.table().phys()));
+        }
     }
 }
 
@@ -2113,7 +2122,7 @@ impl Drop for Table {
 #[cfg(target_arch = "aarch64")]
 pub fn setup_new_utable() -> Result<Table> {
     let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
+        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
             .ok_or(Error::new(ENOMEM))?
     };
 
@@ -2126,7 +2135,7 @@ pub fn setup_new_utable() -> Result<Table> {
     use crate::paging::KernelMapper;
 
     let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
+        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
             .ok_or(Error::new(ENOMEM))?
     };
 
@@ -2154,12 +2163,10 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
 #[cfg(target_arch = "x86_64")]
 pub fn setup_new_utable() -> Result<Table> {
+    use crate::memory::TheFrameAllocator;
     use crate::paging::KernelMapper;
 
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::rmm::FRAME_ALLOCATOR)
-            .ok_or(Error::new(ENOMEM))?
-    };
+    let utable = unsafe { PageMapper::create(TableKind::User, TheFrameAllocator).ok_or(Error::new(ENOMEM))? };
 
     {
         let active_ktable = KernelMapper::lock();
@@ -2220,14 +2227,14 @@ pub struct CowResult {
 /// deallocated.
 fn cow(old_frame: Frame, old_info: &PageInfo, initial_ref_kind: RefKind) -> Result<CowResult, PfError> {
     let old_refcount = old_info.refcount();
-    assert_ne!(old_refcount, RefCount::Zero);
+    assert!(old_refcount.is_some());
 
     let initial_rc = match initial_ref_kind {
         RefKind::Cow => RefCount::One,
         RefKind::Shared => RefCount::Shared(NonZeroUsize::new(2).unwrap()),
     };
 
-    if old_refcount == RefCount::One {
+    if old_refcount == Some(RefCount::One) {
         // We were lucky; the frame was already exclusively owned, so the refcount cannot be
         // modified unless we modify it. This is the special case where the old_frame returned is
         // None.
@@ -2489,6 +2496,7 @@ fn correct_inner<'l>(
                         new_frame
                     }
                     Err(AddRefError::SharedToCow) => unreachable!(),
+                    Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                 }
             } else {
                 // Grant did not exist, but we did own a Provider::External mapping, and cannot
@@ -2688,15 +2696,20 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
                         .expect("phys_contiguous frames all need PageInfos")
                         .remove_ref();
 
-                    assert_eq!(new_rc, RefCount::Zero);
+                    assert_eq!(new_rc, None);
                 }
-                deallocate_frames(base, count.get());
+                unsafe {
+                    let order = count.get().next_power_of_two().trailing_zeros();
+                    deallocate_p2frame(base, order);
+                }
             } else {
                 let Some(info) = get_page_info(base) else {
                     continue;
                 };
-                if info.remove_ref() == RefCount::Zero {
-                    deallocate_frames(base, 1);
+                if info.remove_ref() == None {
+                    unsafe {
+                        deallocate_frame(base);
+                    }
                 }
             }
         }

@@ -3,10 +3,8 @@ use core::iter;
 
 use spinning_top::RwSpinlock;
 
-use super::arch::KSTACK_SIZE;
-use super::context::{Context, ContextId};
+use super::context::{Context, ContextId, Kstack};
 use super::memory::AddrSpaceWrapper;
-use crate::common::aligned_box::AlignedBox;
 use crate::interrupt::InterruptStack;
 use crate::syscall::error::{Error, Result, EAGAIN};
 
@@ -108,14 +106,14 @@ impl ContextList {
 
     /// Spawn a context from a function.
     pub fn spawn(&mut self, userspace_allowed: bool, func: extern "C" fn()) -> Result<&Arc<RwSpinlock<Context>>> {
-        let mut stack = AlignedBox::<[u8; crate::context::arch::KSTACK_SIZE], {crate::context::arch::KSTACK_ALIGN}>::try_zeroed()?;
+        let mut stack = Kstack::new()?;
 
         let context_lock = self.new_context()?;
         {
             let mut context = context_lock.write();
             let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));
 
-            let mut stack_top = unsafe { stack.as_mut_ptr().add(KSTACK_SIZE) };
+            let mut stack_top = stack.initial_top();
 
             const INT_REGS_SIZE: usize = core::mem::size_of::<crate::interrupt::InterruptStack>();
 

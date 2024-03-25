@@ -3,12 +3,10 @@ use core::{
     sync::atomic::AtomicBool,
 };
 
-use crate::{percpu::PercpuBlock, ptrace, syscall::FloatRegisters};
+use crate::syscall::FloatRegisters;
 
 use core::mem::offset_of;
-use alloc::sync::Arc;
 use spin::Once;
-use syscall::PtraceFlags;
 use x86::msr;
 
 /// This must be used by the kernel to ensure that context switches are done atomically
@@ -150,7 +148,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     let pcr = crate::gdt::pcr();
 
     if let Some(ref stack) = next.kstack {
-        crate::gdt::set_tss_stack(pcr, stack.as_ptr() as usize + stack.len());
+        crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
     }
     crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 

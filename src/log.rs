@@ -26,12 +26,12 @@ impl Log {
     }
 
     pub fn write(&mut self, buf: &[u8]) {
-        for &b in buf {
+        /*for &b in buf {
             while self.data.len() + 1 >= self.size {
                 self.data.pop_front();
             }
             self.data.push_back(b);
-        }
+        }*/
     }
 }
 

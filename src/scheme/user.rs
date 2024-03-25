@@ -30,7 +30,7 @@ use crate::{
     },
     event,
     memory::Frame,
-    paging::{mapper::InactiveFlusher, Page, VirtualAddress, PAGE_SIZE},
+    paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
     sync::WaitQueue,
     syscall::{

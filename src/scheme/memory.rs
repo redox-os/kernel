@@ -2,7 +2,6 @@ use core::num::NonZeroUsize;
 
 use alloc::{sync::Arc, vec::Vec};
 use rmm::PhysicalAddress;
-use spin::RwLock;
 
 use crate::{
     context::memory::{handle_notify_files, AddrSpace, Grant, PageSpan, AddrSpaceWrapper},

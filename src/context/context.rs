@@ -1,10 +1,10 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
 use syscall::{SIGKILL, SIGSTOP};
-use core::{cmp::Ordering, mem, num::NonZeroUsize};
+use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize};
 use spin::RwLock;
 
 use crate::{
-    arch::{interrupt::InterruptStack, paging::PAGE_SIZE}, common::aligned_box::AlignedBox, context::{self, arch, file::FileDescriptor, memory::AddrSpace}, cpu_set::{LogicalCpuId, LogicalCpuSet}, ipi::{ipi, IpiKind, IpiTarget}, memory::{Frame, RaiiFrame}, paging::{RmmA, RmmArch}, percpu::PercpuBlock, scheme::{CallerCtx, FileHandle, SchemeNamespace}, sync::WaitMap,
+    arch::{interrupt::InterruptStack, paging::PAGE_SIZE}, common::aligned_box::AlignedBox, context::{self, arch, file::FileDescriptor, memory::AddrSpace}, cpu_set::{LogicalCpuId, LogicalCpuSet}, ipi::{ipi, IpiKind, IpiTarget}, memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame}, paging::{RmmA, RmmArch}, percpu::PercpuBlock, scheme::{CallerCtx, FileHandle, SchemeNamespace}, sync::WaitMap,
 };
 
 use crate::syscall::{
@@ -180,7 +180,7 @@ pub struct Context {
     /// Kernel FX - used to store SIMD and FPU registers on context switch
     pub kfx: AlignedBox<[u8], { arch::KFX_ALIGN }>,
     /// Kernel stack, if located on the heap.
-    pub kstack: Option<AlignedBox<[u8; arch::KSTACK_SIZE], { arch::KSTACK_ALIGN }>>,
+    pub kstack: Option<Kstack>,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
     /// but can be None while the context is being reaped or when a new context is created but has
     /// not yet had its address space changed. Note that these are only for user mappings; kernel
@@ -460,8 +460,7 @@ impl Context {
         let Some(ref kstack) = self.kstack else {
             return None;
         };
-        let range = kstack.len().checked_sub(mem::size_of::<InterruptStack>())?..;
-        Some(unsafe { &*kstack.get(range)?.as_ptr().cast() })
+        Some(unsafe { &*kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
     }
     pub fn regs_mut(&mut self) -> Option<&mut InterruptStack> {
         if !self.can_access_regs() {
@@ -470,8 +469,7 @@ impl Context {
         let Some(ref mut kstack) = self.kstack else {
             return None;
         };
-        let range = kstack.len().checked_sub(mem::size_of::<InterruptStack>())?..;
-        Some(unsafe { &mut *kstack.get_mut(range)?.as_mut_ptr().cast() })
+        Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
     }
 }
 
@@ -579,5 +577,47 @@ impl Drop for BorrowedHtBuf {
                 .get_or_insert(inner);
             }
         }
+    }
+}
+
+pub struct Kstack {
+    /// naturally aligned, order 4
+    base: Frame,
+}
+impl Kstack {
+    pub fn new() -> Result<Self, Enomem> {
+        Ok(Self {
+            base: allocate_p2frame(4).ok_or(Enomem)?,
+        })
+    }
+    pub fn initial_top(&self) -> *mut u8 {
+        unsafe {
+            (RmmA::phys_to_virt(self.base.start_address()).data() as *mut u8).add(PAGE_SIZE << 4)
+        }
+    }
+    pub fn len(&self) -> usize {
+        PAGE_SIZE << 4
+    }
+}
+
+const _: () = {
+    if PAGE_SIZE << 4 != arch::KSTACK_SIZE {
+        panic!();
+    }
+    if arch::KSTACK_ALIGN > (PAGE_SIZE << 4) {
+        panic!();
+    }
+};
+
+impl Drop for Kstack {
+    fn drop(&mut self) {
+        unsafe {
+            deallocate_p2frame(self.base, 4)
+        }
+    }
+}
+impl core::fmt::Debug for Kstack {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "[kstack at {:?}]", self.base)
     }
 }

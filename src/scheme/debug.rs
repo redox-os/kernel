@@ -121,7 +121,7 @@ impl KernelScheme for DebugScheme {
         #[cfg(feature = "profiling")]
         if handle.num != !0 {
             return crate::profiling::drain_buffer(
-                crate::LogicalCpuId::new(handle.num as u32),
+                crate::cpu_set::LogicalCpuId::new(handle.num as u32),
                 buf,
             );
         }

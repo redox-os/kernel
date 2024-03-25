@@ -32,7 +32,7 @@ pub struct BootloaderMemoryEntry {
     pub kind: BootloaderMemoryKind,
 }
 
-unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
+unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<RmmA> {
     use crate::kernel_executable_offsets::*;
     let virt_addr = virt.data();
 
@@ -48,7 +48,7 @@ unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
     }
 }
 
-unsafe fn inner<A: Arch>(
+unsafe fn inner(
     areas: &'static [MemoryArea],
     kernel_base: usize,
     kernel_size_aligned: usize,
@@ -60,7 +60,9 @@ unsafe fn inner<A: Arch>(
     acpi_size_aligned: usize,
     initfs_base: usize,
     initfs_size_aligned: usize,
-) -> BuddyAllocator<A> {
+) {
+    type A = RmmA;
+
     // First, calculate how much memory we have
     let mut size = 0;
     for area in areas.iter() {
@@ -203,46 +205,7 @@ unsafe fn inner<A: Arch>(
         (offset + (KILOBYTE - 1)) / KILOBYTE
     );
 
-    BuddyAllocator::<A>::new(bump_allocator).expect("failed to create BuddyAllocator")
-}
-
-// There can only be one allocator (at the moment), so making this a ZST is great!
-#[derive(Clone, Copy)]
-pub struct LockedAllocator;
-
-static INNER_ALLOCATOR: Mutex<Option<BuddyAllocator<RmmA>>> = Mutex::new(None);
-
-impl FrameAllocator for LockedAllocator {
-    unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
-        if let Some(ref mut allocator) = *INNER_ALLOCATOR.lock() {
-            allocator.allocate(count)
-        } else {
-            None
-        }
-    }
-
-    unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
-        if let Some(ref mut allocator) = *INNER_ALLOCATOR.lock() {
-            allocator.free(address, count)
-        }
-    }
-
-    unsafe fn usage(&self) -> FrameUsage {
-        if let Some(ref allocator) = *INNER_ALLOCATOR.lock() {
-            allocator.usage()
-        } else {
-            FrameUsage::new(FrameCount::new(0), FrameCount::new(0))
-        }
-    }
-}
-impl core::fmt::Debug for LockedAllocator {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match INNER_ALLOCATOR.try_lock().as_deref() {
-            Some(Some(alloc)) => write!(f, "[locked allocator: {:?}]", unsafe { alloc.usage() }),
-            Some(None) => write!(f, "[uninitialized lock allocator]"),
-            None => write!(f, "[failed to lock]"),
-        }
-    }
+    crate::memory::init_mm(bump_allocator);
 }
 
 static AREAS: SyncUnsafeCell<[MemoryArea; 512]> = SyncUnsafeCell::new(
@@ -260,8 +223,6 @@ pub fn areas() -> &'static [MemoryArea] {
     // TODO: Memory hotplug?
     unsafe { &(&*AREAS.get())[..AREA_COUNT.get().read().into()] }
 }
-
-pub static FRAME_ALLOCATOR: LockedAllocator = LockedAllocator;
 
 const NO_PROCESSOR: usize = !0;
 static LOCK_OWNER: AtomicUsize = AtomicUsize::new(NO_PROCESSOR);
@@ -313,7 +274,7 @@ impl KernelMapper {
         unsafe {
             Self::lock_for_manual_mapper(
                 current_processor,
-                PageMapper::current(TableKind::Kernel, FRAME_ALLOCATOR),
+                PageMapper::current(TableKind::Kernel, crate::memory::TheFrameAllocator),
             )
         }
     }
@@ -514,7 +475,7 @@ pub unsafe fn init(
     }
     AREA_COUNT.get().write(area_i as u16);
 
-    let allocator = inner::<A>(
+    inner(
         areas,
         kernel_base,
         kernel_size_aligned,
@@ -527,5 +488,4 @@ pub unsafe fn init(
         initfs_base,
         initfs_size_aligned,
     );
-    *INNER_ALLOCATOR.lock() = Some(allocator);
 }

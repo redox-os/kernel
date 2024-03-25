@@ -9,7 +9,7 @@ use super::{
     usercopy::UserSlice,
 };
 
-use crate::{percpu::PercpuBlock, syscall::error::Result, time};
+use crate::syscall::error::Result;
 
 struct ByteStr<'a>(&'a [u8]);
 
