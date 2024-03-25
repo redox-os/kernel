@@ -148,7 +148,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     let pcr = crate::gdt::pcr();
 
     if let Some(ref stack) = next.kstack {
-        crate::gdt::set_tss_stack(pcr, stack.as_ptr() as usize + stack.len());
+        crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
     }
     crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
