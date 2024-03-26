@@ -7,8 +7,6 @@ use self::display::Display;
 pub mod debug;
 pub mod display;
 
-pub static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
-
 pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
 
 pub static FRAMEBUFFER: Mutex<(usize, usize, usize)> = Mutex::new((0, 0, 0));
@@ -65,13 +63,6 @@ pub fn init(env: &[u8]) {
         let display = Display::new(width, height, stride, virt as *mut u32);
         let debug_display = DebugDisplay::new(display);
         *DEBUG_DISPLAY.lock() = Some(debug_display);
-    }
-}
-
-pub fn init_heap() {
-    if let Some(debug_display) = &mut *DEBUG_DISPLAY.lock() {
-        debug_display.display.offscreen =
-            Some(debug_display.display.onscreen.to_vec().into_boxed_slice());
     }
 }
 
