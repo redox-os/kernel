@@ -99,8 +99,8 @@ pub fn allocate_p2frame_complex(_req_order: u32, flags: (), strategy: Option<()>
 
     freelist.used_frames += 1 << min_order;
 
-    drop(freelist);
     info.mark_used();
+    drop(freelist);
 
     unsafe {
         (RmmA::phys_to_virt(frame.start_address()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
