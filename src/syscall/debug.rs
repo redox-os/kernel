@@ -202,11 +202,11 @@ pub struct SyscallDebugInfo {
 #[cfg(feature = "syscall_debug")]
 impl SyscallDebugInfo {
     pub fn on_switch_from(&mut self) {
-        let now = time::monotonic();
+        let now = crate::time::monotonic();
         self.accumulated_time += now - core::mem::replace(&mut self.this_switch_time, now);
     }
     pub fn on_switch_to(&mut self) {
-        self.this_switch_time = time::monotonic();
+        self.this_switch_time = crate::time::monotonic();
     }
 }
 #[cfg(feature = "syscall_debug")]
@@ -248,7 +248,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         0
     };
 
-    PercpuBlock::current().syscall_debug_info.set(SyscallDebugInfo {
+    crate::percpu::PercpuBlock::current().syscall_debug_info.set(SyscallDebugInfo {
         accumulated_time: 0,
         this_switch_time: debug_start,
         do_debug,
@@ -256,7 +256,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
 }
 #[cfg(feature = "syscall_debug")]
 pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
-    let debug_info = PercpuBlock::current().syscall_debug_info.take();
+    let debug_info = crate::percpu::PercpuBlock::current().syscall_debug_info.take();
 
     if !debug_info.do_debug {
         return;
