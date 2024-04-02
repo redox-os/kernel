@@ -87,23 +87,16 @@ impl KernelScheme for PipeScheme {
         let (is_writer_not_reader, key) = from_raw_id(id);
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
 
-        if is_writer_not_reader && flags == EVENT_WRITE {
-            // TODO: Return correct flags
-            if pipe.queue.lock().len() >= MAX_QUEUE_SIZE {
-                return Ok(EventFlags::empty());
-            } else {
-                return Ok(EVENT_WRITE);
-            }
-        } else if flags == EVENT_READ {
-            // TODO: Return correct flags
-            if pipe.queue.lock().is_empty() {
-                return Ok(EventFlags::empty());
-            } else {
-                return Ok(EVENT_READ);
-            }
+        let mut ready = EventFlags::empty();
+
+        if is_writer_not_reader && flags == EVENT_WRITE && pipe.queue.lock().len() <= MAX_QUEUE_SIZE {
+            ready |= EventFlags::EVENT_WRITE;
+        }
+        if !is_writer_not_reader && flags == EVENT_READ && !pipe.queue.lock().is_empty() {
+            ready |= EventFlags::EVENT_READ;
         }
 
-        Ok(EventFlags::empty())
+        Ok(ready)
     }
 
     fn fsync(&self, _id: usize) -> Result<()> {
