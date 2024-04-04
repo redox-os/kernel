@@ -175,8 +175,8 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
     let mut len = 2;
 
     for i in 2..32 {
-        if bp.saturating_add(16) < crate::KERNEL_HEAP_OFFSET
-            || bp >= crate::KERNEL_HEAP_OFFSET + crate::PML4_SIZE
+        if bp < crate::PHYS_OFFSET
+            || bp.saturating_add(16) >= crate::PHYS_OFFSET + crate::PML4_SIZE
         {
             break;
         }
