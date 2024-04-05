@@ -17,7 +17,7 @@ use crate::{
 
 use crate::syscall::{
     data::TimeSpec,
-    error::{Error, Result, EAGAIN, EFAULT, EINVAL, ESRCH},
+    error::{Error, Result, EAGAIN, EFAULT, EINVAL, ESRCH, ETIMEDOUT},
     flag::{FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE},
 };
 
@@ -118,13 +118,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                 {
                     let mut context = context_lock.write();
 
-                    if let Some(timeout) = timeout_opt {
-                        let start = time::monotonic();
-                        let end = start
-                            + (timeout.tv_sec as u128 * time::NANOS_PER_SEC)
-                            + (timeout.tv_nsec as u128);
-                        context.wake = Some(end);
-                    }
+                    context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128);
 
                     context.block("futex");
                 }
@@ -140,19 +134,11 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
             context::switch();
 
             if timeout_opt.is_some() {
-                let context_lock = {
-                    let contexts = context::contexts();
-                    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                    Arc::clone(context_lock)
-                };
-
-                {
-                    let mut context = context_lock.write();
-                    context.wake = None;
-                }
+                context::current()?.write().wake = None;
+                Err(Error::new(ETIMEDOUT))
+            } else {
+                Ok(0)
             }
-
-            Ok(0)
         }
         FUTEX_WAKE => {
             let mut woken = 0;
