@@ -17,12 +17,20 @@ compile_error!("cannot force-disable xsave without force-disabling xsaveopt");
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct AltReloc {
+    // These two fields point to a utf-8 name of the feature, see the match statement below.
     pub name_start: *const u8,
     pub name_len: usize,
+
+    // Base address of the code that may later be overwritten.
     pub code_start: *mut u8,
+    // Length of the default code, excluding NOPs if the altcode sequence is longer.
     pub origcode_len: usize,
+    // Actual length of the overwritable code, i.e. max(origcode_len, altcode_len).
     pub padded_len: usize,
     pub _rsvd: usize,
+
+    // These two fields point to the alternative code (in .rodata), and possible new nop bytes,
+    // that will replace the code_start..+padded_len
     pub altcode_start: *const u8,
     pub altcode_len: usize,
 }
@@ -145,7 +153,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
         let dst_pages = PageSpan::between(
             Page::containing_address(VirtualAddress::new(reloc.code_start as usize)),
             Page::containing_address(VirtualAddress::new(
-                (reloc.code_start as usize + reloc.origcode_len).next_multiple_of(PAGE_SIZE),
+                (reloc.code_start as usize + reloc.padded_len).next_multiple_of(PAGE_SIZE),
             )),
         );
         for page in dst_pages.pages() {
@@ -176,13 +184,6 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             _ => true,
         };
 
-        if !feature_is_enabled {
-            continue;
-        }
-
-        let (dst, dst_nops) = code.split_at_mut(altcode.len());
-        dst.copy_from_slice(altcode);
-
         // XXX: The `.nops` directive only works for constant lengths, and the variable `.skip -X`
         // only outputs the (slower) single-byte 0x90 NOP.
 
@@ -204,10 +205,27 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             ],
         ];
 
-        for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
-            chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
+        if feature_is_enabled {
+            log::info!("feature {} origcode {:x?}", name, code);
+            let (dst, dst_nops) = code.split_at_mut(altcode.len());
+            dst.copy_from_slice(altcode);
+
+            for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
+                chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
+            }
+            log::trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
+        } else {
+            log::trace!("feature !{} origcode {:x?}", name, code);
+            let (_, padded) = code.split_at_mut(reloc.origcode_len);
+
+            // Not strictly necessary, but reduces the number of instructions using longer nop
+            // instructions.
+            for chunk in padded.chunks_mut(NOPS_TABLE.len()) {
+                chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
+            }
+
+            log::trace!("feature !{} new {:x?}", name, code);
         }
-        log::trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
 
         for page in dst_pages.pages() {
             mapper
