@@ -1515,7 +1515,7 @@ impl Grant {
                         flush.ignore();
                     }
                     let frame = Frame::containing_address(phys);
-                    src_flusher.queue(frame, None, TlbShootdownActions::REVOKE_READ);
+                    src_flusher.queue(frame, None, TlbShootdownActions::REVOKE_WRITE);
                     frame
                 }
                 RefKind::Shared => {
@@ -2332,7 +2332,7 @@ fn correct_inner<'l>(
         AccessMode::Read => (),
 
         AccessMode::Write if !grant_flags.has_write() => {
-            log::debug!("Instuction fetch, but grant was not PROT_WRITE.");
+            log::debug!("Write, but grant was not PROT_WRITE.");
             return Err(PfError::Segv);
         }
         AccessMode::InstrFetch if !grant_flags.has_execute() => {

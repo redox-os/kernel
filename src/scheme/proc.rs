@@ -21,9 +21,9 @@ use crate::{
 
 use alloc::{
     boxed::Box,
-    collections::BTreeMap,
+    collections::{btree_map::Entry, BTreeMap},
     string::{String, ToString},
-    sync::Arc,
+    sync::{Arc, Weak},
     vec::Vec,
 };
 use core::{
@@ -122,8 +122,11 @@ enum Operation {
     Sighandler,
     Start,
     Attr(Attr),
-    Filetable {
+    NewFiletable {
         filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
+    },
+    Filetable {
+        filetable: Weak<RwLock<Vec<Option<FileDescriptor>>>>,
     },
     AddrSpace {
         addrspace: Arc<AddrSpaceWrapper>,
@@ -173,6 +176,7 @@ impl Operation {
                 | Self::Trace
                 | Self::SessionId
                 | Self::Filetable { .. }
+                | Self::NewFiletable { .. }
                 | Self::AddrSpace { .. }
                 | Self::CurrentAddrSpace
                 | Self::CurrentFiletable
@@ -292,7 +296,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                 ),
             },
             Some("filetable") => Operation::Filetable {
-                filetable: Arc::clone(&get_context(pid)?.read().files),
+                filetable: Arc::downgrade(&get_context(pid)?.read().files),
             },
             Some("current-addrspace") => Operation::CurrentAddrSpace,
             Some("current-filetable") => Operation::CurrentFiletable,
@@ -376,13 +380,17 @@ impl<const FULL: bool> ProcScheme<FULL> {
                 return Err(Error::new(EPERM));
             }
 
-            if matches!(operation, Operation::Filetable { .. }) {
+            let filetable_opt = match operation {
+                Operation::Filetable { ref filetable } => Some(filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?),
+                Operation::NewFiletable { ref filetable } => Some(Arc::clone(filetable)),
+                _ => None,
+            };
+            if let Some(filetable) = filetable_opt {
                 data = OperationData::Static(StaticData::new({
                     use core::fmt::Write;
 
                     let mut data = String::new();
-                    for index in target
-                        .files
+                    for index in filetable
                         .read()
                         .iter()
                         .enumerate()
@@ -1254,7 +1262,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 }
                 Ok(buf.len())
             }
-            Operation::Filetable { .. } => Err(Error::new(EBADF)),
+            Operation::Filetable { .. } | Operation::NewFiletable { .. } => Err(Error::new(EBADF)),
 
             Operation::CurrentFiletable => {
                 let filetable_fd = buf.read_usize()?;
@@ -1262,20 +1270,25 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 verify_scheme(hopefully_this_scheme)?;
 
                 let mut handles = HANDLES.write();
-                let Operation::Filetable { ref filetable } = handles
-                    .get(&number)
-                    .ok_or(Error::new(EBADF))?
-                    .info
-                    .operation
-                else {
+                let Entry::Occupied(mut entry) = handles.entry(number) else {
                     return Err(Error::new(EBADF));
+                };
+                let filetable = match &mut entry.get_mut().info.operation {
+                    Operation::Filetable { ref filetable } => filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?,
+                    Operation::NewFiletable { ref filetable } => {
+                        let ft = Arc::clone(&filetable);
+                        entry.get_mut().info.operation = Operation::Filetable { filetable: Arc::downgrade(&filetable) };
+                        ft
+                    }
+
+                    _ => return Err(Error::new(EBADF)),
                 };
 
                 handles
                     .get_mut(&id)
                     .ok_or(Error::new(EBADF))?
                     .info
-                    .operation = Operation::AwaitingFiletableChange(Arc::clone(filetable));
+                    .operation = Operation::AwaitingFiletableChange(filetable);
 
                 Ok(mem::size_of::<usize>())
             }
@@ -1454,11 +1467,13 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 if buf != b"copy" {
                     return Err(Error::new(EINVAL));
                 }
+                let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
+
                 let new_filetable = Arc::try_new(RwLock::new(filetable.read().clone()))
                     .map_err(|_| Error::new(ENOMEM))?;
 
                 handle(
-                    Operation::Filetable {
+                    Operation::NewFiletable {
                         filetable: new_filetable,
                     },
                     OperationData::Other,
