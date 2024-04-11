@@ -59,7 +59,11 @@ impl UnmapResult {
             .get(scheme_id)
             .cloned()
             .ok_or(Error::new(ENODEV))
-            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
+            .and_then(|scheme| if let KernelSchemes::User(u) = scheme {
+                u.munmap(number, base_offset, self.size, self.flags)
+            } else {
+                Ok(())
+            });
 
         if let Ok(fd) = Arc::try_unwrap(description) {
             fd.into_inner().try_close()?;

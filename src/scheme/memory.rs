@@ -173,6 +173,40 @@ impl MemoryScheme {
             )?;
         Ok(base_page.start_address().data())
     }
+    pub fn mmap(
+        id: usize,
+        addr_space: &Arc<AddrSpaceWrapper>,
+        map: &Map,
+        _consume: bool,
+    ) -> Result<usize> {
+        let (handle_ty, mem_ty, flags) = u32::try_from(id)
+            .ok()
+            .and_then(from_raw)
+            .ok_or(Error::new(EBADF))?;
+
+        match handle_ty {
+            HandleTy::Allocated => Self::fmap_anonymous(
+                addr_space,
+                map,
+                flags.contains(HandleFlags::PHYS_CONTIGUOUS),
+            ),
+            HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty),
+        }
+    }
+    pub fn statvfs(_file: usize, dst: UserSliceWo) -> Result<()> {
+        let used = used_frames() as u64;
+        let free = free_frames() as u64;
+
+        let stat = StatVfs {
+            f_bsize: PAGE_SIZE.try_into().map_err(|_| Error::new(EOVERFLOW))?,
+            f_blocks: used + free,
+            f_bfree: free,
+            f_bavail: free,
+        };
+        dst.copy_exactly(&stat)?;
+
+        Ok(())
+    }
 }
 impl KernelScheme for MemoryScheme {
     fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
@@ -231,41 +265,6 @@ impl KernelScheme for MemoryScheme {
     }
 
     fn close(&self, _id: usize) -> Result<()> {
-        Ok(())
-    }
-    fn kfmap(
-        &self,
-        id: usize,
-        addr_space: &Arc<AddrSpaceWrapper>,
-        map: &Map,
-        _consume: bool,
-    ) -> Result<usize> {
-        let (handle_ty, mem_ty, flags) = u32::try_from(id)
-            .ok()
-            .and_then(from_raw)
-            .ok_or(Error::new(EBADF))?;
-
-        match handle_ty {
-            HandleTy::Allocated => Self::fmap_anonymous(
-                addr_space,
-                map,
-                flags.contains(HandleFlags::PHYS_CONTIGUOUS),
-            ),
-            HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty),
-        }
-    }
-    fn kfstatvfs(&self, _file: usize, dst: UserSliceWo) -> Result<()> {
-        let used = used_frames() as u64;
-        let free = free_frames() as u64;
-
-        let stat = StatVfs {
-            f_bsize: PAGE_SIZE.try_into().map_err(|_| Error::new(EOVERFLOW))?,
-            f_blocks: used + free,
-            f_bfree: free,
-            f_bavail: free,
-        };
-        dst.copy_exactly(&stat)?;
-
         Ok(())
     }
 }

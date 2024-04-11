@@ -4,13 +4,9 @@ use redox_path::RedoxPath;
 use spin::RwLock;
 
 use crate::{
-    context,
-    context::{
-        file::{FileDescription, FileDescriptor},
-        memory::{AddrSpace, PageSpan},
-    },
+    context::{self, file::{FileDescription, FileDescriptor}, memory::{AddrSpace, PageSpan}},
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, SchemeId},
+    scheme::{self, CallerCtx, FileHandle, KernelScheme, KernelSchemes, OpenResult, SchemeId},
     syscall::{data::Stat, error::*, flag::*},
 };
 
@@ -18,13 +14,13 @@ use super::usercopy::{UserSlice, UserSliceRo, UserSliceWo};
 
 pub fn file_op_generic<T>(
     fd: FileHandle,
-    op: impl FnOnce(&dyn KernelScheme, usize) -> Result<T>,
+    op: impl FnOnce(&KernelSchemes, usize) -> Result<T>,
 ) -> Result<T> {
     file_op_generic_ext(fd, |s, _, no| op(s, no))
 }
 pub fn file_op_generic_ext<T>(
     fd: FileHandle,
-    op: impl FnOnce(&dyn KernelScheme, SchemeId, usize) -> Result<T>,
+    op: impl FnOnce(&KernelSchemes, SchemeId, usize) -> Result<T>,
 ) -> Result<T> {
     let file = context::current()?
         .read()
@@ -41,7 +37,7 @@ pub fn file_op_generic_ext<T>(
         .ok_or(Error::new(EBADF))?
         .clone();
 
-    op(&*scheme, scheme_id, number)
+    op(&scheme, scheme_id, number)
 }
 pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<alloc::string::String> {
     let mut path_buf = vec![0_u8; max_len];
@@ -112,9 +108,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 
 /// rmdir syscall
 pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
-    let (scheme_ns, caller_ctx) = match context::current()?.read() {
-        ref context => (context.ens, context.caller_ctx()),
-    };
+    let scheme_ns = context::current()?.read().ens;
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -131,7 +125,10 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
             .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
-    scheme.rmdir(reference.as_ref(), caller_ctx)
+    let KernelSchemes::User(user) = scheme else {
+        return Err(Error::new(EOPNOTSUPP));
+    };
+    user.rmdir(reference.as_ref())
 }
 
 /// Unlink syscall
@@ -154,7 +151,11 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
             .ok_or(Error::new(ENODEV))?;
         scheme.clone()
     };
-    scheme.unlink(reference.as_ref(), caller_ctx)
+    match scheme {
+        KernelSchemes::Root(root) => root.unlink(reference.as_ref(), caller_ctx),
+        KernelSchemes::User(user) => user.unlink(reference.as_ref()),
+        _ => return Err(Error::new(EOPNOTSUPP)),
+    }
 }
 
 /// Close syscall
@@ -281,7 +282,10 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
         SendFdFlags::empty()
     };
 
-    scheme.ksendfd(number, desc_to_send, flags_to_scheme, arg)
+    let KernelSchemes::User(user) = scheme else {
+        return Err(Error::new(EOPNOTSUPP));
+    };
+    user.sendfd(number, desc_to_send, flags_to_scheme, arg)
 }
 
 /// File descriptor controls
@@ -388,7 +392,10 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
         return Err(Error::new(EXDEV));
     }
 
-    scheme.frename(description.number, reference.as_ref(), caller_ctx)
+    let KernelSchemes::User(user) = scheme else {
+        return Err(Error::new(EOPNOTSUPP));
+    };
+    user.frename(description.number, reference.as_ref())
 }
 
 /// File status

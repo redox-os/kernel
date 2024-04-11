@@ -378,19 +378,6 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(ENOENT))
     }
 
-    fn kfmap(
-        &self,
-        number: usize,
-        addr_space: &Arc<AddrSpaceWrapper>,
-        map: &crate::syscall::data::Map,
-        consume: bool,
-    ) -> Result<usize> {
-        Err(Error::new(EOPNOTSUPP))
-    }
-    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
-        Err(Error::new(EOPNOTSUPP))
-    }
-
     fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
         Err(Error::new(EOPNOTSUPP))
     }
@@ -403,58 +390,34 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kfutimens(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
-        Err(Error::new(EBADF))
-    }
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         Err(Error::new(EBADF))
-    }
-    fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
-
-    fn ksendfd(
-        &self,
-        id: usize,
-        desc: Arc<RwLock<FileDescription>>,
-        flags: SendFdFlags,
-        arg: u64,
-    ) -> Result<usize> {
-        Err(Error::new(EOPNOTSUPP))
     }
 
     fn fsync(&self, id: usize) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn ftruncate(&self, id: usize, len: usize) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
         Err(Error::new(ESPIPE))
     }
-    fn fchmod(&self, id: usize, new_mode: u16) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
-    fn fchown(&self, id: usize, new_uid: u32, new_gid: u32) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
-        Err(Error::new(EBADF))
-    }
-    fn frename(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
         Err(Error::new(EBADF))
     }
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn rmdir(&self, path: &str, ctx: CallerCtx) -> Result<()> {
-        Err(Error::new(ENOENT))
-    }
-    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
-        Err(Error::new(ENOENT))
-    }
     fn close(&self, id: usize) -> Result<()> {
         Err(Error::new(EBADF))
+    }
+}
+impl KernelSchemes {
+    pub fn mmap(&self, id: usize, addrspace: &Arc<AddrSpaceWrapper>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
+        match self {
+            KernelSchemes::User(user) => user.mmap(id, &addrspace, &map, consume),
+            KernelSchemes::Global(GlobalSchemes::Memory) => MemoryScheme::mmap(id, &addrspace, &map, consume),
+            KernelSchemes::Global(GlobalSchemes::ProcFull | GlobalSchemes::ProcRestricted) => ProcScheme::<false>::mmap(id, &addrspace, &map, consume),
+            _ => Err(Error::new(EOPNOTSUPP)),
+        }
     }
 }
 

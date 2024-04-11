@@ -70,6 +70,33 @@ impl RootScheme {
             handles: RwLock::new(HashMap::new()),
         }
     }
+    pub fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
+        let path = path.trim_matches('/');
+
+        if ctx.uid != 0 {
+            return Err(Error::new(EACCES));
+        }
+        let inner = {
+            let handles = self.handles.read();
+            handles
+                .iter()
+                .find_map(|(_id, handle)| {
+                    match handle {
+                        Handle::Scheme(inner) => {
+                            if path == inner.name.as_ref() {
+                                return Some(inner.clone());
+                            }
+                        }
+                        _ => (),
+                    }
+                    None
+                })
+                .ok_or(Error::new(ENOENT))?
+        };
+
+        inner.unmount()
+    }
+
 }
 
 impl KernelScheme for RootScheme {
@@ -152,33 +179,6 @@ impl KernelScheme for RootScheme {
             self.handles.write().insert(id, Handle::File(inner));
             Ok(OpenResult::SchemeLocal(id))
         }
-    }
-
-    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
-        let path = path.trim_matches('/');
-
-        if ctx.uid != 0 {
-            return Err(Error::new(EACCES));
-        }
-        let inner = {
-            let handles = self.handles.read();
-            handles
-                .iter()
-                .find_map(|(_id, handle)| {
-                    match handle {
-                        Handle::Scheme(inner) => {
-                            if path == inner.name.as_ref() {
-                                return Some(inner.clone());
-                            }
-                        }
-                        _ => (),
-                    }
-                    None
-                })
-                .ok_or(Error::new(ENOENT))?
-        };
-
-        inner.unmount()
     }
 
     fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<usize> {
