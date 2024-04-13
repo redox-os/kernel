@@ -42,6 +42,7 @@ unsafe fn init_hpet() -> bool {
 }
 
 pub unsafe fn init_noncore() {
+    log::info!("Initializing system timer");
     if init_hpet() {
         log::info!("HPET used as system timer");
     } else {
@@ -49,8 +50,11 @@ pub unsafe fn init_noncore() {
         log::info!("PIT used as system timer");
     }
 
+    log::info!("Initializing RTC");
     rtc::init();
+    log::info!("Initializing serial");
     serial::init();
+    log::info!("Finished initializing devices");
 }
 
 pub unsafe fn init_ap() {
