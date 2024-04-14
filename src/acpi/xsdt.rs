@@ -1,6 +1,6 @@
-use alloc::boxed::Box;
 use core::{convert::TryFrom, mem};
 
+use super::RxsdtIter;
 use super::{rxsdt::Rxsdt, sdt::Sdt};
 
 #[derive(Debug)]
@@ -23,8 +23,8 @@ impl Xsdt {
 }
 
 impl Rxsdt for Xsdt {
-    fn iter(&self) -> Box<dyn Iterator<Item = usize>> {
-        Box::new(XsdtIter { sdt: self.0, i: 0 })
+    fn iter(&self) -> RxsdtIter {
+        RxsdtIter::Xsdt(XsdtIter { sdt: self.0, i: 0 })
     }
 }
 

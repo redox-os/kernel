@@ -2,10 +2,11 @@ use alloc::boxed::Box;
 
 use crate::paging::KernelMapper;
 
+use super::RxsdtIter;
 use super::{get_sdt, sdt::Sdt};
 
 pub trait Rxsdt {
-    fn iter(&self) -> Box<dyn Iterator<Item = usize>>;
+    fn iter(&self) -> RxsdtIter;
 
     fn map_all(&self) {
         let mut mapper = KernelMapper::lock();

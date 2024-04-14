@@ -11,7 +11,7 @@ use crate::{
     paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch},
 };
 
-use self::{hpet::Hpet, madt::Madt, rsdp::RSDP, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
+use self::{hpet::Hpet, madt::Madt, rsdp::RSDP, rsdt::{Rsdt, RsdtIter}, rxsdt::Rxsdt, sdt::Sdt, xsdt::{Xsdt, XsdtIter}};
 
 pub mod hpet;
 pub mod madt;
@@ -64,8 +64,22 @@ pub enum RxsdtEnum {
     Rsdt(Rsdt),
     Xsdt(Xsdt),
 }
+pub enum RxsdtIter {
+    Rsdt(RsdtIter),
+    Xsdt(XsdtIter),
+}
+impl Iterator for RxsdtIter {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Rsdt(r) => r.next(),
+            Self::Xsdt(x) => x.next(),
+        }
+    }
+}
 impl Rxsdt for RxsdtEnum {
-    fn iter(&self) -> Box<dyn Iterator<Item = usize>> {
+    fn iter(&self) -> RxsdtIter {
         match self {
             Self::Rsdt(rsdt) => <Rsdt as Rxsdt>::iter(rsdt),
             Self::Xsdt(xsdt) => <Xsdt as Rxsdt>::iter(xsdt),
