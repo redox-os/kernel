@@ -22,6 +22,7 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, usize>> = RwLock::new(BTreeMap::new());
 
+#[derive(Clone, Copy)]
 pub struct TimeScheme;
 
 impl KernelScheme for TimeScheme {
@@ -95,7 +96,7 @@ impl KernelScheme for TimeScheme {
         for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
             let time = unsafe { current_chunk.read_exact::<TimeSpec>()? };
 
-            timeout::register(GlobalSchemes::Time.scheme_id(), id, clock, time);
+            timeout::register(GlobalSchemes::Time(Self).scheme_id(), id, clock, time);
 
             bytes_written += mem::size_of::<TimeSpec>();
         }

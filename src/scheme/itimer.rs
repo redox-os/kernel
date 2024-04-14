@@ -13,6 +13,8 @@ use crate::syscall::{
 };
 
 use super::{CallerCtx, KernelScheme, OpenResult};
+
+#[derive(Clone, Copy)]
 pub struct ITimerScheme;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);

@@ -20,6 +20,7 @@ use crate::syscall::{
 
 use super::{CallerCtx, KernelScheme, OpenResult};
 
+#[derive(Clone, Copy)]
 pub struct MemoryScheme;
 
 // TODO: Use crate that autogenerates conversion functions.

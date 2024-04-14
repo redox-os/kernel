@@ -258,6 +258,7 @@ impl Handle {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ProcScheme<const FULL: bool>;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -1536,7 +1537,7 @@ fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
 fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
     if !matches!(
         scheme,
-        KernelSchemes::Global(GlobalSchemes::ProcFull | GlobalSchemes::ProcRestricted)
+        KernelSchemes::Global(GlobalSchemes::ProcFull(_) | GlobalSchemes::ProcRestricted(_))
     ) {
         return Err(Error::new(EBADF));
     }

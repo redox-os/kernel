@@ -99,7 +99,7 @@ impl RootScheme {
 
 }
 
-impl KernelScheme for RootScheme {
+impl KernelScheme for Arc<RootScheme> {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 

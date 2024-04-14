@@ -39,10 +39,11 @@ pub fn serio_input(index: usize, data: u8) {
     INPUT[index].send(data);
 
     for (id, _handle) in HANDLES.read().iter() {
-        event::trigger(GlobalSchemes::Serio.scheme_id(), *id, EVENT_READ);
+        event::trigger(GlobalSchemes::Serio(SerioScheme).scheme_id(), *id, EVENT_READ);
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct SerioScheme;
 
 impl KernelScheme for SerioScheme {

@@ -3,7 +3,7 @@
 //! of the scheme.
 
 use crate::{
-    context::{self, ContextId}, event, percpu::PercpuBlock, scheme::GlobalSchemes, sync::WaitCondition, syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event}
+    context::{self, ContextId}, event, percpu::PercpuBlock, scheme::{proc::ProcScheme, GlobalSchemes}, sync::WaitCondition, syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event}
 };
 
 use alloc::{collections::VecDeque, sync::Arc};
@@ -159,7 +159,7 @@ pub fn is_traced(pid: ContextId) -> bool {
 
 /// Trigger a notification to the event: scheme
 fn proc_trigger_event(file_id: usize, flags: EventFlags) {
-    event::trigger(GlobalSchemes::ProcFull.scheme_id(), file_id, flags);
+    event::trigger(GlobalSchemes::ProcFull(ProcScheme::<true>).scheme_id(), file_id, flags);
 }
 
 /// Dispatch an event to any tracer tracing `self`. This will cause

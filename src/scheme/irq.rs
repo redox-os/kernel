@@ -56,7 +56,7 @@ pub extern "C" fn irq_trigger(irq: u8) {
         .filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?)))
         .filter(|&(_, (_, handle_irq))| handle_irq == irq)
     {
-        event::trigger(GlobalSchemes::Irq.scheme_id(), *fd, EVENT_READ);
+        event::trigger(GlobalSchemes::Irq(IrqScheme).scheme_id(), *fd, EVENT_READ);
     }
 }
 
@@ -78,6 +78,7 @@ impl Handle {
 static NEXT_FD: AtomicUsize = AtomicUsize::new(1);
 static CPUS: Once<Vec<u8>> = Once::new();
 
+#[derive(Clone, Copy)]
 pub struct IrqScheme;
 
 impl IrqScheme {

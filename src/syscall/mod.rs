@@ -26,7 +26,7 @@ use crate::interrupt::InterruptStack;
 use crate::percpu::PercpuBlock;
 
 use crate::scheme::proc::ProcScheme;
-use crate::scheme::{GlobalSchemes, KernelSchemes};
+use crate::scheme::{GlobalSchemes, KernelScheme, KernelSchemes};
 use crate::{
     context::{memory::AddrSpace, ContextId},
     scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
@@ -120,7 +120,7 @@ pub fn syscall(
                             let buf = UserSlice::wo(c, d)?;
                             match scheme {
                                 KernelSchemes::User(user) => user.statvfs(file, buf)?,
-                                KernelSchemes::Global(GlobalSchemes::Memory) => MemoryScheme::statvfs(file, buf)?,
+                                KernelSchemes::Global(GlobalSchemes::Memory(_)) => MemoryScheme::statvfs(file, buf)?,
                                 _ => return Err(Error::new(EOPNOTSUPP)),
                             }
                             Ok(0)
