@@ -173,24 +173,7 @@ impl MapInfo {
 
 impl fmt::Debug for IoApic {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        struct RedirTable<'a>(&'a Mutex<IoApicRegs>);
-
-        impl<'a> fmt::Debug for RedirTable<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                let mut guard = self.0.lock();
-
-                let count = guard.max_redirection_table_entries();
-                f.debug_list()
-                    .entries((0..count).map(|i| guard.read_ioredtbl(i)))
-                    .finish()
-            }
-        }
-
-        f.debug_struct("IoApic")
-            .field("redir_table", &RedirTable(&self.regs))
-            .field("gsi_start", &self.gsi_start)
-            .field("count", &self.count)
-            .finish()
+        write!(f, "[I/O APIC gsi={} count={}]", self.gsi_start, self.count)
     }
 }
 

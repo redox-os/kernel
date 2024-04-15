@@ -39,6 +39,7 @@
 #![deny(unreachable_patterns)]
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
+#![feature(alloc_error_handler)]
 #![feature(allocator_api)]
 #![feature(array_methods)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations

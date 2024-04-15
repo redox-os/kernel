@@ -20,15 +20,15 @@ pub fn resource() -> Result<Vec<u8>> {
             let id: usize = row.0.into();
             let name = &row.1;
 
-            let _ = writeln!(string, "{}: {}", id, name);
+            //let _ = writeln!(string, "{}: {}", id, name);
 
-            if let Some([a, b, c, d, e, f]) = row.2 {
+            /*if let Some([a, b, c, d, e, f]) = row.2 {
                 let _ = writeln!(
                     string,
                     "  {}",
                     syscall::debug::format_call(a, b, c, d, e, f)
                 );
-            }
+            }*/
         }
     }
 

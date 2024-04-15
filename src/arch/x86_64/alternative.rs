@@ -143,11 +143,11 @@ pub unsafe fn early_init(bsp: bool) {
 unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
     let mut mapper = KernelMapper::lock();
     for reloc in relocs.iter().copied() {
-        let name = core::str::from_utf8(core::slice::from_raw_parts(
+        let raw_name = core::slice::from_raw_parts(
             reloc.name_start,
             reloc.name_len,
-        ))
-        .expect("invalid feature name");
+        );
+        let name = core::str::from_utf8(raw_name).unwrap_or_else(|_| unsafe { core::arch::asm!("ud2", options(noreturn)) });
         let altcode = core::slice::from_raw_parts(reloc.altcode_start, reloc.altcode_len);
 
         let dst_pages = PageSpan::between(

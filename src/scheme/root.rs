@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{borrow::ToOwned, boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -122,7 +122,7 @@ impl KernelScheme for Arc<RootScheme> {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
             let inner = {
-                let path_box = path.to_string().into_boxed_str();
+                let path_box = path.to_owned().into_boxed_str();
                 let mut schemes = scheme::schemes_mut();
 
                 let (_scheme_id, inner) =

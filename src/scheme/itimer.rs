@@ -95,11 +95,12 @@ impl KernelScheme for ITimerScheme {
         Ok(specs_written * mem::size_of::<ITimerSpec>())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let clock = {
+        /*let clock = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        buf.copy_common_bytes_from_slice(format!("time:{}", clock).as_bytes())
+        buf.copy_common_bytes_from_slice(format!("time:{}", clock).as_bytes())*/
+        Ok(0)
     }
 }

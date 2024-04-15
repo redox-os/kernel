@@ -26,3 +26,18 @@ macro_rules! dbg {
         ($($crate::dbg!($val)),+,)
     };
 }
+
+pub fn itoa(mut x: u64, buf: &mut [u8; 32], radix: u32) -> &str {
+    let mut i = 32;
+    while x != 0 {
+        i -= 1;
+        let d = (x % radix as u64) as u8;
+        if d < 10 {
+            buf[i] = b'0' + d;
+        } else {
+            buf[i] = b'a' + (d - 10);
+        }
+        x /= radix as u64;
+    }
+    core::str::from_utf8(&buf[i..]).unwrap()
+}

@@ -125,7 +125,7 @@ impl KernelScheme for SerioScheme {
         )
     }
 
-    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    /*fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
@@ -133,5 +133,5 @@ impl KernelScheme for SerioScheme {
         let path = format!("serio:{}", handle.index).into_bytes();
 
         buf.copy_common_bytes_from_slice(&path)
-    }
+    }*/
 }

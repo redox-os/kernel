@@ -4,7 +4,7 @@ use alloc::{string::String, vec::Vec};
 use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = format!(
+    /*let mut string = format!(
         "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
         "PID",
         "PGID",
@@ -124,5 +124,6 @@ pub fn resource() -> Result<Vec<u8>> {
         }
     }
 
-    Ok(string.into_bytes())
+    Ok(string.into_bytes())*/
+        Ok(Vec::new())
 }

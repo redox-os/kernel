@@ -24,19 +24,19 @@ impl<'a> Elf<'a> {
     /// Create a ELF executable from data
     pub fn from(data: &'a [u8]) -> Result<Elf<'a>, String> {
         if data.len() < header::SIZEOF_EHDR {
-            Err(format!(
+            Err(panic!(
                 "Elf: Not enough data: {} < {}",
                 data.len(),
                 header::SIZEOF_EHDR
             ))
         } else if &data[..header::SELFMAG] != header::ELFMAG {
-            Err(format!(
+            Err(panic!(
                 "Elf: Invalid magic: {:?} != {:?}",
                 &data[..header::SELFMAG],
                 header::ELFMAG
             ))
         } else if data.get(header::EI_CLASS) != Some(&header::ELFCLASS) {
-            Err(format!(
+            Err(panic!(
                 "Elf: Invalid architecture: {:?} != {:?}",
                 data.get(header::EI_CLASS),
                 header::ELFCLASS

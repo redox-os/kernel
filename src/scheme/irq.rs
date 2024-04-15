@@ -171,11 +171,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
             use core::fmt::Write;
 
             for cpu_id in CPUS.get().expect("IRQ scheme not initialized") {
-                writeln!(bytes, "cpu-{:02x}", cpu_id).unwrap();
+                bytes.extend("cpu-".chars());
+                bytes.extend(crate::common::itoa(*cpu_id as u64, &mut [0; 32], 16).chars());
+                bytes.push('\n');
+                //writeln!(bytes, "cpu-{:02x}", cpu_id).unwrap();
             }
 
             if bsp_apic_id().is_some() {
-                writeln!(bytes, "bsp").unwrap();
+                bytes.extend("bsp\n".chars());
             }
 
             // TODO: When signals are used for IRQs, there will probably also be a file
@@ -202,7 +205,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
                         if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
                             continue;
                         }
-                        writeln!(data, "{}", irq).unwrap();
+                        data.extend(crate::common::itoa(irq as u64, &mut [0; 32], 10).chars());
+                        data.push('\n');
+                        //writeln!(data, "{}", irq).unwrap();
                     }
 
                     Handle::Avail(cpu_id, data.into_bytes(), AtomicUsize::new(0))
@@ -348,7 +353,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
-        let scheme_path = match handle {
+        /*let scheme_path = match handle {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
             Handle::Bsp => format!("irq:bsp"),
             Handle::Avail(cpu_id, _, _) => format!("irq:cpu-{:2x}", cpu_id),
@@ -356,7 +361,8 @@ impl crate::scheme::KernelScheme for IrqScheme {
         }
         .into_bytes();
 
-        buf.copy_common_bytes_from_slice(&scheme_path)
+        buf.copy_common_bytes_from_slice(&scheme_path)*/
+        Ok(0)
     }
     fn kread(&self, file: usize, buffer: UserSliceWo) -> Result<usize> {
         let handles_guard = HANDLES.read();

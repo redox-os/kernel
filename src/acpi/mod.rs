@@ -183,7 +183,7 @@ pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
 
 pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {
     let signature =
-        String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");
+        String::from_utf8(sdt.signature.to_vec()).unwrap_or_else(|_| panic!("error converting signature {:#0x?} to string", sdt.signature));
     (signature, sdt.oem_id, sdt.oem_table_id)
 }
 

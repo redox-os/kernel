@@ -20,10 +20,10 @@ pub fn resource() -> Result<Vec<u8>> {
             let id: usize = row.0.into();
             let name = &row.1;
 
-            let _ = writeln!(string, "{}: {}", id, name);
+            //let _ = writeln!(string, "{}: {}", id, name);
 
             if !row.2.is_empty() {
-                let _ = writeln!(string, "  {}", row.2);
+                //let _ = writeln!(string, "  {}", row.2);
             }
         }
     }

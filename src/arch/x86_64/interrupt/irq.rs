@@ -40,13 +40,13 @@ pub fn spurious_count() -> usize {
 pub fn spurious_irq_resource() -> syscall::Result<Vec<u8>> {
     match irq_method() {
         IrqMethod::Apic => Ok(Vec::from(&b"(not implemented for APIC yet)"[..])),
-        IrqMethod::Pic => Ok(format!(
+        IrqMethod::Pic => Ok(/*format!(
             "{}\tIRQ7\n{}\tIRQ15\n{}\ttotal\n",
             spurious_count_irq7(),
             spurious_count_irq15(),
             spurious_count()
         )
-        .into_bytes()),
+        .into_bytes()*/Vec::new()),
     }
 }
 
