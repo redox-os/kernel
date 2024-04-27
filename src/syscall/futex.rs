@@ -2,14 +2,14 @@
 //! Futex or Fast Userspace Mutex is "a method for waiting until a certain condition becomes true."
 //!
 //! For more information about futexes, please read [this](https://eli.thegreenplace.net/2018/basics-of-futexes/) blog post, and the [futex(2)](http://man7.org/linux/man-pages/man2/futex.2.html) man page
-use alloc::{collections::VecDeque, sync::Arc};
+use alloc::{collections::VecDeque, sync::{Arc, Weak}};
 use core::sync::atomic::{AtomicU32, Ordering};
 use rmm::Arch;
 use spin::RwLock;
-use spinning_top::RwSpinlock;
+use spinning_top::{guard::RwSpinlockUpgradableReadGuard, RwSpinlock};
 
 use crate::{
-    context::{self, memory::AddrSpace, Context},
+    context::{self, memory::{AddrSpace, AddrSpaceWrapper}, Context},
     memory::PhysicalAddress,
     paging::{Page, VirtualAddress},
     time,
@@ -26,11 +26,22 @@ use super::usercopy::UserSlice;
 type FutexList = VecDeque<FutexEntry>;
 
 pub struct FutexEntry {
+    // Physical address, required if synchronizing across address spaces (necessitates MAP_SHARED
+    // since CoW would invalidate this address).
     target_physaddr: PhysicalAddress,
+    // Virtual address, required if synchronizing across the same address space, if the memory is
+    // CoW.
+    // TODO: FUTEX_REQUEUE
+    target_virtaddr: VirtualAddress,
+    // Context to wake up, and compare address spaces.
     context_lock: Arc<RwSpinlock<Context>>,
+    // address space to check against if virt matches but not phys
+    addr_space: Weak<AddrSpaceWrapper>,
 }
 
-// TODO: Process-private futexes? In that case, put the futex table in each AddrSpace.
+// TODO: Process-private futexes? In that case, put the futex table in each AddrSpace, or just
+// implement that fully in userspace.
+//
 // TODO: Hash table?
 static FUTEXES: RwLock<FutexList> = RwLock::new(FutexList::new());
 
@@ -49,14 +60,15 @@ fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Optio
 }
 
 pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> Result<usize> {
-    let addr_space_lock = Arc::clone(context::current()?.read().addr_space()?);
+    let current_addrsp = AddrSpace::current()?;
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it
     // before context switching.
-    let addr_space_guard = addr_space_lock.acquire_read();
+    let addr_space_guard = current_addrsp.acquire_read();
 
+    let target_virtaddr = VirtualAddress::new(addr);
     let target_physaddr =
-        validate_and_translate_virt(&*addr_space_guard, VirtualAddress::new(addr))
+        validate_and_translate_virt(&*addr_space_guard, target_virtaddr)
             .ok_or(Error::new(EFAULT))?;
 
     match op {
@@ -125,7 +137,9 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
 
                 futexes.push_back(FutexEntry {
                     target_physaddr,
+                    target_virtaddr,
                     context_lock,
+                    addr_space: Arc::downgrade(&current_addrsp),
                 });
             }
 
@@ -148,51 +162,17 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
 
                 let mut i = 0;
 
-                // TODO: Use retain, once it allows the closure to tell it to stop iterating...
+                // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                 while i < futexes.len() && woken < val {
-                    if futexes[i].target_physaddr != target_physaddr {
+                    if futexes[i].target_physaddr != target_physaddr
+                        && (futexes[i].target_virtaddr != target_virtaddr || !Arc::downgrade(&current_addrsp).ptr_eq(&futexes[i].addr_space))
+                    {
                         i += 1;
                         continue;
                     }
-                    if let Some(futex) = futexes.swap_remove_back(i) {
-                        let mut context_guard = futex.context_lock.write();
-                        context_guard.unblock();
-                        woken += 1;
-                    }
-                }
-            }
-
-            Ok(woken)
-        }
-        FUTEX_REQUEUE => {
-            let addr2_physaddr =
-                validate_and_translate_virt(&*addr_space_guard, VirtualAddress::new(addr2))
-                    .ok_or(Error::new(EFAULT))?;
-
-            drop(addr_space_guard);
-
-            let mut woken = 0;
-            let mut requeued = 0;
-
-            {
-                let mut futexes = FUTEXES.write();
-
-                let mut i = 0;
-                while i < futexes.len() && woken < val {
-                    if futexes[i].target_physaddr != target_physaddr {
-                        i += 1;
-                    }
-                    if let Some(futex) = futexes.swap_remove_back(i) {
-                        futex.context_lock.write().unblock();
-                        woken += 1;
-                    }
-                }
-                while i < futexes.len() && requeued < val2 {
-                    if futexes[i].target_physaddr != target_physaddr {
-                        i += 1;
-                    }
-                    futexes[i].target_physaddr = addr2_physaddr;
-                    requeued += 1;
+                    futexes[i].context_lock.write().unblock();
+                    futexes.swap_remove_back(i);
+                    woken += 1;
                 }
             }
 
