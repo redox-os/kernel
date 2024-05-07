@@ -243,7 +243,7 @@ impl IrqChipCore {
     }
 
     pub fn new_ic(ic_str: &str) -> Option<Box<dyn InterruptController>> {
-        if ic_str.contains("arm,cortex-a15-gic") || ic_str.contains("arm,gic-v3") {
+        if ic_str.contains("arm,cortex-a15-gic") {
             Some(Box::new(gic::GenericInterruptController::new()))
         } else if ic_str.contains("brcm,bcm2836-l1-intc") {
             Some(Box::new(irq_bcm2836::Bcm2836ArmInterruptController::new()))
