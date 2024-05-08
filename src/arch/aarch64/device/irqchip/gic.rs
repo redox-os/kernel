@@ -166,6 +166,7 @@ impl InterruptController for GenericInterruptController {
     fn irq_handler(&mut self, _irq: u32) {}
 }
 
+#[derive(Debug)]
 pub struct GicDistIf {
     pub address: usize,
     pub ncpus: u32,
@@ -173,7 +174,7 @@ pub struct GicDistIf {
 }
 
 impl GicDistIf {
-    unsafe fn init(&mut self, addr: usize) {
+    pub unsafe fn init(&mut self, addr: usize) {
         self.address = addr;
 
         // Disable IRQ Distribution
@@ -214,11 +215,11 @@ impl GicDistIf {
             self.write(ext_offset, val);
         }
 
-        // Enable IRQ distribution
-        self.write(GICD_CTLR, 0x1);
+        // Enable IRQ group 0 and group 1 non-secure distribution
+        self.write(GICD_CTLR, 0x3);
     }
 
-    unsafe fn irq_enable(&mut self, irq: u32) {
+    pub unsafe fn irq_enable(&mut self, irq: u32) {
         let offset = GICD_ISENABLER + (4 * (irq / 32));
         let shift = 1 << (irq % 32);
         let mut val = self.read(offset);
@@ -226,7 +227,7 @@ impl GicDistIf {
         self.write(offset, val);
     }
 
-    unsafe fn irq_disable(&mut self, irq: u32) {
+    pub unsafe fn irq_disable(&mut self, irq: u32) {
         let offset = GICD_ICENABLER + (4 * (irq / 32));
         let shift = 1 << (irq % 32);
         let mut val = self.read(offset);
