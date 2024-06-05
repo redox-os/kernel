@@ -1276,8 +1276,6 @@ impl Grant {
 
                         (frame, false)
                     }
-
-                    /*
                     MmapMode::Cow => unsafe {
                         let frame = match guard.table.utable.remap_with(src_page.start_address(), |flags| flags.write(false)) {
                             Some((_, phys, _)) => Frame::containing_address(phys),
@@ -1291,8 +1289,6 @@ impl Grant {
 
                         (frame, true)
                     }
-                    */
-                    MmapMode::Cow => return Err(Error::new(EOPNOTSUPP)),
                 };
                 src_addrspace = &mut *guard;
 
