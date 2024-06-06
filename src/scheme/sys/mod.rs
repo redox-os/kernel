@@ -1,4 +1,4 @@
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::{borrow::ToOwned, collections::BTreeMap, string::String, vec::Vec};
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -30,7 +30,7 @@ mod syscall;
 mod uname;
 
 struct Handle {
-    path: &'static str,
+    path: String,
     data: Vec<u8>,
     mode: u16,
     seek: usize,
@@ -39,33 +39,40 @@ struct Handle {
 type SysFn = fn() -> Result<Vec<u8>>;
 
 /// System information scheme
+#[derive(Clone, Copy)]
 pub struct SysScheme;
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
+fn for_file(file: &str) -> Result<Vec<u8>> {
+    match file {
+        "block" => block::resource(),
+        "context" => context::resource(),
+        "cpu" => cpu::resource(),
+        "exe" => exe::resource(),
+        "iostat" => iostat::resource(),
+        "irq" => irq::resource(),
+        "log" => log::resource(),
+        "scheme" => scheme::resource(),
+        "scheme_num" => scheme_num::resource(),
+        "syscall" => syscall::resource(),
+        "uname" => uname::resource(),
+        "env" => Ok(Vec::from(crate::init_env())),
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        "spurious_irq" => interrupt::irq::spurious_irq_resource(),
+        // Disabled because the debugger is inherently unsafe and probably will break the system.
+        /*
+        ("trigger_debugger", || unsafe {
+            crate::debugger::debugger(None);
+            Ok(Vec::new())
+        }),
+        */
+        _ => return Err(Error::new(ENOENT)),
+    }
+}
+
 const FILES: &[(&'static str, SysFn)] = &[
-    ("block", block::resource),
-    ("context", context::resource),
-    ("cpu", cpu::resource),
-    ("exe", exe::resource),
-    ("iostat", iostat::resource),
-    ("irq", irq::resource),
-    ("log", log::resource),
-    ("scheme", scheme::resource),
-    ("scheme_num", scheme_num::resource),
-    ("syscall", syscall::resource),
-    ("uname", uname::resource),
-    ("env", || Ok(Vec::from(crate::init_env()))),
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    ("spurious_irq", interrupt::irq::spurious_irq_resource),
-    // Disabled because the debugger is inherently unsafe and probably will break the system.
-    /*
-    ("trigger_debugger", || unsafe {
-        crate::debugger::debugger(None);
-        Ok(Vec::new())
-    }),
-    */
 ];
 
 impl KernelScheme for SysScheme {
@@ -74,18 +81,18 @@ impl KernelScheme for SysScheme {
 
         if path.is_empty() {
             let mut data = Vec::new();
-            for entry in FILES.iter() {
+            /*for entry in FILES.iter() {
                 if !data.is_empty() {
                     data.push(b'\n');
                 }
                 data.extend_from_slice(entry.0.as_bytes());
-            }
+            }*/
 
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
             HANDLES.write().insert(
                 id,
                 Handle {
-                    path: "",
+                    path: String::new(),
                     data,
                     mode: MODE_DIR | 0o444,
                     seek: 0,
@@ -94,22 +101,18 @@ impl KernelScheme for SysScheme {
             return Ok(OpenResult::SchemeLocal(id));
         } else {
             //Have to iterate to get the path without allocation
-            for entry in FILES.iter() {
-                if &entry.0 == &path {
-                    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-                    let data = entry.1()?;
-                    HANDLES.write().insert(
-                        id,
-                        Handle {
-                            path: entry.0,
-                            data,
-                            mode: MODE_FILE | 0o444,
-                            seek: 0,
-                        },
-                    );
-                    return Ok(OpenResult::SchemeLocal(id));
-                }
-            }
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let data = for_file(path)?;
+            HANDLES.write().insert(
+                id,
+                Handle {
+                    path: path.to_owned(),
+                    data,
+                    mode: MODE_FILE | 0o444,
+                    seek: 0,
+                },
+            );
+            return Ok(OpenResult::SchemeLocal(id));
         }
 
         Err(Error::new(ENOENT))

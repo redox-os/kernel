@@ -60,6 +60,7 @@ pub fn pipe(flags: usize) -> Result<(usize, usize)> {
     Ok((id, id | WRITE_NOT_READ_BIT))
 }
 
+#[derive(Clone, Copy)]
 pub struct PipeScheme;
 
 impl KernelScheme for PipeScheme {
@@ -107,7 +108,7 @@ impl KernelScheme for PipeScheme {
         let (is_write_not_read, key) = from_raw_id(id);
 
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
-        let scheme_id = GlobalSchemes::Pipe.scheme_id();
+        let scheme_id = GlobalSchemes::Pipe(Self).scheme_id();
 
         let can_remove = if is_write_not_read {
             event::trigger(scheme_id, key, EVENT_READ);
@@ -196,7 +197,7 @@ impl KernelScheme for PipeScheme {
 
             if bytes_read > 0 {
                 event::trigger(
-                    GlobalSchemes::Pipe.scheme_id(),
+                    GlobalSchemes::Pipe(Self).scheme_id(),
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
                 );
@@ -250,7 +251,7 @@ impl KernelScheme for PipeScheme {
             }
 
             if bytes_written > 0 {
-                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
+                event::trigger(GlobalSchemes::Pipe(Self).scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify();
 
                 return Ok(bytes_written);

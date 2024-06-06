@@ -5,7 +5,7 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{
     context,
-    scheme::{self, SchemeId},
+    scheme::{self, KernelScheme, SchemeId},
     sync::WaitQueue,
     syscall::{
         data::Event,

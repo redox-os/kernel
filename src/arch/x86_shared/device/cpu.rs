@@ -3,6 +3,8 @@ use core::fmt::{Result, Write};
 use crate::arch::cpuid::cpuid;
 
 pub fn cpu_info<W: Write>(w: &mut W) -> Result {
+    return Ok(());
+    /*
     let cpuid = cpuid();
 
     if let Some(info) = cpuid.get_vendor_info() {
@@ -278,4 +280,5 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     writeln!(w)?;
 
     Ok(())
+        */
 }

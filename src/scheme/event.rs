@@ -12,6 +12,7 @@ use crate::{
 
 use super::{CallerCtx, KernelScheme, OpenResult};
 
+#[derive(Clone, Copy)]
 pub struct EventScheme;
 
 impl KernelScheme for EventScheme {

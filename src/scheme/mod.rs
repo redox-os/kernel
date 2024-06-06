@@ -115,37 +115,6 @@ impl SchemeList {
             next_id: MAX_GLOBAL_SCHEMES,
         };
 
-        let mut insert_globals = |globals: &[GlobalSchemes]| {
-            for &g in globals {
-                list.map
-                    .insert(SchemeId::from(g as usize), KernelSchemes::Global(g));
-            }
-        };
-
-        // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
-        {
-            use GlobalSchemes::*;
-            insert_globals(&[
-                Debug,
-                Event,
-                Memory,
-                Pipe,
-                Serio,
-                Irq,
-                Time,
-                ITimer,
-                Sys,
-                ProcFull,
-                ProcRestricted,
-            ]);
-
-            #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
-            insert_globals(&[Acpi]);
-
-            #[cfg(target_arch = "aarch64")]
-            insert_globals(&[Dtb]);
-        }
-
         list.new_null();
         list.new_root();
         list
@@ -158,11 +127,11 @@ impl SchemeList {
 
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
-        self.insert_global(ns, "memory", GlobalSchemes::Memory)
+        self.insert_global(ns, "memory", GlobalSchemes::Memory(MemoryScheme))
             .unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
+        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted(ProcScheme::<false>))
             .unwrap();
-        self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
+        self.insert_global(ns, "pipe", GlobalSchemes::Pipe(PipeScheme)).unwrap();
     }
 
     /// Initialize a new namespace
@@ -175,15 +144,15 @@ impl SchemeList {
             KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))
         })
         .unwrap();
-        self.insert_global(ns, "event", GlobalSchemes::Event)
+        self.insert_global(ns, "event", GlobalSchemes::Event(EventScheme))
             .unwrap();
-        self.insert_global(ns, "itimer", GlobalSchemes::ITimer)
+        self.insert_global(ns, "itimer", GlobalSchemes::ITimer(ITimerScheme))
             .unwrap();
-        self.insert_global(ns, "memory", GlobalSchemes::Memory)
+        self.insert_global(ns, "memory", GlobalSchemes::Memory(MemoryScheme))
             .unwrap();
-        self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
-        self.insert_global(ns, "sys", GlobalSchemes::Sys).unwrap();
-        self.insert_global(ns, "time", GlobalSchemes::Time).unwrap();
+        self.insert_global(ns, "pipe", GlobalSchemes::Pipe(PipeScheme)).unwrap();
+        self.insert_global(ns, "sys", GlobalSchemes::Sys(SysScheme)).unwrap();
+        self.insert_global(ns, "time", GlobalSchemes::Time(TimeScheme)).unwrap();
 
         ns
     }
@@ -196,22 +165,22 @@ impl SchemeList {
         // These schemes should only be available on the root
         #[cfg(all(any(target_arch = "aarch64")))]
         {
-            self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb)
+            self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb(DtbScheme))
                 .unwrap();
         }
         #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
         {
-            self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi)
+            self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi(AcpiScheme))
                 .unwrap();
         }
-        self.insert_global(ns, "debug", GlobalSchemes::Debug)
+        self.insert_global(ns, "debug", GlobalSchemes::Debug(DebugScheme))
             .unwrap();
-        self.insert_global(ns, "irq", GlobalSchemes::Irq).unwrap();
-        self.insert_global(ns, "proc", GlobalSchemes::ProcFull)
+        self.insert_global(ns, "irq", GlobalSchemes::Irq(IrqScheme)).unwrap();
+        self.insert_global(ns, "proc", GlobalSchemes::ProcFull(ProcScheme::<true>))
             .unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
+        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted(ProcScheme::<false>))
             .unwrap();
-        self.insert_global(ns, "serio", GlobalSchemes::Serio)
+        self.insert_global(ns, "serio", GlobalSchemes::Serio(SerioScheme))
             .unwrap();
     }
 
@@ -252,6 +221,9 @@ impl SchemeList {
 
     /// Get the nth scheme.
     pub fn get(&self, id: SchemeId) -> Option<&KernelSchemes> {
+        if let Some(global) = GlobalSchemes::ALL.get(id.get()) && id.get() != 0 {
+            return Some(global);
+        }
         self.map.get(&id)
     }
 
@@ -373,22 +345,10 @@ pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
 }
 
 #[allow(unused_variables)]
-pub trait KernelScheme: Send + Sync + 'static {
+#[enum_dispatch::enum_dispatch]
+pub trait KernelScheme where Self: Send + Sync + 'static {
     fn kopen(&self, path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         Err(Error::new(ENOENT))
-    }
-
-    fn kfmap(
-        &self,
-        number: usize,
-        addr_space: &Arc<AddrSpaceWrapper>,
-        map: &crate::syscall::data::Map,
-        consume: bool,
-    ) -> Result<usize> {
-        Err(Error::new(EOPNOTSUPP))
-    }
-    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
-        Err(Error::new(EOPNOTSUPP))
     }
 
     fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
@@ -403,58 +363,34 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kfutimens(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
-        Err(Error::new(EBADF))
-    }
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         Err(Error::new(EBADF))
-    }
-    fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
-
-    fn ksendfd(
-        &self,
-        id: usize,
-        desc: Arc<RwLock<FileDescription>>,
-        flags: SendFdFlags,
-        arg: u64,
-    ) -> Result<usize> {
-        Err(Error::new(EOPNOTSUPP))
     }
 
     fn fsync(&self, id: usize) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn ftruncate(&self, id: usize, len: usize) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
     fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
         Err(Error::new(ESPIPE))
     }
-    fn fchmod(&self, id: usize, new_mode: u16) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
-    fn fchown(&self, id: usize, new_uid: u32, new_gid: u32) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
-        Err(Error::new(EBADF))
-    }
-    fn frename(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
         Err(Error::new(EBADF))
     }
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn rmdir(&self, path: &str, ctx: CallerCtx) -> Result<()> {
-        Err(Error::new(ENOENT))
-    }
-    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
-        Err(Error::new(ENOENT))
-    }
     fn close(&self, id: usize) -> Result<()> {
         Err(Error::new(EBADF))
+    }
+}
+impl KernelSchemes {
+    pub fn mmap(&self, id: usize, addrspace: &Arc<AddrSpaceWrapper>, map: &crate::syscall::data::Map, consume: bool) -> Result<usize> {
+        match self {
+            KernelSchemes::User(user) => user.mmap(id, &addrspace, &map, consume),
+            KernelSchemes::Global(GlobalSchemes::Memory(_)) => MemoryScheme::mmap(id, &addrspace, &map, consume),
+            KernelSchemes::Global(GlobalSchemes::ProcFull(_) | GlobalSchemes::ProcRestricted(_)) => ProcScheme::<false>::mmap(id, &addrspace, &map, consume),
+            _ => Err(Error::new(EOPNOTSUPP)),
+        }
     }
 }
 
@@ -487,31 +423,33 @@ pub fn calc_seek_offset(
 }
 
 #[derive(Clone)]
+#[enum_dispatch::enum_dispatch(KernelScheme)]
 pub enum KernelSchemes {
     Root(Arc<RootScheme>),
     User(UserScheme),
     Global(GlobalSchemes),
 }
 #[repr(u8)]
+#[enum_dispatch::enum_dispatch(KernelScheme)]
 #[derive(Clone, Copy)]
 pub enum GlobalSchemes {
-    Debug = 1,
-    Event,
-    Memory,
-    Pipe,
-    Serio,
-    Irq,
-    Time,
-    ITimer,
-    Sys,
-    ProcFull,
-    ProcRestricted,
+    Debug(DebugScheme),
+    Event(EventScheme),
+    Memory(MemoryScheme),
+    Pipe(PipeScheme),
+    Serio(SerioScheme),
+    Irq(IrqScheme),
+    Time(TimeScheme),
+    ITimer(ITimerScheme),
+    Sys(SysScheme),
+    ProcFull(ProcScheme<true>),
+    ProcRestricted(ProcScheme<false>),
 
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
-    Acpi,
+    Acpi(AcpiScheme),
 
     #[cfg(target_arch = "aarch64")]
-    Dtb,
+    Dtb(DtbScheme),
 }
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
 
@@ -519,45 +457,50 @@ const _: () = {
     assert!(1 + core::mem::variant_count::<GlobalSchemes>() < MAX_GLOBAL_SCHEMES);
 };
 
-impl core::ops::Deref for KernelSchemes {
-    type Target = dyn KernelScheme;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Root(scheme) => &**scheme,
-            Self::User(scheme) => scheme,
-
-            Self::Global(global) => &**global,
-        }
-    }
-}
-impl core::ops::Deref for GlobalSchemes {
-    type Target = dyn KernelScheme;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Debug => &DebugScheme,
-            Self::Event => &EventScheme,
-            Self::Memory => &MemoryScheme,
-            Self::Pipe => &PipeScheme,
-            Self::Serio => &SerioScheme,
-            Self::Irq => &IrqScheme,
-            Self::Time => &TimeScheme,
-            Self::ITimer => &ITimerScheme,
-            Self::Sys => &SysScheme,
-            Self::ProcFull => &ProcScheme::<true>,
-            Self::ProcRestricted => &ProcScheme::<false>,
-            #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
-            Self::Acpi => &AcpiScheme,
-            #[cfg(target_arch = "aarch64")]
-            Self::Dtb => &DtbScheme,
-        }
-    }
-}
 impl GlobalSchemes {
     pub fn scheme_id(self) -> SchemeId {
-        SchemeId::new(self as usize)
+        SchemeId::new(match self {
+            Self::Debug(_) => 1,
+            Self::Event(_) => 2,
+            Self::Memory(_) => 3,
+            Self::Pipe(_) => 4,
+            Self::Serio(_) => 5,
+            Self::Irq(_) => 6,
+            Self::Time(_) => 7,
+            Self::ITimer(_) => 8,
+            Self::Sys(_) => 9,
+            Self::ProcFull(_) => 10,
+            Self::ProcRestricted(_) => 11,
+
+            #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+            Self::Acpi(_) => 12,
+
+            #[cfg(target_arch = "aarch64")]
+            Self::Dtb(_) => 12,
+        })
     }
+    const ALL: [KernelSchemes; {core::mem::variant_count::<GlobalSchemes>() + 1}] = [
+        // ignored, just ensures it starts from 1
+        KernelSchemes::Global(Self::Debug(DebugScheme)),
+
+        KernelSchemes::Global(Self::Debug(DebugScheme)),
+        KernelSchemes::Global(Self::Event(EventScheme)),
+        KernelSchemes::Global(Self::Memory(MemoryScheme)),
+        KernelSchemes::Global(Self::Pipe(PipeScheme)),
+        KernelSchemes::Global(Self::Serio(SerioScheme)),
+        KernelSchemes::Global(Self::Irq(IrqScheme)),
+        KernelSchemes::Global(Self::Time(TimeScheme)),
+        KernelSchemes::Global(Self::ITimer(ITimerScheme)),
+        KernelSchemes::Global(Self::Sys(SysScheme)),
+        KernelSchemes::Global(Self::ProcFull(ProcScheme::<true>)),
+        KernelSchemes::Global(Self::ProcRestricted(ProcScheme::<false>)),
+
+        #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+        KernelSchemes::Global(Self::Acpi(AcpiScheme)),
+
+        #[cfg(target_arch = "aarch64")]
+        KernelSchemes::Global(Self::Dtb(DtbScheme)),
+    ];
 }
 
 #[cold]

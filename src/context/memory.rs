@@ -59,7 +59,11 @@ impl UnmapResult {
             .get(scheme_id)
             .cloned()
             .ok_or(Error::new(ENODEV))
-            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
+            .and_then(|scheme| if let KernelSchemes::User(u) = scheme {
+                u.munmap(number, base_offset, self.size, self.flags)
+            } else {
+                Ok(())
+            });
 
         if let Ok(fd) = Arc::try_unwrap(description) {
             fd.into_inner().try_close()?;
@@ -736,6 +740,7 @@ impl Default for UserGrants {
         Self::new()
     }
 }
+/*
 impl Debug for PageSpan {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
@@ -750,6 +755,7 @@ impl Debug for PageSpan {
         )
     }
 }
+*/
 
 impl UserGrants {
     pub fn new() -> Self {
@@ -1391,10 +1397,10 @@ impl Grant {
             let prev_span = prev_span.replace(grant_span);
 
             if prev_span.is_none() && src_grant_base > src_base {
-                log::warn!("Grant too far away, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}", prev_span, src_base, src_grant_base, src_grant);
+                //log::warn!("Grant too far away, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}", prev_span, src_base, src_grant_base, src_grant);
                 return Err(Error::new(EINVAL));
             } else if let Some(prev) = prev_span && prev.end() != src_grant_base {
-                log::warn!("Hole between grants, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}", prev_span, src_base, src_grant_base, src_grant);
+                //log::warn!("Hole between grants, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}", prev_span, src_base, src_grant_base, src_grant);
                 return Err(Error::new(EINVAL));
             }
 

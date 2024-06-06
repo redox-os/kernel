@@ -9,7 +9,7 @@ pub fn resource() -> Result<Vec<u8>> {
     {
         let counts = crate::scheme::irq::COUNTS.lock();
         for (i, count) in counts.iter().enumerate() {
-            let _ = writeln!(string, "{}: {}", i, count);
+            //let _ = writeln!(string, "{}: {}", i, count);
         }
     }
 

@@ -27,6 +27,7 @@ use crate::syscall::{
 use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
+#[derive(Clone, Copy)]
 pub struct AcpiScheme;
 
 struct Handle {
@@ -62,7 +63,7 @@ pub fn register_kstop() -> bool {
         .iter()
         .filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe)
     {
-        event::trigger(GlobalSchemes::Acpi.scheme_id(), fd, EVENT_READ);
+        event::trigger(GlobalSchemes::Acpi(AcpiScheme).scheme_id(), fd, EVENT_READ);
         waiters_awoken += 1;
     }
 

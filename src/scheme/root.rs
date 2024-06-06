@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{borrow::ToOwned, boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -70,9 +70,36 @@ impl RootScheme {
             handles: RwLock::new(HashMap::new()),
         }
     }
+    pub fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
+        let path = path.trim_matches('/');
+
+        if ctx.uid != 0 {
+            return Err(Error::new(EACCES));
+        }
+        let inner = {
+            let handles = self.handles.read();
+            handles
+                .iter()
+                .find_map(|(_id, handle)| {
+                    match handle {
+                        Handle::Scheme(inner) => {
+                            if path == inner.name.as_ref() {
+                                return Some(inner.clone());
+                            }
+                        }
+                        _ => (),
+                    }
+                    None
+                })
+                .ok_or(Error::new(ENOENT))?
+        };
+
+        inner.unmount()
+    }
+
 }
 
-impl KernelScheme for RootScheme {
+impl KernelScheme for Arc<RootScheme> {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 
@@ -95,7 +122,7 @@ impl KernelScheme for RootScheme {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
             let inner = {
-                let path_box = path.to_string().into_boxed_str();
+                let path_box = path.to_owned().into_boxed_str();
                 let mut schemes = scheme::schemes_mut();
 
                 let (_scheme_id, inner) =
@@ -152,33 +179,6 @@ impl KernelScheme for RootScheme {
             self.handles.write().insert(id, Handle::File(inner));
             Ok(OpenResult::SchemeLocal(id))
         }
-    }
-
-    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
-        let path = path.trim_matches('/');
-
-        if ctx.uid != 0 {
-            return Err(Error::new(EACCES));
-        }
-        let inner = {
-            let handles = self.handles.read();
-            handles
-                .iter()
-                .find_map(|(_id, handle)| {
-                    match handle {
-                        Handle::Scheme(inner) => {
-                            if path == inner.name.as_ref() {
-                                return Some(inner.clone());
-                            }
-                        }
-                        _ => (),
-                    }
-                    None
-                })
-                .ok_or(Error::new(ENOENT))?
-        };
-
-        inner.unmount()
     }
 
     fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<usize> {

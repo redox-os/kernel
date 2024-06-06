@@ -8,6 +8,7 @@ pub fn feature_info() -> FeatureInfo {
         .expect("x86_64 requires CPUID leaf=0x01 to be present")
 }
 
+#[inline(always)]
 pub fn has_ext_feat(feat: impl FnOnce(ExtendedFeatures) -> bool) -> bool {
     cpuid().get_extended_feature_info().map_or(false, feat)
 }

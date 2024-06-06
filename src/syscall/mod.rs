@@ -4,6 +4,8 @@
 
 extern crate syscall;
 
+use syscall::EOPNOTSUPP;
+
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
@@ -23,6 +25,8 @@ use self::{
 use crate::interrupt::InterruptStack;
 use crate::percpu::PercpuBlock;
 
+use crate::scheme::proc::ProcScheme;
+use crate::scheme::{GlobalSchemes, KernelScheme, KernelSchemes};
 use crate::{
     context::{memory::AddrSpace, ContextId},
     scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
@@ -90,14 +94,16 @@ pub fn syscall(
                             if b == !0 {
                                 MemoryScheme::fmap_anonymous(&addrspace, &map, false)
                             } else {
-                                file_op_generic(fd, |scheme, number| {
-                                    scheme.kfmap(number, &addrspace, &map, false)
-                                })
+                                file_op_generic(fd, |scheme, number| scheme.mmap(number, &addrspace, &map, false))
                             }
                         }
                         // SYS_FMAP_OLD is ignored
                         SYS_FUTIMENS => file_op_generic(fd, |scheme, number| {
-                            scheme.kfutimens(number, UserSlice::ro(c, d)?)
+                            if let KernelSchemes::User(user) = scheme {
+                                user.futimens(number, UserSlice::ro(c, d)?)
+                            } else {
+                                Err(Error::new(EOPNOTSUPP))
+                            }
                         }),
 
                         _ => return Err(Error::new(ENOSYS)),
@@ -110,8 +116,14 @@ pub fn syscall(
                             scheme.kfpath(number, UserSlice::wo(c, d)?)
                         }),
                         SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?).map(|()| 0),
-                        SYS_FSTATVFS => file_op_generic(fd, |scheme, number| {
-                            scheme.kfstatvfs(number, UserSlice::wo(c, d)?).map(|()| 0)
+                        SYS_FSTATVFS => file_op_generic(fd, |scheme, file| {
+                            let buf = UserSlice::wo(c, d)?;
+                            match scheme {
+                                KernelSchemes::User(user) => user.statvfs(file, buf)?,
+                                KernelSchemes::Global(GlobalSchemes::Memory(_)) => MemoryScheme::statvfs(file, buf)?,
+                                _ => return Err(Error::new(EOPNOTSUPP)),
+                            }
+                            Ok(0)
                         }),
 
                         _ => return Err(Error::new(ENOSYS)),
@@ -133,10 +145,20 @@ pub fn syscall(
                             file_op_generic(fd, |scheme, number| scheme.seek(number, c as isize, d))
                         }
                         SYS_FCHMOD => file_op_generic(fd, |scheme, number| {
-                            scheme.fchmod(number, c as u16).map(|()| 0)
+                            if let KernelSchemes::User(user) = scheme {
+                                user.fchmod(number, c as u16)?;
+                            } else {
+                                return Err(Error::new(EOPNOTSUPP));
+                            }
+                            Ok(0)
                         }),
                         SYS_FCHOWN => file_op_generic(fd, |scheme, number| {
-                            scheme.fchown(number, c as u32, d as u32).map(|()| 0)
+                            if let KernelSchemes::User(user) = scheme {
+                                user.fchown(number, c as u32, d as u32)?;
+                            } else {
+                                return Err(Error::new(EOPNOTSUPP));
+                            }
+                            Ok(0)
                         }),
                         SYS_FCNTL => fcntl(fd, c, d),
                         SYS_FEVENT => file_op_generic(fd, |scheme, number| {
@@ -152,7 +174,12 @@ pub fn syscall(
                         }
                         // TODO: 64-bit lengths on 32-bit platforms
                         SYS_FTRUNCATE => file_op_generic(fd, |scheme, number| {
-                            scheme.ftruncate(number, c).map(|()| 0)
+                            if let KernelSchemes::User(user) = scheme {
+                                user.ftruncate(number, c)?;
+                            } else {
+                                return Err(Error::new(EOPNOTSUPP));
+                            }
+                            Ok(0)
                         }),
 
                         SYS_CLOSE => close(fd).map(|()| 0),

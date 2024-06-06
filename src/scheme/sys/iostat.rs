@@ -3,7 +3,8 @@ use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
 pub fn resource() -> Result<Vec<u8>> {
-    let mut string = String::new();
+    return Ok(Vec::new());
+    /*let mut string = String::new();
 
     {
         let mut rows = Vec::new();
@@ -62,5 +63,5 @@ pub fn resource() -> Result<Vec<u8>> {
         }
     }
 
-    Ok(string.into_bytes())
+    Ok(string.into_bytes())*/
 }

@@ -20,11 +20,7 @@ use crate::{
 };
 
 use alloc::{
-    boxed::Box,
-    collections::{btree_map::Entry, BTreeMap},
-    string::{String, ToString},
-    sync::{Arc, Weak},
-    vec::Vec,
+    borrow::ToOwned, boxed::Box, collections::{btree_map::Entry, BTreeMap}, string::{String, ToString}, sync::{Arc, Weak}, vec::Vec
 };
 use core::{
     mem,
@@ -258,6 +254,7 @@ impl Handle {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ProcScheme<const FULL: bool>;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -396,7 +393,9 @@ impl<const FULL: bool> ProcScheme<FULL> {
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
                     {
-                        writeln!(data, "{}", index).unwrap();
+                        //writeln!(data, "{}", index).unwrap();
+                        data.extend(crate::common::itoa(index as u64, &mut [0; 32], 10).chars());
+                        data.push('\n');
                     }
                     data.into_bytes().into_boxed_slice()
                 }));
@@ -685,83 +684,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         }
         Ok(())
     }
-    fn kfmap(
-        &self,
-        id: usize,
-        dst_addr_space: &Arc<AddrSpaceWrapper>,
-        map: &crate::syscall::data::Map,
-        consume: bool,
-    ) -> Result<usize> {
-        let info = HANDLES
-            .read()
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-            .info
-            .clone();
-
-        match info.operation {
-            Operation::AddrSpace { ref addrspace } => {
-                if Arc::ptr_eq(addrspace, dst_addr_space) {
-                    return Err(Error::new(EBUSY));
-                }
-
-                let (requested_dst_page, _) =
-                    crate::syscall::validate_region(map.address, map.size)?;
-                let src_span =
-                    PageSpan::validate_nonempty(VirtualAddress::new(map.offset), map.size)
-                        .ok_or(Error::new(EINVAL))?;
-
-                let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
-
-                let mut src_addr_space = addrspace.acquire_write();
-
-                let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
-
-                let mut notify_files = Vec::new();
-
-                // TODO: Validate flags
-                let result_base = if consume {
-                    dst_addr_space.r#move(
-                        Some((&addrspace, &mut *src_addr_space)),
-                        src_span,
-                        requested_dst_base,
-                        src_page_count.get(),
-                        map.flags,
-                        &mut notify_files,
-                    )?
-                } else {
-                    let mut dst_addrsp_guard = dst_addr_space.acquire_write();
-                    dst_addrsp_guard.mmap(
-                        &dst_addr_space,
-                        requested_dst_base,
-                        src_page_count,
-                        map.flags,
-                        &mut notify_files,
-                        |dst_page, _, dst_mapper, flusher| {
-                            Ok(Grant::borrow(
-                                Arc::clone(addrspace),
-                                &mut *src_addr_space,
-                                src_span.base,
-                                dst_page,
-                                src_span.count,
-                                map.flags,
-                                dst_mapper,
-                                flusher,
-                                true,
-                                true,
-                                false,
-                            )?)
-                        },
-                    )?
-                };
-
-                handle_notify_files(notify_files);
-
-                Ok(result_base.start_address().data())
-            }
-            _ => Err(Error::new(EBADF)),
-        }
-    }
     fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
@@ -980,8 +902,8 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     &*Arc::clone(context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?)
                         .read(),
                 ) {
-                    (Attr::Uid, context) => context.euid.to_string(),
-                    (Attr::Gid, context) => context.egid.to_string(),
+                    (Attr::Uid, context) => crate::common::itoa(context.euid as u64, &mut [0; 32], 10).to_owned(),
+                    (Attr::Gid, context) => crate::common::itoa(context.egid as u64, &mut [0; 32], 10).to_owned(),
                 }
                 .into_bytes();
 
@@ -1049,7 +971,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                         let (scheme, number) = extract_scheme_number(fd)?;
 
-                        scheme.kfmap(
+                        scheme.mmap(
                             number,
                             &addrspace,
                             &Map {
@@ -1373,7 +1295,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let path = format!("proc:{}/{}", handle.info.pid.get(), match handle.info.operation {
+        /*let path = format!("proc:{}/{}", handle.info.pid.get(), match handle.info.operation {
             Operation::Regs(RegsKind::Float) => "regs/float",
             Operation::Regs(RegsKind::Int) => "regs/int",
             Operation::Regs(RegsKind::Env) => "regs/env",
@@ -1397,7 +1319,8 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             }
         );
 
-        buf.copy_common_bytes_from_slice(path.as_bytes())
+        buf.copy_common_bytes_from_slice(path.as_bytes())*/
+        Ok(0)
     }
     fn kfstat(&self, id: usize, buffer: UserSliceWo) -> Result<()> {
         let handles = HANDLES.read();
@@ -1613,9 +1536,87 @@ fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
 fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
     if !matches!(
         scheme,
-        KernelSchemes::Global(GlobalSchemes::ProcFull | GlobalSchemes::ProcRestricted)
+        KernelSchemes::Global(GlobalSchemes::ProcFull(_) | GlobalSchemes::ProcRestricted(_))
     ) {
         return Err(Error::new(EBADF));
     }
     Ok(())
+}
+impl<const FULL: bool> ProcScheme<FULL> {
+    pub fn mmap(
+        id: usize,
+        dst_addr_space: &Arc<AddrSpaceWrapper>,
+        map: &crate::syscall::data::Map,
+        consume: bool,
+    ) -> Result<usize> {
+        let info = HANDLES
+            .read()
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+            .info
+            .clone();
+
+        match info.operation {
+            Operation::AddrSpace { ref addrspace } => {
+                if Arc::ptr_eq(addrspace, dst_addr_space) {
+                    return Err(Error::new(EBUSY));
+                }
+
+                let (requested_dst_page, _) =
+                    crate::syscall::validate_region(map.address, map.size)?;
+                let src_span =
+                    PageSpan::validate_nonempty(VirtualAddress::new(map.offset), map.size)
+                        .ok_or(Error::new(EINVAL))?;
+
+                let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
+
+                let mut src_addr_space = addrspace.acquire_write();
+
+                let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
+
+                let mut notify_files = Vec::new();
+
+                // TODO: Validate flags
+                let result_base = if consume {
+                    dst_addr_space.r#move(
+                        Some((&addrspace, &mut *src_addr_space)),
+                        src_span,
+                        requested_dst_base,
+                        src_page_count.get(),
+                        map.flags,
+                        &mut notify_files,
+                    )?
+                } else {
+                    let mut dst_addrsp_guard = dst_addr_space.acquire_write();
+                    dst_addrsp_guard.mmap(
+                        &dst_addr_space,
+                        requested_dst_base,
+                        src_page_count,
+                        map.flags,
+                        &mut notify_files,
+                        |dst_page, _, dst_mapper, flusher| {
+                            Ok(Grant::borrow(
+                                Arc::clone(addrspace),
+                                &mut *src_addr_space,
+                                src_span.base,
+                                dst_page,
+                                src_span.count,
+                                map.flags,
+                                dst_mapper,
+                                flusher,
+                                true,
+                                true,
+                                false,
+                            )?)
+                        },
+                    )?
+                };
+
+                handle_notify_files(notify_files);
+
+                Ok(result_base.start_address().data())
+            }
+            _ => Err(Error::new(EBADF)),
+        }
+    }
 }

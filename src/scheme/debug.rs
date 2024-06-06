@@ -34,10 +34,11 @@ pub fn debug_input(data: u8) {
 // Notify readers of input updates
 pub fn debug_notify() {
     for (id, _handle) in HANDLES.read().iter() {
-        event::trigger(GlobalSchemes::Debug.scheme_id(), *id, EVENT_READ);
+        event::trigger(GlobalSchemes::Debug(DebugScheme).scheme_id(), *id, EVENT_READ);
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct DebugScheme;
 
 impl KernelScheme for DebugScheme {

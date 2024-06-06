@@ -35,3 +35,12 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
         }
     }
 }
+
+#[alloc_error_handler]
+fn alloc_error_handler(layout: core::alloc::Layout) -> ! {
+    loop {
+        unsafe {
+            interrupt::halt();
+        }
+    }
+}

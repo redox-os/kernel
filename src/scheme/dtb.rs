@@ -15,6 +15,7 @@ use crate::{
     },
 };
 
+#[derive(Clone, Copy)]
 pub struct DtbScheme;
 
 #[derive(Eq, PartialEq)]
