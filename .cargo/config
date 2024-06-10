@@ -1,8 +1,0 @@
-[build]
-rustflags = [
-  # Kernel should preserve floating-point registers
-  "-Csoft-float",
-]
-
-[unstable]
-build-std = ["core", "alloc", "compiler_builtins"]
