@@ -71,9 +71,9 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         ),
         SYS_SENDFD => format!("sendfd({}, {}, {:#0x} {:#0x} {:#0x})", b, c, d, e, f,),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
-        SYS_READ2 => format!("read2({}, {:#X}, {}, {}, {:?})", b, c, d, e, RwFlags::from_bits_retain(f as u32)),
+        SYS_READ2 => format!("read2({}, {:#X}, {}, {}, {:?})", b, c, d, e, (f != usize::MAX).then_some(RwFlags::from_bits_retain(f as u32))),
         SYS_WRITE => format!("write({}, {:#X}, {})", b, c, d),
-        SYS_WRITE2 => format!("write2({}, {:#X}, {}, {}, {:?})", b, c, d, e, RwFlags::from_bits_retain(f as u32)),
+        SYS_WRITE2 => format!("write2({}, {:#X}, {}, {}, {:?})", b, c, d, e, (f != usize::MAX).then_some(RwFlags::from_bits_retain(f as u32))),
         SYS_LSEEK => format!(
             "lseek({}, {}, {} ({}))",
             b,

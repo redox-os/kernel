@@ -84,8 +84,12 @@ pub fn syscall(
                 match a & SYS_ARG {
                     SYS_ARG_SLICE => match a {
                         SYS_WRITE2 => file_op_generic_ext(fd, |scheme, _, desc| {
-                            let flags = u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?;
-                            scheme.kwriteoff(desc.number, UserSlice::ro(c, d)?, e as u64, desc.rw_flags(flags), desc.flags)
+                            let flags = if f == usize::MAX {
+                                None
+                            } else {
+                                Some(u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?)
+                            };
+                            scheme.kwriteoff(desc.number, UserSlice::ro(c, d)?, e as u64, flags.map_or(desc.flags, |f| desc.rw_flags(f)), desc.flags)
                         }),
                         SYS_WRITE => sys_write(fd, UserSlice::ro(c, d)?),
                         SYS_FMAP => {
@@ -108,8 +112,12 @@ pub fn syscall(
                     },
                     SYS_ARG_MSLICE => match a {
                         SYS_READ2 => file_op_generic_ext(fd, |scheme, _, desc| {
-                            let flags = u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?;
-                            scheme.kreadoff(desc.number, UserSlice::wo(c, d)?, e as u64, desc.rw_flags(flags), desc.flags)
+                            let flags = if f == usize::MAX {
+                                None
+                            } else {
+                                Some(u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?)
+                            };
+                            scheme.kreadoff(desc.number, UserSlice::wo(c, d)?, e as u64, flags.map_or(desc.flags, |f| desc.rw_flags(f)), desc.flags)
                         }),
                         SYS_READ => sys_read(fd, UserSlice::wo(c, d)?),
                         SYS_FPATH => file_op_generic(fd, |scheme, number| {
