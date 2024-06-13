@@ -71,7 +71,9 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         ),
         SYS_SENDFD => format!("sendfd({}, {}, {:#0x} {:#0x} {:#0x})", b, c, d, e, f,),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
+        SYS_READ2 => format!("read2({}, {:#X}, {}, {}, {:?})", b, c, d, e, RwFlags::from_bits_retain(f as u32)),
         SYS_WRITE => format!("write({}, {:#X}, {})", b, c, d),
+        SYS_WRITE2 => format!("write2({}, {:#X}, {}, {}, {:?})", b, c, d, e, RwFlags::from_bits_retain(f as u32)),
         SYS_LSEEK => format!(
             "lseek({}, {}, {} ({}))",
             b,
@@ -215,7 +217,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            if context.name.contains("bootstrap") {
+            if context.name.contains("redoxfs") {
                 if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
