@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use syscall::O_FSYNC;
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -7,7 +8,7 @@ use hashbrown::HashMap;
 use spin::{Mutex, RwLock};
 
 use crate::{
-    context,
+    context::{self, file::InternalFlags},
     scheme::{
         self,
         user::{UserInner, UserScheme},
@@ -21,29 +22,16 @@ use crate::{
     },
 };
 
-use super::{calc_seek_offset, CallerCtx, KernelScheme, KernelSchemes, OpenResult};
+use super::{CallerCtx, KernelScheme, KernelSchemes, OpenResult};
 
 struct FolderInner {
     data: Box<[u8]>,
-    pos: Mutex<usize>,
 }
 
 impl FolderInner {
-    fn read(&self, buf: UserSliceWo) -> Result<usize> {
-        let mut pos_guard = self.pos.lock();
-
-        let avail_buf = self.data.get(*pos_guard..).unwrap_or(&[]);
-        let bytes_read = buf.copy_common_bytes_from_slice(avail_buf)?;
-        *pos_guard += bytes_read;
-
-        Ok(bytes_read)
-    }
-
-    fn seek(&self, pos: isize, whence: usize) -> Result<usize> {
-        let mut seek = self.pos.lock();
-        let new_offset = calc_seek_offset(*seek, pos, whence, self.data.len())?;
-        *seek = new_offset as usize;
-        Ok(new_offset)
+    fn read(&self, buf: UserSliceWo, offset: u64) -> Result<usize> {
+        let avail_buf = usize::try_from(offset).ok().and_then(|o| self.data.get(o..)).unwrap_or(&[]);
+        buf.copy_common_bytes_from_slice(avail_buf)
     }
 }
 
@@ -103,6 +91,11 @@ impl KernelScheme for RootScheme {
                         let inner = Arc::new(UserInner::new(
                             self.scheme_id,
                             scheme_id,
+
+                            // TODO: This is a hack, but eventually the legacy interface will be
+                            // removed.
+                            flags & O_FSYNC == O_FSYNC,
+
                             id,
                             path_box,
                             flags,
@@ -119,7 +112,7 @@ impl KernelScheme for RootScheme {
 
             self.handles.write().insert(id, Handle::Scheme(inner));
 
-            Ok(OpenResult::SchemeLocal(id))
+            Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
         } else if path.is_empty() {
             let scheme_ns = {
                 let contexts = context::contexts();
@@ -139,18 +132,17 @@ impl KernelScheme for RootScheme {
 
             let inner = Arc::new(FolderInner {
                 data: data.into_boxed_slice(),
-                pos: Mutex::new(0),
             });
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::Folder(inner));
-            Ok(OpenResult::SchemeLocal(id))
+            Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         } else {
             let inner = Arc::new(path.as_bytes().to_vec().into_boxed_slice());
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::File(inner));
-            Ok(OpenResult::SchemeLocal(id))
+            Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         }
     }
 
@@ -181,7 +173,7 @@ impl KernelScheme for RootScheme {
         inner.unmount()
     }
 
-    fn seek(&self, file: usize, pos: isize, whence: usize) -> Result<usize> {
+    fn fsize(&self, file: usize) -> Result<u64> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
@@ -191,7 +183,7 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(_) => Err(Error::new(EBADF)),
             Handle::File(_) => Err(Error::new(EBADF)),
-            Handle::Folder(inner) => inner.seek(pos, whence),
+            Handle::Folder(inner) => Ok(inner.data.len() as u64),
         }
     }
 
@@ -260,7 +252,7 @@ impl KernelScheme for RootScheme {
         }
         Ok(())
     }
-    fn kread(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kreadoff(&self, file: usize, buf: UserSliceWo, offset: u64, flags: u32, _stored_flags: u32) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
@@ -268,13 +260,13 @@ impl KernelScheme for RootScheme {
         };
 
         match handle {
-            Handle::Scheme(inner) => inner.read(buf),
+            Handle::Scheme(inner) => inner.read(buf, flags),
             Handle::File(_) => Err(Error::new(EBADF)),
-            Handle::Folder(inner) => inner.read(buf),
+            Handle::Folder(inner) => inner.read(buf, offset),
         }
     }
 
-    fn kwrite(&self, file: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kwrite(&self, file: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;

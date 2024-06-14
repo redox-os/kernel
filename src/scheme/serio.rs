@@ -25,7 +25,6 @@ static INPUT: [WaitQueue<u8>; 2] = [WaitQueue::new(), WaitQueue::new()];
 #[derive(Clone, Copy)]
 struct Handle {
     index: usize,
-    flags: usize,
 }
 
 // Using BTreeMap as hashbrown doesn't have a const constructor.
@@ -46,7 +45,7 @@ pub fn serio_input(index: usize, data: u8) {
 pub struct SerioScheme;
 
 impl KernelScheme for SerioScheme {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
@@ -61,27 +60,10 @@ impl KernelScheme for SerioScheme {
             id,
             Handle {
                 index,
-                flags: flags & !O_ACCMODE,
             },
         );
 
-        Ok(OpenResult::SchemeLocal(id))
-    }
-
-    fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        let mut handles = HANDLES.write();
-        if let Some(handle) = handles.get_mut(&id) {
-            match cmd {
-                F_GETFL => Ok(handle.flags),
-                F_SETFL => {
-                    handle.flags = arg & !O_ACCMODE;
-                    Ok(0)
-                }
-                _ => Err(Error::new(EINVAL)),
-            }
-        } else {
-            Err(Error::new(EBADF))
-        }
+        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
@@ -111,7 +93,7 @@ impl KernelScheme for SerioScheme {
 
         Ok(())
     }
-    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
@@ -119,7 +101,7 @@ impl KernelScheme for SerioScheme {
 
         INPUT[handle.index].receive_into_user(
             buf,
-            handle.flags & O_NONBLOCK != O_NONBLOCK,
+            flags & O_NONBLOCK as u32 == 0,
             "SerioScheme::read",
         )
     }

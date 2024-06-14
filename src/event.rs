@@ -30,8 +30,8 @@ impl EventQueue {
         }
     }
 
-    pub fn read(&self, buf: UserSliceWo) -> Result<usize> {
-        self.queue.receive_into_user(buf, true, "EventQueue::read")
+    pub fn read(&self, buf: UserSliceWo, block: bool) -> Result<usize> {
+        self.queue.receive_into_user(buf, block, "EventQueue::read")
     }
 
     pub fn write(&self, events: &[Event]) -> Result<usize> {

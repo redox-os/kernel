@@ -24,6 +24,23 @@ impl<T> WaitQueue<T> {
         }
     }
 
+    pub fn receive(&self, block: bool, reason: &'static str) -> Result<T> {
+        loop {
+            let mut inner = self.inner.lock();
+
+            if let Some(t) = inner.pop_front() {
+                return Ok(t);
+            } else if block {
+                if !self.condition.wait(inner, reason) {
+                    return Err(Error::new(EINTR));
+                }
+                continue;
+            } else {
+                return Err(Error::new(EAGAIN));
+            }
+        }
+    }
+
     pub fn receive_into_user(
         &self,
         buf: UserSliceWo,

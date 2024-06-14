@@ -4,7 +4,7 @@ use alloc::{sync::Arc, vec::Vec};
 use rmm::PhysicalAddress;
 
 use crate::{
-    context::memory::{handle_notify_files, AddrSpace, Grant, PageSpan, AddrSpaceWrapper},
+    context::{file::InternalFlags, memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan}},
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
     paging::VirtualAddress,
 };
@@ -223,16 +223,10 @@ impl KernelScheme for MemoryScheme {
 
         Ok(OpenResult::SchemeLocal(
             (handle_ty as usize) | ((mem_ty as usize) << 8) | (usize::from(flags.bits()) << 16),
+            InternalFlags::empty(),
         ))
     }
 
-    fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
-        Ok(0)
-    }
-
-    fn close(&self, _id: usize) -> Result<()> {
-        Ok(())
-    }
     fn kfmap(
         &self,
         id: usize,

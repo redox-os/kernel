@@ -19,7 +19,6 @@ static INPUT: WaitQueue<u8> = WaitQueue::new();
 
 #[derive(Clone, Copy)]
 struct Handle {
-    flags: usize,
     num: usize,
 }
 
@@ -41,7 +40,7 @@ pub fn debug_notify() {
 pub struct DebugScheme;
 
 impl KernelScheme for DebugScheme {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
@@ -61,28 +60,11 @@ impl KernelScheme for DebugScheme {
         HANDLES.write().insert(
             id,
             Handle {
-                flags: flags & !O_ACCMODE,
                 num,
             },
         );
 
-        Ok(OpenResult::SchemeLocal(id))
-    }
-
-    fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        let mut handles = HANDLES.write();
-        if let Some(handle) = handles.get_mut(&id) {
-            match cmd {
-                F_GETFL => Ok(handle.flags),
-                F_SETFL => {
-                    handle.flags = arg & !O_ACCMODE;
-                    Ok(0)
-                }
-                _ => Err(Error::new(EINVAL)),
-            }
-        } else {
-            Err(Error::new(EBADF))
-        }
+        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
@@ -112,7 +94,7 @@ impl KernelScheme for DebugScheme {
 
         Ok(())
     }
-    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
@@ -128,12 +110,12 @@ impl KernelScheme for DebugScheme {
 
         INPUT.receive_into_user(
             buf,
-            handle.flags & O_NONBLOCK != O_NONBLOCK,
+            flags & O_NONBLOCK as u32 == 0,
             "DebugScheme::read",
         )
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?

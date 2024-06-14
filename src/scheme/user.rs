@@ -3,6 +3,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use slab::Slab;
 use core::{
     mem,
     mem::size_of,
@@ -14,19 +15,14 @@ use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
-    FobtainFdFlags, MunmapFlags, SendFdFlags, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD,
-    SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP, KSMSG_CANCEL, SIGKILL,
+    schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags}, FobtainFdFlags, MunmapFlags, SendFdFlags, F_SETFL, KSMSG_CANCEL, MAP_FIXED_NOREPLACE, SIGKILL, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP
 };
 
 use crate::{
     context::{
-        self,
-        context::HardBlockedReason,
-        file::{FileDescription, FileDescriptor},
-        memory::{
-            AddrSpace, BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, DANGLING, AddrSpaceWrapper,
-        },
-        BorrowedHtBuf, Context, Status,
+        self, context::HardBlockedReason, file::{FileDescription, FileDescriptor, InternalFlags}, memory::{
+            AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, DANGLING
+        }, BorrowedHtBuf, Context, ContextId, Status
     },
     event,
     memory::Frame,
@@ -48,12 +44,14 @@ pub struct UserInner {
     root_id: SchemeId,
     handle_id: usize,
     pub name: Box<str>,
-    pub flags: usize,
     pub scheme_id: SchemeId,
-    next_id: Mutex<u64>,
+    v2: bool,
     context: Weak<RwSpinlock<Context>>,
-    todo: WaitQueue<Packet>,
-    states: Mutex<HashMap<u64, State>>,
+    todo: WaitQueue<Sqe>,
+
+    // TODO: custom packed radix tree data structure
+    states: Mutex<Slab<State>>,
+
     unmounting: AtomicBool,
 }
 
@@ -70,7 +68,7 @@ enum State {
 
 #[derive(Debug)]
 pub enum Response {
-    Regular(usize),
+    Regular(usize, u8),
     Fd(Arc<RwLock<FileDescription>>),
 }
 
@@ -79,26 +77,81 @@ const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
     None => unreachable!(),
 };
 
+enum ParsedCqe {
+    TriggerFevent { number: usize, flags: EventFlags },
+    RegularResponse { tag: u32, code: usize, extra0: u8 },
+    ResponseWithFd { tag: u32, fd: usize },
+    ObtainFd { tag: u32, flags: FobtainFdFlags, dst_fd_or_ptr: usize },
+    ProvideMmap { tag: u32, offset: u64, base_addr: VirtualAddress, page_count: usize }
+}
+impl ParsedCqe {
+    fn parse_packet(packet: &Packet) -> Result<Self> {
+        Ok(if packet.id == 0 {
+            match packet.a {
+                SYS_FEVENT => Self::TriggerFevent {
+                    number: packet.b,
+                    flags: EventFlags::from_bits_truncate(packet.c),
+                },
+                _ => {
+                    log::warn!("Unknown scheme -> kernel message {} from {}", packet.a, context::current().unwrap().read().name);
+                    return Err(Error::new(EINVAL));
+                }
+            }
+        } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
+            // The reason why the new ESKMSG mechanism was introduced, is that passing packet IDs
+            // in packet.id is much cleaner than having to convert it into 1 or 2 usizes etc.
+            match packet.b {
+                SKMSG_FRETURNFD => Self::ResponseWithFd {
+                    tag: (packet.id - 1) as u32,
+                    fd: packet.d,
+                },
+                SKMSG_FOBTAINFD => Self::ObtainFd {
+                    tag: (packet.id - 1) as u32,
+                    flags: FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?,
+                    dst_fd_or_ptr: packet.c,
+                },
+                SKMSG_PROVIDE_MMAP => Self::ProvideMmap {
+                    tag: (packet.id - 1) as u32,
+                    offset: u64::from(packet.uid) | (u64::from(packet.gid) << 32),
+                    base_addr: VirtualAddress::new(packet.c),
+                    page_count: packet.d,
+                },
+                _ => return Err(Error::new(EINVAL)),
+            }
+        } else {
+            ParsedCqe::RegularResponse { tag: (packet.id - 1) as u32, code: packet.a, extra0: 0 }
+        })
+    }
+    fn parse_cqe(cqe: &Cqe) -> Result<Self> {
+        Ok(match CqeOpcode::try_from_raw(cqe.flags & 0b11).ok_or(Error::new(EINVAL))? {
+            CqeOpcode::RespondRegular => Self::RegularResponse { tag: cqe.tag, code: cqe.result as usize, extra0: cqe.extra_raw[0] },
+            CqeOpcode::RespondWithFd => Self::ResponseWithFd { tag: cqe.tag, fd: cqe.result as usize },
+            CqeOpcode::SendFevent => Self::TriggerFevent { number: cqe.result as usize, flags: EventFlags::from_bits(cqe.tag as usize).ok_or(Error::new(EINVAL))? },
+            CqeOpcode::ObtainFd => Self::ObtainFd { tag: cqe.tag, flags: FobtainFdFlags::from_bits(cqe.extra() as usize).ok_or(Error::new(EINVAL))?, dst_fd_or_ptr: cqe.result as usize },
+        })
+    }
+}
+
 impl UserInner {
     pub fn new(
         root_id: SchemeId,
         scheme_id: SchemeId,
+        v2: bool,
         handle_id: usize,
         name: Box<str>,
-        flags: usize,
+        _flags: usize,
         context: Weak<RwSpinlock<Context>>,
     ) -> UserInner {
         UserInner {
             root_id,
             handle_id,
             name,
-            flags,
+            v2,
             scheme_id,
-            next_id: Mutex::new(1),
             context,
             todo: WaitQueue::new(),
             unmounting: AtomicBool::new(false),
-            states: Mutex::new(HashMap::new()),
+            states: Mutex::new(Slab::with_capacity(32)),
         }
     }
 
@@ -116,24 +169,19 @@ impl UserInner {
         Ok(())
     }
 
-    fn next_id(&self) -> u64 {
-        let mut guard = self.next_id.lock();
-        let id = *guard;
-        *guard += 1;
-        id
+    fn next_id(&self) -> Result<u32> {
+        let mut states = self.states.lock();
+        let idx = states.insert(State::Placeholder);
+
+        // TODO: implement blocking?
+        u32::try_from(idx).map_err(|_| Error::new(EAGAIN))
     }
 
-    pub fn call(&self, a: usize, b: usize, c: usize, d: usize) -> Result<usize> {
+    pub fn call(&self, opcode: Opcode, args: impl Args) -> Result<usize> {
         let ctx = context::current()?.read().caller_ctx();
-        match self.call_extended(ctx, None, [a, b, c, d])? {
-            Response::Regular(code) => Error::demux(code),
-            Response::Fd(_) => {
-                if a & SYS_RET_FILE == SYS_RET_FILE {
-                    log::warn!("Kernel code using UserScheme::call wrongly, as an external file descriptor was returned.");
-                }
-
-                Err(Error::new(EIO))
-            }
+        match self.call_extended(ctx, None, opcode, args)? {
+            Response::Regular(code, _) => Error::demux(code),
+            Response::Fd(_) => Err(Error::new(EIO)),
         }
     }
 
@@ -141,19 +189,22 @@ impl UserInner {
         &self,
         ctx: CallerCtx,
         fd: Option<Arc<RwLock<FileDescription>>>,
-        [a, b, c, d]: [usize; 4],
+        opcode: Opcode,
+        args: impl Args,
     ) -> Result<Response> {
         self.call_extended_inner(
             fd,
-            Packet {
-                id: self.next_id(),
-                pid: ctx.pid,
-                uid: ctx.uid,
-                gid: ctx.gid,
-                a,
-                b,
-                c,
-                d,
+            Sqe {
+                opcode: opcode as u8,
+                sqe_flags: SqeFlags::empty(),
+                _rsvd: 0,
+                tag: self.next_id()?,
+                caller: ctx.pid as u64,
+                args: {
+                    let mut a = args.args();
+                    a[5] = uid_gid_hack_merge([ctx.uid, ctx.gid]);
+                    a
+                }
             },
         )
     }
@@ -161,30 +212,25 @@ impl UserInner {
     fn call_extended_inner(
         &self,
         fd: Option<Arc<RwLock<FileDescription>>>,
-        packet: Packet,
+        sqe: Sqe,
     ) -> Result<Response> {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
         }
-
-        let id = packet.id;
 
         let current_context = context::current()?;
 
         {
             let mut states = self.states.lock();
             current_context.write().block("UserScheme::call");
-            states.insert(
-                id,
-                State::Waiting {
-                    context: Arc::downgrade(&current_context),
-                    fd,
-                    canceling: false,
-                },
-            );
+            states[sqe.tag as usize] = State::Waiting {
+                context: Arc::downgrade(&current_context),
+                fd,
+                canceling: false,
+            };
         }
 
-        self.todo.send(packet);
+        self.todo.send(sqe);
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         loop {
@@ -199,31 +245,31 @@ impl UserInner {
             };
 
             let mut states = self.states.lock();
-            match states.entry(id) {
+
+            match states.get_mut(sqe.tag as usize) {
                 // invalid state
-                Entry::Vacant(_) => return Err(Error::new(EBADFD)),
-                Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
+                None => return Err(Error::new(EBADFD)),
+                Some(o) => match mem::replace(o, State::Placeholder) {
                     // signal wakeup while awaiting cancelation
                     old_state @ State::Waiting { canceling: true, .. } => {
-                        *o.get_mut() = old_state;
+                        *o = old_state;
                         drop(states);
                         eintr_if_sigkill()?;
                         context::current()?.write().block("UserInner::call");
                     }
                     // spurious wakeup
                     State::Waiting { canceling: false, fd, context } => {
-                        *o.get_mut() = State::Waiting { canceling: true, fd, context };
+                        *o = State::Waiting { canceling: true, fd, context };
 
                         drop(states);
                         eintr_if_sigkill()?;
 
                         // TODO: Is this too dangerous when the states lock is held?
-                        self.todo.send(Packet {
-                            id: 0,
-                            a: KSMSG_CANCEL,
-                            b: packet.id as usize,
-                            c: (packet.id >> 32) as usize,
-                            ..packet
+                        self.todo.send(Sqe {
+                            opcode: Opcode::Cancel as u8,
+                            sqe_flags: SqeFlags::ONEWAY,
+                            tag: sqe.tag,
+                            ..Default::default()
                         });
                         event::trigger(self.root_id, self.handle_id, EVENT_READ);
                         context::current()?.write().block("UserInner::call");
@@ -231,12 +277,12 @@ impl UserInner {
 
                     // invalid state
                     old_state @ (State::Placeholder | State::Fmap(_)) => {
-                        *o.get_mut() = old_state;
+                        *o = old_state;
                         return Err(Error::new(EBADFD));
                     }
 
                     State::Responded(response) => {
-                        o.remove();
+                        states.remove(sqe.tag as usize);
                         return Ok(response);
                     }
                 },
@@ -540,35 +586,148 @@ impl UserInner {
         })
     }
 
-    pub fn read(&self, buf: UserSliceWo) -> Result<usize> {
+    pub fn read(&self, buf: UserSliceWo, flags: u32) -> Result<usize> {
         // If O_NONBLOCK is used, do not block
-        let nonblock = self.flags & O_NONBLOCK == O_NONBLOCK;
+        let nonblock = flags & O_NONBLOCK as u32 != 0;
+
         // If unmounting, do not block so that EOF can be returned immediately
         let block = !(nonblock || self.unmounting.load(Ordering::SeqCst));
 
-        match self.todo.receive_into_user(buf, block, "UserInner::read") {
-            // If we received requests, return them to the scheme handler
-            Ok(byte_count) => Ok(byte_count),
-            // If there were no requests and we were unmounting, return EOF
-            Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => Ok(0),
-            // If there were no requests and O_NONBLOCK was used (EAGAIN), or some other error
-            // occurred, return that.
-            Err(error) => Err(error),
+        if self.v2 {
+            return match self.todo.receive_into_user(buf, block, "UserInner::read (v2)") {
+                // If we received requests, return them to the scheme handler
+                Ok(byte_count) => Ok(byte_count),
+                // If there were no requests and we were unmounting, return EOF
+                Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => Ok(0),
+                // If there were no requests and O_NONBLOCK was used (EAGAIN), or some other error
+                // occurred, return that.
+                Err(error) => Err(error),
+            };
+        } else {
+            let mut bytes_read = 0;
+
+            for dst in buf.in_exact_chunks(size_of::<Packet>()) {
+                match self.todo.receive(block && bytes_read == 0, "UserInner::read (legacy)") {
+                    Ok(sqe) => {
+                        dst.copy_exactly(&self.translate_sqe_to_packet(&sqe)?)?;
+                        bytes_read += size_of::<Packet>();
+                    }
+                    Err(error) if bytes_read > 0 => return Ok(bytes_read),
+                    Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => return Ok(bytes_read),
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(bytes_read)
         }
+
+    }
+    fn translate_sqe_to_packet(&self, sqe: &Sqe) -> Result<Packet> {
+        let opc = Opcode::try_from_raw(sqe.opcode).expect("passed scheme opcode not internally recognized by kernel");
+
+        let uid = sqe.args[5] as u32;
+        let gid = (sqe.args[5] >> 32) as u32;
+
+        Ok(Packet {
+            id: u64::from(sqe.tag) + 1,
+            pid: sqe.caller as usize,
+            a: match opc {
+                Opcode::Open => SYS_OPEN,
+                Opcode::Rmdir => SYS_RMDIR,
+                Opcode::Unlink => SYS_UNLINK,
+                Opcode::Close => SYS_CLOSE,
+                Opcode::Dup => SYS_DUP,
+                Opcode::Read => SYS_READ,
+                Opcode::Write => SYS_WRITE,
+                Opcode::Fsize => SYS_LSEEK, // lseek reuses the fsize "opcode", must be !v2
+                Opcode::Fchmod => SYS_FCHMOD,
+                Opcode::Fchown => SYS_FCHOWN,
+                Opcode::Fcntl => SYS_FCNTL,
+                Opcode::Fevent => SYS_FEVENT,
+                Opcode::Sendfd => SYS_SENDFD,
+                Opcode::Fpath => SYS_FPATH,
+                Opcode::Frename => SYS_FRENAME,
+                Opcode::Fstat => SYS_FSTAT,
+                Opcode::Fstatvfs => SYS_FSTATVFS,
+                Opcode::Fsync => SYS_FSYNC,
+                Opcode::Ftruncate => SYS_FTRUNCATE,
+                Opcode::Futimens => SYS_FUTIMENS,
+
+                Opcode::MmapPrep => return Ok(Packet {
+                    id: u64::from(sqe.tag) + 1,
+                    pid: sqe.caller as usize,
+                    a: KSMSG_MMAP_PREP,
+                    b: sqe.args[0] as usize,
+                    c: sqe.args[1] as usize,
+                    d: sqe.args[2] as usize,
+                    uid: sqe.args[3] as u32,
+                    gid: (sqe.args[3] >> 32) as u32,
+                }),
+                Opcode::RequestMmap => return Ok(Packet {
+                    id: u64::from(sqe.tag) + 1,
+                    pid: sqe.caller as usize,
+                    a: KSMSG_MMAP,
+                    b: sqe.args[0] as usize,
+                    c: sqe.args[1] as usize,
+                    d: sqe.args[2] as usize,
+                    uid: sqe.args[3] as u32,
+                    gid: (sqe.args[3] >> 32) as u32,
+                }),
+                Opcode::Munmap => return Ok(Packet {
+                    id: u64::from(sqe.tag) + 1,
+                    pid: sqe.caller as usize,
+                    a: KSMSG_MUNMAP,
+                    b: sqe.args[0] as usize, // fd
+                    c: sqe.args[1] as usize, // size
+                    d: sqe.args[2] as usize, // flags
+                    uid: sqe.args[3] as u32, // offset lo
+                    gid: (sqe.args[3] >> 32) as u32, // offset hi
+                }),
+
+                Opcode::Mremap => SYS_MREMAP,
+                Opcode::Msync => KSMSG_MSYNC,
+
+                Opcode::Cancel => return Ok(Packet {
+                    id: 0,
+                    a: KSMSG_CANCEL,
+                    b: sqe.tag as usize,
+                    c: 0,
+                    d: 0,
+                    pid: sqe.caller as usize,
+                    uid,
+                    gid,
+                }),
+
+                _ => return Err(Error::new(EOPNOTSUPP)),
+            },
+            b: sqe.args[0] as usize,
+            c: sqe.args[1] as usize,
+            d: sqe.args[2] as usize,
+
+            uid,
+            gid,
+        })
     }
 
     pub fn write(&self, buf: UserSliceRo) -> Result<usize> {
-        let mut packets_read = 0;
-
-        for chunk in buf.in_exact_chunks(size_of::<Packet>()) {
-            match self.handle_packet(&unsafe { chunk.read_exact::<Packet>()? }) {
-                Ok(()) => packets_read += 1,
-                Err(_) if packets_read > 0 => break,
-                Err(error) => return Err(error),
+        let mut bytes_read = 0;
+        if self.v2 {
+            for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
+                match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? }).and_then(|p| self.handle_parsed(&p)) {
+                    Ok(()) => bytes_read += size_of::<Cqe>(),
+                    Err(_) if bytes_read > 0 => break,
+                    Err(error) => return Err(error),
+                }
+            }
+        } else {
+            for chunk in buf.in_exact_chunks(size_of::<Packet>()) {
+                match ParsedCqe::parse_packet(&unsafe { chunk.read_exact::<Packet>()? }).and_then(|p| self.handle_parsed(&p)) {
+                    Ok(()) => bytes_read += size_of::<Packet>(),
+                    Err(_) if bytes_read > 0 => break,
+                    Err(error) => return Err(error),
+                }
             }
         }
-
-        Ok(packets_read * size_of::<Packet>())
+        Ok(bytes_read)
     }
     pub fn request_fmap(
         &self,
@@ -579,11 +738,11 @@ impl UserInner {
     ) -> Result<()> {
         log::info!("REQUEST FMAP");
 
-        let packet_id = self.next_id();
+        let tag = self.next_id()?;
         let mut states = self.states.lock();
-        states.insert(packet_id, State::Fmap(Arc::downgrade(&context::current()?)));
+        states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()?));
 
-        self.todo.send(Packet {
+        /*self.todo.send(Packet {
             id: packet_id,
             pid: context::context_id().into(),
             a: KSMSG_MMAP,
@@ -592,151 +751,144 @@ impl UserInner {
             d: required_page_count,
             uid: offset as u32,
             gid: (offset >> 32) as u32,
+        });*/
+        self.todo.send(Sqe {
+            opcode: Opcode::RequestMmap as u8,
+            sqe_flags: SqeFlags::empty(),
+            _rsvd: 0,
+            tag,
+            args: [
+                id as u64,
+                flags.bits() as u64,
+                required_page_count as u64,
+                0,
+                0,
+                uid_gid_hack_merge(current_uid_gid()?),
+            ],
+            caller: context::context_id().get() as u64,
         });
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         Ok(())
     }
-    fn handle_packet(&self, packet: &Packet) -> Result<()> {
-        if packet.id == 0 {
-            // TODO: Simplify logic by using SKMSG with packet.id being ignored?
-            match packet.a {
-                SYS_FEVENT => event::trigger(
-                    self.scheme_id,
-                    packet.b,
-                    EventFlags::from_bits_truncate(packet.c),
-                ),
-                _ => log::warn!("Unknown scheme -> kernel message {} from {}", packet.a, context::current().unwrap().read().name),
-            }
-        } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
-            // The reason why the new ESKMSG mechanism was introduced, is that passing packet IDs
-            // in packet.id is much cleaner than having to convert it into 1 or 2 usizes etc.
-            match packet.b {
-                SKMSG_FRETURNFD => {
-                    let fd = packet.c;
+    fn handle_parsed(&self, cqe: &ParsedCqe) -> Result<()> {
+        match *cqe {
+            ParsedCqe::RegularResponse { tag, code, extra0 } => self.respond(tag, Response::Regular(code, extra0))?,
+            ParsedCqe::ResponseWithFd { tag, fd } => self.respond(tag, Response::Fd(
+                context::current()?
+                    .read()
+                    .remove_file(FileHandle::from(fd))
+                    .ok_or(Error::new(EINVAL))?
+                    .description,
+            ))?,
+            ParsedCqe::ObtainFd { tag, flags, dst_fd_or_ptr } => {
+                let description = match self
+                    .states
+                    .lock()
+                    .get_mut(tag as usize)
+                    .ok_or(Error::new(EINVAL))?
+                {
+                    State::Waiting { ref mut fd, .. } => fd.take().ok_or(Error::new(ENOENT))?,
+                    _ => return Err(Error::new(ENOENT)),
+                };
 
-                    let desc = context::current()?
+                // FIXME: Description can leak if context::current() fails, or if there is no
+                // additional file table space.
+                if flags.contains(FobtainFdFlags::MANUAL_FD) {
+                    context::current()?.read().insert_file(
+                        FileHandle::from(dst_fd_or_ptr),
+                        FileDescriptor {
+                            description,
+                            cloexec: true,
+                        },
+                    );
+                } else {
+                    let fd = context::current()?
                         .read()
-                        .remove_file(FileHandle::from(fd))
-                        .ok_or(Error::new(EINVAL))?
-                        .description;
-
-                    self.respond(packet.id, Response::Fd(desc))?;
+                        .add_file(FileDescriptor {
+                            description,
+                            cloexec: true,
+                        })
+                        .ok_or(Error::new(EMFILE))?;
+                    UserSlice::wo(dst_fd_or_ptr, size_of::<usize>())?.write_usize(fd.get())?;
                 }
-                SKMSG_FOBTAINFD => {
-                    let flags = FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?;
-                    let description = match self
-                        .states
-                        .lock()
-                        .get_mut(&packet.id)
-                        .ok_or(Error::new(EINVAL))?
-                    {
-                        State::Waiting { ref mut fd, .. } => fd.take().ok_or(Error::new(ENOENT))?,
-                        _ => return Err(Error::new(ENOENT)),
-                    };
+            }
+            ParsedCqe::ProvideMmap { tag, offset, base_addr, page_count } => {
+                log::info!("PROVIDE_MAP {:x} {:x} {:?} {:x}", tag, offset, base_addr, page_count);
 
-                    // FIXME: Description can leak if context::current() fails, or if there is no
-                    // additional file table space.
-                    if flags.contains(FobtainFdFlags::MANUAL_FD) {
-                        context::current()?.read().insert_file(
-                            FileHandle::from(packet.c),
-                            FileDescriptor {
-                                description,
-                                cloexec: true,
-                            },
-                        );
-                    } else {
-                        let fd = context::current()?
-                            .read()
-                            .add_file(FileDescriptor {
-                                description,
-                                cloexec: true,
-                            })
-                            .ok_or(Error::new(EMFILE))?;
-                        UserSlice::wo(packet.c, size_of::<usize>())?.write_usize(fd.get())?;
-                    }
+                if offset % PAGE_SIZE as u64 != 0 {
+                    return Err(Error::new(EINVAL));
                 }
-                SKMSG_PROVIDE_MMAP => {
-                    log::info!("PROVIDE_MAP {:?}", packet);
-                    let offset = u64::from(packet.uid) | (u64::from(packet.gid) << 32);
 
-                    if offset % PAGE_SIZE as u64 != 0 {
-                        return Err(Error::new(EINVAL));
-                    }
+                if base_addr.data() % PAGE_SIZE != 0 {
+                    return Err(Error::new(EINVAL));
+                }
 
-                    let base_addr = VirtualAddress::new(packet.c);
-                    if base_addr.data() % PAGE_SIZE != 0 {
-                        return Err(Error::new(EINVAL));
-                    }
+                if page_count != 1 {
+                    return Err(Error::new(EINVAL));
+                }
 
-                    let page_count = packet.d;
+                let context = {
+                    let mut states = self.states.lock();
 
-                    if page_count != 1 {
-                        return Err(Error::new(EINVAL));
-                    }
-
-                    let context = match self.states.lock().entry(packet.id) {
-                        Entry::Occupied(mut o) => {
-                            match mem::replace(o.get_mut(), State::Placeholder) {
-                                // invalid state
-                                State::Placeholder => {
-                                    return Err(Error::new(EBADFD));
-                                }
-                                // invalid kernel to scheme call
-                                old_state @ (State::Waiting { .. } | State::Responded(_)) => {
-                                    *o.get_mut() = old_state;
-                                    return Err(Error::new(EINVAL));
-                                }
-                                State::Fmap(context) => {
-                                    o.remove();
-                                    context
-                                }
+                    match states.get_mut(tag as usize) {
+                        Some(o) => match mem::replace(o, State::Placeholder) {
+                            // invalid state
+                            State::Placeholder => {
+                                return Err(Error::new(EBADFD));
+                            }
+                            // invalid kernel to scheme call
+                            old_state @ (State::Waiting { .. } | State::Responded(_)) => {
+                                *o = old_state;
+                                return Err(Error::new(EINVAL));
+                            }
+                            State::Fmap(context) => {
+                                states.remove(tag as usize);
+                                context
                             }
                         }
-                        Entry::Vacant(_) => return Err(Error::new(EINVAL)),
-                    };
-
-                    let context = context.upgrade().ok_or(Error::new(ESRCH))?;
-
-                    let (frame, _) = AddrSpace::current()?
-                        .acquire_read()
-                        .table
-                        .utable
-                        .translate(base_addr)
-                        .ok_or(Error::new(EFAULT))?;
-
-                    let mut context = context.write();
-                    match context.status {
-                        Status::HardBlocked {
-                            reason: HardBlockedReason::AwaitingMmap { .. },
-                        } => context.status = Status::Runnable,
-                        _ => (),
+                        None => return Err(Error::new(EINVAL)),
                     }
-                    context.fmap_ret = Some(Frame::containing_address(frame));
-                }
-                _ => return Err(Error::new(EINVAL)),
-            }
-        } else {
-            self.respond(packet.id, Response::Regular(packet.a))?;
-        }
+                };
 
+                let context = context.upgrade().ok_or(Error::new(ESRCH))?;
+
+                let (frame, _) = AddrSpace::current()?
+                    .acquire_read()
+                    .table
+                    .utable
+                    .translate(base_addr)
+                    .ok_or(Error::new(EFAULT))?;
+
+                let mut context = context.write();
+                match context.status {
+                    Status::HardBlocked {
+                        reason: HardBlockedReason::AwaitingMmap { .. },
+                    } => context.status = Status::Runnable,
+                    _ => (),
+                }
+                context.fmap_ret = Some(Frame::containing_address(frame));
+            }
+            ParsedCqe::TriggerFevent { number, flags } => event::trigger(self.scheme_id, number, flags),
+        }
         Ok(())
     }
-    fn respond(&self, id: u64, mut response: Response) -> Result<()> {
+    fn respond(&self, tag: u32, mut response: Response) -> Result<()> {
         let to_close;
 
-        match self.states.lock().entry(id) {
-            Entry::Occupied(mut o) => match mem::replace(o.get_mut(), State::Placeholder) {
+        let mut states = self.states.lock();
+        match states.get_mut(tag as usize) {
+            Some(o) => match mem::replace(o, State::Placeholder) {
                 // invalid state
                 State::Placeholder => return Err(Error::new(EBADFD)),
                 // invalid scheme to kernel call
                 old_state @ (State::Responded(_) | State::Fmap(_)) => {
-                    *o.get_mut() = old_state;
+                    *o = old_state;
                     return Err(Error::new(EINVAL));
                 }
 
                 State::Waiting { context, fd, canceling } => {
-                    if let Response::Regular(ref mut code) = response && !canceling && *code == Error::mux(Err(Error::new(EINTR))) {
+                    if let Response::Regular(ref mut code, _) = response && !canceling && *code == Error::mux(Err(Error::new(EINTR))) {
                         // EINTR is valid after cancelation has been requested, but not otherwise.
                         // This is because the kernel-assisted signal trampoline will be invoked
                         // after a syscall returns EINTR.
@@ -751,14 +903,14 @@ impl UserInner {
 
                     if let Some(context) = context.upgrade() {
                         context.write().unblock();
-                        *o.get_mut() = State::Responded(response);
+                        *o = State::Responded(response);
                     } else {
-                        o.remove();
+                        states.remove(tag as usize);
                     }
                 }
             },
             // invalid state
-            Entry::Vacant(_) => return Err(Error::new(EBADFD)),
+            None => return Err(Error::new(EBADFD)),
         }
 
         if let Some(to_close) = to_close {
@@ -831,6 +983,7 @@ impl UserInner {
 
         let response = self.call_extended_inner(
             None,
+            /*
             Packet {
                 id: self.next_id(),
                 pid: pid.into(),
@@ -845,6 +998,22 @@ impl UserInner {
                 #[cfg(target_pointer_width = "32")]
                 gid: 0,
             },
+            */
+            Sqe {
+                opcode: Opcode::MmapPrep as u8,
+                sqe_flags: SqeFlags::empty(),
+                _rsvd: 0,
+                tag: self.next_id()?,
+                args: [
+                    file as u64,
+                    unaligned_size as u64,
+                    map.flags.bits() as u64,
+                    map.offset as u64,
+                    0,
+                    uid_gid_hack_merge(current_uid_gid()?),
+                ],
+                caller: pid.get() as u64,
+            },
         )?;
 
         // TODO: I've previously tested that this works, but because the scheme trait all of
@@ -855,7 +1024,7 @@ impl UserInner {
         let mapping_is_lazy = false;
 
         let base_page_opt = match response {
-            Response::Regular(code) => (!mapping_is_lazy).then_some(Error::demux(code)?),
+            Response::Regular(code, _) => (!mapping_is_lazy).then_some(Error::demux(code)?),
             Response::Fd(_) => {
                 log::debug!("Scheme incorrectly returned an fd for fmap.");
 
@@ -1014,40 +1183,45 @@ impl KernelScheme for UserScheme {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        match inner.call_extended(ctx, None, [SYS_OPEN, address.base(), address.len(), flags])? {
-            Response::Regular(code) => Error::demux(code).map(OpenResult::SchemeLocal),
+        match inner.call_extended(ctx, None, Opcode::Open, [address.base(), address.len(), flags])? {
+            Response::Regular(code, fl) => Ok({
+                let fd = Error::demux(code)?;
+                OpenResult::SchemeLocal(code, InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?)
+            }),
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
         }
     }
     fn rmdir(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(SYS_RMDIR, address.base(), address.len(), 0)?;
+        inner.call(Opcode::Rmdir, [address.base(), address.len()])?;
         Ok(())
     }
 
     fn unlink(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(SYS_UNLINK, address.base(), address.len(), 0)?;
+        inner.call(Opcode::Unlink, [address.base(), address.len()])?;
         Ok(())
     }
 
-    fn seek(&self, file: usize, position: isize, whence: usize) -> Result<usize> {
+    fn fsize(&self, file: usize) -> Result<u64> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_LSEEK, file, position as usize, whence)
+        if !inner.v2 {
+            return Err(Error::new(ESPIPE));
+        }
+        inner.call(Opcode::Fsize, [file]).map(|o| o as u64)
     }
 
     fn fchmod(&self, file: usize, mode: u16) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FCHMOD, file, mode as usize, 0)?;
+        inner.call(Opcode::Fchmod, [file, mode as usize])?;
         Ok(())
     }
 
     fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<()> {
         {
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+            let context_lock = context::current()?;
             let context = context_lock.read();
             if context.euid != 0 {
                 if uid != context.euid || gid != context.egid {
@@ -1057,144 +1231,127 @@ impl KernelScheme for UserScheme {
         }
 
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FCHOWN, file, uid as usize, gid as usize)?;
+        inner.call(Opcode::Fchown, [file, uid as usize, gid as usize])?;
         Ok(())
     }
 
     fn fcntl(&self, file: usize, cmd: usize, arg: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FCNTL, file, cmd, arg)
+        inner.call(Opcode::Fcntl, [file, cmd, arg])
     }
 
     fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner
-            .call(SYS_FEVENT, file, flags.bits(), 0)
+            .call(Opcode::Fevent, [file, flags.bits()])
             .map(EventFlags::from_bits_truncate)
     }
-
-    /*
-    fn funmap(&self, grant_address: usize, size: usize) -> Result<usize> {
-        let requested_span = PageSpan::validate_nonempty(VirtualAddress::new(grant_address), size).ok_or(Error::new(EINVAL))?;
-
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-
-        let address_opt = {
-            let context_lock = context::current()?;
-            let context = context_lock.read();
-
-            let mut addr_space = context.addr_space()?.write();
-            let funmap = &mut addr_space.grants.funmap;
-            let entry = funmap.range(..=Page::containing_address(VirtualAddress::new(grant_address))).next_back();
-
-            if let Some((&grant_page, &(page_count, user_page))) = entry {
-                if requested_span.base.next_by(requested_span.count) > grant_page.next_by(page_count) {
-                    return Err(Error::new(EINVAL));
-                }
-
-                funmap.remove(&grant_page);
-
-                let grant_span = PageSpan::new(grant_page, page_count);
-                let user_span = PageSpan::new(user_page, page_count);
-
-                if let Some(before) = grant_span.before(requested_span) {
-                    funmap.insert(before.base, (before.count, user_page));
-                }
-                if let Some(after) = grant_span.after(requested_span) {
-                    let start = grant_span.rebase(user_span, after.base);
-                    funmap.insert(after.base, (after.count, start));
-                }
-
-                Some(grant_span.rebase(user_span,grant_span.base).start_address().data())
-            } else {
-                None
-            }
-        };
-        if let Some(user_address) = address_opt {
-            inner.call(SYS_FUNMAP, user_address, size, 0)
-        } else {
-            Err(Error::new(EINVAL))
-        }
-    }
-    */
 
     fn frename(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(SYS_FRENAME, file, address.base(), address.len())?;
+        inner.call(Opcode::Frename, [file, address.base(), address.len()])?;
         Ok(())
     }
 
     fn fsync(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FSYNC, file, 0, 0)?;
+        inner.call(Opcode::Fsync, [file])?;
         Ok(())
     }
 
     fn ftruncate(&self, file: usize, len: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_FTRUNCATE, file, len, 0)?;
+        inner.call(Opcode::Ftruncate, [file, len])?;
         Ok(())
     }
 
     fn close(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(SYS_CLOSE, file, 0, 0)?;
+        inner.call(Opcode::Close, [file])?;
         Ok(())
     }
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call_extended(ctx, None, [SYS_DUP, file, address.base(), address.len()]);
+        let result = inner.call_extended(ctx, None, Opcode::Dup, [file, address.base(), address.len()]);
 
         address.release()?;
 
         match result? {
-            Response::Regular(code) => Error::demux(code).map(OpenResult::SchemeLocal),
+            Response::Regular(code, fl) => Ok({
+                let fd = Error::demux(code)?;
+                OpenResult::SchemeLocal(fd, InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?)
+            }),
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
         }
     }
     fn kfpath(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call(SYS_FPATH, file, address.base(), address.len());
+        let result = inner.call(Opcode::Fpath, [file, address.base(), address.len()]);
         address.release()?;
         result
     }
 
-    fn kread(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kreadoff(&self, file: usize, buf: UserSliceWo, offset: u64, call_flags: u32, stored_flags: u32) -> Result<usize> {
+        if call_flags != stored_flags {
+            self.fcntl(file, F_SETFL, call_flags as usize)?;
+        }
+
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call(SYS_READ, file, address.base(), address.len());
+        let result = inner.call(Opcode::Read, [file as u64, address.base() as u64, address.len() as u64, offset, u64::from(call_flags)]);
         address.release()?;
+
+        if call_flags != stored_flags {
+            self.fcntl(file, F_SETFL, stored_flags as usize)?;
+        }
+
         result
     }
 
-    fn kwrite(&self, file: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kwriteoff(&self, file: usize, buf: UserSliceRo, offset: u64, call_flags: u32, stored_flags: u32) -> Result<usize> {
+        if call_flags != stored_flags {
+            self.fcntl(file, F_SETFL, call_flags as usize)?;
+        }
+
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call(SYS_WRITE, file, address.base(), address.len());
+        let result = inner.call(Opcode::Write, [file as u64, address.base() as u64, address.len() as u64, offset, u64::from(call_flags)]);
         address.release()?;
+
+        if call_flags != stored_flags {
+            self.fcntl(file, F_SETFL, stored_flags as usize)?;
+        }
+
         result
+    }
+    fn legacy_seek(&self, id: usize, pos: isize, whence: usize) -> Option<Result<usize>> {
+        let inner = self.inner.upgrade()?;
+        if inner.v2 {
+            return None;
+        }
+        Some(inner.call(Opcode::Fsize, [id, pos as usize, whence]))
     }
     fn kfutimens(&self, file: usize, buf: UserSliceRo) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call(SYS_FUTIMENS, file, address.base(), address.len());
+        let result = inner.call(Opcode::Futimens, [file, address.base(), address.len()]);
         address.release()?;
         result
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(stat)?;
-        let result = inner.call(SYS_FSTAT, file, address.base(), address.len());
+        let result = inner.call(Opcode::Fstat, [file, address.base(), address.len()]);
         address.release()?;
         result.map(|_| ())
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(stat)?;
-        let result = inner.call(SYS_FSTATVFS, file, address.base(), address.len());
+        let result = inner.call(Opcode::Fstatvfs, [file, address.base(), address.len()]);
         address.release()?;
         result.map(|_| ())
     }
@@ -1212,23 +1369,15 @@ impl KernelScheme for UserScheme {
     fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
+        let ctx = context::current()?.read().caller_ctx();
         let res = inner.call_extended(
-            CallerCtx {
-                pid: context::context_id().into(),
-                uid: offset as u32,
-                #[cfg(target_pointer_width = "64")]
-                gid: (offset >> 32) as u32,
-
-                // TODO: saturating_shr?
-                #[cfg(not(target_pointer_width = "64"))]
-                gid: 0,
-            },
+            ctx,
             None,
-            [KSMSG_MUNMAP, number, size, flags.bits()],
+            Opcode::Munmap, [number, size, flags.bits(), offset],
         )?;
 
         match res {
-            Response::Regular(_) => Ok(()),
+            Response::Regular(_, _) => Ok(()),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
     }
@@ -1241,18 +1390,15 @@ impl KernelScheme for UserScheme {
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
+        let ctx = context::current()?.read().caller_ctx();
         let res = inner.call_extended(
-            CallerCtx {
-                pid: context::context_id().into(),
-                uid: arg as u32,
-                gid: (arg >> 32) as u32,
-            },
+            ctx,
             Some(desc),
-            [SYS_SENDFD, number, flags.bits(), 0],
+            Opcode::Sendfd, [number, flags.bits()],
         )?;
 
         match res {
-            Response::Regular(res) => Ok(res),
+            Response::Regular(res, _) => Ok(res),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
     }
@@ -1262,4 +1408,31 @@ impl KernelScheme for UserScheme {
 pub enum Mode {
     Ro,
     Wo,
+}
+
+pub trait Args: Copy {
+    fn args(self) -> [u64; 6];
+}
+impl<const N: usize> Args for [u64; N] {
+    fn args(self) -> [u64; 6] {
+        assert!(self.len() <= N);
+        core::array::from_fn(|i| self.get(i).copied().unwrap_or(0))
+    }
+}
+impl<const N: usize> Args for [usize; N] {
+    fn args(self) -> [u64; 6] {
+        self.map(|s| s as u64).args()
+    }
+}
+
+// TODO: Find a better way to do authentication. No scheme call currently uses arg 5 but this will
+// likely change. Ideally this mechanism would also allow the scheme to query the supplementary
+// group list.
+fn uid_gid_hack_merge([uid, gid]: [u32; 2]) -> u64 {
+    u64::from(uid) | (u64::from(gid) << 32)
+}
+fn current_uid_gid() -> Result<[u32; 2]> {
+    Ok(match context::current()?.read() {
+        ref ctx => [ctx.euid, ctx.egid],
+    })
 }

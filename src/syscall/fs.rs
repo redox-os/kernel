@@ -4,11 +4,7 @@ use redox_path::RedoxPath;
 use spin::RwLock;
 
 use crate::{
-    context,
-    context::{
-        file::{FileDescription, FileDescriptor},
-        memory::{AddrSpace, PageSpan},
-    },
+    context::{self, file::{FileDescription, FileDescriptor, InternalFlags}, memory::{AddrSpace, PageSpan}},
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, SchemeId},
     syscall::{data::Stat, error::*, flag::*},
@@ -20,28 +16,24 @@ pub fn file_op_generic<T>(
     fd: FileHandle,
     op: impl FnOnce(&dyn KernelScheme, usize) -> Result<T>,
 ) -> Result<T> {
-    file_op_generic_ext(fd, |s, _, no| op(s, no))
+    file_op_generic_ext(fd, |s, _, desc| op(s, desc.number))
 }
 pub fn file_op_generic_ext<T>(
     fd: FileHandle,
-    op: impl FnOnce(&dyn KernelScheme, SchemeId, usize) -> Result<T>,
+    op: impl FnOnce(&dyn KernelScheme, Arc<RwLock<FileDescription>>, FileDescription) -> Result<T>,
 ) -> Result<T> {
     let file = context::current()?
         .read()
         .get_file(fd)
         .ok_or(Error::new(EBADF))?;
-    let FileDescription {
-        scheme: scheme_id,
-        number,
-        ..
-    } = *file.description.read();
+    let desc = *file.description.read();
 
     let scheme = scheme::schemes()
-        .get(scheme_id)
+        .get(desc.scheme)
         .ok_or(Error::new(EBADF))?
         .clone();
 
-    op(&*scheme, scheme_id, number)
+    op(&*scheme, file.description, desc)
 }
 pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<alloc::string::String> {
     let mut path_buf = vec![0_u8; max_len];
@@ -90,11 +82,12 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
         };
 
         match scheme.kopen(reference.as_ref(), flags, CallerCtx { uid, gid, pid })? {
-            OpenResult::SchemeLocal(number) => Arc::new(RwLock::new(FileDescription {
-                namespace: scheme_ns,
+            OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
                 scheme: scheme_id,
                 number,
-                flags: flags & !O_CLOEXEC,
+                offset: 0,
+                flags: (flags & !O_CLOEXEC) as u32,
+                internal_flags,
             })),
             OpenResult::External(desc) => desc,
         }
@@ -192,8 +185,9 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
                 .clone();
 
             match scheme.kdup(description.number, user_buf, caller_ctx)? {
-                OpenResult::SchemeLocal(number) => Arc::new(RwLock::new(FileDescription {
-                    namespace: description.namespace,
+                OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
+                    offset: 0,
+                    internal_flags,
                     scheme: description.scheme,
                     number,
                     flags: description.flags,
@@ -286,17 +280,26 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
 
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
-    let file = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        context.get_file(fd).ok_or(Error::new(EBADF))?
-    };
+    let file = context::current()?.read().get_file(fd).ok_or(Error::new(EBADF))?;
 
     let description = file.description.read();
 
+    if cmd == F_DUPFD {
+        // Not in match because 'files' cannot be locked
+        let new_file = duplicate_file(fd, UserSlice::empty())?;
+
+        let contexts = context::contexts();
+        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context = context_lock.read();
+
+        return context
+            .add_file_min(new_file, arg)
+            .ok_or(Error::new(EMFILE))
+            .map(FileHandle::into);
+    }
+
     // Communicate fcntl with scheme
-    if cmd != F_DUPFD && cmd != F_GETFD && cmd != F_SETFD {
+    if cmd != F_GETFD && cmd != F_SETFD {
         let scheme = scheme::schemes()
             .get(description.scheme)
             .ok_or(Error::new(EBADF))?
@@ -307,19 +310,6 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 
     // Perform kernel operation if scheme agrees
     {
-        if cmd == F_DUPFD {
-            // Not in match because 'files' cannot be locked
-            let new_file = duplicate_file(fd, UserSlice::empty())?;
-
-            let contexts = context::contexts();
-            let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-            let context = context_lock.read();
-
-            return context
-                .add_file_min(new_file, arg)
-                .ok_or(Error::new(EMFILE))
-                .map(FileHandle::into);
-        }
 
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -339,9 +329,9 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
                     file.cloexec = arg & O_CLOEXEC == O_CLOEXEC;
                     Ok(0)
                 }
-                F_GETFL => Ok(description.flags),
+                F_GETFL => Ok(description.flags as usize),
                 F_SETFL => {
-                    let new_flags = (description.flags & O_ACCMODE) | (arg & !O_ACCMODE);
+                    let new_flags = (description.flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
                     drop(description);
                     file.description.write().flags = new_flags;
                     Ok(0)
@@ -393,13 +383,13 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
 
 /// File status
 pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<()> {
-    file_op_generic_ext(fd, |scheme, scheme_id, number| {
-        scheme.kfstat(number, user_buf)?;
+    file_op_generic_ext(fd, |scheme, _, desc| {
+        scheme.kfstat(desc.number, user_buf)?;
 
         // TODO: Ensure only the kernel can access the stat when st_dev is set, or use another API
         // for retrieving the scheme ID from a file descriptor.
         // TODO: Less hacky method.
-        let st_dev = scheme_id
+        let st_dev = desc.scheme
             .get()
             .try_into()
             .map_err(|_| Error::new(EOVERFLOW))?;
@@ -490,4 +480,60 @@ pub fn mremap(
     )?;
 
     Ok(base.start_address().data())
+}
+
+pub fn lseek(fd: FileHandle, pos: i64, whence: usize) -> Result<usize> {
+    enum Ret {
+        Legacy(usize),
+        Fsize((Option<u64>, Arc<RwLock<FileDescription>>)),
+    }
+    let fsize_or_legacy = file_op_generic_ext(fd, |scheme, desc_arc, desc| {
+        Ok(if let Some(new_off) = scheme.legacy_seek(desc.number, pos as isize, whence) {
+            Ret::Legacy(new_off?)
+        } else if whence == SEEK_END {
+            Ret::Fsize((Some(scheme.fsize(desc.number)?), desc_arc))
+        } else {
+            Ret::Fsize((None, desc_arc))
+        })
+    })?;
+    let (fsize, desc) = match fsize_or_legacy {
+        Ret::Fsize(fsize) => fsize,
+        Ret::Legacy(new_pos) => return Ok(new_pos),
+    };
+
+    let mut guard = desc.write();
+
+    let new_pos = match whence {
+        SEEK_SET => pos,
+        SEEK_CUR => pos.checked_add_unsigned(guard.offset).ok_or(Error::new(EOVERFLOW))?,
+        SEEK_END => pos.checked_add_unsigned(fsize.unwrap()).ok_or(Error::new(EOVERFLOW))?,
+        _ => return Err(Error::new(EINVAL)),
+    };
+    guard.offset = new_pos.try_into().map_err(|_| Error::new(EINVAL))?;
+
+    Ok(guard.offset as usize)
+}
+pub fn sys_read(fd: FileHandle, buf: UserSliceWo) -> Result<usize> {
+    let (bytes_read, desc_arc, desc) = file_op_generic_ext(fd, |scheme, desc_arc, desc| {
+        let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) { desc.offset } else { u64::MAX };
+        Ok((scheme.kreadoff(desc.number, buf, offset, desc.flags, desc.flags)?, desc_arc, desc))
+    })?;
+    if desc.internal_flags.contains(InternalFlags::POSITIONED) {
+        match desc_arc.write().offset {
+            ref mut offset => *offset = offset.saturating_add(bytes_read as u64),
+        }
+    }
+    Ok(bytes_read)
+}
+pub fn sys_write(fd: FileHandle, buf: UserSliceRo) -> Result<usize> {
+    let (bytes_written, desc_arc, desc) = file_op_generic_ext(fd, |scheme, desc_arc, desc| {
+        let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) { desc.offset } else { u64::MAX };
+        Ok((scheme.kwriteoff(desc.number, buf, offset, desc.flags, desc.flags)?, desc_arc, desc))
+    })?;
+    if desc.internal_flags.contains(InternalFlags::POSITIONED) {
+        match desc_arc.write().offset {
+            ref mut offset => *offset = offset.saturating_add(bytes_written as u64),
+        }
+    }
+    Ok(bytes_written)
 }

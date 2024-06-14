@@ -13,7 +13,7 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::{EventFlags, MunmapFlags, SendFdFlags, SEEK_CUR, SEEK_END, SEEK_SET};
 
 use crate::{
-    context::{file::FileDescription, memory::AddrSpaceWrapper},
+    context::{file::{FileDescription, InternalFlags}, memory::AddrSpaceWrapper},
     syscall::{
         error::*,
         usercopy::{UserSliceRo, UserSliceWo},
@@ -394,10 +394,22 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
         Err(Error::new(EOPNOTSUPP))
     }
-    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kwriteoff(&self, id: usize, buf: UserSliceRo, offset: u64, flags: u32, stored_flags: u32) -> Result<usize> {
+        if offset != u64::MAX {
+            return Err(Error::new(ESPIPE));
+        }
+        self.kwrite(id, buf, flags, stored_flags)
+    }
+    fn kreadoff(&self, id: usize, buf: UserSliceWo, offset: u64, flags: u32, stored_flags: u32) -> Result<usize> {
+        if offset != u64::MAX {
+            return Err(Error::new(ESPIPE));
+        }
+        self.kread(id, buf, flags, stored_flags)
+    }
+    fn kwrite(&self, id: usize, buf: UserSliceRo, flags: u32, stored_flags: u32) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, stored_flags: u32) -> Result<usize> {
         Err(Error::new(EBADF))
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
@@ -424,13 +436,16 @@ pub trait KernelScheme: Send + Sync + 'static {
     }
 
     fn fsync(&self, id: usize) -> Result<()> {
-        Err(Error::new(EBADF))
+        Ok(())
     }
     fn ftruncate(&self, id: usize, len: usize) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
+    fn fsize(&self, id: usize) -> Result<u64> {
         Err(Error::new(ESPIPE))
+    }
+    fn legacy_seek(&self, id: usize, pos: isize, whence: usize) -> Option<Result<usize>> {
+        None
     }
     fn fchmod(&self, id: usize, new_mode: u16) -> Result<()> {
         Err(Error::new(EBADF))
@@ -439,13 +454,13 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EBADF))
     }
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
-        Err(Error::new(EBADF))
+        Ok(EventFlags::empty())
     }
     fn frename(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
         Err(Error::new(EBADF))
     }
     fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
-        Err(Error::new(EBADF))
+        Ok(0)
     }
     fn rmdir(&self, path: &str, ctx: CallerCtx) -> Result<()> {
         Err(Error::new(ENOENT))
@@ -454,36 +469,19 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(ENOENT))
     }
     fn close(&self, id: usize) -> Result<()> {
-        Err(Error::new(EBADF))
+        Ok(())
     }
 }
 
 #[derive(Debug)]
 pub enum OpenResult {
-    SchemeLocal(usize),
+    SchemeLocal(usize, InternalFlags),
     External(Arc<RwLock<FileDescription>>),
 }
 pub struct CallerCtx {
     pub pid: usize,
     pub uid: u32,
     pub gid: u32,
-}
-
-pub fn calc_seek_offset(
-    cur_pos: usize,
-    rel_pos: isize,
-    whence: usize,
-    len: usize,
-) -> Result<usize> {
-    match whence {
-        SEEK_SET => usize::try_from(rel_pos).map_err(|_| Error::new(EINVAL)),
-        SEEK_CUR => cur_pos
-            .checked_add_signed(rel_pos)
-            .ok_or(Error::new(EOVERFLOW)),
-        SEEK_END => len.checked_add_signed(rel_pos).ok_or(Error::new(EOVERFLOW)),
-
-        _ => return Err(Error::new(EINVAL)),
-    }
 }
 
 #[derive(Clone)]

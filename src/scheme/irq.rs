@@ -1,3 +1,6 @@
+// TODO: Rewrite this entire scheme. Legacy x86 APIs should be abstracted by a userspace scheme,
+// this scheme should only handle raw IRQ registration and delivery to userspace.
+
 use core::{
     mem, str,
     str::FromStr,
@@ -8,7 +11,7 @@ use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use spin::{Mutex, Once, RwLock};
 
-use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved};
+use crate::{arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved}, context::file::InternalFlags};
 
 use crate::{
     cpu_set::LogicalCpuId,
@@ -22,7 +25,7 @@ use crate::{
     },
 };
 
-use super::{calc_seek_offset, CallerCtx, GlobalSchemes, OpenResult};
+use super::{CallerCtx, GlobalSchemes, OpenResult};
 
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
@@ -62,8 +65,8 @@ pub extern "C" fn irq_trigger(irq: u8) {
 
 enum Handle {
     Irq { ack: AtomicUsize, irq: u8 },
-    Avail(u8, Vec<u8>, AtomicUsize), // CPU id, data, offset
-    TopLevel(Vec<u8>, AtomicUsize),  // data, offset
+    Avail(u8, Vec<u8>), // CPU id, data, offset
+    TopLevel(Vec<u8>),  // data, offset
     Bsp,
 }
 impl Handle {
@@ -105,7 +108,7 @@ impl IrqScheme {
 
         CPUS.call_once(|| cpus);
     }
-    fn open_ext_irq(flags: usize, cpu_id: u8, path_str: &str) -> Result<Handle> {
+    fn open_ext_irq(flags: usize, cpu_id: u8, path_str: &str) -> Result<(Handle, InternalFlags)> {
         let irq_number = u8::from_str(path_str).or(Err(Error::new(ENOENT)))?;
 
         Ok(
@@ -114,10 +117,10 @@ impl IrqScheme {
                 //
                 // The only CPUs don't have the legacy IRQs in their IDTs.
 
-                Handle::Irq {
+                (Handle::Irq {
                     ack: AtomicUsize::new(0),
                     irq: irq_number,
-                }
+                }, InternalFlags::empty())
             } else if irq_number < TOTAL_IRQ_COUNT {
                 if flags & O_CREAT == 0 && flags & O_STAT == 0 {
                     return Err(Error::new(EINVAL));
@@ -132,10 +135,10 @@ impl IrqScheme {
                         true,
                     );
                 }
-                Handle::Irq {
+                (Handle::Irq {
                     ack: AtomicUsize::new(0),
                     irq: irq_number,
-                }
+                }, InternalFlags::empty())
             } else {
                 return Err(Error::new(ENOENT));
             },
@@ -158,7 +161,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
         let path_str = path.trim_start_matches('/');
 
-        let handle: Handle = if path_str.is_empty() {
+        let (handle, int_flags) = if path_str.is_empty() {
             if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
                 return Err(Error::new(EISDIR));
             }
@@ -180,13 +183,13 @@ impl crate::scheme::KernelScheme for IrqScheme {
             // TODO: When signals are used for IRQs, there will probably also be a file
             // `irq:signal` that maps IRQ numbers and their source APIC IDs to signal numbers.
 
-            Handle::TopLevel(bytes.into_bytes(), AtomicUsize::new(0))
+            (Handle::TopLevel(bytes.into_bytes()), InternalFlags::POSITIONED)
         } else {
             if path_str == "bsp" {
                 if bsp_apic_id().is_none() {
                     return Err(Error::new(ENOENT));
                 }
-                Handle::Bsp
+                (Handle::Bsp, InternalFlags::empty())
             } else if path_str.starts_with("cpu-") {
                 let path_str = &path_str[4..];
                 let cpu_id = u8::from_str_radix(&path_str[..2], 16).or(Err(Error::new(ENOENT)))?;
@@ -204,7 +207,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                         writeln!(data, "{}", irq).unwrap();
                     }
 
-                    Handle::Avail(cpu_id, data.into_bytes(), AtomicUsize::new(0))
+                    (Handle::Avail(cpu_id, data.into_bytes()), InternalFlags::POSITIONED)
                 } else if path_str.starts_with('/') {
                     let path_str = &path_str[1..];
                     Self::open_ext_irq(flags, cpu_id, path_str)?
@@ -213,10 +216,10 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 }
             } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
                 if plain_irq_number < BASE_IRQ_COUNT {
-                    Handle::Irq {
+                    (Handle::Irq {
                         ack: AtomicUsize::new(0),
                         irq: plain_irq_number,
-                    }
+                    }, InternalFlags::empty())
                 } else {
                     return Err(Error::new(ENOENT));
                 }
@@ -226,20 +229,15 @@ impl crate::scheme::KernelScheme for IrqScheme {
         };
         let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().insert(fd, handle);
-        Ok(OpenResult::SchemeLocal(fd))
+        Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
 
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
+    fn fsize(&self, id: usize) -> Result<u64> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
-        match handle {
-            &Handle::Avail(_, ref buf, ref offset) | &Handle::TopLevel(ref buf, ref offset) => {
-                let cur_offset = offset.load(Ordering::SeqCst);
-                let new_offset = calc_seek_offset(cur_offset, pos, whence, buf.len())?;
-                offset.store(new_offset as usize, Ordering::SeqCst);
-                Ok(new_offset as usize)
-            }
+        match *handle {
+            Handle::Avail(_, ref buf) | Handle::TopLevel(ref buf) => Ok(buf.len() as u64),
             _ => Err(Error::new(ESPIPE)),
         }
     }
@@ -270,7 +268,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         }
         Ok(())
     }
-    fn kwrite(&self, file: usize, buffer: UserSliceRo) -> Result<usize> {
+    fn kwrite(&self, file: usize, buffer: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
@@ -279,22 +277,20 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 irq: handle_irq,
                 ack: ref handle_ack,
             } => {
-                if buffer.len() >= mem::size_of::<usize>() {
-                    let ack = buffer.read_usize()?;
-                    let current = COUNTS.lock()[handle_irq as usize];
-
-                    if ack == current {
-                        handle_ack.store(ack, Ordering::SeqCst);
-                        unsafe {
-                            acknowledge(handle_irq as usize);
-                        }
-                        Ok(mem::size_of::<usize>())
-                    } else {
-                        Ok(0)
-                    }
-                } else {
-                    Err(Error::new(EINVAL))
+                if buffer.len() < mem::size_of::<usize>() {
+                    return Err(Error::new(EINVAL));
                 }
+                let ack = buffer.read_usize()?;
+                let current = COUNTS.lock()[handle_irq as usize];
+
+                if ack != current {
+                    return Ok(0);
+                }
+                handle_ack.store(ack, Ordering::SeqCst);
+                unsafe {
+                    acknowledge(handle_irq as usize);
+                }
+                Ok(mem::size_of::<usize>())
             }
             _ => Err(Error::new(EBADF)),
         }
@@ -325,14 +321,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 st_nlink: 1,
                 ..Default::default()
             },
-            Handle::Avail(cpu_id, ref buf, _) => Stat {
+            Handle::Avail(cpu_id, ref buf) => Stat {
                 st_mode: MODE_DIR | 0o700,
                 st_size: buf.len() as u64,
                 st_ino: INO_AVAIL | u64::from(cpu_id) << 32,
                 st_nlink: 2,
                 ..Default::default()
             },
-            Handle::TopLevel(ref buf, _) => Stat {
+            Handle::TopLevel(ref buf) => Stat {
                 st_mode: MODE_DIR | 0o500,
                 st_size: buf.len() as u64,
                 st_ino: INO_TOPLEVEL,
@@ -350,14 +346,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let scheme_path = match handle {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
             Handle::Bsp => format!("irq:bsp"),
-            Handle::Avail(cpu_id, _, _) => format!("irq:cpu-{:2x}", cpu_id),
-            Handle::TopLevel(_, _) => format!("irq:"),
+            Handle::Avail(cpu_id, _) => format!("irq:cpu-{:2x}", cpu_id),
+            Handle::TopLevel(_) => format!("irq:"),
         }
         .into_bytes();
 
         buf.copy_common_bytes_from_slice(&scheme_path)
     }
-    fn kread(&self, file: usize, buffer: UserSliceWo) -> Result<usize> {
+    fn kreadoff(&self, file: usize, buffer: UserSliceWo, offset: u64, flags: u32, _stored_flags: u32) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
@@ -367,16 +363,15 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 irq: handle_irq,
                 ack: ref handle_ack,
             } => {
-                if buffer.len() >= mem::size_of::<usize>() {
-                    let current = COUNTS.lock()[handle_irq as usize];
-                    if handle_ack.load(Ordering::SeqCst) != current {
-                        buffer.write_usize(current)?;
-                        Ok(mem::size_of::<usize>())
-                    } else {
-                        Ok(0)
-                    }
+                if buffer.len() < mem::size_of::<usize>() {
+                    return Err(Error::new(EINVAL));
+                }
+                let current = COUNTS.lock()[handle_irq as usize];
+                if handle_ack.load(Ordering::SeqCst) != current {
+                    buffer.write_usize(current)?;
+                    Ok(mem::size_of::<usize>())
                 } else {
-                    Err(Error::new(EINVAL))
+                    Ok(0)
                 }
             }
             Handle::Bsp => {
@@ -390,12 +385,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     Err(Error::new(EBADFD))
                 }
             }
-            Handle::Avail(_, ref buf, ref offset) | Handle::TopLevel(ref buf, ref offset) => {
-                let cur_offset = offset.load(Ordering::SeqCst);
-                let avail_buf = buf.get(cur_offset..).unwrap_or(&[]);
-                let bytes_read = buffer.copy_common_bytes_from_slice(avail_buf)?;
-                offset.fetch_add(bytes_read, Ordering::SeqCst);
-                Ok(bytes_read)
+            Handle::Avail(_, ref buf) | Handle::TopLevel(ref buf) => {
+                let src = usize::try_from(offset).ok().and_then(|o| buf.get(o..)).unwrap_or(&[]);
+                buffer.copy_common_bytes_from_slice(src)
             }
         }
     }

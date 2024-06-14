@@ -6,7 +6,7 @@ use core::{
 use spin::RwLock;
 
 use crate::{
-    context::timeout,
+    context::{file::InternalFlags, timeout},
     syscall::{
         data::TimeSpec,
         error::*,
@@ -37,7 +37,7 @@ impl KernelScheme for TimeScheme {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().insert(id, clock);
 
-        Ok(OpenResult::SchemeLocal(id))
+        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -64,7 +64,7 @@ impl KernelScheme for TimeScheme {
             .ok_or(Error::new(EBADF))
             .and(Ok(()))
     }
-    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kread(&self, id: usize, buf: UserSliceWo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let clock = *HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
 
         let mut bytes_read = 0;
@@ -87,7 +87,7 @@ impl KernelScheme for TimeScheme {
         Ok(bytes_read)
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let clock = *HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
 
         let mut bytes_written = 0;

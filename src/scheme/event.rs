@@ -1,13 +1,13 @@
 use alloc::sync::Arc;
+use syscall::O_NONBLOCK;
 use core::mem;
 
 use crate::{
-    event::{next_queue_id, queues, queues_mut, EventQueue, EventQueueId},
-    syscall::{
+    context::file::InternalFlags, event::{next_queue_id, queues, queues_mut, EventQueue, EventQueueId}, syscall::{
         data::Event,
         error::*,
         usercopy::{UserSliceRo, UserSliceWo},
-    },
+    }
 };
 
 use super::{CallerCtx, KernelScheme, OpenResult};
@@ -19,21 +19,7 @@ impl KernelScheme for EventScheme {
         let id = next_queue_id();
         queues_mut().insert(id, Arc::new(EventQueue::new(id)));
 
-        Ok(OpenResult::SchemeLocal(id.get()))
-    }
-
-    fn fcntl(&self, id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
-        let id = EventQueueId::from(id);
-
-        let handles = queues();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(0))
-    }
-
-    fn fsync(&self, id: usize) -> Result<()> {
-        let id = EventQueueId::from(id);
-
-        let handles = queues();
-        handles.get(&id).ok_or(Error::new(EBADF)).and(Ok(()))
+        Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
     }
 
     fn close(&self, id: usize) -> Result<()> {
@@ -43,7 +29,7 @@ impl KernelScheme for EventScheme {
             .ok_or(Error::new(EBADF))
             .and(Ok(()))
     }
-    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
         let id = EventQueueId::from(id);
 
         let queue = {
@@ -52,10 +38,10 @@ impl KernelScheme for EventScheme {
             handle.clone()
         };
 
-        queue.read(buf)
+        queue.read(buf, flags & O_NONBLOCK as u32 == 0)
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kwrite(&self, id: usize, buf: UserSliceRo, flags: u32, _stored_flags: u32) -> Result<usize> {
         let id = EventQueueId::from(id);
 
         let queue = {

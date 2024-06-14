@@ -5,12 +5,12 @@ use core::{
 };
 use spin::RwLock;
 
-use crate::syscall::{
+use crate::{context::file::InternalFlags, syscall::{
     data::ITimerSpec,
     error::*,
     flag::{EventFlags, CLOCK_MONOTONIC, CLOCK_REALTIME},
     usercopy::{UserSliceRo, UserSliceWo},
-};
+}};
 
 use super::{CallerCtx, KernelScheme, OpenResult};
 pub struct ITimerScheme;
@@ -32,7 +32,7 @@ impl KernelScheme for ITimerScheme {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().insert(id, clock);
 
-        Ok(OpenResult::SchemeLocal(id))
+        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -58,7 +58,7 @@ impl KernelScheme for ITimerScheme {
             .ok_or(Error::new(EBADF))
             .and(Ok(()))
     }
-    fn kread(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kread(&self, id: usize, buf: UserSliceWo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let _clock = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
@@ -75,7 +75,7 @@ impl KernelScheme for ITimerScheme {
         Ok(specs_read * mem::size_of::<ITimerSpec>())
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let _clock = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?

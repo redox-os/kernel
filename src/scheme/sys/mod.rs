@@ -6,16 +6,15 @@ use core::{
 use spin::RwLock;
 
 use crate::{
-    arch::interrupt,
-    syscall::{
+    arch::interrupt, context::file::InternalFlags, syscall::{
         data::Stat,
         error::{Error, Result, EBADF, ENOENT},
         flag::{MODE_DIR, MODE_FILE},
         usercopy::UserSliceWo,
-    },
+    }
 };
 
-use super::{calc_seek_offset, CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult};
 
 mod block;
 mod context;
@@ -33,7 +32,6 @@ struct Handle {
     path: &'static str,
     data: Vec<u8>,
     mode: u16,
-    seek: usize,
 }
 
 type SysFn = fn() -> Result<Vec<u8>>;
@@ -88,10 +86,9 @@ impl KernelScheme for SysScheme {
                     path: "",
                     data,
                     mode: MODE_DIR | 0o444,
-                    seek: 0,
                 },
             );
-            return Ok(OpenResult::SchemeLocal(id));
+            return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
         } else {
             //Have to iterate to get the path without allocation
             for entry in FILES.iter() {
@@ -104,10 +101,9 @@ impl KernelScheme for SysScheme {
                             path: entry.0,
                             data,
                             mode: MODE_FILE | 0o444,
-                            seek: 0,
                         },
                     );
-                    return Ok(OpenResult::SchemeLocal(id));
+                    return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
                 }
             }
         }
@@ -115,13 +111,11 @@ impl KernelScheme for SysScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
+    fn fsize(&self, id: usize) -> Result<u64> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let new_offset = calc_seek_offset(handle.seek, pos, whence, handle.data.len())?;
-        handle.seek = new_offset;
-        Ok(new_offset)
+        Ok(handle.data.len() as u64)
     }
 
     fn fsync(&self, _id: usize) -> Result<()> {
@@ -148,16 +142,17 @@ impl KernelScheme for SysScheme {
 
         Ok(bytes_read)
     }
-    fn kread(&self, id: usize, buffer: UserSliceWo) -> Result<usize> {
+    fn kreadoff(&self, id: usize, buffer: UserSliceWo, pos: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
+        let Ok(pos) = usize::try_from(pos) else {
+            return Ok(0);
+        };
+
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
-        let avail_buf = handle.data.get(handle.seek..).unwrap_or(&[]);
+        let avail_buf = handle.data.get(pos..).unwrap_or(&[]);
 
-        let byte_count = buffer.copy_common_bytes_from_slice(avail_buf)?;
-
-        handle.seek = handle.seek.saturating_add(byte_count);
-        Ok(byte_count)
+        buffer.copy_common_bytes_from_slice(avail_buf)
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {

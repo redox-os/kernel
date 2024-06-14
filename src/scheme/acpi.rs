@@ -9,9 +9,7 @@ use alloc::{boxed::Box, collections::BTreeMap};
 use spin::{Mutex, Once, RwLock};
 
 use crate::{
-    acpi::{RxsdtEnum, RXSDT_ENUM},
-    event,
-    sync::WaitCondition,
+    acpi::{RxsdtEnum, RXSDT_ENUM}, context::file::InternalFlags, event, sync::WaitCondition
 };
 
 use crate::syscall::{
@@ -30,7 +28,6 @@ use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
 pub struct AcpiScheme;
 
 struct Handle {
-    offset: usize,
     kind: HandleKind,
     stat: bool,
 }
@@ -121,25 +118,25 @@ impl KernelScheme for AcpiScheme {
         if flags & O_ACCMODE != O_RDONLY && flags & O_STAT != O_STAT {
             return Err(Error::new(EROFS));
         }
-        let handle_kind = match path {
+        let (handle_kind, int_flags) = match path {
             "" => {
                 if flags & O_DIRECTORY != O_DIRECTORY && flags & O_STAT != O_STAT {
                     return Err(Error::new(EISDIR));
                 }
 
-                HandleKind::TopLevel
+                (HandleKind::TopLevel, InternalFlags::POSITIONED)
             }
             "rxsdt" => {
                 if flags & O_DIRECTORY == O_DIRECTORY && flags & O_STAT != O_STAT {
                     return Err(Error::new(ENOTDIR));
                 }
-                HandleKind::Rxsdt
+                (HandleKind::Rxsdt, InternalFlags::POSITIONED)
             }
             "kstop" => {
                 if flags & O_DIRECTORY == O_DIRECTORY && flags & O_STAT != O_STAT {
                     return Err(Error::new(ENOTDIR));
                 }
-                HandleKind::ShutdownPipe
+                (HandleKind::ShutdownPipe, InternalFlags::empty())
             }
             _ => return Err(Error::new(ENOENT)),
         };
@@ -150,15 +147,15 @@ impl KernelScheme for AcpiScheme {
         let _ = handles_guard.insert(
             fd,
             Handle {
-                offset: 0,
                 kind: handle_kind,
+                // TODO: Redundant
                 stat: flags & O_STAT == O_STAT,
             },
         );
 
-        Ok(OpenResult::SchemeLocal(fd))
+        Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
+    fn fsize(&self, id: usize) -> Result<u64> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -166,39 +163,11 @@ impl KernelScheme for AcpiScheme {
             return Err(Error::new(EBADF));
         }
 
-        let file_len = match handle.kind {
-            HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len(),
+        Ok(match handle.kind {
+            HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len() as u64,
             HandleKind::ShutdownPipe => 1,
-            HandleKind::TopLevel => TOPLEVEL_CONTENTS.len(),
-        };
-
-        let new_offset = match whence {
-            SEEK_SET => pos as usize,
-            SEEK_CUR => {
-                if pos < 0 {
-                    handle
-                        .offset
-                        .checked_sub((-pos) as usize)
-                        .ok_or(Error::new(EINVAL))?
-                } else {
-                    handle.offset.saturating_add(pos as usize)
-                }
-            }
-            SEEK_END => {
-                if pos < 0 {
-                    file_len
-                        .checked_sub((-pos) as usize)
-                        .ok_or(Error::new(EINVAL))?
-                } else {
-                    file_len
-                }
-            }
-            _ => return Err(Error::new(EINVAL)),
-        };
-
-        handle.offset = new_offset;
-
-        Ok(new_offset)
+            HandleKind::TopLevel => TOPLEVEL_CONTENTS.len() as u64,
+        })
     }
     // TODO
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
@@ -217,10 +186,11 @@ impl KernelScheme for AcpiScheme {
         }
         Ok(())
     }
-    fn kwrite(&self, _id: usize, _buf: UserSliceRo) -> Result<usize> {
-        Err(Error::new(EBADF))
-    }
-    fn kread(&self, id: usize, dst_buf: UserSliceWo) -> Result<usize> {
+    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, flags: u32, stored_flags: u32) -> Result<usize> {
+        let Ok(offset) = usize::try_from(offset) else {
+            return Ok(0);
+        };
+
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -244,23 +214,18 @@ impl KernelScheme for AcpiScheme {
                     }
                 }
 
-                dst_buf.copy_exactly(&[0x42])?;
-                handle.offset = 1;
-                return Ok(1);
+                return dst_buf.copy_exactly(&[0x42]).map(|()| 1);
             }
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?,
             HandleKind::TopLevel => TOPLEVEL_CONTENTS,
         };
 
-        let src_offset = core::cmp::min(handle.offset, data.len());
+        let src_offset = core::cmp::min(offset, data.len());
         let src_buf = data
             .get(src_offset..)
             .expect("expected data to be at least data.len() bytes long");
 
-        let bytes_copied = dst_buf.copy_common_bytes_from_slice(src_buf)?;
-        handle.offset += bytes_copied;
-
-        Ok(bytes_copied)
+        dst_buf.copy_common_bytes_from_slice(src_buf)
     }
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         let handles = HANDLES.read();

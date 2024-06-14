@@ -4,6 +4,8 @@
 
 extern crate syscall;
 
+use syscall::{RwFlags, EINVAL};
+
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
@@ -81,9 +83,11 @@ pub fn syscall(
                 let fd = FileHandle::from(b);
                 match a & SYS_ARG {
                     SYS_ARG_SLICE => match a {
-                        SYS_WRITE => file_op_generic(fd, |scheme, number| {
-                            scheme.kwrite(number, UserSlice::ro(c, d)?)
+                        SYS_WRITE2 => file_op_generic_ext(fd, |scheme, _, desc| {
+                            let flags = u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?;
+                            scheme.kwriteoff(desc.number, UserSlice::ro(c, d)?, e as u64, desc.rw_flags(flags), desc.flags)
                         }),
+                        SYS_WRITE => sys_write(fd, UserSlice::ro(c, d)?),
                         SYS_FMAP => {
                             let addrspace = AddrSpace::current()?;
                             let map = unsafe { UserSlice::ro(c, d)?.read_exact::<Map>()? };
@@ -103,9 +107,11 @@ pub fn syscall(
                         _ => return Err(Error::new(ENOSYS)),
                     },
                     SYS_ARG_MSLICE => match a {
-                        SYS_READ => file_op_generic(fd, |scheme, number| {
-                            scheme.kread(number, UserSlice::wo(c, d)?)
+                        SYS_READ2 => file_op_generic_ext(fd, |scheme, _, desc| {
+                            let flags = u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?;
+                            scheme.kreadoff(desc.number, UserSlice::wo(c, d)?, e as u64, desc.rw_flags(flags), desc.flags)
                         }),
+                        SYS_READ => sys_read(fd, UserSlice::wo(c, d)?),
                         SYS_FPATH => file_op_generic(fd, |scheme, number| {
                             scheme.kfpath(number, UserSlice::wo(c, d)?)
                         }),
@@ -129,9 +135,7 @@ pub fn syscall(
                         #[cfg(target_pointer_width = "64")]
                         SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64),
 
-                        SYS_LSEEK => {
-                            file_op_generic(fd, |scheme, number| scheme.seek(number, c as isize, d))
-                        }
+                        SYS_LSEEK => lseek(fd, c as i64, d),
                         SYS_FCHMOD => file_op_generic(fd, |scheme, number| {
                             scheme.fchmod(number, c as u16).map(|()| 0)
                         }),
