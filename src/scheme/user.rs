@@ -82,7 +82,8 @@ enum ParsedCqe {
     RegularResponse { tag: u32, code: usize, extra0: u8 },
     ResponseWithFd { tag: u32, fd: usize },
     ObtainFd { tag: u32, flags: FobtainFdFlags, dst_fd_or_ptr: usize },
-    ProvideMmap { tag: u32, offset: u64, base_addr: VirtualAddress, page_count: usize }
+    ProvideMmap { tag: u32, offset: u64, base_addr: VirtualAddress, page_count: usize },
+    NoOp, // TODO: remove
 }
 impl ParsedCqe {
     fn parse_packet(packet: &Packet) -> Result<Self> {
@@ -94,6 +95,13 @@ impl ParsedCqe {
                 },
                 _ => {
                     log::warn!("Unknown scheme -> kernel message {} from {}", packet.a, context::current().unwrap().read().name);
+
+                    // Some schemes don't implement cancellation properly yet, so we temporarily
+                    // ignore their responses to the cancellation message, rather than EINVAL.
+                    if packet.a == Error::mux(Err(Error::new(ENOSYS))) {
+                        return Ok(Self::NoOp);
+                    }
+
                     return Err(Error::new(EINVAL));
                 }
             }
@@ -870,6 +878,7 @@ impl UserInner {
                 context.fmap_ret = Some(Frame::containing_address(frame));
             }
             ParsedCqe::TriggerFevent { number, flags } => event::trigger(self.scheme_id, number, flags),
+            ParsedCqe::NoOp => (),
         }
         Ok(())
     }
