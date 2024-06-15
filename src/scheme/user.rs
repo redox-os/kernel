@@ -919,8 +919,14 @@ impl UserInner {
         Ok(())
     }
 
-    pub fn fevent(&self, _flags: EventFlags) -> Result<EventFlags> {
-        Ok(EventFlags::empty())
+    pub fn fevent(&self, flags: EventFlags) -> Result<EventFlags> {
+        // TODO: Should the root scheme also suppress events if `flags` does not contain
+        // `EVENT_READ`?
+        Ok(if self.todo.is_currently_empty() {
+            EventFlags::empty()
+        } else {
+            EventFlags::EVENT_READ.intersection(flags)
+        })
     }
 
     pub fn fsync(&self) -> Result<()> {

@@ -23,6 +23,9 @@ impl<T> WaitQueue<T> {
             condition: WaitCondition::new(),
         }
     }
+    pub fn is_currently_empty(&self) -> bool {
+        self.inner.lock().is_empty()
+    }
 
     pub fn receive(&self, block: bool, reason: &'static str) -> Result<T> {
         loop {
