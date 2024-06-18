@@ -160,7 +160,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 return true;
             }
 
-            context.sig.pending |= 1_u64 << (sig - 1);
+            todo!();
 
             // Convert stopped processes to blocked if sending SIGCONT
             if sig == SIGCONT {
@@ -264,78 +264,6 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
     } else {
         Err(Error::new(ESRCH))
     }
-}
-
-pub fn sigaction(
-    sig: usize,
-    act_opt: Option<UserSliceRo>,
-    oldact_opt: Option<UserSliceWo>,
-    restorer: usize,
-) -> Result<()> {
-    if sig == 0 || sig > 0x7F {
-        return Err(Error::new(EINVAL));
-    }
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    let mut actions = context.actions.write();
-
-    if let Some(oldact) = oldact_opt {
-        oldact.copy_exactly(&actions[sig - 1].0)?;
-    }
-
-    if let Some(act) = act_opt {
-        actions[sig - 1] = (unsafe { act.read_exact::<SigAction>()? }, restorer);
-    }
-
-    Ok(())
-}
-
-pub fn sigprocmask(how: usize, mask_ref_opt: Option<UserSliceRo>, oldmask_out_opt: Option<UserSliceWo>) -> Result<()> {
-    let mask_opt = mask_ref_opt.map(|m| m.read_u64()).transpose()?;
-
-    let old_sigmask;
-
-    {
-        let context_lock = context::current()?;
-        let mut context = context_lock.write();
-
-        old_sigmask = context.sig.procmask;
-
-        if let Some(arg) = mask_opt {
-            match how {
-                SIG_BLOCK => context.sig.procmask |= arg,
-                SIG_UNBLOCK => context.sig.procmask &= !arg,
-                SIG_SETMASK => context.sig.procmask = arg,
-                _ => {
-                    return Err(Error::new(EINVAL));
-                }
-            }
-        }
-    };
-
-    if let Some(oldmask_out) = oldmask_out_opt {
-        oldmask_out.write_u64(old_sigmask)?;
-    }
-    Ok(())
-}
-
-pub fn sigreturn() -> Result<()> {
-    let context = context::current()?;
-
-    let mut stack = SignalStack::default();
-
-    // Kernel-only contexts can't call sigreturn in the first place, so a panic would be
-    // acceptable, but handle it anyway.
-    let stack_ptr = context.read().regs().ok_or(Error::new(EINVAL))?.stack_pointer();
-
-    UserSlice::ro(stack_ptr, mem::size_of::<SignalStack>())?.copy_to_slice(&mut stack)?;
-
-    let mut context = context.write();
-    context.regs_mut().ok_or(Error::new(EINVAL))?.load(&stack.intregs);
-    context.sig.procmask = stack.old_procmask;
-
-    Ok(())
 }
 
 pub fn umask(mask: usize) -> Result<usize> {

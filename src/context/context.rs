@@ -140,6 +140,7 @@ pub struct Context {
     /// The effective namespace id
     pub ens: SchemeNamespace,
 
+    /// Signal handler
     pub sig: SignalState,
 
     /// Process umask
@@ -191,8 +192,6 @@ pub struct Context {
     pub name: Cow<'static, str>,
     /// The open files in the scheme
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
-    /// Signal actions
-    pub actions: Arc<RwLock<Vec<(SigAction, usize)>>>,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
     pub userspace: bool,
@@ -203,25 +202,20 @@ pub struct Context {
     pub fmap_ret: Option<Frame>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct SignalState {
-    /// Bitset of pending signals.
-    pub pending: u64,
-    /// Bitset of procmasked signals.
-    pub procmask: u64,
+    /// Offset to jump to when a signal is received.
+    pub user_handler: Option<NonZeroUsize>,
+    /// Offset to jump to when a program fault occurs.
+    pub excp_handler: Option<NonZeroUsize>,
+    /// Signal control page, required for signals to work.
+    pub control: Option<RaiiFrame>,
+    /// Offset within the control page of a naturally aligned, semiatomically accessed, u128.
+    pub sigword_off: u16,
 
-    /// A function pointer to the userspace signal handler.
-    pub handler: Option<SignalHandler>,
-}
-#[derive(Clone, Copy, Debug)]
-pub struct SignalHandler {
-    pub handler: NonZeroUsize,
-    pub altstack: Option<Altstack>,
-}
-#[derive(Clone, Copy, Debug)]
-pub struct Altstack {
-    pub base: NonZeroUsize,
-    pub len: NonZeroUsize,
+    /// Set whenever the kernel is about to have the context jump to its signal trampoline, but the
+    /// context is currently running.
+    pub is_pending: bool,
 }
 
 impl Context {
@@ -238,9 +232,11 @@ impl Context {
             egid: 0,
             ens: SchemeNamespace::from(0),
             sig: SignalState {
-                pending: 0,
-                procmask: !0,
-                handler: None,
+                user_handler: None,
+                excp_handler: None,
+                control: None,
+                sigword_off: 0,
+                is_pending: false,
             },
             umask: 0o022,
             status: Status::HardBlocked { reason: HardBlockedReason::NotYetStarted },
@@ -261,7 +257,6 @@ impl Context {
             addr_space: None,
             name: Cow::Borrowed(""),
             files: Arc::new(RwLock::new(Vec::new())),
-            actions: Self::empty_actions(),
             userspace: false,
             ptrace_stop: false,
             fmap_ret: None,
@@ -431,16 +426,6 @@ impl Context {
 
         core::mem::replace(&mut self.addr_space, addr_space)
     }
-    pub fn empty_actions() -> Arc<RwLock<Vec<(SigAction, usize)>>> {
-        Arc::new(RwLock::new(vec![(
-            SigAction {
-                sa_handler: unsafe { mem::transmute(SIG_DFL) },
-                sa_mask: 0,
-                sa_flags: SigActionFlags::empty(),
-            },
-            0
-        ); 128]))
-    }
     pub fn caller_ctx(&self) -> CallerCtx {
         CallerCtx {
             pid: self.id.into(),
@@ -470,13 +455,6 @@ impl Context {
             return None;
         };
         Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
-    }
-}
-
-impl SignalState {
-    pub fn deliverable(&self) -> u64 {
-        const CANT_BLOCK: u64 = (1 << (SIGKILL - 1)) | (1 << (SIGSTOP - 1));
-        self.pending & (CANT_BLOCK | !self.procmask)
     }
 }
 

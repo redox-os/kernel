@@ -76,7 +76,6 @@ pub fn init() {
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
     context.name = Cow::Borrowed("kmain");
-    context.sig.procmask = 0;
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
 

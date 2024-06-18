@@ -303,6 +303,9 @@ impl RaiiFrame {
             .map_err(|_| Enomem)
             .map(|inner| Self { inner })
     }
+    pub unsafe fn new_unchecked(inner: Frame) -> Self {
+        Self { inner }
+    }
     pub fn get(&self) -> Frame {
         self.inner
     }

@@ -8,7 +8,7 @@ use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
     arch::paging::PAGE_SIZE, cpu_set::LogicalCpuSet, memory::{
-        deallocate_frame, deallocate_p2frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame, PageInfo, RefCount, RefKind
+        deallocate_frame, deallocate_p2frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame, PageInfo, RaiiFrame, RefCount, RefKind
     }, paging::{
         Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress,
     }, percpu::PercpuBlock, scheme::{self, KernelSchemes}
@@ -465,6 +465,37 @@ impl AddrSpaceWrapper {
         }
 
         Ok(dst_base)
+    }
+    /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
+    /// is intended to be used for user-kernel shared memory.
+    pub fn borrow_frame_enforce_rw_allocated(self: &Arc<Self>, page: Page) -> Result<RaiiFrame> {
+        let mut guard = self.acquire_write();
+
+        let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
+
+        if !info.can_have_flags(MapFlags::PROT_READ | MapFlags::PROT_WRITE) {
+            return Err(Error::new(EPERM));
+        }
+        if !matches!(info.provider, Provider::Allocated { .. }) {
+            return Err(Error::new(EPERM));
+        }
+
+        let frame = if let Some((f, fl)) = guard.table.utable.translate(page.start_address()) && fl.has_write() {
+            Frame::containing(f)
+        } else {
+            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0).map_err(|_| Error::new(ENOMEM))?;
+            flush.flush();
+            guard = new_guard;
+
+            frame
+        };
+
+        match get_page_info(frame).expect("missing page info for Allocated grant").add_ref(RefKind::Shared) {
+            Ok(_) => Ok(unsafe { RaiiFrame::new_unchecked(frame) }),
+            Err(AddRefError::RcOverflow) => Err(Error::new(ENOMEM)),
+            Err(AddRefError::SharedToCow) => unreachable!(),
+            Err(AddRefError::CowToShared) => unreachable!("if it was CoW, it was read-only, but in that case we already called correct_inner"),
+        }
     }
 }
 impl AddrSpace {

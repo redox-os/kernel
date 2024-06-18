@@ -224,19 +224,6 @@ pub fn syscall(
                 SYS_SETREUID => setreuid(b as u32, c as u32),
                 SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)),
                 SYS_SETREGID => setregid(b as u32, c as u32),
-                SYS_SIGACTION => sigaction(
-                    b,
-                    UserSlice::ro(c, core::mem::size_of::<SigAction>())?.none_if_null(),
-                    UserSlice::wo(d, core::mem::size_of::<SigAction>())?.none_if_null(),
-                    e,
-                )
-                .map(|()| 0),
-                SYS_SIGPROCMASK => sigprocmask(
-                    b,
-                    UserSlice::ro(c, 8)?.none_if_null(),
-                    UserSlice::wo(d, 8)?.none_if_null(),
-                ).map(|()| 0),
-                SYS_SIGRETURN => sigreturn().map(|()| 0),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
 

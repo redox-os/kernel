@@ -37,13 +37,6 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
         return UpdateResult::Skip;
     }
 
-    let signal = context.sig.deliverable() != 0;
-
-    // Unblock when there are pending nonmasked signals.
-    if matches!(context.status, Status::Blocked) && signal {
-        context.unblock_no_ipi();
-    }
-
     // Wake from sleep
     if context.status.is_soft_blocked() && context.wake.is_some() {
         let wake = context.wake.expect("context::switch: wake not set");
@@ -57,7 +50,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
 
     // Switch to context if it needs to run
     if context.status.is_runnable() {
-        UpdateResult::CanSwitch { signal }
+        UpdateResult::CanSwitch { signal: mem::take(&mut context.sig.is_pending) }
     } else {
         UpdateResult::Skip
     }

@@ -1,7 +1,7 @@
 use crate::{
     arch::paging::{Page, RmmA, RmmArch, VirtualAddress},
     context::{
-        self, context::{Altstack, HardBlockedReason, SignalHandler}, file::{FileDescriptor, InternalFlags}, memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan}, Context, ContextId, Status
+        self, context::{HardBlockedReason, SignalState}, file::{FileDescriptor, InternalFlags}, memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan}, Context, ContextId, Status
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -142,16 +142,7 @@ enum Operation {
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
     // directory.
     OpenViaDup,
-
     SchedAffinity,
-    Sigactions(Arc<RwLock<Vec<(SigAction, usize)>>>),
-    Sigprocmask,
-
-    // TODO: REMOVE
-    Sigignmask,
-
-    CurrentSigactions,
-    AwaitingSigactionsChange(Arc<RwLock<Vec<(SigAction, usize)>>>),
 
     MmapMinAddr(Arc<AddrSpaceWrapper>),
 }
@@ -173,12 +164,7 @@ impl Operation {
                 | Self::AddrSpace { .. }
                 | Self::CurrentAddrSpace
                 | Self::CurrentFiletable
-                | Self::Sigactions(_)
-                | Self::CurrentSigactions
-                | Self::AwaitingSigactionsChange(_)
                 | Self::Sighandler
-                | Self::Sigprocmask
-                | Self::Sigignmask
         )
     }
     fn needs_root(&self) -> bool {
@@ -300,16 +286,10 @@ impl<const FULL: bool> ProcScheme<FULL> {
             Some("name") => (Operation::Name, true),
             Some("session_id") => (Operation::SessionId, true),
             Some("sighandler") => (Operation::Sighandler, false),
-            Some("sigprocmask") => (Operation::Sigprocmask, false),
-            Some("sigignmask") => (Operation::Sigignmask, false),
             Some("start") => (Operation::Start, false),
             Some("uid") => (Operation::Attr(Attr::Uid), true),
             Some("gid") => (Operation::Attr(Attr::Gid), true),
             Some("open_via_dup") => (Operation::OpenViaDup, false),
-            Some("sigactions") => {
-                (Operation::Sigactions(Arc::clone(&get_context(pid)?.read().actions)), false)
-            }
-            Some("current-sigactions") => (Operation::CurrentSigactions, false),
             Some("mmap-min-addr") => (Operation::MmapMinAddr(Arc::clone(
                 get_context(pid)?
                     .read()
@@ -654,12 +634,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     Ok(())
                 })?
             }
-            Operation::AwaitingSigactionsChange(new) => {
-                with_context_mut(handle.info.pid, |context: &mut Context| {
-                    context.actions = new;
-                    Ok(())
-                })?
-            }
             Operation::Trace => {
                 ptrace::close_session(handle.info.pid);
 
@@ -926,40 +900,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 offset,
             ),
 
-            Operation::Sighandler => {
-                let handler = context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sig.handler;
-                let altstack = handler.and_then(|h| h.altstack);
-                let data = SetSighandlerData {
-                    entry: handler.map_or(0, |h| h.handler.get()),
-                    altstack_base: altstack.map_or(0, |a| a.base.get()),
-                    altstack_len: altstack.map_or(0, |a| a.len.get()),
-                };
-                buf.copy_exactly(&data)?;
-
-                Ok(mem::size_of::<SetSighandlerData>())
-            }
-            Operation::Sigprocmask => {
-                let procmask = context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.read().sig.procmask;
-                buf.write_u64(procmask)?;
-                Ok(8)
-            }
-            Operation::Sigignmask => {
-                let mut ignmask = 0_u64;
-
-                {
-                    let contexts = context::contexts();
-                    let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
-                    let context = context.read();
-                    let actions = context.actions.read();
-                    for (idx, (action, _)) in actions.iter().enumerate() {
-                        if action.sa_handler == unsafe { core::mem::transmute(SIG_IGN) } {
-                            ignmask |= 1 << idx;
-                        }
-                    }
-                }
-                buf.write_u64(ignmask)?;
-                Ok(8)
-            }
             Operation::Attr(attr) => {
                 let src_buf = match (
                     attr,
@@ -1189,41 +1129,34 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             Operation::Sighandler => {
                 let data = unsafe { buf.read_exact::<SetSighandlerData>()? };
 
-                let new_handler = match NonZeroUsize::new(data.entry) {
-                    Some(handler) => Some(SignalHandler {
-                        handler,
-                        altstack: match (NonZeroUsize::new(data.altstack_base), NonZeroUsize::new(data.altstack_len)) {
-                            (Some(base), Some(len)) => Some(Altstack { base, len }),
-                            _ => None,
-                        }
-                    }),
-                    None => None,
+                if data.user_handler >= crate::USER_END_OFFSET || data.excp_handler >= crate::USER_END_OFFSET {
+                    return Err(Error::new(EPERM));
+                }
+
+                let (control, sigword_off) = if data.word_addr != 0 {
+                    let offset = u16::try_from(data.word_addr % PAGE_SIZE).unwrap();
+
+                    if offset % 16 != 0 {
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    let frame = AddrSpace::current()?
+                        .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.word_addr)))?;
+
+                    (Some(frame), offset)
+                } else {
+                    (None, 0)
                 };
 
-                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig.handler = new_handler;
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig = SignalState {
+                    user_handler: NonZeroUsize::new(data.user_handler),
+                    excp_handler: NonZeroUsize::new(data.excp_handler),
+                    control,
+                    sigword_off,
+                    is_pending: false,
+                };
 
                 Ok(mem::size_of::<SetSighandlerData>())
-            }
-            Operation::Sigprocmask => {
-                let new_procmask = buf.read_u64()?;
-                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig.procmask = new_procmask;
-                Ok(8)
-            }
-            // TODO: Remove!
-            Operation::Sigignmask => {
-                let new_ignmask = buf.read_u64()?;
-                let contexts = context::contexts();
-                let context = contexts.get(info.pid).ok_or(Error::new(ESRCH))?;
-                let context = context.read();
-                let mut actions = context.actions.write();
-                for bit in (0..64).filter(|bit| new_ignmask & (1 << bit) != 0) {
-                    actions[bit] = (SigAction {
-                        sa_flags: SigActionFlags::empty(),
-                        sa_mask: 0,
-                        sa_handler: unsafe { core::mem::transmute(SIG_IGN) },
-                    }, 0);
-                }
-                Ok(8)
             }
             Operation::Start => match context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().status {
                 ref mut status @ Status::HardBlocked { reason: HardBlockedReason::NotYetStarted } => {
@@ -1311,28 +1244,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 Ok(3 * mem::size_of::<usize>())
             }
-            Operation::CurrentSigactions => {
-                let sigactions_fd = buf.read_usize()?;
-                let (hopefully_this_scheme, number) = extract_scheme_number(sigactions_fd)?;
-                verify_scheme(hopefully_this_scheme)?;
-
-                let mut handles = HANDLES.write();
-                let Operation::Sigactions(ref sigactions) = handles
-                    .get(&number)
-                    .ok_or(Error::new(EBADF))?
-                    .info
-                    .operation
-                else {
-                    return Err(Error::new(EBADF));
-                };
-
-                handles
-                    .get_mut(&id)
-                    .ok_or(Error::new(EBADF))?
-                    .info
-                    .operation = Operation::AwaitingSigactionsChange(Arc::clone(sigactions));
-                Ok(mem::size_of::<usize>())
-            }
             Operation::MmapMinAddr(ref addrspace) => {
                 let val = buf.read_usize()?;
                 if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
@@ -1373,10 +1284,8 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             Operation::Attr(Attr::Gid) => "gid",
             Operation::Filetable { .. } => "filetable",
             Operation::AddrSpace { .. } => "addrspace",
-            Operation::Sigactions(_) => "sigactions",
             Operation::CurrentAddrSpace => "current-addrspace",
             Operation::CurrentFiletable => "current-filetable",
-            Operation::CurrentSigactions => "current-sigactions",
             Operation::OpenViaDup => "open-via-dup",
             Operation::MmapMinAddr(_) => "mmap-min-addr",
             Operation::SchedAffinity => "sched-affinity",
@@ -1523,14 +1432,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                 handle(operation, OperationData::Offset, true)
             }
-            Operation::Sigactions(ref sigactions) => {
-                let new = match buf {
-                    b"empty" => Context::empty_actions(),
-                    b"copy" => Arc::new(RwLock::new(sigactions.read().clone())),
-                    _ => return Err(Error::new(EINVAL)),
-                };
-                handle(Operation::Sigactions(new), OperationData::Other, false)
-            }
             _ => return Err(Error::new(EINVAL)),
         })
         .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
@@ -1546,7 +1447,7 @@ fn inherit_context() -> Result<ContextId> {
         let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
         let new_context_lock = Arc::clone(context::contexts_mut().spawn(true, clone_handler)?);
 
-        // (Starts with "all signals blocked".)
+        // (Signals are initially disabled.)
 
         let current_context = current_context_lock.read();
         let mut new_context = new_context_lock.write();
