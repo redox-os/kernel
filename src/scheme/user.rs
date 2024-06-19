@@ -244,7 +244,7 @@ impl UserInner {
         loop {
             context::switch();
 
-            let eintr_if_sigkill = || if context::current()?.read().sig.deliverable() & (1 << (SIGKILL - 1)) != 0 {
+            let eintr_if_sigkill = || if context::current()?.read().being_sigkilled {
                 // EINTR directly if SIGKILL was found without waiting for scheme. Data loss
                 // doesn't matter.
                 Err(Error::new(EINTR))

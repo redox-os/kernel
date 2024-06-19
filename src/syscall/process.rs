@@ -14,7 +14,7 @@ use crate::{
     paging::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
     syscall::{
-        data::{SigAction, SignalStack},
+        data::SigAction,
         error::*,
         flag::{
             wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT,

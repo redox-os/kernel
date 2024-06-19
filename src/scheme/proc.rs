@@ -1133,7 +1133,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     return Err(Error::new(EPERM));
                 }
 
-                let (control, sigword_off) = if data.word_addr != 0 {
+                let (control, sigctl_off) = if data.word_addr != 0 {
                     let offset = u16::try_from(data.word_addr % PAGE_SIZE).unwrap();
 
                     if offset % 16 != 0 {
@@ -1152,7 +1152,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     user_handler: NonZeroUsize::new(data.user_handler),
                     excp_handler: NonZeroUsize::new(data.excp_handler),
                     control,
-                    sigword_off,
+                    sigctl_off,
                     is_pending: false,
                 };
 

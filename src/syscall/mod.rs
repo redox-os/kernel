@@ -246,16 +246,14 @@ pub fn syscall(
 
     PercpuBlock::current().inside_syscall.set(false);
 
-    if a != SYS_SIGRETURN {
-        // errormux turns Result<usize> into -errno
-        stack.set_syscall_ret_reg(Error::mux(result));
+    // errormux turns Result<usize> into -errno
+    stack.set_syscall_ret_reg(Error::mux(result));
 
-        if result == Err(Error::new(EINTR)) {
-            // Although it would be cleaner to simply run the signal trampoline right after switching
-            // back to any given context, where the signal set/queue is nonempty, syscalls need to
-            // complete *before* any signal is delivered. Otherwise the return value would probably be
-            // overwritten.
-            crate::context::signal::signal_handler();
-        }
+    if result == Err(Error::new(EINTR)) {
+        // Although it would be cleaner to simply run the signal trampoline right after switching
+        // back to any given context, where the signal set/queue is nonempty, syscalls need to
+        // complete *before* any signal is delivered. Otherwise the return value would probably be
+        // overwritten.
+        crate::context::signal::signal_handler();
     }
 }

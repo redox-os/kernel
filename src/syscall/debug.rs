@@ -156,14 +156,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_GETUID => format!("getuid()"),
         SYS_IOPL => format!("iopl({})", b),
         SYS_KILL => format!("kill({}, {})", b, c),
-        SYS_SIGRETURN => format!("sigreturn()"),
-        SYS_SIGACTION => format!("sigaction({}, {:#X}, {:#X}, {:#X})", b, c, d, e),
-        SYS_SIGPROCMASK => format!(
-            "sigprocmask({}, {:?}, {:?})",
-            b,
-            unsafe { read_struct::<[u64; 2]>(c) },
-            unsafe { read_struct::<[u64; 2]>(d) },
-        ),
         SYS_MKNS => format!(
             "mkns({:p} len: {})",
             // TODO: Print out all scheme names?

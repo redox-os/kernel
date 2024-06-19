@@ -1,6 +1,6 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
-use syscall::{SIGKILL, SIGSTOP};
-use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize};
+use syscall::{Sigcontrol, SIGKILL, SIGSTOP};
+use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize, sync::atomic::AtomicU64};
 use spin::RwLock;
 
 use crate::{
@@ -199,6 +199,7 @@ pub struct Context {
     /// a new instance of the proc: scheme, entirely separate from
     /// signals or any other way to restart a process.
     pub ptrace_stop: bool,
+    pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
 }
 
@@ -211,7 +212,7 @@ pub struct SignalState {
     /// Signal control page, required for signals to work.
     pub control: Option<RaiiFrame>,
     /// Offset within the control page of a naturally aligned, semiatomically accessed, u128.
-    pub sigword_off: u16,
+    pub sigctl_off: u16,
 
     /// Set whenever the kernel is about to have the context jump to its signal trampoline, but the
     /// context is currently running.
@@ -235,7 +236,7 @@ impl Context {
                 user_handler: None,
                 excp_handler: None,
                 control: None,
-                sigword_off: 0,
+                sigctl_off: 0,
                 is_pending: false,
             },
             umask: 0o022,
@@ -260,6 +261,7 @@ impl Context {
             userspace: false,
             ptrace_stop: false,
             fmap_ret: None,
+            being_sigkilled: false,
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
@@ -455,6 +457,15 @@ impl Context {
             return None;
         };
         Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
+    }
+    pub fn sigcontrol(&self) -> Option<&Sigcontrol> {
+        assert_eq!(usize::from(self.sig.sigctl_off) % mem::align_of::<usize>(), 0);
+        assert!(usize::from(self.sig.sigctl_off).saturating_add(mem::size_of::<Sigcontrol>()) < PAGE_SIZE);
+
+        Some(unsafe {
+            &*(RmmA::phys_to_virt(self.sig.control.as_ref()?.get().start_address())
+                .data() as *const Sigcontrol).byte_add(usize::from(self.sig.sigctl_off))
+        })
     }
 }
 
