@@ -48,4 +48,17 @@ pub fn signal_handler() {
     .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));*/
 }
 pub fn excp_handler(signal: usize) {
+     let Ok(current) = context::current() else {
+         panic!("CPU exception but not inside of context! Trying to switch...");
+     };
+     let mut context = current.write();
+
+     let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+         context.being_sigkilled = true;
+         context::switch();
+
+         unreachable!();
+     };
+
+     // TODO
 }

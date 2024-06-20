@@ -176,8 +176,8 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             } else if sig == SIGKILL {
                 context.being_sigkilled = true;
             } else if let Some((ctl, _, st)) = context.sigcontrol() {
-                let was_new = ctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
-                if (ctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
+                let _was_new = ctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
+                if (ctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) == 0 {
                     st.is_pending = true;
                 }
             } else {

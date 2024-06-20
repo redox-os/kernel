@@ -203,8 +203,8 @@ pub struct Context {
 pub struct SignalState {
     /// Offset to jump to when a signal is received.
     pub user_handler: NonZeroUsize,
-    /// Offset to jump to when a program fault occurs.
-    pub excp_handler: NonZeroUsize,
+    /// Offset to jump to when a program fault occurs. If None, the context is sigkilled.
+    pub excp_handler: Option<NonZeroUsize>,
 
     /// Signal control pages, shared memory
     pub thread_control: RaiiFrame,

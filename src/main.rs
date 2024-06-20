@@ -268,7 +268,6 @@ pub fn ksignal(signal: usize) {
         if let Some(context_lock) = contexts.current() {
             let mut context = context_lock.write();
             info!("NAME {}", context.name);
-            //context.sig.pending |= 1 << (signal - 1);
         }
     }
     crate::context::signal::excp_handler(signal);

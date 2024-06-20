@@ -1153,7 +1153,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         threadctl_off: validate_off(data.thread_control_addr, mem::size_of::<Sigcontrol>())?,
                         procctl_off: validate_off(data.proc_control_addr, mem::size_of::<SigProcControl>())?,
                         user_handler: NonZeroUsize::new(data.user_handler).ok_or(Error::new(EINVAL))?,
-                        excp_handler: NonZeroUsize::new(data.excp_handler).ok_or(Error::new(EINVAL))?,
+                        excp_handler: NonZeroUsize::new(data.excp_handler),
                         thread_control: addrsp
                             .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.thread_control_addr)))?,
                         proc_control: addrsp
