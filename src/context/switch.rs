@@ -50,7 +50,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
 
     // Switch to context if it needs to run
     if context.status.is_runnable() {
-        UpdateResult::CanSwitch { signal: mem::take(&mut context.sig.is_pending) }
+        UpdateResult::CanSwitch { signal: context.sig.as_mut().map_or(false, |s| mem::take(&mut s.is_pending)) }
     } else {
         UpdateResult::Skip
     }

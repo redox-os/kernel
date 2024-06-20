@@ -15,7 +15,7 @@ pub use self::{
 };
 
 use self::{
-    data::{Map, SigAction, TimeSpec},
+    data::{Map, TimeSpec},
     error::{Error, Result, EINTR, EOVERFLOW, ENOSYS},
     flag::{EventFlags, MapFlags, WaitFlags},
     number::*,

@@ -1,5 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
-use core::{mem, num::NonZeroUsize};
+use syscall::{sig_bit, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
+use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 
 use rmm::Arch;
 use spin::RwLock;
@@ -14,11 +15,10 @@ use crate::{
     paging::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
     syscall::{
-        data::SigAction,
         error::*,
         flag::{
-            wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT,
-            SIG_BLOCK, SIG_SETMASK, SIG_UNBLOCK, WCONTINUED, WNOHANG, WUNTRACED,
+            wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT, WCONTINUED,
+            WNOHANG, WUNTRACED,
         },
         ptrace_event,
     },
@@ -140,9 +140,11 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         (context.ruid, context.euid, context.pgid)
     };
 
-    if sig >= 0x3F {
+    if sig > 0x3F {
         return Err(Error::new(EINVAL));
     }
+    let sig_group = sig / 32;
+
     let mut found = 0;
     let mut sent = 0;
 
@@ -154,19 +156,32 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             if euid != 0 && euid != context.ruid && ruid != context.ruid {
                 return false;
             }
-            // If sig = 0, test that process exists and can be
-            // signalled, but don't send any signal.
+            // If sig = 0, test that process exists and can be signalled, but don't send any
+            // signal.
             if sig == 0 {
                 return true;
             }
 
-            todo!();
-
             // Convert stopped processes to blocked if sending SIGCONT
-            if sig == SIGCONT {
-                if let context::Status::Stopped(_sig) = context.status {
-                    context.status = context::Status::Blocked;
+            if sig == SIGCONT && let context::Status::Stopped(_sig) = context.status {
+                context.status = context::Status::Blocked;
+                if let Some((ctl, _, _)) = context.sigcontrol() {
+                    ctl.word[0].fetch_and(!(sig_bit(SIGTTIN) | sig_bit(SIGTTOU) | sig_bit(SIGTSTP)), Ordering::Relaxed);
                 }
+            } else if sig == SIGSTOP || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP) && context.sigcontrol().map_or(false, |(_, proc, _)| proc.signal_will_stop(sig))) {
+                context.status = context::Status::Stopped(sig);
+                if let Some((ctl, _, _)) = context.sigcontrol() {
+                    ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
+                }
+            } else if sig == SIGKILL {
+                context.being_sigkilled = true;
+            } else if let Some((ctl, _, st)) = context.sigcontrol() {
+                let was_new = ctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
+                if (ctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
+                    st.is_pending = true;
+                }
+            } else {
+                context.being_sigkilled = true;
             }
 
             true

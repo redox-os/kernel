@@ -1,5 +1,5 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
-use syscall::{Sigcontrol, SIGKILL, SIGSTOP};
+use syscall::{SigProcControl, Sigcontrol, SIGKILL, SIGSTOP};
 use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize, sync::atomic::AtomicU64};
 use spin::RwLock;
 
@@ -7,11 +7,7 @@ use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE}, common::aligned_box::AlignedBox, context::{self, arch, file::FileDescriptor, memory::AddrSpace}, cpu_set::{LogicalCpuId, LogicalCpuSet}, ipi::{ipi, IpiKind, IpiTarget}, memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame}, paging::{RmmA, RmmArch}, percpu::PercpuBlock, scheme::{CallerCtx, FileHandle, SchemeNamespace}, sync::WaitMap,
 };
 
-use crate::syscall::{
-    data::SigAction,
-    error::{Error, Result, EAGAIN, ESRCH},
-    flag::{SigActionFlags, SIG_DFL},
-};
+use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
@@ -141,7 +137,7 @@ pub struct Context {
     pub ens: SchemeNamespace,
 
     /// Signal handler
-    pub sig: SignalState,
+    pub sig: Option<SignalState>,
 
     /// Process umask
     pub umask: usize,
@@ -206,13 +202,16 @@ pub struct Context {
 #[derive(Debug)]
 pub struct SignalState {
     /// Offset to jump to when a signal is received.
-    pub user_handler: Option<NonZeroUsize>,
+    pub user_handler: NonZeroUsize,
     /// Offset to jump to when a program fault occurs.
-    pub excp_handler: Option<NonZeroUsize>,
-    /// Signal control page, required for signals to work.
-    pub control: Option<RaiiFrame>,
-    /// Offset within the control page of a naturally aligned, semiatomically accessed, u128.
-    pub sigctl_off: u16,
+    pub excp_handler: NonZeroUsize,
+
+    /// Signal control pages, shared memory
+    pub thread_control: RaiiFrame,
+    pub proc_control: RaiiFrame,
+    /// Offset within the control pages of respective word-aligned structs.
+    pub threadctl_off: u16,
+    pub procctl_off: u16,
 
     /// Set whenever the kernel is about to have the context jump to its signal trampoline, but the
     /// context is currently running.
@@ -232,13 +231,7 @@ impl Context {
             euid: 0,
             egid: 0,
             ens: SchemeNamespace::from(0),
-            sig: SignalState {
-                user_handler: None,
-                excp_handler: None,
-                control: None,
-                sigctl_off: 0,
-                is_pending: false,
-            },
+            sig: None,
             umask: 0o022,
             status: Status::HardBlocked { reason: HardBlockedReason::NotYetStarted },
             status_reason: "",
@@ -458,14 +451,26 @@ impl Context {
         };
         Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
     }
-    pub fn sigcontrol(&self) -> Option<&Sigcontrol> {
-        assert_eq!(usize::from(self.sig.sigctl_off) % mem::align_of::<usize>(), 0);
-        assert!(usize::from(self.sig.sigctl_off).saturating_add(mem::size_of::<Sigcontrol>()) < PAGE_SIZE);
+    pub fn sigcontrol(&mut self) -> Option<(&Sigcontrol, &SigProcControl, &mut SignalState)> {
+        let sig = self.sig.as_mut()?;
 
-        Some(unsafe {
-            &*(RmmA::phys_to_virt(self.sig.control.as_ref()?.get().start_address())
-                .data() as *const Sigcontrol).byte_add(usize::from(self.sig.sigctl_off))
-        })
+        let check = |off| {
+            assert_eq!(usize::from(off) % mem::align_of::<usize>(), 0);
+            assert!(usize::from(off).saturating_add(mem::size_of::<Sigcontrol>()) < PAGE_SIZE);
+        };
+        check(sig.procctl_off);
+        check(sig.threadctl_off);
+
+        let for_thread = unsafe {
+            &*(RmmA::phys_to_virt(sig.thread_control.get().start_address())
+                .data() as *const Sigcontrol).byte_add(usize::from(sig.threadctl_off))
+        };
+        let for_proc = unsafe {
+            &*(RmmA::phys_to_virt(sig.proc_control.get().start_address())
+                .data() as *const SigProcControl).byte_add(usize::from(sig.procctl_off))
+        };
+
+        Some((for_thread, for_proc, sig))
     }
 }
 

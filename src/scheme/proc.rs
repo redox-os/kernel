@@ -8,7 +8,7 @@ use crate::{
     scheme::{self, FileHandle, KernelScheme},
     syscall::{
         self,
-        data::{GrantDesc, Map, PtraceEvent, SetSighandlerData, SigAction, Stat},
+        data::{GrantDesc, Map, PtraceEvent, SetSighandlerData, Stat},
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
@@ -23,6 +23,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use ::syscall::{SigProcControl, Sigcontrol};
 use core::{
     mem,
     num::NonZeroUsize,
@@ -1133,28 +1134,38 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     return Err(Error::new(EPERM));
                 }
 
-                let (control, sigctl_off) = if data.word_addr != 0 {
-                    let offset = u16::try_from(data.word_addr % PAGE_SIZE).unwrap();
+                let state = if data.thread_control_addr != 0 && data.proc_control_addr != 0 {
+                    let offset = u16::try_from(data.thread_control_addr % PAGE_SIZE).unwrap();
 
-                    if offset % 16 != 0 {
-                        return Err(Error::new(EINVAL));
-                    }
+                    let validate_off = |addr, sz| {
+                        let off = addr % PAGE_SIZE;
+                        if off % mem::align_of::<usize>() == 0 && off + sz <= PAGE_SIZE {
+                            Ok(off as u16)
+                        } else {
+                            Err(Error::new(EINVAL))
+                        }
+                    };
 
-                    let frame = AddrSpace::current()?
-                        .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.word_addr)))?;
+                    let addrsp = AddrSpace::current()?;
 
-                    (Some(frame), offset)
+
+                    Some(SignalState {
+                        threadctl_off: validate_off(data.thread_control_addr, mem::size_of::<Sigcontrol>())?,
+                        procctl_off: validate_off(data.proc_control_addr, mem::size_of::<SigProcControl>())?,
+                        user_handler: NonZeroUsize::new(data.user_handler).ok_or(Error::new(EINVAL))?,
+                        excp_handler: NonZeroUsize::new(data.excp_handler).ok_or(Error::new(EINVAL))?,
+                        thread_control: addrsp
+                            .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.thread_control_addr)))?,
+                        proc_control: addrsp
+                            .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.proc_control_addr)))?,
+                        is_pending: false,
+                    })
                 } else {
-                    (None, 0)
+                    None
                 };
 
-                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig = SignalState {
-                    user_handler: NonZeroUsize::new(data.user_handler),
-                    excp_handler: NonZeroUsize::new(data.excp_handler),
-                    control,
-                    sigctl_off,
-                    is_pending: false,
-                };
+
+                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig = state;
 
                 Ok(mem::size_of::<SetSighandlerData>())
             }
