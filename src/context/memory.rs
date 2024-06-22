@@ -1602,6 +1602,12 @@ impl Grant {
                     }
                     // Cannot be shared and CoW simultaneously.
                     Err(AddRefError::SharedToCow) => {
+                        // The call to cow() later implicitly removes one ref, so add it here
+                        // first, even if Shared.
+                        if src_page_info.add_ref(RefKind::Shared) == Err(AddRefError::RcOverflow) {
+                            return Err(Enomem);
+                        }
+
                         // TODO: Copy in place, or use a zeroed page?
                         let CowResult { new_frame, old_frame } = cow(src_frame, src_page_info, rk).map_err(|_| Enomem)?;
                         if let Some(old_frame) = old_frame {

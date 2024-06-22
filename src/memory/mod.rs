@@ -643,7 +643,7 @@ pub fn init_mm(allocator: BumpAllocator<RmmA>) {
         THE_ZEROED_FRAME.get().write(Some((the_frame, the_info)));
     }
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum AddRefError {
     CowToShared,
     SharedToCow,
