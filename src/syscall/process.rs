@@ -162,11 +162,18 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 return true;
             }
 
-            // Convert stopped processes to blocked if sending SIGCONT
             if sig == SIGCONT && let context::Status::Stopped(_sig) = context.status {
+                // Convert stopped processes to blocked if sending SIGCONT, regardless of whether
+                // SIGCONT is blocked or ignored. It can however be controlled whether the process
+                // will additionally ignore, defer, or handle that signal.
                 context.status = context::Status::Blocked;
-                if let Some((ctl, _, _)) = context.sigcontrol() {
+
+                if let Some((ctl, _, st)) = context.sigcontrol() {
                     ctl.word[0].fetch_and(!(sig_bit(SIGTTIN) | sig_bit(SIGTTOU) | sig_bit(SIGTSTP)), Ordering::Relaxed);
+                    ctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
+                    if (ctl.word[0].load(Ordering::Relaxed) >> 32) & sig_bit(SIGCONT) == 0 {
+                        st.is_pending = true;
+                    }
                 }
             } else if sig == SIGSTOP || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP) && context.sigcontrol().map_or(false, |(_, proc, _)| proc.signal_will_stop(sig))) {
                 context.status = context::Status::Stopped(sig);
@@ -181,7 +188,11 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                     st.is_pending = true;
                 }
             } else {
-                context.being_sigkilled = true;
+                // Discard signals if sighandler is unset. This includes both special contexts such
+                // as bootstrap, and child processes or threads that have not yet been started.
+                // This is semantically equivalent to having all signals except SIGSTOP and SIGKILL
+                // blocked/ignored (SIGCONT can be ignored and masked, but will always continue
+                // stopped processes first).
             }
 
             true

@@ -452,8 +452,9 @@ impl Context {
         Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
     }
     pub fn sigcontrol(&mut self) -> Option<(&Sigcontrol, &SigProcControl, &mut SignalState)> {
-        let sig = self.sig.as_mut()?;
-
+        Some(Self::sigcontrol_raw(self.sig.as_mut()?))
+    }
+    pub fn sigcontrol_raw(sig: &mut SignalState) -> (&Sigcontrol, &SigProcControl, &mut SignalState) {
         let check = |off| {
             assert_eq!(usize::from(off) % mem::align_of::<usize>(), 0);
             assert!(usize::from(off).saturating_add(mem::size_of::<Sigcontrol>()) < PAGE_SIZE);
@@ -470,7 +471,7 @@ impl Context {
                 .data() as *const SigProcControl).byte_add(usize::from(sig.procctl_off))
         };
 
-        Some((for_thread, for_proc, sig))
+        (for_thread, for_proc, sig)
     }
 }
 
