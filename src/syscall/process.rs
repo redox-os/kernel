@@ -166,7 +166,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 // Convert stopped processes to blocked if sending SIGCONT, regardless of whether
                 // SIGCONT is blocked or ignored. It can however be controlled whether the process
                 // will additionally ignore, defer, or handle that signal.
-                context.status = context::Status::Blocked;
+                context.status = context::Status::Runnable;
 
                 if let Some((ctl, _, st)) = context.sigcontrol() {
                     ctl.word[0].fetch_and(!(sig_bit(SIGTTIN) | sig_bit(SIGTTOU) | sig_bit(SIGTSTP)), Ordering::Relaxed);
@@ -182,10 +182,12 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 }
             } else if sig == SIGKILL {
                 context.being_sigkilled = true;
+                context.unblock();
             } else if let Some((ctl, _, st)) = context.sigcontrol() {
                 let _was_new = ctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                 if (ctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) == 0 {
                     st.is_pending = true;
+                    context.unblock();
                 }
             } else {
                 // Discard signals if sighandler is unset. This includes both special contexts such

@@ -286,6 +286,7 @@ impl Context {
     /// Unblock context, and return true if it was blocked before being marked runnable
     pub fn unblock(&mut self) -> bool {
         if self.unblock_no_ipi() {
+            // TODO: Only send IPI if currently running?
             if let Some(cpu_id) = self.cpu_id {
                 if cpu_id != crate::cpu_id() {
                     // Send IPI if not on current CPU
