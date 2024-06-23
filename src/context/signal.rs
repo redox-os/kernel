@@ -57,6 +57,7 @@ pub fn signal_handler() {
     // TODO: thumbs_down
     let Some((thread_ctl, proc_ctl, st)) = context.sigcontrol() else {
         // Discard signal if sigcontrol is unset.
+        log::trace!("no sigcontrol, returning");
         return;
     };
     let control_flags = SigcontrolFlags::from_bits_retain(thread_ctl.control_flags.load(Ordering::Acquire));
@@ -64,15 +65,20 @@ pub fn signal_handler() {
     if control_flags.contains(SigcontrolFlags::INHIBIT_DELIVERY) {
         // Signals are inhibited to protect critical sections inside libc, but this code will run
         // every time the context is switched to.
+        log::trace!("Inhibiting delivery, returning");
         return;
     }
 
     if !core::mem::take(&mut st.is_pending) {
+        log::trace!("Not pending, returning");
         return;
     }
 
+    let sigh_instr_ptr = st.user_handler.get();
+
     let Some(regs) = context.regs_mut() else {
         // TODO: is this even reachable?
+        log::trace!("No registers, returning");
         return;
     };
 
@@ -81,6 +87,8 @@ pub fn signal_handler() {
     let fl = regs.flags();
     let scratch_a = regs.scratch.a();
     let scratch_b = regs.scratch.b();
+
+    regs.set_instr_pointer(sigh_instr_ptr);
 
     let (thread_ctl, _, _) = context.sigcontrol()
         .expect("cannot have been unset while holding the lock");
