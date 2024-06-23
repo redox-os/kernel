@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::mem::size_of;
+use core::{mem::size_of, sync::atomic::Ordering};
 use syscall::{
     flag::{
         PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU
@@ -59,7 +59,9 @@ pub fn signal_handler() {
         // Discard signal if sigcontrol is unset.
         return;
     };
-    if unsafe { thread_ctl.control_flags.get().read() }.contains(SigcontrolFlags::INHIBIT_DELIVERY) {
+    let control_flags = SigcontrolFlags::from_bits_retain(thread_ctl.control_flags.load(Ordering::Acquire));
+
+    if control_flags.contains(SigcontrolFlags::INHIBIT_DELIVERY) {
         // Signals are inhibited to protect critical sections inside libc, but this code will run
         // every time the context is switched to.
         return;
@@ -83,14 +85,13 @@ pub fn signal_handler() {
     let (thread_ctl, _, _) = context.sigcontrol()
         .expect("cannot have been unset while holding the lock");
 
-    unsafe {
-        thread_ctl.saved_ip.get().write_volatile(ip);
-        thread_ctl.saved_sp.get().write_volatile(sp);
-        thread_ctl.saved_flags.get().write_volatile(fl);
-        thread_ctl.saved_scratch_a.get().write_volatile(scratch_a);
-        thread_ctl.saved_scratch_b.get().write_volatile(scratch_b);
-        (*thread_ctl.control_flags.get()) |= SigcontrolFlags::INHIBIT_DELIVERY;
-    }
+    thread_ctl.saved_ip.set(ip);
+    thread_ctl.saved_sp.set(sp);
+    thread_ctl.saved_flags.set(fl);
+    thread_ctl.saved_scratch_a.set(scratch_a);
+    thread_ctl.saved_scratch_b.set(scratch_b);
+
+    thread_ctl.control_flags.store((control_flags | SigcontrolFlags::INHIBIT_DELIVERY).bits(), Ordering::Release);
 }
 pub fn excp_handler(signal: usize) {
      let current = context::current().expect("CPU exception but not inside of context!");
