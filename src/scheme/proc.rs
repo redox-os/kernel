@@ -1133,6 +1133,9 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 if data.user_handler >= crate::USER_END_OFFSET || data.excp_handler >= crate::USER_END_OFFSET {
                     return Err(Error::new(EPERM));
                 }
+                if data.thread_control_addr >= crate::USER_END_OFFSET || data.proc_control_addr >= crate::USER_END_OFFSET {
+                    return Err(Error::new(EFAULT));
+                }
 
                 let state = if data.thread_control_addr != 0 && data.proc_control_addr != 0 {
                     let offset = u16::try_from(data.thread_control_addr % PAGE_SIZE).unwrap();
@@ -1146,8 +1149,12 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         }
                     };
 
-                    let addrsp = AddrSpace::current()?;
-
+                    let addrsp = Arc::clone(
+                        context::contexts().get(info.pid)
+                            .ok_or(Error::new(ESRCH))?
+                            .read()
+                            .addr_space()?
+                    );
 
                     Some(SignalState {
                         threadctl_off: validate_off(data.thread_control_addr, mem::size_of::<Sigcontrol>())?,
