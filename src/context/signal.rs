@@ -106,10 +106,8 @@ pub fn excp_handler(signal: usize) {
      let mut context = current.write();
 
      let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
-         context.being_sigkilled = true;
-         context::switch();
-
-         unreachable!();
+         drop(context);
+         crate::syscall::process::exit(SIGKILL << 8);
      };
 
      // TODO
