@@ -74,6 +74,21 @@ impl KernelScheme for DtbScheme {
         Err(Error::new(ENOENT))
     }
 
+    fn fsize(&self, id: usize) -> Result<u64> {
+        let mut handles = HANDLES.write();
+        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+
+        if handle.stat {
+            return Err(Error::new(EBADF));
+        }
+
+        let file_len = match handle.kind {
+            HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?.len(),
+        };
+
+        Ok(file_len as u64)
+    }
+
     fn close(&self, id: usize) -> Result<()> {
         if HANDLES.write().remove(&id).is_none() {
             return Err(Error::new(EBADF));
@@ -81,7 +96,7 @@ impl KernelScheme for DtbScheme {
         Ok(())
     }
 
-    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -98,9 +113,7 @@ impl KernelScheme for DtbScheme {
             .get(src_offset..)
             .expect("expected data to be at least data.len() bytes long");
 
-        let bytes_copied = dst_buf.copy_common_bytes_from_slice(src_buf)?;
-
-        Ok(bytes_copied)
+        dst_buf.copy_common_bytes_from_slice(src_buf)
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {

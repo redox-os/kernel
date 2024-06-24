@@ -26,6 +26,12 @@ pub struct ScratchRegisters {
 }
 
 impl ScratchRegisters {
+    pub fn a(&self) -> usize {
+        self.x0
+    }
+    pub fn b(&self) -> usize {
+        self.x1
+    }
     pub fn dump(&self) {
         println!("X0:    {:>016X}", { self.x0 });
         println!("X1:    {:>016X}", { self.x1 });
@@ -122,6 +128,12 @@ impl InterruptStack {
     }
     pub fn set_instr_pointer(&mut self, ip: usize) {
         self.iret.elr_el1 = ip;
+    }
+    pub fn instr_pointer(&self) -> usize {
+        self.iret.elr_el1
+    }
+    pub fn flags(&self) -> usize {
+        0 // TODO
     }
     // TODO: This can maybe be done in userspace?
     pub fn set_syscall_ret_reg(&mut self, ret: usize) {
