@@ -1,6 +1,6 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
-use syscall::{SigProcControl, Sigcontrol, SIGKILL, SIGSTOP};
-use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize, sync::atomic::AtomicU64};
+use syscall::{SigProcControl, Sigcontrol, SIGKILL, SIGSTOP, AtomicU64};
+use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize};
 use spin::RwLock;
 
 use crate::{
