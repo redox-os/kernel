@@ -6,7 +6,7 @@ use spin::{Once, RwLock};
 use super::{CallerCtx, KernelScheme, OpenResult};
 use crate::{
     dtb::DTB_BINARY,
-    scheme::SchemeId,
+    scheme::{SchemeId, InternalFlags},
     syscall::{
         data::Stat,
         error::*,
@@ -23,7 +23,6 @@ enum HandleKind {
 }
 
 struct Handle {
-    offset: usize,
     kind: HandleKind,
     stat: bool,
 }
@@ -65,56 +64,14 @@ impl KernelScheme for DtbScheme {
             let _ = handles_guard.insert(
                 id,
                 Handle {
-                    offset: 0,
                     kind: HandleKind::RawData,
                     stat: _flags & O_STAT == O_STAT,
                 },
             );
-            return Ok(OpenResult::SchemeLocal(id));
+            return Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()));
         }
 
         Err(Error::new(ENOENT))
-    }
-
-    fn seek(&self, id: usize, pos: isize, whence: usize) -> Result<usize> {
-        let mut handles = HANDLES.write();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-
-        if handle.stat {
-            return Err(Error::new(EBADF));
-        }
-
-        let file_len = match handle.kind {
-            HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?.len(),
-        };
-
-        let new_offset = match whence {
-            SEEK_SET => pos as usize,
-            SEEK_CUR => {
-                if pos < 0 {
-                    handle
-                        .offset
-                        .checked_sub((-pos) as usize)
-                        .ok_or(Error::new(EINVAL))?
-                } else {
-                    handle.offset.saturating_add(pos as usize)
-                }
-            }
-            SEEK_END => {
-                if pos < 0 {
-                    file_len
-                        .checked_sub((-pos) as usize)
-                        .ok_or(Error::new(EINVAL))?
-                } else {
-                    file_len
-                }
-            }
-            _ => return Err(Error::new(EINVAL)),
-        };
-
-        handle.offset = new_offset;
-
-        Ok(new_offset as usize)
     }
 
     fn close(&self, id: usize) -> Result<()> {
@@ -124,11 +81,7 @@ impl KernelScheme for DtbScheme {
         Ok(())
     }
 
-    fn kwrite(&self, _id: usize, _buf: UserSliceRo) -> Result<usize> {
-        Err(Error::new(EBADF))
-    }
-
-    fn kread(&self, id: usize, dst_buf: UserSliceWo) -> Result<usize> {
+    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, flags: u32, _stored_flags: u32) -> Result<usize> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -140,13 +93,12 @@ impl KernelScheme for DtbScheme {
             HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?,
         };
 
-        let src_offset = core::cmp::min(handle.offset, data.len());
+        let src_offset = core::cmp::min(offset.try_into().unwrap(), data.len());
         let src_buf = data
             .get(src_offset..)
             .expect("expected data to be at least data.len() bytes long");
 
         let bytes_copied = dst_buf.copy_common_bytes_from_slice(src_buf)?;
-        handle.offset += bytes_copied;
 
         Ok(bytes_copied)
     }
