@@ -100,7 +100,6 @@ pub fn signal_handler() {
     thread_ctl.saved_scratch_b.set(scratch_b);
 
     thread_ctl.control_flags.store((control_flags | SigcontrolFlags::INHIBIT_DELIVERY).bits(), Ordering::Release);
-    log::info!("delivering");
 }
 pub fn excp_handler(signal: usize) {
      let current = context::current().expect("CPU exception but not inside of context!");

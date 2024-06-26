@@ -6,8 +6,7 @@ use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, PageSpan, Grant},
-    ContextId, WaitpidKey,
+    memory::{AddrSpace, Grant, PageSpan}, switch::SwitchResult, ContextId, WaitpidKey
 };
 
 use crate::{
@@ -251,7 +250,9 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         Err(Error::new(EPERM))
     } else {
         // Switch to ensure delivery to self
-        context::switch();
+        if let SwitchResult::Switched { signal: true } = context::switch() {
+            context::signal::signal_handler();
+        }
 
         Ok(0)
     }
