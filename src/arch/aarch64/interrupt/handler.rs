@@ -123,17 +123,14 @@ impl InterruptStack {
     pub fn set_stack_pointer(&mut self, sp: usize) {
         self.iret.sp_el0 = sp;
     }
-    pub fn stack_pointer(&self) -> usize {
-        self.iret.sp_el0
+    pub fn sig_archdep_reg(&self) -> usize {
+        self.scratch.x0
     }
     pub fn set_instr_pointer(&mut self, ip: usize) {
         self.iret.elr_el1 = ip;
     }
     pub fn instr_pointer(&self) -> usize {
         self.iret.elr_el1
-    }
-    pub fn flags(&self) -> usize {
-        0 // TODO
     }
     // TODO: This can maybe be done in userspace?
     pub fn set_syscall_ret_reg(&mut self, ret: usize) {

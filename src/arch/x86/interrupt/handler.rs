@@ -13,12 +13,6 @@ pub struct ScratchRegisters {
 }
 
 impl ScratchRegisters {
-    pub fn a(&self) -> usize {
-        self.eax
-    }
-    pub fn b(&self) -> usize {
-        self.edx
-    }
     pub fn dump(&self) {
         println!("EAX:   {:08x}", { self.eax });
         println!("ECX:   {:08x}", { self.ecx });
@@ -133,13 +127,10 @@ impl InterruptStack {
     pub fn set_stack_pointer(&mut self, esp: usize) {
         self.iret.esp = esp;
     }
-    pub fn stack_pointer(&self) -> usize {
-        self.iret.esp
-    }
     pub fn instr_pointer(&self) -> usize {
         self.iret.eip
     }
-    pub fn flags(&self) -> usize {
+    pub fn sig_archdep_reg(&self) -> usize {
         self.iret.eflags
     }
     pub fn set_instr_pointer(&mut self, eip: usize) {

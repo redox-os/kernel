@@ -107,13 +107,10 @@ impl InterruptStack {
     pub fn set_stack_pointer(&mut self, rsp: usize) {
         self.iret.rsp = rsp;
     }
-    pub fn stack_pointer(&self) -> usize {
-        self.iret.rsp
-    }
     pub fn instr_pointer(&self) -> usize {
         self.iret.rip
     }
-    pub fn flags(&self) -> usize {
+    pub fn sig_archdep_reg(&self) -> usize {
         self.iret.rflags
     }
     pub fn set_instr_pointer(&mut self, rip: usize) {
@@ -197,14 +194,6 @@ impl InterruptStack {
     /// Checks if the trap flag is enabled, see `set_singlestep`
     pub fn is_singlestep(&self) -> bool {
         self.iret.rflags & FLAG_SINGLESTEP == FLAG_SINGLESTEP
-    }
-}
-impl ScratchRegisters {
-    pub fn a(&self) -> usize {
-        self.rax
-    }
-    pub fn b(&self) -> usize {
-        self.rdx
     }
 }
 

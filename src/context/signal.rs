@@ -83,10 +83,7 @@ pub fn signal_handler() {
     };
 
     let ip = regs.instr_pointer();
-    let sp = regs.stack_pointer();
-    let fl = regs.flags();
-    let scratch_a = regs.scratch.a();
-    let scratch_b = regs.scratch.b();
+    let archdep_reg = regs.sig_archdep_reg();
 
     regs.set_instr_pointer(sigh_instr_ptr);
 
@@ -94,10 +91,7 @@ pub fn signal_handler() {
         .expect("cannot have been unset while holding the lock");
 
     thread_ctl.saved_ip.set(ip);
-    thread_ctl.saved_sp.set(sp);
-    thread_ctl.saved_flags.set(fl);
-    thread_ctl.saved_scratch_a.set(scratch_a);
-    thread_ctl.saved_scratch_b.set(scratch_b);
+    thread_ctl.saved_archdep_reg.set(archdep_reg);
 
     thread_ctl.control_flags.store((control_flags | SigcontrolFlags::INHIBIT_DELIVERY).bits(), Ordering::Release);
 }
