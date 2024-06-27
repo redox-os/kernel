@@ -1,7 +1,9 @@
 [submodule "syscall"]
 	path = syscall
-	url = https://gitlab.redox-os.org/redox-os/syscall.git
-	branch = master
+	#url = https://gitlab.redox-os.org/redox-os/syscall.git
+	url = https://gitlab.redox-os.org/4lDO2/syscall.git
+	#branch = master
+	branch = usignal
 [submodule "slab_allocator"]
 	path = slab_allocator
 	url = https://gitlab.redox-os.org/redox-os/slab_allocator
