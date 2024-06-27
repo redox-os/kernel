@@ -136,10 +136,6 @@ impl InterruptStack {
     pub fn set_instr_pointer(&mut self, eip: usize) {
         self.iret.eip = eip;
     }
-    // TODO: This can maybe be done in userspace?
-    pub fn set_syscall_ret_reg(&mut self, ret: usize) {
-        self.scratch.eax = ret;
-    }
     /// Loads all registers from a struct used by the proc:
     /// scheme to read/write registers.
     pub fn load(&mut self, all: &IntRegisters) {

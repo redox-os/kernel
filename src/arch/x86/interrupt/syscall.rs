@@ -30,7 +30,7 @@ interrupt_stack!(syscall, |stack| {
     with_interrupt_stack!(|stack| {
         let scratch = &stack.scratch;
         let preserved = &stack.preserved;
-        syscall::syscall(
+        let ret = syscall::syscall(
             scratch.eax,
             preserved.ebx,
             scratch.ecx,
@@ -39,6 +39,7 @@ interrupt_stack!(syscall, |stack| {
             preserved.edi,
             stack,
         );
+        stack.scratch.eax = ret;
     })
 });
 

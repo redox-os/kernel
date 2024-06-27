@@ -132,10 +132,6 @@ impl InterruptStack {
     pub fn instr_pointer(&self) -> usize {
         self.iret.elr_el1
     }
-    // TODO: This can maybe be done in userspace?
-    pub fn set_syscall_ret_reg(&mut self, ret: usize) {
-        self.scratch.x0 = ret;
-    }
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();

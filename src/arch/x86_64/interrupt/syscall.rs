@@ -68,7 +68,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     if allowed.unwrap_or(true) {
         let scratch = &(*stack).scratch;
 
-        syscall::syscall(
+        let ret = syscall::syscall(
             scratch.rax,
             scratch.rdi,
             scratch.rsi,
@@ -77,6 +77,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
             scratch.r8,
             &mut *stack,
         );
+        (*stack).scratch.rax = ret;
     }
 
     ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
