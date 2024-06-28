@@ -171,7 +171,6 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                     ctl.word[0].fetch_and(!(sig_bit(SIGTTIN) | sig_bit(SIGTTOU) | sig_bit(SIGTSTP)), Ordering::Relaxed);
                     ctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
                     if (ctl.word[0].load(Ordering::Relaxed) >> 32) & sig_bit(SIGCONT) != 0 {
-                        st.is_pending = true;
                     }
                 }
             } else if sig == SIGSTOP || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP) && context.sigcontrol().map_or(false, |(_, proc, _)| proc.signal_will_stop(sig))) {
@@ -185,7 +184,6 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             } else if let Some((ctl, _, st)) = context.sigcontrol() {
                 let _was_new = ctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                 if (ctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
-                    st.is_pending = true;
                     context.unblock();
                 }
             } else {
@@ -249,12 +247,9 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     } else if sent == 0 {
         Err(Error::new(EPERM))
     } else {
-        // Switch to ensure delivery to self
-        if let SwitchResult::Switched { signal: true } = context::switch() {
-            context::signal::signal_handler();
-        }
+        // Inform userspace it should check its own mask
 
-        Ok(0)
+        Err(Error::new(EINTR))
     }
 }
 

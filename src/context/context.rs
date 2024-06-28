@@ -212,10 +212,6 @@ pub struct SignalState {
     /// Offset within the control pages of respective word-aligned structs.
     pub threadctl_off: u16,
     pub procctl_off: u16,
-
-    /// Set whenever the kernel is about to have the context jump to its signal trampoline, but the
-    /// context is currently running.
-    pub is_pending: bool,
 }
 
 impl Context {

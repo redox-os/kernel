@@ -1165,7 +1165,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                             .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.thread_control_addr)))?,
                         proc_control: addrsp
                             .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.proc_control_addr)))?,
-                        is_pending: false,
                     })
                 } else {
                     None

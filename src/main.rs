@@ -245,10 +245,7 @@ fn run_userspace() -> ! {
         unsafe {
             interrupt::disable();
             match context::switch() {
-                SwitchResult::Switched { signal } => {
-                    if signal {
-                        crate::context::signal::kmain_signal_handler();
-                    }
+                SwitchResult::Switched => {
                     interrupt::enable_and_nop();
                 }
                 SwitchResult::AllContextsIdle => {

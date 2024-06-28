@@ -15,30 +15,6 @@ use crate::{
 
 use super::ContextId;
 
-pub fn kmain_signal_handler() {
-    /*if context::context_id() != ContextId::new(1) {
-        log::warn!("kmain signal didn't target PID 1, ignoring");
-        return;
-    }
-
-    let deliverable = context::current().expect("context::kmain_signal_handler not inside of context");
-    let kstop_bit = 1 << (SIGKILL - 1);
-    let kreset_bit = 1 << (SIGTERM - 1);
-    let bits = deliverable.read().sig.deliverable();
-
-    if bits & kstop_bit == kstop_bit {
-        unsafe {
-            kstop();
-        }
-    } else if bits & kreset_bit == kreset_bit {
-        unsafe {
-            kreset();
-        }
-    } else {
-        log::warn!("Spurious kmain signal, bitmask {bits:#0x}.");
-    }*/
-}
-
 pub fn signal_handler() {
     let context_lock = context::current().expect("running signal handler outside of context");
     let mut context = context_lock.write();
@@ -48,11 +24,11 @@ pub fn signal_handler() {
         crate::syscall::process::exit(SIGKILL << 8);
     }
 
-    let thumbs_down = ptrace::breakpoint_callback(
+    /*let thumbs_down = ptrace::breakpoint_callback(
         PTRACE_STOP_SIGNAL,
         Some(ptrace_event!(PTRACE_STOP_SIGNAL)),
     )
-    .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));
+    .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));*/
 
     // TODO: thumbs_down
     let Some((thread_ctl, proc_ctl, st)) = context.sigcontrol() else {
@@ -60,17 +36,21 @@ pub fn signal_handler() {
         log::trace!("no sigcontrol, returning");
         return;
     };
+    if thread_ctl.currently_pending_unblocked() == 0 {
+        // The context is currently Runnable. When transitioning into Blocked, it will check for
+        // signals (with the context lock held, which is required when sending signals). After
+        // that, any detection of pending unblocked signals by the sender, will result in the
+        // context being unblocked, and signals sent.
+
+        // TODO: prioritize signals over regular program execution
+        return;
+    }
     let control_flags = SigcontrolFlags::from_bits_retain(thread_ctl.control_flags.load(Ordering::Acquire));
 
     if control_flags.contains(SigcontrolFlags::INHIBIT_DELIVERY) {
         // Signals are inhibited to protect critical sections inside libc, but this code will run
         // every time the context is switched to.
         log::trace!("Inhibiting delivery, returning");
-        return;
-    }
-
-    if !core::mem::take(&mut st.is_pending) {
-        log::trace!("Not pending, returning");
         return;
     }
 

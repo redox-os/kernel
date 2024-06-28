@@ -11,7 +11,7 @@ use crate::{
 use super::{ContextId, Status};
 
 enum UpdateResult {
-    CanSwitch { signal: bool },
+    CanSwitch,
     Skip,
 }
 
@@ -50,7 +50,7 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
 
     // Switch to context if it needs to run
     if context.status.is_runnable() {
-        UpdateResult::CanSwitch { signal: context.sig.as_mut().map_or(false, |s| s.is_pending) }
+        UpdateResult::CanSwitch
     } else {
         UpdateResult::Skip
     }
@@ -69,12 +69,8 @@ pub fn tick() {
 
     // Switch after 3 ticks (about 6.75 ms)
     if new_ticks >= 3 {
-        match switch() {
-            SwitchResult::Switched { signal: true } => {
-                crate::context::signal::signal_handler();
-            },
-            _ => (),
-        }
+        switch();
+        crate::context::signal::signal_handler();
     }
 }
 
@@ -91,7 +87,7 @@ pub unsafe extern "C" fn switch_finish_hook() {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SwitchResult {
-    Switched { signal: bool },
+    Switched,
     AllContextsIdle,
 }
 
@@ -156,10 +152,9 @@ pub fn switch() -> SwitchResult {
             let mut next_context_guard = next_context_lock.write_arc();
 
             // Update state of next context and check if runnable
-            if let UpdateResult::CanSwitch { signal } = unsafe { update_runnable(&mut *next_context_guard, cpu_id) } {
+            if let UpdateResult::CanSwitch = unsafe { update_runnable(&mut *next_context_guard, cpu_id) } {
                 // Store locks for previous and next context
                 switch_context_opt = Some((prev_context_guard, next_context_guard));
-                percpu.switch_internals.switch_signal.set(signal);
                 break;
             } else {
                 continue;
@@ -226,10 +221,7 @@ pub fn switch() -> SwitchResult {
         // contexts will return directly to the function pointer passed to context::spawn, and not
         // reach this code until the next context switch back.
 
-        let new_percpu = PercpuBlock::current();
-        // For the same reason, we obviously can't reuse the percpu block
-
-        SwitchResult::Switched { signal: new_percpu.switch_internals.switch_signal.get() }
+        SwitchResult::Switched
     } else {
         // No target was found, unset global lock and return
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
@@ -248,7 +240,6 @@ pub struct ContextSwitchPercpu {
 
     // The ID of the idle process
     idle_id: Cell<ContextId>,
-    switch_signal: Cell<bool>,
 }
 impl ContextSwitchPercpu {
     pub fn context_id(&self) -> ContextId {
