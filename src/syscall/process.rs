@@ -146,11 +146,14 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
 
     let mut found = 0;
     let mut sent = 0;
+    let mut killed_self = false;
 
     {
         let contexts = context::contexts();
 
-        let send = |context: &mut context::Context| -> bool {
+        let mut send = |context: &mut context::Context| -> bool {
+            let is_self = context.id == context::context_id();
+
             // Non-root users cannot kill arbitrarily.
             if euid != 0 && euid != context.ruid && ruid != context.ruid {
                 return false;
@@ -185,10 +188,12 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
             } else if sig == SIGKILL {
                 context.being_sigkilled = true;
                 context.unblock();
+                killed_self |= is_self;
             } else if let Some((tctl, pctl, st)) = context.sigcontrol() && !pctl.signal_will_ign(sig) {
                 let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                 if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                     context.unblock();
+                    killed_self |= is_self;
                 }
             } else {
                 // Discard signals if sighandler is unset. This includes both special contexts such
@@ -250,10 +255,12 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         Err(Error::new(ESRCH))
     } else if sent == 0 {
         Err(Error::new(EPERM))
-    } else {
+    } else if killed_self {
         // Inform userspace it should check its own mask
 
         Err(Error::new(EINTR))
+    } else {
+        Ok(0)
     }
 }
 
