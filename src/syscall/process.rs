@@ -167,23 +167,27 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 // will additionally ignore, defer, or handle that signal.
                 context.status = context::Status::Runnable;
 
-                if let Some((ctl, _, st)) = context.sigcontrol() {
-                    ctl.word[0].fetch_and(!(sig_bit(SIGTTIN) | sig_bit(SIGTTOU) | sig_bit(SIGTSTP)), Ordering::Relaxed);
-                    ctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
-                    if (ctl.word[0].load(Ordering::Relaxed) >> 32) & sig_bit(SIGCONT) != 0 {
+                if let Some((tctl, pctl, st)) = context.sigcontrol() {
+                    if !pctl.signal_will_ign(SIGCONT) {
+                        tctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
+                    }
+
+                    if (tctl.word[0].load(Ordering::Relaxed) >> 32) & sig_bit(SIGCONT) != 0 {
+                        // already Runnable, SIGCONT handler will run like any other signal
                     }
                 }
             } else if sig == SIGSTOP || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP) && context.sigcontrol().map_or(false, |(_, proc, _)| proc.signal_will_stop(sig))) {
                 context.status = context::Status::Stopped(sig);
+                // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
                 if let Some((ctl, _, _)) = context.sigcontrol() {
                     ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
                 }
             } else if sig == SIGKILL {
                 context.being_sigkilled = true;
                 context.unblock();
-            } else if let Some((ctl, _, st)) = context.sigcontrol() {
-                let _was_new = ctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
-                if (ctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
+            } else if let Some((tctl, pctl, st)) = context.sigcontrol() && !pctl.signal_will_ign(sig) {
+                let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
+                if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                     context.unblock();
                 }
             } else {
