@@ -1,5 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
-use syscall::{sig_bit, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU};
+use syscall::{sig_bit, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 
 use rmm::Arch;
@@ -138,6 +138,14 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
         let context = context_lock.read();
         (context.ruid, context.euid, context.pgid)
     };
+
+    if euid == 0 && pid == ContextId::new(1) {
+        match sig {
+            SIGTERM => unsafe { crate::stop::kreset() },
+            SIGKILL => unsafe { crate::stop::kstop() },
+            _ => return Ok(0), // error?
+        }
+    }
 
     if sig > 0x3F {
         return Err(Error::new(EINVAL));
