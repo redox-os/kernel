@@ -3,6 +3,7 @@
 //!
 //! For more information about futexes, please read [this](https://eli.thegreenplace.net/2018/basics-of-futexes/) blog post, and the [futex(2)](http://man7.org/linux/man-pages/man2/futex.2.html) man page
 use alloc::{collections::VecDeque, sync::{Arc, Weak}};
+use syscall::EINTR;
 use core::sync::atomic::{AtomicU32, Ordering};
 use rmm::Arch;
 use spin::RwLock;
@@ -131,6 +132,11 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> R
                     let mut context = context_lock.write();
 
                     context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128);
+                    if let Some((tctl, _pctl, _)) = context.sigcontrol() {
+                        if tctl.currently_pending_unblocked() != 0 {
+                            return Err(Error::new(EINTR));
+                        }
+                    }
 
                     context.block("futex");
                 }

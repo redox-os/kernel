@@ -34,6 +34,12 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
     {
         let mut context = current_context.write();
 
+        if let Some((tctl, _pctl, _)) = context.sigcontrol() {
+            if tctl.currently_pending_unblocked() != 0 {
+                return Err(Error::new(EINTR));
+            }
+        }
+
         context.wake = Some(end);
         context.block("nanosleep");
     }
