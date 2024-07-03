@@ -211,6 +211,8 @@ pub fn switch() -> SwitchResult {
             next_context.syscall_debug_info.on_switch_to();
         }
 
+        percpu.switch_internals.being_sigkilled.set(next_context.being_sigkilled);
+
         unsafe {
             arch::switch_to(prev_context, next_context);
         }
@@ -240,6 +242,8 @@ pub struct ContextSwitchPercpu {
 
     // The ID of the idle process
     idle_id: Cell<ContextId>,
+
+    pub(crate) being_sigkilled: Cell<bool>,
 }
 impl ContextSwitchPercpu {
     pub fn context_id(&self) -> ContextId {

@@ -4,7 +4,7 @@
 
 extern crate syscall;
 
-use syscall::{RwFlags, EINVAL};
+use syscall::{RwFlags, EINVAL, SIGKILL};
 
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
@@ -195,7 +195,7 @@ pub fn syscall(
                 SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
                 SYS_GETPPID => getppid().map(ContextId::into),
 
-                SYS_EXIT => exit((b & 0xFF) << 8),
+                SYS_EXIT => exit(b),
                 SYS_KILL => kill(ContextId::from(b), c),
                 SYS_WAITPID => waitpid(
                     ContextId::from(b),
@@ -244,7 +244,12 @@ pub fn syscall(
     #[cfg(feature = "syscall_debug")]
     debug_end([a, b, c, d, e, f], result);
 
-    PercpuBlock::current().inside_syscall.set(false);
+    let percpu = PercpuBlock::current();
+    percpu.inside_syscall.set(false);
+
+    if percpu.switch_internals.being_sigkilled.get() {
+        exit(SIGKILL);
+    }
 
     // errormux turns Result<usize> into -errno
     Error::mux(result)
