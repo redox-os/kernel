@@ -196,7 +196,7 @@ pub fn syscall(
                 SYS_GETPPID => getppid().map(ContextId::into),
 
                 SYS_EXIT => exit(b),
-                SYS_KILL => kill(ContextId::from(b), c),
+                SYS_KILL => kill(ContextId::from(b), c, false),
                 SYS_WAITPID => waitpid(
                     ContextId::from(b),
                     if c == 0 {

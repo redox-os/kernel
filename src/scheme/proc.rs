@@ -639,7 +639,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 ptrace::close_session(handle.info.pid);
 
                 if handle.info.flags & O_EXCL == O_EXCL {
-                    syscall::kill(handle.info.pid, SIGKILL)?;
+                    syscall::kill(handle.info.pid, SIGKILL, false)?;
                 }
 
                 let contexts = context::contexts();

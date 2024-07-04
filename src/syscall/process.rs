@@ -1,5 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
-use syscall::{sig_bit, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
+use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 
 use rmm::Arch;
@@ -61,6 +61,8 @@ pub fn exit(status: usize) -> ! {
             let context = context_lock.read();
             (context.pgid, context.ppid)
         };
+        let _ = kill(ppid, SIGCHLD, true);
+
 
         // Transfer child processes to parent
         {
@@ -131,7 +133,7 @@ pub fn getppid() -> Result<ContextId> {
     Ok(context.ppid)
 }
 
-pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
+pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
     let (ruid, euid, current_pgid) = {
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
@@ -159,17 +161,22 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
     {
         let contexts = context::contexts();
 
-        let mut send = |context: &mut context::Context| -> bool {
+        enum SendResult {
+            Forbidden,
+            Succeeded { sigchld_parent: Option<ContextId> },
+        }
+
+        let mut send = |context: &mut context::Context| -> SendResult {
             let is_self = context.id == context::context_id();
 
             // Non-root users cannot kill arbitrarily.
             if euid != 0 && euid != context.ruid && ruid != context.ruid {
-                return false;
+                return SendResult::Forbidden;
             }
             // If sig = 0, test that process exists and can be signalled, but don't send any
             // signal.
             if sig == 0 {
-                return true;
+                return SendResult::Succeeded { sigchld_parent: None };
             }
 
             if sig == SIGCONT && let context::Status::Stopped(_sig) = context.status {
@@ -179,7 +186,7 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 context.status = context::Status::Runnable;
 
                 if let Some((tctl, pctl, st)) = context.sigcontrol() {
-                    if !pctl.signal_will_ign(SIGCONT) {
+                    if !pctl.signal_will_ign(SIGCONT, false) {
                         tctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
                     }
 
@@ -187,41 +194,53 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                         // already Runnable, SIGCONT handler will run like any other signal
                     }
                 }
+                // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
+                SendResult::Succeeded { sigchld_parent: None }
             } else if sig == SIGSTOP || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP) && context.sigcontrol().map_or(false, |(_, proc, _)| proc.signal_will_stop(sig))) {
                 context.status = context::Status::Stopped(sig);
                 // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
                 if let Some((ctl, _, _)) = context.sigcontrol() {
                     ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
                 }
+                return SendResult::Succeeded { sigchld_parent: Some(context.ppid) };
             } else if sig == SIGKILL {
                 context.being_sigkilled = true;
                 context.unblock();
                 killed_self |= is_self;
-            } else if let Some((tctl, pctl, st)) = context.sigcontrol() && !pctl.signal_will_ign(sig) {
+
+                // exit() will signal the parent instead
+                SendResult::Succeeded { sigchld_parent: None }
+            } else if let Some((tctl, pctl, st)) = context.sigcontrol() && !pctl.signal_will_ign(sig, parent_sigchld) {
                 let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                 if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                     context.unblock();
                     killed_self |= is_self;
                 }
+                SendResult::Succeeded { sigchld_parent: None }
             } else {
                 // Discard signals if sighandler is unset. This includes both special contexts such
                 // as bootstrap, and child processes or threads that have not yet been started.
                 // This is semantically equivalent to having all signals except SIGSTOP and SIGKILL
                 // blocked/ignored (SIGCONT can be ignored and masked, but will always continue
                 // stopped processes first).
+                SendResult::Succeeded { sigchld_parent: None }
             }
-
-            true
         };
 
         if pid.get() as isize > 0 {
             // Send to a single process
             if let Some(context_lock) = contexts.get(pid) {
-                let mut context = context_lock.write();
-
                 found += 1;
-                if send(&mut context) {
-                    sent += 1;
+                let result = send(&mut *context_lock.write());
+
+                match result {
+                    SendResult::Forbidden => (),
+                    SendResult::Succeeded { sigchld_parent } => {
+                        if let Some(ppid) = sigchld_parent {
+                            kill(ppid, SIGCHLD, true)?;
+                        }
+                        sent += 1;
+                    }
                 }
             }
         } else if pid.get() == 1_usize.wrapping_neg() {
@@ -232,8 +251,18 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 if context.id.get() > 2 {
                     found += 1;
 
-                    if send(&mut context) {
-                        sent += 1;
+                    let result = send(&mut *context);
+                    drop(context);
+
+                    match result {
+                        SendResult::Forbidden => (),
+                        SendResult::Succeeded { sigchld_parent } => {
+                            if let Some(ppid) = sigchld_parent {
+                                // TODO: handle error?
+                                let _ = kill(ppid, SIGCHLD, true);
+                            }
+                            sent += 1;
+                        }
                     }
                 }
             }
@@ -251,8 +280,18 @@ pub fn kill(pid: ContextId, sig: usize) -> Result<usize> {
                 if context.pgid == pgid {
                     found += 1;
 
-                    if send(&mut context) {
-                        sent += 1;
+                    let result = send(&mut *context);
+                    drop(context);
+
+                    match result {
+                        SendResult::Forbidden => (),
+                        SendResult::Succeeded { sigchld_parent } => {
+                            if let Some(ppid) = sigchld_parent {
+                                // TODO: handle error?
+                                let _ = kill(ppid, SIGCHLD, true);
+                            }
+                            sent += 1;
+                        }
                     }
                 }
             }
