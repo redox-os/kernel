@@ -279,7 +279,7 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                 }
                 SendResult::SucceededSigcont { ppid, pgid } => {
                     sent += 1;
-                    &process::PROCESSES
+                    process::PROCESSES
                         .read()
                         .get(&ppid)
                         .ok_or(Error::new(ESRCH))?

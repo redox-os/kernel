@@ -221,18 +221,23 @@ impl Handle {
 }
 impl Handle {
     fn continue_ignored_children(&mut self) -> Option<()> {
-        let data = self.data.trace_data()?;
+        let Handle::Process {
+            process,
+            kind: ProcHandle::Trace { pid, clones, .. },
+        } = self
+        else {
+            return None;
+        };
         let contexts = context::contexts();
 
-        for pid in data.clones.drain(..) {
+        for pid in clones.drain(..) {
             if ptrace::is_traced(pid) {
                 continue;
             }
-            if let Some(context) = contexts.get(pid) {
-                let mut context = context.write();
-                context.status = context::Status::HardBlocked {
-                    reason: HardBlockedReason::PtraceStop,
-                };
+            if let Some(process) = process::PROCESSES.read().get(&pid) {
+                let mut process = process.write();
+                // FIXME
+                //context.status = context::Status::Runnable;
             }
         }
         Some(())
@@ -257,10 +262,18 @@ fn get_context(id: ContextId) -> Result<Arc<RwSpinlock<Context>>> {
         .ok_or(Error::new(ENOENT))
         .map(Arc::clone)
 }
+enum OpenTy {
+    Proc(ProcessId),
+    Ctxt(ContextId),
+}
 
 impl<const FULL: bool> ProcScheme<FULL> {
-    fn openat_context(&self, path: &str, context: Arc<RwSpinlock<Context>>) -> Result<()> {
-        let kind = match path {
+    fn openat_context(
+        &self,
+        path: &str,
+        context: Arc<RwSpinlock<Context>>,
+    ) -> Result<Option<(ContextHandle, bool)>> {
+        Ok(Some(match path {
             "addrspace" => (
                 ContextHandle::AddrSpace {
                     addrspace: Arc::clone(
@@ -298,75 +311,81 @@ impl<const FULL: bool> ProcScheme<FULL> {
                 false,
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
-            _ => return Err(Error::new(EINVAL)),
-        };
+            _ => return Ok(None),
+        }))
+    }
+    fn openat_process(
+        &self,
+        target: &Arc<RwLock<Process>>,
+        name: &str,
+        flags: usize,
+    ) -> Result<Option<(ProcHandle, bool)>> {
+        Ok(Some(match name {
+            "trace" => (
+                ProcHandle::Trace {
+                    pid: target.read().pid,
+                    clones: Vec::new(),
+                    excl: flags & O_EXCL == O_EXCL,
+                },
+                false,
+            ),
+            "exe" => (
+                ProcHandle::Static {
+                    ty: "exe",
+                    // FIXME
+                    bytes: target
+                        .read()
+                        .threads
+                        .first()
+                        .and_then(|f| f.upgrade())
+                        .ok_or(Error::new(ESRCH))?
+                        .read()
+                        .name
+                        .as_bytes()
+                        .into(),
+                },
+                true,
+            ),
+            "uid" => (ProcHandle::Attr { attr: Attr::Uid }, true),
+            "gid" => (ProcHandle::Attr { attr: Attr::Gid }, true),
+            "session_id" => (ProcHandle::SessionId, true),
+            _ => return Ok(None),
+        }))
     }
     fn open_inner(
         &self,
-        pid: ProcessId,
+        ty: OpenTy,
         operation_str: Option<&str>,
         flags: usize,
         uid: u32,
         gid: u32,
     ) -> Result<(usize, InternalFlags)> {
-        let processes = process::PROCESSES.read();
-        let target = processes.get(&pid).ok_or(Error::new(ESRCH))?;
+        let target = match ty {
+            OpenTy::Proc(pid) => {
+                let processes = process::PROCESSES.read();
+                Arc::clone(processes.get(&pid).ok_or(Error::new(ESRCH))?)
+            }
+            OpenTy::Ctxt(cid) => Arc::clone(
+                &context::contexts()
+                    .get(cid)
+                    .ok_or(Error::new(ESRCH))?
+                    .read()
+                    .process,
+            ),
+        };
 
-        let (handle, positioned) = match operation_str.ok_or(Error::new(EINVAL))? {
-            "trace" => (
-                Handle::Process {
-                    process: Arc::clone(target),
-                    kind: ProcHandle::Trace {
-                        pid,
-                        clones: Vec::new(),
-                        excl: flags & O_EXCL == O_EXCL,
-                    },
-                },
-                false,
-            ),
-            "exe" => (
-                Handle::Process {
-                    process: Arc::clone(target),
-                    kind: ProcHandle::Static {
-                        ty: "exe",
-                        // FIXME
-                        bytes: target
-                            .read()
-                            .threads
-                            .first()
-                            .and_then(|f| f.upgrade())
-                            .ok_or(Error::new(ESRCH))?
-                            .read()
-                            .name
-                            .as_bytes()
-                            .to_owned(),
-                    },
-                },
-                true,
-            ),
-            "uid" => (
-                Handle::Process {
-                    kind: ProcHandle::Attr { attr: Attr::Uid },
-                    process: Arc::clone(target),
-                },
-                true,
-            ),
-            "gid" => (
-                Handle::Process {
-                    kind: ProcHandle::Attr { attr: Attr::Gid },
-                    process: Arc::clone(target),
-                },
-                true,
-            ),
-            "session_id" => (
-                Handle::Process {
-                    kind: ProcHandle::SessionId,
-                    process: Arc::clone(target),
-                },
-                true,
-            ),
+        let (mut handle, positioned) = {
+            let name = operation_str.ok_or(Error::new(EINVAL))?;
 
-            other => {
+            if let Some((kind, positioned)) = self.openat_process(&target, name, flags)? {
+                (
+                    Handle::Process {
+                        process: Arc::clone(&target),
+                        kind,
+                    },
+                    positioned,
+                )
+            } else {
                 let first_thread = target
                     .read()
                     .threads
@@ -374,18 +393,31 @@ impl<const FULL: bool> ProcScheme<FULL> {
                     .ok_or(Error::new(ESRCH))?
                     .upgrade()
                     .ok_or(Error::new(ESRCH))?;
-                self.openat_context(other, first_thread)
+                if let Some((kind, positioned)) =
+                    self.openat_context(name, Arc::clone(&first_thread))?
+                {
+                    (
+                        Handle::Context {
+                            context: first_thread,
+                            kind,
+                        },
+                        positioned,
+                    )
+                } else {
+                    return Err(Error::new(EINVAL));
+                }
             }
         };
-
-        let mut data;
 
         {
             let target = target.read();
 
+            // FIXME
+            /*
             if let Status::Exited(_) = target.status {
                 return Err(Error::new(ESRCH));
             }
+            */
 
             // Unless root, check security
             if handle.needs_child_process() && uid != 0 && gid != 0 {
@@ -402,7 +434,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                     // Is it a subprocess of us? In the future, a capability could
                     // bypass this check.
                     match process::ancestors(&*process::PROCESSES.read(), target.ppid)
-                        .find(|&(id, _context)| pid == current.pid)
+                        .find(|&(pid, _context)| pid == current.pid)
                     {
                         Some((id, context)) => {
                             // Paranoid sanity check, as ptrace security holes
@@ -418,13 +450,21 @@ impl<const FULL: bool> ProcScheme<FULL> {
             }
 
             let filetable_opt = match handle {
-                ContextHandle::Filetable {
-                    ref filetable,
-                    ref mut data,
+                Handle::Context {
+                    kind:
+                        ContextHandle::Filetable {
+                            ref filetable,
+                            ref mut data,
+                        },
+                    ..
                 } => Some((filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?, data)),
-                ContextHandle::NewFiletable {
-                    ref filetable,
-                    ref mut data,
+                Handle::Context {
+                    kind:
+                        ContextHandle::NewFiletable {
+                            ref filetable,
+                            ref mut data,
+                        },
+                    ..
                 } => Some((Arc::clone(filetable), data)),
                 _ => None,
             };
@@ -447,7 +487,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
         };
 
         let (id, int_fl) = new_handle((
-            handle,
+            handle.clone(),
             if positioned {
                 InternalFlags::POSITIONED
             } else {
@@ -455,7 +495,11 @@ impl<const FULL: bool> ProcScheme<FULL> {
             },
         ))?;
 
-        if let ContextHandle::Trace = operation {
+        if let Handle::Process {
+            kind: ProcHandle::Trace { pid, .. },
+            ..
+        } = handle
+        {
             if !ptrace::try_new_session(pid, id) {
                 // There is no good way to handle id being occupied for nothing
                 // here, is there?
@@ -479,13 +523,15 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let pid_str = parts.next().ok_or(Error::new(ENOENT))?;
 
         let pid = if pid_str == "current" {
-            context::current_cid()
+            OpenTy::Ctxt(context::current_cid())
         } else if pid_str == "new" {
-            new_child()?
+            OpenTy::Ctxt(new_child()?)
         } else if !FULL {
             return Err(Error::new(EACCES));
         } else {
-            ContextId::new(pid_str.parse().map_err(|_| Error::new(ENOENT))?)
+            OpenTy::Ctxt(ContextId::new(
+                pid_str.parse().map_err(|_| Error::new(ENOENT))?,
+            ))
         };
 
         self.open_inner(pid, parts.next(), flags, ctx.uid, ctx.gid)
@@ -797,7 +843,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 };
                 return self
                     .open_inner(
-                        context.read().pid,
+                        OpenTy::Ctxt(context.read().cid),
                         Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
                             .filter(|s| !s.is_empty()),
                         O_RDWR | O_CLOEXEC,
@@ -994,7 +1040,14 @@ impl ProcHandle {
                     Ok(())
                 })?;
 
-                let first = process.read().threads.first().and_then(|f| f.upgrade()).ok_or(Error::new(ESRCH))?.read().cid;
+                let first = process
+                    .read()
+                    .threads
+                    .first()
+                    .and_then(|f| f.upgrade())
+                    .ok_or(Error::new(ESRCH))?
+                    .read()
+                    .cid;
 
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
                     try_stop_context(first, |context| match context.regs_mut() {
@@ -1107,12 +1160,18 @@ impl ProcHandle {
                 })?;
                 let mut handles = HANDLES.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let data = handle.data.trace_data().expect("operations can't change");
+                let Handle::Process {
+                    kind: ProcHandle::Trace { ref mut clones, .. },
+                    ..
+                } = handle
+                else {
+                    return Err(Error::new(EBADFD));
+                };
 
                 // Save child processes in a list of processes to restart
                 for event in &slice[..read] {
                     if event.cause == PTRACE_EVENT_CLONE {
-                        data.clones.push(ContextId::from(event.a));
+                        clones.push(ProcessId::from(event.a));
                     }
                 }
 
@@ -1435,13 +1494,13 @@ impl ContextHandle {
                         let context = context.read();
                         // NOTE: The kernel will never touch floats
 
-                        Ok((
+                        (
                             Output {
                                 float: context.get_fx_regs(),
                             },
                             mem::size_of::<FloatRegisters>(),
-                        ))
-                    }?,
+                        )
+                    }
                     RegsKind::Int => {
                         try_stop_context(context.read().cid, |context| match context.regs() {
                             None => {
