@@ -25,7 +25,7 @@ use self::{
 use crate::{interrupt::InterruptStack, percpu::PercpuBlock};
 
 use crate::{
-    context::{memory::AddrSpace, ContextId},
+    context::{memory::AddrSpace, process::ProcessId},
     scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
 };
 
@@ -205,14 +205,14 @@ pub fn syscall(
                         .map(|()| 0)
                 }
                 SYS_FUTEX => futex(b, c, d, e, f),
-                SYS_GETPID => getpid().map(ContextId::into),
-                SYS_GETPGID => getpgid(ContextId::from(b)).map(ContextId::into),
-                SYS_GETPPID => getppid().map(ContextId::into),
+                SYS_GETPID => getpid().map(ProcessId::into),
+                SYS_GETPGID => getpgid(ProcessId::from(b)).map(ProcessId::into),
+                SYS_GETPPID => getppid().map(ProcessId::into),
 
                 SYS_EXIT => exit(b),
-                SYS_KILL => kill(ContextId::from(b), c, false),
+                SYS_KILL => kill(ProcessId::from(b), c, false),
                 SYS_WAITPID => waitpid(
-                    ContextId::from(b),
+                    ProcessId::from(b),
                     if c == 0 {
                         None
                     } else {
@@ -220,7 +220,7 @@ pub fn syscall(
                     },
                     WaitFlags::from_bits_truncate(d),
                 )
-                .map(ContextId::into),
+                .map(ProcessId::into),
                 SYS_IOPL => iopl(b),
                 SYS_GETEGID => getegid(),
                 SYS_GETENS => getens(),
@@ -234,10 +234,10 @@ pub fn syscall(
                     c.checked_mul(core::mem::size_of::<[usize; 2]>())
                         .ok_or(Error::new(EOVERFLOW))?,
                 )?),
-                SYS_SETPGID => setpgid(ContextId::from(b), ContextId::from(c)),
-                SYS_SETREUID => setreuid(b as u32, c as u32),
-                SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)),
-                SYS_SETREGID => setregid(b as u32, c as u32),
+                SYS_SETPGID => setpgid(ProcessId::from(b), ProcessId::from(c)).map(|()| 0),
+                SYS_SETREUID => setreuid(b as u32, c as u32).map(|()| 0),
+                SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
+                SYS_SETREGID => setregid(b as u32, c as u32).map(|()| 0),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),
 

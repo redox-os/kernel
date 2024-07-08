@@ -14,6 +14,7 @@ use crate::{
     syscall::error::{Error, Result, ESRCH},
 };
 
+use self::process::ProcessId;
 pub use self::{
     context::{BorrowedHtBuf, Context, ContextId, Status, WaitpidKey},
     list::ContextList,
@@ -46,6 +47,9 @@ pub mod file;
 
 /// Memory struct - contains a set of pages for a context
 pub mod memory;
+
+/// Process handling - TODO move to userspace
+pub mod process;
 
 /// Signal handling
 pub mod signal;
@@ -102,6 +106,9 @@ pub fn contexts_mut() -> RwLockWriteGuard<'static, ContextList> {
 
 pub fn current_cid() -> ContextId {
     PercpuBlock::current().switch_internals.current_cid()
+}
+pub fn current_pid() -> Result<ProcessId> {
+    Ok(current()?.read().pid)
 }
 
 pub fn current() -> Result<Arc<RwSpinlock<Context>>> {

@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use crate::{
-    context,
+    context::{self, process},
     scheme::{self, SchemeNamespace},
     syscall::error::*,
 };
@@ -12,50 +12,32 @@ use super::{
 };
 
 pub fn getegid() -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    Ok(context.egid as usize)
+    Ok(process::current()?.read().egid as usize)
 }
 
 pub fn getens() -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    Ok(context.ens.into())
+    Ok(process::current()?.read().ens.into())
 }
 
 pub fn geteuid() -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    Ok(context.euid as usize)
+    Ok(process::current()?.read().euid as usize)
 }
 
 pub fn getgid() -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    Ok(context.rgid as usize)
+    Ok(process::current()?.read().rgid as usize)
 }
 
 pub fn getns() -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    Ok(context.rns.into())
+    Ok(process::current()?.read().rns.into())
 }
 
 pub fn getuid() -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    Ok(context.ruid as usize)
+    Ok(process::current()?.read().ruid as usize)
 }
 
 pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
-    let (uid, from) = match context::current()?.read() {
-        ref context => (context.euid, context.ens),
+    let (uid, from) = match process::current()?.read() {
+        ref process => (process.euid, process.ens),
     };
 
     // TODO: Lift this restriction later?
@@ -86,18 +68,17 @@ pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
     Ok(to.into())
 }
 
-pub fn setregid(rgid: u32, egid: u32) -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let mut context = context_lock.write();
+pub fn setregid(rgid: u32, egid: u32) -> Result<()> {
+    let process_lock = process::current()?;
+    let mut process = process_lock.write();
 
-    let setrgid = if context.euid == 0 {
+    let setrgid = if process.euid == 0 {
         // Allow changing RGID if root
         true
-    } else if rgid == context.egid {
+    } else if rgid == process.egid {
         // Allow changing RGID if used for EGID
         true
-    } else if rgid == context.rgid {
+    } else if rgid == process.rgid {
         // Allow changing RGID if used for RGID
         true
     } else if rgid as i32 == -1 {
@@ -108,13 +89,13 @@ pub fn setregid(rgid: u32, egid: u32) -> Result<usize> {
         return Err(Error::new(EPERM));
     };
 
-    let setegid = if context.euid == 0 {
+    let setegid = if process.euid == 0 {
         // Allow changing EGID if root
         true
-    } else if egid == context.egid {
+    } else if egid == process.egid {
         // Allow changing EGID if used for EGID
         true
-    } else if egid == context.rgid {
+    } else if egid == process.rgid {
         // Allow changing EGID if used for RGID
         true
     } else if egid as i32 == -1 {
@@ -126,20 +107,19 @@ pub fn setregid(rgid: u32, egid: u32) -> Result<usize> {
     };
 
     if setrgid {
-        context.rgid = rgid;
+        process.rgid = rgid;
     }
 
     if setegid {
-        context.egid = egid;
+        process.egid = egid;
     }
 
-    Ok(0)
+    Ok(())
 }
 
-pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let mut context = context_lock.write();
+pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<()> {
+    let process_lock = process::current()?;
+    let mut process = process_lock.write();
 
     let setrns = if rns.get() as isize == -1 {
         // Ignore RNS if -1 is passed
@@ -147,16 +127,16 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
     } else if rns.get() == 0 {
         // Allow entering capability mode
         true
-    } else if context.rns.get() == 0 {
+    } else if process.rns.get() == 0 {
         // Do not allow leaving capability mode
         return Err(Error::new(EPERM));
-    } else if context.euid == 0 {
+    } else if process.euid == 0 {
         // Allow setting RNS if root
         true
-    } else if rns == context.ens {
+    } else if rns == process.ens {
         // Allow setting RNS if used for ENS
         true
-    } else if rns == context.rns {
+    } else if rns == process.rns {
         // Allow setting RNS if used for RNS
         true
     } else {
@@ -170,16 +150,16 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
     } else if ens.get() == 0 {
         // Allow entering capability mode
         true
-    } else if context.ens.get() == 0 {
+    } else if process.ens.get() == 0 {
         // Do not allow leaving capability mode
         return Err(Error::new(EPERM));
-    } else if context.euid == 0 {
+    } else if process.euid == 0 {
         // Allow setting ENS if root
         true
-    } else if ens == context.ens {
+    } else if ens == process.ens {
         // Allow setting ENS if used for ENS
         true
-    } else if ens == context.rns {
+    } else if ens == process.rns {
         // Allow setting ENS if used for RNS
         true
     } else {
@@ -189,29 +169,28 @@ pub fn setrens(rns: SchemeNamespace, ens: SchemeNamespace) -> Result<usize> {
 
     if setrns {
         assert_ne!(rns.get() as isize, -1);
-        context.rns = rns;
+        process.rns = rns;
     }
 
     if setens {
         assert_ne!(ens.get() as isize, -1);
-        context.ens = ens;
+        process.ens = ens;
     }
 
-    Ok(0)
+    Ok(())
 }
 
-pub fn setreuid(ruid: u32, euid: u32) -> Result<usize> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let mut context = context_lock.write();
+pub fn setreuid(ruid: u32, euid: u32) -> Result<()> {
+    let process_lock = process::current()?;
+    let mut process = process_lock.write();
 
-    let setruid = if context.euid == 0 {
+    let setruid = if process.euid == 0 {
         // Allow setting RUID if root
         true
-    } else if ruid == context.euid {
+    } else if ruid == process.euid {
         // Allow setting RUID if used for EUID
         true
-    } else if ruid == context.ruid {
+    } else if ruid == process.ruid {
         // Allow setting RUID if used for RUID
         true
     } else if ruid as i32 == -1 {
@@ -222,13 +201,13 @@ pub fn setreuid(ruid: u32, euid: u32) -> Result<usize> {
         return Err(Error::new(EPERM));
     };
 
-    let seteuid = if context.euid == 0 {
+    let seteuid = if process.euid == 0 {
         // Allow setting EUID if root
         true
-    } else if euid == context.euid {
+    } else if euid == process.euid {
         // Allow setting EUID if used for EUID
         true
-    } else if euid == context.ruid {
+    } else if euid == process.ruid {
         // Allow setting EUID if used for RUID
         true
     } else if euid as i32 == -1 {
@@ -240,12 +219,12 @@ pub fn setreuid(ruid: u32, euid: u32) -> Result<usize> {
     };
 
     if setruid {
-        context.ruid = ruid;
+        process.ruid = ruid;
     }
 
     if seteuid {
-        context.euid = euid;
+        process.euid = euid;
     }
 
-    Ok(0)
+    Ok(())
 }

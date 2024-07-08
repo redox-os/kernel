@@ -200,10 +200,12 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     match context::contexts_mut().spawn(true, userspace_init) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
-            context.rns = SchemeNamespace::from(1);
-            context.ens = SchemeNamespace::from(1);
             context.status = context::Status::Runnable;
             context.name = "bootstrap".into();
+
+            let mut process = context.process.write();
+            process.rns = SchemeNamespace::from(1);
+            process.ens = SchemeNamespace::from(1);
         }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);

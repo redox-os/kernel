@@ -7,7 +7,7 @@ use crate::{
     context::{
         self,
         file::{FileDescription, FileDescriptor, InternalFlags},
-        memory::{AddrSpace, PageSpan},
+        memory::{AddrSpace, PageSpan}, process,
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
@@ -54,13 +54,13 @@ const PATH_MAX: usize = PAGE_SIZE;
 
 /// Open syscall
 pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
-    let (pid, uid, gid, scheme_ns, umask) = match context::current()?.read() {
-        ref context => (
-            context.pid.into(),
-            context.euid,
-            context.egid,
-            context.ens,
-            context.umask,
+    let (pid, uid, gid, scheme_ns, umask) = match process::current()?.read() {
+        ref process => (
+            process.pid.into(),
+            process.euid,
+            process.egid,
+            process.ens,
+            process.umask,
         ),
     };
 

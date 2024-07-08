@@ -33,21 +33,6 @@ impl ContextList {
         self.map.get(&id)
     }
 
-    /// Get an iterator of all parents
-    pub fn ancestors(
-        &'_ self,
-        id: ContextId,
-    ) -> impl Iterator<Item = (ContextId, &Arc<RwSpinlock<Context>>)> + '_ {
-        iter::successors(
-            self.get(id).map(|context| (id, context)),
-            move |(_id, context)| {
-                let context = context.read();
-                let id = context.ppid;
-                self.get(id).map(|context| (id, context))
-            },
-        )
-    }
-
     /// Get the current context.
     pub fn current(&self) -> Option<&Arc<RwSpinlock<Context>>> {
         self.map.get(&super::current_cid())

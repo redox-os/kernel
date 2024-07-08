@@ -131,7 +131,7 @@ pub fn switch() -> SwitchResult {
         let mut skip_idle = true;
 
         // Locate next context
-        for (pid, next_context_lock) in contexts
+        for (cid, next_context_lock) in contexts
             // Include all contexts with IDs greater than the current...
             .range((Bound::Excluded(prev_context_guard.cid), Bound::Unbounded))
             .chain(
@@ -146,7 +146,7 @@ pub fn switch() -> SwitchResult {
             )
         // ... but not the current context, which is already locked
         {
-            if pid == &idle_id && skip_idle {
+            if cid == &idle_id && skip_idle {
                 // Skip idle process the first time it shows up
                 skip_idle = false;
                 continue;
@@ -201,7 +201,7 @@ pub fn switch() -> SwitchResult {
             }));
 
         let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
-            .get(&next_context.pid)
+            .get(&next_context.cid)
             .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
         {
             (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))

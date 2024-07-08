@@ -27,7 +27,7 @@ use ::core::sync::atomic::AtomicUsize;
 
 use super::{
     empty_cr3,
-    memory::{AddrSpaceWrapper, GrantFileRef},
+    memory::{AddrSpaceWrapper, GrantFileRef}, process::{Process, ProcessId},
 };
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
@@ -71,8 +71,8 @@ pub enum HardBlockedReason {
 
 #[derive(Copy, Clone, Debug)]
 pub struct WaitpidKey {
-    pub pid: Option<ContextId>,
-    pub pgid: Option<ContextId>,
+    pub pid: Option<ProcessId>,
+    pub pgid: Option<ProcessId>,
 }
 
 impl Ord for WaitpidKey {
@@ -134,31 +134,11 @@ pub struct Context {
     /// The internal context ID of this context
     pub cid: ContextId,
     /// The process ID of this context
-    pub pid: ContextId,
-    /// The group ID of this context
-    pub pgid: ContextId,
-    /// The ID of the parent context
-    pub ppid: ContextId,
-    /// The ID of the session
-    pub session_id: ContextId,
-    /// The real user id
-    pub ruid: u32,
-    /// The real group id
-    pub rgid: u32,
-    /// The real namespace id
-    pub rns: SchemeNamespace,
-    /// The effective user id
-    pub euid: u32,
-    /// The effective group id
-    pub egid: u32,
-    /// The effective namespace id
-    pub ens: SchemeNamespace,
-
+    pub pid: ProcessId,
+    /// Process state shared with other threads
+    pub process: Arc<RwLock<Process>>,
     /// Signal handler
     pub sig: Option<SignalState>,
-
-    /// Process umask
-    pub umask: usize,
     /// Status of context
     pub status: Status,
     pub status_reason: &'static str,
@@ -186,8 +166,6 @@ pub struct Context {
     /// Tail buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
     pub syscall_tail: Option<RaiiFrame>,
-    /// Context is being waited on
-    pub waitpid: Arc<WaitMap<WaitpidKey, (ContextId, usize)>>,
     /// Context should wake up at specified time
     pub wake: Option<u128>,
     /// The architecture specific context
@@ -209,10 +187,6 @@ pub struct Context {
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
     pub userspace: bool,
-    /// A somewhat hacky way to initially stop a context when creating
-    /// a new instance of the proc: scheme, entirely separate from
-    /// signals or any other way to restart a process.
-    pub ptrace_stop: bool,
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
 }
@@ -233,21 +207,12 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new(cid: ContextId, pid: ContextId) -> Result<Context> {
+    pub fn new(cid: ContextId, pid: ContextId, process: Arc<RwLock<Process>>) -> Result<Context> {
         let this = Context {
             cid,
             pid,
-            pgid: pid,
-            ppid: ContextId::from(0),
-            session_id: ContextId::from(0),
-            ruid: 0,
-            rgid: 0,
-            rns: SchemeNamespace::from(0),
-            euid: 0,
-            egid: 0,
-            ens: SchemeNamespace::from(0),
+            process,
             sig: None,
-            umask: 0o022,
             status: Status::HardBlocked {
                 reason: HardBlockedReason::NotYetStarted,
             },
@@ -260,7 +225,6 @@ impl Context {
             inside_syscall: false,
             syscall_head: Some(RaiiFrame::allocate()?),
             syscall_tail: Some(RaiiFrame::allocate()?),
-            waitpid: Arc::new(WaitMap::new()),
             wake: None,
             arch: arch::Context::new(),
             kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
@@ -269,7 +233,6 @@ impl Context {
             name: Cow::Borrowed(""),
             files: Arc::new(RwLock::new(Vec::new())),
             userspace: false,
-            ptrace_stop: false,
             fmap_ret: None,
             being_sigkilled: false,
 
