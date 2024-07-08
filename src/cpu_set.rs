@@ -52,8 +52,6 @@ pub struct LogicalCpuSet([AtomicUsize; SET_WORDS]);
 fn parts(id: LogicalCpuId) -> (usize, u32) {
     ((id.get() / usize::BITS) as usize, id.get() % usize::BITS)
 }
-const MASK_SIZE: usize = SET_WORDS * core::mem::size_of::<usize>();
-
 impl LogicalCpuSet {
     pub const fn empty() -> Self {
         const ZEROES: AtomicUsize = AtomicUsize::new(0);
@@ -66,10 +64,6 @@ impl LogicalCpuSet {
     pub fn contains(&mut self, id: LogicalCpuId) -> bool {
         let (word, bit) = parts(id);
         *self.0[word].get_mut() & (1 << bit) != 0
-    }
-    pub fn contains_now(&self, id: LogicalCpuId) -> bool {
-        let (word, bit) = parts(id);
-        self.0[word].load(Ordering::Acquire) & (1 << bit) != 0
     }
     pub fn atomic_set(&self, id: LogicalCpuId) {
         let (word, bit) = parts(id);

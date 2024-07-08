@@ -25,28 +25,28 @@ pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
 #[cfg(feature = "multi_core")]
 #[inline(always)]
 pub fn ipi(kind: IpiKind, target: IpiTarget) {
-    use crate::device::local_apic::LOCAL_APIC;
+    use crate::device::local_apic::the_local_apic;
 
     #[cfg(feature = "profiling")]
     if matches!(kind, IpiKind::Profile) {
         let icr = (target as u64) << 18 | 1 << 14 | 0b100 << 8;
-        unsafe { LOCAL_APIC.set_icr(icr) };
+        unsafe { the_local_apic().set_icr(icr) };
         return;
     }
 
     let icr = (target as u64) << 18 | 1 << 14 | (kind as u64);
-    unsafe { LOCAL_APIC.set_icr(icr) };
+    unsafe { the_local_apic().set_icr(icr) };
 }
 use crate::cpu_set::LogicalCpuId;
 
 #[cfg(feature = "multi_core")]
 #[inline(always)]
 pub fn ipi_single(kind: IpiKind, target: LogicalCpuId) {
-    use crate::device::local_apic::LOCAL_APIC;
+    use crate::device::local_apic::the_local_apic;
 
     unsafe {
         // TODO: Distinguish between logical and physical CPU IDs
-        LOCAL_APIC.ipi(target.get(), kind);
+        the_local_apic().ipi(target.get(), kind);
     }
 }
 

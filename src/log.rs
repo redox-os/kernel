@@ -1,6 +1,5 @@
 use alloc::collections::VecDeque;
-use core::sync::atomic::{AtomicBool, Ordering};
-use spin::Mutex;
+use spin::{Mutex, Once};
 
 pub static LOG: Mutex<Option<Log>> = Mutex::new(None);
 
@@ -37,7 +36,6 @@ impl Log {
 
 struct RedoxLogger {
     log_func: fn(&log::Record),
-    pub initialized: AtomicBool,
 }
 
 impl ::log::Log for RedoxLogger {
@@ -50,26 +48,23 @@ impl ::log::Log for RedoxLogger {
     fn flush(&self) {}
 }
 
-pub fn init_logger(func: fn(&log::Record)) {
-    unsafe {
-        match LOGGER.initialized.load(Ordering::SeqCst) {
-            false => {
-                ::log::set_max_level(::log::LevelFilter::Info);
-                LOGGER.log_func = func;
-                match ::log::set_logger(&LOGGER) {
-                    Ok(_) => ::log::info!("Logger initialized."),
-                    Err(e) => println!("Logger setup failed! error: {}", e),
-                }
-                LOGGER.initialized.store(true, Ordering::SeqCst);
-            }
-            true => {
-                ::log::info!("Tried to reinitialize the logger, which is not possible. Ignoring.")
-            }
+pub fn init_logger(log_func: fn(&log::Record)) {
+    let mut called = false;
+    let logger = LOGGER.call_once(|| {
+        ::log::set_max_level(::log::LevelFilter::Info);
+        called = true;
+
+        RedoxLogger {
+            log_func,
         }
+    });
+    if !called {
+        log::error!("Tried to reinitialize the logger, which is not possible. Ignoring.")
+    }
+    match ::log::set_logger(logger) {
+        Ok(_) => log::info!("Logger initialized."),
+        Err(e) => println!("Logger setup failed! error: {}", e),
     }
 }
 
-static mut LOGGER: RedoxLogger = RedoxLogger {
-    log_func: |_| {},
-    initialized: AtomicBool::new(false),
-};
+static LOGGER: Once<RedoxLogger> = Once::new();

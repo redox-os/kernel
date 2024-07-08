@@ -10,7 +10,7 @@ use super::{find_sdt, sdt::Sdt};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::{
-    device::local_apic::LOCAL_APIC,
+    device::local_apic::the_local_apic,
     interrupt,
     start::{kstart_ap, AP_READY, CPU_COUNT},
 };
@@ -45,7 +45,7 @@ impl Madt {
 
             println!("  APIC: {:>08X}: {}", madt.local_address, madt.flags);
 
-            let local_apic = unsafe { &mut LOCAL_APIC };
+            let local_apic = unsafe { the_local_apic() };
             let me = local_apic.id() as u8;
 
             if local_apic.x2 {

@@ -136,7 +136,7 @@ unsafe fn pic_eoi(irq: u8) {
 }
 
 unsafe fn lapic_eoi() {
-    local_apic::LOCAL_APIC.eoi()
+    local_apic::the_local_apic().eoi()
 }
 
 unsafe fn pic_unmask(irq: usize) {
@@ -279,7 +279,7 @@ interrupt!(lapic_timer, || {
 interrupt!(lapic_error, || {
     println!(
         "Local apic internal error: ESR={:#0x}",
-        local_apic::LOCAL_APIC.esr()
+        local_apic::the_local_apic().esr()
     );
     lapic_eoi();
 });

@@ -1,24 +1,24 @@
 use crate::percpu::PercpuBlock;
-use crate::{context, device::local_apic::LOCAL_APIC};
+use crate::{context, device::local_apic::the_local_apic};
 
 interrupt!(wakeup, || {
-    LOCAL_APIC.eoi();
+    the_local_apic().eoi();
 });
 
 interrupt!(tlb, || {
     PercpuBlock::current().maybe_handle_tlb_shootdown();
 
-    LOCAL_APIC.eoi();
+    the_local_apic().eoi();
 });
 
 interrupt!(switch, || {
-    LOCAL_APIC.eoi();
+    the_local_apic().eoi();
 
     let _ = context::switch();
 });
 
 interrupt!(pit, || {
-    LOCAL_APIC.eoi();
+    the_local_apic().eoi();
 
     // Switch after a sufficient amount of time since the last switch.
     context::switch::tick();

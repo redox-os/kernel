@@ -1,7 +1,5 @@
 use core::{
-    mem,
-    num::NonZeroU8,
-    sync::atomic::{AtomicU32, Ordering},
+    cell::SyncUnsafeCell, mem, num::NonZeroU8, sync::atomic::{AtomicU32, Ordering}
 };
 
 use alloc::boxed::Box;
@@ -18,7 +16,7 @@ use crate::{cpu_set::LogicalCpuId, interrupt::*, ipi::IpiKind, paging::PAGE_SIZE
 
 use spin::RwLock;
 
-pub static mut INIT_IDT: [IdtEntry; 32] = [IdtEntry::new(); 32];
+pub static INIT_IDT: SyncUnsafeCell<[IdtEntry; 32]> = SyncUnsafeCell::new([IdtEntry::new(); 32]);
 
 pub type IdtEntries = [IdtEntry; 256];
 pub type IdtReservations = [AtomicU32; 8];
@@ -69,7 +67,7 @@ impl Idt {
     }
 }
 
-static mut INIT_BSP_IDT: Idt = Idt::new();
+static INIT_BSP_IDT: SyncUnsafeCell<Idt> = SyncUnsafeCell::new(Idt::new());
 
 // TODO: VecMap?
 pub static IDTS: RwLock<Option<HashMap<LogicalCpuId, &'static mut Idt>>> = RwLock::new(None);
@@ -141,8 +139,9 @@ macro_rules! use_default_irqs(
 );
 
 pub unsafe fn init() {
-    set_exceptions(&mut INIT_IDT);
-    dtables::lidt(&DescriptorTablePointer::new(&INIT_IDT));
+    let idt = &mut *INIT_IDT.get();
+    set_exceptions(idt);
+    dtables::lidt(&DescriptorTablePointer::new(&idt));
 }
 
 fn set_exceptions(idt: &mut [IdtEntry]) {
@@ -193,7 +192,7 @@ pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
     let idts_btree = idts_guard.get_or_insert_with(HashMap::new);
 
     if cpu_id == LogicalCpuId::BSP {
-        idts_btree.insert(cpu_id, &mut INIT_BSP_IDT);
+        idts_btree.insert(cpu_id, &mut *INIT_BSP_IDT.get());
     } else {
         let idt = idts_btree
             .entry(cpu_id)
@@ -205,7 +204,7 @@ pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
 /// Initializes a fully functional IDT for use before it be moved into the map. This is ONLY called
 /// on the BSP, since the kernel heap is ready for the APs.
 pub unsafe fn init_paging_bsp() {
-    init_generic(LogicalCpuId::BSP, &mut INIT_BSP_IDT);
+    init_generic(LogicalCpuId::BSP, &mut *INIT_BSP_IDT.get());
 }
 
 /// Initializes an IDT for any type of processor.

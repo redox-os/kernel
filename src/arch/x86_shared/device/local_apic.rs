@@ -1,4 +1,5 @@
 use core::{
+    cell::SyncUnsafeCell,
     ptr::{read_volatile, write_volatile},
     sync::atomic::{self, AtomicU32},
 };
@@ -8,17 +9,20 @@ use crate::{paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch}, i
 
 use crate::arch::cpuid::cpuid;
 
-pub static mut LOCAL_APIC: LocalApic = LocalApic {
+static LOCAL_APIC: SyncUnsafeCell<LocalApic> = SyncUnsafeCell::new(LocalApic {
     address: 0,
     x2: false,
-};
+});
+pub unsafe fn the_local_apic() -> &'static mut LocalApic {
+    &mut *LOCAL_APIC.get()
+}
 
 pub unsafe fn init(active_table: &mut KernelMapper) {
-    LOCAL_APIC.init(active_table);
+    the_local_apic().init(active_table);
 }
 
 pub unsafe fn init_ap() {
-    LOCAL_APIC.init_ap();
+    the_local_apic().init_ap();
 }
 
 /// Local APIC
