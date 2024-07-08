@@ -38,7 +38,7 @@ impl WaitCondition {
 
     // Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function
     pub fn wait<T>(&self, guard: MutexGuard<T>, reason: &'static str) -> bool {
-        let id;
+        let cid;
         {
             let context_lock = {
                 let contexts = context::contexts();
@@ -53,7 +53,7 @@ impl WaitCondition {
                 {
                     return false;
                 }
-                id = context.id;
+                cid = context.cid;
                 context.block(reason);
             }
 
@@ -73,7 +73,7 @@ impl WaitCondition {
             while i < contexts.len() {
                 let remove = {
                     let context = contexts[i].read();
-                    context.id == id
+                    context.cid == cid
                 };
 
                 if remove {

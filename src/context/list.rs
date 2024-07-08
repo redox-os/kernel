@@ -50,7 +50,7 @@ impl ContextList {
 
     /// Get the current context.
     pub fn current(&self) -> Option<&Arc<RwSpinlock<Context>>> {
-        self.map.get(&super::context_id())
+        self.map.get(&super::current_cid())
     }
 
     pub fn iter(
@@ -72,7 +72,8 @@ impl ContextList {
     ) -> Result<&Arc<RwSpinlock<Context>>> {
         assert!(self
             .map
-            .insert(id, Arc::new(RwSpinlock::new(Context::new(id)?)))
+            // TODO
+            .insert(id, Arc::new(RwSpinlock::new(Context::new(id, id)?)))
             .is_none());
 
         Ok(self

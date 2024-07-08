@@ -263,7 +263,7 @@ pub fn ksignal(signal: usize) {
         "SIGNAL {}, CPU {}, PID {:?}",
         signal,
         cpu_id(),
-        context::context_id()
+        context::current_cid()
     );
     {
         let contexts = context::contexts();

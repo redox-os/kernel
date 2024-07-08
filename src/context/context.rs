@@ -131,8 +131,10 @@ impl Eq for WaitpidKey {}
 /// A context, which identifies either a process or a thread
 #[derive(Debug)]
 pub struct Context {
-    /// The ID of this context
-    pub id: ContextId,
+    /// The internal context ID of this context
+    pub cid: ContextId,
+    /// The process ID of this context
+    pub pid: ContextId,
     /// The group ID of this context
     pub pgid: ContextId,
     /// The ID of the parent context
@@ -231,10 +233,11 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new(id: ContextId) -> Result<Context> {
+    pub fn new(cid: ContextId, pid: ContextId) -> Result<Context> {
         let this = Context {
-            id,
-            pgid: id,
+            cid,
+            pid,
+            pgid: pid,
             ppid: ContextId::from(0),
             session_id: ContextId::from(0),
             ruid: 0,
@@ -409,7 +412,7 @@ impl Context {
             return addr_space;
         };
 
-        if self.id == super::context_id() {
+        if self.cid == super::current_cid() {
             // TODO: Share more code with context::arch::switch_to.
             let this_percpu = PercpuBlock::current();
 
@@ -449,7 +452,7 @@ impl Context {
     }
     pub fn caller_ctx(&self) -> CallerCtx {
         CallerCtx {
-            pid: self.id.into(),
+            pid: self.pid.into(),
             uid: self.euid,
             gid: self.egid,
         }

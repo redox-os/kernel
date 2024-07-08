@@ -85,8 +85,8 @@ pub fn init() {
 
     unsafe {
         let percpu = PercpuBlock::current();
-        percpu.switch_internals.set_context_id(context.id);
-        percpu.switch_internals.set_idle_id(context.id);
+        percpu.switch_internals.set_current_cid(context.cid);
+        percpu.switch_internals.set_idle_id(context.cid);
     }
 }
 
@@ -100,8 +100,8 @@ pub fn contexts_mut() -> RwLockWriteGuard<'static, ContextList> {
     CONTEXTS.write()
 }
 
-pub fn context_id() -> ContextId {
-    PercpuBlock::current().switch_internals.context_id()
+pub fn current_cid() -> ContextId {
+    PercpuBlock::current().switch_internals.current_cid()
 }
 
 pub fn current() -> Result<Arc<RwSpinlock<Context>>> {

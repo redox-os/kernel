@@ -13,7 +13,7 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
         interrupt::stack_trace();
     }
 
-    println!("CPU {}, PID {:?}", cpu_id(), context::context_id());
+    println!("CPU {}, CID {:?}", cpu_id(), context::current_cid());
 
     // This could deadlock, but at this point we are going to halt anyways
     {

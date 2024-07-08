@@ -855,7 +855,7 @@ impl UserInner {
                 0,
                 uid_gid_hack_merge(current_uid_gid()?),
             ],
-            caller: context::context_id().get() as u64,
+            caller: context::current()?.read().pid.get() as u64,
         });
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
@@ -1104,7 +1104,7 @@ impl UserInner {
                 }
             }
             let desc = desc_res?;
-            (context.id, desc.description)
+            (context.pid, desc.description)
         };
 
         let response = self.call_extended_inner(

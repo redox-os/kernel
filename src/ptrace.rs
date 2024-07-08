@@ -175,7 +175,7 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
         let contexts = context::contexts();
         let context = contexts.current()?;
         let context = context.read();
-        context.id
+        context.pid
     };
 
     let sessions = sessions();
@@ -295,7 +295,7 @@ pub fn next_breakpoint() -> Option<PtraceFlags> {
     let context = context.read();
 
     let sessions = sessions();
-    let session = sessions.get(&context.id)?;
+    let session = sessions.get(&context.pid)?;
     let data = session.data.lock();
     let breakpoint = data.breakpoint?;
 

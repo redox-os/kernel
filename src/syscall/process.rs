@@ -48,7 +48,7 @@ pub fn exit(status: usize) -> ! {
                 .and_then(|a| Arc::try_unwrap(a).ok());
             drop(context.syscall_head.take());
             drop(context.syscall_tail.take());
-            context.id
+            context.pid
         };
 
         // Files must be closed while context is valid so that messages can be passed
@@ -114,7 +114,7 @@ pub fn exit(status: usize) -> ! {
 }
 
 pub fn getpid() -> Result<ContextId> {
-    Ok(context::context_id())
+    Ok(context::current()?.read().pid)
 }
 
 pub fn getpgid(pid: ContextId) -> Result<ContextId> {
@@ -178,7 +178,7 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
         }
 
         let mut send = |context: &mut context::Context| -> SendResult {
-            let is_self = context.id == context::context_id();
+            let is_self = context.cid == context::current_cid();
 
             // Non-root users cannot kill arbitrarily.
             if euid != 0 && euid != context.ruid && ruid != context.ruid {
@@ -312,7 +312,7 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             for (pid, context_lock) in contexts.iter() {
                 let mut context = context_lock.write();
 
-                if context.id.get() <= 2 {
+                if context.pid.get() <= 2 {
                     continue;
                 }
                 found += 1;
@@ -373,7 +373,7 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
     let current_pid = {
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        context.id
+        context.pid
     };
 
     let context_lock = if pid.get() == 0 {
@@ -383,9 +383,9 @@ pub fn setpgid(pid: ContextId, pgid: ContextId) -> Result<usize> {
     };
 
     let mut context = context_lock.write();
-    if context.id == current_pid || context.ppid == current_pid {
+    if context.pid == current_pid || context.ppid == current_pid {
         if pgid.get() == 0 {
-            context.pgid = context.id;
+            context.pgid = context.pid;
         } else {
             context.pgid = pgid;
         }
@@ -439,7 +439,7 @@ pub fn waitpid(
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
-        (context.id, Arc::clone(&context.waitpid))
+        (context.pid, Arc::clone(&context.waitpid))
     };
     let write_status = |value| {
         status_ptr
@@ -543,7 +543,7 @@ pub fn waitpid(
                 if context.ppid != ppid {
                     println!(
                         "TODO: Hack for rustc - changing ppid of {} from {} to {}",
-                        context.id.get(),
+                        context.pid.get(),
                         context.ppid.get(),
                         ppid.get()
                     );

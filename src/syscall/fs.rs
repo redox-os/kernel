@@ -56,7 +56,7 @@ const PATH_MAX: usize = PAGE_SIZE;
 pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let (pid, uid, gid, scheme_ns, umask) = match context::current()?.read() {
         ref context => (
-            context.id.into(),
+            context.pid.into(),
             context.euid,
             context.egid,
             context.ens,
@@ -361,7 +361,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
             CallerCtx {
                 uid: context.euid,
                 gid: context.egid,
-                pid: context.id.get(),
+                pid: context.pid.get(),
             },
             context.ens,
         ),

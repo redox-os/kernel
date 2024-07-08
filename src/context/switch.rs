@@ -133,11 +133,11 @@ pub fn switch() -> SwitchResult {
         // Locate next context
         for (pid, next_context_lock) in contexts
             // Include all contexts with IDs greater than the current...
-            .range((Bound::Excluded(prev_context_guard.id), Bound::Unbounded))
+            .range((Bound::Excluded(prev_context_guard.cid), Bound::Unbounded))
             .chain(
                 contexts
                     // ... and all contexts with IDs less than the current...
-                    .range((Bound::Unbounded, Bound::Excluded(prev_context_guard.id))),
+                    .range((Bound::Unbounded, Bound::Excluded(prev_context_guard.cid))),
             )
             .chain(
                 contexts
@@ -184,7 +184,7 @@ pub fn switch() -> SwitchResult {
         next_context.switch_time = switch_time;
 
         let percpu = PercpuBlock::current();
-        percpu.switch_internals.context_id.set(next_context.id);
+        percpu.switch_internals.current_cid.set(next_context.cid);
 
         // FIXME set th switch result in arch::switch_to instead
         let prev_context =
@@ -201,7 +201,7 @@ pub fn switch() -> SwitchResult {
             }));
 
         let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
-            .get(&next_context.id)
+            .get(&next_context.pid)
             .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
         {
             (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
@@ -251,8 +251,8 @@ pub struct ContextSwitchPercpu {
     switch_result: Cell<Option<SwitchResultInner>>,
     pit_ticks: Cell<usize>,
 
-    /// Unique ID of the currently running context.
-    context_id: Cell<ContextId>,
+    /// Unique context ID of the currently running context.
+    current_cid: Cell<ContextId>,
 
     // The ID of the idle process
     idle_id: Cell<ContextId>,
@@ -260,11 +260,11 @@ pub struct ContextSwitchPercpu {
     pub(crate) being_sigkilled: Cell<bool>,
 }
 impl ContextSwitchPercpu {
-    pub fn context_id(&self) -> ContextId {
-        self.context_id.get()
+    pub fn current_cid(&self) -> ContextId {
+        self.current_cid.get()
     }
-    pub unsafe fn set_context_id(&self, new: ContextId) {
-        self.context_id.set(new)
+    pub unsafe fn set_current_cid(&self, new: ContextId) {
+        self.current_cid.set(new)
     }
     pub fn idle_id(&self) -> ContextId {
         self.idle_id.get()

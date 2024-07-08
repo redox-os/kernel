@@ -75,7 +75,7 @@ fn try_stop_context<F, T>(pid: ContextId, callback: F) -> Result<T>
 where
     F: FnOnce(&mut Context) -> Result<T>,
 {
-    if pid == context::context_id() {
+    if pid == context::current_cid() {
         return Err(Error::new(EBADF));
     }
     // Stop process
@@ -215,6 +215,7 @@ impl OperationData {
 #[derive(Clone)]
 struct Info {
     pid: ContextId,
+    cid: ContextId,
     flags: usize,
 
     // Important: Operation must never change. Search for:
@@ -344,7 +345,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                 let current = current.read();
 
                 // Are we the process?
-                if target.id != current.id {
+                if target.pid != current.pid {
                     // Do we own the process?
                     if uid != target.euid && gid != target.egid {
                         return Err(Error::new(EPERM));
@@ -354,13 +355,13 @@ impl<const FULL: bool> ProcScheme<FULL> {
                     // bypass this check.
                     match contexts
                         .ancestors(target.ppid)
-                        .find(|&(id, _context)| id == current.id)
+                        .find(|&(id, _context)| pid == current.pid)
                     {
                         Some((id, context)) => {
                             // Paranoid sanity check, as ptrace security holes
                             // wouldn't be fun
-                            assert_eq!(id, current.id);
-                            assert_eq!(id, context.read().id);
+                            assert_eq!(id, current.pid);
+                            assert_eq!(id, context.read().pid);
                         }
                         None => return Err(Error::new(EPERM)),
                     }
@@ -400,6 +401,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                     flags,
                     pid,
                     operation: operation.clone(),
+                    cid: pid,
                 },
                 data,
             },
@@ -471,7 +473,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
     #[cfg(target_arch = "x86_64")]
     fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
         // TODO: Avoid rdmsr if fsgsbase is not enabled, if this is worth optimizing for.
-        let (fsbase, gsbase) = if info.pid == context::context_id() {
+        let (fsbase, gsbase) = if info.cid == context::current_cid() {
             unsafe {
                 (
                     x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
@@ -551,7 +553,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
             return Err(Error::new(EINVAL));
         }
 
-        if info.pid == context::context_id() {
+        if info.pid == context::current_cid() {
             unsafe {
                 x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
                 // We have to write to KERNEL_GSBASE, because when the kernel returns to
@@ -587,7 +589,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let pid_str = parts.next().ok_or(Error::new(ENOENT))?;
 
         let pid = if pid_str == "current" {
-            context::context_id()
+            context::current_cid()
         } else if pid_str == "new" {
             inherit_context()?
         } else if !FULL {
@@ -630,7 +632,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let mut handle = HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
         handle.continue_ignored_children();
 
-        let stop_context = if handle.info.pid == context::context_id() {
+        let stop_context = if handle.info.cid == context::current_cid() {
             with_context_mut
         } else {
             try_stop_context
@@ -1439,6 +1441,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     info: Info {
                         flags: 0,
                         pid: info.pid,
+                        cid: info.cid,
                         operation,
                     },
                     data,
@@ -1578,12 +1581,12 @@ fn inherit_context() -> Result<ContextId> {
         new_context.rgid = current_context.rgid;
         new_context.ens = current_context.ens;
         new_context.rns = current_context.rns;
-        new_context.ppid = current_context.id;
+        new_context.ppid = current_context.pid;
         new_context.pgid = current_context.pgid;
         new_context.session_id = current_context.session_id;
         new_context.umask = current_context.umask;
 
-        new_context.id
+        new_context.cid
     };
 
     if ptrace::send_event(crate::syscall::ptrace_event!(
