@@ -31,5 +31,11 @@ build:aarch64:
       # TODO: cross compiler binutils?
     - make target/aarch64/kernel.all ARCH=aarch64 BUILD=target/aarch64
 
-# TODO: rustfmt check
+fmt:
+    stage: build
+    needs: []
+    script:
+        - rustup component add rustfmt-preview
+        - cargo fmt -- --check
+
 # TODO: unit tests

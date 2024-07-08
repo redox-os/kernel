@@ -764,7 +764,7 @@ impl UserInner {
                         d: sqe.args[2] as usize,         // flags
                         uid: sqe.args[3] as u32,         // offset lo
                         gid: (sqe.args[3] >> 32) as u32, // offset hi
-                    })
+                    });
                 }
 
                 Opcode::Mremap => SYS_MREMAP,
