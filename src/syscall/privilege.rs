@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use crate::{
-    context::{self, process},
+    context::process,
     scheme::{self, SchemeNamespace},
     syscall::error::*,
 };

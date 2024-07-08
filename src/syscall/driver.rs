@@ -1,19 +1,15 @@
 use alloc::sync::Arc;
 
 use crate::{
-    context,
+    context::{self, process},
     paging::VirtualAddress,
     syscall::error::{Error, Result, EFAULT, EPERM, ESRCH},
 };
 fn enforce_root() -> Result<()> {
-    let contexts = context::contexts();
-    let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-    let context = context_lock.read();
-    if context.euid == 0 {
-        Ok(())
-    } else {
-        Err(Error::new(EPERM))
+    if process::current()?.read().euid != 0 {
+        return Err(Error::new(EPERM));
     }
+    Ok(())
 }
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]

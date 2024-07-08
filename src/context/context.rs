@@ -16,8 +16,7 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::{CallerCtx, FileHandle, SchemeNamespace},
-    sync::WaitMap,
+    scheme::FileHandle,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
@@ -207,7 +206,7 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new(cid: ContextId, pid: ContextId, process: Arc<RwLock<Process>>) -> Result<Context> {
+    pub fn new(cid: ContextId, pid: ProcessId, process: Arc<RwLock<Process>>) -> Result<Context> {
         let this = Context {
             cid,
             pid,
@@ -412,13 +411,6 @@ impl Context {
         }
 
         core::mem::replace(&mut self.addr_space, addr_space)
-    }
-    pub fn caller_ctx(&self) -> CallerCtx {
-        CallerCtx {
-            pid: self.pid.into(),
-            uid: self.euid,
-            gid: self.egid,
-        }
     }
 
     fn can_access_regs(&self) -> bool {

@@ -1,11 +1,11 @@
 use alloc::{collections::BTreeMap, sync::Arc};
-use core::iter;
+use spin::RwLock;
 
 use spinning_top::RwSpinlock;
 
 use super::{
     context::{Context, ContextId, Kstack},
-    memory::AddrSpaceWrapper,
+    memory::AddrSpaceWrapper, process::{Process, ProcessId},
 };
 use crate::{
     interrupt::InterruptStack,
@@ -53,22 +53,26 @@ impl ContextList {
 
     pub(crate) fn insert_context_raw(
         &mut self,
-        id: ContextId,
+        cid: ContextId,
+        pid: ProcessId,
+        process: Arc<RwLock<Process>>,
     ) -> Result<&Arc<RwSpinlock<Context>>> {
         assert!(self
             .map
             // TODO
-            .insert(id, Arc::new(RwSpinlock::new(Context::new(id, id)?)))
+            .insert(cid, Arc::new(RwSpinlock::new(Context::new(cid, pid, process)?)))
             .is_none());
 
         Ok(self
             .map
-            .get(&id)
+            .get(&cid)
             .expect("Failed to insert new context. ID is out of bounds."))
     }
 
     /// Create a new context.
-    pub fn new_context(&mut self) -> Result<&Arc<RwSpinlock<Context>>> {
+    pub fn new_context(&mut self, process: Arc<RwLock<Process>>) -> Result<&Arc<RwSpinlock<Context>>> {
+        let pid = process.read().pid;
+
         // Zero is not a valid context ID, therefore add 1.
         //
         // FIXME: Ensure the number of CPUs can't switch between new_context calls.
@@ -91,7 +95,7 @@ impl ContextList {
         let id = ContextId::from(self.next_id);
         self.next_id += 1;
 
-        self.insert_context_raw(id)
+        self.insert_context_raw(id, pid, process)
     }
 
     /// Spawn a context from a function.

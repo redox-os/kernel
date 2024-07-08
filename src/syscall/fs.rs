@@ -111,8 +111,8 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 
 /// rmdir syscall
 pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
-    let (scheme_ns, caller_ctx) = match context::current()?.read() {
-        ref context => (context.ens, context.caller_ctx()),
+    let (scheme_ns, caller_ctx) = match process::current()?.read() {
+        ref process => (process.ens, process.caller_ctx()),
     };
 
     /*
@@ -135,8 +135,8 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
 
 /// Unlink syscall
 pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
-    let (scheme_ns, caller_ctx) = match context::current()?.read() {
-        ref context => (context.ens, context.caller_ctx()),
+    let (scheme_ns, caller_ctx) = match process::current()?.read() {
+        ref process => (process.ens, process.caller_ctx()),
     };
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -159,8 +159,7 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
 /// Close syscall
 pub fn close(fd: FileHandle) -> Result<()> {
     let file = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context_lock = context::current()?;
         let context = context_lock.read();
         context.remove_file(fd).ok_or(Error::new(EBADF))?
     };
@@ -169,12 +168,8 @@ pub fn close(fd: FileHandle) -> Result<()> {
 }
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
-    let (file, caller_ctx) = match context::current()?.read() {
-        ref context => (
-            context.get_file(fd).ok_or(Error::new(EBADF))?,
-            context.caller_ctx(),
-        ),
-    };
+    let caller_ctx = process::current()?.read().caller_ctx();
+    let file = context::current()?.read().get_file(fd).ok_or(Error::new(EBADF))?;
 
     if user_buf.is_empty() {
         Ok(FileDescriptor {
@@ -355,17 +350,17 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
-    let (file, caller_ctx, scheme_ns) = match context::current()?.read() {
-        ref context => (
-            context.get_file(fd).ok_or(Error::new(EBADF))?,
+    let (caller_ctx, scheme_ns) = match process::current()?.read() {
+        ref process => (
             CallerCtx {
-                uid: context.euid,
-                gid: context.egid,
-                pid: context.pid.get(),
+                uid: process.euid,
+                gid: process.egid,
+                pid: process.pid.get(),
             },
-            context.ens,
+            process.ens,
         ),
     };
+    let file = context::current()?.read().get_file(fd).ok_or(Error::new(EBADF))?;
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;

@@ -3,7 +3,7 @@
 //! of the scheme.
 
 use crate::{
-    context::{self, ContextId},
+    context::{self, process::ProcessId},
     event,
     percpu::PercpuBlock,
     scheme::GlobalSchemes,
@@ -82,7 +82,7 @@ pub struct Session {
     pub tracer: WaitCondition,
 }
 impl Session {
-    pub fn with_session<F, T>(pid: ContextId, callback: F) -> Result<T>
+    pub fn with_session<F, T>(pid: ProcessId, callback: F) -> Result<T>
     where
         F: FnOnce(&Session) -> Result<T>,
     {
@@ -97,7 +97,7 @@ impl Session {
     }
 }
 
-type SessionMap = HashMap<ContextId, Arc<Session>>;
+type SessionMap = HashMap<ProcessId, Arc<Session>>;
 
 static SESSIONS: Once<RwLock<SessionMap>> = Once::new();
 
@@ -113,7 +113,7 @@ fn sessions_mut() -> RwLockWriteGuard<'static, SessionMap> {
 
 /// Try to create a new session, but fail if one already exists for this
 /// process
-pub fn try_new_session(pid: ContextId, file_id: usize) -> bool {
+pub fn try_new_session(pid: ProcessId, file_id: usize) -> bool {
     let mut sessions = sessions_mut();
 
     match sessions.entry(pid) {
@@ -135,7 +135,7 @@ pub fn try_new_session(pid: ContextId, file_id: usize) -> bool {
 
 /// Remove the session from the list of open sessions and notify any
 /// waiting processes
-pub fn close_session(pid: ContextId) {
+pub fn close_session(pid: ProcessId) {
     if let Some(session) = sessions_mut().remove(&pid) {
         session.tracer.notify();
         session.tracee.notify();
@@ -148,7 +148,7 @@ pub fn close_session(pid: ContextId) {
 /// session will *actually* be closed. This is partly to ensure ENOSRCH is
 /// returned rather than ENODEV (which occurs when there's no session - should
 /// never really happen).
-pub fn close_tracee(pid: ContextId) {
+pub fn close_tracee(pid: ProcessId) {
     if let Some(session) = sessions().get(&pid) {
         session.tracer.notify();
 
@@ -158,7 +158,7 @@ pub fn close_tracee(pid: ContextId) {
 }
 
 /// Returns true if a session is attached to this process
-pub fn is_traced(pid: ContextId) -> bool {
+pub fn is_traced(pid: ProcessId) -> bool {
     sessions().contains_key(&pid)
 }
 
@@ -213,7 +213,7 @@ pub(crate) struct Breakpoint {
 ///
 /// Note: Don't call while holding any locks or allocated data, this will
 /// switch contexts and may in fact just never terminate.
-pub fn wait(pid: ContextId) -> Result<()> {
+pub fn wait(pid: ProcessId) -> Result<()> {
     loop {
         let session = {
             let sessions = sessions();

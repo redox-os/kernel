@@ -21,14 +21,10 @@ use syscall::{
 
 use crate::{
     context::{
-        self,
-        context::HardBlockedReason,
-        file::{FileDescription, FileDescriptor, InternalFlags},
-        memory::{
+        self, context::HardBlockedReason, file::{FileDescription, FileDescriptor, InternalFlags}, memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
-        },
-        BorrowedHtBuf, Context, Status,
+        }, process, BorrowedHtBuf, Context, Status
     },
     event,
     memory::Frame,
@@ -236,7 +232,7 @@ impl UserInner {
     }
 
     pub fn call(&self, opcode: Opcode, args: impl Args) -> Result<usize> {
-        let ctx = context::current()?.read().caller_ctx();
+        let ctx = process::current()?.read().caller_ctx();
         match self.call_extended(ctx, None, opcode, args)? {
             Response::Regular(code, _) => Error::demux(code),
             Response::Fd(_) => Err(Error::new(EIO)),
@@ -1355,10 +1351,10 @@ impl KernelScheme for UserScheme {
 
     fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<()> {
         {
-            let context_lock = context::current()?;
-            let context = context_lock.read();
-            if context.euid != 0 {
-                if uid != context.euid || gid != context.egid {
+            let process_lock = process::current()?;
+            let process = process_lock.read();
+            if process.euid != 0 {
+                if uid != process.euid || gid != process.egid {
                     return Err(Error::new(EPERM));
                 }
             }
@@ -1543,7 +1539,7 @@ impl KernelScheme for UserScheme {
     fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let ctx = context::current()?.read().caller_ctx();
+        let ctx = process::current()?.read().caller_ctx();
         let res = inner.call_extended(
             ctx,
             None,
@@ -1565,7 +1561,7 @@ impl KernelScheme for UserScheme {
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let ctx = context::current()?.read().caller_ctx();
+        let ctx = process::current()?.read().caller_ctx();
         let res = inner.call_extended(ctx, Some(desc), Opcode::Sendfd, [number, flags.bits()])?;
 
         match res {
@@ -1603,7 +1599,7 @@ fn uid_gid_hack_merge([uid, gid]: [u32; 2]) -> u64 {
     u64::from(uid) | (u64::from(gid) << 32)
 }
 fn current_uid_gid() -> Result<[u32; 2]> {
-    Ok(match context::current()?.read() {
-        ref ctx => [ctx.euid, ctx.egid],
+    Ok(match process::current()?.read() {
+        ref p => [p.euid, p.egid],
     })
 }

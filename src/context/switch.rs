@@ -25,12 +25,6 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
         return UpdateResult::Skip;
     }
 
-    // Ignore contexts stopped by ptrace
-    // TODO: ContextStatus::HardBlocked?
-    if context.ptrace_stop {
-        return UpdateResult::Skip;
-    }
-
     // Ignore contexts assigned to other CPUs
     if !context.sched_affinity.contains(cpu_id) {
         return UpdateResult::Skip;
@@ -201,7 +195,7 @@ pub fn switch() -> SwitchResult {
             }));
 
         let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
-            .get(&next_context.cid)
+            .get(&next_context.pid)
             .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
         {
             (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))

@@ -1,3 +1,5 @@
+use core::ops::{Deref, DerefMut};
+
 // TODO: move all this code to userspace
 use alloc::collections::BTreeMap;
 use alloc::sync::{Arc, Weak};
@@ -8,7 +10,7 @@ use spinning_top::RwSpinlock;
 
 use syscall::{Error, Result, ESRCH};
 
-use crate::scheme::SchemeNamespace;
+use crate::scheme::{CallerCtx, SchemeNamespace};
 use crate::sync::WaitMap;
 
 use crate::context::{self, Context, WaitpidKey};
@@ -17,6 +19,14 @@ int_like!(ProcessId, usize);
 
 #[derive(Debug)]
 pub struct Process {
+    pub info: ProcessInfo,
+    /// Context is being waited on
+    pub waitpid: Arc<WaitMap<WaitpidKey, (ProcessId, usize)>>,
+    /// Threads of process
+    pub threads: Vec<Weak<RwSpinlock<Context>>>,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct ProcessInfo {
     /// The process ID of this process
     pub pid: ProcessId,
     /// The group ID of this process
@@ -39,46 +49,47 @@ pub struct Process {
     pub ens: SchemeNamespace,
     /// Process umask
     pub umask: usize,
-    /// Context is being waited on
-    pub waitpid: WaitMap<WaitpidKey, (ProcessId, usize)>,
-    pub threads: Vec<Weak<RwSpinlock<Context>>>,
+}
+impl Deref for Process {
+    type Target = ProcessInfo;
+
+    fn deref(&self) -> &Self::Target {
+        &self.info
+    }
+}
+impl DerefMut for Process {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.info
+    }
 }
 
 pub static PROCESSES: RwLock<BTreeMap<ProcessId, Arc<RwLock<Process>>>> = RwLock::new(BTreeMap::new());
 
 /// Get an iterator of all parents
 pub fn ancestors(
-    list: &BTreeSet<Process>,
+    list: &BTreeMap<ProcessId, Arc<RwLock<Process>>>,
     id: ProcessId,
-) -> impl Iterator<Item = (ProcessId, &Arc<RwSpinlock<Context>>)> + '_ {
+) -> impl Iterator<Item = (ProcessId, &Arc<RwLock<Process>>)> + '_ {
     core::iter::successors(
         list.get(&id).map(|process| (id, process)),
         move |(_id, process)| {
-            let context = process.read();
+            let process = process.read();
             let id = process.ppid;
-            list.get(&id).map(|context| (id, context))
+            list.get(&id).map(|process| (id, process))
         },
     )
 }
 
-impl Ord for Process {
-    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        Ord::cmp(&self.pid, &other.pid)
-    }
-}
-impl PartialOrd for Process {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        Some(Ord::cmp(&self.pid, &other.pid))
-    }
-}
-
 pub fn current() -> Result<Arc<RwLock<Process>>> {
     let pid = context::current()?.read().pid;
-    PROCESSES.read().get(&pid).ok_or(Error::new(ESRCH))
+    Ok(Arc::clone(PROCESSES.read().get(&pid).ok_or(Error::new(ESRCH))?))
 }
-impl PartialEq for Process {
-    fn eq(&self, other: &Self) -> bool {
-        Ord::cmp(self, other) == core::cmp::Ordering::Equal
+impl Process {
+    pub fn caller_ctx(&self) -> CallerCtx {
+        CallerCtx {
+            pid: self.pid.into(),
+            uid: self.euid,
+            gid: self.egid,
+        }
     }
 }
-impl Eq for Process {}

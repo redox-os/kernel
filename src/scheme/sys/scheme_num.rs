@@ -1,17 +1,12 @@
 use alloc::vec::Vec;
 
 use crate::{
-    context, scheme,
+    context::process, scheme,
     syscall::error::{Error, Result, ESRCH},
 };
 
 pub fn resource() -> Result<Vec<u8>> {
-    let scheme_ns = {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
-        context.ens
-    };
+    let scheme_ns = process::current()?.read().ens;
 
     let mut data = Vec::new();
 

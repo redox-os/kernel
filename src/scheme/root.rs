@@ -8,7 +8,7 @@ use spin::RwLock;
 use syscall::O_FSYNC;
 
 use crate::{
-    context::{self, file::InternalFlags},
+    context::{self, file::InternalFlags, process},
     scheme::{
         self,
         user::{UserInner, UserScheme},
@@ -115,12 +115,7 @@ impl KernelScheme for RootScheme {
 
             Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
         } else if path.is_empty() {
-            let scheme_ns = {
-                let contexts = context::contexts();
-                let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                let context = context_lock.read();
-                context.ens
-            };
+            let scheme_ns = process::current()?.read().ens;
 
             let mut data = Vec::new();
             {
