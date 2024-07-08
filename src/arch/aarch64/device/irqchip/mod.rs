@@ -160,7 +160,9 @@ impl IrqChipList {
                     y += 1;
                     continue;
                 }
-                if let Some(pp) = self.chips[y].parent_phandle && pp == self.chips[x].phandle {
+                if let Some(pp) = self.chips[y].parent_phandle
+                    && pp == self.chips[x].phandle
+                {
                     self.chips[y].parent = Some(x);
                     self.chips[x].childs.push(y);
                 }

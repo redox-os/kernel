@@ -61,8 +61,7 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::context::switch::SwitchResult;
-use crate::scheme::SchemeNamespace;
+use crate::{context::switch::SwitchResult, scheme::SchemeNamespace};
 
 use crate::consts::*;
 
@@ -260,7 +259,12 @@ fn run_userspace() -> ! {
 
 /// Allow exception handlers to send signal to arch-independent kernel
 pub fn ksignal(signal: usize) {
-    info!("SIGNAL {}, CPU {}, PID {:?}", signal, cpu_id(), context::context_id());
+    info!(
+        "SIGNAL {}, CPU {}, PID {:?}",
+        signal,
+        cpu_id(),
+        context::context_id()
+    );
     {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {

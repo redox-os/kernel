@@ -25,7 +25,9 @@ pub fn iopl(level: usize) -> Result<usize> {
 pub fn iopl(level: usize) -> Result<usize> {
     enforce_root()?;
 
-    context::current()?.write().set_userspace_io_allowed(level >= 3);
+    context::current()?
+        .write()
+        .set_userspace_io_allowed(level >= 3);
 
     Ok(0)
 }

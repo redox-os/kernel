@@ -56,12 +56,7 @@ impl KernelScheme for SerioScheme {
         }
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(
-            id,
-            Handle {
-                index,
-            },
-        );
+        HANDLES.write().insert(id, Handle { index });
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }

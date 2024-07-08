@@ -1,13 +1,15 @@
 use alloc::sync::Arc;
-use syscall::O_NONBLOCK;
 use core::mem;
+use syscall::O_NONBLOCK;
 
 use crate::{
-    context::file::InternalFlags, event::{next_queue_id, queues, queues_mut, EventQueue, EventQueueId}, syscall::{
+    context::file::InternalFlags,
+    event::{next_queue_id, queues, queues_mut, EventQueue, EventQueueId},
+    syscall::{
         data::Event,
         error::*,
         usercopy::{UserSliceRo, UserSliceWo},
-    }
+    },
 };
 
 use super::{CallerCtx, KernelScheme, OpenResult};
@@ -41,7 +43,13 @@ impl KernelScheme for EventScheme {
         queue.read(buf, flags & O_NONBLOCK as u32 == 0)
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        id: usize,
+        buf: UserSliceRo,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let id = EventQueueId::from(id);
 
         let queue = {

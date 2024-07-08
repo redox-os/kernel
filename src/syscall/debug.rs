@@ -71,9 +71,23 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         ),
         SYS_SENDFD => format!("sendfd({}, {}, {:#0x} {:#0x} {:#0x})", b, c, d, e, f,),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
-        SYS_READ2 => format!("read2({}, {:#X}, {}, {}, {:?})", b, c, d, e, (f != usize::MAX).then_some(RwFlags::from_bits_retain(f as u32))),
+        SYS_READ2 => format!(
+            "read2({}, {:#X}, {}, {}, {:?})",
+            b,
+            c,
+            d,
+            e,
+            (f != usize::MAX).then_some(RwFlags::from_bits_retain(f as u32))
+        ),
         SYS_WRITE => format!("write({}, {:#X}, {})", b, c, d),
-        SYS_WRITE2 => format!("write2({}, {:#X}, {}, {}, {:?})", b, c, d, e, (f != usize::MAX).then_some(RwFlags::from_bits_retain(f as u32))),
+        SYS_WRITE2 => format!(
+            "write2({}, {:#X}, {}, {}, {:?})",
+            b,
+            c,
+            d,
+            e,
+            (f != usize::MAX).then_some(RwFlags::from_bits_retain(f as u32))
+        ),
         SYS_LSEEK => format!(
             "lseek({}, {}, {} ({}))",
             b,
@@ -242,20 +256,25 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         0
     };
 
-    crate::percpu::PercpuBlock::current().syscall_debug_info.set(SyscallDebugInfo {
-        accumulated_time: 0,
-        this_switch_time: debug_start,
-        do_debug,
-    });
+    crate::percpu::PercpuBlock::current()
+        .syscall_debug_info
+        .set(SyscallDebugInfo {
+            accumulated_time: 0,
+            this_switch_time: debug_start,
+            do_debug,
+        });
 }
 #[cfg(feature = "syscall_debug")]
 pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
-    let debug_info = crate::percpu::PercpuBlock::current().syscall_debug_info.take();
+    let debug_info = crate::percpu::PercpuBlock::current()
+        .syscall_debug_info
+        .take();
 
     if !debug_info.do_debug {
         return;
     }
-    let debug_duration = debug_info.accumulated_time + (crate::time::monotonic() - debug_info.this_switch_time);
+    let debug_duration =
+        debug_info.accumulated_time + (crate::time::monotonic() - debug_info.this_switch_time);
 
     let contexts = crate::context::contexts();
     if let Some(context_lock) = contexts.current() {

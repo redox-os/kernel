@@ -9,9 +9,7 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic};
 use crate::{
     arch::interrupt::irq,
     memory::Frame,
-    paging::{
-        entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
-    },
+    paging::{entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch},
 };
 
 use super::pic;

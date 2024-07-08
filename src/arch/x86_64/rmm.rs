@@ -4,8 +4,8 @@ use core::{
     sync::atomic::{self, AtomicUsize, Ordering},
 };
 use rmm::{
-    Arch, BumpAllocator, MemoryArea, PageFlags, PageMapper,
-    PhysicalAddress, TableKind, VirtualAddress, KILOBYTE, MEGABYTE,
+    Arch, BumpAllocator, MemoryArea, PageFlags, PageMapper, PhysicalAddress, TableKind,
+    VirtualAddress, KILOBYTE, MEGABYTE,
 };
 
 use crate::{cpu_set::LogicalCpuId, memory::TheFrameAllocator};

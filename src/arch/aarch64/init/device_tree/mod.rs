@@ -5,7 +5,7 @@ use self::byteorder::{ByteOrder, BE};
 use core::slice;
 use fdt::Node;
 
-use log::{info, debug};
+use log::{debug, info};
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C)]

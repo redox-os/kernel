@@ -115,7 +115,14 @@ impl super::Context {
             return None;
         }
         let regs = self.regs()?;
-        Some([regs.scratch.eax, regs.preserved.ebx, regs.scratch.ecx, regs.scratch.edx, regs.preserved.esi, regs.preserved.edi])
+        Some([
+            regs.scratch.eax,
+            regs.preserved.ebx,
+            regs.scratch.ecx,
+            regs.scratch.edx,
+            regs.preserved.esi,
+            regs.preserved.edi,
+        ])
     }
 }
 
@@ -149,7 +156,9 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         prev.arch.gsbase = gdt[GDT_USER_GS].offset() as usize;
         gdt[GDT_USER_GS].set_offset(next.arch.gsbase as u32);
     }
-    PercpuBlock::current().new_addrsp_tmp.set(next.addr_space.clone());
+    PercpuBlock::current()
+        .new_addrsp_tmp
+        .set(next.addr_space.clone());
 
     core::arch::asm!(
         "call {inner}",

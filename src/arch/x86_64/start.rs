@@ -15,8 +15,7 @@ use crate::devices::graphical_debug;
 use crate::{
     allocator,
     cpu_set::LogicalCpuId,
-    device, gdt, idt, interrupt,
-    misc,
+    device, gdt, idt, interrupt, misc,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
 };
 

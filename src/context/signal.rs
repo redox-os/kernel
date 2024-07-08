@@ -1,7 +1,9 @@
 use core::sync::atomic::Ordering;
 
-use crate::context;
-use crate::syscall::flag::{SIGKILL, SigcontrolFlags};
+use crate::{
+    context,
+    syscall::flag::{SigcontrolFlags, SIGKILL},
+};
 
 pub fn signal_handler() {
     let context_lock = context::current().expect("running signal handler outside of context");
@@ -33,7 +35,8 @@ pub fn signal_handler() {
         // TODO: prioritize signals over regular program execution
         return;
     }
-    let control_flags = SigcontrolFlags::from_bits_retain(thread_ctl.control_flags.load(Ordering::Acquire));
+    let control_flags =
+        SigcontrolFlags::from_bits_retain(thread_ctl.control_flags.load(Ordering::Acquire));
 
     if control_flags.contains(SigcontrolFlags::INHIBIT_DELIVERY) {
         // Signals are inhibited to protect critical sections inside libc, but this code will run
@@ -55,22 +58,26 @@ pub fn signal_handler() {
 
     regs.set_instr_pointer(sigh_instr_ptr);
 
-    let (thread_ctl, _, _) = context.sigcontrol()
+    let (thread_ctl, _, _) = context
+        .sigcontrol()
         .expect("cannot have been unset while holding the lock");
 
     thread_ctl.saved_ip.set(ip);
     thread_ctl.saved_archdep_reg.set(archdep_reg);
 
-    thread_ctl.control_flags.store((control_flags | SigcontrolFlags::INHIBIT_DELIVERY).bits(), Ordering::Release);
+    thread_ctl.control_flags.store(
+        (control_flags | SigcontrolFlags::INHIBIT_DELIVERY).bits(),
+        Ordering::Release,
+    );
 }
 pub fn excp_handler(_signal: usize) {
-     let current = context::current().expect("CPU exception but not inside of context!");
-     let context = current.write();
+    let current = context::current().expect("CPU exception but not inside of context!");
+    let context = current.write();
 
-     let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
-         drop(context);
-         crate::syscall::process::exit(SIGKILL << 8);
-     };
+    let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+        drop(context);
+        crate::syscall::process::exit(SIGKILL << 8);
+    };
 
-     // TODO
+    // TODO
 }

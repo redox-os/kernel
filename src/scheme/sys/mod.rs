@@ -6,12 +6,14 @@ use core::{
 use spin::RwLock;
 
 use crate::{
-    arch::interrupt, context::file::InternalFlags, syscall::{
+    arch::interrupt,
+    context::file::InternalFlags,
+    syscall::{
         data::Stat,
         error::{Error, Result, EBADF, ENOENT},
         flag::{MODE_DIR, MODE_FILE},
         usercopy::UserSliceWo,
-    }
+    },
 };
 
 use super::{CallerCtx, KernelScheme, OpenResult};
@@ -142,7 +144,14 @@ impl KernelScheme for SysScheme {
 
         Ok(bytes_read)
     }
-    fn kreadoff(&self, id: usize, buffer: UserSliceWo, pos: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(
+        &self,
+        id: usize,
+        buffer: UserSliceWo,
+        pos: u64,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let Ok(pos) = usize::try_from(pos) else {
             return Ok(0);
         };

@@ -11,7 +11,10 @@ use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use spin::{Mutex, Once, RwLock};
 
-use crate::{arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved}, context::file::InternalFlags};
+use crate::{
+    arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved},
+    context::file::InternalFlags,
+};
 
 use crate::{
     cpu_set::LogicalCpuId,
@@ -117,10 +120,13 @@ impl IrqScheme {
                 //
                 // The only CPUs don't have the legacy IRQs in their IDTs.
 
-                (Handle::Irq {
-                    ack: AtomicUsize::new(0),
-                    irq: irq_number,
-                }, InternalFlags::empty())
+                (
+                    Handle::Irq {
+                        ack: AtomicUsize::new(0),
+                        irq: irq_number,
+                    },
+                    InternalFlags::empty(),
+                )
             } else if irq_number < TOTAL_IRQ_COUNT {
                 if flags & O_CREAT == 0 && flags & O_STAT == 0 {
                     return Err(Error::new(EINVAL));
@@ -135,10 +141,13 @@ impl IrqScheme {
                         true,
                     );
                 }
-                (Handle::Irq {
-                    ack: AtomicUsize::new(0),
-                    irq: irq_number,
-                }, InternalFlags::empty())
+                (
+                    Handle::Irq {
+                        ack: AtomicUsize::new(0),
+                        irq: irq_number,
+                    },
+                    InternalFlags::empty(),
+                )
             } else {
                 return Err(Error::new(ENOENT));
             },
@@ -183,7 +192,10 @@ impl crate::scheme::KernelScheme for IrqScheme {
             // TODO: When signals are used for IRQs, there will probably also be a file
             // `irq:signal` that maps IRQ numbers and their source APIC IDs to signal numbers.
 
-            (Handle::TopLevel(bytes.into_bytes()), InternalFlags::POSITIONED)
+            (
+                Handle::TopLevel(bytes.into_bytes()),
+                InternalFlags::POSITIONED,
+            )
         } else {
             if path_str == "bsp" {
                 if bsp_apic_id().is_none() {
@@ -207,7 +219,10 @@ impl crate::scheme::KernelScheme for IrqScheme {
                         writeln!(data, "{}", irq).unwrap();
                     }
 
-                    (Handle::Avail(cpu_id, data.into_bytes()), InternalFlags::POSITIONED)
+                    (
+                        Handle::Avail(cpu_id, data.into_bytes()),
+                        InternalFlags::POSITIONED,
+                    )
                 } else if path_str.starts_with('/') {
                     let path_str = &path_str[1..];
                     Self::open_ext_irq(flags, cpu_id, path_str)?
@@ -216,10 +231,13 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 }
             } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
                 if plain_irq_number < BASE_IRQ_COUNT {
-                    (Handle::Irq {
-                        ack: AtomicUsize::new(0),
-                        irq: plain_irq_number,
-                    }, InternalFlags::empty())
+                    (
+                        Handle::Irq {
+                            ack: AtomicUsize::new(0),
+                            irq: plain_irq_number,
+                        },
+                        InternalFlags::empty(),
+                    )
                 } else {
                     return Err(Error::new(ENOENT));
                 }
@@ -268,7 +286,13 @@ impl crate::scheme::KernelScheme for IrqScheme {
         }
         Ok(())
     }
-    fn kwrite(&self, file: usize, buffer: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        file: usize,
+        buffer: UserSliceRo,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
@@ -353,7 +377,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
         buf.copy_common_bytes_from_slice(&scheme_path)
     }
-    fn kreadoff(&self, file: usize, buffer: UserSliceWo, offset: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(
+        &self,
+        file: usize,
+        buffer: UserSliceWo,
+        offset: u64,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
@@ -386,7 +417,10 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 }
             }
             Handle::Avail(_, ref buf) | Handle::TopLevel(ref buf) => {
-                let src = usize::try_from(offset).ok().and_then(|o| buf.get(o..)).unwrap_or(&[]);
+                let src = usize::try_from(offset)
+                    .ok()
+                    .and_then(|o| buf.get(o..))
+                    .unwrap_or(&[]);
                 buffer.copy_common_bytes_from_slice(src)
             }
         }

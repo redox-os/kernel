@@ -1,5 +1,5 @@
-use log::{debug, info};
 use alloc::boxed::Box;
+use log::{debug, info};
 
 use crate::{
     arch::device::irqchip::IRQ_CHIP, context, context::timeout,

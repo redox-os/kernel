@@ -10,14 +10,17 @@ use core::{
 
 use spin::Mutex;
 
-use crate::context::{self, memory::{AccessMode, PfError}};
-use crate::kernel_executable_offsets::{__usercopy_start, __usercopy_end};
-use crate::paging::Page;
-pub use crate::paging::{PAGE_SIZE, PAGE_MASK, PhysicalAddress, RmmA, RmmArch};
-use rmm::{
-    BumpAllocator, FrameAllocator, FrameCount, FrameUsage, TableKind, VirtualAddress
+pub use crate::paging::{PhysicalAddress, RmmA, RmmArch, PAGE_MASK, PAGE_SIZE};
+use crate::{
+    context::{
+        self,
+        memory::{AccessMode, PfError},
+    },
+    kernel_executable_offsets::{__usercopy_end, __usercopy_start},
+    paging::Page,
+    syscall::error::{Error, ENOMEM},
 };
-use crate::syscall::error::{ENOMEM, Error};
+use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, TableKind, VirtualAddress};
 
 /// Get the number of frames available
 pub fn free_frames() -> usize {
@@ -42,25 +45,44 @@ pub fn allocate_frame() -> Option<Frame> {
     allocate_p2frame(0)
 }
 // TODO: Flags, strategy
-pub fn allocate_p2frame_complex(_req_order: u32, _flags: (), _strategy: Option<()>, min_order: u32) -> Option<(Frame, usize)> {
+pub fn allocate_p2frame_complex(
+    _req_order: u32,
+    _flags: (),
+    _strategy: Option<()>,
+    min_order: u32,
+) -> Option<(Frame, usize)> {
     let mut freelist = FREELIST.lock();
 
-    let Some((frame_order, frame)) = freelist.for_orders.iter().enumerate().skip(min_order as usize).find_map(|(i, f)| f.map(|f| (i as u32, f))) else {
+    let Some((frame_order, frame)) = freelist
+        .for_orders
+        .iter()
+        .enumerate()
+        .skip(min_order as usize)
+        .find_map(|(i, f)| f.map(|f| (i as u32, f)))
+    else {
         return None;
     };
 
     let info = get_page_info(frame)
         .unwrap_or_else(|| panic!("no page info for allocated frame {frame:?}"))
-        .as_free().expect("freelist frames must not be marked used!");
+        .as_free()
+        .expect("freelist frames must not be marked used!");
     let next_free = info.next();
     //log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
 
-    debug_assert_eq!(next_free.order(), frame_order, "{frame:?}->next {next_free:?}.order != {frame_order}");
+    debug_assert_eq!(
+        next_free.order(),
+        frame_order,
+        "{frame:?}->next {next_free:?}.order != {frame_order}"
+    );
     if let Some(next) = next_free.frame() {
         let f = get_free_alloc_page_info(next);
         debug_assert_eq!(f.prev().frame(), Some(frame));
         debug_assert_ne!(next, frame);
-        debug_assert!(next.is_aligned_to_order(frame_order), "NEXT {next:?} UNALIGNED");
+        debug_assert!(
+            next.is_aligned_to_order(frame_order),
+            "NEXT {next:?} UNALIGNED"
+        );
         f.set_prev(P2Frame::new(None, frame_order));
     }
 
@@ -79,7 +101,9 @@ pub fn allocate_p2frame_complex(_req_order: u32, _flags: (), _strategy: Option<(
 
         debug_assert_eq!(freelist.for_orders[order as usize], None);
 
-        let hi_info = get_page_info(hi).expect("sub-p2frame of split p2flame lacked PageInfo").make_free(order);
+        let hi_info = get_page_info(hi)
+            .expect("sub-p2frame of split p2flame lacked PageInfo")
+            .make_free(order);
         debug_assert!(!hi.is_aligned_to_order(frame_order));
         debug_assert!(hi.is_aligned_to_order(order));
         hi_info.set_next(P2Frame::new(None, order));
@@ -93,7 +117,8 @@ pub fn allocate_p2frame_complex(_req_order: u32, _flags: (), _strategy: Option<(
     drop(freelist);
 
     unsafe {
-        (RmmA::phys_to_virt(frame.start_address()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
+        (RmmA::phys_to_virt(frame.start_address()).data() as *mut u8)
+            .write_bytes(0, PAGE_SIZE << min_order);
     }
 
     debug_assert!(frame.start_address().data() >= unsafe { ALLOCATOR_DATA.abs_off });
@@ -113,7 +138,9 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         // 2^addrwidth - 1. However, allocation and deallocation must be synchronized (the "next"
         // word of the PageInfo).
 
-        let sibling = Frame::containing_address(PhysicalAddress::new(current.start_address().data() ^ (PAGE_SIZE << merge_order)));
+        let sibling = Frame::containing_address(PhysicalAddress::new(
+            current.start_address().data() ^ (PAGE_SIZE << merge_order),
+        ));
 
         let Some(_cur_info) = get_page_info(current) else {
             unreachable!("attempting to free non-allocator-owned page");
@@ -135,14 +162,20 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         if sib_info.next().order() < merge_order {
             break;
         }
-        debug_assert!(!(sib_info.next().order() > merge_order), "sibling page has unaligned order or contains current page");
+        debug_assert!(
+            !(sib_info.next().order() > merge_order),
+            "sibling page has unaligned order or contains current page"
+        );
         //log::info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
 
         if let Some(sib_prev) = sib_info.prev().frame() {
             get_free_alloc_page_info(sib_prev).set_next(sib_info.next());
         } else {
             debug_assert_eq!(freelist.for_orders[merge_order as usize], Some(sibling));
-            debug_assert!(sib_info.next().frame().map_or(true, |f| f.is_aligned_to_order(merge_order)));
+            debug_assert!(sib_info
+                .next()
+                .frame()
+                .map_or(true, |f| f.is_aligned_to_order(merge_order)));
             debug_assert_eq!(sib_info.next().order(), merge_order);
             freelist.for_orders[merge_order as usize] = sib_info.next().frame();
         }
@@ -150,7 +183,9 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             get_free_alloc_page_info(sib_next).set_prev(sib_info.prev());
         }
 
-        current = Frame::containing_address(PhysicalAddress::new(current.start_address().data() & !(PAGE_SIZE << merge_order)));
+        current = Frame::containing_address(PhysicalAddress::new(
+            current.start_address().data() & !(PAGE_SIZE << merge_order),
+        ));
 
         largest_order = merge_order + 1;
     }
@@ -194,13 +229,15 @@ pub struct Frame {
 struct P2Frame(usize);
 impl P2Frame {
     fn new(frame: Option<Frame>, order: u32) -> Self {
-        Self(
-            frame.map_or(0, |f| f.physaddr.get()) | (order as usize),
-        )
+        Self(frame.map_or(0, |f| f.physaddr.get()) | (order as usize))
     }
     fn get(self) -> (Option<Frame>, u32) {
         let page_off_mask = PAGE_SIZE - 1;
-        (NonZeroUsize::new(self.0 & !page_off_mask & !RC_USED_NOT_FREE).map(|physaddr| Frame { physaddr }), (self.0 & page_off_mask) as u32)
+        (
+            NonZeroUsize::new(self.0 & !page_off_mask & !RC_USED_NOT_FREE)
+                .map(|physaddr| Frame { physaddr }),
+            (self.0 & page_off_mask) as u32,
+        )
     }
     fn frame(self) -> Option<Frame> {
         self.get().0
@@ -241,7 +278,8 @@ impl Frame {
     /// Create a frame containing `address`
     pub fn containing(address: PhysicalAddress) -> Frame {
         Frame {
-            physaddr: NonZeroUsize::new(address.data() & !PAGE_MASK).expect("frame 0x0 is reserved"),
+            physaddr: NonZeroUsize::new(address.data() & !PAGE_MASK)
+                .expect("frame 0x0 is reserved"),
         }
     }
     pub fn base(self) -> PhysicalAddress {
@@ -250,7 +288,11 @@ impl Frame {
 
     //TODO: Set private
     pub fn range_inclusive(start: Frame, end: Frame) -> impl Iterator<Item = Frame> {
-        (start.physaddr.get()..=end.physaddr.get()).step_by(PAGE_SIZE).map(|number| Frame { physaddr: NonZeroUsize::new(number).unwrap() })
+        (start.physaddr.get()..=end.physaddr.get())
+            .step_by(PAGE_SIZE)
+            .map(|number| Frame {
+                physaddr: NonZeroUsize::new(number).unwrap(),
+            })
     }
     #[track_caller]
     pub fn next_by(self, n: usize) -> Self {
@@ -260,14 +302,15 @@ impl Frame {
                 .get()
                 .checked_add(n * PAGE_SIZE)
                 .and_then(NonZeroUsize::new)
-                .expect("overflow or null in Frame::next_by")
+                .expect("overflow or null in Frame::next_by"),
         }
     }
     pub fn offset_from(self, from: Self) -> usize {
         self.physaddr
             .get()
             .checked_sub(from.physaddr.get())
-            .expect("overflow in Frame::offset_from") / PAGE_SIZE
+            .expect("overflow in Frame::offset_from")
+            / PAGE_SIZE
     }
     pub fn is_aligned_to_order(self, order: u32) -> bool {
         self.start_address().data() % (PAGE_SIZE << order) == 0
@@ -305,7 +348,8 @@ impl Drop for RaiiFrame {
     fn drop(&mut self) {
         if get_page_info(self.inner)
             .expect("RaiiFrame lacking PageInfo")
-            .remove_ref() == None
+            .remove_ref()
+            == None
         {
             unsafe {
                 deallocate_frame(self.inner);
@@ -384,7 +428,10 @@ bitflags::bitflags! {
     }
 }
 
-static mut ALLOCATOR_DATA: AllocatorData = AllocatorData { sections: &[], abs_off: 0 };
+static mut ALLOCATOR_DATA: AllocatorData = AllocatorData {
+    sections: &[],
+    abs_off: 0,
+};
 
 struct AllocatorData {
     // TODO: Memory hotplugging?
@@ -396,7 +443,10 @@ struct FreeList {
     for_orders: [Option<Frame>; ORDER_COUNT as usize],
     used_frames: usize,
 }
-static FREELIST: Mutex<FreeList> = Mutex::new(FreeList { for_orders: [None; ORDER_COUNT as usize], used_frames: 0 });
+static FREELIST: Mutex<FreeList> = Mutex::new(FreeList {
+    for_orders: [None; ORDER_COUNT as usize],
+    used_frames: 0,
+});
 
 pub struct Section {
     base: Frame,
@@ -415,27 +465,43 @@ const _: () = {
 fn init_sections(mut allocator: BumpAllocator<RmmA>) {
     let (free_areas, offset_into_first_free_area) = allocator.free_areas();
 
-    let free_areas_iter = || free_areas.iter().copied().enumerate().map(|(i, area)| if i == 0 {
-        rmm::MemoryArea {
-            base: area.base.add(offset_into_first_free_area),
-            size: area.size - offset_into_first_free_area,
-        }
-    } else {
-        area
-    });
+    let free_areas_iter = || {
+        free_areas.iter().copied().enumerate().map(|(i, area)| {
+            if i == 0 {
+                rmm::MemoryArea {
+                    base: area.base.add(offset_into_first_free_area),
+                    size: area.size - offset_into_first_free_area,
+                }
+            } else {
+                area
+            }
+        })
+    };
 
     let sections: &'static mut [Section] = {
-        let max_section_count: usize = free_areas_iter().map(|area| {
-            let aligned_end = area.base.add(area.size).data().next_multiple_of(MAX_SECTION_SIZE);
-            let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
+        let max_section_count: usize = free_areas_iter()
+            .map(|area| {
+                let aligned_end = area
+                    .base
+                    .add(area.size)
+                    .data()
+                    .next_multiple_of(MAX_SECTION_SIZE);
+                let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
-            (aligned_end - aligned_start) / MAX_SECTION_SIZE
-        }).sum();
-        let section_array_page_count = (max_section_count * mem::size_of::<Section>()).div_ceil(PAGE_SIZE);
+                (aligned_end - aligned_start) / MAX_SECTION_SIZE
+            })
+            .sum();
+        let section_array_page_count =
+            (max_section_count * mem::size_of::<Section>()).div_ceil(PAGE_SIZE);
 
         unsafe {
-            let base = allocator.allocate(FrameCount::new(section_array_page_count)).expect("failed to allocate sections array");
-            core::slice::from_raw_parts_mut(RmmA::phys_to_virt(base).data() as *mut Section, max_section_count)
+            let base = allocator
+                .allocate(FrameCount::new(section_array_page_count))
+                .expect("failed to allocate sections array");
+            core::slice::from_raw_parts_mut(
+                RmmA::phys_to_virt(base).data() as *mut Section,
+                max_section_count,
+            )
         }
     };
 
@@ -458,7 +524,9 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
         // TODO: Should RMM do this?
 
-        while let Some(next_area) = iter.peek() && next_area.base == memory_map_area.base.add(memory_map_area.size) {
+        while let Some(next_area) = iter.peek()
+            && next_area.base == memory_map_area.base.add(memory_map_area.size)
+        {
             memory_map_area.size += next_area.size;
             let _ = iter.next();
         }
@@ -479,13 +547,20 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
         while pages_left > 0 {
             let page_info_max_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
-            let pages_to_next_section = (MAX_SECTION_SIZE - (base.start_address().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
+            let pages_to_next_section =
+                (MAX_SECTION_SIZE - (base.start_address().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
             let page_info_count = core::cmp::min(page_info_max_count, pages_to_next_section);
 
-            let page_info_array_size_pages = (page_info_count * mem::size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
+            let page_info_array_size_pages =
+                (page_info_count * mem::size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
             let page_info_array = unsafe {
-                let base = allocator.allocate(FrameCount::new(page_info_array_size_pages)).expect("failed to allocate page info array");
-                core::slice::from_raw_parts_mut(RmmA::phys_to_virt(base).data() as *mut PageInfo, page_info_count)
+                let base = allocator
+                    .allocate(FrameCount::new(page_info_array_size_pages))
+                    .expect("failed to allocate page info array");
+                core::slice::from_raw_parts_mut(
+                    RmmA::phys_to_virt(base).data() as *mut PageInfo,
+                    page_info_count,
+                )
             };
             for p in &*page_info_array {
                 assert_eq!(p.next.load(Ordering::Relaxed), 0);
@@ -516,12 +591,15 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 break 'sections;
             }
             //log::info!("MARKING {frame:?} AS USED");
-            page_info.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed);
+            page_info
+                .refcount
+                .store(RC_USED_NOT_FREE, Ordering::Relaxed);
             page_info.next.store(0, Ordering::Relaxed);
         }
     }
 
-    let mut first_pages: [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] = [None; ORDER_COUNT as usize];
+    let mut first_pages: [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] =
+        [None; ORDER_COUNT as usize];
     let mut last_pages = first_pages;
 
     let mut append_page = |page: Frame, info: &'static PageInfo, order| {
@@ -544,7 +622,9 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             debug_assert_eq!(last_info.next().frame(), None);
 
             last_info.set_next(P2Frame::new(Some(page), order));
-            info.as_free().unwrap().set_prev(P2Frame::new(Some(last_frame), order));
+            info.as_free()
+                .unwrap()
+                .set_prev(P2Frame::new(Some(last_frame), order));
         } else {
             first_pages[order as usize] = Some(this_page);
             info.as_free().unwrap().set_prev(P2Frame::new(None, order));
@@ -552,7 +632,10 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         }
     };
     unsafe {
-        ALLOCATOR_DATA = AllocatorData { sections, abs_off: allocator.abs_offset().data() };
+        ALLOCATOR_DATA = AllocatorData {
+            sections,
+            abs_off: allocator.abs_offset().data(),
+        };
     }
 
     for section in &*sections {
@@ -575,7 +658,10 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 //log::info!("ORDER {order}: FIRST SKIP");
             }
 
-            if !frames.is_empty() && order != MAX_ORDER && !base.next_by(frames.len()).is_aligned_to_order(order + 1) {
+            if !frames.is_empty()
+                && order != MAX_ORDER
+                && !base.next_by(frames.len()).is_aligned_to_order(order + 1)
+            {
                 // The last section page is not aligned to the next order size.
 
                 let off = frames.len() - pages_for_current_order;
@@ -605,7 +691,9 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         //log::info!("SECTION from {:?}, {} pages, array at {:p}", section.base, section.frames.len(), section.frames);
     }
     for (order, tuple_opt) in last_pages.iter().enumerate() {
-        let Some((frame, info)) = tuple_opt else { continue; };
+        let Some((frame, info)) = tuple_opt else {
+            continue;
+        };
         debug_assert!(frame.is_aligned_to_order(order as u32));
         let free = info.as_free().unwrap();
         debug_assert_eq!(free.prev().order(), order as u32);
@@ -616,7 +704,6 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
     //debug_freelist();
     log::info!("Initial freelist consistent");
-
 }
 
 #[cold]
@@ -644,9 +731,15 @@ impl PageInfo {
         let prev = self.refcount.load(Ordering::Relaxed);
 
         if prev & RC_USED_NOT_FREE == RC_USED_NOT_FREE {
-            PageInfoKind::Used(PageInfoUsed { _refcount: &self.refcount, _misc: &self.next })
+            PageInfoKind::Used(PageInfoUsed {
+                _refcount: &self.refcount,
+                _misc: &self.next,
+            })
         } else {
-            PageInfoKind::Free(PageInfoFree { prev: &self.refcount, next: &self.next })
+            PageInfoKind::Free(PageInfoFree {
+                prev: &self.refcount,
+                next: &self.next,
+            })
         }
     }
     fn as_free(&self) -> Option<PageInfoFree<'_>> {
@@ -657,8 +750,12 @@ impl PageInfo {
     }
     pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
         match (self.refcount().expect("cannot add_ref to free frame"), kind) {
-            (RefCount::One, RefKind::Cow) => self.refcount.store(RC_USED_NOT_FREE | 1, Ordering::Relaxed),
-            (RefCount::One, RefKind::Shared) => self.refcount.store(RC_USED_NOT_FREE | 1 | RC_SHARED_NOT_COW, Ordering::Relaxed),
+            (RefCount::One, RefKind::Cow) => {
+                self.refcount.store(RC_USED_NOT_FREE | 1, Ordering::Relaxed)
+            }
+            (RefCount::One, RefKind::Shared) => self
+                .refcount
+                .store(RC_USED_NOT_FREE | 1 | RC_SHARED_NOT_COW, Ordering::Relaxed),
             (RefCount::Cow(_), RefKind::Cow) | (RefCount::Shared(_), RefKind::Shared) => {
                 let old = self.refcount.fetch_add(1, Ordering::Relaxed);
 
@@ -691,7 +788,10 @@ impl PageInfo {
     }
     #[track_caller]
     pub fn allows_writable(&self) -> bool {
-        match self.refcount().expect("using allows_writable on free page!") {
+        match self
+            .refcount()
+            .expect("using allows_writable on free page!")
+        {
             RefCount::One => true,
             RefCount::Cow(_) => false,
             RefCount::Shared(_) => true,
@@ -721,14 +821,18 @@ impl PageInfoFree<'_> {
     }
     #[track_caller]
     fn set_next(&self, next: P2Frame) {
-        debug_assert!(next.frame().map_or(true, |f| f.is_aligned_to_order(next.order())));
+        debug_assert!(next
+            .frame()
+            .map_or(true, |f| f.is_aligned_to_order(next.order())));
         self.next.store(next.0, Ordering::Relaxed)
     }
     fn prev(&self) -> P2Frame {
         P2Frame(self.prev.load(Ordering::Relaxed))
     }
     fn set_prev(&self, prev: P2Frame) {
-        debug_assert!(prev.frame().map_or(true, |f| f.is_aligned_to_order(prev.order())));
+        debug_assert!(prev
+            .frame()
+            .map_or(true, |f| f.is_aligned_to_order(prev.order())));
         self.prev.store(prev.0, Ordering::Relaxed)
     }
     fn mark_used(&self) {
@@ -764,7 +868,6 @@ impl RefCount {
         } else {
             RefCount::Cow(nz_refcount)
         })
-
     }
     pub fn to_raw(self) -> usize {
         match self {
@@ -807,8 +910,10 @@ pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
 
 #[track_caller]
 fn get_free_alloc_page_info(frame: Frame) -> PageInfoFree<'static> {
-    let i = get_page_info(frame).unwrap_or_else(|| panic!("allocator-owned frames need a PageInfo, but none for {frame:?}"));
-    i.as_free().unwrap()//.unwrap_or_else(|| panic!("expected frame to be free, but {frame:?} wasn't, in {i:?}"))
+    let i = get_page_info(frame).unwrap_or_else(|| {
+        panic!("allocator-owned frames need a PageInfo, but none for {frame:?}")
+    });
+    i.as_free().unwrap() //.unwrap_or_else(|| panic!("expected frame to be free, but {frame:?} wasn't, in {i:?}"))
 }
 
 pub struct Segv;
@@ -896,9 +1001,16 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
 
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let new_frame = allocate_frame().ok_or(PfError::Oom)?;
-    let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
+    let page_info = get_page_info(new_frame).unwrap_or_else(|| {
+        panic!(
+            "all allocated frames need an associated page info, {:?} didn't",
+            new_frame
+        )
+    });
     debug_assert_eq!(page_info.refcount(), Some(RefCount::One));
-    page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
+    page_info
+        .refcount
+        .store(init_rc.to_raw(), Ordering::Relaxed);
 
     Ok(new_frame)
 }

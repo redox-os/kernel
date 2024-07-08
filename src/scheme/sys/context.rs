@@ -1,5 +1,7 @@
-use alloc::string::ToString;
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
 

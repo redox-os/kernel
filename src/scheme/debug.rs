@@ -57,12 +57,7 @@ impl KernelScheme for DebugScheme {
         };
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(
-            id,
-            Handle {
-                num,
-            },
-        );
+        HANDLES.write().insert(id, Handle { num });
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
@@ -108,14 +103,16 @@ impl KernelScheme for DebugScheme {
             );
         }
 
-        INPUT.receive_into_user(
-            buf,
-            flags & O_NONBLOCK as u32 == 0,
-            "DebugScheme::read",
-        )
+        INPUT.receive_into_user(buf, flags & O_NONBLOCK as u32 == 0, "DebugScheme::read")
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        id: usize,
+        buf: UserSliceRo,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?

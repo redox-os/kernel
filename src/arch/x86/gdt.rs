@@ -1,8 +1,12 @@
 //! Global descriptor table
 
-use core::ptr::addr_of_mut;
-use core::{convert::TryInto, mem, cell::{Cell, RefCell}};
-use core::sync::atomic::AtomicBool;
+use core::{
+    cell::{Cell, RefCell},
+    convert::TryInto,
+    mem,
+    ptr::addr_of_mut,
+    sync::atomic::AtomicBool,
+};
 
 use crate::cpu_set::LogicalCpuId;
 
@@ -159,7 +163,11 @@ pub unsafe fn set_tss_stack(stack: usize) {
     addr_of_mut!((*pcr()).tss.0.esp0).write(stack as u32);
 }
 pub unsafe fn set_userspace_io_allowed(allowed: bool) {
-    addr_of_mut!((*pcr()).tss.0.iobp_offset).write(if allowed { mem::size_of::<TaskStateSegment>() as u16 } else { 0xFFFF });
+    addr_of_mut!((*pcr()).tss.0.iobp_offset).write(if allowed {
+        mem::size_of::<TaskStateSegment>() as u16
+    } else {
+        0xFFFF
+    });
 }
 
 /// Initialize a minimal GDT without configuring percpu.
@@ -181,8 +189,12 @@ pub unsafe fn init() {
 
 /// Initialize GDT and configure percpu.
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
-    let alloc_order = mem::size_of::<ProcessorControlRegion>().div_ceil(PAGE_SIZE).next_power_of_two().trailing_zeros();
-    let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR frame");
+    let alloc_order = mem::size_of::<ProcessorControlRegion>()
+        .div_ceil(PAGE_SIZE)
+        .next_power_of_two()
+        .trailing_zeros();
+    let pcr_frame =
+        crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR frame");
     let pcr =
         &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
 
@@ -201,7 +213,8 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         let tss = &pcr.tss.0 as *const _ as usize as u32;
 
         pcr.gdt[GDT_TSS].set_offset(tss);
-        pcr.gdt[GDT_TSS].set_limit(mem::size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE as u32);
+        pcr.gdt[GDT_TSS]
+            .set_limit(mem::size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE as u32);
     }
 
     // Load the new GDT, which is correctly located in thread local storage.

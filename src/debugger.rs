@@ -36,7 +36,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         if let Some(ref space) = context.addr_space {
             let new_as = spaces.insert(space.acquire_read().table.utable.table().phys().data());
 
-            RmmA::set_table(TableKind::User, space.acquire_read().table.utable.table().phys());
+            RmmA::set_table(
+                TableKind::User,
+                space.acquire_read().table.utable.table().phys(),
+            );
             check_consistency(&mut *space.acquire_write(), new_as, &mut tree);
 
             if let Some([a, b, c, d, e, f]) = context.current_syscall() {
@@ -132,7 +135,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
-            RmmA::set_table(TableKind::User, space.acquire_read().table.utable.table().phys());
+            RmmA::set_table(
+                TableKind::User,
+                space.acquire_read().table.utable.table().phys(),
+            );
             //TODO check_consistency(&mut space.write());
         }
 
@@ -245,7 +251,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
             let was_new = spaces.insert(space.acquire_read().table.utable.table().phys().data());
-            RmmA::set_table(TableKind::User, space.acquire_read().table.utable.table().phys());
+            RmmA::set_table(
+                TableKind::User,
+                space.acquire_read().table.utable.table().phys(),
+            );
             check_consistency(&mut space.acquire_write(), was_new, &mut tree);
         }
 
@@ -432,8 +441,13 @@ pub unsafe fn check_consistency(
                         match page.refcount() {
                             None => panic!("mapped page with zero refcount"),
 
-                            Some(RefCount::One | RefCount::Shared(_)) => assert!(!(flags.has_write() && !grant.flags().has_write()), "page entry has higher permissions than grant!"),
-                            Some(RefCount::Cow(_)) => assert!(!flags.has_write(), "directly writable CoW page!"),
+                            Some(RefCount::One | RefCount::Shared(_)) => assert!(
+                                !(flags.has_write() && !grant.flags().has_write()),
+                                "page entry has higher permissions than grant!"
+                            ),
+                            Some(RefCount::Cow(_)) => {
+                                assert!(!flags.has_write(), "directly writable CoW page!")
+                            }
                         }
                     } else {
                         //println!("!OWNED {:?}", frame);

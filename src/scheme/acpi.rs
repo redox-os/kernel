@@ -9,7 +9,10 @@ use alloc::{boxed::Box, collections::BTreeMap};
 use spin::{Mutex, Once, RwLock};
 
 use crate::{
-    acpi::{RxsdtEnum, RXSDT_ENUM}, context::file::InternalFlags, event, sync::WaitCondition
+    acpi::{RxsdtEnum, RXSDT_ENUM},
+    context::file::InternalFlags,
+    event,
+    sync::WaitCondition,
 };
 
 use crate::syscall::{
@@ -186,7 +189,14 @@ impl KernelScheme for AcpiScheme {
         }
         Ok(())
     }
-    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(
+        &self,
+        id: usize,
+        dst_buf: UserSliceWo,
+        offset: u64,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let Ok(offset) = usize::try_from(offset) else {
             return Ok(0);
         };

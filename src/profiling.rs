@@ -7,12 +7,12 @@ use core::{
 use alloc::boxed::Box;
 
 use crate::{
+    cpu_set::LogicalCpuId,
     idt::Idt,
     interrupt,
     interrupt::{irq::aux_timer, InterruptStack},
     percpu::PercpuBlock,
     syscall::{error::*, usercopy::UserSliceWo},
-    cpu_set::LogicalCpuId,
 };
 
 const N: usize = 64 * 1024 * 1024;
@@ -175,8 +175,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
     let mut len = 2;
 
     for i in 2..32 {
-        if bp < crate::PHYS_OFFSET
-            || bp.saturating_add(16) >= crate::PHYS_OFFSET + crate::PML4_SIZE
+        if bp < crate::PHYS_OFFSET || bp.saturating_add(16) >= crate::PHYS_OFFSET + crate::PML4_SIZE
         {
             break;
         }

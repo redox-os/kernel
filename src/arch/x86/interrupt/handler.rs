@@ -458,17 +458,18 @@ impl ArchIntCtx for InterruptStack {
 
 #[naked]
 pub unsafe extern "C" fn enter_usermode() {
-    core::arch::asm!(concat!(
-        // TODO: Unmap PTI
-        // $crate::arch::x86::pti::unmap();
+    core::arch::asm!(
+        concat!(
+            // TODO: Unmap PTI
+            // $crate::arch::x86::pti::unmap();
 
-        // Exit kernel TLS segment
-        exit_gs!(),
-
-        // Restore all userspace registers
-        pop_preserved!(),
-        pop_scratch!(),
-
-        "iretd\n",
-    ), options(noreturn))
+            // Exit kernel TLS segment
+            exit_gs!(),
+            // Restore all userspace registers
+            pop_preserved!(),
+            pop_scratch!(),
+            "iretd\n",
+        ),
+        options(noreturn)
+    )
 }

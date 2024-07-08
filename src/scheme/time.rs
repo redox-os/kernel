@@ -87,7 +87,13 @@ impl KernelScheme for TimeScheme {
         Ok(bytes_read)
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        id: usize,
+        buf: UserSliceRo,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let clock = *HANDLES.read().get(&id).ok_or(Error::new(EBADF))?;
 
         let mut bytes_written = 0;

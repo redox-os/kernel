@@ -12,10 +12,9 @@ use crate::devices::graphical_debug;
 use crate::{
     allocator,
     arch::{flags::*, pti},
-    device, gdt, idt, interrupt,
-    memory,
-    paging::{self, KernelMapper, PhysicalAddress, RmmA, RmmArch, TableKind},
     cpu_set::LogicalCpuId,
+    device, gdt, idt, interrupt, memory,
+    paging::{self, KernelMapper, PhysicalAddress, RmmA, RmmArch, TableKind},
 };
 use log::info;
 

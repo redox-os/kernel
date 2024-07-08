@@ -1,10 +1,23 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
-use syscall::{SigProcControl, Sigcontrol};
-use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize};
+use core::{
+    cmp::Ordering,
+    mem::{self, size_of},
+    num::NonZeroUsize,
+};
 use spin::RwLock;
+use syscall::{SigProcControl, Sigcontrol};
 
 use crate::{
-    arch::{interrupt::InterruptStack, paging::PAGE_SIZE}, common::aligned_box::AlignedBox, context::{self, arch, file::FileDescriptor}, cpu_set::{LogicalCpuId, LogicalCpuSet}, ipi::{ipi, IpiKind, IpiTarget}, memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame}, paging::{RmmA, RmmArch}, percpu::PercpuBlock, scheme::{CallerCtx, FileHandle, SchemeNamespace}, sync::WaitMap,
+    arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
+    common::aligned_box::AlignedBox,
+    context::{self, arch, file::FileDescriptor},
+    cpu_set::{LogicalCpuId, LogicalCpuSet},
+    ipi::{ipi, IpiKind, IpiTarget},
+    memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
+    paging::{RmmA, RmmArch},
+    percpu::PercpuBlock,
+    scheme::{CallerCtx, FileHandle, SchemeNamespace},
+    sync::WaitMap,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
@@ -12,7 +25,10 @@ use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 /// Unique identifier for a context (i.e. `pid`).
 use ::core::sync::atomic::AtomicUsize;
 
-use super::{memory::{GrantFileRef, AddrSpaceWrapper}, empty_cr3};
+use super::{
+    empty_cr3,
+    memory::{AddrSpaceWrapper, GrantFileRef},
+};
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
@@ -229,7 +245,9 @@ impl Context {
             ens: SchemeNamespace::from(0),
             sig: None,
             umask: 0o022,
-            status: Status::HardBlocked { reason: HardBlockedReason::NotYetStarted },
+            status: Status::HardBlocked {
+                reason: HardBlockedReason::NotYetStarted,
+            },
             status_reason: "",
             running: false,
             cpu_id: None,
@@ -385,7 +403,9 @@ impl Context {
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
-        if let (Some(ref old), Some(ref new)) = (&self.addr_space, &addr_space) && Arc::ptr_eq(old, new) {
+        if let (Some(ref old), Some(ref new)) = (&self.addr_space, &addr_space)
+            && Arc::ptr_eq(old, new)
+        {
             return addr_space;
         };
 
@@ -394,11 +414,20 @@ impl Context {
             let this_percpu = PercpuBlock::current();
 
             if let Some(ref prev_addrsp) = self.addr_space {
-                assert!(Arc::ptr_eq(&this_percpu.current_addrsp.borrow().as_ref().unwrap(), prev_addrsp));
-                prev_addrsp.acquire_read().used_by.atomic_clear(this_percpu.cpu_id);
+                assert!(Arc::ptr_eq(
+                    &this_percpu.current_addrsp.borrow().as_ref().unwrap(),
+                    prev_addrsp
+                ));
+                prev_addrsp
+                    .acquire_read()
+                    .used_by
+                    .atomic_clear(this_percpu.cpu_id);
             }
 
-            let _old_addrsp = core::mem::replace(&mut *this_percpu.current_addrsp.borrow_mut(), addr_space.clone());
+            let _old_addrsp = core::mem::replace(
+                &mut *this_percpu.current_addrsp.borrow_mut(),
+                addr_space.clone(),
+            );
 
             if let Some(ref new) = addr_space {
                 let new_addrsp = new.acquire_read();
@@ -451,7 +480,9 @@ impl Context {
     pub fn sigcontrol(&mut self) -> Option<(&Sigcontrol, &SigProcControl, &mut SignalState)> {
         Some(Self::sigcontrol_raw(self.sig.as_mut()?))
     }
-    pub fn sigcontrol_raw(sig: &mut SignalState) -> (&Sigcontrol, &SigProcControl, &mut SignalState) {
+    pub fn sigcontrol_raw(
+        sig: &mut SignalState,
+    ) -> (&Sigcontrol, &SigProcControl, &mut SignalState) {
         let check = |off| {
             assert_eq!(usize::from(off) % mem::align_of::<usize>(), 0);
             assert!(usize::from(off).saturating_add(mem::size_of::<Sigcontrol>()) < PAGE_SIZE);
@@ -460,12 +491,14 @@ impl Context {
         check(sig.threadctl_off);
 
         let for_thread = unsafe {
-            &*(RmmA::phys_to_virt(sig.thread_control.get().start_address())
-                .data() as *const Sigcontrol).byte_add(usize::from(sig.threadctl_off))
+            &*(RmmA::phys_to_virt(sig.thread_control.get().start_address()).data()
+                as *const Sigcontrol)
+                .byte_add(usize::from(sig.threadctl_off))
         };
         let for_proc = unsafe {
-            &*(RmmA::phys_to_virt(sig.proc_control.get().start_address())
-                .data() as *const SigProcControl).byte_add(usize::from(sig.procctl_off))
+            &*(RmmA::phys_to_virt(sig.proc_control.get().start_address()).data()
+                as *const SigProcControl)
+                .byte_add(usize::from(sig.procctl_off))
         };
 
         (for_thread, for_proc, sig)
@@ -594,9 +627,7 @@ impl Kstack {
 
 impl Drop for Kstack {
     fn drop(&mut self) {
-        unsafe {
-            deallocate_p2frame(self.base, 4)
-        }
+        unsafe { deallocate_p2frame(self.base, 4) }
     }
 }
 impl core::fmt::Debug for Kstack {

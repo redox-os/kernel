@@ -1,5 +1,4 @@
-use crate::percpu::PercpuBlock;
-use crate::{context, device::local_apic::the_local_apic};
+use crate::{context, device::local_apic::the_local_apic, percpu::PercpuBlock};
 
 interrupt!(wakeup, || {
     the_local_apic().eoi();

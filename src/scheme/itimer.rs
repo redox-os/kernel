@@ -5,12 +5,15 @@ use core::{
 };
 use spin::RwLock;
 
-use crate::{context::file::InternalFlags, syscall::{
-    data::ITimerSpec,
-    error::*,
-    flag::{EventFlags, CLOCK_MONOTONIC, CLOCK_REALTIME},
-    usercopy::{UserSliceRo, UserSliceWo},
-}};
+use crate::{
+    context::file::InternalFlags,
+    syscall::{
+        data::ITimerSpec,
+        error::*,
+        flag::{EventFlags, CLOCK_MONOTONIC, CLOCK_REALTIME},
+        usercopy::{UserSliceRo, UserSliceWo},
+    },
+};
 
 use super::{CallerCtx, KernelScheme, OpenResult};
 pub struct ITimerScheme;
@@ -75,7 +78,13 @@ impl KernelScheme for ITimerScheme {
         Ok(specs_read * mem::size_of::<ITimerSpec>())
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        id: usize,
+        buf: UserSliceRo,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let _clock = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?

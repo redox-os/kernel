@@ -1,5 +1,8 @@
 use core::{
-    cell::SyncUnsafeCell, mem, num::NonZeroU8, sync::atomic::{AtomicU32, Ordering}
+    cell::SyncUnsafeCell,
+    mem,
+    num::NonZeroU8,
+    sync::atomic::{AtomicU32, Ordering},
 };
 
 use alloc::boxed::Box;

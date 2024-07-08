@@ -4,7 +4,11 @@ use redox_path::RedoxPath;
 use spin::RwLock;
 
 use crate::{
-    context::{self, file::{FileDescription, FileDescriptor, InternalFlags}, memory::{AddrSpace, PageSpan}},
+    context::{
+        self,
+        file::{FileDescription, FileDescriptor, InternalFlags},
+        memory::{AddrSpace, PageSpan},
+    },
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
     syscall::{data::Stat, error::*, flag::*},
@@ -82,13 +86,15 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
         };
 
         match scheme.kopen(reference.as_ref(), flags, CallerCtx { uid, gid, pid })? {
-            OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
-                scheme: scheme_id,
-                number,
-                offset: 0,
-                flags: (flags & !O_CLOEXEC) as u32,
-                internal_flags,
-            })),
+            OpenResult::SchemeLocal(number, internal_flags) => {
+                Arc::new(RwLock::new(FileDescription {
+                    scheme: scheme_id,
+                    number,
+                    offset: 0,
+                    flags: (flags & !O_CLOEXEC) as u32,
+                    internal_flags,
+                }))
+            }
             OpenResult::External(desc) => desc,
         }
     };
@@ -185,13 +191,15 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
                 .clone();
 
             match scheme.kdup(description.number, user_buf, caller_ctx)? {
-                OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
-                    offset: 0,
-                    internal_flags,
-                    scheme: description.scheme,
-                    number,
-                    flags: description.flags,
-                })),
+                OpenResult::SchemeLocal(number, internal_flags) => {
+                    Arc::new(RwLock::new(FileDescription {
+                        offset: 0,
+                        internal_flags,
+                        scheme: description.scheme,
+                        number,
+                        flags: description.flags,
+                    }))
+                }
                 OpenResult::External(desc) => desc,
             }
         };
@@ -280,7 +288,10 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
 
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
-    let file = context::current()?.read().get_file(fd).ok_or(Error::new(EBADF))?;
+    let file = context::current()?
+        .read()
+        .get_file(fd)
+        .ok_or(Error::new(EBADF))?;
 
     let description = file.description.read();
 
@@ -310,7 +321,6 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 
     // Perform kernel operation if scheme agrees
     {
-
         let contexts = context::contexts();
         let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
         let context = context_lock.read();
@@ -331,7 +341,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
                 }
                 F_GETFL => Ok(description.flags as usize),
                 F_SETFL => {
-                    let new_flags = (description.flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
+                    let new_flags =
+                        (description.flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
                     drop(description);
                     file.description.write().flags = new_flags;
                     Ok(0)
@@ -389,7 +400,8 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo) -> Result<()> {
         // TODO: Ensure only the kernel can access the stat when st_dev is set, or use another API
         // for retrieving the scheme ID from a file descriptor.
         // TODO: Less hacky method.
-        let st_dev = desc.scheme
+        let st_dev = desc
+            .scheme
             .get()
             .try_into()
             .map_err(|_| Error::new(EOVERFLOW))?;
@@ -488,13 +500,15 @@ pub fn lseek(fd: FileHandle, pos: i64, whence: usize) -> Result<usize> {
         Fsize((Option<u64>, Arc<RwLock<FileDescription>>)),
     }
     let fsize_or_legacy = file_op_generic_ext(fd, |scheme, desc_arc, desc| {
-        Ok(if let Some(new_off) = scheme.legacy_seek(desc.number, pos as isize, whence) {
-            Ret::Legacy(new_off?)
-        } else if whence == SEEK_END {
-            Ret::Fsize((Some(scheme.fsize(desc.number)?), desc_arc))
-        } else {
-            Ret::Fsize((None, desc_arc))
-        })
+        Ok(
+            if let Some(new_off) = scheme.legacy_seek(desc.number, pos as isize, whence) {
+                Ret::Legacy(new_off?)
+            } else if whence == SEEK_END {
+                Ret::Fsize((Some(scheme.fsize(desc.number)?), desc_arc))
+            } else {
+                Ret::Fsize((None, desc_arc))
+            },
+        )
     })?;
     let (fsize, desc) = match fsize_or_legacy {
         Ret::Fsize(fsize) => fsize,
@@ -505,8 +519,12 @@ pub fn lseek(fd: FileHandle, pos: i64, whence: usize) -> Result<usize> {
 
     let new_pos = match whence {
         SEEK_SET => pos,
-        SEEK_CUR => pos.checked_add_unsigned(guard.offset).ok_or(Error::new(EOVERFLOW))?,
-        SEEK_END => pos.checked_add_unsigned(fsize.unwrap()).ok_or(Error::new(EOVERFLOW))?,
+        SEEK_CUR => pos
+            .checked_add_unsigned(guard.offset)
+            .ok_or(Error::new(EOVERFLOW))?,
+        SEEK_END => pos
+            .checked_add_unsigned(fsize.unwrap())
+            .ok_or(Error::new(EOVERFLOW))?,
         _ => return Err(Error::new(EINVAL)),
     };
     guard.offset = new_pos.try_into().map_err(|_| Error::new(EINVAL))?;
@@ -515,8 +533,16 @@ pub fn lseek(fd: FileHandle, pos: i64, whence: usize) -> Result<usize> {
 }
 pub fn sys_read(fd: FileHandle, buf: UserSliceWo) -> Result<usize> {
     let (bytes_read, desc_arc, desc) = file_op_generic_ext(fd, |scheme, desc_arc, desc| {
-        let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) { desc.offset } else { u64::MAX };
-        Ok((scheme.kreadoff(desc.number, buf, offset, desc.flags, desc.flags)?, desc_arc, desc))
+        let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) {
+            desc.offset
+        } else {
+            u64::MAX
+        };
+        Ok((
+            scheme.kreadoff(desc.number, buf, offset, desc.flags, desc.flags)?,
+            desc_arc,
+            desc,
+        ))
     })?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
         match desc_arc.write().offset {
@@ -527,8 +553,16 @@ pub fn sys_read(fd: FileHandle, buf: UserSliceWo) -> Result<usize> {
 }
 pub fn sys_write(fd: FileHandle, buf: UserSliceRo) -> Result<usize> {
     let (bytes_written, desc_arc, desc) = file_op_generic_ext(fd, |scheme, desc_arc, desc| {
-        let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) { desc.offset } else { u64::MAX };
-        Ok((scheme.kwriteoff(desc.number, buf, offset, desc.flags, desc.flags)?, desc_arc, desc))
+        let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) {
+            desc.offset
+        } else {
+            u64::MAX
+        };
+        Ok((
+            scheme.kwriteoff(desc.number, buf, offset, desc.flags, desc.flags)?,
+            desc_arc,
+            desc,
+        ))
     })?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
         match desc_arc.write().offset {

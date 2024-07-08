@@ -2,7 +2,9 @@ use core::mem;
 
 use crate::{
     memory::{allocate_p2frame, Frame},
-    paging::{KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
+    paging::{
+        KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE,
+    },
 };
 
 use super::{find_sdt, sdt::Sdt};

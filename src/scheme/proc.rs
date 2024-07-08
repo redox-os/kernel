@@ -1,7 +1,11 @@
 use crate::{
     arch::paging::{Page, RmmA, RmmArch, VirtualAddress},
     context::{
-        self, context::{HardBlockedReason, SignalState}, file::{FileDescriptor, InternalFlags}, memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan}, Context, ContextId, Status
+        self,
+        context::{HardBlockedReason, SignalState},
+        file::{FileDescriptor, InternalFlags},
+        memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
+        Context, ContextId, Status,
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -16,6 +20,7 @@ use crate::{
     },
 };
 
+use ::syscall::{SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
     collections::{btree_map::Entry, BTreeMap},
@@ -23,7 +28,6 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use ::syscall::{SigProcControl, Sigcontrol};
 use core::{
     mem,
     num::NonZeroUsize,
@@ -36,7 +40,10 @@ use spinning_top::RwSpinlock;
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
-    let avail_src = usize::try_from(offset).ok().and_then(|o| src.get(o..)).unwrap_or(&[]);
+    let avail_src = usize::try_from(offset)
+        .ok()
+        .and_then(|o| src.get(o..))
+        .unwrap_or(&[]);
     dst.copy_common_bytes_from_slice(avail_src)
 }
 
@@ -266,17 +273,23 @@ impl<const FULL: bool> ProcScheme<FULL> {
         gid: u32,
     ) -> Result<(usize, InternalFlags)> {
         let (operation, positioned) = match operation_str {
-            Some("addrspace") => (Operation::AddrSpace {
-                addrspace: Arc::clone(
-                    get_context(pid)?
-                        .read()
-                        .addr_space()
-                        .map_err(|_| Error::new(ENOENT))?,
-                ),
-            }, true),
-            Some("filetable") => (Operation::Filetable {
-                filetable: Arc::downgrade(&get_context(pid)?.read().files),
-            }, true),
+            Some("addrspace") => (
+                Operation::AddrSpace {
+                    addrspace: Arc::clone(
+                        get_context(pid)?
+                            .read()
+                            .addr_space()
+                            .map_err(|_| Error::new(ENOENT))?,
+                    ),
+                },
+                true,
+            ),
+            Some("filetable") => (
+                Operation::Filetable {
+                    filetable: Arc::downgrade(&get_context(pid)?.read().files),
+                },
+                true,
+            ),
             Some("current-addrspace") => (Operation::CurrentAddrSpace, false),
             Some("current-filetable") => (Operation::CurrentFiletable, false),
             Some("regs/float") => (Operation::Regs(RegsKind::Float), false),
@@ -291,12 +304,15 @@ impl<const FULL: bool> ProcScheme<FULL> {
             Some("uid") => (Operation::Attr(Attr::Uid), true),
             Some("gid") => (Operation::Attr(Attr::Gid), true),
             Some("open_via_dup") => (Operation::OpenViaDup, false),
-            Some("mmap-min-addr") => (Operation::MmapMinAddr(Arc::clone(
-                get_context(pid)?
-                    .read()
-                    .addr_space()
-                    .map_err(|_| Error::new(ENOENT))?,
-            )), false),
+            Some("mmap-min-addr") => (
+                Operation::MmapMinAddr(Arc::clone(
+                    get_context(pid)?
+                        .read()
+                        .addr_space()
+                        .map_err(|_| Error::new(ENOENT))?,
+                )),
+                false,
+            ),
             Some("sched-affinity") => (Operation::SchedAffinity, true),
             _ => return Err(Error::new(EINVAL)),
         };
@@ -354,7 +370,9 @@ impl<const FULL: bool> ProcScheme<FULL> {
             }
 
             let filetable_opt = match operation {
-                Operation::Filetable { ref filetable } => Some(filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?),
+                Operation::Filetable { ref filetable } => {
+                    Some(filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?)
+                }
                 Operation::NewFiletable { ref filetable } => Some(Arc::clone(filetable)),
                 _ => None,
             };
@@ -376,14 +394,21 @@ impl<const FULL: bool> ProcScheme<FULL> {
             }
         };
 
-        let (id, int_fl) = new_handle((Handle {
-            info: Info {
-                flags,
-                pid,
-                operation: operation.clone(),
+        let (id, int_fl) = new_handle((
+            Handle {
+                info: Info {
+                    flags,
+                    pid,
+                    operation: operation.clone(),
+                },
+                data,
             },
-            data,
-        }, if positioned { InternalFlags::POSITIONED } else { InternalFlags::empty() }))?;
+            if positioned {
+                InternalFlags::POSITIONED
+            } else {
+                InternalFlags::empty()
+            },
+        ))?;
 
         if let Operation::Trace = operation {
             if !ptrace::try_new_session(pid, id) {
@@ -612,7 +637,11 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         };
 
         match handle.info.operation {
-            Operation::AwaitingAddrSpaceChange { new, new_sp, new_ip } => {
+            Operation::AwaitingAddrSpaceChange {
+                new,
+                new_sp,
+                new_ip,
+            } => {
                 let _ = stop_context(handle.info.pid, |context: &mut Context| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
@@ -729,7 +758,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             _ => Err(Error::new(EBADF)),
         }
     }
-    fn kreadoff(&self, id: usize, buf: UserSliceWo, offset: u64, _read_flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        offset: u64,
+        _read_flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
             let handles = HANDLES.read();
@@ -741,7 +777,11 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             Operation::Static(_) => {
                 let mut handles = HANDLES.write();
                 let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                read_from(buf, &handle.data.static_data().ok_or(Error::new(EBADFD))?.buf, offset)
+                read_from(
+                    buf,
+                    &handle.data.static_data().ok_or(Error::new(EBADFD))?.buf,
+                    offset,
+                )
             }
             Operation::Regs(kind) => {
                 union Output {
@@ -764,9 +804,13 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     RegsKind::Int => try_stop_context(info.pid, |context| match context.regs() {
                         None => {
                             assert!(!context.running, "try_stop_context is broken, clearly");
-                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            println!(
+                                "{}:{}: Couldn't read registers from stopped process",
+                                file!(),
+                                line!()
+                            );
                             Err(Error::new(ENOTRECOVERABLE))
-                        },
+                        }
                         Some(stack) => {
                             let mut regs = IntRegisters::default();
                             stack.save(&mut regs);
@@ -839,8 +883,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 Ok(read * mem::size_of::<PtraceEvent>())
             }
             Operation::AddrSpace { ref addrspace } => {
-                let OperationData::Offset =
-                    HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.data
+                let OperationData::Offset = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.data
                 else {
                     return Err(Error::new(EBADFD));
                 };
@@ -943,7 +986,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             _ => Err(Error::new(EBADF)),
         }
     }
-    fn kwriteoff(&self, id: usize, buf: UserSliceRo, _offset: u64, _fcntl_flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwriteoff(
+        &self,
+        id: usize,
+        buf: UserSliceRo,
+        _offset: u64,
+        _fcntl_flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         // TODO: offset
 
         // Don't hold a global lock during the context switch later on
@@ -1027,9 +1077,13 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
                     try_stop_context(info.pid, |context| match context.regs_mut() {
                         None => {
-                            println!("{}:{}: Couldn't read registers from stopped process", file!(), line!());
+                            println!(
+                                "{}:{}: Couldn't read registers from stopped process",
+                                file!(),
+                                line!()
+                            );
                             Err(Error::new(ENOTRECOVERABLE))
-                        },
+                        }
                         Some(stack) => {
                             stack.load(&regs);
 
@@ -1056,20 +1110,18 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 })?;
 
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
-                    try_stop_context(info.pid, |context| {
-                        match context.regs_mut() {
-                            None => {
-                                println!(
-                                    "{}:{}: Couldn't read registers from stopped process",
-                                    file!(),
-                                    line!()
-                                );
-                                Err(Error::new(ENOTRECOVERABLE))
-                            }
-                            Some(stack) => {
-                                stack.set_singlestep(true);
-                                Ok(())
-                            }
+                    try_stop_context(info.pid, |context| match context.regs_mut() {
+                        None => {
+                            println!(
+                                "{}:{}: Couldn't read registers from stopped process",
+                                file!(),
+                                line!()
+                            );
+                            Err(Error::new(ENOTRECOVERABLE))
+                        }
+                        Some(stack) => {
+                            stack.set_singlestep(true);
+                            Ok(())
                         }
                     })?;
                 }
@@ -1130,10 +1182,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             Operation::Sighandler => {
                 let data = unsafe { buf.read_exact::<SetSighandlerData>()? };
 
-                if data.user_handler >= crate::USER_END_OFFSET || data.excp_handler >= crate::USER_END_OFFSET {
+                if data.user_handler >= crate::USER_END_OFFSET
+                    || data.excp_handler >= crate::USER_END_OFFSET
+                {
                     return Err(Error::new(EPERM));
                 }
-                if data.thread_control_addr >= crate::USER_END_OFFSET || data.proc_control_addr >= crate::USER_END_OFFSET {
+                if data.thread_control_addr >= crate::USER_END_OFFSET
+                    || data.proc_control_addr >= crate::USER_END_OFFSET
+                {
                     return Err(Error::new(EFAULT));
                 }
 
@@ -1148,38 +1204,58 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     };
 
                     let addrsp = Arc::clone(
-                        context::contexts().get(info.pid)
+                        context::contexts()
+                            .get(info.pid)
                             .ok_or(Error::new(ESRCH))?
                             .read()
-                            .addr_space()?
+                            .addr_space()?,
                     );
 
                     Some(SignalState {
-                        threadctl_off: validate_off(data.thread_control_addr, mem::size_of::<Sigcontrol>())?,
-                        procctl_off: validate_off(data.proc_control_addr, mem::size_of::<SigProcControl>())?,
-                        user_handler: NonZeroUsize::new(data.user_handler).ok_or(Error::new(EINVAL))?,
+                        threadctl_off: validate_off(
+                            data.thread_control_addr,
+                            mem::size_of::<Sigcontrol>(),
+                        )?,
+                        procctl_off: validate_off(
+                            data.proc_control_addr,
+                            mem::size_of::<SigProcControl>(),
+                        )?,
+                        user_handler: NonZeroUsize::new(data.user_handler)
+                            .ok_or(Error::new(EINVAL))?,
                         excp_handler: NonZeroUsize::new(data.excp_handler),
-                        thread_control: addrsp
-                            .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.thread_control_addr)))?,
-                        proc_control: addrsp
-                            .borrow_frame_enforce_rw_allocated(Page::containing_address(VirtualAddress::new(data.proc_control_addr)))?,
+                        thread_control: addrsp.borrow_frame_enforce_rw_allocated(
+                            Page::containing_address(VirtualAddress::new(data.thread_control_addr)),
+                        )?,
+                        proc_control: addrsp.borrow_frame_enforce_rw_allocated(
+                            Page::containing_address(VirtualAddress::new(data.proc_control_addr)),
+                        )?,
                     })
                 } else {
                     None
                 };
 
-
-                context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().sig = state;
+                context::contexts()
+                    .get(info.pid)
+                    .ok_or(Error::new(ESRCH))?
+                    .write()
+                    .sig = state;
 
                 Ok(mem::size_of::<SetSighandlerData>())
             }
-            Operation::Start => match context::contexts().get(info.pid).ok_or(Error::new(ESRCH))?.write().status {
-                ref mut status @ Status::HardBlocked { reason: HardBlockedReason::NotYetStarted } => {
+            Operation::Start => match context::contexts()
+                .get(info.pid)
+                .ok_or(Error::new(ESRCH))?
+                .write()
+                .status
+            {
+                ref mut status @ Status::HardBlocked {
+                    reason: HardBlockedReason::NotYetStarted,
+                } => {
                     *status = Status::Runnable;
                     Ok(buf.len())
                 }
                 _ => return Err(Error::new(EINVAL)),
-            }
+            },
             Operation::Attr(attr) => {
                 // TODO: What limit?
                 let mut str_buf = [0_u8; 32];
@@ -1210,10 +1286,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     return Err(Error::new(EBADF));
                 };
                 let filetable = match &mut entry.get_mut().info.operation {
-                    Operation::Filetable { ref filetable } => filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?,
+                    Operation::Filetable { ref filetable } => {
+                        filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?
+                    }
                     Operation::NewFiletable { ref filetable } => {
                         let ft = Arc::clone(&filetable);
-                        entry.get_mut().info.operation = Operation::Filetable { filetable: Arc::downgrade(&filetable) };
+                        entry.get_mut().info.operation = Operation::Filetable {
+                            filetable: Arc::downgrade(&filetable),
+                        };
                         ft
                     }
 
@@ -1287,23 +1367,26 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let path = format!("proc:{}/{}", handle.info.pid.get(), match handle.info.operation {
-            Operation::Regs(RegsKind::Float) => "regs/float",
-            Operation::Regs(RegsKind::Int) => "regs/int",
-            Operation::Regs(RegsKind::Env) => "regs/env",
-            Operation::Trace => "trace",
-            Operation::Static(path) => path,
-            Operation::Name => "name",
-            Operation::Sighandler => "sighandler",
-            Operation::Attr(Attr::Uid) => "uid",
-            Operation::Attr(Attr::Gid) => "gid",
-            Operation::Filetable { .. } => "filetable",
-            Operation::AddrSpace { .. } => "addrspace",
-            Operation::CurrentAddrSpace => "current-addrspace",
-            Operation::CurrentFiletable => "current-filetable",
-            Operation::OpenViaDup => "open-via-dup",
-            Operation::MmapMinAddr(_) => "mmap-min-addr",
-            Operation::SchedAffinity => "sched-affinity",
+        let path = format!(
+            "proc:{}/{}",
+            handle.info.pid.get(),
+            match handle.info.operation {
+                Operation::Regs(RegsKind::Float) => "regs/float",
+                Operation::Regs(RegsKind::Int) => "regs/int",
+                Operation::Regs(RegsKind::Env) => "regs/env",
+                Operation::Trace => "trace",
+                Operation::Static(path) => path,
+                Operation::Name => "name",
+                Operation::Sighandler => "sighandler",
+                Operation::Attr(Attr::Uid) => "uid",
+                Operation::Attr(Attr::Gid) => "gid",
+                Operation::Filetable { .. } => "filetable",
+                Operation::AddrSpace { .. } => "addrspace",
+                Operation::CurrentAddrSpace => "current-addrspace",
+                Operation::CurrentFiletable => "current-filetable",
+                Operation::OpenViaDup => "open-via-dup",
+                Operation::MmapMinAddr(_) => "mmap-min-addr",
+                Operation::SchedAffinity => "sched-affinity",
 
                 _ => return Err(Error::new(EOPNOTSUPP)),
             }
@@ -1333,7 +1416,12 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         // TODO: operation-dependent
-        Ok(handle.data.static_data().ok_or(Error::new(ESPIPE))?.buf.len() as u64)
+        Ok(handle
+            .data
+            .static_data()
+            .ok_or(Error::new(ESPIPE))?
+            .buf
+            .len() as u64)
     }
 
     /// Dup is currently used to implement clone() and execve().
@@ -1345,14 +1433,23 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             handle.info.clone()
         };
 
-        let handle = |operation, data, positioned| (Handle {
-            info: Info {
-                flags: 0,
-                pid: info.pid,
-                operation,
-            },
-            data,
-        }, if positioned { InternalFlags::POSITIONED } else { InternalFlags::empty() });
+        let handle = |operation, data, positioned| {
+            (
+                Handle {
+                    info: Info {
+                        flags: 0,
+                        pid: info.pid,
+                        operation,
+                    },
+                    data,
+                },
+                if positioned {
+                    InternalFlags::POSITIONED
+                } else {
+                    InternalFlags::empty()
+                },
+            )
+        };
         let mut array = [0_u8; 64];
         if raw_buf.len() > array.len() {
             return Err(Error::new(EINVAL));
@@ -1378,7 +1475,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         uid,
                         gid,
                     )
-                    .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+                    .map(|(r, fl)| OpenResult::SchemeLocal(r, fl));
             }
 
             Operation::Filetable { ref filetable } => {
@@ -1459,7 +1556,8 @@ extern "C" fn clone_handler() {
 
 fn inherit_context() -> Result<ContextId> {
     let new_id = {
-        let current_context_lock = Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
+        let current_context_lock =
+            Arc::clone(context::contexts().current().ok_or(Error::new(ESRCH))?);
         let new_context_lock = Arc::clone(context::contexts_mut().spawn(true, clone_handler)?);
 
         // (Signals are initially disabled.)
@@ -1467,7 +1565,9 @@ fn inherit_context() -> Result<ContextId> {
         let current_context = current_context_lock.read();
         let mut new_context = new_context_lock.write();
 
-        new_context.status = Status::HardBlocked { reason: HardBlockedReason::NotYetStarted };
+        new_context.status = Status::HardBlocked {
+            reason: HardBlockedReason::NotYetStarted,
+        };
 
         // TODO: Move all of these IDs into somewhere in userspace, file descriptors as
         // capabilities. A userspace daemon can manage process hierarchies etc. whereas the kernel

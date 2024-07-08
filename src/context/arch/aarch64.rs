@@ -11,8 +11,8 @@ use spin::Once;
 use crate::{
     device::cpu::registers::{control_regs, tlb},
     paging::{RmmA, RmmArch, TableKind},
-    syscall::FloatRegisters,
     percpu::PercpuBlock,
+    syscall::FloatRegisters,
 };
 
 /// This must be used by the kernel to ensure that context switches are done atomically
@@ -146,7 +146,9 @@ impl super::Context {
         }
         let regs = self.regs()?;
         let scratch = &regs.scratch;
-        Some([scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4])
+        Some([
+            scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4,
+        ])
     }
 }
 
@@ -158,10 +160,9 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
     *EMPTY_CR3.get_unchecked()
 }
 
-#[target_feature(enable="neon")]
+#[target_feature(enable = "neon")]
 #[naked]
-unsafe fn fp_save(float_regs: &mut FloatRegisters)
-{
+unsafe fn fp_save(float_regs: &mut FloatRegisters) {
     asm!(
     "stp q0, q1, [x0, {0} + 16 * 0]",
     "stp q2, q3, [x0, {0} + 16 * 2]",
@@ -192,10 +193,9 @@ unsafe fn fp_save(float_regs: &mut FloatRegisters)
     );
 }
 
-#[target_feature(enable="neon")]
+#[target_feature(enable = "neon")]
 #[naked]
-unsafe fn fp_load(float_regs: &mut FloatRegisters)
-{
+unsafe fn fp_load(float_regs: &mut FloatRegisters) {
     asm!(
     "ldp q0, q1, [x0, {0} + 16 * 0]",
     "ldp q2, q3, [x0, {0} + 16 * 2]",
@@ -235,7 +235,9 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         fp_load(&mut *(next.kfx.as_mut_ptr() as *mut FloatRegisters));
     }
 
-    PercpuBlock::current().new_addrsp_tmp.set(next.addr_space.clone());
+    PercpuBlock::current()
+        .new_addrsp_tmp
+        .set(next.addr_space.clone());
 
     switch_to_inner(&mut prev.arch, &mut next.arch)
 }

@@ -1,12 +1,15 @@
 use alloc::vec::Vec;
-use core::{arch::asm, ptr::{read_volatile, write_volatile}};
+use core::{
+    arch::asm,
+    ptr::{read_volatile, write_volatile},
+};
 
 use byteorder::{ByteOrder, BE};
 use fdt::{DeviceTree, Node};
 
+use super::gic::GicDistIf;
 use crate::init::device_tree::find_compatible_node;
 use log::{debug, info};
-use super::gic::GicDistIf;
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -48,7 +51,10 @@ impl GicV3 {
         self.gicrs.clear();
 
         // Get number of GICRs
-        let gicrs = match node.properties().find(|p| p.name.contains("#redistributor-regions")) {
+        let gicrs = match node
+            .properties()
+            .find(|p| p.name.contains("#redistributor-regions"))
+        {
             Some(prop) => BE::read_u32(prop.data),
             None => 1,
         };
@@ -62,7 +68,9 @@ impl GicV3 {
             )
         });
         if let Some((gicd_addr, _gicd_size)) = chunks.next() {
-            unsafe { self.gic_dist_if.init(crate::PHYS_OFFSET + gicd_addr); }
+            unsafe {
+                self.gic_dist_if.init(crate::PHYS_OFFSET + gicd_addr);
+            }
         }
         for _ in 0..gicrs {
             if let Some(gicr) = chunks.next() {
@@ -89,7 +97,9 @@ impl InterruptController for GicV3 {
         self.parse(fdt)?;
         log::info!("{:X?}", self);
 
-        unsafe { self.gic_cpu_if.init(); }
+        unsafe {
+            self.gic_cpu_if.init();
+        }
         let idx = *irq_idx;
         let cnt = if self.gic_dist_if.nirqs > 1024 {
             1024

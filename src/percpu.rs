@@ -1,15 +1,17 @@
-use core::cell::{Cell, RefCell};
-use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::{
+    cell::{Cell, RefCell},
+    sync::atomic::{AtomicBool, AtomicPtr, Ordering},
+};
 
 use alloc::sync::{Arc, Weak};
 use rmm::Arch;
 use syscall::PtraceFlags;
 
-use crate::context::empty_cr3;
-use crate::context::memory::AddrSpaceWrapper;
-use crate::cpu_set::MAX_CPU_COUNT;
-use crate::ptrace::Session;
-use crate::{context::switch::ContextSwitchPercpu, cpu_set::LogicalCpuId};
+use crate::{
+    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
+    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    ptrace::Session,
+};
 
 #[cfg(feature = "syscall_debug")]
 use crate::syscall::debug::SyscallDebugInfo;
@@ -40,7 +42,8 @@ pub struct PercpuBlock {
 }
 
 const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
-static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] = [NULL; MAX_CPU_COUNT as usize];
+static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
+    [NULL; MAX_CPU_COUNT as usize];
 
 pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
     ALL_PERCPU_BLOCKS[id.get() as usize].store(block, Ordering::Release)
@@ -57,11 +60,19 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
         let my_percpublock = PercpuBlock::current();
         assert_ne!(target, my_percpublock.cpu_id);
 
-        let Some(percpublock) = (unsafe { ALL_PERCPU_BLOCKS[target.get() as usize].load(Ordering::Acquire).as_ref() }) else {
+        let Some(percpublock) = (unsafe {
+            ALL_PERCPU_BLOCKS[target.get() as usize]
+                .load(Ordering::Acquire)
+                .as_ref()
+        }) else {
             log::warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };
-        while percpublock.wants_tlb_shootdown.swap(true, Ordering::Release) == true {
+        while percpublock
+            .wants_tlb_shootdown
+            .swap(true, Ordering::Release)
+            == true
+        {
             // Load is faster than CAS or on x86, LOCK BTS
             while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) == true {
                 my_percpublock.maybe_handle_tlb_shootdown();
@@ -109,7 +120,10 @@ pub unsafe fn switch_arch_hook() {
         // If we are not switching to a different address space, we can simply return early.
     }
     if let Some(ref prev_addrsp) = &*cur_addrsp {
-        prev_addrsp.acquire_read().used_by.atomic_clear(percpu.cpu_id);
+        prev_addrsp
+            .acquire_read()
+            .used_by
+            .atomic_clear(percpu.cpu_id);
     }
 
     drop(cur_addrsp);

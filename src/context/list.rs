@@ -3,10 +3,14 @@ use core::iter;
 
 use spinning_top::RwSpinlock;
 
-use super::context::{Context, ContextId, Kstack};
-use super::memory::AddrSpaceWrapper;
-use crate::interrupt::InterruptStack;
-use crate::syscall::error::{Error, Result, EAGAIN};
+use super::{
+    context::{Context, ContextId, Kstack},
+    memory::AddrSpaceWrapper,
+};
+use crate::{
+    interrupt::InterruptStack,
+    syscall::error::{Error, Result, EAGAIN},
+};
 
 /// Context list type
 pub struct ContextList {
@@ -105,7 +109,11 @@ impl ContextList {
     }
 
     /// Spawn a context from a function.
-    pub fn spawn(&mut self, userspace_allowed: bool, func: extern "C" fn()) -> Result<&Arc<RwSpinlock<Context>>> {
+    pub fn spawn(
+        &mut self,
+        userspace_allowed: bool,
+        func: extern "C" fn(),
+    ) -> Result<&Arc<RwSpinlock<Context>>> {
         let stack = Kstack::new()?;
 
         let context_lock = self.new_context()?;
@@ -129,7 +137,9 @@ impl ContextList {
             unsafe {
                 if userspace_allowed {
                     stack_top = stack_top.sub(core::mem::size_of::<usize>());
-                    stack_top.cast::<usize>().write(crate::interrupt::syscall::enter_usermode as usize);
+                    stack_top
+                        .cast::<usize>()
+                        .write(crate::interrupt::syscall::enter_usermode as usize);
                 }
 
                 stack_top = stack_top.sub(core::mem::size_of::<usize>());
@@ -138,7 +148,9 @@ impl ContextList {
 
             #[cfg(target_arch = "aarch64")]
             unsafe {
-                context.arch.set_lr(crate::interrupt::syscall::enter_usermode as usize);
+                context
+                    .arch
+                    .set_lr(crate::interrupt::syscall::enter_usermode as usize);
                 context.arch.set_x28(func as usize);
                 context.arch.set_context_handle();
             }

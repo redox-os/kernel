@@ -66,7 +66,9 @@ pub unsafe fn early_init(bsp: bool) {
         && let Some(f) = cpuid().get_extended_feature_info()
         && f.has_fsgsbase()
     {
-        x86::controlregs::cr4_write(x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE);
+        x86::controlregs::cr4_write(
+            x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE,
+        );
 
         enable |= KcpuFeatures::FSGSBASE;
     } else {

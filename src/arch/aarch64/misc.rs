@@ -1,5 +1,7 @@
-use core::cell::{Cell, RefCell};
-use core::sync::atomic::AtomicBool;
+use core::{
+    cell::{Cell, RefCell},
+    sync::atomic::AtomicBool,
+};
 
 use crate::{
     cpu_set::LogicalCpuId,

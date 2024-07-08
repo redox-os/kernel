@@ -13,7 +13,10 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::{EventFlags, MunmapFlags, SendFdFlags};
 
 use crate::{
-    context::{file::{FileDescription, InternalFlags}, memory::AddrSpaceWrapper},
+    context::{
+        file::{FileDescription, InternalFlags},
+        memory::AddrSpaceWrapper,
+    },
     syscall::{
         error::*,
         usercopy::{UserSliceRo, UserSliceWo},
@@ -394,13 +397,27 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
         Err(Error::new(EOPNOTSUPP))
     }
-    fn kwriteoff(&self, id: usize, buf: UserSliceRo, offset: u64, flags: u32, stored_flags: u32) -> Result<usize> {
+    fn kwriteoff(
+        &self,
+        id: usize,
+        buf: UserSliceRo,
+        offset: u64,
+        flags: u32,
+        stored_flags: u32,
+    ) -> Result<usize> {
         if offset != u64::MAX {
             return Err(Error::new(ESPIPE));
         }
         self.kwrite(id, buf, flags, stored_flags)
     }
-    fn kreadoff(&self, id: usize, buf: UserSliceWo, offset: u64, flags: u32, stored_flags: u32) -> Result<usize> {
+    fn kreadoff(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        offset: u64,
+        flags: u32,
+        stored_flags: u32,
+    ) -> Result<usize> {
         if offset != u64::MAX {
             return Err(Error::new(ESPIPE));
         }

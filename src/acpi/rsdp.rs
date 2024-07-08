@@ -20,7 +20,7 @@ pub struct RSDP {
 
 impl RSDP {
     fn get_already_supplied_rsdp(rsdp_ptr: *const u8) -> RSDP {
-                // TODO: Validate
+        // TODO: Validate
         unsafe { *(rsdp_ptr as *const RSDP) }
     }
     pub fn get_rsdp(

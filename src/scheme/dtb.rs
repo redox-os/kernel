@@ -6,7 +6,7 @@ use spin::{Once, RwLock};
 use super::{CallerCtx, KernelScheme, OpenResult};
 use crate::{
     dtb::DTB_BINARY,
-    scheme::{SchemeId, InternalFlags},
+    scheme::{InternalFlags, SchemeId},
     syscall::{
         data::Stat,
         error::*,
@@ -96,7 +96,14 @@ impl KernelScheme for DtbScheme {
         Ok(())
     }
 
-    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(
+        &self,
+        id: usize,
+        dst_buf: UserSliceWo,
+        offset: u64,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 

@@ -16,14 +16,13 @@ pub use self::{
 
 use self::{
     data::{Map, TimeSpec},
-    error::{Error, Result, EOVERFLOW, ENOSYS},
+    error::{Error, Result, ENOSYS, EOVERFLOW},
     flag::{EventFlags, MapFlags, WaitFlags},
     number::*,
     usercopy::UserSlice,
 };
 
-use crate::interrupt::InterruptStack;
-use crate::percpu::PercpuBlock;
+use crate::{interrupt::InterruptStack, percpu::PercpuBlock};
 
 use crate::{
     context::{memory::AddrSpace, ContextId},
@@ -69,14 +68,7 @@ pub fn syscall(
     _stack: &mut InterruptStack,
 ) -> usize {
     #[inline(always)]
-    fn inner(
-        a: usize,
-        b: usize,
-        c: usize,
-        d: usize,
-        e: usize,
-        f: usize,
-    ) -> Result<usize> {
+    fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> Result<usize> {
         //SYS_* is declared in kernel/syscall/src/number.rs
         match a & SYS_CLASS {
             SYS_CLASS_FILE => {
@@ -87,9 +79,20 @@ pub fn syscall(
                             let flags = if f == usize::MAX {
                                 None
                             } else {
-                                Some(u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?)
+                                Some(
+                                    u32::try_from(f)
+                                        .ok()
+                                        .and_then(RwFlags::from_bits)
+                                        .ok_or(Error::new(EINVAL))?,
+                                )
                             };
-                            scheme.kwriteoff(desc.number, UserSlice::ro(c, d)?, e as u64, flags.map_or(desc.flags, |f| desc.rw_flags(f)), desc.flags)
+                            scheme.kwriteoff(
+                                desc.number,
+                                UserSlice::ro(c, d)?,
+                                e as u64,
+                                flags.map_or(desc.flags, |f| desc.rw_flags(f)),
+                                desc.flags,
+                            )
                         }),
                         SYS_WRITE => sys_write(fd, UserSlice::ro(c, d)?),
                         SYS_FMAP => {
@@ -115,9 +118,20 @@ pub fn syscall(
                             let flags = if f == usize::MAX {
                                 None
                             } else {
-                                Some(u32::try_from(f).ok().and_then(RwFlags::from_bits).ok_or(Error::new(EINVAL))?)
+                                Some(
+                                    u32::try_from(f)
+                                        .ok()
+                                        .and_then(RwFlags::from_bits)
+                                        .ok_or(Error::new(EINVAL))?,
+                                )
                             };
-                            scheme.kreadoff(desc.number, UserSlice::wo(c, d)?, e as u64, flags.map_or(desc.flags, |f| desc.rw_flags(f)), desc.flags)
+                            scheme.kreadoff(
+                                desc.number,
+                                UserSlice::wo(c, d)?,
+                                e as u64,
+                                flags.map_or(desc.flags, |f| desc.rw_flags(f)),
+                                desc.flags,
+                            )
                         }),
                         SYS_READ => sys_read(fd, UserSlice::wo(c, d)?),
                         SYS_FPATH => file_op_generic(fd, |scheme, number| {

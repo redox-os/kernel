@@ -1,12 +1,13 @@
 use alloc::{sync::Arc, vec::Vec};
-use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
+use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
 
 use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan}, ContextId, WaitpidKey
+    memory::{AddrSpace, Grant, PageSpan},
+    ContextId, WaitpidKey,
 };
 
 use crate::{
@@ -42,7 +43,9 @@ pub fn exit(status: usize) -> ! {
             let mut context = context_lock.write();
             close_files = Arc::try_unwrap(mem::take(&mut context.files))
                 .map_or_else(|_| Vec::new(), RwLock::into_inner);
-            addrspace_opt = context.set_addr_space(None).and_then(|a| Arc::try_unwrap(a).ok());
+            addrspace_opt = context
+                .set_addr_space(None)
+                .and_then(|a| Arc::try_unwrap(a).ok());
             drop(context.syscall_head.take());
             drop(context.syscall_tail.take());
             context.id
@@ -62,7 +65,6 @@ pub fn exit(status: usize) -> ! {
             (context.pgid, context.ppid)
         };
         let _ = kill(ppid, SIGCHLD, true);
-
 
         // Transfer child processes to parent
         {
@@ -164,8 +166,15 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
         enum SendResult {
             Forbidden,
             Succeeded,
-            SucceededSigchld { ppid: ContextId, pgid: ContextId, orig_signal: usize },
-            SucceededSigcont { ppid: ContextId, pgid: ContextId },
+            SucceededSigchld {
+                ppid: ContextId,
+                pgid: ContextId,
+                orig_signal: usize,
+            },
+            SucceededSigcont {
+                ppid: ContextId,
+                pgid: ContextId,
+            },
         }
 
         let mut send = |context: &mut context::Context| -> SendResult {
@@ -178,10 +187,12 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             // If sig = 0, test that process exists and can be signalled, but don't send any
             // signal.
             if sig == 0 {
-                return SendResult::Succeeded
+                return SendResult::Succeeded;
             }
 
-            if sig == SIGCONT && let context::Status::Stopped(_sig) = context.status {
+            if sig == SIGCONT
+                && let context::Status::Stopped(_sig) = context.status
+            {
                 // Convert stopped processes to blocked if sending SIGCONT, regardless of whether
                 // SIGCONT is blocked or ignored. It can however be controlled whether the process
                 // will additionally ignore, defer, or handle that signal.
@@ -197,14 +208,26 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                     }
                 }
                 // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
-                SendResult::SucceededSigcont { ppid: context.ppid, pgid: context.pgid }
-            } else if sig == SIGSTOP || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP) && context.sigcontrol().map_or(false, |(_, proc, _)| proc.signal_will_stop(sig))) {
+                SendResult::SucceededSigcont {
+                    ppid: context.ppid,
+                    pgid: context.pgid,
+                }
+            } else if sig == SIGSTOP
+                || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP)
+                    && context
+                        .sigcontrol()
+                        .map_or(false, |(_, proc, _)| proc.signal_will_stop(sig)))
+            {
                 context.status = context::Status::Stopped(sig);
                 // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
                 if let Some((ctl, _, _)) = context.sigcontrol() {
                     ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
                 }
-                SendResult::SucceededSigchld { ppid: context.ppid, pgid: context.pgid, orig_signal: sig }
+                SendResult::SucceededSigchld {
+                    ppid: context.ppid,
+                    pgid: context.pgid,
+                    orig_signal: sig,
+                }
             } else if sig == SIGKILL {
                 context.being_sigkilled = true;
                 context.unblock();
@@ -212,7 +235,9 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
 
                 // exit() will signal the parent, rather than immediately in kill()
                 SendResult::Succeeded
-            } else if let Some((tctl, pctl, _st)) = context.sigcontrol() && !pctl.signal_will_ign(sig, parent_sigchld) {
+            } else if let Some((tctl, pctl, _st)) = context.sigcontrol()
+                && !pctl.signal_will_ign(sig, parent_sigchld)
+            {
                 let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                 if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                     context.unblock();
@@ -232,22 +257,44 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             match result {
                 SendResult::Forbidden => (),
                 SendResult::Succeeded => sent += 1,
-                SendResult::SucceededSigchld { ppid, pgid, orig_signal } => {
+                SendResult::SucceededSigchld {
+                    ppid,
+                    pgid,
+                    orig_signal,
+                } => {
                     sent += 1;
-                    let waitpid = Arc::clone(&context::contexts().get(ppid).ok_or(Error::new(ESRCH))?.read().waitpid);
-                    waitpid.send(WaitpidKey {
-                        pid: Some(pid),
-                        pgid: Some(pgid),
-                    }, (pid, (orig_signal << 8) | 0x7f));
+                    let waitpid = Arc::clone(
+                        &context::contexts()
+                            .get(ppid)
+                            .ok_or(Error::new(ESRCH))?
+                            .read()
+                            .waitpid,
+                    );
+                    waitpid.send(
+                        WaitpidKey {
+                            pid: Some(pid),
+                            pgid: Some(pgid),
+                        },
+                        (pid, (orig_signal << 8) | 0x7f),
+                    );
                     kill(ppid, SIGCHLD, true)?;
                 }
                 SendResult::SucceededSigcont { ppid, pgid } => {
                     sent += 1;
-                    let waitpid = Arc::clone(&context::contexts().get(ppid).ok_or(Error::new(ESRCH))?.read().waitpid);
-                    waitpid.send(WaitpidKey {
-                        pid: Some(pid),
-                        pgid: Some(pgid),
-                    }, (pid, 0xffff));
+                    let waitpid = Arc::clone(
+                        &context::contexts()
+                            .get(ppid)
+                            .ok_or(Error::new(ESRCH))?
+                            .read()
+                            .waitpid,
+                    );
+                    waitpid.send(
+                        WaitpidKey {
+                            pid: Some(pid),
+                            pgid: Some(pgid),
+                        },
+                        (pid, 0xffff),
+                    );
                 }
             }
             Ok(())
@@ -555,15 +602,31 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
         );
 
         let base = Page::containing_address(VirtualAddress::new(PAGE_SIZE));
-        let flags = MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_EXEC | MapFlags::PROT_READ | MapFlags::PROT_WRITE;
+        let flags = MapFlags::MAP_FIXED_NOREPLACE
+            | MapFlags::PROT_EXEC
+            | MapFlags::PROT_READ
+            | MapFlags::PROT_WRITE;
 
-        let page_count = NonZeroUsize::new(bootstrap.page_count)
-            .expect("bootstrap contained no pages!");
+        let page_count =
+            NonZeroUsize::new(bootstrap.page_count).expect("bootstrap contained no pages!");
 
-        let _base_page = addr_space.acquire_write().mmap(&addr_space, Some(base), page_count, flags, &mut Vec::new(), |page, flags, mapper, flusher| {
-            let shared = false;
-            Ok(Grant::zeroed(PageSpan::new(page, bootstrap.page_count), flags, mapper, flusher, shared)?)
-        });
+        let _base_page = addr_space.acquire_write().mmap(
+            &addr_space,
+            Some(base),
+            page_count,
+            flags,
+            &mut Vec::new(),
+            |page, flags, mapper, flusher| {
+                let shared = false;
+                Ok(Grant::zeroed(
+                    PageSpan::new(page, bootstrap.page_count),
+                    flags,
+                    mapper,
+                    flusher,
+                    shared,
+                )?)
+            },
+        );
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
@@ -579,8 +642,10 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
     // Start in a minimal environment without any stack.
 
     match context::current()
-        .expect("bootstrap was not running inside any context").write()
-        .regs_mut().expect("bootstrap needs registers to be available")
+        .expect("bootstrap was not running inside any context")
+        .write()
+        .regs_mut()
+        .expect("bootstrap needs registers to be available")
     {
         ref mut regs => {
             regs.init();

@@ -1,11 +1,7 @@
 use alloc::boxed::Box;
 use spin::Mutex;
 
-use crate::{
-    device::uart_pl011::SerialPort,
-    init::device_tree,
-    interrupt::irq::trigger,
-};
+use crate::{device::uart_pl011::SerialPort, init::device_tree, interrupt::irq::trigger};
 use log::{debug, info};
 
 use super::irqchip::{register_irq, InterruptHandler, IRQ_CHIP};

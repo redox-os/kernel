@@ -301,7 +301,9 @@ impl InterruptController for Bcm2835ArmInterruptController {
     fn irq_handler(&mut self, _irq: u32) {
         unsafe {
             let irq = self.irq_ack();
-            if let Some(virq) = self.irq_to_virq(irq) && virq < 1024 {
+            if let Some(virq) = self.irq_to_virq(irq)
+                && virq < 1024
+            {
                 if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
                     handler.irq_handler(virq as u32);
                 }
@@ -317,7 +319,9 @@ impl InterruptHandler for Bcm2835ArmInterruptController {
     fn irq_handler(&mut self, _irq: u32) {
         unsafe {
             let irq = self.irq_ack();
-            if let Some(virq) = self.irq_to_virq(irq) && virq < 1024 {
+            if let Some(virq) = self.irq_to_virq(irq)
+                && virq < 1024
+            {
                 if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
                     handler.irq_handler(virq as u32);
                 }

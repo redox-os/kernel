@@ -8,14 +8,15 @@ use alloc::{
 use spin::{Mutex, RwLock};
 
 use crate::{
-    context::file::InternalFlags, event, sync::WaitCondition, syscall::{
+    context::file::InternalFlags,
+    event,
+    sync::WaitCondition,
+    syscall::{
         data::Stat,
         error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
-        flag::{
-            EventFlags, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK,
-        },
+        flag::{EventFlags, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK},
         usercopy::{UserSliceRo, UserSliceWo},
-    }
+    },
 };
 
 use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
@@ -65,7 +66,8 @@ impl KernelScheme for PipeScheme {
 
         let mut ready = EventFlags::empty();
 
-        if is_writer_not_reader && flags == EVENT_WRITE && pipe.queue.lock().len() <= MAX_QUEUE_SIZE {
+        if is_writer_not_reader && flags == EVENT_WRITE && pipe.queue.lock().len() <= MAX_QUEUE_SIZE
+        {
             ready |= EventFlags::EVENT_WRITE;
         }
         if !is_writer_not_reader && flags == EVENT_READ && !pipe.queue.lock().is_empty() {
@@ -123,7 +125,10 @@ impl KernelScheme for PipeScheme {
             return Err(Error::new(EBADF));
         }
 
-        Ok(OpenResult::SchemeLocal(key | WRITE_NOT_READ_BIT, InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            key | WRITE_NOT_READ_BIT,
+            InternalFlags::empty(),
+        ))
     }
     fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         if !path.trim_start_matches('/').is_empty() {
@@ -135,7 +140,13 @@ impl KernelScheme for PipeScheme {
         Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
     }
 
-    fn kread(&self, id: usize, user_buf: UserSliceWo, fcntl_flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kread(
+        &self,
+        id: usize,
+        user_buf: UserSliceWo,
+        fcntl_flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
 
         if is_write_not_read {
@@ -185,7 +196,13 @@ impl KernelScheme for PipeScheme {
             }
         }
     }
-    fn kwrite(&self, id: usize, user_buf: UserSliceRo, fcntl_flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        id: usize,
+        user_buf: UserSliceRo,
+        fcntl_flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
 
         if !is_write_not_read {
@@ -247,7 +264,7 @@ impl KernelScheme for PipeScheme {
 }
 
 pub struct Pipe {
-    read_condition: WaitCondition,  // signals whether there are available bytes to read
+    read_condition: WaitCondition, // signals whether there are available bytes to read
     write_condition: WaitCondition, // signals whether there is room for additional bytes
     queue: Mutex<VecDeque<u8>>,
     reader_is_alive: AtomicBool, // starts set, unset when reader closes

@@ -5,7 +5,10 @@ use core::{
 };
 use x86::msr::*;
 
-use crate::{paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch}, ipi::IpiKind};
+use crate::{
+    ipi::IpiKind,
+    paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch},
+};
 
 use crate::arch::cpuid::cpuid;
 

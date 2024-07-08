@@ -1,11 +1,11 @@
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
-use syscall::O_FSYNC;
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
 use spin::RwLock;
+use syscall::O_FSYNC;
 
 use crate::{
     context::{self, file::InternalFlags},
@@ -30,7 +30,10 @@ struct FolderInner {
 
 impl FolderInner {
     fn read(&self, buf: UserSliceWo, offset: u64) -> Result<usize> {
-        let avail_buf = usize::try_from(offset).ok().and_then(|o| self.data.get(o..)).unwrap_or(&[]);
+        let avail_buf = usize::try_from(offset)
+            .ok()
+            .and_then(|o| self.data.get(o..))
+            .unwrap_or(&[]);
         buf.copy_common_bytes_from_slice(avail_buf)
     }
 }
@@ -91,11 +94,9 @@ impl KernelScheme for RootScheme {
                         let inner = Arc::new(UserInner::new(
                             self.scheme_id,
                             scheme_id,
-
                             // TODO: This is a hack, but eventually the legacy interface will be
                             // removed.
                             flags & O_FSYNC == O_FSYNC,
-
                             id,
                             path_box,
                             flags,
@@ -252,7 +253,14 @@ impl KernelScheme for RootScheme {
         }
         Ok(())
     }
-    fn kreadoff(&self, file: usize, buf: UserSliceWo, offset: u64, flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(
+        &self,
+        file: usize,
+        buf: UserSliceWo,
+        offset: u64,
+        flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
@@ -266,7 +274,13 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn kwrite(&self, file: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        file: usize,
+        buf: UserSliceRo,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;

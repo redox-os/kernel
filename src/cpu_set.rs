@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use alloc::string::{ToString, String};
+use alloc::string::{String, ToString};
 
 /// A unique number used internally by the kernel to identify CPUs.
 ///
@@ -83,11 +83,15 @@ impl LogicalCpuSet {
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = LogicalCpuId> + '_ {
         // TODO: Will this be optimized away?
-        self.0.iter_mut().enumerate().flat_map(move |(i, w)| (0..usize::BITS).filter_map(move |b| if *w.get_mut() & 1 << b != 0 {
-            Some(LogicalCpuId::new(i as u32 * usize::BITS + b))
-        } else {
-            None
-        }))
+        self.0.iter_mut().enumerate().flat_map(move |(i, w)| {
+            (0..usize::BITS).filter_map(move |b| {
+                if *w.get_mut() & 1 << b != 0 {
+                    Some(LogicalCpuId::new(i as u32 * usize::BITS + b))
+                } else {
+                    None
+                }
+            })
+        })
     }
 }
 

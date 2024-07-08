@@ -407,13 +407,15 @@ macro_rules! exception_stack {
 }
 #[naked]
 pub unsafe extern "C" fn enter_usermode() -> ! {
-    core::arch::asm!(concat!(
-        "blr x28\n",
-        // Restore all userspace registers
-        pop_special!(),
-        pop_scratch!(),
-        pop_preserved!(),
-
-        "eret\n",
-    ), options(noreturn));
+    core::arch::asm!(
+        concat!(
+            "blr x28\n",
+            // Restore all userspace registers
+            pop_special!(),
+            pop_scratch!(),
+            pop_preserved!(),
+            "eret\n",
+        ),
+        options(noreturn)
+    );
 }

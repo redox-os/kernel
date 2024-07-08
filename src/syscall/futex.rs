@@ -2,15 +2,22 @@
 //! Futex or Fast Userspace Mutex is "a method for waiting until a certain condition becomes true."
 //!
 //! For more information about futexes, please read [this](https://eli.thegreenplace.net/2018/basics-of-futexes/) blog post, and the [futex(2)](http://man7.org/linux/man-pages/man2/futex.2.html) man page
-use alloc::{collections::VecDeque, sync::{Arc, Weak}};
-use syscall::EINTR;
+use alloc::{
+    collections::VecDeque,
+    sync::{Arc, Weak},
+};
 use core::sync::atomic::{AtomicU32, Ordering};
 use rmm::Arch;
 use spin::RwLock;
 use spinning_top::RwSpinlock;
+use syscall::EINTR;
 
 use crate::{
-    context::{self, memory::{AddrSpace, AddrSpaceWrapper}, Context},
+    context::{
+        self,
+        memory::{AddrSpace, AddrSpaceWrapper},
+        Context,
+    },
     memory::PhysicalAddress,
     paging::{Page, VirtualAddress},
     time,
@@ -68,9 +75,8 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
     let addr_space_guard = current_addrsp.acquire_read();
 
     let target_virtaddr = VirtualAddress::new(addr);
-    let target_physaddr =
-        validate_and_translate_virt(&*addr_space_guard, target_virtaddr)
-            .ok_or(Error::new(EFAULT))?;
+    let target_physaddr = validate_and_translate_virt(&*addr_space_guard, target_virtaddr)
+        .ok_or(Error::new(EFAULT))?;
 
     match op {
         // TODO: FUTEX_WAIT_MULTIPLE?
@@ -131,7 +137,9 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                 {
                     let mut context = context_lock.write();
 
-                    context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128);
+                    context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| {
+                        tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128
+                    });
                     if let Some((tctl, _pctl, _)) = context.sigcontrol() {
                         if tctl.currently_pending_unblocked() != 0 {
                             return Err(Error::new(EINTR));
@@ -171,7 +179,8 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                 // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                 while i < futexes.len() && woken < val {
                     if futexes[i].target_physaddr != target_physaddr
-                        && (futexes[i].target_virtaddr != target_virtaddr || !Arc::downgrade(&current_addrsp).ptr_eq(&futexes[i].addr_space))
+                        && (futexes[i].target_virtaddr != target_virtaddr
+                            || !Arc::downgrade(&current_addrsp).ptr_eq(&futexes[i].addr_space))
                     {
                         i += 1;
                         continue;

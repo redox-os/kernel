@@ -5,7 +5,11 @@ use spinning_top::guard::ArcRwSpinlockWriteGuard;
 use syscall::PtraceFlags;
 
 use crate::{
-    context::{arch, contexts, Context}, cpu_set::LogicalCpuId, interrupt, percpu::PercpuBlock, ptrace, time
+    context::{arch, contexts, Context},
+    cpu_set::LogicalCpuId,
+    interrupt,
+    percpu::PercpuBlock,
+    ptrace, time,
 };
 
 use super::ContextId;
@@ -152,7 +156,9 @@ pub fn switch() -> SwitchResult {
             let mut next_context_guard = next_context_lock.write_arc();
 
             // Update state of next context and check if runnable
-            if let UpdateResult::CanSwitch = unsafe { update_runnable(&mut *next_context_guard, cpu_id) } {
+            if let UpdateResult::CanSwitch =
+                unsafe { update_runnable(&mut *next_context_guard, cpu_id) }
+            {
                 // Store locks for previous and next context
                 switch_context_opt = Some((prev_context_guard, next_context_guard));
                 break;
@@ -181,12 +187,10 @@ pub fn switch() -> SwitchResult {
         percpu.switch_internals.context_id.set(next_context.id);
 
         // FIXME set th switch result in arch::switch_to instead
-        let prev_context = unsafe {
-            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard)
-        };
-        let next_context = unsafe {
-            mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard)
-        };
+        let prev_context =
+            unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard) };
+        let next_context =
+            unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard) };
 
         percpu
             .switch_internals
@@ -196,9 +200,14 @@ pub fn switch() -> SwitchResult {
                 _next_guard: next_context_guard,
             }));
 
-        let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions().get(&next_context.id).map(|s| (Arc::downgrade(s), s.data.lock().breakpoint)) {
+        let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
+            .get(&next_context.id)
+            .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
+        {
             (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
-        } else { (None, PtraceFlags::empty()) };
+        } else {
+            (None, PtraceFlags::empty())
+        };
 
         *percpu.ptrace_session.borrow_mut() = ptrace_session;
         percpu.ptrace_flags.set(ptrace_flags);
@@ -206,12 +215,17 @@ pub fn switch() -> SwitchResult {
 
         #[cfg(feature = "syscall_debug")]
         {
-            prev_context.syscall_debug_info = percpu.syscall_debug_info.replace(next_context.syscall_debug_info);
+            prev_context.syscall_debug_info = percpu
+                .syscall_debug_info
+                .replace(next_context.syscall_debug_info);
             prev_context.syscall_debug_info.on_switch_from();
             next_context.syscall_debug_info.on_switch_to();
         }
 
-        percpu.switch_internals.being_sigkilled.set(next_context.being_sigkilled);
+        percpu
+            .switch_internals
+            .being_sigkilled
+            .set(next_context.being_sigkilled);
 
         unsafe {
             arch::switch_to(prev_context, next_context);

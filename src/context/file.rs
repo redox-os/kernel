@@ -42,7 +42,18 @@ impl FileDescription {
 }
 impl InternalFlags {
     pub fn from_extra0(fl: u8) -> Option<Self> {
-        Some(NewFdFlags::from_bits(fl)?.iter().map(|fd| if fd == NewFdFlags::POSITIONED { Self::POSITIONED } else { Self::empty() }).collect())
+        Some(
+            NewFdFlags::from_bits(fl)?
+                .iter()
+                .map(|fd| {
+                    if fd == NewFdFlags::POSITIONED {
+                        Self::POSITIONED
+                    } else {
+                        Self::empty()
+                    }
+                })
+                .collect(),
+        )
     }
 }
 

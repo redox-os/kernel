@@ -4,7 +4,10 @@ use alloc::{sync::Arc, vec::Vec};
 use rmm::PhysicalAddress;
 
 use crate::{
-    context::{file::InternalFlags, memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan}},
+    context::{
+        file::InternalFlags,
+        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
+    },
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
     paging::VirtualAddress,
 };
@@ -133,44 +136,43 @@ impl MemoryScheme {
 
         let current_addrsp = AddrSpace::current()?;
 
-        let base_page = current_addrsp.acquire_write()
-            .mmap_anywhere(
-                &current_addrsp,
-                page_count,
-                flags,
-                |dst_page, mut page_flags, dst_mapper, dst_flusher| {
-                    match memory_type {
-                        // Default
-                        MemoryType::Writeback => (),
+        let base_page = current_addrsp.acquire_write().mmap_anywhere(
+            &current_addrsp,
+            page_count,
+            flags,
+            |dst_page, mut page_flags, dst_mapper, dst_flusher| {
+                match memory_type {
+                    // Default
+                    MemoryType::Writeback => (),
 
-                        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
-                        MemoryType::WriteCombining => {
-                            page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true)
-                        }
-
-                        MemoryType::Uncacheable => {
-                            page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true)
-                        }
-
-                        // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
-                        // uncacheable, write-combining, write-through, write-protect, and write-back.
-                        #[cfg(target_arch = "aarch64")]
-                        MemoryType::DeviceMemory => {
-                            page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true)
-                        }
-
-                        _ => (),
+                    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
+                    MemoryType::WriteCombining => {
+                        page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true)
                     }
 
-                    Grant::physmap(
-                        Frame::containing_address(PhysicalAddress::new(physical_address)),
-                        PageSpan::new(dst_page, page_count.get()),
-                        page_flags,
-                        dst_mapper,
-                        dst_flusher,
-                    )
-                },
-            )?;
+                    MemoryType::Uncacheable => {
+                        page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true)
+                    }
+
+                    // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
+                    // uncacheable, write-combining, write-through, write-protect, and write-back.
+                    #[cfg(target_arch = "aarch64")]
+                    MemoryType::DeviceMemory => {
+                        page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true)
+                    }
+
+                    _ => (),
+                }
+
+                Grant::physmap(
+                    Frame::containing_address(PhysicalAddress::new(physical_address)),
+                    PageSpan::new(dst_page, page_count.get()),
+                    page_flags,
+                    dst_mapper,
+                    dst_flusher,
+                )
+            },
+        )?;
         Ok(base_page.start_address().data())
     }
 }

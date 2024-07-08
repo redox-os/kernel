@@ -54,9 +54,7 @@ pub fn init_logger(log_func: fn(&log::Record)) {
         ::log::set_max_level(::log::LevelFilter::Info);
         called = true;
 
-        RedoxLogger {
-            log_func,
-        }
+        RedoxLogger { log_func }
     });
     if !called {
         log::error!("Tried to reinitialize the logger, which is not possible. Ignoring.")
