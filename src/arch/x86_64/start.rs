@@ -5,6 +5,8 @@
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
+use log::info;
+
 #[cfg(feature = "acpi")]
 use crate::acpi;
 
@@ -12,11 +14,9 @@ use crate::acpi;
 use crate::devices::graphical_debug;
 use crate::{
     allocator,
-    arch::{flags::*, pti},
     cpu_set::LogicalCpuId,
     device, gdt, idt, interrupt,
-    log::{self, info},
-    memory, misc,
+    misc,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
 };
 
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         device::system76_ec::init();
 
         // Initialize logger
-        log::init_logger(|r| {
+        crate::log::init_logger(|r| {
             use core::fmt::Write;
             let _ = writeln!(
                 super::debug::Writer::new(),
@@ -190,7 +190,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         idt::init_paging_post_heap(LogicalCpuId::BSP);
 
         // Activate memory logging
-        log::init();
+        crate::log::init();
 
         // Initialize miscellaneous processor features
         misc::init(LogicalCpuId::BSP);

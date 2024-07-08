@@ -1,4 +1,4 @@
-use crate::log::{debug, info};
+use log::{debug, info};
 use alloc::boxed::Box;
 
 use crate::{

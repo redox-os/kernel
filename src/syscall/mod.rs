@@ -16,7 +16,7 @@ pub use self::{
 
 use self::{
     data::{Map, TimeSpec},
-    error::{Error, Result, EINTR, EOVERFLOW, ENOSYS},
+    error::{Error, Result, EOVERFLOW, ENOSYS},
     flag::{EventFlags, MapFlags, WaitFlags},
     number::*,
     usercopy::UserSlice,
@@ -66,7 +66,7 @@ pub fn syscall(
     d: usize,
     e: usize,
     f: usize,
-    stack: &mut InterruptStack,
+    _stack: &mut InterruptStack,
 ) -> usize {
     #[inline(always)]
     fn inner(

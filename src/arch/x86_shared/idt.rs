@@ -311,10 +311,10 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     idt.set_reserved_mut(IpiKind::Switch as u8, true);
     idt.set_reserved_mut(IpiKind::Tlb as u8, true);
     idt.set_reserved_mut(IpiKind::Pit as u8, true);
-    let current_idt = &mut idt.entries;
 
     #[cfg(target_arch = "x86")]
     {
+        let current_idt = &mut idt.entries;
         // Set syscall function
         current_idt[0x80].set_func(syscall::syscall);
         current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);

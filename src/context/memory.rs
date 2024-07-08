@@ -490,12 +490,15 @@ impl AddrSpaceWrapper {
             frame
         };
 
-        match get_page_info(frame).expect("missing page info for Allocated grant").add_ref(RefKind::Shared) {
+        let frame = match get_page_info(frame).expect("missing page info for Allocated grant").add_ref(RefKind::Shared) {
             Ok(_) => Ok(unsafe { RaiiFrame::new_unchecked(frame) }),
             Err(AddRefError::RcOverflow) => Err(Error::new(ENOMEM)),
             Err(AddRefError::SharedToCow) => unreachable!(),
             Err(AddRefError::CowToShared) => unreachable!("if it was CoW, it was read-only, but in that case we already called correct_inner"),
-        }
+        };
+        drop(guard);
+
+        frame
     }
 }
 impl AddrSpace {

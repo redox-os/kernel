@@ -10,9 +10,9 @@ use spin::{Mutex, RwLock};
 use crate::{
     context::file::InternalFlags, event, sync::WaitCondition, syscall::{
         data::Stat,
-        error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, ESPIPE},
+        error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
         flag::{
-            EventFlags, EVENT_READ, EVENT_WRITE, F_GETFL, F_SETFL, MODE_FIFO, O_ACCMODE, O_NONBLOCK,
+            EventFlags, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK,
         },
         usercopy::{UserSliceRo, UserSliceWo},
     }

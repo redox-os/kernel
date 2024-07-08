@@ -41,7 +41,7 @@ impl KernelScheme for EventScheme {
         queue.read(buf, flags & O_NONBLOCK as u32 == 0)
     }
 
-    fn kwrite(&self, id: usize, buf: UserSliceRo, flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwrite(&self, id: usize, buf: UserSliceRo, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let id = EventQueueId::from(id);
 
         let queue = {

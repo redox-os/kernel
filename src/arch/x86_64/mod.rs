@@ -1,5 +1,4 @@
 pub use crate::arch::x86_shared::*;
-use crate::cpu_set::LogicalCpuId;
 
 pub mod alternative;
 

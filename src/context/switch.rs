@@ -8,7 +8,7 @@ use crate::{
     context::{arch, contexts, Context}, cpu_set::LogicalCpuId, interrupt, percpu::PercpuBlock, ptrace, time
 };
 
-use super::{ContextId, Status};
+use super::ContextId;
 
 enum UpdateResult {
     CanSwitch,

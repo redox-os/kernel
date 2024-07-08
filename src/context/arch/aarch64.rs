@@ -23,8 +23,6 @@ pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
 
 // 512 bytes for registers, extra bytes for fpcr and fpsr
 pub const KFX_ALIGN: usize = 16;
-pub const KSTACK_SIZE: usize = 65536;
-pub const KSTACK_ALIGN: usize = 16;
 
 #[derive(Clone, Debug)]
 pub struct Context {

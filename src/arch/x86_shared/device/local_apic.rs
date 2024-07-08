@@ -4,7 +4,7 @@ use core::{
 };
 use x86::msr::*;
 
-use crate::{paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress}, ipi::IpiKind};
+use crate::{paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch}, ipi::IpiKind};
 
 use crate::arch::cpuid::cpuid;
 
@@ -50,7 +50,7 @@ impl LocalApic {
 
         let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
         #[cfg(target_arch = "x86")]
-        let virtaddr = VirtualAddress::new(crate::LAPIC_OFFSET);
+        let virtaddr = rmm::VirtualAddress::new(crate::LAPIC_OFFSET);
         #[cfg(target_arch = "x86_64")]
         let virtaddr = RmmA::phys_to_virt(physaddr);
 

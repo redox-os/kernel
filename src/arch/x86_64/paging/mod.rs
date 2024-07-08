@@ -6,7 +6,7 @@ use core::fmt::Debug;
 use x86::msr;
 
 pub use super::CurrentRmmArch as RmmA;
-pub use rmm::{Arch as RmmArch, Flusher, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
+pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 pub use crate::rmm::KernelMapper;

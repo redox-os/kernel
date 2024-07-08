@@ -4,10 +4,9 @@ use core::{
     sync::atomic::{self, AtomicUsize, Ordering},
 };
 use rmm::{
-    Arch, BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea, PageFlags, PageMapper,
+    Arch, BumpAllocator, MemoryArea, PageFlags, PageMapper,
     PhysicalAddress, TableKind, VirtualAddress, KILOBYTE, MEGABYTE,
 };
-use spin::Mutex;
 
 use crate::{cpu_set::LogicalCpuId, memory::TheFrameAllocator};
 

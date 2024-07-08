@@ -16,9 +16,9 @@ use crate::{
     allocator, device, dtb,
     init::device_tree,
     interrupt,
-    log::{self, info},
     paging::{self, KernelMapper},
 };
+use log::info;
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -81,7 +81,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         //graphical_debug::init(env);
 
         // Initialize logger
-        log::init_logger(|r| {
+        crate::log::init_logger(|r| {
             use core::fmt::Write;
             let _ = write!(
                 crate::debug::Writer::new(),
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         //graphical_debug::init_heap();
 
         // Activate memory logging
-        log::init();
+        crate::log::init();
 
         dtb::init(Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size)));
 

@@ -1,7 +1,6 @@
 //! Global descriptor table
 
-use core::{cell::{Cell, RefCell}, convert::TryInto, mem::{self, size_of}};
-use core::sync::atomic::AtomicBool;
+use core::{convert::TryInto, mem::size_of};
 
 use crate::{
     cpu_set::LogicalCpuId,

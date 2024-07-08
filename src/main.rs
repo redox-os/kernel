@@ -72,16 +72,16 @@ mod common;
 
 /// Architecture-dependent stuff
 #[macro_use]
+#[allow(dead_code)] // TODO
 mod arch;
 use crate::arch::*;
-
-use crate::log::info;
 
 /// Heap allocators
 mod allocator;
 
 /// ACPI table parsing
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+#[allow(dead_code)] // TODO
 mod acpi;
 
 #[cfg(all(any(target_arch = "aarch64")))]
@@ -111,6 +111,7 @@ mod externs;
 
 /// Logging
 mod log;
+use ::log::info;
 
 /// Memory management
 mod memory;
@@ -263,7 +264,7 @@ pub fn ksignal(signal: usize) {
     {
         let contexts = context::contexts();
         if let Some(context_lock) = contexts.current() {
-            let mut context = context_lock.write();
+            let context = context_lock.read();
             info!("NAME {}", context.name);
         }
     }

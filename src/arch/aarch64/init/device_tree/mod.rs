@@ -2,12 +2,19 @@ extern crate byteorder;
 extern crate fdt;
 
 use self::byteorder::{ByteOrder, BE};
-use crate::{
-    log::{debug, info},
-    memory::MemoryArea,
-};
 use core::slice;
 use fdt::Node;
+
+use log::{info, debug};
+
+#[derive(Copy, Clone, Debug, Default)]
+#[repr(C)]
+pub struct MemoryArea {
+    pub base_addr: u64,
+    pub length: u64,
+    pub _type: u32,
+    pub acpi: u32,
+}
 
 pub static mut MEMORY_MAP: [MemoryArea; 512] = [MemoryArea {
     base_addr: 0,

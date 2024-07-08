@@ -106,7 +106,7 @@ impl ContextList {
 
     /// Spawn a context from a function.
     pub fn spawn(&mut self, userspace_allowed: bool, func: extern "C" fn()) -> Result<&Arc<RwSpinlock<Context>>> {
-        let mut stack = Kstack::new()?;
+        let stack = Kstack::new()?;
 
         let context_lock = self.new_context()?;
         {

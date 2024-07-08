@@ -5,7 +5,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 
 use crate::{
     context::{self, file::InternalFlags},

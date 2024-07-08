@@ -1,5 +1,3 @@
-use core::mem;
-
 use crate::{memory::ArchIntCtx, syscall::IntRegisters};
 
 use super::super::flags::*;

@@ -2,7 +2,7 @@
 
 use crate::{
     event,
-    scheme::{self, SchemeId, SchemeNamespace},
+    scheme::{self, SchemeId},
     syscall::error::{Error, Result, EBADF},
 };
 use alloc::sync::Arc;

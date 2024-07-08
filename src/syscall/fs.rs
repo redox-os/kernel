@@ -6,7 +6,7 @@ use spin::RwLock;
 use crate::{
     context::{self, file::{FileDescription, FileDescriptor, InternalFlags}, memory::{AddrSpace, PageSpan}},
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, SchemeId},
+    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
     syscall::{data::Stat, error::*, flag::*},
 };
 

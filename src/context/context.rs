@@ -1,10 +1,10 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
-use syscall::{SigProcControl, Sigcontrol, SIGKILL, SIGSTOP, AtomicU64};
+use syscall::{SigProcControl, Sigcontrol};
 use core::{cmp::Ordering, mem::{self, size_of}, num::NonZeroUsize};
 use spin::RwLock;
 
 use crate::{
-    arch::{interrupt::InterruptStack, paging::PAGE_SIZE}, common::aligned_box::AlignedBox, context::{self, arch, file::FileDescriptor, memory::AddrSpace}, cpu_set::{LogicalCpuId, LogicalCpuSet}, ipi::{ipi, IpiKind, IpiTarget}, memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame}, paging::{RmmA, RmmArch}, percpu::PercpuBlock, scheme::{CallerCtx, FileHandle, SchemeNamespace}, sync::WaitMap,
+    arch::{interrupt::InterruptStack, paging::PAGE_SIZE}, common::aligned_box::AlignedBox, context::{self, arch, file::FileDescriptor}, cpu_set::{LogicalCpuId, LogicalCpuSet}, ipi::{ipi, IpiKind, IpiTarget}, memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame}, paging::{RmmA, RmmArch}, percpu::PercpuBlock, scheme::{CallerCtx, FileHandle, SchemeNamespace}, sync::WaitMap,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
@@ -591,15 +591,6 @@ impl Kstack {
         PAGE_SIZE << 4
     }
 }
-
-const _: () = {
-    if PAGE_SIZE << 4 != arch::KSTACK_SIZE {
-        panic!();
-    }
-    if arch::KSTACK_ALIGN > (PAGE_SIZE << 4) {
-        panic!();
-    }
-};
 
 impl Drop for Kstack {
     fn drop(&mut self) {

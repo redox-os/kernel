@@ -5,8 +5,8 @@ use crate::{
     device::uart_pl011::SerialPort,
     init::device_tree,
     interrupt::irq::trigger,
-    log::{debug, info},
 };
+use log::{debug, info};
 
 use super::irqchip::{register_irq, InterruptHandler, IRQ_CHIP};
 use crate::{dtb::DTB_BINARY, init::device_tree::find_compatible_node};

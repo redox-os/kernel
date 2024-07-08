@@ -12,7 +12,7 @@ use crate::{
     scheme::*,
     sync::WaitQueue,
     syscall::{
-        flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK},
+        flag::{EventFlags, EVENT_READ, O_NONBLOCK},
         usercopy::UserSliceWo,
     },
 };

@@ -5,10 +5,9 @@ use crate::arch::device::irqchip::IRQ_CHIP;
 use byteorder::{ByteOrder, BE};
 use fdt::{DeviceTree, Node};
 
-use crate::{
-    init::device_tree::find_compatible_node,
-    log::{debug, error, info},
-};
+use crate::init::device_tree::find_compatible_node;
+use log::{debug, error, info};
+
 use syscall::{
     error::{Error, EINVAL},
     Result,

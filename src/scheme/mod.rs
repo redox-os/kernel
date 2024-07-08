@@ -10,7 +10,7 @@ use alloc::{boxed::Box, collections::BTreeMap, string::ToString, sync::Arc, vec:
 use core::sync::atomic::AtomicUsize;
 use hashbrown::HashMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::{EventFlags, MunmapFlags, SendFdFlags, SEEK_CUR, SEEK_END, SEEK_SET};
+use syscall::{EventFlags, MunmapFlags, SendFdFlags};
 
 use crate::{
     context::{file::{FileDescription, InternalFlags}, memory::AddrSpaceWrapper},

@@ -11,18 +11,17 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
     usize,
 };
-use hashbrown::hash_map::{Entry, HashMap};
 use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
-    schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags}, FobtainFdFlags, MunmapFlags, SendFdFlags, F_SETFL, KSMSG_CANCEL, MAP_FIXED_NOREPLACE, SIGKILL, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP
+    schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags}, FobtainFdFlags, MunmapFlags, SendFdFlags, F_SETFL, KSMSG_CANCEL, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP
 };
 
 use crate::{
     context::{
         self, context::HardBlockedReason, file::{FileDescription, FileDescriptor, InternalFlags}, memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, DANGLING
-        }, BorrowedHtBuf, Context, ContextId, Status
+        }, BorrowedHtBuf, Context, Status
     },
     event,
     memory::Frame,
@@ -620,7 +619,7 @@ impl UserInner {
                         dst.copy_exactly(&self.translate_sqe_to_packet(&sqe)?)?;
                         bytes_read += size_of::<Packet>();
                     }
-                    Err(error) if bytes_read > 0 => return Ok(bytes_read),
+                    Err(_error) if bytes_read > 0 => return Ok(bytes_read),
                     Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => return Ok(bytes_read),
                     Err(error) => return Err(error),
                 }
@@ -740,7 +739,7 @@ impl UserInner {
     pub fn request_fmap(
         &self,
         id: usize,
-        offset: u64,
+        _offset: u64,
         required_page_count: usize,
         flags: MapFlags,
     ) -> Result<()> {
@@ -1200,7 +1199,7 @@ impl KernelScheme for UserScheme {
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
         match inner.call_extended(ctx, None, Opcode::Open, [address.base(), address.len(), flags])? {
             Response::Regular(code, fl) => Ok({
-                let fd = Error::demux(code)?;
+                let _ = Error::demux(code)?;
                 OpenResult::SchemeLocal(code, InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?)
             }),
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
@@ -1401,7 +1400,7 @@ impl KernelScheme for UserScheme {
         number: usize,
         desc: Arc<RwLock<FileDescription>>,
         flags: SendFdFlags,
-        arg: u64,
+        _arg: u64,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 

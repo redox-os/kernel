@@ -13,11 +13,11 @@ use crate::{
     allocator,
     arch::{flags::*, pti},
     device, gdt, idt, interrupt,
-    log::{self, info},
     memory,
     paging::{self, KernelMapper, PhysicalAddress, RmmA, RmmArch, TableKind},
     cpu_set::LogicalCpuId,
 };
+use log::info;
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: usize = 0;
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         device::system76_ec::init();
 
         // Initialize logger
-        log::init_logger(|r| {
+        crate::log::init_logger(|r| {
             use core::fmt::Write;
             let _ = writeln!(
                 super::debug::Writer::new(),
@@ -183,7 +183,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         idt::init_paging_post_heap(LogicalCpuId::BSP);
 
         // Activate memory logging
-        log::init();
+        crate::log::init();
 
         // Initialize devices
         device::init();

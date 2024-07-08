@@ -192,12 +192,6 @@ impl<const READ: bool> UserSlice<READ, true> {
             .copy_from_slice(&int.to_ne_bytes())?;
         Ok(())
     }
-    pub fn write_u64(self, int: u64) -> Result<()> {
-        self.limit(core::mem::size_of::<u64>())
-            .ok_or(Error::new(EINVAL))?
-            .copy_from_slice(&int.to_ne_bytes())?;
-        Ok(())
-    }
 }
 
 impl UserSliceRo {

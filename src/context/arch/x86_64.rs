@@ -22,12 +22,8 @@ pub const KFX_ALIGN: usize = 16;
 
 #[cfg(not(cpu_feature_never = "xsave"))]
 pub const KFX_ALIGN: usize = 64;
-pub const KSTACK_SIZE: usize = 65536;
 
-// Why not, helps with guarding etc.
-// TODO: Unmap the 63rd page, for stack guarding! Then re-map it onto the kernel heap when freeing.
-// Use a RAII guard.
-pub const KSTACK_ALIGN: usize = 4096;
+// TODO: stack guarding?
 
 #[derive(Clone, Debug)]
 #[repr(C)]

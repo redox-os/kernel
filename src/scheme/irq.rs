@@ -353,7 +353,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
         buf.copy_common_bytes_from_slice(&scheme_path)
     }
-    fn kreadoff(&self, file: usize, buffer: UserSliceWo, offset: u64, flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(&self, file: usize, buffer: UserSliceWo, offset: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 

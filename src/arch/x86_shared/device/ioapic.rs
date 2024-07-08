@@ -11,7 +11,6 @@ use crate::{
     memory::Frame,
     paging::{
         entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
-        VirtualAddress,
     },
 };
 
@@ -237,7 +236,7 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static Mad
 
     let frame = Frame::containing_address(PhysicalAddress::new(madt_ioapic.address as usize));
     #[cfg(target_arch = "x86")]
-    let page = Page::containing_address(VirtualAddress::new(crate::IOAPIC_OFFSET));
+    let page = Page::containing_address(rmm::VirtualAddress::new(crate::IOAPIC_OFFSET));
     #[cfg(target_arch = "x86_64")]
     let page = Page::containing_address(RmmA::phys_to_virt(frame.start_address()));
 

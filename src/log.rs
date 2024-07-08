@@ -73,5 +73,3 @@ static mut LOGGER: RedoxLogger = RedoxLogger {
     log_func: |_| {},
     initialized: AtomicBool::new(false),
 };
-
-pub use log::{debug, error, info, set_max_level, warn};

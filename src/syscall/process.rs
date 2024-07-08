@@ -6,7 +6,7 @@ use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan}, switch::SwitchResult, ContextId, WaitpidKey
+    memory::{AddrSpace, Grant, PageSpan}, ContextId, WaitpidKey
 };
 
 use crate::{
@@ -24,7 +24,7 @@ use crate::{
     Bootstrap, CurrentRmmArch,
 };
 
-use super::usercopy::{UserSliceRo, UserSliceWo, UserSlice};
+use super::usercopy::UserSliceWo;
 
 pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(
@@ -106,7 +106,7 @@ pub fn exit(status: usize) -> ! {
         ptrace::close_tracee(pid);
     }
 
-    let _ = unsafe { context::switch() };
+    let _ = context::switch();
 
     unreachable!();
 }
@@ -187,7 +187,7 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                 // will additionally ignore, defer, or handle that signal.
                 context.status = context::Status::Runnable;
 
-                if let Some((tctl, pctl, st)) = context.sigcontrol() {
+                if let Some((tctl, pctl, _st)) = context.sigcontrol() {
                     if !pctl.signal_will_ign(SIGCONT, false) {
                         tctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
                     }
@@ -212,7 +212,7 @@ pub fn kill(pid: ContextId, sig: usize, parent_sigchld: bool) -> Result<usize> {
 
                 // exit() will signal the parent, rather than immediately in kill()
                 SendResult::Succeeded
-            } else if let Some((tctl, pctl, st)) = context.sigcontrol() && !pctl.signal_will_ign(sig, parent_sigchld) {
+            } else if let Some((tctl, pctl, _st)) = context.sigcontrol() && !pctl.signal_will_ign(sig, parent_sigchld) {
                 let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                 if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                     context.unblock();

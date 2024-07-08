@@ -7,10 +7,8 @@ use byteorder::{ByteOrder, BE};
 use fdt::DeviceTree;
 use syscall::Result;
 
-use crate::{
-    init::device_tree::travel_interrupt_ctrl,
-    log::{debug, error},
-};
+use crate::init::device_tree::travel_interrupt_ctrl;
+use log::{debug, error};
 
 mod gic;
 mod gicv3;

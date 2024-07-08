@@ -7,7 +7,7 @@ use syscall::EINTR;
 use core::sync::atomic::{AtomicU32, Ordering};
 use rmm::Arch;
 use spin::RwLock;
-use spinning_top::{guard::RwSpinlockUpgradableReadGuard, RwSpinlock};
+use spinning_top::RwSpinlock;
 
 use crate::{
     context::{self, memory::{AddrSpace, AddrSpaceWrapper}, Context},
@@ -18,8 +18,8 @@ use crate::{
 
 use crate::syscall::{
     data::TimeSpec,
-    error::{Error, Result, EAGAIN, EFAULT, EINVAL, ESRCH, ETIMEDOUT},
-    flag::{FUTEX_REQUEUE, FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE},
+    error::{Error, Result, EAGAIN, EFAULT, EINVAL, ETIMEDOUT},
+    flag::{FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE},
 };
 
 use super::usercopy::UserSlice;
@@ -60,7 +60,7 @@ fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Optio
     Some(frame.add(off))
 }
 
-pub fn futex(addr: usize, op: usize, val: usize, val2: usize, addr2: usize) -> Result<usize> {
+pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> Result<usize> {
     let current_addrsp = AddrSpace::current()?;
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it

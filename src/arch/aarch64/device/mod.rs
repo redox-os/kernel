@@ -2,10 +2,10 @@ use core::arch::asm;
 
 use crate::{
     dtb::DTB_BINARY,
-    log::info,
     memory::Frame,
     paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress},
 };
+use log::info;
 
 pub mod cpu;
 pub mod generic_timer;

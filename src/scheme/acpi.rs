@@ -17,9 +17,9 @@ use crate::syscall::{
     error::{Error, Result, EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS},
     flag::{
         EventFlags, EVENT_READ, MODE_CHR, MODE_DIR, MODE_FILE, O_ACCMODE, O_CREAT, O_DIRECTORY,
-        O_EXCL, O_RDONLY, O_STAT, O_SYMLINK, SEEK_CUR, SEEK_END, SEEK_SET,
+        O_EXCL, O_RDONLY, O_STAT, O_SYMLINK,
     },
-    usercopy::{UserSliceRo, UserSliceWo},
+    usercopy::UserSliceWo,
 };
 
 use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
@@ -186,7 +186,7 @@ impl KernelScheme for AcpiScheme {
         }
         Ok(())
     }
-    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, flags: u32, stored_flags: u32) -> Result<usize> {
+    fn kreadoff(&self, id: usize, dst_buf: UserSliceWo, offset: u64, _flags: u32, _stored_flags: u32) -> Result<usize> {
         let Ok(offset) = usize::try_from(offset) else {
             return Ok(0);
         };

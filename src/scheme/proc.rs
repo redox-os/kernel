@@ -1,7 +1,7 @@
 use crate::{
     arch::paging::{Page, RmmA, RmmArch, VirtualAddress},
     context::{
-        self, context::{HardBlockedReason, SignalState}, file::{FileDescriptor, InternalFlags}, memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan}, Context, ContextId, Status
+        self, context::{HardBlockedReason, SignalState}, file::{FileDescriptor, InternalFlags}, memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan}, Context, ContextId, Status
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -729,7 +729,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             _ => Err(Error::new(EBADF)),
         }
     }
-    fn kreadoff(&self, id: usize, buf: UserSliceWo, offset: u64, read_flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kreadoff(&self, id: usize, buf: UserSliceWo, offset: u64, _read_flags: u32, _stored_flags: u32) -> Result<usize> {
         // Don't hold a global lock during the context switch later on
         let info = {
             let handles = HANDLES.read();
@@ -943,7 +943,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             _ => Err(Error::new(EBADF)),
         }
     }
-    fn kwriteoff(&self, id: usize, buf: UserSliceRo, _offset: u64, fcntl_flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kwriteoff(&self, id: usize, buf: UserSliceRo, _offset: u64, _fcntl_flags: u32, _stored_flags: u32) -> Result<usize> {
         // TODO: offset
 
         // Don't hold a global lock during the context switch later on
@@ -1138,8 +1138,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 }
 
                 let state = if data.thread_control_addr != 0 && data.proc_control_addr != 0 {
-                    let offset = u16::try_from(data.thread_control_addr % PAGE_SIZE).unwrap();
-
                     let validate_off = |addr, sz| {
                         let off = addr % PAGE_SIZE;
                         if off % mem::align_of::<usize>() == 0 && off + sz <= PAGE_SIZE {

@@ -4,10 +4,8 @@ use core::{arch::asm, ptr::{read_volatile, write_volatile}};
 use byteorder::{ByteOrder, BE};
 use fdt::{DeviceTree, Node};
 
-use crate::{
-    init::device_tree::find_compatible_node,
-    log::{debug, info},
-};
+use crate::init::device_tree::find_compatible_node;
+use log::{debug, info};
 use super::gic::GicDistIf;
 use syscall::{
     error::{Error, EINVAL},

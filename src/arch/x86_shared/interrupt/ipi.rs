@@ -1,7 +1,3 @@
-use core::sync::atomic::Ordering;
-
-use x86::tlb;
-
 use crate::percpu::PercpuBlock;
 use crate::{context, device::local_apic::LOCAL_APIC};
 

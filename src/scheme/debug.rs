@@ -7,7 +7,7 @@ use crate::{
     scheme::*,
     sync::WaitQueue,
     syscall::{
-        flag::{EventFlags, EVENT_READ, F_GETFL, F_SETFL, O_ACCMODE, O_NONBLOCK},
+        flag::{EventFlags, EVENT_READ, O_NONBLOCK},
         usercopy::{UserSliceRo, UserSliceWo},
     },
 };
@@ -95,7 +95,7 @@ impl KernelScheme for DebugScheme {
         Ok(())
     }
     fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
-        let handle = {
+        let _handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };

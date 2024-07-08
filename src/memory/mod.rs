@@ -19,16 +19,6 @@ use rmm::{
 };
 use crate::syscall::error::{ENOMEM, Error};
 
-/// A memory map area
-#[derive(Copy, Clone, Debug, Default)]
-#[repr(packed)]
-pub struct MemoryArea {
-    pub base_addr: u64,
-    pub length: u64,
-    pub _type: u32,
-    pub acpi: u32,
-}
-
 /// Get the number of frames available
 pub fn free_frames() -> usize {
     total_frames() - used_frames()
@@ -125,7 +115,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
 
         let sibling = Frame::containing_address(PhysicalAddress::new(current.start_address().data() ^ (PAGE_SIZE << merge_order)));
 
-        let Some(_) = get_page_info(current) else {
+        let Some(_cur_info) = get_page_info(current) else {
             unreachable!("attempting to free non-allocator-owned page");
         };
 

@@ -1,19 +1,7 @@
-use alloc::sync::Arc;
-use core::{mem::size_of, sync::atomic::Ordering};
-use syscall::{
-    flag::{
-        PTRACE_FLAG_IGNORE, PTRACE_STOP_SIGNAL, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU
-    },
-    ptrace_event, IntRegisters, SigcontrolFlags,
-};
+use core::sync::atomic::Ordering;
 
-use crate::{
-    context::{self, switch, Status, WaitpidKey},
-    ptrace,
-    syscall::usercopy::UserSlice, stop::{kstop, kreset},
-};
-
-use super::ContextId;
+use crate::context;
+use crate::syscall::flag::{SIGKILL, SigcontrolFlags};
 
 pub fn signal_handler() {
     let context_lock = context::current().expect("running signal handler outside of context");
@@ -31,7 +19,7 @@ pub fn signal_handler() {
     .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));*/
 
     // TODO: thumbs_down
-    let Some((thread_ctl, proc_ctl, st)) = context.sigcontrol() else {
+    let Some((thread_ctl, _proc_ctl, st)) = context.sigcontrol() else {
         // Discard signal if sigcontrol is unset.
         log::trace!("no sigcontrol, returning");
         return;
@@ -75,11 +63,11 @@ pub fn signal_handler() {
 
     thread_ctl.control_flags.store((control_flags | SigcontrolFlags::INHIBIT_DELIVERY).bits(), Ordering::Release);
 }
-pub fn excp_handler(signal: usize) {
+pub fn excp_handler(_signal: usize) {
      let current = context::current().expect("CPU exception but not inside of context!");
-     let mut context = current.write();
+     let context = current.write();
 
-     let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+     let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
          drop(context);
          crate::syscall::process::exit(SIGKILL << 8);
      };
