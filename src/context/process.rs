@@ -1,21 +1,28 @@
-use core::ops::{Deref, DerefMut};
+use core::{
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 // TODO: move all this code to userspace
-use alloc::collections::BTreeMap;
-use alloc::sync::{Arc, Weak};
-use alloc::vec::Vec;
+use alloc::{
+    collections::BTreeMap,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 
 use spin::RwLock;
 use spinning_top::RwSpinlock;
 
-use syscall::{Error, Result, ESRCH};
+use syscall::{Error, Result, ENOMEM, ESRCH};
 
-use crate::scheme::{CallerCtx, SchemeNamespace};
-use crate::sync::WaitMap;
+use crate::{
+    scheme::{CallerCtx, SchemeNamespace},
+    sync::WaitMap,
+};
 
 use crate::context::{self, Context, WaitpidKey};
 
-int_like!(ProcessId, usize);
+int_like!(ProcessId, AtomicProcessId, usize, AtomicUsize);
 
 #[derive(Debug)]
 pub struct Process {
@@ -25,7 +32,7 @@ pub struct Process {
     /// Threads of process
     pub threads: Vec<Weak<RwSpinlock<Context>>>,
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ProcessInfo {
     /// The process ID of this process
     pub pid: ProcessId,
@@ -63,7 +70,10 @@ impl DerefMut for Process {
     }
 }
 
-pub static PROCESSES: RwLock<BTreeMap<ProcessId, Arc<RwLock<Process>>>> = RwLock::new(BTreeMap::new());
+pub const INIT: ProcessId = ProcessId::new(1);
+static NEXT_PID: AtomicProcessId = AtomicProcessId::new(INIT);
+pub static PROCESSES: RwLock<BTreeMap<ProcessId, Arc<RwLock<Process>>>> =
+    RwLock::new(BTreeMap::new());
 
 /// Get an iterator of all parents
 pub fn ancestors(
@@ -82,7 +92,9 @@ pub fn ancestors(
 
 pub fn current() -> Result<Arc<RwLock<Process>>> {
     let pid = context::current()?.read().pid;
-    Ok(Arc::clone(PROCESSES.read().get(&pid).ok_or(Error::new(ESRCH))?))
+    Ok(Arc::clone(
+        PROCESSES.read().get(&pid).ok_or(Error::new(ESRCH))?,
+    ))
 }
 impl Process {
     pub fn caller_ctx(&self) -> CallerCtx {
@@ -92,4 +104,13 @@ impl Process {
             gid: self.egid,
         }
     }
+}
+pub fn new_process(info: impl FnOnce(ProcessId) -> ProcessInfo) -> Result<Arc<RwLock<Process>>> {
+    let pid = NEXT_PID.fetch_add(ProcessId::new(1), Ordering::Relaxed);
+    Arc::try_new(RwLock::new(Process {
+        waitpid: Arc::try_new(WaitMap::new()).map_err(|_| Error::new(ENOMEM))?,
+        threads: Vec::new(),
+        info: info(pid),
+    }))
+    .map_err(|_| Error::new(ENOMEM))
 }

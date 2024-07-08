@@ -2,7 +2,7 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{borrow::Cow, sync::Arc};
+use alloc::{borrow::Cow, sync::Arc, vec::Vec};
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use spinning_top::RwSpinlock;
@@ -11,10 +11,11 @@ use crate::{
     cpu_set::LogicalCpuSet,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
+    sync::WaitMap,
     syscall::error::{Error, Result, ESRCH},
 };
 
-use self::process::ProcessId;
+use self::process::{Process, ProcessId, ProcessInfo};
 pub use self::{
     context::{BorrowedHtBuf, Context, ContextId, Status, WaitpidKey},
     list::ContextList,
@@ -73,8 +74,16 @@ pub use self::arch::empty_cr3;
 pub fn init() {
     let mut contexts = contexts_mut();
     let id = ContextId::from(crate::cpu_id().get() as usize + 1);
+
+    let pid = ProcessId::new(0);
+    let process = Arc::new(RwLock::new(Process {
+        info: ProcessInfo::default(),
+        waitpid: Arc::new(WaitMap::new()),
+        threads: Vec::new(),
+    }));
+
     let context_lock = contexts
-        .insert_context_raw(id)
+        .insert_context_raw(id, pid, process)
         .expect("could not initialize first context");
     let mut context = context_lock.write();
     context.sched_affinity = LogicalCpuSet::empty();

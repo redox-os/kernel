@@ -93,6 +93,15 @@ macro_rules! int_like {
             }
             #[allow(dead_code)]
             #[inline]
+            pub fn fetch_add(
+                &self,
+                with: $new_type_name,
+                order: ::core::sync::atomic::Ordering,
+            ) -> $new_type_name {
+                $new_type_name::from(self.container.fetch_add(with.into(), order))
+            }
+            #[allow(dead_code)]
+            #[inline]
             pub fn compare_exchange(
                 &self,
                 current: $new_type_name,

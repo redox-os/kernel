@@ -236,7 +236,9 @@ pub fn syscall(
                 )?),
                 SYS_SETPGID => setpgid(ProcessId::from(b), ProcessId::from(c)).map(|()| 0),
                 SYS_SETREUID => setreuid(b as u32, c as u32).map(|()| 0),
-                SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
+                SYS_SETRENS => {
+                    setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0)
+                }
                 SYS_SETREGID => setregid(b as u32, c as u32).map(|()| 0),
                 SYS_UMASK => umask(b),
                 SYS_VIRTTOPHYS => virttophys(b),

@@ -7,7 +7,8 @@ use crate::{
     context::{
         self,
         file::{FileDescription, FileDescriptor, InternalFlags},
-        memory::{AddrSpace, PageSpan}, process,
+        memory::{AddrSpace, PageSpan},
+        process,
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
@@ -169,7 +170,10 @@ pub fn close(fd: FileHandle) -> Result<()> {
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
     let caller_ctx = process::current()?.read().caller_ctx();
-    let file = context::current()?.read().get_file(fd).ok_or(Error::new(EBADF))?;
+    let file = context::current()?
+        .read()
+        .get_file(fd)
+        .ok_or(Error::new(EBADF))?;
 
     if user_buf.is_empty() {
         Ok(FileDescriptor {
@@ -360,7 +364,10 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
             process.ens,
         ),
     };
-    let file = context::current()?.read().get_file(fd).ok_or(Error::new(EBADF))?;
+    let file = context::current()?
+        .read()
+        .get_file(fd)
+        .ok_or(Error::new(EBADF))?;
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;

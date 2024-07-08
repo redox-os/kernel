@@ -26,7 +26,8 @@ use ::core::sync::atomic::AtomicUsize;
 
 use super::{
     empty_cr3,
-    memory::{AddrSpaceWrapper, GrantFileRef}, process::{Process, ProcessId},
+    memory::{AddrSpaceWrapper, GrantFileRef},
+    process::{Process, ProcessId},
 };
 int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
@@ -65,7 +66,7 @@ pub enum HardBlockedReason {
     AwaitingMmap { file_ref: GrantFileRef },
     // TODO: PageFaultOom?
     NotYetStarted,
-    // TODO: ptrace_stop?
+    PtraceStop,
 }
 
 #[derive(Copy, Clone, Debug)]

@@ -5,10 +5,12 @@ use spinning_top::RwSpinlock;
 
 use super::{
     context::{Context, ContextId, Kstack},
-    memory::AddrSpaceWrapper, process::{Process, ProcessId},
+    memory::AddrSpaceWrapper,
+    process::{new_process, Process, ProcessId, ProcessInfo},
 };
 use crate::{
     interrupt::InterruptStack,
+    scheme::SchemeNamespace,
     syscall::error::{Error, Result, EAGAIN},
 };
 
@@ -60,7 +62,10 @@ impl ContextList {
         assert!(self
             .map
             // TODO
-            .insert(cid, Arc::new(RwSpinlock::new(Context::new(cid, pid, process)?)))
+            .insert(
+                cid,
+                Arc::new(RwSpinlock::new(Context::new(cid, pid, process)?))
+            )
             .is_none());
 
         Ok(self
@@ -70,7 +75,10 @@ impl ContextList {
     }
 
     /// Create a new context.
-    pub fn new_context(&mut self, process: Arc<RwLock<Process>>) -> Result<&Arc<RwSpinlock<Context>>> {
+    pub fn new_context(
+        &mut self,
+        process: Arc<RwLock<Process>>,
+    ) -> Result<&Arc<RwSpinlock<Context>>> {
         let pid = process.read().pid;
 
         // Zero is not a valid context ID, therefore add 1.
@@ -102,11 +110,12 @@ impl ContextList {
     pub fn spawn(
         &mut self,
         userspace_allowed: bool,
+        process: Arc<RwLock<Process>>,
         func: extern "C" fn(),
     ) -> Result<&Arc<RwSpinlock<Context>>> {
         let stack = Kstack::new()?;
 
-        let context_lock = self.new_context()?;
+        let context_lock = self.new_context(process)?;
         {
             let mut context = context_lock.write();
             let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));

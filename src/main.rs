@@ -61,7 +61,13 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{context::switch::SwitchResult, scheme::SchemeNamespace};
+use crate::{
+    context::{
+        process::{new_process, ProcessInfo, INIT},
+        switch::SwitchResult,
+    },
+    scheme::SchemeNamespace,
+};
 
 use crate::consts::*;
 
@@ -197,7 +203,22 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    match context::contexts_mut().spawn(true, userspace_init) {
+    let process = new_process(|_| ProcessInfo {
+        pid: INIT,
+        ppid: INIT,
+        pgid: INIT,
+        session_id: INIT,
+        ruid: 0,
+        rgid: 0,
+        euid: 0,
+        egid: 0,
+        rns: SchemeNamespace::new(0),
+        ens: SchemeNamespace::new(0),
+        umask: 0o22,
+    })
+    .expect("failed to create init process");
+
+    match context::contexts_mut().spawn(true, process, userspace_init) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
             context.status = context::Status::Runnable;

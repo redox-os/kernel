@@ -6,7 +6,9 @@ use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan}, process::{self, ProcessId, ProcessInfo}, WaitpidKey
+    memory::{AddrSpace, Grant, PageSpan},
+    process::{self, ProcessId, ProcessInfo},
+    WaitpidKey,
 };
 
 use crate::{
@@ -116,7 +118,12 @@ pub fn getpgid(pid: ProcessId) -> Result<ProcessId> {
     let process_lock = if pid.get() == 0 {
         process::current()?
     } else {
-        Arc::clone(process::PROCESSES.read().get(&pid).ok_or(Error::new(ESRCH))?)
+        Arc::clone(
+            process::PROCESSES
+                .read()
+                .get(&pid)
+                .ok_or(Error::new(ESRCH))?,
+        )
     };
     let process = process_lock.read();
     Ok(process.pgid)
@@ -254,7 +261,8 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                 } => {
                     sent += 1;
                     let waitpid = Arc::clone(
-                        &process::PROCESSES.read()
+                        &process::PROCESSES
+                            .read()
                             .get(&ppid)
                             .ok_or(Error::new(ESRCH))?
                             .read()
@@ -271,17 +279,19 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                 }
                 SendResult::SucceededSigcont { ppid, pgid } => {
                     sent += 1;
-                        &process::PROCESSES.read()
-                            .get(&ppid)
-                            .ok_or(Error::new(ESRCH))?
-                            .read()
-                            .waitpid.send(
-                        WaitpidKey {
-                            pid: Some(pid),
-                            pgid: Some(pgid),
-                        },
-                        (pid, 0xffff),
-                    );
+                    &process::PROCESSES
+                        .read()
+                        .get(&ppid)
+                        .ok_or(Error::new(ESRCH))?
+                        .read()
+                        .waitpid
+                        .send(
+                            WaitpidKey {
+                                pid: Some(pid),
+                                pgid: Some(pgid),
+                            },
+                            (pid, 0xffff),
+                        );
                 }
             }
             Ok(())
@@ -293,7 +303,15 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                 found += 1;
                 let (context_lock, info) = {
                     let process = process_lock.read();
-                    (process.threads.first().ok_or(Error::new(ESRCH))?.upgrade().ok_or(Error::new(ESRCH))?, process.info)
+                    (
+                        process
+                            .threads
+                            .first()
+                            .ok_or(Error::new(ESRCH))?
+                            .upgrade()
+                            .ok_or(Error::new(ESRCH))?,
+                        process.info,
+                    )
                 };
                 let mut context = context_lock.write();
                 let result = send(&mut *context, &info);
@@ -304,7 +322,15 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             for (pid, process_lock) in processes.iter() {
                 let (context_lock, info) = {
                     let process = process_lock.read();
-                    (process.threads.first().ok_or(Error::new(ESRCH))?.upgrade().ok_or(Error::new(ESRCH))?, process.info)
+                    (
+                        process
+                            .threads
+                            .first()
+                            .ok_or(Error::new(ESRCH))?
+                            .upgrade()
+                            .ok_or(Error::new(ESRCH))?,
+                        process.info,
+                    )
                 };
 
                 if info.pid.get() <= 2 {
@@ -328,7 +354,15 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             for (pid, process_lock) in processes.iter() {
                 let (context_lock, info) = {
                     let process = process_lock.read();
-                    (process.threads.first().ok_or(Error::new(ESRCH))?.upgrade().ok_or(Error::new(ESRCH))?, process.info)
+                    (
+                        process
+                            .threads
+                            .first()
+                            .ok_or(Error::new(ESRCH))?
+                            .upgrade()
+                            .ok_or(Error::new(ESRCH))?,
+                        process.info,
+                    )
                 };
 
                 if info.pgid != pgid {
@@ -404,14 +438,23 @@ pub fn umask(mask: usize) -> Result<usize> {
 }
 
 fn reap(pid: ProcessId) -> Result<ProcessId> {
-    let process_lock = Arc::clone(process::PROCESSES.read().get(&pid).ok_or(Error::new(ESRCH))?);
+    let process_lock = Arc::clone(
+        process::PROCESSES
+            .read()
+            .get(&pid)
+            .ok_or(Error::new(ESRCH))?,
+    );
 
     // Spin until not running
     loop {
         // TODO: exit WaitCondition?
         {
             let mut process = process_lock.read();
-            if process.threads.iter().all(|t| t.upgrade().map_or(true, |t| !t.read().running)) {
+            if process
+                .threads
+                .iter()
+                .all(|t| t.upgrade().map_or(true, |t| !t.read().running))
+            {
                 break;
             }
         }
@@ -420,7 +463,8 @@ fn reap(pid: ProcessId) -> Result<ProcessId> {
         interrupt::pause();
     }
 
-    let _ = process::PROCESSES.write()
+    let _ = process::PROCESSES
+        .write()
         .remove(&pid)
         .ok_or(Error::new(ESRCH))?;
 
