@@ -5,7 +5,7 @@ use crate::{
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
-        process::{self, Process, ProcessId},
+        process::{self, Process, ProcessId, ProcessInfo},
         Context, ContextId, Status,
     },
     memory::PAGE_SIZE,
@@ -745,44 +745,43 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        let Handle::Process { process, kind } = handle else {
-            return Err(Error::new(EBADF));
-        };
-        let path = format!(
-            "proc:{}/{}",
-            process.read().pid.get(),
-            match kind {
-                ProcHandle::Attr {
-                    attr: Attr::Uid, ..
-                } => "uid",
-                ProcHandle::Attr {
-                    attr: Attr::Gid, ..
-                } => "gid",
-                ProcHandle::Trace { .. } => "trace",
-                ProcHandle::Static { ty, .. } => ty,
-                ProcHandle::SessionId => "session_id",
-            },
-        );
-        /*let path = format!(
-            "proc:{}/{}",
-            handle.pid.get(),
-            match handle {
-                ContextHandle::Regs(RegsKind::Float) => "regs/float",
-                ContextHandle::Regs(RegsKind::Int) => "regs/int",
-                ContextHandle::Regs(RegsKind::Env) => "regs/env",
-                ContextHandle::Name => "name",
-                ContextHandle::Sighandler => "sighandler",
-                ContextHandle::Filetable { .. } => "filetable",
-                ContextHandle::AddrSpace { .. } => "addrspace",
-                ContextHandle::CurrentAddrSpace => "current-addrspace",
-                ContextHandle::CurrentFiletable => "current-filetable",
-                ContextHandle::OpenViaDup => "open-via-dup",
-                ContextHandle::MmapMinAddr(_) => "mmap-min-addr",
-                ContextHandle::SchedAffinity => "sched-affinity",
+        let path = match handle {
+            Handle::Process { process, kind } => format!(
+                "proc:{}/{}",
+                process.read().pid.get(),
+                match kind {
+                    ProcHandle::Attr {
+                        attr: Attr::Uid, ..
+                    } => "uid",
+                    ProcHandle::Attr {
+                        attr: Attr::Gid, ..
+                    } => "gid",
+                    ProcHandle::Trace { .. } => "trace",
+                    ProcHandle::Static { ty, .. } => ty,
+                    ProcHandle::SessionId => "session_id",
+                },
+            ),
+            Handle::Context { context, kind} => format!(
+                "proc:{}/{}",
+                context.read().pid.get(),
+                match kind {
+                    ContextHandle::Regs(RegsKind::Float) => "regs/float",
+                    ContextHandle::Regs(RegsKind::Int) => "regs/int",
+                    ContextHandle::Regs(RegsKind::Env) => "regs/env",
+                    ContextHandle::Name => "name",
+                    ContextHandle::Sighandler => "sighandler",
+                    ContextHandle::Filetable { .. } => "filetable",
+                    ContextHandle::AddrSpace { .. } => "addrspace",
+                    ContextHandle::CurrentAddrSpace => "current-addrspace",
+                    ContextHandle::CurrentFiletable => "current-filetable",
+                    ContextHandle::OpenViaDup => "open-via-dup",
+                    ContextHandle::MmapMinAddr(_) => "mmap-min-addr",
+                    ContextHandle::SchedAffinity => "sched-affinity",
 
-                _ => return Err(Error::new(EOPNOTSUPP)),
-            }
-        );*/
+                    _ => return Err(Error::new(EOPNOTSUPP)),
+                }
+            ),
+        };
 
         buf.copy_common_bytes_from_slice(path.as_bytes())
     }
@@ -841,9 +840,10 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 let (uid, gid) = match &*process::current()?.read() {
                     process => (process.euid, process.egid),
                 };
+                let cid = context.read().cid;
                 return self
                     .open_inner(
-                        OpenTy::Ctxt(context.read().cid),
+                        OpenTy::Ctxt(cid),
                         Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
                             .filter(|s| !s.is_empty()),
                         O_RDWR | O_CLOEXEC,
@@ -944,9 +944,14 @@ extern "C" fn clone_handler() {
 
 fn new_child() -> Result<ContextId> {
     let new_id = {
-        let current_process = process::current()?;
+        let current_process_info = process::current()?.read().info;
+        let new_process = process::new_process(|new_pid| ProcessInfo {
+            pid: new_pid,
+            ppid: current_process_info.pid,
+            ..current_process_info
+        })?;
         let new_context_lock =
-            Arc::clone(context::contexts_mut().spawn(true, current_process, clone_handler)?);
+            Arc::clone(context::contexts_mut().spawn(true, new_process, clone_handler)?);
 
         // (Signals are initially disabled.)
 
@@ -1270,7 +1275,8 @@ impl ContextHandle {
                 RegsKind::Float => {
                     let regs = unsafe { buf.read_exact::<FloatRegisters>()? };
 
-                    try_stop_context(context.read().cid, |context| {
+                    let cid = context.read().cid;
+                    try_stop_context(cid, |context| {
                         // NOTE: The kernel will never touch floats
 
                         // Ignore the rare case of floating point
@@ -1283,7 +1289,8 @@ impl ContextHandle {
                 RegsKind::Int => {
                     let regs = unsafe { buf.read_exact::<IntRegisters>()? };
 
-                    try_stop_context(context.read().cid, |context| match context.regs_mut() {
+                    let cid = context.read().cid;
+                    try_stop_context(cid, |context| match context.regs_mut() {
                         None => {
                             println!(
                                 "{}:{}: Couldn't read registers from stopped process",
@@ -1301,7 +1308,8 @@ impl ContextHandle {
                 }
                 RegsKind::Env => {
                     let regs = unsafe { buf.read_exact::<EnvRegisters>()? };
-                    write_env_regs(context.read().cid, regs)?;
+                    let cid = context.read().cid;
+                    write_env_regs(cid, regs)?;
                     Ok(mem::size_of::<EnvRegisters>())
                 }
             },
@@ -1502,7 +1510,8 @@ impl ContextHandle {
                         )
                     }
                     RegsKind::Int => {
-                        try_stop_context(context.read().cid, |context| match context.regs() {
+                        let cid = context.read().cid;
+                        try_stop_context(cid, |context| match context.regs() {
                             None => {
                                 assert!(!context.running, "try_stop_context is broken, clearly");
                                 println!(
@@ -1519,12 +1528,16 @@ impl ContextHandle {
                             }
                         })?
                     }
-                    RegsKind::Env => (
-                        Output {
-                            env: read_env_regs(context.read().cid)?,
-                        },
-                        mem::size_of::<EnvRegisters>(),
-                    ),
+                    RegsKind::Env => {
+                        let cid = context.read().cid;
+
+                        (
+                            Output {
+                                env: read_env_regs(cid)?,
+                            },
+                            mem::size_of::<EnvRegisters>(),
+                        )
+                    }
                 };
 
                 let src_buf =

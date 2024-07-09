@@ -115,7 +115,8 @@ impl ContextList {
     ) -> Result<&Arc<RwSpinlock<Context>>> {
         let stack = Kstack::new()?;
 
-        let context_lock = self.new_context(process)?;
+        let context_lock = self.new_context(Arc::clone(&process))?;
+        process.write().threads.push(Arc::downgrade(&context_lock));
         {
             let mut context = context_lock.write();
             let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));

@@ -107,10 +107,12 @@ impl Process {
 }
 pub fn new_process(info: impl FnOnce(ProcessId) -> ProcessInfo) -> Result<Arc<RwLock<Process>>> {
     let pid = NEXT_PID.fetch_add(ProcessId::new(1), Ordering::Relaxed);
-    Arc::try_new(RwLock::new(Process {
+    let proc = Arc::try_new(RwLock::new(Process {
         waitpid: Arc::try_new(WaitMap::new()).map_err(|_| Error::new(ENOMEM))?,
         threads: Vec::new(),
         info: info(pid),
     }))
-    .map_err(|_| Error::new(ENOMEM))
+    .map_err(|_| Error::new(ENOMEM))?;
+    PROCESSES.write().insert(pid, Arc::clone(&proc));
+    Ok(proc)
 }
