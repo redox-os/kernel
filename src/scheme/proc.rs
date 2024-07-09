@@ -524,8 +524,10 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
         let pid = if pid_str == "current" {
             OpenTy::Ctxt(context::current_cid())
-        } else if pid_str == "new" {
+        } else if pid_str == "new" || pid_str == "new-child" {
             OpenTy::Ctxt(new_child()?)
+        } else if pid_str == "new-thread" {
+            OpenTy::Ctxt(new_thread()?)
         } else if !FULL {
             return Err(Error::new(EACCES));
         } else {
@@ -942,6 +944,13 @@ extern "C" fn clone_handler() {
     // usermode.
 }
 
+fn new_thread() -> Result<ContextId> {
+    let current_process = process::current()?;
+    let new_context = Arc::clone(context::contexts_mut().spawn(true, current_process, clone_handler)?);
+    let cid = new_context.read().cid;
+    Ok(cid)
+}
+
 fn new_child() -> Result<ContextId> {
     let new_id = {
         let current_process_info = process::current()?.read().info;
@@ -952,14 +961,7 @@ fn new_child() -> Result<ContextId> {
         })?;
         let new_context_lock =
             Arc::clone(context::contexts_mut().spawn(true, new_process, clone_handler)?);
-
-        // (Signals are initially disabled.)
-
-        let mut new_context = new_context_lock.write();
-
-        new_context.status = Status::HardBlocked {
-            reason: HardBlockedReason::NotYetStarted,
-        };
+        let new_context = new_context_lock.read();
 
         new_context.cid
     };
