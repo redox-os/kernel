@@ -68,7 +68,7 @@ impl KernelScheme for DtbScheme {
                     stat: _flags & O_STAT == O_STAT,
                 },
             );
-            return Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()));
+            return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
         }
 
         Err(Error::new(ENOENT))
