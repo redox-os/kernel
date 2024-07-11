@@ -479,7 +479,7 @@ pub fn waitpid(
     let process_lock = process::current()?;
     let (ppid, waitpid) = {
         let process = process_lock.read();
-        (process.ppid, Arc::clone(&process.waitpid))
+        (process.pid, Arc::clone(&process.waitpid))
     };
 
     let write_status = |value| {
@@ -515,7 +515,7 @@ pub fn waitpid(
                 let processes = process::PROCESSES.read();
                 for (_id, process_lock) in processes.iter() {
                     let process = process_lock.read();
-                    if process.ppid == ppid {
+                    if process.pgid == ppid {
                         found = true;
                         break;
                     }
@@ -582,6 +582,7 @@ pub fn waitpid(
                 let process = process_lock.read();
 
                 if process.ppid != ppid {
+                    log::info!("HACK");
                     return Err(Error::new(ECHILD));
                     // TODO
                     /*

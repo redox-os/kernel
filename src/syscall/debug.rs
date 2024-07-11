@@ -223,8 +223,8 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            if context.name.contains("redoxfs") {
-                if a == SYS_CLOCK_GETTIME || a == SYS_YIELD {
+            if context.name.contains("xhcid") {
+                if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
                     false
                 } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
                     false
@@ -243,7 +243,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}): ", context.name, context.pid.get());
+            print!("{} ({}/{}): ", context.name, context.pid.get(), context.cid.get());
         }
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
@@ -279,7 +279,7 @@ pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
     let contexts = crate::context::contexts();
     if let Some(context_lock) = contexts.current() {
         let context = context_lock.read();
-        print!("{} ({}): ", context.name, context.pid.get());
+        print!("{} ({}/{}): ", context.name, context.pid.get(), context.cid.get());
     }
 
     // Do format_call outside print! so possible exception handlers cannot reentrantly
