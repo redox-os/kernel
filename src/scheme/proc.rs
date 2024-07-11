@@ -3,6 +3,7 @@ use crate::{
     context::{
         self,
         context::{HardBlockedReason, SignalState},
+        contexts,
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
         process::{self, Process, ProcessId, ProcessInfo},
@@ -374,10 +375,9 @@ impl<const FULL: bool> ProcScheme<FULL> {
             ),
         };
 
+        let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = {
-            let name = operation_str.ok_or(Error::new(EINVAL))?;
-
-            if let Some((kind, positioned)) = self.openat_process(&target, name, flags)? {
+            if let Some((kind, positioned)) = self.openat_process(&target, operation_name, flags)? {
                 (
                     Handle::Process {
                         process: Arc::clone(&target),
@@ -386,23 +386,22 @@ impl<const FULL: bool> ProcScheme<FULL> {
                     positioned,
                 )
             } else {
-                let first_thread = target
-                    .read()
-                    .threads
-                    .first()
-                    .ok_or(Error::new(ESRCH))?
-                    .upgrade()
-                    .ok_or(Error::new(ESRCH))?;
+                let context = match ty {
+                    OpenTy::Proc(_) => target
+                        .read()
+                        .threads
+                        .first()
+                        .ok_or(Error::new(ESRCH))?
+                        .upgrade()
+                        .ok_or(Error::new(ESRCH))?,
+                    OpenTy::Ctxt(ctxt) => {
+                        Arc::clone(contexts().get(ctxt).ok_or(Error::new(ESRCH))?)
+                    }
+                };
                 if let Some((kind, positioned)) =
-                    self.openat_context(name, Arc::clone(&first_thread))?
+                    self.openat_context(operation_name, Arc::clone(&context))?
                 {
-                    (
-                        Handle::Context {
-                            context: first_thread,
-                            kind,
-                        },
-                        positioned,
-                    )
+                    (Handle::Context { context, kind }, positioned)
                 } else {
                     return Err(Error::new(EINVAL));
                 }
@@ -763,7 +762,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     ProcHandle::SessionId => "session_id",
                 },
             ),
-            Handle::Context { context, kind} => format!(
+            Handle::Context { context, kind } => format!(
                 "proc:{}/{}",
                 context.read().pid.get(),
                 match kind {
@@ -946,7 +945,8 @@ extern "C" fn clone_handler() {
 
 fn new_thread() -> Result<ContextId> {
     let current_process = process::current()?;
-    let new_context = Arc::clone(context::contexts_mut().spawn(true, current_process, clone_handler)?);
+    let new_context =
+        Arc::clone(context::contexts_mut().spawn(true, current_process, clone_handler)?);
     let cid = new_context.read().cid;
     Ok(cid)
 }
