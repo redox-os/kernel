@@ -131,7 +131,7 @@ pub fn switch() -> SwitchResult {
         for next_context_lock in contexts
             // Include all contexts with IDs greater than the current...
             .range((
-                Bound::Excluded(ContextRef(Arc::downgrade(&prev_context_lock))),
+                Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
                 Bound::Unbounded,
             ))
             .chain(
@@ -139,10 +139,10 @@ pub fn switch() -> SwitchResult {
                     // ... and all contexts with IDs less than the current...
                     .range((
                         Bound::Unbounded,
-                        Bound::Excluded(ContextRef(Arc::downgrade(&prev_context_lock))),
+                        Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
                     )),
             )
-            .filter_map(|r| r.0.upgrade())
+            .filter_map(|r| r.upgrade())
             .chain(Some(Arc::clone(&idle_context)))
         // ... but not the current context, which is already locked
         {

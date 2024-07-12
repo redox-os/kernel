@@ -27,7 +27,7 @@ pub fn resource() -> Result<Vec<u8>> {
     );
     {
         let contexts = context::contexts();
-        for context_ref in contexts.iter().filter_map(|r| r.0.upgrade()) {
+        for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
             let context = context_ref.read();
 
             let mut stat_string = String::new();

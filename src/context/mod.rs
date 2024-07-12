@@ -104,7 +104,7 @@ pub fn init() {
 
     CONTEXTS
         .write()
-        .insert(ContextRef(Arc::downgrade(&context_lock)));
+        .insert(ContextRef(Arc::clone(&context_lock)));
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -140,11 +140,16 @@ pub fn current_pid() -> Result<ProcessId> {
     Ok(current().read().pid)
 }
 
-pub struct ContextRef(pub Weak<RwSpinlock<Context>>);
+pub struct ContextRef(pub Arc<RwSpinlock<Context>>);
+impl ContextRef {
+    pub fn upgrade(&self) -> Option<Arc<RwSpinlock<Context>>> {
+        Some(Arc::clone(&self.0))
+    }
+}
 
 impl Ord for ContextRef {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        Ord::cmp(&self.0.as_ptr(), &other.0.as_ptr())
+        Ord::cmp(&Arc::as_ptr(&self.0), &Arc::as_ptr(&other.0))
     }
 }
 impl PartialOrd for ContextRef {
@@ -175,7 +180,7 @@ pub fn spawn(
 
     CONTEXTS
         .write()
-        .insert(ContextRef(Arc::downgrade(&context_lock)));
+        .insert(ContextRef(Arc::clone(&context_lock)));
 
     process.write().threads.push(Arc::downgrade(&context_lock));
     {
