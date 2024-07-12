@@ -160,59 +160,81 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
     *EMPTY_CR3.get_unchecked()
 }
 
-pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    let mut float_regs = &mut *(prev.kfx.as_mut_ptr() as *mut FloatRegisters);
+#[target_feature(enable="neon")]
+#[naked]
+unsafe fn fp_save(float_regs: &mut FloatRegisters)
+{
     asm!(
-        "stp q0, q1, [{0}, #16 * 0]",
-        "stp q2, q3, [{0}, #16 * 2]",
-        "stp q4, q5, [{0}, #16 * 4]",
-        "stp q6, q7, [{0}, #16 * 6]",
-        "stp q8, q9, [{0}, #16 * 8]",
-        "stp q10, q11, [{0}, #16 * 10]",
-        "stp q12, q13, [{0}, #16 * 12]",
-        "stp q14, q15, [{0}, #16 * 14]",
-        "stp q16, q17, [{0}, #16 * 16]",
-        "stp q18, q19, [{0}, #16 * 18]",
-        "stp q20, q21, [{0}, #16 * 20]",
-        "stp q22, q23, [{0}, #16 * 22]",
-        "stp q24, q25, [{0}, #16 * 24]",
-        "stp q26, q27, [{0}, #16 * 26]",
-        "stp q28, q29, [{0}, #16 * 28]",
-        "stp q30, q31, [{0}, #16 * 30]",
-        "mrs {1}, fpcr",
-        "mrs {2}, fpsr",
-        in(reg) core::ptr::addr_of_mut!(float_regs.fp_simd_regs),
-        out(reg) float_regs.fpcr,
-        out(reg) float_regs.fpsr
+    "stp q0, q1, [x0, {0} + 16 * 0]",
+    "stp q2, q3, [x0, {0} + 16 * 2]",
+    "stp q4, q5, [x0, {0} + 16 * 4]",
+    "stp q6, q7, [x0, {0} + 16 * 6]",
+    "stp q8, q9, [x0, {0} + 16 * 8]",
+    "stp q10, q11, [x0, {0} + 16 * 10]",
+    "stp q12, q13, [x0, {0} + 16 * 12]",
+    "stp q14, q15, [x0, {0} + 16 * 14]",
+    "stp q16, q17, [x0, {0} + 16 * 16]",
+    "stp q18, q19, [x0, {0} + 16 * 18]",
+    "stp q20, q21, [x0, {0} + 16 * 20]",
+    "stp q22, q23, [x0, {0} + 16 * 22]",
+    "stp q24, q25, [x0, {0} + 16 * 24]",
+    "stp q26, q27, [x0, {0} + 16 * 26]",
+    "stp q28, q29, [x0, {0} + 16 * 28]",
+    "stp q30, q31, [x0, {0} + 16 * 30]",
+    "mrs x9, fpcr",
+    "add x0, x0, {1}",
+    "str x9, [x0]",
+    "mrs x9, fpsr",
+    "str x9, [x0, {2} - {1}]",
+    "ret",
+    const mem::offset_of!(FloatRegisters, fp_simd_regs),
+    const mem::offset_of!(FloatRegisters, fpcr),
+    const mem::offset_of!(FloatRegisters, fpsr),
+    options(noreturn),
     );
+}
+
+#[target_feature(enable="neon")]
+#[naked]
+unsafe fn fp_load(float_regs: &mut FloatRegisters)
+{
+    asm!(
+    "ldp q0, q1, [x0, {0} + 16 * 0]",
+    "ldp q2, q3, [x0, {0} + 16 * 2]",
+    "ldp q4, q5, [x0, {0} + 16 * 4]",
+    "ldp q6, q7, [x0, {0} + 16 * 6]",
+    "ldp q8, q9, [x0, {0} + 16 * 8]",
+    "ldp q10, q11, [x0, {0} + 16 * 10]",
+    "ldp q12, q13, [x0, {0} + 16 * 12]",
+    "ldp q14, q15, [x0, {0} + 16 * 14]",
+    "ldp q16, q17, [x0, {0} + 16 * 16]",
+    "ldp q18, q19, [x0, {0} + 16 * 18]",
+    "ldp q20, q21, [x0, {0} + 16 * 20]",
+    "ldp q22, q23, [x0, {0} + 16 * 22]",
+    "ldp q24, q25, [x0, {0} + 16 * 24]",
+    "ldp q26, q27, [x0, {0} + 16 * 26]",
+    "ldp q28, q29, [x0, {0} + 16 * 28]",
+    "ldp q30, q31, [x0, {0} + 16 * 30]",
+    "add x0, x0, {1}",
+    "ldr x9, [x0]",
+    "msr fpcr, x9",
+    "ldr x9, [x0, {2} - {1}]",
+    "msr fpsr, x9",
+    "ret",
+    const mem::offset_of!(FloatRegisters, fp_simd_regs),
+    const mem::offset_of!(FloatRegisters, fpcr),
+    const mem::offset_of!(FloatRegisters, fpsr),
+    options(noreturn),
+    );
+}
+
+pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
+    fp_save(&mut *(prev.kfx.as_mut_ptr() as *mut FloatRegisters));
 
     prev.arch.fx_loadable = true;
 
     if next.arch.fx_loadable {
-        let mut float_regs = &mut *(next.kfx.as_mut_ptr() as *mut FloatRegisters);
-        asm!(
-            "ldp q0, q1, [{0}, #16 * 0]",
-            "ldp q2, q3, [{0}, #16 * 2]",
-            "ldp q4, q5, [{0}, #16 * 4]",
-            "ldp q6, q7, [{0}, #16 * 6]",
-            "ldp q8, q9, [{0}, #16 * 8]",
-            "ldp q10, q11, [{0}, #16 * 10]",
-            "ldp q12, q13, [{0}, #16 * 12]",
-            "ldp q14, q15, [{0}, #16 * 14]",
-            "ldp q16, q17, [{0}, #16 * 16]",
-            "ldp q18, q19, [{0}, #16 * 18]",
-            "ldp q20, q21, [{0}, #16 * 20]",
-            "ldp q22, q23, [{0}, #16 * 22]",
-            "ldp q24, q25, [{0}, #16 * 24]",
-            "ldp q26, q27, [{0}, #16 * 26]",
-            "ldp q28, q29, [{0}, #16 * 28]",
-            "ldp q30, q31, [{0}, #16 * 30]",
-            "msr fpcr, {1}",
-            "msr fpsr, {2}",
-            in(reg) core::ptr::addr_of_mut!(float_regs.fp_simd_regs),
-            in(reg) float_regs.fpcr,
-            in(reg) float_regs.fpsr
-        );
+        fp_load(&mut *(next.kfx.as_mut_ptr() as *mut FloatRegisters));
     }
 
     PercpuBlock::current().new_addrsp_tmp.set(next.addr_space.clone());
