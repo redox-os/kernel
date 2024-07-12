@@ -55,7 +55,7 @@ impl UnmapResult {
             ref desc => (desc.scheme, desc.number),
         };
 
-        let funmap_result = crate::scheme::schemes()
+        let funmap_result = scheme::schemes()
             .get(scheme_id)
             .cloned()
             .ok_or(Error::new(ENODEV))
@@ -293,7 +293,7 @@ impl AddrSpaceWrapper {
     #[must_use = "needs to notify files"]
     pub fn munmap(
         &self,
-        mut requested_span: PageSpan,
+        requested_span: PageSpan,
         unpin: bool,
     ) -> Result<Vec<UnmapResult>> {
         let mut guard = self.acquire_write();
@@ -340,7 +340,7 @@ impl AddrSpaceWrapper {
             }
             _ => {
                 dst.grants
-                    .find_free(dst.mmap_min, core::cmp::max(new_page_count, src_span.count))
+                    .find_free(dst.mmap_min, cmp::max(new_page_count, src_span.count))
                     .ok_or(Error::new(ENOMEM))?
                     .base
             }
@@ -2109,7 +2109,7 @@ impl Drop for Table {
             }
         }
         unsafe {
-            crate::memory::deallocate_frame(Frame::containing_address(self.utable.table().phys()));
+            deallocate_frame(Frame::containing_address(self.utable.table().phys()));
         }
     }
 }
@@ -2613,7 +2613,7 @@ impl GenericFlusher for NopFlusher {
 }
 struct FlusherState<'addrsp> {
     // TODO: what capacity?
-    pagequeue: arrayvec::ArrayVec<PageQueueEntry, 32>,
+    pagequeue: ArrayVec<PageQueueEntry, 32>,
     dirty: bool,
 
     ackword: &'addrsp AtomicU32,

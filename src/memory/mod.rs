@@ -52,7 +52,7 @@ pub fn allocate_frame() -> Option<Frame> {
     allocate_p2frame(0)
 }
 // TODO: Flags, strategy
-pub fn allocate_p2frame_complex(_req_order: u32, flags: (), strategy: Option<()>, min_order: u32) -> Option<(Frame, usize)> {
+pub fn allocate_p2frame_complex(_req_order: u32, _flags: (), _strategy: Option<()>, min_order: u32) -> Option<(Frame, usize)> {
     let mut freelist = FREELIST.lock();
 
     let Some((frame_order, frame)) = freelist.for_orders.iter().enumerate().skip(min_order as usize).find_map(|(i, f)| f.map(|f| (i as u32, f))) else {
@@ -125,7 +125,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
 
         let sibling = Frame::containing_address(PhysicalAddress::new(current.start_address().data() ^ (PAGE_SIZE << merge_order)));
 
-        let Some(cur_info) = get_page_info(current) else {
+        let Some(_) = get_page_info(current) else {
             unreachable!("attempting to free non-allocator-owned page");
         };
 
@@ -210,7 +210,7 @@ impl P2Frame {
     }
     fn get(self) -> (Option<Frame>, u32) {
         let page_off_mask = PAGE_SIZE - 1;
-        (NonZeroUsize::new(self.0 & !page_off_mask & !(RC_USED_NOT_FREE)).map(|physaddr| Frame { physaddr }), (self.0 & page_off_mask) as u32)
+        (NonZeroUsize::new(self.0 & !page_off_mask & !RC_USED_NOT_FREE).map(|physaddr| Frame { physaddr }), (self.0 & page_off_mask) as u32)
     }
     fn frame(self) -> Option<Frame> {
         self.get().0
@@ -315,7 +315,7 @@ impl Drop for RaiiFrame {
             .remove_ref() == None
         {
             unsafe {
-                crate::memory::deallocate_frame(self.inner);
+                deallocate_frame(self.inner);
             }
         }
     }
@@ -539,7 +539,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         }
         debug_assert!(info.as_free().is_some());
         debug_assert!(this_page.0.is_aligned_to_order(order));
-        debug_assert_eq!(info.next.load(Ordering::Relaxed), 0);
+        debug_assert_eq!(info.next.load(Ordering::Relaxed), order as usize);
         debug_assert_eq!(info.refcount.load(Ordering::Relaxed), 0);
 
         let last_page = last_pages[order as usize].replace(this_page);
@@ -902,7 +902,7 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
 }
 
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
-    let new_frame = crate::memory::allocate_frame().ok_or(PfError::Oom)?;
+    let new_frame = allocate_frame().ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).unwrap_or_else(|| panic!("all allocated frames need an associated page info, {:?} didn't", new_frame));
     debug_assert_eq!(page_info.refcount(), Some(RefCount::One));
     page_info.refcount.store(init_rc.to_raw(), Ordering::Relaxed);
