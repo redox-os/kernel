@@ -3,11 +3,10 @@ use crate::{
     context::{
         self,
         context::{HardBlockedReason, SignalState},
-        contexts,
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
         process::{self, Process, ProcessId, ProcessInfo},
-        Context, ContextId, Status,
+        Context, Status,
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -49,40 +48,18 @@ fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     dst.copy_common_bytes_from_slice(avail_src)
 }
 
-fn with_context<F, T>(pid: ContextId, callback: F) -> Result<T>
-where
-    F: FnOnce(&Context) -> Result<T>,
-{
-    let contexts = context::contexts();
-    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
-    let context = context.read();
-    if let Status::Exited(_) = context.status {
-        return Err(Error::new(ESRCH));
-    }
-    callback(&context)
-}
-fn with_context_mut<F, T>(pid: ContextId, callback: F) -> Result<T>
-where
-    F: FnOnce(&mut Context) -> Result<T>,
-{
-    let contexts = context::contexts();
-    let context = contexts.get(pid).ok_or(Error::new(ESRCH))?;
-    let mut context = context.write();
-    if let Status::Exited(_) = context.status {
-        return Err(Error::new(ESRCH));
-    }
-    callback(&mut context)
-}
-fn try_stop_context<F, T>(pid: ContextId, callback: F) -> Result<T>
-where
-    F: FnOnce(&mut Context) -> Result<T>,
-{
-    if pid == context::current_cid() {
-        return Err(Error::new(EBADF));
+fn try_stop_context<T>(
+    context_ref: Arc<RwSpinlock<Context>>,
+    callback: impl FnOnce(&mut Context) -> Result<T>,
+) -> Result<T> {
+    if context::is_current(&context_ref) {
+        return callback(&mut *context_ref.write());
     }
     // Stop process
-    let (prev_status, mut running) = with_context_mut(pid, |context| {
-        Ok((
+    let (prev_status, mut running) = {
+        let mut context = context_ref.write();
+
+        (
             core::mem::replace(
                 &mut context.status,
                 context::Status::HardBlocked {
@@ -90,28 +67,27 @@ where
                 },
             ),
             context.running,
-        ))
-    })?;
+        )
+    };
 
     // Wait until stopped
     while running {
         context::switch();
 
-        running = with_context(pid, |context| Ok(context.running))?;
+        running = context_ref.read().running;
     }
 
-    with_context_mut(pid, |context| {
-        assert!(
-            !context.running,
-            "process can't have been restarted, we stopped it!"
-        );
+    let mut context = context_ref.write();
+    assert!(
+        !context.running,
+        "process can't have been restarted, we stopped it!"
+    );
 
-        let ret = callback(context);
+    let ret = callback(&mut *context);
 
-        context.status = prev_status;
+    context.status = prev_status;
 
-        ret
-    })
+    ret
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -257,15 +233,9 @@ fn new_handle((handle, fl): (Handle, InternalFlags)) -> Result<(usize, InternalF
     Ok((id, fl))
 }
 
-fn get_context(id: ContextId) -> Result<Arc<RwSpinlock<Context>>> {
-    context::contexts()
-        .get(id)
-        .ok_or(Error::new(ENOENT))
-        .map(Arc::clone)
-}
 enum OpenTy {
     Proc(ProcessId),
-    Ctxt(ContextId),
+    Ctxt(Arc<RwSpinlock<Context>>),
 }
 
 impl<const FULL: bool> ProcScheme<FULL> {
@@ -366,13 +336,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                 let processes = process::PROCESSES.read();
                 Arc::clone(processes.get(&pid).ok_or(Error::new(ESRCH))?)
             }
-            OpenTy::Ctxt(cid) => Arc::clone(
-                &context::contexts()
-                    .get(cid)
-                    .ok_or(Error::new(ESRCH))?
-                    .read()
-                    .process,
-            ),
+            OpenTy::Ctxt(ref context) => Arc::clone(&context.read().process),
         };
 
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
@@ -394,9 +358,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                         .ok_or(Error::new(ESRCH))?
                         .upgrade()
                         .ok_or(Error::new(ESRCH))?,
-                    OpenTy::Ctxt(ctxt) => {
-                        Arc::clone(contexts().get(ctxt).ok_or(Error::new(ESRCH))?)
-                    }
+                    OpenTy::Ctxt(ref ctxt) => Arc::clone(&ctxt),
                 };
                 if let Some((kind, positioned)) =
                     self.openat_context(operation_name, Arc::clone(&context))?
@@ -522,7 +484,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let pid_str = parts.next().ok_or(Error::new(ENOENT))?;
 
         let pid = if pid_str == "current" {
-            OpenTy::Ctxt(context::current_cid())
+            OpenTy::Ctxt(context::current())
         } else if pid_str == "new" || pid_str == "new-child" {
             OpenTy::Ctxt(new_child()?)
         } else if pid_str == "new-thread" {
@@ -530,7 +492,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         } else if !FULL {
             return Err(Error::new(EACCES));
         } else {
-            OpenTy::Ctxt(ContextId::new(
+            OpenTy::Proc(ProcessId::new(
                 pid_str.parse().map_err(|_| Error::new(ENOENT))?,
             ))
         };
@@ -568,15 +530,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                         new_ip,
                     },
             } => {
-                let cid = context.read().cid;
-
-                let stop_context = if cid == context::current_cid() {
-                    with_context_mut
-                } else {
-                    try_stop_context
-                };
-
-                let _ = stop_context(cid, |context: &mut Context| {
+                let _ = try_stop_context(context, |context: &mut Context| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -631,7 +585,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         consume: bool,
     ) -> Result<usize> {
         let handle = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.clone();
-        let Handle::Context { context, kind } = handle else {
+        let Handle::Context { kind, .. } = handle else {
             return Err(Error::new(EBADF));
         };
 
@@ -841,10 +795,9 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 let (uid, gid) = match &*process::current()?.read() {
                     process => (process.euid, process.egid),
                 };
-                let cid = context.read().cid;
                 return self
                     .open_inner(
-                        OpenTy::Ctxt(cid),
+                        OpenTy::Ctxt(context),
                         Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
                             .filter(|s| !s.is_empty()),
                         O_RDWR | O_CLOEXEC,
@@ -943,53 +896,40 @@ extern "C" fn clone_handler() {
     // usermode.
 }
 
-fn new_thread() -> Result<ContextId> {
+fn new_thread() -> Result<Arc<RwSpinlock<Context>>> {
     let current_process = process::current()?;
-    let new_context =
-        Arc::clone(context::contexts_mut().spawn(true, current_process, clone_handler)?);
-    let cid = new_context.read().cid;
-    Ok(cid)
+    context::spawn(true, current_process, clone_handler)
 }
 
-fn new_child() -> Result<ContextId> {
-    let new_id = {
+fn new_child() -> Result<Arc<RwSpinlock<Context>>> {
+    let new_context = {
         let current_process_info = process::current()?.read().info;
         let new_process = process::new_process(|new_pid| ProcessInfo {
             pid: new_pid,
             ppid: current_process_info.pid,
             ..current_process_info
         })?;
-        let new_context_lock =
-            Arc::clone(context::contexts_mut().spawn(true, new_process, clone_handler)?);
-        let new_context = new_context_lock.read();
-
-        new_context.cid
+        context::spawn(true, new_process, clone_handler)?
     };
 
     if ptrace::send_event(crate::syscall::ptrace_event!(
         PTRACE_EVENT_CLONE,
-        new_id.into()
+        new_context.read().pid.into()
     ))
     .is_some()
     {
         // Freeze the clone, allow ptrace to put breakpoints
         // to it before it starts
-        let contexts = context::contexts();
-        let context = contexts
-            .get(new_id)
-            .expect("Newly created context doesn't exist??");
-        let mut context = context.write();
+        let mut context = new_context.write();
         context.status = context::Status::HardBlocked {
             reason: HardBlockedReason::PtraceStop,
         };
     }
 
-    Ok(new_id)
+    Ok(new_context)
 }
 fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
-    let (scheme_id, number) = match &*context::contexts()
-        .current()
-        .ok_or(Error::new(ESRCH))?
+    let (scheme_id, number) = match &*context::current()
         .read()
         .get_file(FileHandle::from(fd))
         .ok_or(Error::new(EBADF))?
@@ -1052,9 +992,7 @@ impl ProcHandle {
                     .threads
                     .first()
                     .and_then(|f| f.upgrade())
-                    .ok_or(Error::new(ESRCH))?
-                    .read()
-                    .cid;
+                    .ok_or(Error::new(ESRCH))?;
 
                 if op.contains(PTRACE_STOP_SINGLESTEP) {
                     try_stop_context(first, |context| match context.regs_mut() {
@@ -1140,11 +1078,7 @@ impl ProcHandle {
         read_flags: u32,
     ) -> Result<usize> {
         match self {
-            Self::Static { bytes, .. } => {
-                let mut handles = HANDLES.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                read_from(buf, &bytes, offset)
-            }
+            Self::Static { bytes, .. } => read_from(buf, &bytes, offset),
             Self::Trace { pid, clones, .. } => {
                 // Wait for event
                 if (read_flags as usize) & O_NONBLOCK != O_NONBLOCK {
@@ -1277,8 +1211,7 @@ impl ContextHandle {
                 RegsKind::Float => {
                     let regs = unsafe { buf.read_exact::<FloatRegisters>()? };
 
-                    let cid = context.read().cid;
-                    try_stop_context(cid, |context| {
+                    try_stop_context(context, |context| {
                         // NOTE: The kernel will never touch floats
 
                         // Ignore the rare case of floating point
@@ -1291,8 +1224,7 @@ impl ContextHandle {
                 RegsKind::Int => {
                     let regs = unsafe { buf.read_exact::<IntRegisters>()? };
 
-                    let cid = context.read().cid;
-                    try_stop_context(cid, |context| match context.regs_mut() {
+                    try_stop_context(context, |context| match context.regs_mut() {
                         None => {
                             println!(
                                 "{}:{}: Couldn't read registers from stopped process",
@@ -1310,8 +1242,7 @@ impl ContextHandle {
                 }
                 RegsKind::Env => {
                     let regs = unsafe { buf.read_exact::<EnvRegisters>()? };
-                    let cid = context.read().cid;
-                    write_env_regs(cid, regs)?;
+                    write_env_regs(context, regs)?;
                     Ok(mem::size_of::<EnvRegisters>())
                 }
             },
@@ -1511,35 +1442,28 @@ impl ContextHandle {
                             mem::size_of::<FloatRegisters>(),
                         )
                     }
-                    RegsKind::Int => {
-                        let cid = context.read().cid;
-                        try_stop_context(cid, |context| match context.regs() {
-                            None => {
-                                assert!(!context.running, "try_stop_context is broken, clearly");
-                                println!(
-                                    "{}:{}: Couldn't read registers from stopped process",
-                                    file!(),
-                                    line!()
-                                );
-                                Err(Error::new(ENOTRECOVERABLE))
-                            }
-                            Some(stack) => {
-                                let mut regs = IntRegisters::default();
-                                stack.save(&mut regs);
-                                Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
-                            }
-                        })?
-                    }
-                    RegsKind::Env => {
-                        let cid = context.read().cid;
-
-                        (
-                            Output {
-                                env: read_env_regs(cid)?,
-                            },
-                            mem::size_of::<EnvRegisters>(),
-                        )
-                    }
+                    RegsKind::Int => try_stop_context(context, |context| match context.regs() {
+                        None => {
+                            assert!(!context.running, "try_stop_context is broken, clearly");
+                            println!(
+                                "{}:{}: Couldn't read registers from stopped process",
+                                file!(),
+                                line!()
+                            );
+                            Err(Error::new(ENOTRECOVERABLE))
+                        }
+                        Some(stack) => {
+                            let mut regs = IntRegisters::default();
+                            stack.save(&mut regs);
+                            Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
+                        }
+                    })?,
+                    RegsKind::Env => (
+                        Output {
+                            env: read_env_regs(context)?,
+                        },
+                        mem::size_of::<EnvRegisters>(),
+                    ),
                 };
 
                 let src_buf =
@@ -1604,16 +1528,16 @@ impl ContextHandle {
     }
 }
 #[cfg(target_arch = "aarch64")]
-fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
+fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Result<()> {
     use crate::device::cpu::registers::control_regs;
 
-    if info.pid == context::context_id() {
+    if context::is_current(&context) {
         unsafe {
             control_regs::tpidr_el0_write(regs.tpidr_el0 as u64);
             control_regs::tpidrro_el0_write(regs.tpidrro_el0 as u64);
         }
     } else {
-        try_stop_context(info.pid, |context| {
+        try_stop_context(context, |context| {
             context.arch.tpidr_el0 = regs.tpidr_el0;
             context.arch.tpidrro_el0 = regs.tpidrro_el0;
             Ok(())
@@ -1623,24 +1547,19 @@ fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
 }
 
 #[cfg(target_arch = "x86")]
-fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
+fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Result<()> {
     if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize))
         && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize)))
     {
         return Err(Error::new(EINVAL));
     }
 
-    if info.pid == context::context_id() {
+    if context::is_current(&context) {
         unsafe {
             (&mut *crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_FS].set_offset(regs.fsbase);
             (&mut *crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_GS].set_offset(regs.gsbase);
 
-            match context::contexts()
-                .current()
-                .ok_or(Error::new(ESRCH))?
-                .write()
-                .arch
-            {
+            match context.write().arch {
                 ref mut arch => {
                     arch.fsbase = regs.fsbase as usize;
                     arch.gsbase = regs.gsbase as usize;
@@ -1648,7 +1567,7 @@ fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
             }
         }
     } else {
-        try_stop_context(info.pid, |context| {
+        try_stop_context(context, |context| {
             context.arch.fsbase = regs.fsbase as usize;
             context.arch.gsbase = regs.gsbase as usize;
             Ok(())
@@ -1658,26 +1577,21 @@ fn write_env_regs(&self, info: &Info, regs: EnvRegisters) -> Result<()> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn write_env_regs(cid: ContextId, regs: EnvRegisters) -> Result<()> {
+fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Result<()> {
     if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize))
         && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize)))
     {
         return Err(Error::new(EINVAL));
     }
 
-    if cid == context::current_cid() {
+    if context::is_current(&context) {
         unsafe {
             x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
             // We have to write to KERNEL_GSBASE, because when the kernel returns to
             // userspace, it will have executed SWAPGS first.
             x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
 
-            match context::contexts()
-                .current()
-                .ok_or(Error::new(ESRCH))?
-                .write()
-                .arch
-            {
+            match context::current().write().arch {
                 ref mut arch => {
                     arch.fsbase = regs.fsbase as usize;
                     arch.gsbase = regs.gsbase as usize;
@@ -1685,7 +1599,7 @@ fn write_env_regs(cid: ContextId, regs: EnvRegisters) -> Result<()> {
             }
         }
     } else {
-        try_stop_context(cid, |context| {
+        try_stop_context(context, |context| {
             context.arch.fsbase = regs.fsbase as usize;
             context.arch.gsbase = regs.gsbase as usize;
             Ok(())
@@ -1694,10 +1608,10 @@ fn write_env_regs(cid: ContextId, regs: EnvRegisters) -> Result<()> {
     Ok(())
 }
 #[cfg(target_arch = "aarch64")]
-fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
+fn read_env_regs(context: Arc<RwSpinlock<Context>>) -> Result<EnvRegisters> {
     use crate::device::cpu::registers::control_regs;
 
-    let (tpidr_el0, tpidrro_el0) = if info.pid == context::context_id() {
+    let (tpidr_el0, tpidrro_el0) = if context::is_current(&context) {
         unsafe {
             (
                 control_regs::tpidr_el0() as usize,
@@ -1705,7 +1619,7 @@ fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
             )
         }
     } else {
-        try_stop_context(info.pid, |context| {
+        try_stop_context(context, |context| {
             Ok((context.arch.tpidr_el0, context.arch.tpidrro_el0))
         })?
     };
@@ -1716,8 +1630,8 @@ fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
 }
 
 #[cfg(target_arch = "x86")]
-fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
-    let (fsbase, gsbase) = if info.pid == context::context_id() {
+fn read_env_regs(context: Arc<RwSpinlock<Context>>) -> Result<EnvRegisters> {
+    let (fsbase, gsbase) = if context::is_current(&context) {
         unsafe {
             (
                 (&*crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_FS].offset() as u64,
@@ -1725,7 +1639,7 @@ fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
             )
         }
     } else {
-        try_stop_context(info.pid, |context| {
+        try_stop_context(context, |context| {
             Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
         })?
     };
@@ -1736,9 +1650,9 @@ fn read_env_regs(&self, info: &Info) -> Result<EnvRegisters> {
 }
 
 #[cfg(target_arch = "x86_64")]
-fn read_env_regs(cid: ContextId) -> Result<EnvRegisters> {
+fn read_env_regs(context: Arc<RwSpinlock<Context>>) -> Result<EnvRegisters> {
     // TODO: Avoid rdmsr if fsgsbase is not enabled, if this is worth optimizing for.
-    let (fsbase, gsbase) = if cid == context::current_cid() {
+    let (fsbase, gsbase) = if context::is_current(&context) {
         unsafe {
             (
                 x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
@@ -1746,7 +1660,7 @@ fn read_env_regs(cid: ContextId) -> Result<EnvRegisters> {
             )
         }
     } else {
-        try_stop_context(cid, |context| {
+        try_stop_context(context, |context| {
             Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
         })?
     };

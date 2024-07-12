@@ -21,15 +21,11 @@ use crate::{
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 
-/// Unique identifier for a context (i.e. `pid`).
-use ::core::sync::atomic::AtomicUsize;
-
 use super::{
     empty_cr3,
     memory::{AddrSpaceWrapper, GrantFileRef},
     process::{Process, ProcessId},
 };
-int_like!(ContextId, AtomicContextId, usize, AtomicUsize);
 
 /// The status of a context - used for scheduling
 /// See `syscall::process::waitpid` and the `sync` module for examples of usage
@@ -131,8 +127,6 @@ impl Eq for WaitpidKey {}
 /// A context, which identifies either a process or a thread
 #[derive(Debug)]
 pub struct Context {
-    /// The internal context ID of this context
-    pub cid: ContextId,
     /// The process ID of this context
     pub pid: ProcessId,
     /// Process state shared with other threads
@@ -207,9 +201,8 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new(cid: ContextId, pid: ProcessId, process: Arc<RwLock<Process>>) -> Result<Context> {
+    pub fn new(pid: ProcessId, process: Arc<RwLock<Process>>) -> Result<Context> {
         let this = Context {
-            cid,
             pid,
             process,
             sig: None,
@@ -362,6 +355,10 @@ impl Context {
         }
     }
 
+    pub fn is_current_context(&self) -> bool {
+        self.running && self.cpu_id == Some(crate::cpu_id())
+    }
+
     pub fn addr_space(&self) -> Result<&Arc<AddrSpaceWrapper>> {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
@@ -375,7 +372,7 @@ impl Context {
             return addr_space;
         };
 
-        if self.cid == super::current_cid() {
+        if self.is_current_context() {
             // TODO: Share more code with context::arch::switch_to.
             let this_percpu = PercpuBlock::current();
 
@@ -474,7 +471,7 @@ impl BorrowedHtBuf {
     pub fn head() -> Result<Self> {
         Ok(Self {
             inner: Some(
-                context::current()?
+                context::current()
                     .write()
                     .syscall_head
                     .take()
@@ -486,7 +483,7 @@ impl BorrowedHtBuf {
     pub fn tail() -> Result<Self> {
         Ok(Self {
             inner: Some(
-                context::current()?
+                context::current()
                     .write()
                     .syscall_tail
                     .take()
@@ -545,9 +542,8 @@ impl BorrowedHtBuf {
 }
 impl Drop for BorrowedHtBuf {
     fn drop(&mut self) {
-        let Ok(context) = context::current() else {
-            return;
-        };
+        let context = context::current();
+
         let Some(inner) = self.inner.take() else {
             return;
         };

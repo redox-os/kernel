@@ -27,7 +27,7 @@ pub fn file_op_generic_ext<T>(
     fd: FileHandle,
     op: impl FnOnce(&dyn KernelScheme, Arc<RwLock<FileDescription>>, FileDescription) -> Result<T>,
 ) -> Result<T> {
-    let file = context::current()?
+    let file = context::current()
         .read()
         .get_file(fd)
         .ok_or(Error::new(EBADF))?;
@@ -101,7 +101,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     };
     //drop(path_buf);
 
-    context::current()?
+    context::current()
         .read()
         .add_file(FileDescriptor {
             description,
@@ -160,7 +160,7 @@ pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
 /// Close syscall
 pub fn close(fd: FileHandle) -> Result<()> {
     let file = {
-        let context_lock = context::current()?;
+        let context_lock = context::current();
         let context = context_lock.read();
         context.remove_file(fd).ok_or(Error::new(EBADF))?
     };
@@ -170,7 +170,7 @@ pub fn close(fd: FileHandle) -> Result<()> {
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
     let caller_ctx = process::current()?.read().caller_ctx();
-    let file = context::current()?
+    let file = context::current()
         .read()
         .get_file(fd)
         .ok_or(Error::new(EBADF))?;
@@ -214,7 +214,7 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
 pub fn dup(fd: FileHandle, buf: UserSliceRo) -> Result<FileHandle> {
     let new_file = duplicate_file(fd, buf)?;
 
-    context::current()?
+    context::current()
         .read()
         .add_file(new_file)
         .ok_or(Error::new(EMFILE))
@@ -228,9 +228,8 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: UserSliceRo) -> Result<File
         let _ = close(new_fd);
         let new_file = duplicate_file(fd, buf)?;
 
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-        let context = context_lock.read();
+        let context_ref = context::current();
+        let context = context_ref.read();
 
         context
             .insert_file(new_fd, new_file)
@@ -241,7 +240,7 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
     let requested_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
 
     let (scheme, number, desc_to_send) = {
-        let current_lock = context::current()?;
+        let current_lock = context::current();
         let current = current_lock.read();
 
         // TODO: Ensure deadlocks can't happen
@@ -287,7 +286,7 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
 
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
-    let file = context::current()?
+    let file = context::current()
         .read()
         .get_file(fd)
         .ok_or(Error::new(EBADF))?;
@@ -298,8 +297,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
         // Not in match because 'files' cannot be locked
         let new_file = duplicate_file(fd, UserSlice::empty())?;
 
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context_lock = context::current();
         let context = context_lock.read();
 
         return context
@@ -320,8 +318,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 
     // Perform kernel operation if scheme agrees
     {
-        let contexts = context::contexts();
-        let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
+        let context_lock = context::current();
         let context = context_lock.read();
 
         let mut files = context.files.write();
@@ -364,7 +361,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
             process.ens,
         ),
     };
-    let file = context::current()?
+    let file = context::current()
         .read()
         .get_file(fd)
         .ok_or(Error::new(EBADF))?;
@@ -433,7 +430,7 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
         );
     }
 
-    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let addr_space = Arc::clone(context::current().read().addr_space()?);
     let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned)
         .ok_or(Error::new(EINVAL))?;
     let unpin = false;

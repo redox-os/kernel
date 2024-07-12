@@ -122,7 +122,7 @@ impl ParsedCqe {
                     log::warn!(
                         "Unknown scheme -> kernel message {} from {}",
                         packet.a,
-                        context::current().unwrap().read().name
+                        context::current().read().name
                     );
 
                     // Some schemes don't implement cancellation properly yet, so we temporarily
@@ -276,7 +276,7 @@ impl UserInner {
             return Err(Error::new(ENODEV));
         }
 
-        let current_context = context::current()?;
+        let current_context = context::current();
 
         {
             let mut states = self.states.lock();
@@ -295,7 +295,7 @@ impl UserInner {
             context::switch();
 
             let eintr_if_sigkill = || {
-                if context::current()?.read().being_sigkilled {
+                if context::current().read().being_sigkilled {
                     // EINTR directly if SIGKILL was found without waiting for scheme. Data loss
                     // doesn't matter.
                     Err(Error::new(EINTR))
@@ -317,7 +317,7 @@ impl UserInner {
                         *o = old_state;
                         drop(states);
                         eintr_if_sigkill()?;
-                        context::current()?.write().block("UserInner::call");
+                        context::current().write().block("UserInner::call");
                     }
                     // spurious wakeup
                     State::Waiting {
@@ -342,7 +342,7 @@ impl UserInner {
                             ..Default::default()
                         });
                         event::trigger(self.root_id, self.handle_id, EVENT_READ);
-                        context::current()?.write().block("UserInner::call");
+                        context::current().write().block("UserInner::call");
                     }
 
                     // invalid state
@@ -830,7 +830,7 @@ impl UserInner {
 
         let tag = self.next_id()?;
         let mut states = self.states.lock();
-        states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()?));
+        states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
 
         /*self.todo.send(Packet {
             id: packet_id,
@@ -855,7 +855,7 @@ impl UserInner {
                 0,
                 uid_gid_hack_merge(current_uid_gid()?),
             ],
-            caller: context::current()?.read().pid.get() as u64,
+            caller: context::current().read().pid.get() as u64,
         });
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
@@ -869,7 +869,7 @@ impl UserInner {
             ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
                 tag,
                 Response::Fd(
-                    context::current()?
+                    context::current()
                         .read()
                         .remove_file(FileHandle::from(fd))
                         .ok_or(Error::new(EINVAL))?
@@ -894,7 +894,7 @@ impl UserInner {
                 // FIXME: Description can leak if context::current() fails, or if there is no
                 // additional file table space.
                 if flags.contains(FobtainFdFlags::MANUAL_FD) {
-                    context::current()?.read().insert_file(
+                    context::current().read().insert_file(
                         FileHandle::from(dst_fd_or_ptr),
                         FileDescriptor {
                             description,
@@ -902,7 +902,7 @@ impl UserInner {
                         },
                     );
                 } else {
-                    let fd = context::current()?
+                    let fd = context::current()
                         .read()
                         .add_file(FileDescriptor {
                             description,
@@ -1089,7 +1089,7 @@ impl UserInner {
         }
 
         let (pid, desc) = {
-            let context_lock = context::current()?;
+            let context_lock = context::current();
             let context = context_lock.read();
             // TODO: Faster, cleaner mechanism to get descriptor
             let mut desc_res = Err(Error::new(EBADF));

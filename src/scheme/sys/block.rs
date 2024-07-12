@@ -10,9 +10,13 @@ pub fn resource() -> Result<Vec<u8>> {
         let mut rows = Vec::new();
         {
             let contexts = context::contexts();
-            for (id, context_lock) in contexts.iter() {
+            for context_lock in contexts.iter().filter_map(|r| r.0.upgrade()) {
                 let context = context_lock.read();
-                rows.push((*id, context.name.clone(), context.status_reason));
+                rows.push((
+                    context.pid.get(),
+                    context.name.clone(),
+                    context.status_reason,
+                ));
             }
         }
 

@@ -77,11 +77,7 @@ impl KernelScheme for RootScheme {
                 return Err(Error::new(EINVAL));
             }
 
-            let context = {
-                let contexts = context::contexts();
-                let context = contexts.current().ok_or(Error::new(ESRCH))?;
-                Arc::downgrade(context)
-            };
+            let context = Arc::downgrade(&context::current());
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 

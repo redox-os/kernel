@@ -243,7 +243,12 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         let contexts = crate::context::contexts();
         if let Some(context_lock) = contexts.current() {
             let context = context_lock.read();
-            print!("{} ({}/{}): ", context.name, context.pid.get(), context.cid.get());
+            print!(
+                "{} ({}/{}): ",
+                context.name,
+                context.pid.get(),
+                context.cid.get()
+            );
         }
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
@@ -279,7 +284,12 @@ pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
     let contexts = crate::context::contexts();
     if let Some(context_lock) = contexts.current() {
         let context = context_lock.read();
-        print!("{} ({}/{}): ", context.name, context.pid.get(), context.cid.get());
+        print!(
+            "{} ({}/{}): ",
+            context.name,
+            context.pid.get(),
+            context.cid.get()
+        );
     }
 
     // Do format_call outside print! so possible exception handlers cannot reentrantly

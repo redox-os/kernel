@@ -2712,7 +2712,7 @@ fn correct_inner<'l>(
                 .request_fmap(scheme_number, offset, 1, flags)
                 .unwrap();
 
-            let context_lock = super::current().map_err(|_| PfError::NonfatalInternalError)?;
+            let context_lock = crate::context::current();
             context_lock
                 .write()
                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });

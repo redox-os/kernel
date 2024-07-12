@@ -104,7 +104,7 @@ impl super::Context {
     pub fn set_userspace_io_allowed(&mut self, allowed: bool) {
         self.arch.userspace_io_allowed = allowed;
 
-        if self.id == super::context_id() {
+        if self.is_current_context() {
             unsafe {
                 crate::gdt::set_userspace_io_allowed(allowed);
             }

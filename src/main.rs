@@ -117,6 +117,8 @@ mod externs;
 /// Logging
 mod log;
 use ::log::info;
+use alloc::sync::Arc;
+use spinning_top::RwSpinlock;
 
 /// Memory management
 mod memory;
@@ -183,6 +185,7 @@ struct Bootstrap {
     env: &'static [u8],
 }
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
+static INIT_THREAD: spin::Once<Arc<RwSpinlock<crate::context::Context>>> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
@@ -218,15 +221,18 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     })
     .expect("failed to create init process");
 
-    match context::contexts_mut().spawn(true, process, userspace_init) {
+    match context::spawn(true, process, userspace_init) {
         Ok(context_lock) => {
-            let mut context = context_lock.write();
-            context.status = context::Status::Runnable;
-            context.name = "bootstrap".into();
+            {
+                let mut context = context_lock.write();
+                context.status = context::Status::Runnable;
+                context.name = "bootstrap".into();
 
-            let mut process = context.process.write();
-            process.rns = SchemeNamespace::from(1);
-            process.ens = SchemeNamespace::from(1);
+                let mut process = context.process.write();
+                process.rns = SchemeNamespace::from(1);
+                process.ens = SchemeNamespace::from(1);
+            }
+            INIT_THREAD.call_once(move || context_lock);
         }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
@@ -282,18 +288,12 @@ fn run_userspace() -> ! {
 
 /// Allow exception handlers to send signal to arch-independent kernel
 pub fn ksignal(signal: usize) {
-    info!(
-        "SIGNAL {}, CPU {}, PID {:?}",
-        signal,
-        cpu_id(),
-        context::current_cid()
-    );
+    let current = context::current();
+
+    info!("SIGNAL {signal}, CPU {}, PID {current:p}", cpu_id(),);
     {
-        let contexts = context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
-            info!("NAME {}", context.name);
-        }
+        let context = current.read();
+        info!("NAME {}", context.name);
     }
     crate::context::signal::excp_handler(signal);
 }

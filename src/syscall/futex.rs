@@ -89,7 +89,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
             {
                 let mut futexes = FUTEXES.write();
 
-                let context_lock = context::current()?;
+                let context_lock = context::current();
 
                 let (fetched, expected) = if op == FUTEX_WAIT {
                     // Must be aligned, otherwise it could cross a page boundary and mess up the
@@ -162,7 +162,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
             context::switch();
 
             if timeout_opt.is_some() {
-                context::current()?.write().wake = None;
+                context::current().write().wake = None;
                 Err(Error::new(ETIMEDOUT))
             } else {
                 Ok(0)

@@ -6,7 +6,7 @@ use crate::{
 };
 
 pub fn signal_handler() {
-    let context_lock = context::current().expect("running signal handler outside of context");
+    let context_lock = context::current();
     let mut context = context_lock.write();
     let context = &mut *context;
 
@@ -71,7 +71,7 @@ pub fn signal_handler() {
     );
 }
 pub fn excp_handler(_signal: usize) {
-    let current = context::current().expect("CPU exception but not inside of context!");
+    let current = context::current();
     let context = current.write();
 
     let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {

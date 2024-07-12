@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use crate::{
     context::{self, process},
     paging::VirtualAddress,
-    syscall::error::{Error, Result, EFAULT, EPERM, ESRCH},
+    syscall::error::{Error, Result, EFAULT, EPERM},
 };
 fn enforce_root() -> Result<()> {
     if process::current()?.read().euid != 0 {
@@ -21,7 +21,7 @@ pub fn iopl(level: usize) -> Result<usize> {
 pub fn iopl(level: usize) -> Result<usize> {
     enforce_root()?;
 
-    context::current()?
+    context::current()
         .write()
         .set_userspace_io_allowed(level >= 3);
 
@@ -31,7 +31,7 @@ pub fn iopl(level: usize) -> Result<usize> {
 pub fn virttophys(virtual_address: usize) -> Result<usize> {
     enforce_root()?;
 
-    let addr_space = Arc::clone(context::current()?.read().addr_space()?);
+    let addr_space = Arc::clone(context::current().read().addr_space()?);
     let addr_space = addr_space.acquire_read();
 
     match addr_space

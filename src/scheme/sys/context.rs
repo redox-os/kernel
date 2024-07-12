@@ -27,8 +27,8 @@ pub fn resource() -> Result<Vec<u8>> {
     );
     {
         let contexts = context::contexts();
-        for (_id, context_lock) in contexts.iter() {
-            let context = context_lock.read();
+        for context_ref in contexts.iter().filter_map(|r| r.0.upgrade()) {
+            let context = context_ref.read();
 
             let mut stat_string = String::new();
             // TODO: All user programs must have some grant in order for executable memory to even

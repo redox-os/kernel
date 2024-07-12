@@ -91,7 +91,7 @@ pub fn ancestors(
 }
 
 pub fn current() -> Result<Arc<RwLock<Process>>> {
-    let pid = context::current()?.read().pid;
+    let pid = context::current().read().pid;
     Ok(Arc::clone(
         PROCESSES.read().get(&pid).ok_or(Error::new(ESRCH))?,
     ))

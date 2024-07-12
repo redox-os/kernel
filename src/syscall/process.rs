@@ -35,7 +35,7 @@ pub fn exit(status: usize) -> ! {
     );
 
     {
-        let context_lock = context::current().expect("exit failed to find context");
+        let context_lock = context::current();
 
         let close_files;
         let addrspace_opt;
@@ -175,7 +175,7 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
         }
 
         let mut send = |context: &mut context::Context, proc: &ProcessInfo| -> SendResult {
-            let is_self = context.cid == context::current_cid();
+            let is_self = context.is_current_context();
 
             // Non-root users cannot kill arbitrarily.
             if euid != 0 && euid != proc.ruid && ruid != proc.ruid {
@@ -640,9 +640,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
 
     {
         let addr_space = Arc::clone(
-            context::contexts()
-                .current()
-                .expect("expected a context to exist when executing init")
+            context::current()
                 .read()
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
@@ -689,7 +687,6 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
     // Start in a minimal environment without any stack.
 
     match context::current()
-        .expect("bootstrap was not running inside any context")
         .write()
         .regs_mut()
         .expect("bootstrap needs registers to be available")

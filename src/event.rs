@@ -9,7 +9,7 @@ use crate::{
     sync::WaitQueue,
     syscall::{
         data::Event,
-        error::{Error, Result, EBADF, ESRCH},
+        error::{Error, Result, EBADF},
         flag::EventFlags,
         usercopy::UserSliceWo,
     },
@@ -37,9 +37,9 @@ impl EventQueue {
     pub fn write(&self, events: &[Event]) -> Result<usize> {
         for event in events {
             let file = {
-                let contexts = context::contexts();
-                let context_lock = contexts.current().ok_or(Error::new(ESRCH))?;
-                let context = context_lock.read();
+                let context_ref = context::current();
+                let context = context_ref.read();
+
                 let files = context.files.read();
                 match files.get(event.id).ok_or(Error::new(EBADF))? {
                     Some(file) => file.clone(),

@@ -171,12 +171,7 @@ fn proc_trigger_event(file_id: usize, flags: EventFlags) {
 /// the tracer to wake up and poll for events. Returns Some(()) if an
 /// event was sent.
 pub fn send_event(event: PtraceEvent) -> Option<()> {
-    let id = {
-        let contexts = context::contexts();
-        let context = contexts.current()?;
-        let context = context.read();
-        context.pid
-    };
+    let id = context::current().read().pid;
 
     let sessions = sessions();
     let session = sessions.get(&id)?;
@@ -290,9 +285,8 @@ pub fn breakpoint_callback(
 /// Obtain the next breakpoint flags for the current process. This is used for
 /// detecting whether or not the tracer decided to use sysemu mode.
 pub fn next_breakpoint() -> Option<PtraceFlags> {
-    let contexts = context::contexts();
-    let context = contexts.current()?;
-    let context = context.read();
+    let context_lock = context::current();
+    let context = context_lock.read();
 
     let sessions = sessions();
     let session = sessions.get(&context.pid)?;

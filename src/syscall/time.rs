@@ -30,7 +30,7 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
     let start = time::monotonic();
     let end = start + (req.tv_sec as u128 * time::NANOS_PER_SEC) + (req.tv_nsec as u128);
 
-    let current_context = context::current()?;
+    let current_context = context::current();
     {
         let mut context = current_context.write();
 

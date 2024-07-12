@@ -1,4 +1,7 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 use spin::{Mutex, MutexGuard};
 use spinning_top::RwSpinlock;
 
@@ -6,7 +9,7 @@ use crate::context::{self, Context};
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<Vec<Arc<RwSpinlock<Context>>>>,
+    contexts: Mutex<Vec<Weak<RwSpinlock<Context>>>>,
 }
 
 impl WaitCondition {
@@ -20,8 +23,10 @@ impl WaitCondition {
     pub fn notify(&self) -> usize {
         let mut contexts = self.contexts.lock();
         let len = contexts.len();
-        while let Some(context_lock) = contexts.pop() {
-            context_lock.write().unblock();
+        while let Some(context_weak) = contexts.pop() {
+            if let Some(context_ref) = context_weak.upgrade() {
+                context_ref.write().unblock();
+            }
         }
         len
     }
@@ -30,34 +35,31 @@ impl WaitCondition {
     pub unsafe fn notify_signal(&self) -> usize {
         let contexts = self.contexts.lock();
         let len = contexts.len();
-        for context_lock in contexts.iter() {
-            context_lock.write().unblock();
+        for context_weak in contexts.iter() {
+            if let Some(context_ref) = context_weak.upgrade() {
+                context_ref.write().unblock();
+            }
         }
         len
     }
 
     // Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function
     pub fn wait<T>(&self, guard: MutexGuard<T>, reason: &'static str) -> bool {
-        let cid;
+        let current_context_ref = context::current();
         {
-            let context_lock = {
-                let contexts = context::contexts();
-                let context_lock = contexts.current().expect("WaitCondition::wait: no context");
-                Arc::clone(context_lock)
-            };
-
             {
-                let mut context = context_lock.write();
+                let mut context = current_context_ref.write();
                 if let Some((control, _, _)) = context.sigcontrol()
                     && control.currently_pending_unblocked() != 0
                 {
                     return false;
                 }
-                cid = context.cid;
                 context.block(reason);
             }
 
-            self.contexts.lock().push(context_lock);
+            self.contexts
+                .lock()
+                .push(Arc::downgrade(&current_context_ref));
 
             drop(guard);
         }
@@ -69,14 +71,10 @@ impl WaitCondition {
         {
             let mut contexts = self.contexts.lock();
 
+            // TODO: retain
             let mut i = 0;
             while i < contexts.len() {
-                let remove = {
-                    let context = contexts[i].read();
-                    context.cid == cid
-                };
-
-                if remove {
+                if Weak::as_ptr(&contexts[i]) == Arc::as_ptr(&current_context_ref) {
                     contexts.remove(i);
                     waited = false;
                     break;

@@ -1,7 +1,12 @@
-use core::{cell::Cell, mem, ops::Bound, sync::atomic::Ordering};
+use core::{
+    cell::{Cell, RefCell},
+    mem,
+    ops::Bound,
+    sync::atomic::Ordering,
+};
 
 use alloc::sync::Arc;
-use spinning_top::guard::ArcRwSpinlockWriteGuard;
+use spinning_top::{guard::ArcRwSpinlockWriteGuard, RwSpinlock};
 use syscall::PtraceFlags;
 
 use crate::{
@@ -12,7 +17,7 @@ use crate::{
     ptrace, time,
 };
 
-use super::ContextId;
+use super::ContextRef;
 
 enum UpdateResult {
     CanSwitch,
@@ -116,31 +121,32 @@ pub fn switch() -> SwitchResult {
         let contexts = contexts();
 
         // Lock previous context
-        let prev_context_lock = contexts
-            .current()
-            .expect("context::switch: not inside of context");
+        let prev_context_lock = crate::context::current();
         let prev_context_guard = prev_context_lock.write_arc();
 
-        let idle_id = percpu.switch_internals.idle_id();
+        let idle_context = percpu.switch_internals.idle_context();
         let mut skip_idle = true;
 
         // Locate next context
-        for (cid, next_context_lock) in contexts
+        for next_context_lock in contexts
             // Include all contexts with IDs greater than the current...
-            .range((Bound::Excluded(prev_context_guard.cid), Bound::Unbounded))
+            .range((
+                Bound::Excluded(ContextRef(Arc::downgrade(&prev_context_lock))),
+                Bound::Unbounded,
+            ))
             .chain(
                 contexts
                     // ... and all contexts with IDs less than the current...
-                    .range((Bound::Unbounded, Bound::Excluded(prev_context_guard.cid))),
+                    .range((
+                        Bound::Unbounded,
+                        Bound::Excluded(ContextRef(Arc::downgrade(&prev_context_lock))),
+                    )),
             )
-            .chain(
-                contexts
-                    // ... and finally the idle ID
-                    .range((Bound::Included(idle_id), Bound::Included(idle_id))),
-            )
+            .filter_map(|r| r.0.upgrade())
+            .chain(Some(Arc::clone(&idle_context)))
         // ... but not the current context, which is already locked
         {
-            if cid == &idle_id && skip_idle {
+            if Arc::ptr_eq(&next_context_lock, &idle_context) && skip_idle {
                 // Skip idle process the first time it shows up
                 skip_idle = false;
                 continue;
@@ -178,7 +184,11 @@ pub fn switch() -> SwitchResult {
         next_context.switch_time = switch_time;
 
         let percpu = PercpuBlock::current();
-        percpu.switch_internals.current_cid.set(next_context.cid);
+        unsafe {
+            percpu.switch_internals.set_current_context(Arc::clone(
+                ArcRwSpinlockWriteGuard::rwlock(&next_context_guard),
+            ));
+        }
 
         // FIXME set th switch result in arch::switch_to instead
         let prev_context =
@@ -245,25 +255,33 @@ pub struct ContextSwitchPercpu {
     switch_result: Cell<Option<SwitchResultInner>>,
     pit_ticks: Cell<usize>,
 
-    /// Unique context ID of the currently running context.
-    current_cid: Cell<ContextId>,
+    current_ctxt: RefCell<Option<Arc<RwSpinlock<Context>>>>,
 
-    // The ID of the idle process
-    idle_id: Cell<ContextId>,
+    // The idle process
+    idle_ctxt: RefCell<Option<Arc<RwSpinlock<Context>>>>,
 
     pub(crate) being_sigkilled: Cell<bool>,
 }
 impl ContextSwitchPercpu {
-    pub fn current_cid(&self) -> ContextId {
-        self.current_cid.get()
+    pub fn with_context<T>(&self, f: impl FnOnce(&Arc<RwSpinlock<Context>>) -> T) -> T {
+        f(&*self
+            .current_ctxt
+            .borrow()
+            .as_ref()
+            .expect("not inside of context"))
     }
-    pub unsafe fn set_current_cid(&self, new: ContextId) {
-        self.current_cid.set(new)
+    pub unsafe fn set_current_context(&self, new: Arc<RwSpinlock<Context>>) {
+        *self.current_ctxt.borrow_mut() = Some(new);
     }
-    pub fn idle_id(&self) -> ContextId {
-        self.idle_id.get()
+    pub unsafe fn set_idle_context(&self, new: Arc<RwSpinlock<Context>>) {
+        *self.idle_ctxt.borrow_mut() = Some(new);
     }
-    pub unsafe fn set_idle_id(&self, new: ContextId) {
-        self.idle_id.set(new)
+    pub fn idle_context(&self) -> Arc<RwSpinlock<Context>> {
+        Arc::clone(
+            self.idle_ctxt
+                .borrow()
+                .as_ref()
+                .expect("no idle context present"),
+        )
     }
 }
