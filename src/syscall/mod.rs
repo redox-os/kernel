@@ -136,13 +136,10 @@ pub fn syscall(
             }),
 
             SYS_DUP => dup(fd, UserSlice::ro(c, d)?).map(FileHandle::into),
-            SYS_DUP2 => dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?)
-                .map(FileHandle::into),
+            SYS_DUP2 => dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?).map(FileHandle::into),
 
             #[cfg(target_pointer_width = "32")]
-            SYS_SENDFD => {
-                sendfd(fd, FileHandle::from(c), d, e as u64 | ((f as u64) << 32))
-            }
+            SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64 | ((f as u64) << 32)),
 
             #[cfg(target_pointer_width = "64")]
             SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64),
@@ -163,13 +160,11 @@ pub fn syscall(
             SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?).map(|()| 0),
             SYS_FUNMAP => funmap(b, c),
 
-            SYS_FSYNC => {
-                file_op_generic(fd, |scheme, number| scheme.fsync(number).map(|()| 0))
-            }
+            SYS_FSYNC => file_op_generic(fd, |scheme, number| scheme.fsync(number).map(|()| 0)),
             // TODO: 64-bit lengths on 32-bit platforms
-            SYS_FTRUNCATE => file_op_generic(fd, |scheme, number| {
-                scheme.ftruncate(number, c).map(|()| 0)
-            }),
+            SYS_FTRUNCATE => {
+                file_op_generic(fd, |scheme, number| scheme.ftruncate(number, c).map(|()| 0))
+            }
 
             SYS_CLOSE => close(fd).map(|()| 0),
 
@@ -183,8 +178,7 @@ pub fn syscall(
             )
             .map(|()| 0),
             SYS_CLOCK_GETTIME => {
-                clock_gettime(b, UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?)
-                    .map(|()| 0)
+                clock_gettime(b, UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?).map(|()| 0)
             }
             SYS_FUTEX => futex(b, c, d, e, f),
             SYS_GETPID => getpid().map(ProcessId::into),
@@ -218,9 +212,7 @@ pub fn syscall(
             )?),
             SYS_SETPGID => setpgid(ProcessId::from(b), ProcessId::from(c)).map(|()| 0),
             SYS_SETREUID => setreuid(b as u32, c as u32).map(|()| 0),
-            SYS_SETRENS => {
-                setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0)
-            }
+            SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
             SYS_SETREGID => setregid(b as u32, c as u32).map(|()| 0),
             SYS_UMASK => umask(b),
             SYS_VIRTTOPHYS => virttophys(b),

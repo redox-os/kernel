@@ -16,7 +16,8 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::FileHandle, sync::WaitCondition,
+    scheme::FileHandle,
+    sync::WaitCondition,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
@@ -43,7 +44,9 @@ pub enum Status {
     HardBlocked {
         reason: HardBlockedReason,
     },
-    Exited { user_data: usize },
+    Exited {
+        user_data: usize,
+    },
 }
 
 impl Status {

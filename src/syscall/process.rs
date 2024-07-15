@@ -1,13 +1,15 @@
 use alloc::{sync::Arc, vec::Vec};
-use spinning_top::RwSpinlock;
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
+use spinning_top::RwSpinlock;
 use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
 
 use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan}, process::{self, Process, ProcessId, ProcessInfo, ProcessStatus}, Context, WaitpidKey
+    memory::{AddrSpace, Grant, PageSpan},
+    process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
+    Context, WaitpidKey,
 };
 
 use crate::{
@@ -27,41 +29,49 @@ use crate::{
 
 use super::usercopy::UserSliceWo;
 
+pub fn exit_context(context_lock: &Arc<RwSpinlock<Context>>, user_data: usize) {
+    // TODO: Stop context?
+    let close_files;
+    let addrspace_opt;
+
+    {
+        let mut context = context_lock.write();
+        close_files = Arc::try_unwrap(mem::take(&mut context.files))
+            .map_or_else(|_| Vec::new(), RwLock::into_inner);
+        addrspace_opt = context
+            .set_addr_space(None)
+            .and_then(|a| Arc::try_unwrap(a).ok());
+        drop(context.syscall_head.take());
+        drop(context.syscall_tail.take());
+    }
+    // Files must be closed while context is valid so that messages can be passed
+    for (_fd, file_opt) in close_files.into_iter().enumerate() {
+        if let Some(file) = file_opt {
+            let _ = file.close();
+        }
+    }
+    drop(addrspace_opt);
+    let mut guard = context_lock.write();
+    guard.status = context::Status::Exited { user_data };
+    guard.status_cond.notify();
+}
+
 pub fn exit(status: usize) -> ! {
     ptrace::breakpoint_callback(
         PTRACE_STOP_EXIT,
         Some(ptrace_event!(PTRACE_STOP_EXIT, status)),
     );
 
+    let current_context = context::current();
+    let current_process = process::current().expect("no active process during exit syscall");
+    let current_pid = current_process.read().pid;
+
+    exit_context(&current_context, 0);
+
     {
-        let context_lock = context::current();
-
-        let close_files;
-        let addrspace_opt;
-
-        let (pid, process_lock) = {
-            let mut context = context_lock.write();
-            close_files = Arc::try_unwrap(mem::take(&mut context.files))
-                .map_or_else(|_| Vec::new(), RwLock::into_inner);
-            addrspace_opt = context
-                .set_addr_space(None)
-                .and_then(|a| Arc::try_unwrap(a).ok());
-            drop(context.syscall_head.take());
-            drop(context.syscall_tail.take());
-            (context.pid, Arc::clone(&context.process))
-        };
-
-        // Files must be closed while context is valid so that messages can be passed
-        for (_fd, file_opt) in close_files.into_iter().enumerate() {
-            if let Some(file) = file_opt {
-                let _ = file.close();
-            }
-        }
-        drop(addrspace_opt);
-
         // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits
         let (pgid, ppid) = {
-            let process = process_lock.read();
+            let process = current_process.read();
             (process.pgid, process.ppid)
         };
         let _ = kill(ppid, SIGCHLD, true);
@@ -71,16 +81,15 @@ pub fn exit(status: usize) -> ! {
             let processes = context::process::PROCESSES.read();
             for (_child_pid, child_process_lock) in processes.iter() {
                 let mut process = child_process_lock.write();
-                if process.ppid == pid {
+                if process.ppid == current_pid {
                     process.ppid = ppid;
                 }
             }
         }
 
-        process_lock.write().status = ProcessStatus::Exited(status);
-        context_lock.write().status = context::Status::Exited { user_data: status };
+        current_process.write().status = ProcessStatus::Exited(status);
 
-        let children = process_lock.write().waitpid.receive_all();
+        let children = current_process.write().waitpid.receive_all();
 
         {
             let processes = process::PROCESSES.read();
@@ -93,16 +102,16 @@ pub fn exit(status: usize) -> ! {
 
                 waitpid.send(
                     WaitpidKey {
-                        pid: Some(pid),
+                        pid: Some(current_pid),
                         pgid: Some(pgid),
                     },
-                    (pid, status),
+                    (current_pid, status),
                 );
             }
         }
 
         // Alert any tracers waiting of this process
-        ptrace::close_tracee(pid);
+        ptrace::close_tracee(current_pid);
     }
 
     let _ = context::switch();
@@ -174,7 +183,10 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             },
         }
 
-        let mut send = |context_lock: &Arc<RwSpinlock<Context>>, process_lock: &Arc<RwLock<Process>>, proc_info: &ProcessInfo| -> SendResult {
+        let mut send = |context_lock: &Arc<RwSpinlock<Context>>,
+                        process_lock: &Arc<RwLock<Process>>,
+                        proc_info: &ProcessInfo|
+         -> SendResult {
             let is_self = context::is_current(context_lock);
 
             // Non-root users cannot kill arbitrarily.

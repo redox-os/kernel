@@ -1415,11 +1415,13 @@ impl ContextHandle {
             }
             Self::Status => {
                 let user_data = buf.read_usize()?;
-                let mut context = context.write();
 
                 // TODO: Handle Status::HardBlocked differently?
-                context.status = Status::Exited { user_data };
-                context.status_cond.notify();
+                crate::syscall::exit_context(&context, user_data);
+
+                if context::is_current(&context) {
+                    context::switch();
+                }
 
                 Ok(mem::size_of::<usize>())
             }
