@@ -7,9 +7,7 @@ use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan},
-    process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
-    Context, WaitpidKey,
+    memory::{AddrSpace, Grant, PageSpan}, process::{self, Process, ProcessId, ProcessInfo, ProcessStatus}, Context, ContextRef, WaitpidKey
 };
 
 use crate::{
@@ -29,7 +27,7 @@ use crate::{
 
 use super::usercopy::UserSliceWo;
 
-pub fn exit_context(context_lock: &Arc<RwSpinlock<Context>>, user_data: usize) {
+pub fn exit_context(context_lock: Arc<RwSpinlock<Context>>) {
     // TODO: Stop context?
     let close_files;
     let addrspace_opt;
@@ -44,16 +42,17 @@ pub fn exit_context(context_lock: &Arc<RwSpinlock<Context>>, user_data: usize) {
         drop(context.syscall_head.take());
         drop(context.syscall_tail.take());
     }
+
     // Files must be closed while context is valid so that messages can be passed
-    for (_fd, file_opt) in close_files.into_iter().enumerate() {
+    for file_opt in close_files.into_iter() {
         if let Some(file) = file_opt {
             let _ = file.close();
         }
     }
     drop(addrspace_opt);
-    let mut guard = context_lock.write();
-    guard.status = context::Status::Exited { user_data };
-    guard.status_cond.notify();
+    // TODO: Should status == Status::HardBlocked be handled differently?
+    context_lock.write().status = context::Status::Dead;
+    let _ = context::contexts_mut().remove(&ContextRef(context_lock));
 }
 
 pub fn exit(status: usize) -> ! {
@@ -66,7 +65,17 @@ pub fn exit(status: usize) -> ! {
     let current_process = process::current().expect("no active process during exit syscall");
     let current_pid = current_process.read().pid;
 
-    exit_context(&current_context, 0);
+    let threads = core::mem::take(&mut current_process.write().threads);
+
+    for context_lock in threads.into_iter().filter_map(|t| t.upgrade()) {
+        // Current context must be closed last, as it would otherwise be impossible to context
+        // switch back, if closing file descriptors require scheme calls.
+        if Arc::ptr_eq(&context_lock, &current_context) {
+            continue;
+        }
+        exit_context(context_lock);
+    }
+    exit_context(current_context);
 
     {
         // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits

@@ -1,12 +1,7 @@
 use crate::{
     arch::paging::{Page, RmmA, RmmArch, VirtualAddress},
     context::{
-        self,
-        context::{HardBlockedReason, SignalState},
-        file::{FileDescriptor, InternalFlags},
-        memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
-        process::{self, Process, ProcessId, ProcessInfo},
-        Context, Status,
+        self, context::{HardBlockedReason, SignalState}, file::{FileDescriptor, InternalFlags}, memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan}, process::{self, Process, ProcessId, ProcessInfo}, Context, ContextRef, Status
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -1413,13 +1408,25 @@ impl ContextHandle {
 
                 Ok(mem::size_of_val(&mask))
             }
-            Self::Status => {
+            ContextHandle::Status => {
                 let user_data = buf.read_usize()?;
+                if user_data != usize::MAX {
+                    // TODO: lwp_park/lwp_unpark?
+                    return Err(Error::new(EOPNOTSUPP));
+                }
+                let is_current = context::is_current(&context);
 
-                // TODO: Handle Status::HardBlocked differently?
-                crate::syscall::exit_context(&context, user_data);
+                {
+                    let process = Arc::clone(&context.read().process);
+                    let mut process = process.write();
+                    if let Some(pos) = process.threads.iter().position(|p| Weak::as_ptr(p) == Arc::as_ptr(&context)) {
+                        process.threads.remove(pos);
+                    }
+                }
 
-                if context::is_current(&context) {
+                crate::syscall::exit_context(context);
+
+                if is_current {
                     context::switch();
                 }
 
@@ -1535,25 +1542,6 @@ impl ContextHandle {
                 buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
                 Ok(mem::size_of_val(&mask))
             } // TODO: Replace write() with SYS_DUP_FORWARD.
-
-            ContextHandle::Status => {
-                // Writing to the status explicitly exits the current thread.
-                let cond = Arc::clone(&context.read().status_cond);
-                let user_data = loop {
-                    let mut context = context.write();
-
-                    if let Status::Exited { user_data } = context.status {
-                        break user_data;
-                    }
-
-                    if !cond.wait(context, "waiting for thread") {
-                        return Err(Error::new(EINTR));
-                    }
-                };
-
-                buf.write_usize(user_data)?;
-                Ok(mem::size_of::<usize>())
-            }
 
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it

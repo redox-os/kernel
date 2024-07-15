@@ -48,9 +48,11 @@ pub struct FutexEntry {
 }
 
 // TODO: Process-private futexes? In that case, put the futex table in each AddrSpace, or just
-// implement that fully in userspace.
+// implement that fully in userspace. Although futex is probably the best API for process-shared
+// POSIX synchronization primitives, a local hash table and wait-for-thread kernel APIs (e.g.
+// lwp_park/lwp_unpark from NetBSD) could be a simpler replacement.
 //
-// TODO: Hash table?
+// TODO: Use an actual hash table.
 static FUTEXES: RwLock<FutexList> = RwLock::new(FutexList::new());
 
 fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Option<PhysicalAddress> {

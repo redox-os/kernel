@@ -44,9 +44,7 @@ pub enum Status {
     HardBlocked {
         reason: HardBlockedReason,
     },
-    Exited {
-        user_data: usize,
-    },
+    Dead,
 }
 
 impl Status {
@@ -184,7 +182,6 @@ pub struct Context {
     pub userspace: bool,
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
-    pub status_cond: Arc<WaitCondition>,
 }
 
 #[derive(Debug)]
@@ -230,7 +227,6 @@ impl Context {
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
-            status_cond: Arc::new(WaitCondition::new()),
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
