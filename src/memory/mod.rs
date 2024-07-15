@@ -645,6 +645,9 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         for order in 0..=MAX_ORDER {
             let pages_for_current_order = 1 << order;
 
+            debug_assert_eq!(frames.len() % pages_for_current_order, 0);
+            debug_assert!(base.is_aligned_to_order(order));
+
             if !frames.is_empty() && order != MAX_ORDER && !base.is_aligned_to_order(order + 1) {
                 frames[0].next.store(order as usize, Ordering::Relaxed);
                 // The first section page is not aligned to the next order size.
@@ -672,9 +675,13 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 //log::info!("ORDER {order}: LAST {final_page:?}");
                 append_page(final_page, &frames[off], order);
 
-                frames = &frames[..frames.len() - pages_for_current_order];
+                frames = &frames[..off];
             } else {
                 //log::info!("ORDER {order}: LAST SKIP");
+            }
+
+            if frames.is_empty() {
+                break;
             }
 
             if order == MAX_ORDER {
