@@ -78,6 +78,7 @@ pub fn exit(status: usize) -> ! {
         }
 
         process_lock.write().status = ProcessStatus::Exited(status);
+        context_lock.write().status = context::Status::Exited { user_data: status };
 
         let children = process_lock.write().waitpid.receive_all();
 
@@ -519,7 +520,7 @@ pub fn waitpid(
                 let processes = process::PROCESSES.read();
                 for (_id, process_lock) in processes.iter() {
                     let process = process_lock.read();
-                    if process.pgid == ppid {
+                    if process.ppid == ppid {
                         found = true;
                         break;
                     }

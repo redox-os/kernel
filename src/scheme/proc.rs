@@ -284,6 +284,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                 false,
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
+            "status" => (ContextHandle::Status, false),
             _ => return Ok(None),
         }))
     }
