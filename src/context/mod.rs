@@ -85,6 +85,7 @@ pub fn init() {
             info: ProcessInfo::default(),
             waitpid: Arc::new(WaitMap::new()),
             threads: Vec::new(),
+            status: process::ProcessStatus::PossiblyRunnable,
         }))
     });
 

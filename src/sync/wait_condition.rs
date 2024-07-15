@@ -44,7 +44,7 @@ impl WaitCondition {
     }
 
     // Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function
-    pub fn wait<T>(&self, guard: MutexGuard<T>, reason: &'static str) -> bool {
+    pub fn wait<T>(&self, guard: T, reason: &'static str) -> bool {
         let current_context_ref = context::current();
         {
             {

@@ -1,4 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
+use spinning_top::RwSpinlock;
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
 
@@ -6,9 +7,7 @@ use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan},
-    process::{self, ProcessId, ProcessInfo},
-    WaitpidKey,
+    memory::{AddrSpace, Grant, PageSpan}, process::{self, Process, ProcessId, ProcessInfo, ProcessStatus}, Context, WaitpidKey
 };
 
 use crate::{
@@ -78,7 +77,7 @@ pub fn exit(status: usize) -> ! {
             }
         }
 
-        context_lock.write().status = context::Status::Exited(status);
+        process_lock.write().status = ProcessStatus::Exited(status);
 
         let children = process_lock.write().waitpid.receive_all();
 
@@ -174,11 +173,11 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             },
         }
 
-        let mut send = |context: &mut context::Context, proc: &ProcessInfo| -> SendResult {
-            let is_self = context.is_current_context();
+        let mut send = |context_lock: &Arc<RwSpinlock<Context>>, process_lock: &Arc<RwLock<Process>>, proc_info: &ProcessInfo| -> SendResult {
+            let is_self = context::is_current(context_lock);
 
             // Non-root users cannot kill arbitrarily.
-            if euid != 0 && euid != proc.ruid && ruid != proc.ruid {
+            if euid != 0 && euid != proc_info.ruid && ruid != proc_info.ruid {
                 return SendResult::Forbidden;
             }
             // If sig = 0, test that process exists and can be signalled, but don't send any
@@ -187,15 +186,18 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                 return SendResult::Succeeded;
             }
 
+            let mut process_guard = process_lock.write();
+
             if sig == SIGCONT
-                && let context::Status::Stopped(_sig) = context.status
+                && let ProcessStatus::Stopped(_sig) = process_guard.status
             {
                 // Convert stopped processes to blocked if sending SIGCONT, regardless of whether
                 // SIGCONT is blocked or ignored. It can however be controlled whether the process
                 // will additionally ignore, defer, or handle that signal.
-                context.status = context::Status::Runnable;
+                process_guard.status = ProcessStatus::PossiblyRunnable;
+                drop(process_guard);
 
-                if let Some((tctl, pctl, _st)) = context.sigcontrol() {
+                if let Some((tctl, pctl, _st)) = context_lock.write().sigcontrol() {
                     if !pctl.signal_will_ign(SIGCONT, false) {
                         tctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
                     }
@@ -205,39 +207,47 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                     }
                 }
                 // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
-                SendResult::SucceededSigcont {
-                    ppid: proc.ppid,
-                    pgid: proc.pgid,
-                }
-            } else if sig == SIGSTOP
+                return SendResult::SucceededSigcont {
+                    ppid: proc_info.ppid,
+                    pgid: proc_info.pgid,
+                };
+            }
+            let mut context_guard = context_lock.write();
+            if sig == SIGSTOP
                 || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP)
-                    && context
+                    && context_guard
                         .sigcontrol()
                         .map_or(false, |(_, proc, _)| proc.signal_will_stop(sig)))
             {
-                context.status = context::Status::Stopped(sig);
+                context_guard.status = context::Status::Blocked;
                 // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
-                if let Some((ctl, _, _)) = context.sigcontrol() {
+                if let Some((ctl, _, _)) = context_guard.sigcontrol() {
                     ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
                 }
-                SendResult::SucceededSigchld {
-                    ppid: proc.ppid,
-                    pgid: proc.pgid,
+                drop(context_guard);
+                process_lock.write().status = ProcessStatus::Stopped(sig);
+                return SendResult::SucceededSigchld {
+                    ppid: proc_info.ppid,
+                    pgid: proc_info.pgid,
                     orig_signal: sig,
-                }
-            } else if sig == SIGKILL {
-                context.being_sigkilled = true;
-                context.unblock();
+                };
+            }
+            if sig == SIGKILL {
+                context_guard.being_sigkilled = true;
+                context_guard.unblock();
+                drop(context_guard);
+                process_lock.write().status = ProcessStatus::Exited(SIGKILL);
                 killed_self |= is_self;
 
                 // exit() will signal the parent, rather than immediately in kill()
-                SendResult::Succeeded
-            } else if let Some((tctl, pctl, _st)) = context.sigcontrol()
+                return SendResult::Succeeded;
+            }
+            if let Some((tctl, pctl, _st)) = context_guard.sigcontrol()
                 && !pctl.signal_will_ign(sig, parent_sigchld)
             {
                 let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                 if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
-                    context.unblock();
+                    context_guard.unblock();
                     killed_self |= is_self;
                 }
                 SendResult::Succeeded
@@ -313,8 +323,7 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                         process.info,
                     )
                 };
-                let mut context = context_lock.write();
-                let result = send(&mut *context, &info);
+                let result = send(&context_lock, process_lock, &info);
                 handle_send(pid, result)?;
             }
         } else if pid.get() == 1_usize.wrapping_neg() {
@@ -333,14 +342,11 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                     )
                 };
 
-                if info.pid.get() <= 2 {
+                if info.pid.get() <= 1 {
                     continue;
                 }
                 found += 1;
-                let mut context = context_lock.write();
-
-                let result = send(&mut *context, &info);
-                drop(context);
+                let result = send(&context_lock, process_lock, &info);
                 handle_send(*pid, result)?;
             }
         } else {
@@ -370,9 +376,7 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                 }
                 found += 1;
 
-                let mut context = context_lock.write();
-                let result = send(&mut *context, &info);
-                drop(context);
+                let result = send(&context_lock, process_lock, &info);
 
                 handle_send(*pid, result)?;
             }
@@ -600,7 +604,7 @@ pub fn waitpid(
                 }
             };
 
-            if let Some(context::Status::Exited(status)) = hack_status {
+            if let Some(ProcessStatus::Exited(_status)) = hack_status {
                 /*let _ = waitpid.receive_nonblock(&WaitpidKey {
                     pid: Some(pid),
                     pgid: None,

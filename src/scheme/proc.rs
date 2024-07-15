@@ -114,6 +114,8 @@ enum ProcHandle {
 }
 #[derive(Clone)]
 enum ContextHandle {
+    Status,
+
     Regs(RegsKind),
     Name,
     Sighandler,
@@ -1410,6 +1412,16 @@ impl ContextHandle {
 
                 Ok(mem::size_of_val(&mask))
             }
+            Self::Status => {
+                let user_data = buf.read_usize()?;
+                let mut context = context.write();
+
+                // TODO: Handle Status::HardBlocked differently?
+                context.status = Status::Exited { user_data };
+                context.status_cond.notify();
+
+                Ok(mem::size_of::<usize>())
+            }
             Self::OpenViaDup
             | Self::AwaitingAddrSpaceChange { .. }
             | Self::AwaitingFiletableChange { .. } => Err(Error::new(EBADF)),
@@ -1520,6 +1532,26 @@ impl ContextHandle {
                 buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
                 Ok(mem::size_of_val(&mask))
             } // TODO: Replace write() with SYS_DUP_FORWARD.
+
+            ContextHandle::Status => {
+                // Writing to the status explicitly exits the current thread.
+                let cond = Arc::clone(&context.read().status_cond);
+                let user_data = loop {
+                    let mut context = context.write();
+
+                    if let Status::Exited { user_data } = context.status {
+                        break user_data;
+                    }
+
+                    if !cond.wait(context, "waiting for thread") {
+                        return Err(Error::new(EINTR));
+                    }
+                };
+
+                buf.write_usize(user_data)?;
+                Ok(mem::size_of::<usize>())
+            }
+
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
             // with `<pid>/ctx`

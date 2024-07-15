@@ -16,7 +16,7 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::FileHandle,
+    scheme::FileHandle, sync::WaitCondition,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
@@ -43,9 +43,7 @@ pub enum Status {
     HardBlocked {
         reason: HardBlockedReason,
     },
-
-    Stopped(usize),
-    Exited(usize),
+    Exited { user_data: usize },
 }
 
 impl Status {
@@ -183,6 +181,7 @@ pub struct Context {
     pub userspace: bool,
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
+    pub status_cond: Arc<WaitCondition>,
 }
 
 #[derive(Debug)]
@@ -228,6 +227,7 @@ impl Context {
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
+            status_cond: Arc::new(WaitCondition::new()),
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),

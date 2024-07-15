@@ -29,6 +29,7 @@ pub struct Process {
     pub info: ProcessInfo,
     /// Context is being waited on
     pub waitpid: Arc<WaitMap<WaitpidKey, (ProcessId, usize)>>,
+    pub status: ProcessStatus,
     /// Threads of process
     pub threads: Vec<Weak<RwSpinlock<Context>>>,
 }
@@ -68,6 +69,12 @@ impl DerefMut for Process {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.info
     }
+}
+#[derive(Debug)]
+pub enum ProcessStatus {
+    PossiblyRunnable,
+    Stopped(usize),
+    Exited(usize),
 }
 
 pub const INIT: ProcessId = ProcessId::new(1);
@@ -110,6 +117,7 @@ pub fn new_process(info: impl FnOnce(ProcessId) -> ProcessInfo) -> Result<Arc<Rw
     let proc = Arc::try_new(RwLock::new(Process {
         waitpid: Arc::try_new(WaitMap::new()).map_err(|_| Error::new(ENOMEM))?,
         threads: Vec::new(),
+        status: ProcessStatus::PossiblyRunnable,
         info: info(pid),
     }))
     .map_err(|_| Error::new(ENOMEM))?;

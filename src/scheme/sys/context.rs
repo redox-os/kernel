@@ -53,10 +53,7 @@ pub fn resource() -> Result<Vec<u8>> {
                         stat_string.push('B');
                     }
                 }
-                context::Status::Stopped(_sig) => {
-                    stat_string.push('T');
-                }
-                context::Status::Exited(_status) => {
+                context::Status::Exited { .. } => {
                     stat_string.push('Z');
                 }
             }
