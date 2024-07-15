@@ -12,9 +12,9 @@ use crate::{allocator, device, dtb, init::device_tree, paging};
 use log::info;
 
 /// Test of zero values in BSS.
-static BSS_TEST_ZERO: usize = 0;
+static mut BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
-static DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
+static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
