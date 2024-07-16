@@ -30,7 +30,13 @@ use crate::{
 use super::usercopy::UserSliceWo;
 
 pub fn exit_context(context_lock: Arc<RwSpinlock<Context>>) {
-    // TODO: Stop context?
+    if !context::is_current(&context_lock) {
+        context_lock.write().status = context::Status::Dead;
+        while context_lock.read().running {
+            context::switch();
+        }
+    }
+
     let close_files;
     let addrspace_opt;
 
