@@ -891,8 +891,7 @@ impl UserInner {
                     _ => return Err(Error::new(ENOENT)),
                 };
 
-                // FIXME: Description can leak if context::current() fails, or if there is no
-                // additional file table space.
+                // FIXME: Description can leak if there is no additional file table space.
                 if flags.contains(FobtainFdFlags::MANUAL_FD) {
                     context::current().read().insert_file(
                         FileHandle::from(dst_fd_or_ptr),

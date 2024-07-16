@@ -5,7 +5,7 @@ use crate::{
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
-        process::{self, Process, ProcessId, ProcessInfo},
+        process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
         Context, ContextRef, Status,
     },
     memory::PAGE_SIZE,
@@ -201,22 +201,27 @@ impl Handle {
 impl Handle {
     fn continue_ignored_children(&mut self) -> Option<()> {
         let Handle::Process {
-            process,
-            kind: ProcHandle::Trace { pid, clones, .. },
+            kind: ProcHandle::Trace { clones, .. },
+            ..
         } = self
         else {
             return None;
         };
-        let contexts = context::contexts();
 
         for pid in clones.drain(..) {
             if ptrace::is_traced(pid) {
                 continue;
             }
-            if let Some(process) = process::PROCESSES.read().get(&pid) {
-                let mut process = process.write();
-                // FIXME
-                //context.status = context::Status::Runnable;
+            let Some(child_process) = process::PROCESSES.read().get(&pid).map(Arc::clone) else {
+                continue;
+            };
+            for thread in child_process
+                .read()
+                .threads
+                .iter()
+                .filter_map(|t| t.upgrade())
+            {
+                thread.write().status = context::Status::Runnable;
             }
         }
         Some(())
@@ -306,7 +311,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
             "exe" => (
                 ProcHandle::Static {
                     ty: "exe",
-                    // FIXME
+                    // FIXME: allow opening any thread
                     bytes: target
                         .read()
                         .threads
@@ -376,12 +381,9 @@ impl<const FULL: bool> ProcScheme<FULL> {
         {
             let target = target.read();
 
-            // FIXME
-            /*
-            if let Status::Exited(_) = target.status {
+            if let ProcessStatus::Exited(_) = target.status {
                 return Err(Error::new(ESRCH));
             }
-            */
 
             // Unless root, check security
             if handle.needs_child_process() && uid != 0 && gid != 0 {
@@ -471,9 +473,12 @@ impl<const FULL: bool> ProcScheme<FULL> {
             }
 
             if flags & O_TRUNC == O_TRUNC {
-                let mut target = target.write();
-                // FIXME
-                //target.ptrace_stop = true;
+                let target = target.read();
+                for thread in target.threads.iter().filter_map(|t| t.upgrade()) {
+                    thread.write().status = context::Status::HardBlocked {
+                        reason: HardBlockedReason::PtraceStop,
+                    };
+                }
             }
         }
 
@@ -1015,13 +1020,11 @@ impl ProcHandle {
                 }
 
                 // disable the ptrace_stop flag, which is used in some cases
-                // FIXME
-                /*
-                with_context_mut(info.pid, |context| {
-                    context.ptrace_stop = false;
-                    Ok(())
-                })?;
-                */
+                for thread in process.read().threads.iter().filter_map(|t| t.upgrade()) {
+                    thread.write().status = context::Status::HardBlocked {
+                        reason: HardBlockedReason::PtraceStop,
+                    };
+                }
 
                 // and notify the tracee's WaitCondition, which is used in other cases
                 ptrace::Session::with_session(pid, |session| {
@@ -1082,14 +1085,17 @@ impl ProcHandle {
     ) -> Result<usize> {
         match self {
             Self::Static { bytes, .. } => read_from(buf, &bytes, offset),
-            Self::Trace { pid, clones, .. } => {
+            Self::Trace { pid, .. } => {
                 // Wait for event
                 if (read_flags as usize) & O_NONBLOCK != O_NONBLOCK {
                     ptrace::wait(pid)?;
                 }
 
-                // Check if process exists FIXME
-                //with_context(pid, |_| Ok(()))?;
+                // Check if process exists
+                let _ = process::PROCESSES
+                    .read()
+                    .get(&pid)
+                    .ok_or(Error::new(ESRCH))?;
 
                 let mut src_buf = [PtraceEvent::default(); 4];
 
