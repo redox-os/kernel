@@ -16,6 +16,7 @@ pub mod entry {
             const NO_CACHE =        1 << 4;
             const HUGE_PAGE =       1 << 7;
             const GLOBAL =          1 << 8;
+            const DEV_MEM =         0;
         }
     }
 }

@@ -17,6 +17,7 @@ use crate::{
     cpu_set::LogicalCpuId,
     device, gdt, idt, interrupt, misc,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
+    startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
 };
 
 /// Test of zero values in BSS.
@@ -33,7 +34,7 @@ pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
-#[repr(C, packed)]
+#[repr(C, packed(8))]
 pub struct KernelArgs {
     kernel_base: u64,
     kernel_size: u64,
@@ -139,20 +140,33 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         idt::init();
 
         // Initialize RMM
-        crate::arch::rmm::init(
+        register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
+        register_memory_region(
             args.kernel_base as usize,
             args.kernel_size as usize,
+            BootloaderMemoryKind::Kernel,
+        );
+        register_memory_region(
             args.stack_base as usize,
             args.stack_size as usize,
+            BootloaderMemoryKind::IdentityMap,
+        );
+        register_memory_region(
             args.env_base as usize,
             args.env_size as usize,
+            BootloaderMemoryKind::IdentityMap,
+        );
+        register_memory_region(
             args.acpi_rsdp_base as usize,
             args.acpi_rsdp_size as usize,
-            args.areas_base as usize,
-            args.areas_size as usize,
+            BootloaderMemoryKind::IdentityMap,
+        );
+        register_memory_region(
             args.bootstrap_base as usize,
             args.bootstrap_size as usize,
+            BootloaderMemoryKind::IdentityMap,
         );
+        crate::startup::memory::init(Some(0x100000), None);
 
         // Initialize PAT
         paging::init();

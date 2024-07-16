@@ -1,10 +1,10 @@
 use alloc::boxed::Box;
 use spin::Mutex;
 
-use crate::{device::uart_pl011::SerialPort, init::device_tree, interrupt::irq::trigger};
+use crate::{device::uart_pl011::SerialPort, interrupt::irq::trigger};
 
 use super::irqchip::{register_irq, InterruptHandler, IRQ_CHIP};
-use crate::dtb::DTB_BINARY;
+use crate::dtb::{diag_uart_range, DTB_BINARY};
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use fdt::Fdt;
@@ -25,13 +25,13 @@ impl InterruptHandler for Com1Irq {
     }
 }
 
-pub unsafe fn init_early(dtb_base: usize, dtb_size: usize) {
+pub unsafe fn init_early(dtb: &Fdt) {
     if COM1.lock().is_some() {
         // Hardcoded UART
         return;
     }
 
-    if let Some((phys, _size, skip_init, cts)) = device_tree::diag_uart_range(dtb_base, dtb_size) {
+    if let Some((phys, _size, skip_init, cts)) = diag_uart_range(dtb) {
         let virt = crate::PHYS_OFFSET + phys;
         {
             let mut serial_port = SerialPort::new(virt, skip_init, cts);

@@ -8,8 +8,17 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug;
 
-use crate::{allocator, device, dtb, init::device_tree, paging};
+use fdt::Fdt;
 use log::info;
+use rmm::PhysicalAddress;
+
+use crate::{
+    allocator, device, dtb,
+    dtb::register_dev_memory_ranges,
+    memory::{Frame, PAGE_SIZE},
+    paging,
+    startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
+};
 
 /// Test of zero values in BSS.
 static mut BSS_TEST_ZERO: usize = 0;
@@ -22,7 +31,7 @@ pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
-#[repr(C, packed)]
+#[repr(C, packed(8))]
 pub struct KernelArgs {
     kernel_base: usize,
     kernel_size: usize,
@@ -56,9 +65,16 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
-        if args.dtb_base != 0 {
+        let dtb = if args.dtb_base != 0 {
+            let data = unsafe { slice::from_raw_parts(args.dtb_base as *const u8, args.dtb_size) };
+            Fdt::new(data).ok()
+        } else {
+            None
+        };
+
+        if let Some(dt) = &dtb {
             // Try to find serial port prior to logging
-            device::serial::init_early(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
+            device::serial::init_early(dt);
         }
 
         // Convert env to slice
@@ -124,30 +140,46 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             tmp = out(reg) _,
         );
 
-        if args.dtb_base != 0 {
-            //Try to read device memory map
-            device_tree::fill_memory_map(crate::PHYS_OFFSET + args.dtb_base, args.dtb_size);
+        if let Some(dt) = &dtb {
+            //in uefi boot mode, ignore memory node, just read the device memory range
+            //register_memory_ranges(dt);
+
+            register_dev_memory_ranges(dt);
         }
+
+        register_bootloader_areas(args.areas_base, args.areas_size);
 
         /* NOT USED WITH UEFI
         let env_size = device_tree::fill_env_data(crate::PHYS_OFFSET + dtb_base, dtb_size, env_base);
         */
 
         // Initialize RMM
-        crate::arch::rmm::init(
+        register_memory_region(
             args.kernel_base,
             args.kernel_size,
+            BootloaderMemoryKind::Kernel,
+        );
+        register_memory_region(
             args.stack_base,
             args.stack_size,
+            BootloaderMemoryKind::IdentityMap,
+        );
+        register_memory_region(
             args.env_base,
             args.env_size,
+            BootloaderMemoryKind::IdentityMap,
+        );
+        register_memory_region(
             args.dtb_base,
             args.dtb_size,
-            args.areas_base,
-            args.areas_size,
+            BootloaderMemoryKind::IdentityMap,
+        );
+        register_memory_region(
             args.bootstrap_base,
             args.bootstrap_size,
+            BootloaderMemoryKind::IdentityMap,
         );
+        crate::startup::memory::init(None, None);
 
         // Initialize paging
         paging::init();

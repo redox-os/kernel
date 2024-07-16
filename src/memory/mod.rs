@@ -25,6 +25,23 @@ use crate::{
 };
 use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, TableKind, VirtualAddress};
 
+/// Available physical memory areas
+pub(crate) static AREAS: SyncUnsafeCell<[rmm::MemoryArea; 512]> = SyncUnsafeCell::new(
+    [rmm::MemoryArea {
+        base: PhysicalAddress::new(0),
+        size: 0,
+    }; 512],
+);
+pub(crate) static AREA_COUNT: SyncUnsafeCell<u16> = SyncUnsafeCell::new(0);
+
+// TODO: Share code
+pub(crate) fn areas() -> &'static [rmm::MemoryArea] {
+    // SAFETY: Both AREAS and AREA_COUNT are initialized once and then never changed.
+    //
+    // TODO: Memory hotplug?
+    unsafe { &(&*AREAS.get())[..AREA_COUNT.get().read().into()] }
+}
+
 /// Get the number of frames available
 pub fn free_frames() -> usize {
     total_frames() - used_frames()

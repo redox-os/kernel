@@ -139,6 +139,9 @@ pub mod profiling;
 /// Schemes, filesystem handlers
 mod scheme;
 
+/// Early init
+mod startup;
+
 /// Synchronization primitives
 mod sync;
 
