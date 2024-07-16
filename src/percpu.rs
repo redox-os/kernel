@@ -47,6 +47,7 @@ const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
     [NULL; MAX_CPU_COUNT as usize];
 
+#[allow(unused)]
 pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
     ALL_PERCPU_BLOCKS[id.get() as usize].store(block, Ordering::Release)
 }

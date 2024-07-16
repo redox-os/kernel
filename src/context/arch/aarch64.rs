@@ -1,19 +1,7 @@
-use alloc::sync::Arc;
-use core::{
-    arch::asm,
-    mem,
-    mem::offset_of,
-    ptr,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{arch::asm, mem, mem::offset_of, ptr, sync::atomic::AtomicBool};
 use spin::Once;
 
-use crate::{
-    device::cpu::registers::{control_regs, tlb},
-    paging::{RmmA, RmmArch, TableKind},
-    percpu::PercpuBlock,
-    syscall::FloatRegisters,
-};
+use crate::{percpu::PercpuBlock, syscall::FloatRegisters};
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
@@ -86,19 +74,12 @@ impl Context {
         self.lr = address;
     }
 
-    pub fn set_fp(&mut self, address: usize) {
-        self.fp = address;
-    }
-
     pub fn set_context_handle(&mut self) {
         let address = self as *const _ as usize;
         self.tpidrro_el0 = address;
     }
 
-    pub fn get_context_handle(&mut self) -> usize {
-        self.tpidrro_el0
-    }
-
+    #[allow(unused)]
     pub fn dump(&self) {
         println!("elr_el1: 0x{:016x}", self.elr_el1);
         println!("sp_el0: 0x{:016x}", self.sp_el0);
@@ -131,7 +112,7 @@ impl super::Context {
         unsafe { ptr::read(self.kfx.as_ptr() as *const FloatRegisters) }
     }
 
-    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) {
+    pub fn set_fx_regs(&mut self, new: FloatRegisters) {
         if !self.arch.fx_loadable {
             panic!("TODO: make set_fx_regs always work");
         }
@@ -162,7 +143,7 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 
 #[target_feature(enable = "neon")]
 #[naked]
-unsafe fn fp_save(float_regs: &mut FloatRegisters) {
+unsafe extern "C" fn fp_save(float_regs: &mut FloatRegisters) {
     asm!(
     "stp q0, q1, [x0, {0} + 16 * 0]",
     "stp q2, q3, [x0, {0} + 16 * 2]",
@@ -195,7 +176,7 @@ unsafe fn fp_save(float_regs: &mut FloatRegisters) {
 
 #[target_feature(enable = "neon")]
 #[naked]
-unsafe fn fp_load(float_regs: &mut FloatRegisters) {
+unsafe extern "C" fn fp_load(float_regs: &mut FloatRegisters) {
     asm!(
     "ldp q0, q1, [x0, {0} + 16 * 0]",
     "ldp q2, q3, [x0, {0} + 16 * 2]",

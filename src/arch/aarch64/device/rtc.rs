@@ -1,19 +1,12 @@
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::read_volatile;
 
 use crate::{
     memory::Frame,
-    paging::{KernelMapper, Page, PageFlags, PhysicalAddress, TableKind, VirtualAddress},
+    paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress},
     time,
 };
 
 static RTC_DR: u32 = 0x000;
-static RTC_MR: u32 = 0x004;
-static RTC_LR: u32 = 0x008;
-static RTC_CR: u32 = 0x00c;
-static RTC_IMSC: u32 = 0x010;
-static RTC_RIS: u32 = 0x014;
-static RTC_MIS: u32 = 0x018;
-static RTC_ICR: u32 = 0x01c;
 
 static mut PL031_RTC: Pl031rtc = Pl031rtc { address: 0 };
 
@@ -55,10 +48,6 @@ impl Pl031rtc {
     unsafe fn read(&self, reg: u32) -> u32 {
         let val = read_volatile((self.address + reg as usize) as *const u32);
         val
-    }
-
-    unsafe fn write(&mut self, reg: u32, value: u32) {
-        write_volatile((self.address + reg as usize) as *mut u32, value);
     }
 
     pub fn time(&mut self) -> u64 {

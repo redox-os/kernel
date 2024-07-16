@@ -1,12 +1,6 @@
 //! Global descriptor table
 
-use core::{
-    cell::{Cell, RefCell},
-    convert::TryInto,
-    mem,
-    ptr::addr_of_mut,
-    sync::atomic::AtomicBool,
-};
+use core::{mem, ptr::addr_of_mut};
 
 use crate::cpu_set::LogicalCpuId;
 
@@ -18,8 +12,6 @@ use x86::{
 };
 
 use crate::paging::{RmmA, RmmArch, PAGE_SIZE};
-
-use super::cpuid::cpuid;
 
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;

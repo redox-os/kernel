@@ -4,11 +4,9 @@ use core::{
     sync::atomic::{self, AtomicUsize, Ordering},
 };
 use rmm::{
-    Arch, BuddyAllocator, BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea,
-    PageEntry, PageFlags, PageMapper, PhysicalAddress, TableKind, VirtualAddress, KILOBYTE,
-    MEGABYTE,
+    Arch, BumpAllocator, FrameAllocator, MemoryArea, PageEntry, PageFlags, PageMapper,
+    PhysicalAddress, TableKind, VirtualAddress, KILOBYTE, MEGABYTE,
 };
-use spin::Mutex;
 
 use crate::{cpu_set::LogicalCpuId, memory::TheFrameAllocator};
 
@@ -17,6 +15,7 @@ use super::CurrentRmmArch as RmmA;
 // Keep synced with OsMemoryKind in bootloader
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u64)]
+#[allow(dead_code)]
 pub enum BootloaderMemoryKind {
     Null = 0,
     Free = 1,
@@ -196,11 +195,6 @@ static AREAS: SyncUnsafeCell<[MemoryArea; 512]> = SyncUnsafeCell::new(
     }; 512],
 );
 static AREA_COUNT: SyncUnsafeCell<u16> = SyncUnsafeCell::new(0);
-
-pub fn areas() -> &'static [MemoryArea] {
-    // SAFETY: Both areas and AREA_COUNT are initialized once and then never changed.
-    unsafe { &(&*AREAS.get())[..AREA_COUNT.get().read().into()] }
-}
 
 const NO_PROCESSOR: usize = !0;
 static LOCK_OWNER: AtomicUsize = AtomicUsize::new(NO_PROCESSOR);

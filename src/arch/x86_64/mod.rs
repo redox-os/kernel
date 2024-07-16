@@ -35,7 +35,6 @@ pub use ::rmm::X8664Arch as CurrentRmmArch;
 pub mod flags {
     pub const SHIFT_SINGLESTEP: usize = 8;
     pub const FLAG_SINGLESTEP: usize = 1 << SHIFT_SINGLESTEP;
-    pub const FLAG_INTERRUPTS: usize = 1 << 9;
 }
 
 // TODO: Maybe support rewriting relocations (using LD's --emit-relocs) when working with entire

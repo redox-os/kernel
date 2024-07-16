@@ -2,12 +2,12 @@ use alloc::boxed::Box;
 use spin::Mutex;
 
 use crate::{device::uart_pl011::SerialPort, init::device_tree, interrupt::irq::trigger};
-use log::{debug, info};
 
 use super::irqchip::{register_irq, InterruptHandler, IRQ_CHIP};
 use crate::{dtb::DTB_BINARY, init::device_tree::find_compatible_node};
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
+use log::info;
 
 pub static COM1: Mutex<Option<SerialPort>> = Mutex::new(None);
 
@@ -30,7 +30,7 @@ pub unsafe fn init_early(dtb_base: usize, dtb_size: usize) {
         return;
     }
 
-    if let Some((phys, size, skip_init, cts)) = device_tree::diag_uart_range(dtb_base, dtb_size) {
+    if let Some((phys, _size, skip_init, cts)) = device_tree::diag_uart_range(dtb_base, dtb_size) {
         let virt = crate::PHYS_OFFSET + phys;
         {
             let mut serial_port = SerialPort::new(virt, skip_init, cts);

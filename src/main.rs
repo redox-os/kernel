@@ -243,7 +243,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
 }
 
 /// This is the main kernel entry point for secondary CPUs
-#[allow(unreachable_code, unused_variables)]
+#[allow(unreachable_code, unused_variables, dead_code)]
 fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);

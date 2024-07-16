@@ -6,7 +6,6 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
-use hashbrown::HashMap;
 use rmm::{Arch as _, PageFlush};
 use spin::{RwLock, RwLockReadGuard, RwLockUpgradableGuard, RwLockWriteGuard};
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
@@ -728,9 +727,6 @@ pub struct UserGrants {
     holes: BTreeMap<VirtualAddress, usize>,
     // TODO: Would an additional map ordered by (size,start) to allow for O(log n) allocations be
     // beneficial?
-
-    //TODO: technically VirtualAddress is from a scheme's context!
-    pub funmap: HashMap<Page, (usize, Page)>,
 }
 
 #[derive(Clone, Copy)]
@@ -836,7 +832,6 @@ impl UserGrants {
             inner: BTreeMap::new(),
             holes: core::iter::once((VirtualAddress::new(0), crate::USER_END_OFFSET))
                 .collect::<BTreeMap<_, _>>(),
-            funmap: HashMap::new(),
         }
     }
     /// Returns the grant, if any, which occupies the specified page

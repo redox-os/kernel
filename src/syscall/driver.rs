@@ -13,7 +13,7 @@ fn enforce_root() -> Result<()> {
 }
 
 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-pub fn iopl(level: usize) -> Result<usize> {
+pub fn iopl(_level: usize) -> Result<usize> {
     Err(Error::new(syscall::error::ENOSYS))
 }
 

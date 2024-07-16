@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! ELF executables
 
 use alloc::string::String;

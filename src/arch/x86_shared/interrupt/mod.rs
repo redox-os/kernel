@@ -16,12 +16,6 @@ pub unsafe fn disable() {
     core::arch::asm!("cli", options(nomem, nostack));
 }
 
-/// Set interrupts
-#[inline(always)]
-pub unsafe fn enable() {
-    core::arch::asm!("sti", options(nomem, nostack));
-}
-
 /// Set interrupts and halt
 /// This will atomically wait for the next interrupt
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!

@@ -88,7 +88,7 @@ impl InterruptController for GenericInterruptController {
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> Result<Option<usize>> {
-        let (dist_addr, dist_size, cpu_addr, cpu_size) =
+        let (dist_addr, _dist_size, cpu_addr, _cpu_size) =
             match GenericInterruptController::parse(fdt) {
                 Ok(regs) => regs,
                 Err(err) => return Err(err),
@@ -137,15 +137,14 @@ impl InterruptController for GenericInterruptController {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
     }
     fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
-        let mut off: usize = 0;
         let mut i = 0;
         for chunk in irq_data.chunks(3) {
             if i == idx {
-                match chunk[0] {
-                    0 => off = chunk[1] as usize + 32, //SPI
-                    1 => off = chunk[1] as usize + 16, //PPI,
+                let mut off = match chunk[0] {
+                    0 => chunk[1] as usize + 32, //SPI
+                    1 => chunk[1] as usize + 16, //PPI,
                     _ => return Err(Error::new(EINVAL)),
-                }
+                };
                 off += self.irq_range.0;
                 return Ok(off);
             }

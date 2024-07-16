@@ -4,8 +4,7 @@ extern crate fdt;
 use self::byteorder::{ByteOrder, BE};
 use core::slice;
 use fdt::Node;
-
-use log::{debug, info};
+use log::debug;
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C)]
@@ -94,6 +93,7 @@ pub fn travel_interrupt_ctrl(fdt: &fdt::DeviceTree) {
     }
 }
 
+#[allow(unused)]
 fn memory_ranges(
     dt: &fdt::DeviceTree,
     address_cells: usize,
@@ -106,7 +106,7 @@ fn memory_ranges(
         .find(|p| p.name.contains("reg"))
         .unwrap();
     let chunk_sz = (address_cells + size_cells) * 4;
-    let chunk_count = (reg.data.len() / chunk_sz);
+    let chunk_count = reg.data.len() / chunk_sz;
     let mut index = 0;
     for chunk in reg.data.chunks(chunk_sz as usize) {
         if index == chunk_count {
@@ -157,7 +157,7 @@ fn dev_memory_ranges(
         .find(|p| p.name.contains("ranges"))
         .unwrap();
     let chunk_sz = (address_cells * 2 + size_cells) * 4;
-    let chunk_count = (reg.data.len() / chunk_sz);
+    let chunk_count = reg.data.len() / chunk_sz;
     let mut index = 0;
     for chunk in reg.data.chunks(chunk_sz as usize) {
         if index == chunk_count {
@@ -238,7 +238,7 @@ pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize
         .unwrap();
 
     let (address_cells, size_cells) = root_cell_sz(&dt).unwrap();
-    let chunk_sz = (address_cells + size_cells) * 4;
+    let _chunk_sz = (address_cells + size_cells) * 4;
     let (base, size) = reg.data.split_at((address_cells * 4) as usize);
     let mut b = 0;
     // FIXME likely needs shifting before addition
@@ -250,18 +250,6 @@ pub fn diag_uart_range(dtb_base: usize, dtb_size: usize) -> Option<(usize, usize
         s += BE::read_u32(sz_chunk);
     }
     Some((b as usize, s as usize, skip_init, cts_event_walkaround))
-}
-
-fn compatible_node_present<'a>(dt: &fdt::DeviceTree<'a>, compat_string: &str) -> bool {
-    for node in dt.nodes() {
-        if let Some(compatible) = node.properties().find(|p| p.name.contains("compatible")) {
-            let s = core::str::from_utf8(compatible.data).unwrap();
-            if s.contains(compat_string) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 pub fn find_compatible_node<'a>(
@@ -279,6 +267,7 @@ pub fn find_compatible_node<'a>(
     None
 }
 
+#[allow(unused)]
 pub fn fill_env_data(dtb_base: usize, dtb_size: usize, env_base: usize) -> usize {
     let data = unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) };
     let dt = fdt::DeviceTree::new(data).unwrap();

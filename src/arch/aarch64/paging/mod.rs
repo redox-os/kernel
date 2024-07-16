@@ -1,23 +1,16 @@
 //! # Paging
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
-use core::{mem, ptr};
-
-use crate::device::cpu::registers::{control_regs, tlb};
-
-use self::mapper::PageFlushAll;
+use crate::device::cpu::registers::control_regs;
 
 pub use super::CurrentRmmArch as RmmA;
-pub use rmm::{Arch as RmmArch, Flusher, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
+pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 pub use crate::rmm::KernelMapper;
 
 pub mod entry;
 pub mod mapper;
-
-/// Number of entries per page table
-pub const ENTRY_COUNT: usize = RmmA::PAGE_ENTRIES;
 
 /// Size of pages
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
@@ -52,22 +45,6 @@ impl Page {
         VirtualAddress::new(self.number * PAGE_SIZE)
     }
 
-    pub fn p4_index(self) -> usize {
-        (self.number >> 27) & 0o777
-    }
-
-    pub fn p3_index(self) -> usize {
-        (self.number >> 18) & 0o777
-    }
-
-    pub fn p2_index(self) -> usize {
-        (self.number >> 9) & 0o777
-    }
-
-    pub fn p1_index(self) -> usize {
-        self.number & 0o777
-    }
-
     pub fn containing_address(address: VirtualAddress) -> Page {
         //TODO assert!(address.data() < 0x0000_8000_0000_0000 || address.data() >= 0xffff_8000_0000_0000,
         //    "invalid address: 0x{:x}", address.data());
@@ -82,10 +59,6 @@ impl Page {
             end: r#final.next(),
         }
     }
-    pub fn range_exclusive(start: Page, end: Page) -> PageIter {
-        PageIter { start, end }
-    }
-
     pub fn next(self) -> Page {
         self.next_by(1)
     }

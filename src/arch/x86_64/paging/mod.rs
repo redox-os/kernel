@@ -91,10 +91,6 @@ impl Page {
             end: r#final.next(),
         }
     }
-    pub fn range_exclusive(start: Page, end: Page) -> PageIter {
-        PageIter { start, end }
-    }
-
     pub fn next(self) -> Page {
         self.next_by(1)
     }

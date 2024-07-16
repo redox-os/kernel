@@ -1,4 +1,3 @@
-use rmm::TableKind;
 use x86::irq::PageFaultError;
 
 use crate::{

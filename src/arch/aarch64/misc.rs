@@ -1,8 +1,3 @@
-use core::{
-    cell::{Cell, RefCell},
-    sync::atomic::AtomicBool,
-};
-
 use crate::{
     cpu_set::LogicalCpuId,
     paging::{RmmA, RmmArch},

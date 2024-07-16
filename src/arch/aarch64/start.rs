@@ -5,19 +5,10 @@
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-use crate::{
-    memory::Frame,
-    paging::{Page, PhysicalAddress, VirtualAddress, PAGE_SIZE},
-};
-
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug;
-use crate::{
-    allocator, device, dtb,
-    init::device_tree,
-    interrupt,
-    paging::{self, KernelMapper},
-};
+
+use crate::{allocator, device, dtb, init::device_tree, paging};
 use log::info;
 
 /// Test of zero values in BSS.
@@ -201,6 +192,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 }
 
 #[repr(packed)]
+#[allow(unused)]
 pub struct KernelArgsAp {
     cpu_id: u64,
     page_table: u64,
@@ -209,6 +201,7 @@ pub struct KernelArgsAp {
 }
 
 /// Entry to rust for an AP
-pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
+#[allow(unused)]
+pub unsafe extern "C" fn kstart_ap(_args_ptr: *const KernelArgsAp) -> ! {
     loop {}
 }

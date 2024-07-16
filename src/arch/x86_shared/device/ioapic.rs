@@ -9,11 +9,13 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic};
 use crate::{
     arch::interrupt::irq,
     memory::Frame,
-    paging::{entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch},
+    paging::{entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress},
 };
 
 use super::pic;
 use crate::arch::cpuid::cpuid;
+#[cfg(target_arch = "x86_64")]
+use {crate::memory::RmmA, rmm::Arch};
 
 pub struct IoApicRegs {
     pointer: *const u32,
@@ -46,14 +48,8 @@ impl IoApicRegs {
     pub fn read_ioapicid(&mut self) -> u32 {
         self.read_reg(0x00)
     }
-    pub fn write_ioapicid(&mut self, value: u32) {
-        self.write_reg(0x00, value);
-    }
     pub fn read_ioapicver(&mut self) -> u32 {
         self.read_reg(0x01)
-    }
-    pub fn read_ioapicarb(&mut self) -> u32 {
-        self.read_reg(0x02)
     }
     pub fn read_ioredtbl(&mut self, idx: u8) -> u64 {
         assert!(idx < 24);
@@ -76,6 +72,7 @@ impl IoApicRegs {
         let ver = self.read_ioapicver();
         ((ver & 0x00FF_0000) >> 16) as u8
     }
+    #[allow(dead_code)]
     pub fn id(&mut self) -> u8 {
         let id_reg = self.read_ioapicid();
         ((id_reg & 0x0F00_0000) >> 24) as u8
@@ -87,6 +84,7 @@ pub struct IoApic {
     count: u8,
 }
 impl IoApic {
+    #[allow(dead_code)]
     pub fn new(regs_base: *const u32, gsi_start: u32) -> Self {
         let mut regs = IoApicRegs { pointer: regs_base };
         let count = regs.max_redirection_table_entries();
@@ -98,6 +96,7 @@ impl IoApic {
         }
     }
     /// Map an interrupt vector to a physical local APIC ID of a processor (thus physical mode).
+    #[allow(dead_code)]
     pub fn map(&self, idx: u8, info: MapInfo) {
         self.regs.lock().write_ioredtbl(idx, info.as_raw())
     }
@@ -125,12 +124,14 @@ pub enum ApicPolarity {
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
+#[allow(unused)]
 pub enum DestinationMode {
     Physical = 0,
     Logical = 1,
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
+#[allow(unused)]
 pub enum DeliveryMode {
     Fixed = 0b000,
     LowestPriority = 0b001,
@@ -297,6 +298,7 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
     SRC_OVERRIDES.get_or_insert_with(Vec::new).push(over);
 }
 
+#[allow(dead_code)]
 pub unsafe fn init(active_table: &mut KernelMapper) {
     let bsp_apic_id = cpuid().get_feature_info().unwrap().initial_local_apic_id(); // TODO: remove unwraps
 

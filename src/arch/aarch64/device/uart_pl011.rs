@@ -134,10 +134,6 @@ impl SerialPort {
         }
     }
 
-    pub fn base(&self) -> usize {
-        self.base
-    }
-
     pub fn read_reg(&self, register: u8) -> u32 {
         unsafe { ptr::read_volatile((self.base + register as usize) as *mut u32) }
     }
@@ -228,10 +224,6 @@ impl SerialPort {
     pub fn clear_all_irqs(&mut self) {
         let flags = UartIcrFlags::RTIC | UartIcrFlags::RXIC;
         self.write_reg(self.intr_clr_reg, flags.bits());
-    }
-
-    pub fn disable_irq(&mut self) {
-        self.write_reg(self.intr_mask_setclr_reg, 0);
     }
 
     pub fn enable_irq(&mut self) {
