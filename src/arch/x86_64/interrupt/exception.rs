@@ -189,6 +189,9 @@ interrupt_stack!(machine_check, @paranoid, |stack| {
 interrupt_stack!(simd, |stack| {
     println!("SIMD floating point fault");
     stack.dump();
+    let mut mxcsr = 0_usize;
+    core::arch::asm!("stmxcsr [{}]", in(reg) core::ptr::addr_of_mut!(mxcsr));
+    println!("MXCSR {:#0x}", mxcsr);
     stack_trace();
     ksignal(SIGFPE);
 });
