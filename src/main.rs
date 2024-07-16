@@ -124,7 +124,6 @@ use spinning_top::RwSpinlock;
 mod memory;
 
 /// Panic
-#[cfg(not(test))]
 mod panic;
 
 mod percpu;

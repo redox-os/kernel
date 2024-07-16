@@ -3,7 +3,6 @@ use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
 
 use super::gic::GicDistIf;
-use log::info;
 use syscall::{
     error::{Error, EINVAL},
     Result,

@@ -4,7 +4,7 @@ use rmm::{
     VirtualAddress, KILOBYTE, MEGABYTE,
 };
 
-use crate::{cpu_set::LogicalCpuId, init::device_tree::MEMORY_MAP, paging::entry::EntryFlags};
+use crate::{init::device_tree::MEMORY_MAP, paging::entry::EntryFlags};
 
 use super::CurrentRmmArch as RmmA;
 
