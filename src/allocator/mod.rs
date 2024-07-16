@@ -1,4 +1,7 @@
-use crate::paging::{mapper::PageFlushAll, KernelMapper, Page, PageFlags, VirtualAddress};
+use crate::{
+    memory::KernelMapper,
+    paging::{mapper::PageFlushAll, Page, PageFlags, VirtualAddress},
+};
 use rmm::Flusher;
 
 #[cfg(not(feature = "slab"))]

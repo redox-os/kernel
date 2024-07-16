@@ -8,7 +8,8 @@ use x86::controlregs::{Cr4, Xcr0};
 use crate::{
     context::memory::PageSpan,
     cpuid::{cpuid, feature_info, has_ext_feat},
-    paging::{KernelMapper, Page, PageFlags, VirtualAddress, PAGE_SIZE},
+    memory::KernelMapper,
+    paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE},
 };
 
 #[cfg(all(cpu_feature_never = "xsave", not(cpu_feature_never = "xsaveopt")))]
@@ -163,6 +164,8 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
         );
         for page in dst_pages.pages() {
             mapper
+                .get_mut()
+                .unwrap()
                 .remap(
                     page.start_address(),
                     PageFlags::new().write(true).execute(true).global(true),
@@ -234,6 +237,8 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
 
         for page in dst_pages.pages() {
             mapper
+                .get_mut()
+                .unwrap()
                 .remap(
                     page.start_address(),
                     PageFlags::new().write(false).execute(true).global(true),

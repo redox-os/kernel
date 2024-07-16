@@ -2288,7 +2288,7 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86)
 #[cfg(target_arch = "x86")]
 pub fn setup_new_utable() -> Result<Table> {
-    use crate::paging::KernelMapper;
+    use crate::memory::KernelMapper;
 
     let utable = unsafe {
         PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
@@ -2319,7 +2319,7 @@ pub fn setup_new_utable() -> Result<Table> {
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
 #[cfg(target_arch = "x86_64")]
 pub fn setup_new_utable() -> Result<Table> {
-    use crate::{memory::TheFrameAllocator, paging::KernelMapper};
+    use crate::memory::{KernelMapper, TheFrameAllocator};
 
     let utable = unsafe {
         PageMapper::create(TableKind::User, TheFrameAllocator).ok_or(Error::new(ENOMEM))?

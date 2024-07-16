@@ -1,6 +1,6 @@
 use core::{arch::asm, mem};
 
-use crate::paging::{KernelMapper, VirtualAddress};
+use crate::{memory::KernelMapper, paging::VirtualAddress};
 
 /// Get a stack trace
 //TODO: Check for stack being mapped before dereferencing

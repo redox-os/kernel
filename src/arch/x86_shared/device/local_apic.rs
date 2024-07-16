@@ -7,10 +7,10 @@ use x86::msr::*;
 
 use crate::{
     ipi::IpiKind,
-    paging::{KernelMapper, PageFlags, PhysicalAddress},
+    paging::{PageFlags, PhysicalAddress},
 };
 
-use crate::arch::cpuid::cpuid;
+use crate::{arch::cpuid::cpuid, memory::KernelMapper};
 
 static LOCAL_APIC: SyncUnsafeCell<LocalApic> = SyncUnsafeCell::new(LocalApic {
     address: 0,

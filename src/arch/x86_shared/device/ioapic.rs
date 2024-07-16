@@ -8,8 +8,8 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic};
 
 use crate::{
     arch::interrupt::irq,
-    memory::Frame,
-    paging::{entry::EntryFlags, KernelMapper, Page, PageFlags, PhysicalAddress},
+    memory::{Frame, KernelMapper},
+    paging::{entry::EntryFlags, Page, PageFlags, PhysicalAddress},
 };
 
 use super::pic;
