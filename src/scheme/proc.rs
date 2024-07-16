@@ -17,7 +17,7 @@ use crate::{
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
-        EnvRegisters, FloatRegisters, IntRegisters,
+        EnvRegisters, FloatRegisters, IntRegisters, KillTarget,
     },
 };
 
@@ -114,7 +114,8 @@ enum ProcHandle {
 }
 #[derive(Clone)]
 enum ContextHandle {
-    Status,
+    Status, // writing usize::MAX causes exit
+    Signal, // writing sends signal
 
     Regs(RegsKind),
     Name,
@@ -290,6 +291,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status, false),
+            "signal" => (ContextHandle::Signal, false),
             _ => return Ok(None),
         }))
     }
@@ -568,7 +570,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 ptrace::close_session(pid);
 
                 if excl {
-                    syscall::kill(pid, SIGKILL, false)?;
+                    syscall::kill(pid, SIGKILL)?;
                 }
 
                 let threads = process.read().threads.clone();
@@ -1446,6 +1448,21 @@ impl ContextHandle {
                 }
 
                 Ok(mem::size_of::<usize>())
+            }
+            ContextHandle::Signal => {
+                let sig = buf.read_u32()?;
+                let mut killed_self = false;
+                crate::syscall::process::send_signal(
+                    KillTarget::Thread(context),
+                    sig as usize,
+                    false,
+                    &mut killed_self,
+                )?;
+                if killed_self {
+                    Err(Error::new(EINTR))
+                } else {
+                    Ok(4)
+                }
             }
             Self::OpenViaDup
             | Self::AwaitingAddrSpaceChange { .. }

@@ -30,7 +30,6 @@ pub struct Process {
     /// Context is being waited on
     pub waitpid: Arc<WaitMap<WaitpidKey, (ProcessId, usize)>>,
     pub status: ProcessStatus,
-    /// Threads of process
     pub threads: Vec<Weak<RwSpinlock<Context>>>,
 }
 #[derive(Debug, Clone, Copy, Default)]

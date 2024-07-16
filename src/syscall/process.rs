@@ -91,7 +91,7 @@ pub fn exit(status: usize) -> ! {
             let process = current_process.read();
             (process.pgid, process.ppid)
         };
-        let _ = kill(ppid, SIGCHLD, true);
+        let _ = kill(ppid, SIGCHLD);
 
         // Transfer child processes to parent (TODO: to init)
         {
@@ -159,7 +159,185 @@ pub fn getppid() -> Result<ProcessId> {
     Ok(process::current()?.read().ppid)
 }
 
-pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
+pub enum KillTarget {
+    Process(Arc<RwLock<Process>>),
+    Thread(Arc<RwSpinlock<Context>>),
+}
+
+pub fn send_signal(
+    target: KillTarget,
+    sig: usize,
+    is_sigchld_to_parent: bool,
+    killed_self: &mut bool,
+) -> Result<()> {
+    if sig > 0x3F {
+        return Err(Error::new(EINVAL));
+    }
+
+    let sig_group = (sig - 1) / 32;
+
+    let (context_lock, process_lock) = match target {
+        KillTarget::Thread(c) => (Arc::clone(&c), Arc::clone(&c.read().process)),
+        KillTarget::Process(ref p) => (
+            p.read()
+                .threads
+                .iter()
+                .filter_map(|t| t.upgrade())
+                .next()
+                .ok_or(Error::new(ESRCH))?,
+            Arc::clone(p),
+        ),
+    };
+    let proc_info = process_lock.read().info;
+
+    enum Sent {
+        Succeeded,
+        SucceededSigchld {
+            ppid: ProcessId,
+            pgid: ProcessId,
+            orig_signal: usize,
+        },
+        SucceededSigcont {
+            ppid: ProcessId,
+            pgid: ProcessId,
+        },
+    }
+
+    let result = (|| {
+        let is_self = context::is_current(&context_lock);
+
+        // If sig = 0, test that process exists and can be signalled, but don't send any
+        // signal.
+        if sig == 0 {
+            return Sent::Succeeded;
+        }
+
+        let mut process_guard = process_lock.write();
+
+        if sig == SIGCONT
+            && let ProcessStatus::Stopped(_sig) = process_guard.status
+        {
+            // Convert stopped processes to blocked if sending SIGCONT, regardless of whether
+            // SIGCONT is blocked or ignored. It can however be controlled whether the process
+            // will additionally ignore, defer, or handle that signal.
+            process_guard.status = ProcessStatus::PossiblyRunnable;
+            drop(process_guard);
+
+            if let Some((tctl, pctl, _st)) = context_lock.write().sigcontrol() {
+                if !pctl.signal_will_ign(SIGCONT, false) {
+                    tctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
+                }
+
+                if (tctl.word[0].load(Ordering::Relaxed) >> 32) & sig_bit(SIGCONT) != 0 {
+                    // already Runnable, SIGCONT handler will run like any other signal
+                }
+            }
+            // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
+            return Sent::SucceededSigcont {
+                ppid: proc_info.ppid,
+                pgid: proc_info.pgid,
+            };
+        }
+        drop(process_guard);
+        let mut context_guard = context_lock.write();
+        if sig == SIGSTOP
+            || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP)
+                && context_guard
+                    .sigcontrol()
+                    .map_or(false, |(_, proc, _)| proc.signal_will_stop(sig)))
+        {
+            context_guard.status = context::Status::Blocked;
+            // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
+            if let Some((ctl, _, _)) = context_guard.sigcontrol() {
+                ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
+            }
+            drop(context_guard);
+            process_lock.write().status = ProcessStatus::Stopped(sig);
+            return Sent::SucceededSigchld {
+                ppid: proc_info.ppid,
+                pgid: proc_info.pgid,
+                orig_signal: sig,
+            };
+        }
+        if sig == SIGKILL {
+            context_guard.being_sigkilled = true;
+            context_guard.unblock();
+            drop(context_guard);
+            process_lock.write().status = ProcessStatus::Exited(SIGKILL);
+            *killed_self |= is_self;
+
+            // exit() will signal the parent, rather than immediately in kill()
+            return Sent::Succeeded;
+        }
+        if let Some((tctl, pctl, _st)) = context_guard.sigcontrol()
+            && !pctl.signal_will_ign(sig, is_sigchld_to_parent)
+        {
+            let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
+            if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
+                context_guard.unblock();
+                *killed_self |= is_self;
+            }
+            Sent::Succeeded
+        } else {
+            // Discard signals if sighandler is unset. This includes both special contexts such
+            // as bootstrap, and child processes or threads that have not yet been started.
+            // This is semantically equivalent to having all signals except SIGSTOP and SIGKILL
+            // blocked/ignored (SIGCONT can be ignored and masked, but will always continue
+            // stopped processes first).
+            Sent::Succeeded
+        }
+    })();
+
+    match result {
+        Sent::Succeeded => (),
+        Sent::SucceededSigchld {
+            ppid,
+            pgid,
+            orig_signal,
+        } => {
+            let waitpid = Arc::clone(
+                &process::PROCESSES
+                    .read()
+                    .get(&ppid)
+                    .ok_or(Error::new(ESRCH))?
+                    .read()
+                    .waitpid,
+            );
+            waitpid.send(
+                WaitpidKey {
+                    pid: Some(proc_info.pid),
+                    pgid: Some(pgid),
+                },
+                (proc_info.pid, (orig_signal << 8) | 0x7f),
+            );
+            let parent = process::PROCESSES
+                .read()
+                .get(&ppid)
+                .map(Arc::clone)
+                .ok_or(Error::new(ESRCH))?;
+            send_signal(KillTarget::Process(parent), SIGCHLD, true, killed_self)?;
+        }
+        Sent::SucceededSigcont { ppid, pgid } => {
+            process::PROCESSES
+                .read()
+                .get(&ppid)
+                .ok_or(Error::new(ESRCH))?
+                .read()
+                .waitpid
+                .send(
+                    WaitpidKey {
+                        pid: Some(proc_info.pid),
+                        pgid: Some(pgid),
+                    },
+                    (proc_info.pid, 0xffff),
+                );
+        }
+    }
+
+    Ok(())
+}
+
+pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
     let (ruid, euid, current_pgid) = {
         let process_lock = process::current()?;
         let process = process_lock.read();
@@ -174,211 +352,47 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
         }
     }
 
-    if sig > 0x3F {
-        return Err(Error::new(EINVAL));
-    }
-    let sig_group = sig / 32;
-
     let mut found = 0;
     let mut sent = 0;
     let mut killed_self = false;
 
+    // Non-root users cannot kill arbitrarily.
+    let can_send =
+        |proc_info: &ProcessInfo| euid == 0 || euid == proc_info.ruid || ruid == proc_info.ruid;
+
     {
         let processes = process::PROCESSES.read();
 
-        enum SendResult {
-            Forbidden,
-            Succeeded,
-            SucceededSigchld {
-                ppid: ProcessId,
-                pgid: ProcessId,
-                orig_signal: usize,
-            },
-            SucceededSigcont {
-                ppid: ProcessId,
-                pgid: ProcessId,
-            },
-        }
-
-        let mut send = |context_lock: &Arc<RwSpinlock<Context>>,
-                        process_lock: &Arc<RwLock<Process>>,
-                        proc_info: &ProcessInfo|
-         -> SendResult {
-            let is_self = context::is_current(context_lock);
-
-            // Non-root users cannot kill arbitrarily.
-            if euid != 0 && euid != proc_info.ruid && ruid != proc_info.ruid {
-                return SendResult::Forbidden;
-            }
-            // If sig = 0, test that process exists and can be signalled, but don't send any
-            // signal.
-            if sig == 0 {
-                return SendResult::Succeeded;
-            }
-
-            let mut process_guard = process_lock.write();
-
-            if sig == SIGCONT
-                && let ProcessStatus::Stopped(_sig) = process_guard.status
-            {
-                // Convert stopped processes to blocked if sending SIGCONT, regardless of whether
-                // SIGCONT is blocked or ignored. It can however be controlled whether the process
-                // will additionally ignore, defer, or handle that signal.
-                process_guard.status = ProcessStatus::PossiblyRunnable;
-                drop(process_guard);
-
-                if let Some((tctl, pctl, _st)) = context_lock.write().sigcontrol() {
-                    if !pctl.signal_will_ign(SIGCONT, false) {
-                        tctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
-                    }
-
-                    if (tctl.word[0].load(Ordering::Relaxed) >> 32) & sig_bit(SIGCONT) != 0 {
-                        // already Runnable, SIGCONT handler will run like any other signal
-                    }
-                }
-                // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
-                return SendResult::SucceededSigcont {
-                    ppid: proc_info.ppid,
-                    pgid: proc_info.pgid,
-                };
-            }
-            drop(process_guard);
-            let mut context_guard = context_lock.write();
-            if sig == SIGSTOP
-                || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP)
-                    && context_guard
-                        .sigcontrol()
-                        .map_or(false, |(_, proc, _)| proc.signal_will_stop(sig)))
-            {
-                context_guard.status = context::Status::Blocked;
-                // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
-                if let Some((ctl, _, _)) = context_guard.sigcontrol() {
-                    ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
-                }
-                drop(context_guard);
-                process_lock.write().status = ProcessStatus::Stopped(sig);
-                return SendResult::SucceededSigchld {
-                    ppid: proc_info.ppid,
-                    pgid: proc_info.pgid,
-                    orig_signal: sig,
-                };
-            }
-            if sig == SIGKILL {
-                context_guard.being_sigkilled = true;
-                context_guard.unblock();
-                drop(context_guard);
-                process_lock.write().status = ProcessStatus::Exited(SIGKILL);
-                killed_self |= is_self;
-
-                // exit() will signal the parent, rather than immediately in kill()
-                return SendResult::Succeeded;
-            }
-            if let Some((tctl, pctl, _st)) = context_guard.sigcontrol()
-                && !pctl.signal_will_ign(sig, parent_sigchld)
-            {
-                let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
-                if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
-                    context_guard.unblock();
-                    killed_self |= is_self;
-                }
-                SendResult::Succeeded
-            } else {
-                // Discard signals if sighandler is unset. This includes both special contexts such
-                // as bootstrap, and child processes or threads that have not yet been started.
-                // This is semantically equivalent to having all signals except SIGSTOP and SIGKILL
-                // blocked/ignored (SIGCONT can be ignored and masked, but will always continue
-                // stopped processes first).
-                SendResult::Succeeded
-            }
-        };
-        let mut handle_send = |pid, result| -> Result<()> {
-            match result {
-                SendResult::Forbidden => (),
-                SendResult::Succeeded => sent += 1,
-                SendResult::SucceededSigchld {
-                    ppid,
-                    pgid,
-                    orig_signal,
-                } => {
-                    sent += 1;
-                    let waitpid = Arc::clone(
-                        &process::PROCESSES
-                            .read()
-                            .get(&ppid)
-                            .ok_or(Error::new(ESRCH))?
-                            .read()
-                            .waitpid,
-                    );
-                    waitpid.send(
-                        WaitpidKey {
-                            pid: Some(pid),
-                            pgid: Some(pgid),
-                        },
-                        (pid, (orig_signal << 8) | 0x7f),
-                    );
-                    kill(ppid, SIGCHLD, true)?;
-                }
-                SendResult::SucceededSigcont { ppid, pgid } => {
-                    sent += 1;
-                    process::PROCESSES
-                        .read()
-                        .get(&ppid)
-                        .ok_or(Error::new(ESRCH))?
-                        .read()
-                        .waitpid
-                        .send(
-                            WaitpidKey {
-                                pid: Some(pid),
-                                pgid: Some(pgid),
-                            },
-                            (pid, 0xffff),
-                        );
-                }
-            }
-            Ok(())
-        };
-
         if pid.get() as isize > 0 {
             // Send to a single process
-            if let Some(process_lock) = processes.get(&pid) {
+            if let Some(process_lock) = processes.get(&pid).map(Arc::clone) {
                 found += 1;
-                let (context_lock, info) = {
-                    let process = process_lock.read();
-                    (
-                        process
-                            .threads
-                            .first()
-                            .ok_or(Error::new(ESRCH))?
-                            .upgrade()
-                            .ok_or(Error::new(ESRCH))?,
-                        process.info,
-                    )
-                };
-                let result = send(&context_lock, process_lock, &info);
-                handle_send(pid, result)?;
+                if can_send(&process_lock.read().info) {
+                    sent += 1;
+                    send_signal(
+                        KillTarget::Process(process_lock),
+                        sig,
+                        false,
+                        &mut killed_self,
+                    )?;
+                }
             }
         } else if pid.get() == 1_usize.wrapping_neg() {
             // Send to every process with permission, except for init
             for (pid, process_lock) in processes.iter() {
-                let (context_lock, info) = {
-                    let process = process_lock.read();
-                    (
-                        process
-                            .threads
-                            .first()
-                            .ok_or(Error::new(ESRCH))?
-                            .upgrade()
-                            .ok_or(Error::new(ESRCH))?,
-                        process.info,
-                    )
-                };
-
-                if info.pid.get() <= 1 {
+                if pid.get() <= 1 {
                     continue;
                 }
                 found += 1;
-                let result = send(&context_lock, process_lock, &info);
-                handle_send(*pid, result)?;
+                if can_send(&process_lock.read().info) {
+                    sent += 1;
+                    send_signal(
+                        KillTarget::Process(Arc::clone(process_lock)),
+                        sig,
+                        false,
+                        &mut killed_self,
+                    )?;
+                }
             }
         } else {
             let pgid = if pid.get() == 0 {
@@ -388,28 +402,21 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
             };
 
             // Send to every process in the process group whose ID
-            for (pid, process_lock) in processes.iter() {
-                let (context_lock, info) = {
-                    let process = process_lock.read();
-                    (
-                        process
-                            .threads
-                            .first()
-                            .ok_or(Error::new(ESRCH))?
-                            .upgrade()
-                            .ok_or(Error::new(ESRCH))?,
-                        process.info,
-                    )
-                };
-
-                if info.pgid != pgid {
+            for (_pid, process_lock) in processes.iter() {
+                if process_lock.read().pgid != pgid {
                     continue;
                 }
                 found += 1;
 
-                let result = send(&context_lock, process_lock, &info);
-
-                handle_send(*pid, result)?;
+                if can_send(&process_lock.read().info) {
+                    sent += 1;
+                    send_signal(
+                        KillTarget::Process(Arc::clone(process_lock)),
+                        sig,
+                        false,
+                        &mut killed_self,
+                    )?;
+                }
             }
         }
     }
