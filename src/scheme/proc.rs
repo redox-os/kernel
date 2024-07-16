@@ -1,7 +1,12 @@
 use crate::{
     arch::paging::{Page, RmmA, RmmArch, VirtualAddress},
     context::{
-        self, context::{HardBlockedReason, SignalState}, file::{FileDescriptor, InternalFlags}, memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan}, process::{self, Process, ProcessId, ProcessInfo}, Context, ContextRef, Status
+        self,
+        context::{HardBlockedReason, SignalState},
+        file::{FileDescriptor, InternalFlags},
+        memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
+        process::{self, Process, ProcessId, ProcessInfo},
+        Context, ContextRef, Status,
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -1419,7 +1424,11 @@ impl ContextHandle {
                 {
                     let process = Arc::clone(&context.read().process);
                     let mut process = process.write();
-                    if let Some(pos) = process.threads.iter().position(|p| Weak::as_ptr(p) == Arc::as_ptr(&context)) {
+                    if let Some(pos) = process
+                        .threads
+                        .iter()
+                        .position(|p| Weak::as_ptr(p) == Arc::as_ptr(&context))
+                    {
                         process.threads.remove(pos);
                     }
                 }

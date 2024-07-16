@@ -7,7 +7,9 @@ use rmm::Arch;
 use spin::RwLock;
 
 use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan}, process::{self, Process, ProcessId, ProcessInfo, ProcessStatus}, Context, ContextRef, WaitpidKey
+    memory::{AddrSpace, Grant, PageSpan},
+    process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
+    Context, ContextRef, WaitpidKey,
 };
 
 use crate::{
@@ -234,6 +236,7 @@ pub fn kill(pid: ProcessId, sig: usize, parent_sigchld: bool) -> Result<usize> {
                     pgid: proc_info.pgid,
                 };
             }
+            drop(process_guard);
             let mut context_guard = context_lock.write();
             if sig == SIGSTOP
                 || (matches!(sig, SIGTTIN | SIGTTOU | SIGTSTP)
