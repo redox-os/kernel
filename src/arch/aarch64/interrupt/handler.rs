@@ -22,7 +22,7 @@ pub struct ScratchRegisters {
     pub x16: usize,
     pub x17: usize,
     pub x18: usize,
-    pub padding: usize,
+    pub _padding: usize,
 }
 
 impl ScratchRegisters {
@@ -262,10 +262,7 @@ impl InterruptStack {
     }
 
     //TODO
-    pub fn is_singlestep(&self) -> bool {
-        false
-    }
-    pub fn set_singlestep(&mut self, singlestep: bool) {}
+    pub fn set_singlestep(&mut self, _singlestep: bool) {}
 }
 
 #[macro_export]

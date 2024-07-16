@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use core::{
     convert::TryInto,
     ptr::{addr_of, addr_of_mut},

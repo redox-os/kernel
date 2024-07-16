@@ -688,7 +688,7 @@ impl UserInner {
                         dst.copy_exactly(&self.translate_sqe_to_packet(&sqe)?)?;
                         bytes_read += size_of::<Packet>();
                     }
-                    Err(_error) if bytes_read > 0 => return Ok(bytes_read),
+                    Err(_) if bytes_read > 0 => return Ok(bytes_read),
                     Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => {
                         return Ok(bytes_read)
                     }

@@ -1,12 +1,6 @@
-//use crate::device::generic_timer::{GENTIMER};
-use crate::device::{irqchip::IRQ_CHIP, serial::COM1};
+use crate::device::irqchip::IRQ_CHIP;
 
-pub struct IrqDesc {
-    pub virq: u32,
-    pub hwirq: u32,
-}
-
-exception_stack!(irq_at_el0, |stack| {
+exception_stack!(irq_at_el0, |_stack| {
     let irq = IRQ_CHIP.irq_ack();
     if let Some(virq) = IRQ_CHIP.irq_to_virq(irq)
         && virq < 1024
@@ -23,7 +17,7 @@ exception_stack!(irq_at_el0, |stack| {
     }
 });
 
-exception_stack!(irq_at_el1, |stack| {
+exception_stack!(irq_at_el1, |_stack| {
     let irq = IRQ_CHIP.irq_ack();
     if let Some(virq) = IRQ_CHIP.irq_to_virq(irq)
         && virq < 1024
@@ -52,13 +46,6 @@ pub unsafe fn trigger(irq: u32) {
 
 pub unsafe fn acknowledge(_irq: usize) {
     // TODO
-}
-
-pub unsafe fn irq_handler_com1(irq: u32) {
-    if let Some(ref mut serial_port) = *COM1.lock() {
-        serial_port.receive();
-    };
-    trigger(irq);
 }
 
 /*

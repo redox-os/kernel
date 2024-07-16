@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use log::{debug, info};
+use log::info;
 
 use crate::{
     arch::device::irqchip::IRQ_CHIP, context, context::timeout,
@@ -85,12 +85,14 @@ impl GenericTimer {
         }
     }
 
+    #[allow(unused)]
     fn disable() {
         let mut ctrl = TimerCtrlFlags::from_bits_truncate(unsafe { control_regs::tmr_ctrl() });
         ctrl.remove(TimerCtrlFlags::ENABLE);
         unsafe { control_regs::tmr_ctrl_write(ctrl.bits()) };
     }
 
+    #[allow(unused)]
     pub fn set_irq(&mut self) {
         let mut ctrl = TimerCtrlFlags::from_bits_truncate(unsafe { control_regs::tmr_ctrl() });
         ctrl.remove(TimerCtrlFlags::IMASK);

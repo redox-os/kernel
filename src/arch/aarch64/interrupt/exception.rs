@@ -34,7 +34,7 @@ unsafe fn instr_data_abort_inner(
     stack: &mut InterruptStack,
     from_user: bool,
     instr_not_data: bool,
-    from: &str,
+    _from: &str,
 ) -> bool {
     let iss = iss(stack.iret.esr_el1);
     let fsc = iss & 0x3F;
@@ -82,12 +82,12 @@ unsafe fn cntvct_el0() -> usize {
 
 unsafe fn instr_trapped_msr_mrs_inner(
     stack: &mut InterruptStack,
-    from_user: bool,
-    instr_not_data: bool,
-    from: &str,
+    _from_user: bool,
+    _instr_not_data: bool,
+    _from: &str,
 ) -> bool {
     let iss = iss(stack.iret.esr_el1);
-    let res0 = (iss & 0x1C0_0000) >> 22;
+    // let res0 = (iss & 0x1C0_0000) >> 22;
     let op0 = (iss & 0x030_0000) >> 20;
     let op2 = (iss & 0x00e_0000) >> 17;
     let op1 = (iss & 0x001_c000) >> 14;

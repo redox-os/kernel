@@ -7,7 +7,7 @@ use x86::msr::*;
 
 use crate::{
     ipi::IpiKind,
-    paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch},
+    paging::{KernelMapper, PageFlags, PhysicalAddress},
 };
 
 use crate::arch::cpuid::cpuid;
@@ -34,9 +34,6 @@ pub struct LocalApic {
     pub x2: bool,
 }
 
-#[derive(Debug)]
-struct NoFreqInfo;
-
 static BSP_APIC_ID: AtomicU32 = AtomicU32::new(u32::max_value());
 
 #[no_mangle]
@@ -59,7 +56,10 @@ impl LocalApic {
         #[cfg(target_arch = "x86")]
         let virtaddr = rmm::VirtualAddress::new(crate::LAPIC_OFFSET);
         #[cfg(target_arch = "x86_64")]
-        let virtaddr = RmmA::phys_to_virt(physaddr);
+        let virtaddr = {
+            use rmm::Arch;
+            crate::memory::RmmA::phys_to_virt(physaddr)
+        };
 
         self.address = virtaddr.data();
         self.x2 = cpuid()

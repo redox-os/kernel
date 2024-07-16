@@ -21,16 +21,8 @@ const LOCAL_PRESCALER: u32 = 0x008;
 const LOCAL_GPU_ROUTING: u32 = 0x00C;
 const LOCAL_TIMER_INT_CONTROL0: u32 = 0x040;
 const LOCAL_IRQ_PENDING: u32 = 0x060;
-const LOCAL_FIQ_PENDING: u32 = 0x070;
 
-const LOCAL_IRQ_CNTPSIRQ: u32 = 0x0;
 const LOCAL_IRQ_CNTPNSIRQ: u32 = 0x1;
-const LOCAL_IRQ_CNTHPIRQ: u32 = 0x2;
-const LOCAL_IRQ_CNTVIRQ: u32 = 0x3;
-const LOCAL_IRQ_MAILBOX0: u32 = 0x4;
-const LOCAL_IRQ_MAILBOX1: u32 = 0x5;
-const LOCAL_IRQ_MAILBOX2: u32 = 0x6;
-const LOCAL_IRQ_MAILBOX3: u32 = 0x7;
 const LOCAL_IRQ_GPU_FAST: u32 = 0x8;
 const LOCAL_IRQ_PMU_FAST: u32 = 0x9;
 const LOCAL_IRQ_LAST: u32 = LOCAL_IRQ_PMU_FAST;
@@ -59,7 +51,6 @@ fn ffs(num: u32) -> u32 {
         r += 2;
     }
     if (x & 0x1) == 0 {
-        x >>= 1;
         r += 1;
     }
 
@@ -128,13 +119,13 @@ impl InterruptController for Bcm2836ArmInterruptController {
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> Result<Option<usize>> {
-        let (base, size) = match Bcm2836ArmInterruptController::parse(fdt) {
+        let (base, _size) = match Bcm2836ArmInterruptController::parse(fdt) {
             Ok((a, b)) => (a, b),
             Err(_) => return Err(Error::new(EINVAL)),
         };
         unsafe {
             self.address = base + crate::PHYS_OFFSET;
-            let mut cpuid: usize = 0;
+            let cpuid: usize;
             asm!("mrs {}, mpidr_el1", out(reg) cpuid);
             self.active_cpu = cpuid as u32 & 0x3;
 
@@ -160,7 +151,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
     }
 
     fn irq_ack(&mut self) -> u32 {
-        let mut cpuid: usize = 0;
+        let cpuid: usize;
         unsafe {
             asm!("mrs {}, mpidr_el1", out(reg) cpuid);
         }
@@ -174,7 +165,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_enable(&mut self, irq_num: u32) {
         match irq_num {
             LOCAL_IRQ_CNTPNSIRQ => unsafe {
-                let mut cpuid: usize = 0;
+                let cpuid: usize;
                 asm!("mrs {}, mpidr_el1", out(reg) cpuid);
                 let cpu = cpuid as u32 & 0x3;
                 let mut reg_val = self.read(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu);
@@ -193,11 +184,9 @@ impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_disable(&mut self, irq_num: u32) {
         match irq_num {
             LOCAL_IRQ_CNTPNSIRQ => unsafe {
-                let mut cpuid: usize = 0;
-                unsafe {
-                    asm!("mrs {}, mpidr_el1", out(reg) cpuid);
-                }
-                let mut cpu = cpuid as u32 & 0x3;
+                let cpuid: usize;
+                asm!("mrs {}, mpidr_el1", out(reg) cpuid);
+                let cpu = cpuid as u32 & 0x3;
                 let mut reg_val = self.read(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu);
                 reg_val &= !0x2;
                 self.write(LOCAL_TIMER_INT_CONTROL0 + 4 * cpu, reg_val);
@@ -211,12 +200,11 @@ impl InterruptController for Bcm2836ArmInterruptController {
         }
     }
     fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
-        let mut off: usize = 0;
         let mut i = 0;
         //assert interrupt-cells == 0x2
         for chunk in irq_data.chunks(2) {
             if i == idx {
-                off = chunk[0] as usize + self.irq_range.0;
+                let off = chunk[0] as usize + self.irq_range.0;
                 return Ok(off);
             }
             i += 1;
@@ -231,5 +219,5 @@ impl InterruptController for Bcm2836ArmInterruptController {
         }
     }
 
-    fn irq_handler(&mut self, irq: u32) {}
+    fn irq_handler(&mut self, _irq: u32) {}
 }

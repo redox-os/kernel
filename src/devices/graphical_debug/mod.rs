@@ -13,6 +13,7 @@ pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
 
 pub static FRAMEBUFFER: Mutex<(usize, usize, usize)> = Mutex::new((0, 0, 0));
 
+#[allow(unused)]
 pub fn init(env: &[u8]) {
     println!("Starting graphical debug");
 
@@ -68,6 +69,7 @@ pub fn init(env: &[u8]) {
     }
 }
 
+#[allow(unused)]
 pub fn init_heap() {
     if let Some(debug_display) = &mut *DEBUG_DISPLAY.lock() {
         debug_display.display.offscreen =
@@ -75,6 +77,7 @@ pub fn init_heap() {
     }
 }
 
+#[allow(unused)]
 pub fn fini() {
     DEBUG_DISPLAY.lock().take();
 

@@ -284,6 +284,7 @@ pub fn breakpoint_callback(
 
 /// Obtain the next breakpoint flags for the current process. This is used for
 /// detecting whether or not the tracer decided to use sysemu mode.
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn next_breakpoint() -> Option<PtraceFlags> {
     let context_lock = context::current();
     let context = context_lock.read();
