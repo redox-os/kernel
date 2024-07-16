@@ -505,8 +505,8 @@ pub fn waitpid(
     status_ptr: Option<UserSliceWo>,
     flags: WaitFlags,
 ) -> Result<ProcessId> {
-    let process_lock = process::current()?;
     let (ppid, waitpid) = {
+        let process_lock = process::current()?;
         let process = process_lock.read();
         (process.pid, Arc::clone(&process.waitpid))
     };
@@ -605,37 +605,27 @@ pub fn waitpid(
                 grim_reaper(w_pid, status)
             }
         } else {
-            let hack_status = {
-                let processes = process::PROCESSES.read();
-                let process_lock = processes.get(&pid).ok_or(Error::new(ECHILD))?;
-                let process = process_lock.read();
+            let status = {
+                let process_lock = Arc::clone(
+                    process::PROCESSES
+                        .read()
+                        .get(&pid)
+                        .ok_or(Error::new(ESRCH))?,
+                );
+                let process_guard = process_lock.read();
 
-                if process.ppid != ppid {
-                    log::info!("HACK");
+                if process_guard.ppid != ppid {
                     return Err(Error::new(ECHILD));
-                    // TODO
-                    /*
-                    println!(
-                        "TODO: Hack for rustc - changing ppid of {} from {} to {}",
-                        process.pid.get(),
-                        process.ppid.get(),
-                        ppid.get()
-                    );
-                    process.ppid = ppid;
-                    Some(context.status.clone())
-                    */
-                } else {
-                    None
                 }
+                process_guard.status
             };
 
-            if let Some(ProcessStatus::Exited(_status)) = hack_status {
-                /*let _ = waitpid.receive_nonblock(&WaitpidKey {
+            if let ProcessStatus::Exited(status) = status {
+                let _ = waitpid.receive_nonblock(&WaitpidKey {
                     pid: Some(pid),
                     pgid: None,
                 });
-                grim_reaper(pid, status)*/
-                unreachable!()
+                grim_reaper(pid, status)
             } else if flags & WNOHANG == WNOHANG {
                 let res = waitpid.receive_nonblock(&WaitpidKey {
                     pid: Some(pid),

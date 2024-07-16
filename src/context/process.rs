@@ -70,7 +70,7 @@ impl DerefMut for Process {
         &mut self.info
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ProcessStatus {
     PossiblyRunnable,
     Stopped(usize),
