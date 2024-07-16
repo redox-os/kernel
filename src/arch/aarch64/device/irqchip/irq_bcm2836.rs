@@ -2,13 +2,9 @@ use core::{
     arch::asm,
     ptr::{read_volatile, write_volatile},
 };
+use fdt::{node::FdtNode, Fdt};
 
-use byteorder::{ByteOrder, BE};
-use fdt::{DeviceTree, Node};
-
-use crate::init::device_tree::find_compatible_node;
 use log::{debug, info};
-
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -71,22 +67,18 @@ impl Bcm2836ArmInterruptController {
             active_cpu: 0,
         }
     }
-    pub fn parse(fdt: &DeviceTree) -> Result<(usize, usize)> {
-        //TODO: try to parse dtb using stable library
-        if let Some(node) = find_compatible_node(fdt, "brcm,bcm2836-l1-intc") {
+    pub fn parse(fdt: &Fdt) -> Result<(usize, usize)> {
+        if let Some(node) = fdt.find_compatible(&["brcm,bcm2836-l1-intc"]) {
             return Bcm2836ArmInterruptController::parse_inner(&node);
         } else {
             return Err(Error::new(EINVAL));
         }
     }
-    fn parse_inner(node: &Node) -> Result<(usize, usize)> {
+    fn parse_inner(node: &FdtNode) -> Result<(usize, usize)> {
         //assert address_cells == 0x1, size_cells == 0x1
-        let reg = node.properties().find(|p| p.name.contains("reg")).unwrap();
-        let (base, size) = reg.data.split_at(4);
-        let base = BE::read_u32(base);
-        let size = BE::read_u32(size);
+        let reg = node.reg().unwrap().nth(0).unwrap();
 
-        Ok((base as usize, size as usize))
+        Ok((reg.starting_address as usize, reg.size.unwrap()))
     }
 
     unsafe fn init(&mut self) {
@@ -114,7 +106,7 @@ impl Bcm2836ArmInterruptController {
 impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_init(
         &mut self,
-        fdt: &DeviceTree,
+        fdt: &Fdt,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,

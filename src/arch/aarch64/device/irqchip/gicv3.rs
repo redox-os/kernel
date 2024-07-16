@@ -1,11 +1,9 @@
 use alloc::vec::Vec;
 use core::arch::asm;
-
-use byteorder::{ByteOrder, BE};
-use fdt::DeviceTree;
+use fdt::{node::NodeProperty, Fdt};
 
 use super::gic::GicDistIf;
-use crate::init::device_tree::find_compatible_node;
+use log::info;
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -36,8 +34,8 @@ impl GicV3 {
         }
     }
 
-    pub fn parse(&mut self, fdt: &DeviceTree) -> Result<()> {
-        let Some(node) = find_compatible_node(fdt, "arm,gic-v3") else {
+    pub fn parse(&mut self, fdt: &Fdt) -> Result<()> {
+        let Some(node) = fdt.find_compatible(&["arm,gic-v3"]) else {
             return Err(Error::new(EINVAL));
         };
 
@@ -47,30 +45,23 @@ impl GicV3 {
         self.gicrs.clear();
 
         // Get number of GICRs
-        let gicrs = match node
-            .properties()
-            .find(|p| p.name.contains("#redistributor-regions"))
-        {
-            Some(prop) => BE::read_u32(prop.data),
-            None => 1,
-        };
+        let gicrs = node
+            .property("#redistributor-regions")
+            .and_then(NodeProperty::as_usize)
+            .unwrap_or(1);
 
         // Read registers
-        let reg = node.properties().find(|p| p.name.contains("reg")).unwrap();
-        let mut chunks = reg.data.chunks_exact(16).map(|chunk| {
-            (
-                BE::read_u64(&chunk[0..8]) as usize,
-                BE::read_u64(&chunk[8..16]) as usize,
-            )
-        });
-        if let Some((gicd_addr, _gicd_size)) = chunks.next() {
+        let mut chunks = node.reg().unwrap();
+        if let Some(gicd) = chunks.next() {
             unsafe {
-                self.gic_dist_if.init(crate::PHYS_OFFSET + gicd_addr);
+                self.gic_dist_if
+                    .init(crate::PHYS_OFFSET + gicd.starting_address as usize);
             }
         }
         for _ in 0..gicrs {
             if let Some(gicr) = chunks.next() {
-                self.gicrs.push(gicr);
+                self.gicrs
+                    .push((gicr.starting_address as usize, gicr.size.unwrap()));
             }
         }
 
@@ -85,7 +76,7 @@ impl GicV3 {
 impl InterruptController for GicV3 {
     fn irq_init(
         &mut self,
-        fdt: &DeviceTree,
+        fdt: &Fdt,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,

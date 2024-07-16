@@ -76,11 +76,8 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "fdt"
-version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/rosehuds/fdt.git#7358607679114ccab5f97e14894ed3b59c5d42d6"
-dependencies = [
- "byteorder",
-]
+version = "0.2.0-alpha1"
+source = "git+https://github.com/repnop/fdt.git?rev=2fb1409edd1877c714a0aa36b6a7c5351004be54#2fb1409edd1877c714a0aa36b6a7c5351004be54"
 
 [[package]]
 name = "goblin"

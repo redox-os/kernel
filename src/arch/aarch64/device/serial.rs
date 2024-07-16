@@ -4,9 +4,10 @@ use spin::Mutex;
 use crate::{device::uart_pl011::SerialPort, init::device_tree, interrupt::irq::trigger};
 
 use super::irqchip::{register_irq, InterruptHandler, IRQ_CHIP};
-use crate::{dtb::DTB_BINARY, init::device_tree::find_compatible_node};
+use crate::dtb::DTB_BINARY;
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
+use fdt::Fdt;
 use log::info;
 
 pub static COM1: Mutex<Option<SerialPort>> = Mutex::new(None);
@@ -43,23 +44,17 @@ pub unsafe fn init_early(dtb_base: usize, dtb_size: usize) {
 
 pub unsafe fn init() {
     let data = DTB_BINARY.get().unwrap();
-    let fdt = fdt::DeviceTree::new(data).unwrap();
-    if let Some(node) = find_compatible_node(&fdt, "arm,pl011") {
-        let interrupts = node
-            .properties()
-            .find(|p| p.name.contains("interrupts"))
-            .unwrap();
+    let fdt = Fdt::new(data).unwrap();
+    if let Some(node) = fdt.find_compatible(&["arm,pl011"]) {
+        let interrupts = node.property("interrupts").unwrap();
         let mut intr_data = Vec::new();
-        for chunk in interrupts.data.chunks(4) {
+        for chunk in interrupts.value.chunks(4) {
             let val = BE::read_u32(chunk);
             intr_data.push(val);
         }
         let mut ic_idx = IRQ_CHIP.irq_chip_list.root_idx;
-        if let Some(interrupt_parent) = node
-            .properties()
-            .find(|p| p.name.contains("interrupt-parent"))
-        {
-            let phandle = BE::read_u32(interrupt_parent.data);
+        if let Some(interrupt_parent) = node.property("interrupt-parent") {
+            let phandle = interrupt_parent.as_usize().unwrap() as u32;
             let mut i = 0;
             while i < IRQ_CHIP.irq_chip_list.chips.len() {
                 let item = &IRQ_CHIP.irq_chip_list.chips[i];

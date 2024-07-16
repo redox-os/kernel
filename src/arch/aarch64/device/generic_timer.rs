@@ -3,11 +3,11 @@ use log::info;
 
 use crate::{
     arch::device::irqchip::IRQ_CHIP, context, context::timeout,
-    device::cpu::registers::control_regs, dtb::DTB_BINARY, init::device_tree::find_compatible_node,
-    interrupt::irq::trigger, time,
+    device::cpu::registers::control_regs, dtb::DTB_BINARY, interrupt::irq::trigger, time,
 };
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
+use fdt::Fdt;
 
 use super::irqchip::{register_irq, InterruptHandler};
 
@@ -26,23 +26,17 @@ pub unsafe fn init() {
     };
     timer.init();
     let data = DTB_BINARY.get().unwrap();
-    let fdt = fdt::DeviceTree::new(data).unwrap();
-    if let Some(node) = find_compatible_node(&fdt, "arm,armv7-timer") {
-        let interrupts = node
-            .properties()
-            .find(|p| p.name.contains("interrupts"))
-            .unwrap();
+    let fdt = Fdt::new(data).unwrap();
+    if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
+        let interrupts = node.property("interrupts").unwrap();
         let mut intr_data = Vec::new();
-        for chunk in interrupts.data.chunks(4) {
+        for chunk in interrupts.value.chunks(4) {
             let val = BE::read_u32(chunk);
             intr_data.push(val);
         }
         let mut ic_idx = IRQ_CHIP.irq_chip_list.root_idx;
-        if let Some(interrupt_parent) = node
-            .properties()
-            .find(|p| p.name.contains("interrupt-parent"))
-        {
-            let phandle = BE::read_u32(interrupt_parent.data);
+        if let Some(interrupt_parent) = node.property("interrupt-parent") {
+            let phandle = interrupt_parent.as_usize().unwrap() as u32;
             let mut i = 0;
             while i < IRQ_CHIP.irq_chip_list.chips.len() {
                 let item = &IRQ_CHIP.irq_chip_list.chips[i];

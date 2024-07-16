@@ -3,9 +3,8 @@ use core::ptr::{read_volatile, write_volatile};
 
 use crate::arch::device::irqchip::IRQ_CHIP;
 use byteorder::{ByteOrder, BE};
-use fdt::{DeviceTree, Node};
+use fdt::{node::FdtNode, Fdt};
 
-use crate::init::device_tree::find_compatible_node;
 use log::{debug, error, info};
 
 use syscall::{
@@ -67,33 +66,25 @@ impl Bcm2835ArmInterruptController {
             irq_range: (0, 0),
         }
     }
-    pub fn parse(fdt: &DeviceTree) -> Result<(usize, usize, Option<usize>)> {
-        //TODO: try to parse dtb using stable library
-        if let Some(node) = find_compatible_node(fdt, "brcm,bcm2836-armctrl-ic") {
+    pub fn parse(fdt: &Fdt) -> Result<(usize, usize, Option<usize>)> {
+        if let Some(node) = fdt.find_compatible(&["brcm,bcm2836-armctrl-ic"]) {
             return unsafe { Bcm2835ArmInterruptController::parse_inner(&node) };
         } else {
             return Err(Error::new(EINVAL));
         }
     }
-    unsafe fn parse_inner(node: &Node) -> Result<(usize, usize, Option<usize>)> {
+    unsafe fn parse_inner(node: &FdtNode) -> Result<(usize, usize, Option<usize>)> {
         //assert address_cells == 0x1, size_cells == 0x1
-        let reg = node.properties().find(|p| p.name.contains("reg")).unwrap();
-        let (base, size) = reg.data.split_at(4);
-        let base = BE::read_u32(base);
-        let size = BE::read_u32(size);
+        let mem = node.reg().unwrap().nth(0).unwrap();
+        let base = mem.starting_address as u32;
+        let size = mem.size.unwrap() as u32;
         let mut ret_virq = None;
 
-        if let Some(interrupt_parent) = node
-            .properties()
-            .find(|p| p.name.contains("interrupt-parent"))
-        {
-            let phandle = BE::read_u32(interrupt_parent.data);
-            let interrupts = node
-                .properties()
-                .find(|p| p.name.contains("interrupts"))
-                .unwrap();
+        if let Some(interrupt_parent) = node.property("interrupt-parent") {
+            let phandle = interrupt_parent.as_usize().unwrap() as u32;
+            let interrupts = node.property("interrupts").unwrap();
             let mut intr_data = Vec::new();
-            for chunk in interrupts.data.chunks(4) {
+            for chunk in interrupts.value.chunks(4) {
                 let val = BE::read_u32(chunk);
                 intr_data.push(val);
             }
@@ -141,7 +132,7 @@ impl Bcm2835ArmInterruptController {
 impl InterruptController for Bcm2835ArmInterruptController {
     fn irq_init(
         &mut self,
-        fdt: &DeviceTree,
+        fdt: &Fdt,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
