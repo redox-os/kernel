@@ -142,8 +142,8 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                     context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| {
                         tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128
                     });
-                    if let Some((tctl, _pctl, _)) = context.sigcontrol() {
-                        if tctl.currently_pending_unblocked() != 0 {
+                    if let Some((tctl, pctl, _)) = context.sigcontrol() {
+                        if tctl.currently_pending_unblocked(pctl) != 0 {
                             return Err(Error::new(EINTR));
                         }
                     }

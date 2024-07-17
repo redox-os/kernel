@@ -21,12 +21,12 @@ pub fn signal_handler() {
     .and_then(|_| ptrace::next_breakpoint().map(|f| f.contains(PTRACE_FLAG_IGNORE)));*/
 
     // TODO: thumbs_down
-    let Some((thread_ctl, _proc_ctl, st)) = context.sigcontrol() else {
+    let Some((thread_ctl, proc_ctl, st)) = context.sigcontrol() else {
         // Discard signal if sigcontrol is unset.
         log::trace!("no sigcontrol, returning");
         return;
     };
-    if thread_ctl.currently_pending_unblocked() == 0 {
+    if thread_ctl.currently_pending_unblocked(proc_ctl) == 0 {
         // The context is currently Runnable. When transitioning into Blocked, it will check for
         // signals (with the context lock held, which is required when sending signals). After
         // that, any detection of pending unblocked signals by the sender, will result in the

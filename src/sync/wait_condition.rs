@@ -49,8 +49,8 @@ impl WaitCondition {
         {
             {
                 let mut context = current_context_ref.write();
-                if let Some((control, _, _)) = context.sigcontrol()
-                    && control.currently_pending_unblocked() != 0
+                if let Some((control, pctl, _)) = context.sigcontrol()
+                    && control.currently_pending_unblocked(pctl) != 0
                 {
                     return false;
                 }
