@@ -177,7 +177,7 @@ pub fn send_signal(
     let sig_group = (sig - 1) / 32;
 
     let (context_lock, process_lock) = match target {
-        KillTarget::Thread(c) => (Arc::clone(&c), Arc::clone(&c.read().process)),
+        KillTarget::Thread(ref c) => (Arc::clone(&c), Arc::clone(&c.read().process)),
         KillTarget::Process(ref p) => (
             p.read()
                 .threads
@@ -223,13 +223,29 @@ pub fn send_signal(
             process_guard.status = ProcessStatus::PossiblyRunnable;
             drop(process_guard);
 
-            if let Some((tctl, pctl, _st)) = context_lock.write().sigcontrol() {
+            if let Some((_, pctl, _)) = context_lock.write().sigcontrol() {
                 if !pctl.signal_will_ign(SIGCONT, false) {
-                    tctl.word[0].fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
+                    pctl.pending.fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
                 }
 
-                if (tctl.word[0].load(Ordering::Relaxed) >> 32) & sig_bit(SIGCONT) != 0 {
-                    // already Runnable, SIGCONT handler will run like any other signal
+                // TODO: which threads should become Runnable?
+                for thread in process_lock
+                    .read()
+                    .threads
+                    .iter()
+                    .filter_map(|t| t.upgrade())
+                {
+                    let mut thread = thread.write();
+                    if let Some((tctl, _, _)) = thread.sigcontrol() {
+                        tctl.word[0].fetch_and(
+                            !(sig_bit(SIGSTOP)
+                                | sig_bit(SIGTTIN)
+                                | sig_bit(SIGTTOU)
+                                | sig_bit(SIGTSTP)),
+                            Ordering::Relaxed,
+                        );
+                    }
+                    thread.unblock();
                 }
             }
             // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
@@ -247,12 +263,28 @@ pub fn send_signal(
                     .map_or(false, |(_, proc, _)| proc.signal_will_stop(sig)))
         {
             context_guard.status = context::Status::Blocked;
-            // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
-            if let Some((ctl, _, _)) = context_guard.sigcontrol() {
-                ctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
-            }
             drop(context_guard);
             process_lock.write().status = ProcessStatus::Stopped(sig);
+
+            // TODO: Actually wait for, or IPI the context first, then clear bit. Not atomically safe otherwise.
+            let mut already = false;
+            for thread in process_lock
+                .read()
+                .threads
+                .iter()
+                .filter_map(|t| t.upgrade())
+            {
+                let mut thread = thread.write();
+                if let Some((tctl, pctl, _)) = thread.sigcontrol() {
+                    if !already {
+                        pctl.pending.fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
+                        already = true;
+                    }
+                    tctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
+                }
+                thread.unblock();
+            }
+
             return Sent::SucceededSigchld {
                 ppid: proc_info.ppid,
                 pgid: proc_info.pgid,
@@ -272,10 +304,31 @@ pub fn send_signal(
         if let Some((tctl, pctl, _st)) = context_guard.sigcontrol()
             && !pctl.signal_will_ign(sig, is_sigchld_to_parent)
         {
-            let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
-            if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
-                context_guard.unblock();
-                *killed_self |= is_self;
+            match target {
+                KillTarget::Thread(_) => {
+                    let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
+                    if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
+                        context_guard.unblock();
+                        *killed_self |= is_self;
+                    }
+                }
+                KillTarget::Process(proc) => {
+                    pctl.pending.fetch_or(sig_bit(sig), Ordering::Relaxed);
+                    drop(context_guard);
+
+                    for thread in proc.read().threads.iter().filter_map(|t| t.upgrade()) {
+                        let mut thread = thread.write();
+                        let Some((tctl, _, _)) = thread.sigcontrol() else {
+                            continue;
+                        };
+                        if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0
+                        {
+                            thread.unblock();
+                            *killed_self |= is_self;
+                            break;
+                        }
+                    }
+                }
             }
             Sent::Succeeded
         } else {
