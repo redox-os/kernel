@@ -219,35 +219,27 @@ impl SyscallDebugInfo {
 }
 #[cfg(feature = "syscall_debug")]
 pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
-    let do_debug = {
-        let contexts = crate::context::contexts();
-        if let Some(context_lock) = contexts.current() {
-            let context = context_lock.read();
-            if context.name.contains("xhcid") {
-                if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
-                    false
-                } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
-                    false
-                } else {
-                    true
-                }
-            } else {
-                false
-            }
-        } else {
+    let do_debug = if crate::context::current().read().name.contains("sigchld") {
+        if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
+        } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
+            false
+        } else {
+            true
         }
+    } else {
+        false
     };
 
     let debug_start = if do_debug {
-        let contexts = crate::context::contexts();
-        if let Some(context_lock) = contexts.current() {
+        let context_lock = crate::context::current();
+        {
             let context = context_lock.read();
             print!(
-                "{} ({}/{}): ",
+                "{} ({}/{:p}): ",
                 context.name,
                 context.pid.get(),
-                context.cid.get()
+                context_lock,
             );
         }
 
@@ -281,14 +273,14 @@ pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
     let debug_duration =
         debug_info.accumulated_time + (crate::time::monotonic() - debug_info.this_switch_time);
 
-    let contexts = crate::context::contexts();
-    if let Some(context_lock) = contexts.current() {
+    let context_lock = crate::context::current();
+    {
         let context = context_lock.read();
         print!(
-            "{} ({}/{}): ",
+            "{} ({}/{:p}): ",
             context.name,
             context.pid.get(),
-            context.cid.get()
+            context_lock,
         );
     }
 

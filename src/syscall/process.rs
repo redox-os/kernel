@@ -282,7 +282,6 @@ pub fn send_signal(
                     }
                     tctl.word[0].fetch_and(!sig_bit(SIGCONT), Ordering::Relaxed);
                 }
-                thread.unblock();
             }
 
             return Sent::SucceededSigchld {
@@ -348,14 +347,12 @@ pub fn send_signal(
             pgid,
             orig_signal,
         } => {
-            let waitpid = Arc::clone(
-                &process::PROCESSES
-                    .read()
-                    .get(&ppid)
-                    .ok_or(Error::new(ESRCH))?
-                    .read()
-                    .waitpid,
-            );
+            let parent = process::PROCESSES
+                .read()
+                .get(&ppid)
+                .map(Arc::clone)
+                .ok_or(Error::new(ESRCH))?;
+            let waitpid = Arc::clone(&parent.read().waitpid);
             waitpid.send(
                 WaitpidKey {
                     pid: Some(proc_info.pid),
@@ -363,11 +360,6 @@ pub fn send_signal(
                 },
                 (proc_info.pid, (orig_signal << 8) | 0x7f),
             );
-            let parent = process::PROCESSES
-                .read()
-                .get(&ppid)
-                .map(Arc::clone)
-                .ok_or(Error::new(ESRCH))?;
             send_signal(KillTarget::Process(parent), SIGCHLD, true, killed_self)?;
         }
         Sent::SucceededSigcont { ppid, pgid } => {
