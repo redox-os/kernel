@@ -74,5 +74,7 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 
 pub fn sched_yield() -> Result<()> {
     context::switch();
+    // TODO: Do this check in userspace
+    context::signal::signal_handler();
     Ok(())
 }

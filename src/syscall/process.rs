@@ -91,7 +91,9 @@ pub fn exit(status: usize) -> ! {
             let process = current_process.read();
             (process.pgid, process.ppid)
         };
-        let _ = kill(ppid, SIGCHLD);
+        if let Some(parent) = process::PROCESSES.read().get(&ppid).map(Arc::clone) {
+            let _ = send_signal(KillTarget::Process(parent), SIGCHLD, true, &mut false);
+        }
 
         // Transfer child processes to parent (TODO: to init)
         {
@@ -365,19 +367,21 @@ pub fn send_signal(
             send_signal(KillTarget::Process(parent), SIGCHLD, true, killed_self)?;
         }
         Sent::SucceededSigcont { ppid, pgid } => {
-            process::PROCESSES
+            let parent = process::PROCESSES
                 .read()
                 .get(&ppid)
-                .ok_or(Error::new(ESRCH))?
-                .read()
-                .waitpid
-                .send(
-                    WaitpidKey {
-                        pid: Some(proc_info.pid),
-                        pgid: Some(pgid),
-                    },
-                    (proc_info.pid, 0xffff),
-                );
+                .map(Arc::clone)
+                .ok_or(Error::new(ESRCH))?;
+            let waitpid = Arc::clone(&parent.read().waitpid);
+            waitpid.send(
+                WaitpidKey {
+                    pid: Some(proc_info.pid),
+                    pgid: Some(pgid),
+                },
+                (proc_info.pid, 0xffff),
+            );
+            // POSIX XSI allows but does not require SIGCONT to send signals to the parent.
+            //send_signal(KillTarget::Process(parent), SIGCHLD, true, killed_self)?;
         }
     }
 

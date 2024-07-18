@@ -213,6 +213,11 @@ impl KernelScheme for PipeScheme {
         loop {
             let mut vec = pipe.queue.lock();
 
+            if !pipe.reader_is_alive.load(Ordering::Relaxed) {
+                return Err(Error::new(EPIPE));
+            }
+
+
             let bytes_left = MAX_QUEUE_SIZE.saturating_sub(vec.len());
             let bytes_to_write = core::cmp::min(bytes_left, user_buf.len());
             let src_buf = user_buf
@@ -244,9 +249,7 @@ impl KernelScheme for PipeScheme {
                 return Ok(0);
             }
 
-            if !pipe.reader_is_alive.load(Ordering::SeqCst) {
-                return Err(Error::new(EPIPE));
-            } else if fcntl_flags & O_NONBLOCK as u32 != 0 {
+            if fcntl_flags & O_NONBLOCK as u32 != 0 {
                 return Err(Error::new(EAGAIN));
             } else if !pipe.write_condition.wait(vec, "PipeWrite::write") {
                 return Err(Error::new(EINTR));
