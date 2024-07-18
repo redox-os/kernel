@@ -223,10 +223,12 @@ pub fn send_signal(
             process_guard.status = ProcessStatus::PossiblyRunnable;
             drop(process_guard);
 
-            if let Some((_, pctl, _)) = context_lock.write().sigcontrol() {
+            let mut context_guard = context_lock.write();
+            if let Some((_, pctl, _)) = context_guard.sigcontrol() {
                 if !pctl.signal_will_ign(SIGCONT, false) {
                     pctl.pending.fetch_or(sig_bit(SIGCONT), Ordering::Relaxed);
                 }
+                drop(context_guard);
 
                 // TODO: which threads should become Runnable?
                 for thread in process_lock
