@@ -7,10 +7,14 @@ use crate::{
 
 pub fn signal_handler() {
     let context_lock = context::current();
-    let mut context = context_lock.write();
-    let context = &mut *context;
+    let mut context_guard = context_lock.write();
+    let context = &mut *context_guard;
 
-    if context.being_sigkilled {
+    let being_sigkilled = context.being_sigkilled;
+
+    if being_sigkilled {
+        drop(context_guard);
+        drop(context_lock);
         crate::syscall::process::exit(SIGKILL << 8);
     }
 

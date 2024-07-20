@@ -1441,10 +1441,10 @@ impl ContextHandle {
                     }
                 }
 
-                crate::syscall::exit_context(context);
-
                 if is_current {
-                    context::switch();
+                    crate::syscall::exit_this_context();
+                } else {
+                    crate::syscall::wait_for_exit(context);
                 }
 
                 Ok(mem::size_of::<usize>())

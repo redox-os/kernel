@@ -29,17 +29,11 @@ use crate::{
 
 use super::usercopy::UserSliceWo;
 
-pub fn exit_context(context_lock: Arc<RwSpinlock<Context>>) {
-    if !context::is_current(&context_lock) {
-        context_lock.write().status = context::Status::Dead;
-        while context_lock.read().running {
-            context::switch();
-        }
-    }
-
+pub fn exit_this_context() -> ! {
     let close_files;
     let addrspace_opt;
 
+    let context_lock = context::current();
     {
         let mut context = context_lock.write();
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
@@ -61,81 +55,103 @@ pub fn exit_context(context_lock: Arc<RwSpinlock<Context>>) {
     // TODO: Should status == Status::HardBlocked be handled differently?
     context_lock.write().status = context::Status::Dead;
     let _ = context::contexts_mut().remove(&ContextRef(context_lock));
+    context::switch();
+    unreachable!();
+}
+
+pub fn wait_for_exit(context_lock: Arc<RwSpinlock<Context>>) {
+    {
+        let mut ctxt = context_lock.write();
+        ctxt.status = context::Status::Runnable;
+        ctxt.being_sigkilled = true;
+    }
+    while !matches!(context_lock.read().status, context::Status::Dead) {
+        context::switch();
+    }
 }
 
 pub fn exit(status: usize) -> ! {
+    if matches!(
+        mem::replace(
+            &mut process::current().unwrap().write().status,
+            ProcessStatus::Exiting
+        ),
+        ProcessStatus::Exiting
+    ) {
+        // already exiting the current process, so just set our status to Dead and context switch.
+        exit_this_context();
+    }
+
     ptrace::breakpoint_callback(
         PTRACE_STOP_EXIT,
         Some(ptrace_event!(PTRACE_STOP_EXIT, status)),
     );
 
-    let current_context = context::current();
-    let current_process = process::current().expect("no active process during exit syscall");
-    let current_pid = current_process.read().pid;
-
-    let threads = core::mem::take(&mut current_process.write().threads);
-
-    for context_lock in threads.into_iter().filter_map(|t| t.upgrade()) {
-        // Current context must be closed last, as it would otherwise be impossible to context
-        // switch back, if closing file descriptors require scheme calls.
-        if Arc::ptr_eq(&context_lock, &current_context) {
-            continue;
-        }
-        exit_context(context_lock);
-    }
-    exit_context(current_context);
-
     {
-        // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits
-        let (pgid, ppid) = {
-            let process = current_process.read();
-            (process.pgid, process.ppid)
-        };
-        if let Some(parent) = process::PROCESSES.read().get(&ppid).map(Arc::clone) {
-            let _ = send_signal(KillTarget::Process(parent), SIGCHLD, true, &mut false);
-        }
+        let current_context = context::current();
+        let current_process = process::current().expect("no active process during exit syscall");
+        let current_pid = current_process.read().pid;
 
-        // Transfer child processes to parent (TODO: to init)
-        {
-            let processes = context::process::PROCESSES.read();
-            for (_child_pid, child_process_lock) in processes.iter() {
-                let mut process = child_process_lock.write();
-                if process.ppid == current_pid {
-                    process.ppid = ppid;
-                }
+        let threads = core::mem::take(&mut current_process.write().threads);
+
+        for context_lock in threads.into_iter().filter_map(|t| t.upgrade()) {
+            // Current context must be closed last, as it would otherwise be impossible to context
+            // switch back, if closing file descriptors require scheme calls.
+            if Arc::ptr_eq(&context_lock, &current_context) {
+                continue;
             }
+            wait_for_exit(context_lock);
         }
-
-        current_process.write().status = ProcessStatus::Exited(status);
-
-        let children = current_process.write().waitpid.receive_all();
 
         {
-            let processes = process::PROCESSES.read();
-            if let Some(parent_lock) = processes.get(&ppid) {
-                let waitpid = Arc::clone(&parent_lock.write().waitpid);
-
-                for (c_pid, c_status) in children {
-                    waitpid.send(c_pid, c_status);
-                }
-
-                waitpid.send(
-                    WaitpidKey {
-                        pid: Some(current_pid),
-                        pgid: Some(pgid),
-                    },
-                    (current_pid, status),
-                );
+            // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits
+            let (pgid, ppid) = {
+                let process = current_process.read();
+                (process.pgid, process.ppid)
+            };
+            if let Some(parent) = process::PROCESSES.read().get(&ppid).map(Arc::clone) {
+                let _ = send_signal(KillTarget::Process(parent), SIGCHLD, true, &mut false);
             }
-        }
 
-        // Alert any tracers waiting of this process
-        ptrace::close_tracee(current_pid);
+            // Transfer child processes to parent (TODO: to init)
+            {
+                let processes = context::process::PROCESSES.read();
+                for (_child_pid, child_process_lock) in processes.iter() {
+                    let mut process = child_process_lock.write();
+                    if process.ppid == current_pid {
+                        process.ppid = ppid;
+                    }
+                }
+            }
+
+            current_process.write().status = ProcessStatus::Exited(status);
+
+            let children = current_process.write().waitpid.receive_all();
+
+            {
+                let processes = process::PROCESSES.read();
+                if let Some(parent_lock) = processes.get(&ppid) {
+                    let waitpid = Arc::clone(&parent_lock.write().waitpid);
+
+                    for (c_pid, c_status) in children {
+                        waitpid.send(c_pid, c_status);
+                    }
+
+                    waitpid.send(
+                        WaitpidKey {
+                            pid: Some(current_pid),
+                            pgid: Some(pgid),
+                        },
+                        (current_pid, status),
+                    );
+                }
+            }
+
+            // Alert any tracers waiting of this process
+            ptrace::close_tracee(current_pid);
+        }
     }
-
-    let _ = context::switch();
-
-    unreachable!();
+    exit_this_context();
 }
 
 pub fn getpid() -> Result<ProcessId> {
@@ -298,7 +314,6 @@ pub fn send_signal(
             context_guard.being_sigkilled = true;
             context_guard.unblock();
             drop(context_guard);
-            process_lock.write().status = ProcessStatus::Exited(SIGKILL);
             *killed_self |= is_self;
 
             // exit() will signal the parent, rather than immediately in kill()

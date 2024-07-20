@@ -217,7 +217,6 @@ impl KernelScheme for PipeScheme {
                 return Err(Error::new(EPIPE));
             }
 
-
             let bytes_left = MAX_QUEUE_SIZE.saturating_sub(vec.len());
             let bytes_to_write = core::cmp::min(bytes_left, user_buf.len());
             let src_buf = user_buf

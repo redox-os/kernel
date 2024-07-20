@@ -73,6 +73,7 @@ impl DerefMut for Process {
 pub enum ProcessStatus {
     PossiblyRunnable,
     Stopped(usize),
+    Exiting,
     Exited(usize),
 }
 
