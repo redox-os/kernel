@@ -674,13 +674,15 @@ pub fn waitpid(
                     Some(Ok(ProcessId::from(0)))
                 }
             } else {
-                let (w_pid, status) = waitpid.receive(
-                    &WaitpidKey {
-                        pid: None,
-                        pgid: Some(pgid),
-                    },
-                    "waitpid pgid",
-                );
+                let (w_pid, status) = waitpid
+                    .receive(
+                        &WaitpidKey {
+                            pid: None,
+                            pgid: Some(pgid),
+                        },
+                        "waitpid pgid",
+                    )
+                    .ok_or(Error::new(EINTR))?;
                 grim_reaper(w_pid, status)
             }
         } else {
@@ -716,13 +718,15 @@ pub fn waitpid(
                     Some(Ok(ProcessId::from(0)))
                 }
             } else {
-                let (w_pid, status) = waitpid.receive(
-                    &WaitpidKey {
-                        pid: Some(pid),
-                        pgid: None,
-                    },
-                    "waitpid pid",
-                );
+                let (w_pid, status) = waitpid
+                    .receive(
+                        &WaitpidKey {
+                            pid: Some(pid),
+                            pgid: None,
+                        },
+                        "waitpid pid",
+                    )
+                    .ok_or(Error::new(EINTR))?;
                 grim_reaper(w_pid, status)
             }
         };

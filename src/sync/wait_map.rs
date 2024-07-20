@@ -26,14 +26,15 @@ where
         self.inner.lock().remove(key)
     }
 
-    pub fn receive(&self, key: &K, reason: &'static str) -> V {
+    pub fn receive(&self, key: &K, reason: &'static str) -> Option<V> {
         loop {
             let mut inner = self.inner.lock();
             if let Some(value) = inner.remove(key) {
-                return value;
+                return Some(value);
             }
-            //TODO: use false from wait condition to indicate EINTR
-            let _ = self.condition.wait(inner, reason);
+            if !self.condition.wait(inner, reason) {
+                return None;
+            }
         }
     }
 
