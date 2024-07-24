@@ -1,6 +1,8 @@
-use alloc::collections::BTreeSet;
-
-use crate::paging::{RmmA, RmmArch, TableKind, PAGE_SIZE};
+use crate::{
+    context::Context,
+    paging::{RmmA, RmmArch, TableKind, PAGE_SIZE},
+};
+use spinning_top::RwSpinlock;
 
 //TODO: combine arches into one function (aarch64 one is newest)
 
@@ -209,7 +211,10 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
+pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
+    use core::sync::atomic::Ordering;
+
+    use alloc::sync::Arc;
     use hashbrown::HashSet;
 
     use crate::memory::{get_page_info, the_zeroed_frame, RefCount};
@@ -230,12 +235,12 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
     let old_table = RmmA::table(TableKind::User);
 
-    for (id, context_lock) in crate::context::contexts().iter() {
-        if target_id.map_or(false, |target_id| *id != target_id) {
+    for context_lock in crate::context::contexts().iter() {
+        if target_id.map_or(false, |target_id| Arc::as_ptr(&context_lock.0) != target_id) {
             continue;
         }
-        let context = context_lock.read();
-        println!("{}: {}", (*id).get(), context.name);
+        let context = context_lock.0.read();
+        println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
 
         if let Some(ref head) = context.syscall_head {
             tree.insert(head.get(), (1, false));
@@ -320,22 +325,26 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 
         println!();
     }
+    crate::scheme::proc::foreach_addrsp(|addrsp| {
+        let was_new = spaces.insert(addrsp.acquire_read().table.utable.table().phys().data());
+        check_consistency(&mut *addrsp.acquire_write(), was_new, &mut tree);
+    });
     for (frame, (count, p)) in tree {
         let Some(info) = get_page_info(frame) else {
             assert!(p);
             continue;
         };
         let rc = info.refcount();
-        let c = match rc {
-            None => 0,
-            Some(RefCount::One) => 1,
-            Some(RefCount::Cow(c)) => c.get(),
-            Some(RefCount::Shared(s)) => s.get(),
+        let (c, s) = match rc {
+            None => (0, false),
+            Some(RefCount::One) => (1, false),
+            Some(RefCount::Cow(c)) => (c.get(), false),
+            Some(RefCount::Shared(s)) => (s.get(), true),
         };
         if c != count {
             println!(
-                "frame refcount mismatch for {:?} ({} != {})",
-                frame, c, count
+                "frame refcount mismatch for {:?} ({} != {} s {})",
+                frame, c, count, s
             );
         }
     }

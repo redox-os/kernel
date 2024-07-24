@@ -235,6 +235,21 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
+#[cfg(feature = "debugger")]
+#[allow(dead_code)]
+pub fn foreach_addrsp(mut f: impl FnMut(&Arc<AddrSpaceWrapper>)) {
+    for (_, handle) in HANDLES.read().iter() {
+        let Handle::Context {
+            kind: ContextHandle::AddrSpace { addrspace, .. },
+            ..
+        } = handle
+        else {
+            continue;
+        };
+        f(&addrspace);
+    }
+}
+
 fn new_handle((handle, fl): (Handle, InternalFlags)) -> Result<(usize, InternalFlags)> {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let _ = HANDLES.write().insert(id, handle);

@@ -1425,9 +1425,8 @@ impl Grant {
                             }
                             src_flusher_state = src_flusher.detach();
 
-                            if page_info.remove_ref().is_none() {
-                                deallocate_frame(frame);
-                            }
+                            // TODO: there used to be an additional remove_ref here, was that
+                            // correct?
 
                             new_cow_frame
                         },
@@ -2791,10 +2790,37 @@ pub struct NopFlusher;
 impl GenericFlusher for NopFlusher {
     fn queue(
         &mut self,
-        _frame: Frame,
-        _phys_contiguous_count: Option<NonZeroUsize>,
-        _actions: TlbShootdownActions,
+        frame: Frame,
+        phys_contiguous_count: Option<NonZeroUsize>,
+        actions: TlbShootdownActions,
     ) {
+        if actions.contains(TlbShootdownActions::FREE) {
+            handle_free_action(frame, phys_contiguous_count);
+        }
+    }
+}
+fn handle_free_action(base: Frame, phys_contiguous_count: Option<NonZeroUsize>) {
+    if let Some(count) = phys_contiguous_count {
+        for i in 0..count.get() {
+            let new_rc = get_page_info(base.next_by(i))
+                .expect("phys_contiguous frames all need PageInfos")
+                .remove_ref();
+
+            assert_eq!(new_rc, None);
+        }
+        unsafe {
+            let order = count.get().next_power_of_two().trailing_zeros();
+            deallocate_p2frame(base, order);
+        }
+    } else {
+        let Some(info) = get_page_info(base) else {
+            return;
+        };
+        if info.remove_ref() == None {
+            unsafe {
+                deallocate_frame(base);
+            }
+        }
     }
 }
 struct FlusherState<'addrsp> {
@@ -2848,7 +2874,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
     pub fn flush(&mut self) {
         let pages = core::mem::take(&mut self.state.pagequeue);
 
-        if pages.is_empty() && core::mem::replace(&mut self.state.dirty, false) == true {
+        if pages.is_empty() && core::mem::replace(&mut self.state.dirty, false) == false {
             return;
         }
 
@@ -2883,28 +2909,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
             else {
                 continue;
             };
-            if let Some(count) = phys_contiguous_count {
-                for i in 0..count.get() {
-                    let new_rc = get_page_info(base.next_by(i))
-                        .expect("phys_contiguous frames all need PageInfos")
-                        .remove_ref();
-
-                    assert_eq!(new_rc, None);
-                }
-                unsafe {
-                    let order = count.get().next_power_of_two().trailing_zeros();
-                    deallocate_p2frame(base, order);
-                }
-            } else {
-                let Some(info) = get_page_info(base) else {
-                    continue;
-                };
-                if info.remove_ref() == None {
-                    unsafe {
-                        deallocate_frame(base);
-                    }
-                }
-            }
+            handle_free_action(base, phys_contiguous_count);
         }
     }
 }
