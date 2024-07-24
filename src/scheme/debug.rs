@@ -3,6 +3,7 @@ use spin::RwLock;
 
 use crate::{
     arch::debug::Writer,
+    devices::graphical_debug,
     event,
     scheme::*,
     sync::WaitQueue,
@@ -48,6 +49,13 @@ impl KernelScheme for DebugScheme {
         let num = match path {
             "" => !0,
 
+            "disable-graphical-debug" => {
+                #[cfg(feature = "graphical_debug")]
+                graphical_debug::fini();
+
+                !0 - 1
+            }
+
             #[cfg(feature = "profiling")]
             p if p.starts_with("profiling-") => {
                 path[10..].parse().map_err(|_| Error::new(ENOENT))?
@@ -90,10 +98,14 @@ impl KernelScheme for DebugScheme {
         Ok(())
     }
     fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
-        let _handle = {
+        let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
+
+        if handle.num == !0 - 1 {
+            return Err(Error::new(EINVAL));
+        }
 
         #[cfg(feature = "profiling")]
         if handle.num != !0 {
@@ -118,7 +130,7 @@ impl KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
         if handle.num != !0 {
-            return Err(Error::new(EBADF));
+            return Err(Error::new(EINVAL));
         }
 
         let mut tmp = [0_u8; 512];
@@ -141,7 +153,7 @@ impl KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
         if handle.num != !0 {
-            return Err(Error::new(EBADF));
+            return Err(Error::new(EINVAL));
         }
 
         // TODO: Copy elsewhere in the kernel?
