@@ -175,7 +175,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init();
 
-        // Set up double buffer for grpahical debug now that heap is available
+        // Set up double buffer for graphical debug now that heap is available
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init_heap();
 
