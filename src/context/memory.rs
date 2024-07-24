@@ -2898,6 +2898,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
         }
 
         while self.state.ackword.load(Ordering::SeqCst) < affected_cpu_count {
+            PercpuBlock::current().maybe_handle_tlb_shootdown();
             core::hint::spin_loop();
         }
 
