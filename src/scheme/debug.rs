@@ -40,6 +40,13 @@ pub fn debug_notify() {
 
 pub struct DebugScheme;
 
+#[repr(usize)]
+enum SpecialFds {
+    Default = !0,
+    NoPreserve = !0 - 1,
+    DisableGraphicalDebug = !0 - 2,
+}
+
 impl KernelScheme for DebugScheme {
     fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         if ctx.uid != 0 {
@@ -47,13 +54,15 @@ impl KernelScheme for DebugScheme {
         }
 
         let num = match path {
-            "" => !0,
+            "" => SpecialFds::Default as usize,
+
+            "no-preserve" => SpecialFds::NoPreserve as usize,
 
             "disable-graphical-debug" => {
                 #[cfg(feature = "graphical_debug")]
                 graphical_debug::fini();
 
-                !0 - 1
+                SpecialFds::DisableGraphicalDebug as usize
             }
 
             #[cfg(feature = "profiling")]
@@ -103,12 +112,14 @@ impl KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        if handle.num == !0 - 1 {
+        if handle.num == SpecialFds::NoPreserve as usize
+            && handle.num == SpecialFds::DisableGraphicalDebug as usize
+        {
             return Err(Error::new(EINVAL));
         }
 
         #[cfg(feature = "profiling")]
-        if handle.num != !0 {
+        if handle.num != SpecialFds::Default as usize {
             return crate::profiling::drain_buffer(
                 crate::cpu_set::LogicalCpuId::new(handle.num as u32),
                 buf,
@@ -129,7 +140,9 @@ impl KernelScheme for DebugScheme {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
-        if handle.num != !0 {
+        if handle.num != SpecialFds::Default as usize
+            && handle.num != SpecialFds::NoPreserve as usize
+        {
             return Err(Error::new(EINVAL));
         }
 
@@ -142,7 +155,7 @@ impl KernelScheme for DebugScheme {
             // The reason why a new writer is created for each iteration, is because the page fault
             // handler in usercopy might use the same lock when printing for debug purposes, and
             // although it most likely won't, it would be dangerous to rely on that assumption.
-            Writer::new().write(tmp_bytes);
+            Writer::new().write(tmp_bytes, handle.num != SpecialFds::NoPreserve as usize);
         }
 
         Ok(buf.len())
@@ -152,7 +165,9 @@ impl KernelScheme for DebugScheme {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
-        if handle.num != !0 {
+        if handle.num != SpecialFds::Default as usize
+            && handle.num != SpecialFds::NoPreserve as usize
+        {
             return Err(Error::new(EINVAL));
         }
 
