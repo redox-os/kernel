@@ -110,7 +110,13 @@ pub fn exit(status: usize) -> ! {
                 (process.pgid, process.ppid)
             };
             if let Some(parent) = process::PROCESSES.read().get(&ppid).map(Arc::clone) {
-                let _ = send_signal(KillTarget::Process(parent), SIGCHLD, true, &mut false);
+                let _ = send_signal(
+                    KillTarget::Process(parent),
+                    SIGCHLD,
+                    KillMode::Idempotent,
+                    true,
+                    &mut false,
+                );
             }
 
             // Transfer child processes to parent (TODO: to init)
@@ -185,6 +191,7 @@ pub enum KillTarget {
 pub fn send_signal(
     target: KillTarget,
     sig: usize,
+    mode: KillMode,
     is_sigchld_to_parent: bool,
     killed_self: &mut bool,
 ) -> Result<()> {
@@ -208,7 +215,7 @@ pub fn send_signal(
     };
     let proc_info = process_lock.read().info;
 
-    enum Sent {
+    enum SendResult {
         Succeeded,
         SucceededSigchld {
             ppid: ProcessId,
@@ -219,6 +226,7 @@ pub fn send_signal(
             ppid: ProcessId,
             pgid: ProcessId,
         },
+        FullQ,
     }
 
     let result = (|| {
@@ -227,7 +235,7 @@ pub fn send_signal(
         // If sig = 0, test that process exists and can be signalled, but don't send any
         // signal.
         if sig == 0 {
-            return Sent::Succeeded;
+            return SendResult::Succeeded;
         }
 
         let mut process_guard = process_lock.write();
@@ -269,7 +277,7 @@ pub fn send_signal(
                 }
             }
             // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
-            return Sent::SucceededSigcont {
+            return SendResult::SucceededSigcont {
                 ppid: proc_info.ppid,
                 pgid: proc_info.pgid,
             };
@@ -304,7 +312,7 @@ pub fn send_signal(
                 }
             }
 
-            return Sent::SucceededSigchld {
+            return SendResult::SucceededSigchld {
                 ppid: proc_info.ppid,
                 pgid: proc_info.pgid,
                 orig_signal: sig,
@@ -317,9 +325,9 @@ pub fn send_signal(
             *killed_self |= is_self;
 
             // exit() will signal the parent, rather than immediately in kill()
-            return Sent::Succeeded;
+            return SendResult::Succeeded;
         }
-        if let Some((tctl, pctl, _st)) = context_guard.sigcontrol()
+        if let Some((tctl, pctl, sigst)) = context_guard.sigcontrol()
             && !pctl.signal_will_ign(sig, is_sigchld_to_parent)
         {
             match target {
@@ -331,7 +339,21 @@ pub fn send_signal(
                     }
                 }
                 KillTarget::Process(proc) => {
-                    pctl.pending.fetch_or(sig_bit(sig), Ordering::Relaxed);
+                    match mode {
+                        KillMode::Queued(arg) if sig <= 32 => {
+                            let head = pctl.qhead.load(Ordering::Relaxed);
+                            if head == sigst.our_qtail {
+                                return SendResult::FullQ;
+                            }
+                            let new_tail = (sigst.our_qtail + 1) % 32;
+                            pctl.queue[usize::from(new_tail)].arg.set(arg);
+                            core::sync::atomic::fence(Ordering::Release);
+                            sigst.our_qtail = new_tail;
+                        }
+                        _ => (),
+                    }
+
+                    pctl.pending.fetch_or(sig_bit(sig), Ordering::Release);
                     drop(context_guard);
 
                     for thread in proc.read().threads.iter().filter_map(|t| t.upgrade()) {
@@ -348,20 +370,21 @@ pub fn send_signal(
                     }
                 }
             }
-            Sent::Succeeded
+            SendResult::Succeeded
         } else {
             // Discard signals if sighandler is unset. This includes both special contexts such
             // as bootstrap, and child processes or threads that have not yet been started.
             // This is semantically equivalent to having all signals except SIGSTOP and SIGKILL
             // blocked/ignored (SIGCONT can be ignored and masked, but will always continue
             // stopped processes first).
-            Sent::Succeeded
+            SendResult::Succeeded
         }
     })();
 
     match result {
-        Sent::Succeeded => (),
-        Sent::SucceededSigchld {
+        SendResult::Succeeded => (),
+        SendResult::FullQ => return Err(Error::new(EAGAIN)),
+        SendResult::SucceededSigchld {
             ppid,
             pgid,
             orig_signal,
@@ -379,9 +402,15 @@ pub fn send_signal(
                 },
                 (proc_info.pid, (orig_signal << 8) | 0x7f),
             );
-            send_signal(KillTarget::Process(parent), SIGCHLD, true, killed_self)?;
+            send_signal(
+                KillTarget::Process(parent),
+                SIGCHLD,
+                mode,
+                true,
+                killed_self,
+            )?;
         }
-        Sent::SucceededSigcont { ppid, pgid } => {
+        SendResult::SucceededSigcont { ppid, pgid } => {
             let parent = process::PROCESSES
                 .read()
                 .get(&ppid)
@@ -403,7 +432,13 @@ pub fn send_signal(
     Ok(())
 }
 
-pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
+#[derive(Clone, Copy)]
+pub enum KillMode {
+    Idempotent,
+    Queued(usize),
+}
+
+pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
     let (ruid, euid, current_pgid) = {
         let process_lock = process::current()?;
         let process = process_lock.read();
@@ -438,6 +473,7 @@ pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
                     send_signal(
                         KillTarget::Process(process_lock),
                         sig,
+                        mode,
                         false,
                         &mut killed_self,
                     )?;
@@ -455,6 +491,7 @@ pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
                     send_signal(
                         KillTarget::Process(Arc::clone(process_lock)),
                         sig,
+                        mode,
                         false,
                         &mut killed_self,
                     )?;
@@ -479,6 +516,7 @@ pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
                     send_signal(
                         KillTarget::Process(Arc::clone(process_lock)),
                         sig,
+                        mode,
                         false,
                         &mut killed_self,
                     )?;

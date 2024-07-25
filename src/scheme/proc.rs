@@ -17,7 +17,7 @@ use crate::{
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
-        EnvRegisters, FloatRegisters, IntRegisters, KillTarget,
+        EnvRegisters, FloatRegisters, IntRegisters, KillMode, KillTarget,
     },
 };
 
@@ -585,7 +585,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 ptrace::close_session(pid);
 
                 if excl {
-                    syscall::kill(pid, SIGKILL)?;
+                    syscall::kill(pid, SIGKILL, KillMode::Idempotent)?;
                 }
 
                 let threads = process.read().threads.clone();
@@ -1326,6 +1326,7 @@ impl ContextHandle {
                         proc_control: addrsp.borrow_frame_enforce_rw_allocated(
                             Page::containing_address(VirtualAddress::new(data.proc_control_addr)),
                         )?,
+                        our_qtail: 0,
                     })
                 } else {
                     None
@@ -1470,6 +1471,7 @@ impl ContextHandle {
                 crate::syscall::process::send_signal(
                     KillTarget::Thread(context),
                     sig as usize,
+                    KillMode::Idempotent,
                     false,
                     &mut killed_self,
                 )?;
