@@ -197,6 +197,8 @@ pub struct SignalState {
     /// Offset within the control pages of respective word-aligned structs.
     pub threadctl_off: u16,
     pub procctl_off: u16,
+
+    pub our_qtail: u8,
 }
 
 impl Context {

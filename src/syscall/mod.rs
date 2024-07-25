@@ -200,7 +200,8 @@ pub fn syscall(
             SYS_GETPPID => getppid().map(ProcessId::into),
 
             SYS_EXIT => exit(b),
-            SYS_KILL => kill(ProcessId::from(b), c),
+            SYS_KILL => kill(ProcessId::from(b), c, KillMode::Idempotent),
+            SYS_SIGQUEUE => kill(ProcessId::from(b), c, KillMode::Queued(d)),
             SYS_WAITPID => waitpid(
                 ProcessId::from(b),
                 if c == 0 {
