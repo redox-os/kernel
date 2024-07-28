@@ -43,6 +43,7 @@
 #![deny(unused_must_use)]
 #![feature(allocator_api)]
 #![feature(asm_const)] // TODO: Relax requirements of most asm invocations
+#![feature(core_intrinsics)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
 #![feature(let_chains)]

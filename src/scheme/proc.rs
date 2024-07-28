@@ -1326,7 +1326,7 @@ impl ContextHandle {
                         proc_control: addrsp.borrow_frame_enforce_rw_allocated(
                             Page::containing_address(VirtualAddress::new(data.proc_control_addr)),
                         )?,
-                        our_qtail: 0,
+                        rtqs: Vec::new(),
                     })
                 } else {
                     None
