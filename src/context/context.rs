@@ -1,4 +1,4 @@
-use alloc::{borrow::Cow, sync::Arc, vec::Vec};
+use alloc::{borrow::Cow, collections::VecDeque, sync::Arc, vec::Vec};
 use core::{
     cmp::Ordering,
     mem::{self, size_of},
@@ -198,7 +198,7 @@ pub struct SignalState {
     pub threadctl_off: u16,
     pub procctl_off: u16,
 
-    pub our_qtail: u8,
+    pub rtqs: Vec<VecDeque<usize>>,
 }
 
 impl Context {

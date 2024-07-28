@@ -201,7 +201,8 @@ pub fn syscall(
 
             SYS_EXIT => exit(b),
             SYS_KILL => kill(ProcessId::from(b), c, KillMode::Idempotent),
-            SYS_SIGQUEUE => kill(ProcessId::from(b), c, KillMode::Queued(d)),
+            SYS_SIGENQUEUE => kill(ProcessId::from(b), c, KillMode::Queued(d)),
+            SYS_SIGDEQUEUE => sigdequeue(UserSlice::wo(b, 8)?, c as u32).map(|()| 0),
             SYS_WAITPID => waitpid(
                 ProcessId::from(b),
                 if c == 0 {

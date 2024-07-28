@@ -1,4 +1,4 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 use spinning_top::RwSpinlock;
 use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
@@ -195,7 +195,7 @@ pub fn send_signal(
     is_sigchld_to_parent: bool,
     killed_self: &mut bool,
 ) -> Result<()> {
-    if sig > 0x3F {
+    if sig > 64 {
         return Err(Error::new(EINVAL));
     }
 
@@ -340,15 +340,20 @@ pub fn send_signal(
                 }
                 KillTarget::Process(proc) => {
                     match mode {
-                        KillMode::Queued(arg) if sig <= 32 => {
-                            let head = pctl.qhead.load(Ordering::Relaxed);
-                            if head == sigst.our_qtail {
+                        KillMode::Queued(arg) if sig_group == 1 => {
+                            let rtidx = sig - 33;
+                            log::info!("QUEUEING {arg} RTIDX {rtidx}");
+                            if rtidx >= sigst.rtqs.len() {
+                                sigst.rtqs.resize_with(rtidx + 1, VecDeque::new);
+                            }
+                            let rtq = sigst.rtqs.get_mut(rtidx).unwrap();
+
+                            // TODO: configurable limit?
+                            if rtq.len() > 32 {
                                 return SendResult::FullQ;
                             }
-                            let new_tail = (sigst.our_qtail + 1) % 32;
-                            pctl.queue[usize::from(new_tail)].arg.set(arg);
-                            core::sync::atomic::fence(Ordering::Release);
-                            sigst.our_qtail = new_tail;
+
+                            rtq.push_back(arg);
                         }
                         _ => (),
                     }
@@ -846,4 +851,32 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
         CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8,
         bootstrap.page_count * PAGE_SIZE,
     )
+}
+pub fn sigdequeue(out: UserSliceWo, sig_idx: u32) -> Result<()> {
+    log::info!("DEQUEING {sig_idx}");
+    let current = context::current();
+    let mut current = current.write();
+    let Some((_tctl, pctl, st)) = current.sigcontrol() else {
+        log::info!("[ESRCH]");
+        return Err(Error::new(ESRCH));
+    };
+    if sig_idx >= 32 {
+        return Err(Error::new(EINVAL));
+    }
+    let q = st
+        .rtqs
+        .get_mut(sig_idx as usize)
+        .ok_or(Error::new(EAGAIN))?;
+    let Some(front) = q.pop_front() else {
+        log::info!("[EAGAIN]");
+        return Err(Error::new(EAGAIN));
+    };
+    if q.is_empty() {
+        pctl.pending
+            .fetch_and(!(1 << (32 + sig_idx as usize)), Ordering::Relaxed);
+    }
+    out.write_usize(front)
+        .inspect_err(|err| log::error!("failed {err}"))?;
+    log::info!("success");
+    Ok(())
 }
