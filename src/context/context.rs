@@ -5,7 +5,7 @@ use core::{
     num::NonZeroUsize,
 };
 use spin::RwLock;
-use syscall::{SigProcControl, Sigcontrol};
+use syscall::{RtSigInfo, SigProcControl, Sigcontrol};
 
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
@@ -198,7 +198,7 @@ pub struct SignalState {
     pub threadctl_off: u16,
     pub procctl_off: u16,
 
-    pub rtqs: Vec<VecDeque<usize>>,
+    pub rtqs: Vec<VecDeque<RtSigInfo>>,
 }
 
 impl Context {

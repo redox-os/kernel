@@ -1,7 +1,7 @@
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 use spinning_top::RwSpinlock;
-use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
+use syscall::{sig_bit, RtSigInfo, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
 
 use rmm::Arch;
 use spin::RwLock;
@@ -342,7 +342,7 @@ pub fn send_signal(
                     match mode {
                         KillMode::Queued(arg) if sig_group == 1 => {
                             let rtidx = sig - 33;
-                            log::info!("QUEUEING {arg} RTIDX {rtidx}");
+                            //log::info!("QUEUEING {arg} RTIDX {rtidx}");
                             if rtidx >= sigst.rtqs.len() {
                                 sigst.rtqs.resize_with(rtidx + 1, VecDeque::new);
                             }
@@ -440,7 +440,7 @@ pub fn send_signal(
 #[derive(Clone, Copy)]
 pub enum KillMode {
     Idempotent,
-    Queued(usize),
+    Queued(RtSigInfo),
 }
 
 pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
@@ -853,11 +853,9 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
     )
 }
 pub fn sigdequeue(out: UserSliceWo, sig_idx: u32) -> Result<()> {
-    log::info!("DEQUEING {sig_idx}");
     let current = context::current();
     let mut current = current.write();
     let Some((_tctl, pctl, st)) = current.sigcontrol() else {
-        log::info!("[ESRCH]");
         return Err(Error::new(ESRCH));
     };
     if sig_idx >= 32 {
@@ -868,15 +866,12 @@ pub fn sigdequeue(out: UserSliceWo, sig_idx: u32) -> Result<()> {
         .get_mut(sig_idx as usize)
         .ok_or(Error::new(EAGAIN))?;
     let Some(front) = q.pop_front() else {
-        log::info!("[EAGAIN]");
         return Err(Error::new(EAGAIN));
     };
     if q.is_empty() {
         pctl.pending
             .fetch_and(!(1 << (32 + sig_idx as usize)), Ordering::Relaxed);
     }
-    out.write_usize(front)
-        .inspect_err(|err| log::error!("failed {err}"))?;
-    log::info!("success");
+    out.copy_exactly(&front)?;
     Ok(())
 }
