@@ -27,8 +27,8 @@ impl<'a> Writer<'a> {
         }
     }
 
-    pub fn write(&mut self, buf: &[u8]) {
-        {
+    pub fn write(&mut self, buf: &[u8], preserve: bool) {
+        if preserve {
             if let Some(ref mut log) = *self.log {
                 log.write(buf);
             }
@@ -52,7 +52,7 @@ impl<'a> Writer<'a> {
 
 impl<'a> fmt::Write for Writer<'a> {
     fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
-        self.write(s.as_bytes());
+        self.write(s.as_bytes(), reserve);
         Ok(())
     }
 }
