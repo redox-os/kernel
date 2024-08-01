@@ -4,7 +4,9 @@
 
 extern crate syscall;
 
-use syscall::{RwFlags, EINVAL, SIGKILL};
+use core::mem::size_of;
+
+use syscall::{RtSigInfo, RwFlags, EINVAL, SIGKILL};
 
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
@@ -187,8 +189,16 @@ pub fn syscall(
 
             SYS_EXIT => exit(b),
             SYS_KILL => kill(ProcessId::from(b), c, KillMode::Idempotent),
-            SYS_SIGENQUEUE => kill(ProcessId::from(b), c, KillMode::Queued(d)),
-            SYS_SIGDEQUEUE => sigdequeue(UserSlice::wo(b, 8)?, c as u32).map(|()| 0),
+            SYS_SIGENQUEUE => kill(
+                ProcessId::from(b),
+                c,
+                KillMode::Queued(unsafe {
+                    UserSlice::ro(d, size_of::<RtSigInfo>())?.read_exact()?
+                }),
+            ),
+            SYS_SIGDEQUEUE => {
+                sigdequeue(UserSlice::wo(b, size_of::<RtSigInfo>())?, c as u32).map(|()| 0)
+            }
             SYS_WAITPID => waitpid(
                 ProcessId::from(b),
                 if c == 0 {
