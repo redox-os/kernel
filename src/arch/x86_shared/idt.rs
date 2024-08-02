@@ -1,7 +1,6 @@
 use core::{
     cell::SyncUnsafeCell,
     mem,
-    num::NonZeroU8,
     sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -15,7 +14,7 @@ use x86::{
 
 #[cfg(target_arch = "x86_64")]
 use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
-use crate::{cpu_set::LogicalCpuId, interrupt::*, ipi::IpiKind, paging::PAGE_SIZE};
+use crate::{cpu_set::LogicalCpuId, interrupt::*, ipi::IpiKind};
 
 use spin::RwLock;
 
@@ -36,30 +35,6 @@ impl Idt {
             reservations: new_idt_reservations(),
         }
     }
-    #[inline]
-    pub fn is_reserved(&self, index: u8) -> bool {
-        let byte_index = index / 32;
-        let bit = index % 32;
-
-        { &self.reservations[usize::from(byte_index)] }.load(Ordering::Acquire) & (1 << bit) != 0
-    }
-
-    #[inline]
-    pub fn set_reserved(&self, index: u8, reserved: bool) {
-        let byte_index = index / 32;
-        let bit = index % 32;
-
-        { &self.reservations[usize::from(byte_index)] }
-            .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
-    }
-    #[inline]
-    pub fn is_reserved_mut(&mut self, index: u8) -> bool {
-        let byte_index = index / 32;
-        let bit = index % 32;
-
-        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() & (1 << bit) != 0
-    }
-
     #[inline]
     pub fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
         let byte_index = index / 32;
@@ -109,17 +84,6 @@ pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
             .reservations[usize::from(byte_index)]
     }
     .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
-}
-
-pub fn allocate_interrupt() -> Option<NonZeroU8> {
-    let cpu_id = crate::cpu_id();
-    for number in 50..=254 {
-        if !is_reserved(cpu_id, number) {
-            set_reserved(cpu_id, number, true);
-            return Some(unsafe { NonZeroU8::new_unchecked(number) });
-        }
-    }
-    None
 }
 
 pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
@@ -229,22 +193,23 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
         // Note that each CPU has its own "backup interrupt stack".
         let index = 1_u8;
 
-        // Allocate 64 KiB of stack space for the backup stack.
-        const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
-        let frames = crate::memory::allocate_p2frame(4)
-            .expect("failed to allocate pages for backup interrupt stack");
-
-        use crate::paging::{RmmA, RmmArch};
-
-        // Physical pages are mapped linearly. So is the linearly mapped virtual memory.
-        let base_address = RmmA::phys_to_virt(frames.start_address());
-
-        // Stack always grows downwards.
-        let address = base_address.data() + BACKUP_STACK_SIZE;
-
         // Put them in the 1st entry of the IST.
         #[cfg(target_arch = "x86_64")] // TODO: x86
         {
+            use crate::paging::PAGE_SIZE;
+            // Allocate 64 KiB of stack space for the backup stack.
+            const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
+            let frames = crate::memory::allocate_p2frame(4)
+                .expect("failed to allocate pages for backup interrupt stack");
+
+            use crate::paging::{RmmA, RmmArch};
+
+            // Physical pages are mapped linearly. So is the linearly mapped virtual memory.
+            let base_address = RmmA::phys_to_virt(frames.start_address());
+
+            // Stack always grows downwards.
+            let address = base_address.data() + BACKUP_STACK_SIZE;
+
             (*crate::gdt::pcr()).tss.ist[usize::from(index - 1)] = address as u64;
         }
 

@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
 
 use crate::arch::device::irqchip::IRQ_CHIP;
@@ -39,7 +39,6 @@ fn ffs(num: u32) -> u32 {
         r += 2;
     }
     if (x & 0x1) == 0 {
-        x >>= 1;
         r += 1;
     }
 
@@ -49,7 +48,6 @@ fn ffs(num: u32) -> u32 {
 const PENDING_0: u32 = 0x0;
 const PENDING_1: u32 = 0x4;
 const PENDING_2: u32 = 0x8;
-const FIQ_CTRL: u32 = 0xc;
 const ENABLE_0: u32 = 0x18;
 const ENABLE_1: u32 = 0x10;
 const ENABLE_2: u32 = 0x14;
@@ -148,7 +146,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> Result<Option<usize>> {
-        let (base, size, virq) = match Bcm2835ArmInterruptController::parse(fdt) {
+        let (base, _size, virq) = match Bcm2835ArmInterruptController::parse(fdt) {
             Ok((a, b, c)) => (a, b, c),
             Err(_) => return Err(Error::new(EINVAL)),
         };
@@ -274,7 +272,6 @@ impl InterruptController for Bcm2835ArmInterruptController {
     }
     fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
         //assert interrupt-cells == 0x2
-        let mut off: usize = 0;
         let mut i = 0;
         //assert interrupt-cells == 0x2
         for chunk in irq_data.chunks(2) {
@@ -283,7 +280,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
                 let irq = chunk[1] as usize;
                 //TODO: check bank && irq
                 let hwirq = bank << 5 | irq;
-                off = hwirq + self.irq_range.0;
+                let off = hwirq + self.irq_range.0;
                 return Ok(off);
             }
             i += 1;

@@ -1,10 +1,7 @@
-use core::{mem, sync::atomic::AtomicBool};
-
-use alloc::sync::Arc;
+use core::sync::atomic::AtomicBool;
 
 use crate::{
     gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
-    paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     syscall::FloatRegisters,
 };

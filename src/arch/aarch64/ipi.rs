@@ -3,15 +3,11 @@
 pub enum IpiKind {
     Wakeup = 0x40,
     Tlb = 0x41,
-    Switch = 0x42,
-    Pit = 0x43,
 }
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum IpiTarget {
-    Current = 1,
-    All = 2,
     Other = 3,
 }
 
@@ -21,7 +17,7 @@ pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
 
 #[cfg(feature = "multi_core")]
 #[inline(always)]
-pub fn ipi(kind: IpiKind, target: IpiTarget) {}
+pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
 
 #[cfg(not(feature = "multi_core"))]
 #[inline(always)]
@@ -29,4 +25,4 @@ pub fn ipi_single(_kind: IpiKind, _target: crate::cpu_set::LogicalCpuId) {}
 
 #[cfg(feature = "multi_core")]
 #[inline(always)]
-pub fn ipi_single(kind: IpiKind, target: crate::cpu_set::LogicalCpuId) {}
+pub fn ipi_single(_kind: IpiKind, _target: crate::cpu_set::LogicalCpuId) {}

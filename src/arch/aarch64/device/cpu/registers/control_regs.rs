@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 //! Functions to read and write control registers.
 
 use core::arch::asm;
@@ -72,38 +74,38 @@ pub unsafe fn tpidrro_el0_write(val: u64) {
 
 pub unsafe fn esr_el1() -> u32 {
     let ret: u32;
-    asm!("mrs {}, esr_el1", out(reg) ret);
+    asm!("mrs {0:w}, esr_el1", out(reg) ret);
     ret
 }
 
 pub unsafe fn cntfreq_el0() -> u32 {
-    let ret: u32;
+    let ret: usize;
     asm!("mrs {}, cntfrq_el0", out(reg) ret);
-    ret
+    ret as u32
 }
 
 pub unsafe fn tmr_ctrl() -> u32 {
-    let ret: u32;
+    let ret: usize;
     asm!("mrs {}, cntp_ctl_el0", out(reg) ret);
-    ret
+    ret as u32
 }
 
 pub unsafe fn tmr_ctrl_write(val: u32) {
-    asm!("msr cntp_ctl_el0, {}", in(reg) val);
+    asm!("msr cntp_ctl_el0, {}", in(reg) val as usize);
 }
 
 pub unsafe fn tmr_tval() -> u32 {
-    let ret: u32;
-    asm!("mrs {}, cntp_tval_el0", out(reg) ret);
-    ret
+    let ret: usize;
+    asm!("mrs {0}, cntp_tval_el0", out(reg) ret);
+    ret as u32
 }
 
 pub unsafe fn tmr_tval_write(val: u32) {
-    asm!("msr cntp_tval_el0, {}", in(reg) val);
+    asm!("msr cntp_tval_el0, {}", in(reg) val as usize);
 }
 
 pub unsafe fn midr() -> u32 {
-    let ret: u32;
+    let ret: usize;
     asm!("mrs {}, midr_el1", out(reg) ret);
-    ret
+    ret as u32
 }

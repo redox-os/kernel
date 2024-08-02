@@ -20,12 +20,6 @@ pub unsafe fn disable() {
     asm!("msr daifset, #2");
 }
 
-/// Set interrupts
-#[inline(always)]
-pub unsafe fn enable() {
-    asm!("msr daifclr, #2");
-}
-
 /// Set interrupts and halt
 /// This will atomically wait for the next interrupt
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
@@ -57,7 +51,7 @@ pub fn pause() {
     unsafe { asm!("nop") };
 }
 
-pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
+pub fn available_irqs_iter(_cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
     0..0
 }
 
@@ -67,12 +61,12 @@ pub fn bsp_apic_id() -> Option<u32> {
 }
 
 #[inline]
-pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
+pub fn is_reserved(_cpu_id: LogicalCpuId, _index: u8) -> bool {
     //TODO
     true
 }
 
 #[inline]
-pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
+pub fn set_reserved(_cpu_id: LogicalCpuId, _index: u8, _reserved: bool) {
     //TODO
 }

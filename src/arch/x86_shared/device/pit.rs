@@ -1,8 +1,8 @@
 use crate::syscall::io::{Io, Pio};
 
 pub static mut CHAN0: Pio<u8> = Pio::new(0x40);
-pub static mut CHAN1: Pio<u8> = Pio::new(0x41);
-pub static mut CHAN2: Pio<u8> = Pio::new(0x42);
+//pub static mut CHAN1: Pio<u8> = Pio::new(0x41);
+//pub static mut CHAN2: Pio<u8> = Pio::new(0x42);
 pub static mut COMMAND: Pio<u8> = Pio::new(0x43);
 
 const SELECT_CHAN0: u8 = 0b00 << 6;

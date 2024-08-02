@@ -174,10 +174,6 @@ impl InterruptStack {
             self.iret.eflags &= !FLAG_SINGLESTEP;
         }
     }
-    /// Checks if the trap flag is enabled, see `set_singlestep`
-    pub fn is_singlestep(&self) -> bool {
-        self.iret.eflags & FLAG_SINGLESTEP == FLAG_SINGLESTEP
-    }
 }
 
 #[derive(Default)]

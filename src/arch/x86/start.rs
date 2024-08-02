@@ -11,17 +11,16 @@ use crate::acpi;
 use crate::devices::graphical_debug;
 use crate::{
     allocator,
-    arch::{flags::*, pti},
     cpu_set::LogicalCpuId,
-    device, gdt, idt, interrupt, memory,
-    paging::{self, KernelMapper, PhysicalAddress, RmmA, RmmArch, TableKind},
+    device, gdt, idt, interrupt,
+    paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
 };
 use log::info;
 
 /// Test of zero values in BSS.
-static BSS_TEST_ZERO: usize = 0;
+static mut BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
-static DATA_TEST_NONZERO: usize = usize::max_value();
+static mut DATA_TEST_NONZERO: usize = usize::max_value();
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);

@@ -27,7 +27,6 @@ pub use ::rmm::X86Arch as CurrentRmmArch;
 pub mod flags {
     pub const SHIFT_SINGLESTEP: usize = 8;
     pub const FLAG_SINGLESTEP: usize = 1 << SHIFT_SINGLESTEP;
-    pub const FLAG_INTERRUPTS: usize = 1 << 9;
 }
 
 #[naked]

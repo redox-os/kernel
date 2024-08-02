@@ -5,8 +5,9 @@ use core::{
 };
 use spin::RwLock;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+use crate::arch::interrupt;
 use crate::{
-    arch::interrupt,
     context::file::InternalFlags,
     syscall::{
         data::Stat,

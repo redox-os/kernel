@@ -6,12 +6,12 @@ use spin::{Once, RwLock};
 use super::{CallerCtx, KernelScheme, OpenResult};
 use crate::{
     dtb::DTB_BINARY,
-    scheme::{InternalFlags, SchemeId},
+    scheme::InternalFlags,
     syscall::{
         data::Stat,
         error::*,
-        flag::{MODE_FILE, O_STAT, SEEK_CUR, SEEK_END, SEEK_SET},
-        usercopy::{UserSliceRo, UserSliceWo},
+        flag::{MODE_FILE, O_STAT},
+        usercopy::UserSliceWo,
     },
 };
 

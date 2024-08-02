@@ -1,8 +1,4 @@
-use alloc::{
-    boxed::Box,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, BE};
 use fdt::DeviceTree;
 use syscall::Result;
@@ -15,13 +11,6 @@ mod gicv3;
 mod irq_bcm2835;
 mod irq_bcm2836;
 
-pub const IRQ_TYPE_NONE: u32 = 0;
-pub const IRQ_TYPE_EDGE_RISING: u32 = 1;
-pub const IRQ_TYPE_EDGE_FALLING: u32 = 2;
-pub const IRQ_TYPE_EDGE: u32 = IRQ_TYPE_EDGE_RISING | IRQ_TYPE_EDGE_FALLING; //both rising && failling
-pub const IRQ_TYPE_LEVEL_HIGH: u32 = 4;
-pub const IRQ_TYPE_LEVEL_LOW: u32 = 8;
-
 pub trait InterruptController {
     fn irq_init(
         &mut self,
@@ -33,6 +22,7 @@ pub trait InterruptController {
     fn irq_ack(&mut self) -> u32;
     fn irq_eoi(&mut self, irq_num: u32);
     fn irq_enable(&mut self, irq_num: u32);
+    #[allow(unused)]
     fn irq_disable(&mut self, irq_num: u32);
     fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize>;
     fn irq_to_virq(&mut self, hwirq: u32) -> Option<usize>;
@@ -44,10 +34,8 @@ pub trait InterruptHandler {
 }
 
 pub struct IrqChipItem {
-    pub compatible: String,
     pub phandle: u32,
     pub parent_phandle: Option<u32>,
-    pub intr_cell_size: u32,
     pub parent: Option<usize>, //parent idx in chiplist
     pub childs: Vec<usize>,    //child idx in chiplist
     pub interrupts: Vec<u32>,
@@ -117,10 +105,8 @@ impl IrqChipList {
                     BE::read_u32(phandle.data)
                 );
                 let mut item = IrqChipItem {
-                    compatible: s.to_string(),
                     phandle: BE::read_u32(phandle.data),
                     parent_phandle: None,
-                    intr_cell_size: BE::read_u32(intr_cells.data),
                     parent: None,
                     childs: Vec::new(),
                     interrupts: Vec::new(),
@@ -151,10 +137,9 @@ impl IrqChipList {
 
     fn init_inner2(&mut self) {
         let mut x = 0;
-        let mut y = 0;
 
         while x < self.chips.len() {
-            y = 0;
+            let mut y = 0;
             while y < self.chips.len() {
                 if x == y {
                     y += 1;
@@ -193,7 +178,6 @@ impl IrqChipList {
 pub struct IrqChipCore {
     //TODO: support multi level interrupt constrollers
     pub irq_chip_list: IrqChipList,
-    pub handlers: [Option<Box<dyn InterruptHandler>>; 1024],
     pub irq_desc: [IrqDesc; 1024],
 }
 
@@ -220,6 +204,7 @@ impl IrqChipCore {
         self.irq_chip_list.chips[ic_idx].ic.irq_enable(hwirq)
     }
 
+    #[allow(unused)]
     pub fn irq_disable(&mut self, virq: u32) {
         let irq_desc = &self.irq_desc[virq as usize];
         let ic_idx = irq_desc.basic.ic_idx;
@@ -276,7 +261,6 @@ pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore {
         root_phandle: 0,
         root_idx: 0,
     },
-    handlers: [INIT_HANDLER; 1024],
     irq_desc: [INIT_IRQ_DESC; 1024],
 };
 

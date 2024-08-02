@@ -757,23 +757,26 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
         let page_count =
             NonZeroUsize::new(bootstrap.page_count).expect("bootstrap contained no pages!");
 
-        let _base_page = addr_space.acquire_write().mmap(
-            &addr_space,
-            Some(base),
-            page_count,
-            flags,
-            &mut Vec::new(),
-            |page, flags, mapper, flusher| {
-                let shared = false;
-                Ok(Grant::zeroed(
-                    PageSpan::new(page, bootstrap.page_count),
-                    flags,
-                    mapper,
-                    flusher,
-                    shared,
-                )?)
-            },
-        );
+        let _base_page = addr_space
+            .acquire_write()
+            .mmap(
+                &addr_space,
+                Some(base),
+                page_count,
+                flags,
+                &mut Vec::new(),
+                |page, flags, mapper, flusher| {
+                    let shared = false;
+                    Ok(Grant::zeroed(
+                        PageSpan::new(page, bootstrap.page_count),
+                        flags,
+                        mapper,
+                        flusher,
+                        shared,
+                    )?)
+                },
+            )
+            .expect("Failed to allocate bootstrap pages");
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
