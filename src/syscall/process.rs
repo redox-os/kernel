@@ -1,7 +1,9 @@
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 use spinning_top::RwSpinlock;
-use syscall::{sig_bit, RtSigInfo, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
+use syscall::{
+    sig_bit, RtSigInfo, SenderInfo, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU,
+};
 
 use rmm::Arch;
 use spin::RwLock;
@@ -87,10 +89,12 @@ pub fn exit(status: usize) -> ! {
         Some(ptrace_event!(PTRACE_STOP_EXIT, status)),
     );
 
+    let current_pid;
+    let current_ruid;
     {
         let current_context = context::current();
         let current_process = process::current().expect("no active process during exit syscall");
-        let current_pid = current_process.read().pid;
+        current_pid = current_process.read().pid;
 
         let threads = core::mem::take(&mut current_process.write().threads);
 
@@ -107,6 +111,7 @@ pub fn exit(status: usize) -> ! {
             // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits
             let (pgid, ppid) = {
                 let process = current_process.read();
+                current_ruid = process.ruid;
                 (process.pgid, process.ppid)
             };
             if let Some(parent) = process::PROCESSES.read().get(&ppid).map(Arc::clone) {
@@ -116,6 +121,10 @@ pub fn exit(status: usize) -> ! {
                     KillMode::Idempotent,
                     true,
                     &mut false,
+                    SenderInfo {
+                        pid: current_pid.get().try_into().unwrap_or(0),
+                        ruid: current_ruid,
+                    },
                 );
             }
 
@@ -194,12 +203,14 @@ pub fn send_signal(
     mode: KillMode,
     is_sigchld_to_parent: bool,
     killed_self: &mut bool,
+    sender: SenderInfo,
 ) -> Result<()> {
     if sig > 64 {
         return Err(Error::new(EINVAL));
     }
 
     let sig_group = (sig - 1) / 32;
+    let sig_idx = sig - 1;
 
     let (context_lock, process_lock) = match target {
         KillTarget::Thread(ref c) => (Arc::clone(&c), Arc::clone(&c.read().process)),
@@ -227,6 +238,7 @@ pub fn send_signal(
             pgid: ProcessId,
         },
         FullQ,
+        Invalid,
     }
 
     let result = (|| {
@@ -332,6 +344,8 @@ pub fn send_signal(
         {
             match target {
                 KillTarget::Thread(_) => {
+                    tctl.sender_infos[sig_idx].store(sender.raw(), Ordering::Relaxed);
+
                     let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
                     if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                         context_guard.unblock();
@@ -340,9 +354,12 @@ pub fn send_signal(
                 }
                 KillTarget::Process(proc) => {
                     match mode {
-                        KillMode::Queued(arg) if sig_group == 1 => {
-                            let rtidx = sig - 33;
-                            //log::info!("QUEUEING {arg} RTIDX {rtidx}");
+                        KillMode::Queued(arg) => {
+                            if sig_group != 1 || sig_idx < 32 || sig_idx >= 64 {
+                                return SendResult::Invalid;
+                            }
+                            let rtidx = sig_idx - 32;
+                            //log::info!("QUEUEING {arg:?} RTIDX {rtidx}");
                             if rtidx >= sigst.rtqs.len() {
                                 sigst.rtqs.resize_with(rtidx + 1, VecDeque::new);
                             }
@@ -355,7 +372,12 @@ pub fn send_signal(
 
                             rtq.push_back(arg);
                         }
-                        _ => (),
+                        KillMode::Idempotent => {
+                            if sig_group != 0 {
+                                return SendResult::Invalid;
+                            }
+                            pctl.sender_infos[sig_idx].store(sender.raw(), Ordering::Relaxed);
+                        }
                     }
 
                     pctl.pending.fetch_or(sig_bit(sig), Ordering::Release);
@@ -389,6 +411,7 @@ pub fn send_signal(
     match result {
         SendResult::Succeeded => (),
         SendResult::FullQ => return Err(Error::new(EAGAIN)),
+        SendResult::Invalid => return Err(Error::new(EINVAL)),
         SendResult::SucceededSigchld {
             ppid,
             pgid,
@@ -413,6 +436,7 @@ pub fn send_signal(
                 mode,
                 true,
                 killed_self,
+                sender,
             )?;
         }
         SendResult::SucceededSigcont { ppid, pgid } => {
@@ -444,13 +468,17 @@ pub enum KillMode {
 }
 
 pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
-    let (ruid, euid, current_pgid) = {
+    let (current_ruid, current_euid, current_pgid, current_pid) = {
         let process_lock = process::current()?;
         let process = process_lock.read();
-        (process.ruid, process.euid, process.pgid)
+        (process.ruid, process.euid, process.pgid, process.pid)
+    };
+    let sender = SenderInfo {
+        pid: current_pid.get().try_into().unwrap_or(0),
+        ruid: current_ruid,
     };
 
-    if euid == 0 && pid.get() == 1 {
+    if current_euid == 0 && pid.get() == 1 {
         match sig {
             SIGTERM => unsafe { crate::stop::kreset() },
             SIGKILL => unsafe { crate::stop::kstop() },
@@ -463,8 +491,9 @@ pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
     let mut killed_self = false;
 
     // Non-root users cannot kill arbitrarily.
-    let can_send =
-        |proc_info: &ProcessInfo| euid == 0 || euid == proc_info.ruid || ruid == proc_info.ruid;
+    let can_send = |proc_info: &ProcessInfo| {
+        current_euid == 0 || current_euid == proc_info.ruid || current_ruid == proc_info.ruid
+    };
 
     {
         let processes = process::PROCESSES.read();
@@ -481,6 +510,7 @@ pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
                         mode,
                         false,
                         &mut killed_self,
+                        sender,
                     )?;
                 }
             }
@@ -499,6 +529,7 @@ pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
                         mode,
                         false,
                         &mut killed_self,
+                        sender,
                     )?;
                 }
             }
@@ -524,6 +555,7 @@ pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
                         mode,
                         false,
                         &mut killed_self,
+                        sender,
                     )?;
                 }
             }
