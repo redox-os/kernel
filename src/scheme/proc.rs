@@ -13,7 +13,7 @@ use crate::{
     scheme::{self, FileHandle, KernelScheme},
     syscall::{
         self,
-        data::{GrantDesc, Map, PtraceEvent, SetSighandlerData, Stat},
+        data::{GrantDesc, Map, PtraceEvent, SenderInfo, SetSighandlerData, Stat},
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
@@ -1466,6 +1466,14 @@ impl ContextHandle {
                 Ok(mem::size_of::<usize>())
             }
             ContextHandle::Signal => {
+                let me = {
+                    let p = process::current()?;
+                    let p = p.read();
+                    SenderInfo {
+                        pid: p.pid.get().try_into().unwrap_or(0),
+                        ruid: p.ruid,
+                    }
+                };
                 let sig = buf.read_u32()?;
                 let mut killed_self = false;
                 crate::syscall::process::send_signal(
@@ -1474,6 +1482,7 @@ impl ContextHandle {
                     KillMode::Idempotent,
                     false,
                     &mut killed_self,
+                    me,
                 )?;
                 if killed_self {
                     Err(Error::new(EINTR))
