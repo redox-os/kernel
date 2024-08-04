@@ -346,7 +346,7 @@ pub fn send_signal(
                 KillTarget::Thread(_) => {
                     tctl.sender_infos[sig_idx].store(sender.raw(), Ordering::Relaxed);
 
-                    let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
+                    let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Release);
                     if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                         context_guard.unblock();
                         *killed_self |= is_self;
@@ -373,6 +373,18 @@ pub fn send_signal(
                             rtq.push_back(arg);
                         }
                         KillMode::Idempotent => {
+                            if pctl.pending.load(Ordering::Acquire) & sig_bit(sig) != 0 {
+                                // If already pending, do not send this signal. While possible that
+                                // another thread is concurrently clearing pending, and that other
+                                // spuriously awoken threads would benefit from actually receiving
+                                // this signal, there is no requirement by POSIX for such signals
+                                // not to be mergeable. So unless the signal handler is observed to
+                                // happen-before this syscall, it can be ignored. The pending bits
+                                // would certainly have been cleared, thus contradicting this
+                                // already reached statement.
+                                return SendResult::Succeeded;
+                            }
+
                             if sig_group != 0 {
                                 return SendResult::Invalid;
                             }
