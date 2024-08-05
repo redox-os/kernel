@@ -1,7 +1,9 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 use spinning_top::RwSpinlock;
-use syscall::{sig_bit, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU};
+use syscall::{
+    sig_bit, RtSigInfo, SenderInfo, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU,
+};
 
 use rmm::Arch;
 use spin::RwLock;
@@ -87,10 +89,12 @@ pub fn exit(status: usize) -> ! {
         Some(ptrace_event!(PTRACE_STOP_EXIT, status)),
     );
 
+    let current_pid;
+    let current_ruid;
     {
         let current_context = context::current();
         let current_process = process::current().expect("no active process during exit syscall");
-        let current_pid = current_process.read().pid;
+        current_pid = current_process.read().pid;
 
         let threads = core::mem::take(&mut current_process.write().threads);
 
@@ -107,10 +111,21 @@ pub fn exit(status: usize) -> ! {
             // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits
             let (pgid, ppid) = {
                 let process = current_process.read();
+                current_ruid = process.ruid;
                 (process.pgid, process.ppid)
             };
             if let Some(parent) = process::PROCESSES.read().get(&ppid).map(Arc::clone) {
-                let _ = send_signal(KillTarget::Process(parent), SIGCHLD, true, &mut false);
+                let _ = send_signal(
+                    KillTarget::Process(parent),
+                    SIGCHLD,
+                    KillMode::Idempotent,
+                    true,
+                    &mut false,
+                    SenderInfo {
+                        pid: current_pid.get().try_into().unwrap_or(0),
+                        ruid: current_ruid,
+                    },
+                );
             }
 
             // Transfer child processes to parent (TODO: to init)
@@ -185,14 +200,17 @@ pub enum KillTarget {
 pub fn send_signal(
     target: KillTarget,
     sig: usize,
+    mode: KillMode,
     is_sigchld_to_parent: bool,
     killed_self: &mut bool,
+    sender: SenderInfo,
 ) -> Result<()> {
-    if sig > 0x3F {
+    if sig > 64 {
         return Err(Error::new(EINVAL));
     }
 
     let sig_group = (sig - 1) / 32;
+    let sig_idx = sig - 1;
 
     let (context_lock, process_lock) = match target {
         KillTarget::Thread(ref c) => (Arc::clone(&c), Arc::clone(&c.read().process)),
@@ -208,7 +226,7 @@ pub fn send_signal(
     };
     let proc_info = process_lock.read().info;
 
-    enum Sent {
+    enum SendResult {
         Succeeded,
         SucceededSigchld {
             ppid: ProcessId,
@@ -219,6 +237,8 @@ pub fn send_signal(
             ppid: ProcessId,
             pgid: ProcessId,
         },
+        FullQ,
+        Invalid,
     }
 
     let result = (|| {
@@ -227,7 +247,7 @@ pub fn send_signal(
         // If sig = 0, test that process exists and can be signalled, but don't send any
         // signal.
         if sig == 0 {
-            return Sent::Succeeded;
+            return SendResult::Succeeded;
         }
 
         let mut process_guard = process_lock.write();
@@ -269,7 +289,7 @@ pub fn send_signal(
                 }
             }
             // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
-            return Sent::SucceededSigcont {
+            return SendResult::SucceededSigcont {
                 ppid: proc_info.ppid,
                 pgid: proc_info.pgid,
             };
@@ -304,7 +324,7 @@ pub fn send_signal(
                 }
             }
 
-            return Sent::SucceededSigchld {
+            return SendResult::SucceededSigchld {
                 ppid: proc_info.ppid,
                 pgid: proc_info.pgid,
                 orig_signal: sig,
@@ -317,21 +337,62 @@ pub fn send_signal(
             *killed_self |= is_self;
 
             // exit() will signal the parent, rather than immediately in kill()
-            return Sent::Succeeded;
+            return SendResult::Succeeded;
         }
-        if let Some((tctl, pctl, _st)) = context_guard.sigcontrol()
+        if let Some((tctl, pctl, sigst)) = context_guard.sigcontrol()
             && !pctl.signal_will_ign(sig, is_sigchld_to_parent)
         {
             match target {
                 KillTarget::Thread(_) => {
-                    let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Relaxed);
+                    tctl.sender_infos[sig_idx].store(sender.raw(), Ordering::Relaxed);
+
+                    let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Release);
                     if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
                         context_guard.unblock();
                         *killed_self |= is_self;
                     }
                 }
                 KillTarget::Process(proc) => {
-                    pctl.pending.fetch_or(sig_bit(sig), Ordering::Relaxed);
+                    match mode {
+                        KillMode::Queued(arg) => {
+                            if sig_group != 1 || sig_idx < 32 || sig_idx >= 64 {
+                                return SendResult::Invalid;
+                            }
+                            let rtidx = sig_idx - 32;
+                            //log::info!("QUEUEING {arg:?} RTIDX {rtidx}");
+                            if rtidx >= sigst.rtqs.len() {
+                                sigst.rtqs.resize_with(rtidx + 1, VecDeque::new);
+                            }
+                            let rtq = sigst.rtqs.get_mut(rtidx).unwrap();
+
+                            // TODO: configurable limit?
+                            if rtq.len() > 32 {
+                                return SendResult::FullQ;
+                            }
+
+                            rtq.push_back(arg);
+                        }
+                        KillMode::Idempotent => {
+                            if pctl.pending.load(Ordering::Acquire) & sig_bit(sig) != 0 {
+                                // If already pending, do not send this signal. While possible that
+                                // another thread is concurrently clearing pending, and that other
+                                // spuriously awoken threads would benefit from actually receiving
+                                // this signal, there is no requirement by POSIX for such signals
+                                // not to be mergeable. So unless the signal handler is observed to
+                                // happen-before this syscall, it can be ignored. The pending bits
+                                // would certainly have been cleared, thus contradicting this
+                                // already reached statement.
+                                return SendResult::Succeeded;
+                            }
+
+                            if sig_group != 0 {
+                                return SendResult::Invalid;
+                            }
+                            pctl.sender_infos[sig_idx].store(sender.raw(), Ordering::Relaxed);
+                        }
+                    }
+
+                    pctl.pending.fetch_or(sig_bit(sig), Ordering::Release);
                     drop(context_guard);
 
                     for thread in proc.read().threads.iter().filter_map(|t| t.upgrade()) {
@@ -348,20 +409,22 @@ pub fn send_signal(
                     }
                 }
             }
-            Sent::Succeeded
+            SendResult::Succeeded
         } else {
             // Discard signals if sighandler is unset. This includes both special contexts such
             // as bootstrap, and child processes or threads that have not yet been started.
             // This is semantically equivalent to having all signals except SIGSTOP and SIGKILL
             // blocked/ignored (SIGCONT can be ignored and masked, but will always continue
             // stopped processes first).
-            Sent::Succeeded
+            SendResult::Succeeded
         }
     })();
 
     match result {
-        Sent::Succeeded => (),
-        Sent::SucceededSigchld {
+        SendResult::Succeeded => (),
+        SendResult::FullQ => return Err(Error::new(EAGAIN)),
+        SendResult::Invalid => return Err(Error::new(EINVAL)),
+        SendResult::SucceededSigchld {
             ppid,
             pgid,
             orig_signal,
@@ -379,9 +442,16 @@ pub fn send_signal(
                 },
                 (proc_info.pid, (orig_signal << 8) | 0x7f),
             );
-            send_signal(KillTarget::Process(parent), SIGCHLD, true, killed_self)?;
+            send_signal(
+                KillTarget::Process(parent),
+                SIGCHLD,
+                mode,
+                true,
+                killed_self,
+                sender,
+            )?;
         }
-        Sent::SucceededSigcont { ppid, pgid } => {
+        SendResult::SucceededSigcont { ppid, pgid } => {
             let parent = process::PROCESSES
                 .read()
                 .get(&ppid)
@@ -403,14 +473,24 @@ pub fn send_signal(
     Ok(())
 }
 
-pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
-    let (ruid, euid, current_pgid) = {
+#[derive(Clone, Copy)]
+pub enum KillMode {
+    Idempotent,
+    Queued(RtSigInfo),
+}
+
+pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
+    let (current_ruid, current_euid, current_pgid, current_pid) = {
         let process_lock = process::current()?;
         let process = process_lock.read();
-        (process.ruid, process.euid, process.pgid)
+        (process.ruid, process.euid, process.pgid, process.pid)
+    };
+    let sender = SenderInfo {
+        pid: current_pid.get().try_into().unwrap_or(0),
+        ruid: current_ruid,
     };
 
-    if euid == 0 && pid.get() == 1 {
+    if current_euid == 0 && pid.get() == 1 {
         match sig {
             SIGTERM => unsafe { crate::stop::kreset() },
             SIGKILL => unsafe { crate::stop::kstop() },
@@ -423,8 +503,9 @@ pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
     let mut killed_self = false;
 
     // Non-root users cannot kill arbitrarily.
-    let can_send =
-        |proc_info: &ProcessInfo| euid == 0 || euid == proc_info.ruid || ruid == proc_info.ruid;
+    let can_send = |proc_info: &ProcessInfo| {
+        current_euid == 0 || current_euid == proc_info.ruid || current_ruid == proc_info.ruid
+    };
 
     {
         let processes = process::PROCESSES.read();
@@ -438,8 +519,10 @@ pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
                     send_signal(
                         KillTarget::Process(process_lock),
                         sig,
+                        mode,
                         false,
                         &mut killed_self,
+                        sender,
                     )?;
                 }
             }
@@ -455,8 +538,10 @@ pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
                     send_signal(
                         KillTarget::Process(Arc::clone(process_lock)),
                         sig,
+                        mode,
                         false,
                         &mut killed_self,
+                        sender,
                     )?;
                 }
             }
@@ -479,8 +564,10 @@ pub fn kill(pid: ProcessId, sig: usize) -> Result<usize> {
                     send_signal(
                         KillTarget::Process(Arc::clone(process_lock)),
                         sig,
+                        mode,
                         false,
                         &mut killed_self,
+                        sender,
                     )?;
                 }
             }
@@ -805,4 +892,27 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
         CurrentRmmArch::phys_to_virt(bootstrap.base.start_address()).data() as *const u8,
         bootstrap.page_count * PAGE_SIZE,
     )
+}
+pub fn sigdequeue(out: UserSliceWo, sig_idx: u32) -> Result<()> {
+    let current = context::current();
+    let mut current = current.write();
+    let Some((_tctl, pctl, st)) = current.sigcontrol() else {
+        return Err(Error::new(ESRCH));
+    };
+    if sig_idx >= 32 {
+        return Err(Error::new(EINVAL));
+    }
+    let q = st
+        .rtqs
+        .get_mut(sig_idx as usize)
+        .ok_or(Error::new(EAGAIN))?;
+    let Some(front) = q.pop_front() else {
+        return Err(Error::new(EAGAIN));
+    };
+    if q.is_empty() {
+        pctl.pending
+            .fetch_and(!(1 << (32 + sig_idx as usize)), Ordering::Relaxed);
+    }
+    out.copy_exactly(&front)?;
+    Ok(())
 }
