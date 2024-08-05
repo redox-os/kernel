@@ -1438,7 +1438,9 @@ impl ContextHandle {
                 Ok(mem::size_of_val(&mask))
             }
             ContextHandle::Status => {
-                let user_data = buf.read_usize()?;
+                let mut args = buf.usizes();
+
+                let user_data = args.next().ok_or(Error::new(EINVAL))??;
                 if user_data != usize::MAX {
                     // TODO: lwp_park/lwp_unpark?
                     return Err(Error::new(EOPNOTSUPP));
@@ -1460,10 +1462,31 @@ impl ContextHandle {
                 if is_current {
                     crate::syscall::exit_this_context();
                 } else {
-                    crate::syscall::wait_for_exit(context);
+                    crate::syscall::wait_for_exit(Arc::clone(&context));
                 }
+                // The following functionality simplifies the cleanup step when detached threads
+                // terminate.
+                if let Some(post_unmap) = args.next() {
+                    let base = post_unmap?;
+                    let size = args.next().ok_or(Error::new(EINVAL))??;
 
-                Ok(mem::size_of::<usize>())
+                    if size == 0 {
+                        return Ok(3 * mem::size_of::<usize>());
+                    }
+
+                    let addrsp = Arc::clone(context.read().addr_space()?);
+                    let res = addrsp.munmap(
+                        PageSpan::validate_nonempty(VirtualAddress::new(base), size)
+                            .ok_or(Error::new(EINVAL))?,
+                        false,
+                    )?;
+                    for r in res {
+                        let _ = r.unmap();
+                    }
+                    Ok(3 * mem::size_of::<usize>())
+                } else {
+                    Ok(mem::size_of::<usize>())
+                }
             }
             ContextHandle::Signal => {
                 let me = {
