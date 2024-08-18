@@ -74,6 +74,28 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let path = path_buf.use_for_string(raw_path)?;
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+
+    // Display a deprecation warning for any usage of the legacy scheme syntax (scheme:/path)
+    // FIXME remove entries from this list as the respective programs get updated
+    if path_buf.contains(':')
+        && !path_buf.starts_with(':')
+        && path_buf != "rand:" // FIXME Remove exception at next rustc update
+        && !path_buf.starts_with("thisproc:") // bootstrap needs redox-rt update
+        && path_buf != "memory:" // ramfs, escalated
+        && path_buf != "event:" // ipcd, orbterm, old redox-event in getty
+        && path_buf != "file:/etc/shadow" // login, orblogin
+        && path_buf != "file:/etc/passwd" // login, orblogin
+        && path_buf != "time:4" // launcher
+        && !path_buf.starts_with("display")
+        && !path_buf.starts_with("orbital:")
+    {
+        println!(
+            "deprecated: legacy path {:?} used by {}",
+            path_buf,
+            context::current().read().name
+        );
+    }
+    
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
