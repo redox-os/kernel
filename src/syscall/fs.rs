@@ -84,11 +84,12 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
         && !path_buf.starts_with("display")
         && !path_buf.starts_with("orbital:")
     {
-        println!(
-            "deprecated: legacy path {:?} used by {}",
-            path_buf,
-            context::current().read().name
-        );
+        let name = context::current().read().name.clone();
+        if !name.contains("cosmic")
+        // FIXME cosmic apps need crate updates
+        {
+            println!("deprecated: legacy path {:?} used by {}", path_buf, name);
+        }
     }
 
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
