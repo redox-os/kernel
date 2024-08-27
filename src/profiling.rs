@@ -233,7 +233,7 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
                 .set_func(crate::interrupt::ipi::wakeup);
         }
 
-        let apic = &mut crate::device::local_apic::LOCAL_APIC;
+        let apic = &mut crate::device::local_apic::the_local_apic();
         apic.set_lvt_timer((0b01 << 17) | 32);
         apic.set_div_conf(0b1011);
         apic.set_init_count(0xffff_f);
