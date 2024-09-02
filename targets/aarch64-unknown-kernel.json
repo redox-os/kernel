@@ -1,5 +1,6 @@
 {
     "llvm-target": "aarch64-unknown-none",
+    "abi": "softfloat",
     "target-endian": "little",
     "target-pointer-width": "64",
     "target-c-int-width": "32",
