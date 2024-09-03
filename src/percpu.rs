@@ -39,6 +39,8 @@ pub struct PercpuBlock {
 
     #[cfg(feature = "syscall_debug")]
     pub syscall_debug_info: Cell<SyscallDebugInfo>,
+
+    pub misc_arch_info: crate::device::ArchPercpuMisc,
 }
 
 const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
@@ -158,6 +160,8 @@ impl PercpuBlock {
 
             #[cfg(feature = "profiling")]
             profiling: None,
+
+            misc_arch_info: Default::default(),
         }
     }
 }

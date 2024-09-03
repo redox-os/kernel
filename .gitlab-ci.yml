@@ -4,7 +4,8 @@ variables:
   GIT_SUBMODULE_STRATEGY: recursive
 
 before_script:
-  rustup component add rust-src
+  - apt-get install nasm
+  - rustup component add rust-src
 
 stages:
   - build
@@ -15,14 +16,14 @@ stages:
 build:x86_64:
   stage: build
   script:
-    mkdir -p target/x86_64
-    make ARCH=x86_64 BUILD=target/x86_64
+    - mkdir -p target/x86_64
+    - make ARCH=x86_64 BUILD=target/x86_64
 
 build:i686:
   stage: build
   script:
-    mkdir -p target/i686
-    make ARCH=i686 BUILD=target/i686
+    - mkdir -p target/i686
+    - make ARCH=i686 BUILD=target/i686
 
 build:aarch64:
   stage: build

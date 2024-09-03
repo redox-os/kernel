@@ -260,9 +260,9 @@ macro_rules! swapgs_iff_ring3_fast {
         // Check whether the last two bits RSP+8 (code segment) are equal to zero.
         test QWORD PTR [rsp + 8], 0x3
         // Skip the SWAPGS instruction if CS & 0b11 == 0b00.
-        jz 1f
+        jz 2f
         swapgs
-        1:
+        2:
     "
     };
 }
@@ -271,9 +271,9 @@ macro_rules! swapgs_iff_ring3_fast_errorcode {
     () => {
         "
         test QWORD PTR [rsp + 16], 0x3
-        jz 1f
+        jz 2f
         swapgs
-        1:
+        2:
     "
     };
 }
@@ -336,9 +336,9 @@ macro_rules! conditional_swapgs_paranoid {
         "
         cmp rdx, rdi
         sete bl
-        je 1f
+        je 2f
         swapgs
-        1:
+        2:
         ",
     ) }
 }
@@ -346,9 +346,9 @@ macro_rules! conditional_swapgs_back_paranoid {
     () => {
         "
         test bl, bl
-        jnz 1f
+        jnz 2f
         swapgs
-        1:
+        2:
     "
     };
 }

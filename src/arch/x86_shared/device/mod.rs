@@ -10,6 +10,9 @@ pub mod serial;
 #[cfg(feature = "system76_ec_debug")]
 pub mod system76_ec;
 
+#[cfg(feature = "x86_kvm_pv")]
+pub mod tsc;
+
 use crate::paging::KernelMapper;
 
 pub unsafe fn init() {
@@ -43,6 +46,12 @@ unsafe fn init_hpet() -> bool {
 
 pub unsafe fn init_noncore() {
     log::info!("Initializing system timer");
+
+    #[cfg(feature = "x86_kvm_pv")]
+    if tsc::init() {
+        log::info!("TSC used as system clock source");
+    }
+
     if init_hpet() {
         log::info!("HPET used as system timer");
     } else {
@@ -59,4 +68,13 @@ pub unsafe fn init_noncore() {
 
 pub unsafe fn init_ap() {
     local_apic::init_ap();
+
+    #[cfg(feature = "x86_kvm_pv")]
+    tsc::init();
+}
+
+#[derive(Default)]
+pub struct ArchPercpuMisc {
+    #[cfg(feature = "x86_kvm_pv")]
+    pub tsc_info: tsc::TscPercpu,
 }

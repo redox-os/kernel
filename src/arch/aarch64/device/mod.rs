@@ -54,3 +54,5 @@ pub unsafe fn io_mmap(addr: usize, io_size: usize) {
             .flush();
     }
 }
+#[derive(Default)]
+pub struct ArchPercpuMisc;

@@ -42,7 +42,7 @@ raw-cpuid = "10.2.0"
 x86 = { version = "0.47.0", default-features = false }
 
 [features]
-default = ["acpi", "multi_core", "graphical_debug", "serial_debug", "self_modifying"]
+default = ["acpi", "multi_core", "graphical_debug", "serial_debug", "self_modifying", "x86_kvm_pv"]
 
 # Activates some limited code-overwriting optimizations, based on CPU features.
 self_modifying = []
@@ -58,6 +58,7 @@ qemu_debug = []
 serial_debug = []
 system76_ec_debug = []
 slab = ["slab_allocator"]
+x86_kvm_pv = []
 
 debugger = ["syscall_debug"]
 syscall_debug = []

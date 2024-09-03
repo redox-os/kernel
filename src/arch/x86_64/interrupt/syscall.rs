@@ -149,7 +149,7 @@ pub unsafe extern "C" fn syscall_instruction() {
 
     "test BYTE PTR [rsp + 17], 1;",
     // If set, return using IRETQ instead.
-    "jnz 1f;",
+    "jnz 2f;",
 
     // Otherwise, continue with the fast sysretq.
 
@@ -180,7 +180,7 @@ pub unsafe extern "C" fn syscall_instruction() {
     // IRETQ fallback:
     "
     .p2align 4
-1:
+2:
     xor rcx, rcx
     xor r11, r11
     iretq

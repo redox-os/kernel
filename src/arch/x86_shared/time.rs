@@ -2,7 +2,17 @@
 use super::device::hpet;
 use super::device::pit;
 
-pub fn counter() -> u128 {
+pub fn monotonic_absolute() -> u128 {
+    // The paravirtualized TSC is already guaranteed to be monotonic, and thus doesn't need to be
+    // readjusted.
+    #[cfg(feature = "x86_kvm_pv")]
+    if let Some(ns) = super::device::tsc::monotonic_absolute() {
+        return ns;
+    }
+
+    *crate::time::OFFSET.lock() + hpet_or_pit()
+}
+fn hpet_or_pit() -> u128 {
     #[cfg(feature = "acpi")]
     if let Some(ref hpet) = *crate::acpi::ACPI_TABLE.hpet.read() {
         //TODO: handle rollover?
@@ -32,7 +42,6 @@ pub fn counter() -> u128 {
         // Calculate nanoseconds since last interrupt
         return (elapsed as u128 * period_fs as u128) / 1_000_000;
     }
-
     // Read ticks since last interrupt
     let elapsed = unsafe { pit::read() };
     // Calculate nanoseconds since last interrupt

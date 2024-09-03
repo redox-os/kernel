@@ -1,4 +1,4 @@
-pub fn counter() -> u128 {
+pub fn monotonic_absolute() -> u128 {
     //TODO: aarch64 generic timer counter
-    0
+    *crate::time::OFFSET.lock()
 }
