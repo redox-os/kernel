@@ -65,6 +65,7 @@ enum State {
     Waiting {
         context: Weak<RwSpinlock<Context>>,
         fd: Option<Arc<RwLock<FileDescription>>>,
+        borrowed: PageSpan,
         canceling: bool,
     },
     Responded(Response),
@@ -235,9 +236,9 @@ impl UserInner {
         u32::try_from(idx).map_err(|_| Error::new(EAGAIN))
     }
 
-    pub fn call(&self, opcode: Opcode, args: impl Args) -> Result<usize> {
+    pub fn call(&self, opcode: Opcode, args: impl Args, borrowed: PageSpan) -> Result<usize> {
         let ctx = process::current()?.read().caller_ctx();
-        match self.call_extended(ctx, None, opcode, args)? {
+        match self.call_extended(ctx, None, opcode, args, borrowed)? {
             Response::Regular(code, _) => Error::demux(code),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
@@ -249,6 +250,7 @@ impl UserInner {
         fd: Option<Arc<RwLock<FileDescription>>>,
         opcode: Opcode,
         args: impl Args,
+        borrowed: PageSpan,
     ) -> Result<Response> {
         self.call_extended_inner(
             fd,
@@ -264,6 +266,7 @@ impl UserInner {
                     a
                 },
             },
+            borrowed,
         )
     }
 
@@ -271,6 +274,7 @@ impl UserInner {
         &self,
         fd: Option<Arc<RwLock<FileDescription>>>,
         sqe: Sqe,
+        borrowed: PageSpan,
     ) -> Result<Response> {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
@@ -285,6 +289,7 @@ impl UserInner {
                 context: Arc::downgrade(&current_context),
                 fd,
                 canceling: false,
+                borrowed,
             };
         }
 
@@ -324,11 +329,13 @@ impl UserInner {
                         canceling: false,
                         fd,
                         context,
+                        borrowed,
                     } => {
                         *o = State::Waiting {
                             canceling: true,
                             fd,
                             context,
+                            borrowed,
                         };
 
                         drop(states);
@@ -401,7 +408,6 @@ impl UserInner {
             destroyed: false,
             base: dst_page.start_address().data(),
             len: buf.len(),
-            space: Some(dst_addr_space),
             head: CopyInfo {
                 src: Some(tail),
                 dst: None,
@@ -441,7 +447,6 @@ impl UserInner {
                 destroyed: false,
                 base: DANGLING,
                 len: 0,
-                space: None,
                 head: CopyInfo {
                     src: None,
                     dst: None,
@@ -468,7 +473,6 @@ impl UserInner {
                 destroyed: false,
                 base: user_buf.addr(),
                 len: user_buf.len(),
-                space: None,
                 head: CopyInfo {
                     src: None,
                     dst: None,
@@ -650,7 +654,6 @@ impl UserInner {
             destroyed: false,
             base: free_span.base.start_address().data() + offset,
             len: user_buf.len(),
-            space: Some(dst_space_lock),
             head,
             tail,
         })
@@ -1003,6 +1006,7 @@ impl UserInner {
                     context,
                     fd,
                     canceling,
+                    borrowed,
                 } => {
                     if let Response::Regular(ref mut code, _) = response
                         && !canceling
@@ -1026,6 +1030,9 @@ impl UserInner {
                     } else {
                         states.remove(tag as usize);
                     }
+
+                    let unpin = true;
+                    AddrSpace::current()?.munmap(borrowed, unpin)?;
                 }
             },
             // invalid state
@@ -1139,6 +1146,7 @@ impl UserInner {
                 ],
                 caller: pid.get() as u64,
             },
+            PageSpan::empty(),
         )?;
 
         // TODO: I've previously tested that this works, but because the scheme trait all of
@@ -1215,8 +1223,6 @@ pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     base: usize,
     len: usize,
 
-    space: Option<Arc<AddrSpaceWrapper>>,
-
     head: CopyInfo<READ, WRITE>,
     tail: CopyInfo<READ, WRITE>,
 }
@@ -1226,6 +1232,10 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
     }
     fn len(&self) -> usize {
         self.len
+    }
+    fn span(&self) -> PageSpan {
+        let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
+        PageSpan::new(first_page, page_count)
     }
 }
 struct CopyInfo<const READ: bool, const WRITE: bool> {
@@ -1245,35 +1255,23 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
             return Ok(());
         }
 
-        let mut result = Ok(());
-
         // TODO: Encode src and dst better using const generics.
         if let CopyInfo {
             src: Some(ref src),
             dst: Some(ref mut dst),
         } = self.head
         {
-            result = result.and_then(|()| {
-                dst.copy_from_slice(&src.buf()[self.base % PAGE_SIZE..][..dst.len()])
-            });
+            dst.copy_from_slice(&src.buf()[self.base % PAGE_SIZE..][..dst.len()])?;
         }
         if let CopyInfo {
             src: Some(ref src),
             dst: Some(ref mut dst),
         } = self.tail
         {
-            result = result.and_then(|()| dst.copy_from_slice(&src.buf()[..dst.len()]));
+            dst.copy_from_slice(&src.buf()[..dst.len()])?;
         }
-        let Some(space) = self.space.take() else {
-            return result;
-        };
 
-        let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
-
-        let unpin = true;
-        space.munmap(PageSpan::new(first_page, page_count), unpin)?;
-
-        result
+        Ok(())
     }
     pub fn release(mut self) -> Result<()> {
         self.release_inner()
@@ -1313,6 +1311,7 @@ impl KernelScheme for UserScheme {
             None,
             Opcode::Open,
             [address.base(), address.len(), flags],
+            address.span(),
         )? {
             Response::Regular(code, fl) => Ok({
                 let _ = Error::demux(code)?;
@@ -1327,14 +1326,22 @@ impl KernelScheme for UserScheme {
     fn rmdir(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(Opcode::Rmdir, [address.base(), address.len()])?;
+        inner.call(
+            Opcode::Rmdir,
+            [address.base(), address.len()],
+            address.span(),
+        )?;
         Ok(())
     }
 
     fn unlink(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(Opcode::Unlink, [address.base(), address.len()])?;
+        inner.call(
+            Opcode::Unlink,
+            [address.base(), address.len()],
+            address.span(),
+        )?;
         Ok(())
     }
 
@@ -1343,12 +1350,14 @@ impl KernelScheme for UserScheme {
         if !inner.v2 {
             return Err(Error::new(ESPIPE));
         }
-        inner.call(Opcode::Fsize, [file]).map(|o| o as u64)
+        inner
+            .call(Opcode::Fsize, [file], PageSpan::empty())
+            .map(|o| o as u64)
     }
 
     fn fchmod(&self, file: usize, mode: u16) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fchmod, [file, mode as usize])?;
+        inner.call(Opcode::Fchmod, [file, mode as usize], PageSpan::empty())?;
         Ok(())
     }
 
@@ -1364,44 +1373,52 @@ impl KernelScheme for UserScheme {
         }
 
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fchown, [file, uid as usize, gid as usize])?;
+        inner.call(
+            Opcode::Fchown,
+            [file, uid as usize, gid as usize],
+            PageSpan::empty(),
+        )?;
         Ok(())
     }
 
     fn fcntl(&self, file: usize, cmd: usize, arg: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fcntl, [file, cmd, arg])
+        inner.call(Opcode::Fcntl, [file, cmd, arg], PageSpan::empty())
     }
 
     fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner
-            .call(Opcode::Fevent, [file, flags.bits()])
+            .call(Opcode::Fevent, [file, flags.bits()], PageSpan::empty())
             .map(EventFlags::from_bits_truncate)
     }
 
     fn frename(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.copy_and_capture_tail(path.as_bytes())?;
-        inner.call(Opcode::Frename, [file, address.base(), address.len()])?;
+        inner.call(
+            Opcode::Frename,
+            [file, address.base(), address.len()],
+            address.span(),
+        )?;
         Ok(())
     }
 
     fn fsync(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fsync, [file])?;
+        inner.call(Opcode::Fsync, [file], PageSpan::empty())?;
         Ok(())
     }
 
     fn ftruncate(&self, file: usize, len: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Ftruncate, [file, len])?;
+        inner.call(Opcode::Ftruncate, [file, len], PageSpan::empty())?;
         Ok(())
     }
 
     fn close(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Close, [file])?;
+        inner.call(Opcode::Close, [file], PageSpan::empty())?;
         Ok(())
     }
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {
@@ -1412,6 +1429,7 @@ impl KernelScheme for UserScheme {
             None,
             Opcode::Dup,
             [file, address.base(), address.len()],
+            address.span(),
         );
 
         address.release()?;
@@ -1430,7 +1448,11 @@ impl KernelScheme for UserScheme {
     fn kfpath(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call(Opcode::Fpath, [file, address.base(), address.len()]);
+        let result = inner.call(
+            Opcode::Fpath,
+            [file, address.base(), address.len()],
+            address.span(),
+        );
         address.release()?;
         result
     }
@@ -1458,6 +1480,7 @@ impl KernelScheme for UserScheme {
                 offset,
                 u64::from(call_flags),
             ],
+            address.span(),
         );
         address.release()?;
 
@@ -1491,6 +1514,7 @@ impl KernelScheme for UserScheme {
                 offset,
                 u64::from(call_flags),
             ],
+            address.span(),
         );
         address.release()?;
 
@@ -1505,26 +1529,38 @@ impl KernelScheme for UserScheme {
         if inner.v2 {
             return None;
         }
-        Some(inner.call(Opcode::Fsize, [id, pos as usize, whence]))
+        Some(inner.call(Opcode::Fsize, [id, pos as usize, whence], PageSpan::empty()))
     }
     fn kfutimens(&self, file: usize, buf: UserSliceRo) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(buf)?;
-        let result = inner.call(Opcode::Futimens, [file, address.base(), address.len()]);
+        let result = inner.call(
+            Opcode::Futimens,
+            [file, address.base(), address.len()],
+            address.span(),
+        );
         address.release()?;
         result
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(stat)?;
-        let result = inner.call(Opcode::Fstat, [file, address.base(), address.len()]);
+        let result = inner.call(
+            Opcode::Fstat,
+            [file, address.base(), address.len()],
+            address.span(),
+        );
         address.release()?;
         result.map(|_| ())
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(stat)?;
-        let result = inner.call(Opcode::Fstatvfs, [file, address.base(), address.len()]);
+        let result = inner.call(
+            Opcode::Fstatvfs,
+            [file, address.base(), address.len()],
+            address.span(),
+        );
         address.release()?;
         result.map(|_| ())
     }
@@ -1548,6 +1584,7 @@ impl KernelScheme for UserScheme {
             None,
             Opcode::Munmap,
             [number, size, flags.bits(), offset],
+            PageSpan::empty(),
         )?;
 
         match res {
@@ -1565,7 +1602,13 @@ impl KernelScheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let ctx = process::current()?.read().caller_ctx();
-        let res = inner.call_extended(ctx, Some(desc), Opcode::Sendfd, [number, flags.bits()])?;
+        let res = inner.call_extended(
+            ctx,
+            Some(desc),
+            Opcode::Sendfd,
+            [number, flags.bits()],
+            PageSpan::empty(),
+        )?;
 
         match res {
             Response::Regular(res, _) => Ok(res),
