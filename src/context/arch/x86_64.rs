@@ -161,15 +161,15 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
             then1: ["
                 mov eax, 0xffffffff
                 mov edx, eax
-                xsaveopt [{prev_fx}]
-                xrstor [{next_fx}]
+                xsaveopt64 [{prev_fx}]
+                xrstor64 [{next_fx}]
             "],
             feature2: "xsave",
             then2: ["
                 mov eax, 0xffffffff
                 mov edx, eax
-                xsave [{prev_fx}]
-                xrstor [{next_fx}]
+                xsave64 [{prev_fx}]
+                xrstor64 [{next_fx}]
             "],
             default: ["
                 fxsave64 [{prev_fx}]
