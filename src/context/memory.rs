@@ -1337,7 +1337,7 @@ impl Grant {
                             .utable
                             .translate(src_page.start_address())
                         {
-                            Some((phys, _)) => Frame::containing_address(phys),
+                            Some((phys, _)) => Frame::containing(phys),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
                                 let (frame, _, new_guard) = correct_inner(
@@ -1361,7 +1361,7 @@ impl Grant {
                             .utable
                             .remap_with(src_page.start_address(), |flags| flags.write(false))
                         {
-                            Some((_, phys, _)) => Frame::containing_address(phys),
+                            Some((_, phys, _)) => Frame::containing(phys),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
                                 let (frame, _, new_guard) = correct_inner(
@@ -1547,7 +1547,7 @@ impl Grant {
                     continue;
                 };
 
-                let writable = match get_page_info(Frame::containing_address(phys)) {
+                let writable = match get_page_info(Frame::containing(phys)) {
                     None => true,
                     Some(i) => {
                         if i.add_ref(RefKind::Shared).is_err() {
@@ -1569,7 +1569,7 @@ impl Grant {
                     flush.ignore();
 
                     dst_flusher.queue(
-                        Frame::containing_address(phys),
+                        Frame::containing(phys),
                         None,
                         TlbShootdownActions::NEW_MAPPING,
                     );
@@ -1627,13 +1627,13 @@ impl Grant {
                     unsafe {
                         flush.ignore();
                     }
-                    let frame = Frame::containing_address(phys);
+                    let frame = Frame::containing(phys);
                     src_flusher.queue(frame, None, TlbShootdownActions::REVOKE_WRITE);
                     frame
                 }
                 RefKind::Shared => {
                     if let Some((phys, _)) = src_mapper.translate(src_page.start_address()) {
-                        Frame::containing_address(phys)
+                        Frame::containing(phys)
                     } else {
                         // TODO: Omit the unnecessary subsequent add_ref call.
                         let new_frame = init_frame(RefCount::One).expect("TODO: handle OOM");
@@ -1686,7 +1686,7 @@ impl Grant {
 
                                 // FIXME: Is MOVE correct?
                                 src_flusher.queue(
-                                    Frame::containing_address(phys),
+                                    Frame::containing(phys),
                                     None,
                                     TlbShootdownActions::MOVE,
                                 );
@@ -1778,7 +1778,7 @@ impl Grant {
                 flush.ignore();
             }
             src_flusher.queue(
-                Frame::containing_address(phys),
+                Frame::containing(phys),
                 None,
                 TlbShootdownActions::MOVE,
             );
@@ -1795,7 +1795,7 @@ impl Grant {
                 flush.ignore();
             }
             dst_flusher.queue(
-                Frame::containing_address(phys),
+                Frame::containing(phys),
                 None,
                 TlbShootdownActions::NEW_MAPPING,
             );
@@ -1823,9 +1823,9 @@ impl Grant {
                     continue;
                 };
                 flush.ignore();
-                //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing_address(mapper.translate(page.start_address()).unwrap().0));
+                //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing(mapper.translate(page.start_address()).unwrap().0));
                 flusher.queue(
-                    Frame::containing_address(phys),
+                    Frame::containing(phys),
                     None,
                     TlbShootdownActions::change_of_flags(old_flags, flags),
                 );
@@ -1888,7 +1888,7 @@ impl Grant {
 
         if is_phys_contiguous {
             let (phys_base, _) = mapper.translate(self.base.start_address()).unwrap();
-            let base_frame = Frame::containing_address(phys_base);
+            let base_frame = Frame::containing(phys_base);
 
             for i in 0..self.info.page_count {
                 unsafe {
@@ -1919,7 +1919,7 @@ impl Grant {
                 }
 
                 flusher.queue(
-                    Frame::containing_address(phys),
+                    Frame::containing(phys),
                     None,
                     TlbShootdownActions::FREE,
                 );
@@ -2269,7 +2269,7 @@ impl Drop for Table {
             }
         }
         unsafe {
-            deallocate_frame(Frame::containing_address(self.utable.table().phys()));
+            deallocate_frame(Frame::containing(self.utable.table().phys()));
         }
     }
 }
@@ -2511,7 +2511,7 @@ fn correct_inner<'l>(
         .table
         .utable
         .translate(faulting_page.start_address())
-        .map(|(phys, _page_flags)| Frame::containing_address(phys));
+        .map(|(phys, _page_flags)| Frame::containing(phys));
     let faulting_pageinfo_opt = faulting_frame_opt.map(|frame| (frame, get_page_info(frame)));
 
     // TODO: Aligned readahead? AMD Zen3+ CPUs can smash 4 4k pages that are 16k-aligned, into a
@@ -2594,7 +2594,7 @@ fn correct_inner<'l>(
                 let src_frame = if let Some((phys, _)) =
                     guard.table.utable.translate(src_page.start_address())
                 {
-                    Frame::containing_address(phys)
+                    Frame::containing(phys)
                 } else {
                     // Grant was valid (TODO check), but we need to correct the underlying page.
                     // TODO: Access mode

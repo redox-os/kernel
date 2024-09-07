@@ -58,7 +58,7 @@ impl Madt {
 
             if cfg!(feature = "multi_core") {
                 // Map trampoline
-                let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
+                let trampoline_frame = Frame::containing(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
                 let (result, page_table_physaddr) = unsafe {
                     //TODO: do not have writable and executable!

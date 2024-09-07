@@ -138,7 +138,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         // 2^addrwidth - 1. However, allocation and deallocation must be synchronized (the "next"
         // word of the PageInfo).
 
-        let sibling = Frame::containing_address(PhysicalAddress::new(
+        let sibling = Frame::containing(PhysicalAddress::new(
             current.base().data() ^ (PAGE_SIZE << merge_order),
         ));
 
@@ -183,7 +183,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             get_free_alloc_page_info(sib_next).set_prev(sib_info.prev());
         }
 
-        current = Frame::containing_address(PhysicalAddress::new(
+        current = Frame::containing(PhysicalAddress::new(
             current.base().data() & !(PAGE_SIZE << merge_order),
         ));
 
@@ -264,12 +264,6 @@ impl core::fmt::Debug for Frame {
 }
 
 impl Frame {
-    /// Create a frame containing `address`
-    // TODO: Remove
-    pub fn containing_address(address: PhysicalAddress) -> Frame {
-        Self::containing(address)
-    }
-
     /// Create a frame containing `address`
     pub fn containing(address: PhysicalAddress) -> Frame {
         Frame {
@@ -540,7 +534,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         );
 
         let mut pages_left = memory_map_area.size.div_floor(PAGE_SIZE);
-        let mut base = Frame::containing_address(memory_map_area.base);
+        let mut base = Frame::containing(memory_map_area.base);
 
         while pages_left > 0 {
             let page_info_max_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
@@ -1028,7 +1022,7 @@ impl FrameAllocator for TheFrameAllocator {
     }
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
         let order = count.data().next_power_of_two().trailing_zeros();
-        deallocate_p2frame(Frame::containing_address(address), order)
+        deallocate_p2frame(Frame::containing(address), order)
     }
     unsafe fn usage(&self) -> FrameUsage {
         FrameUsage::new(

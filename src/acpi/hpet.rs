@@ -70,7 +70,7 @@ impl GenericAddressStructure {
     pub unsafe fn init(&self, mapper: &mut KernelMapper) {
         use crate::paging::{Page, VirtualAddress};
 
-        let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
+        let frame = Frame::containing(PhysicalAddress::new(self.address as usize));
         let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
 
         mapper
@@ -101,7 +101,7 @@ impl GenericAddressStructure {
 #[cfg(not(target_arch = "x86"))]
 impl GenericAddressStructure {
     pub unsafe fn init(&self, mapper: &mut KernelMapper) {
-        let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
+        let frame = Frame::containing(PhysicalAddress::new(self.address as usize));
         let (_, result) = mapper
             .get_mut()
             .expect(
