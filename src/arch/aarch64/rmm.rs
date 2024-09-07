@@ -29,7 +29,7 @@ pub enum BootloaderMemoryKind {
 pub struct BootloaderMemoryEntry {
     pub base: u64,
     pub size: u64,
-    pub kind: BootloaderMemoryKind,
+    pub kind: u64,
 }
 
 unsafe fn page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<RmmA> {
@@ -347,7 +347,7 @@ pub unsafe fn init(
     // Copy memory map from bootloader location, and page align it
     let mut area_i = 0;
     for bootloader_area in bootloader_areas.iter() {
-        if { bootloader_area.kind } != BootloaderMemoryKind::Free {
+        if { bootloader_area.kind } != BootloaderMemoryKind::Free as u64 {
             // Not a free area
             continue;
         }
