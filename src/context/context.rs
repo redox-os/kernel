@@ -446,13 +446,11 @@ impl Context {
         check(sig.threadctl_off);
 
         let for_thread = unsafe {
-            &*(RmmA::phys_to_virt(sig.thread_control.get().base()).data()
-                as *const Sigcontrol)
+            &*(RmmA::phys_to_virt(sig.thread_control.get().base()).data() as *const Sigcontrol)
                 .byte_add(usize::from(sig.threadctl_off))
         };
         let for_proc = unsafe {
-            &*(RmmA::phys_to_virt(sig.proc_control.get().base()).data()
-                as *const SigProcControl)
+            &*(RmmA::phys_to_virt(sig.proc_control.get().base()).data() as *const SigProcControl)
                 .byte_add(usize::from(sig.procctl_off))
         };
 
@@ -493,26 +491,14 @@ impl BorrowedHtBuf {
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
         unsafe {
-            &*(RmmA::phys_to_virt(
-                self.inner
-                    .as_ref()
-                    .expect("must succeed")
-                    .get()
-                    .base(),
-            )
-            .data() as *const [u8; PAGE_SIZE])
+            &*(RmmA::phys_to_virt(self.inner.as_ref().expect("must succeed").get().base()).data()
+                as *const [u8; PAGE_SIZE])
         }
     }
     pub fn buf_mut(&mut self) -> &mut [u8; PAGE_SIZE] {
         unsafe {
-            &mut *(RmmA::phys_to_virt(
-                self.inner
-                    .as_mut()
-                    .expect("must succeed")
-                    .get()
-                    .base(),
-            )
-            .data() as *mut [u8; PAGE_SIZE])
+            &mut *(RmmA::phys_to_virt(self.inner.as_mut().expect("must succeed").get().base())
+                .data() as *mut [u8; PAGE_SIZE])
         }
     }
     pub fn frame(&self) -> Frame {
@@ -570,9 +556,7 @@ impl Kstack {
         })
     }
     pub fn initial_top(&self) -> *mut u8 {
-        unsafe {
-            (RmmA::phys_to_virt(self.base.base()).data() as *mut u8).add(PAGE_SIZE << 4)
-        }
+        unsafe { (RmmA::phys_to_virt(self.base.base()).data() as *mut u8).add(PAGE_SIZE << 4) }
     }
     pub fn len(&self) -> usize {
         PAGE_SIZE << 4

@@ -117,8 +117,7 @@ pub fn allocate_p2frame_complex(
     drop(freelist);
 
     unsafe {
-        (RmmA::phys_to_virt(frame.base()).data() as *mut u8)
-            .write_bytes(0, PAGE_SIZE << min_order);
+        (RmmA::phys_to_virt(frame.base()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
     }
 
     debug_assert!(frame.base().data() >= unsafe { ALLOCATOR_DATA.abs_off });
@@ -255,11 +254,7 @@ impl core::fmt::Debug for P2Frame {
 
 impl core::fmt::Debug for Frame {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "[frame at {:p}]",
-            self.base().data() as *const u8
-        )
+        write!(f, "[frame at {:p}]", self.base().data() as *const u8)
     }
 }
 

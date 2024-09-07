@@ -1166,11 +1166,9 @@ impl Grant {
         for (i, page) in span.pages().enumerate().take(MAX_EAGER_PAGES) {
             let frame = phys.next_by(i);
             unsafe {
-                let Some(result) = mapper.map_phys(
-                    page.start_address(),
-                    frame.base(),
-                    flags.write(false),
-                ) else {
+                let Some(result) =
+                    mapper.map_phys(page.start_address(), frame.base(), flags.write(false))
+                else {
                     break;
                 };
                 result.ignore();
@@ -1254,11 +1252,9 @@ impl Grant {
                     .add_ref(RefKind::Cow)
                     .expect("the static zeroed frame cannot be shared!");
 
-                let Some(result) = mapper.map_phys(
-                    page.start_address(),
-                    the_frame.base(),
-                    flags.write(false),
-                ) else {
+                let Some(result) =
+                    mapper.map_phys(page.start_address(), the_frame.base(), flags.write(false))
+                else {
                     break;
                 };
                 result.ignore();
@@ -1639,11 +1635,7 @@ impl Grant {
                         let new_frame = init_frame(RefCount::One).expect("TODO: handle OOM");
                         let src_flush = unsafe {
                             src_mapper
-                                .map_phys(
-                                    src_page.start_address(),
-                                    new_frame.base(),
-                                    flags,
-                                )
+                                .map_phys(src_page.start_address(), new_frame.base(), flags)
                                 .expect("TODO: handle OOM")
                         };
                         unsafe {
@@ -1777,11 +1769,7 @@ impl Grant {
             unsafe {
                 flush.ignore();
             }
-            src_flusher.queue(
-                Frame::containing(phys),
-                None,
-                TlbShootdownActions::MOVE,
-            );
+            src_flusher.queue(Frame::containing(phys), None, TlbShootdownActions::MOVE);
 
             let dst_mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
 
@@ -1918,11 +1906,7 @@ impl Grant {
                     flush.ignore();
                 }
 
-                flusher.queue(
-                    Frame::containing(phys),
-                    None,
-                    TlbShootdownActions::FREE,
-                );
+                flusher.queue(Frame::containing(phys), None, TlbShootdownActions::FREE);
             }
         }
 
@@ -2731,11 +2715,10 @@ fn correct_inner<'l>(
 
     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
     let Some(flush) = (unsafe {
-        addr_space.table.utable.map_phys(
-            faulting_page.start_address(),
-            frame.base(),
-            new_flags,
-        )
+        addr_space
+            .table
+            .utable
+            .map_phys(faulting_page.start_address(), frame.base(), new_flags)
     }) else {
         // TODO
         return Err(PfError::Oom);
