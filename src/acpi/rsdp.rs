@@ -44,14 +44,14 @@ impl RSDP {
             let end_frame = Frame::containing_address(PhysicalAddress::new(end_addr));
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 let page =
-                    Page::containing_address(VirtualAddress::new(frame.start_address().data()));
+                    Page::containing_address(VirtualAddress::new(frame.base().data()));
                 let result = unsafe {
                     mapper
                         .get_mut()
                         .expect("KernelMapper locked re-entrant while locating RSDPs")
                         .map_phys(
                             page.start_address(),
-                            frame.start_address(),
+                            frame.base(),
                             PageFlags::new(),
                         )
                         .expect("failed to map page while searching for RSDP")

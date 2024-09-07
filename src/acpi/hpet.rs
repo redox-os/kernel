@@ -80,7 +80,7 @@ impl GenericAddressStructure {
             )
             .map_phys(
                 page.start_address(),
-                frame.start_address(),
+                frame.base(),
                 PageFlags::new()
                     .write(true)
                     .custom_flag(EntryFlags::NO_CACHE.bits(), true),
@@ -108,7 +108,7 @@ impl GenericAddressStructure {
                 "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
             )
             .map_linearly(
-                frame.start_address(),
+                frame.base(),
                 PageFlags::new()
                     .write(true)
                     .custom_flag(EntryFlags::NO_CACHE.bits(), true),

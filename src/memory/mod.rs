@@ -117,11 +117,11 @@ pub fn allocate_p2frame_complex(
     drop(freelist);
 
     unsafe {
-        (RmmA::phys_to_virt(frame.start_address()).data() as *mut u8)
+        (RmmA::phys_to_virt(frame.base()).data() as *mut u8)
             .write_bytes(0, PAGE_SIZE << min_order);
     }
 
-    debug_assert!(frame.start_address().data() >= unsafe { ALLOCATOR_DATA.abs_off });
+    debug_assert!(frame.base().data() >= unsafe { ALLOCATOR_DATA.abs_off });
 
     Some((frame, PAGE_SIZE << min_order))
 }
@@ -139,7 +139,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         // word of the PageInfo).
 
         let sibling = Frame::containing_address(PhysicalAddress::new(
-            current.start_address().data() ^ (PAGE_SIZE << merge_order),
+            current.base().data() ^ (PAGE_SIZE << merge_order),
         ));
 
         let Some(_cur_info) = get_page_info(current) else {
@@ -184,7 +184,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         }
 
         current = Frame::containing_address(PhysicalAddress::new(
-            current.start_address().data() & !(PAGE_SIZE << merge_order),
+            current.base().data() & !(PAGE_SIZE << merge_order),
         ));
 
         largest_order = merge_order + 1;
@@ -258,17 +258,12 @@ impl core::fmt::Debug for Frame {
         write!(
             f,
             "[frame at {:p}]",
-            self.start_address().data() as *const u8
+            self.base().data() as *const u8
         )
     }
 }
 
 impl Frame {
-    /// Get the address of this frame
-    // TODO: Remove
-    pub fn start_address(&self) -> PhysicalAddress {
-        self.base()
-    }
     /// Create a frame containing `address`
     // TODO: Remove
     pub fn containing_address(address: PhysicalAddress) -> Frame {
@@ -282,6 +277,8 @@ impl Frame {
                 .expect("frame 0x0 is reserved"),
         }
     }
+
+    /// Get the address of this frame
     pub fn base(self) -> PhysicalAddress {
         PhysicalAddress::new(self.physaddr.get())
     }
@@ -313,7 +310,7 @@ impl Frame {
             / PAGE_SIZE
     }
     pub fn is_aligned_to_order(self, order: u32) -> bool {
-        self.start_address().data() % (PAGE_SIZE << order) == 0
+        self.base().data() % (PAGE_SIZE << order) == 0
     }
 }
 
@@ -548,7 +545,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         while pages_left > 0 {
             let page_info_max_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
             let pages_to_next_section =
-                (MAX_SECTION_SIZE - (base.start_address().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
+                (MAX_SECTION_SIZE - (base.base().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
             let page_info_count = core::cmp::min(page_info_max_count, pages_to_next_section);
 
             let page_info_array_size_pages =
@@ -587,7 +584,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
     'sections: for section in &*sections {
         for (off, page_info) in section.frames.iter().enumerate() {
             let frame = section.base.next_by(off);
-            if frame.start_address() >= allocator.abs_offset() {
+            if frame.base() >= allocator.abs_offset() {
                 break 'sections;
             }
             //log::info!("MARKING {frame:?} AS USED");
@@ -605,7 +602,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
     let mut append_page = |page: Frame, info: &'static PageInfo, order| {
         let this_page = (page, info);
 
-        if page.start_address() < allocator.abs_offset() {
+        if page.base() < allocator.abs_offset() {
             return;
         }
         debug_assert!(info.as_free().is_some());
@@ -1027,7 +1024,7 @@ pub struct TheFrameAllocator;
 impl FrameAllocator for TheFrameAllocator {
     unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         let order = count.data().next_power_of_two().trailing_zeros();
-        allocate_p2frame(order).map(|f| f.start_address())
+        allocate_p2frame(order).map(|f| f.base())
     }
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
         let order = count.data().next_power_of_two().trailing_zeros();
