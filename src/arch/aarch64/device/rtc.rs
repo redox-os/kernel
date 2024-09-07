@@ -23,8 +23,8 @@ impl Pl031rtc {
     unsafe fn init(&mut self) {
         let mut mapper = KernelMapper::lock();
 
-        let start_frame = Frame::containing_address(PhysicalAddress::new(0x09010000));
-        let end_frame = Frame::containing_address(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
+        let start_frame = Frame::containing(PhysicalAddress::new(0x09010000));
+        let end_frame = Frame::containing(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
 
         for frame in Frame::range_inclusive(start_frame, end_frame) {
             let page = Page::containing_address(VirtualAddress::new(
