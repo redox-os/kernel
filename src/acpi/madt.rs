@@ -67,7 +67,7 @@ impl Madt {
                     let result = mapper
                         .get_mut()
                         .expect("expected kernel page table not to be recursively locked while initializing MADT")
-                        .map_phys(trampoline_page.base(), trampoline_frame.base(), PageFlags::new().execute(true).write(true))
+                        .map_phys(trampoline_page.start_address(), trampoline_frame.base(), PageFlags::new().execute(true).write(true))
                         .expect("failed to map trampoline");
 
                     (result, mapper.table().phys().data())
