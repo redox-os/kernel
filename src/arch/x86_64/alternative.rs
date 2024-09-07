@@ -84,6 +84,7 @@ pub unsafe fn early_init(bsp: bool) {
         );
 
         let mut xcr0 = Xcr0::XCR0_FPU_MMX_STATE | Xcr0::XCR0_SSE_STATE;
+        x86::controlregs::xcr0_write(xcr0);
         let ext_state_info = cpuid()
             .get_extended_state_info()
             .expect("must be present if XSAVE is supported");
@@ -143,6 +144,8 @@ pub unsafe fn early_init(bsp: bool) {
 
 #[cfg(feature = "self_modifying")]
 unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
+    log::info!("self-modifying features: {:?}", enable);
+
     let mut mapper = KernelMapper::lock();
     for reloc in relocs.iter().copied() {
         let name = core::str::from_utf8(core::slice::from_raw_parts(
