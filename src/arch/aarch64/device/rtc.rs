@@ -28,14 +28,14 @@ impl Pl031rtc {
 
         for frame in Frame::range_inclusive(start_frame, end_frame) {
             let page = Page::containing_address(VirtualAddress::new(
-                frame.start_address().data() + crate::PHYS_OFFSET,
+                frame.base().data() + crate::PHYS_OFFSET,
             ));
             mapper
                 .get_mut()
                 .expect("failed to access KernelMapper for mapping RTC")
                 .map_phys(
                     page.start_address(),
-                    frame.start_address(),
+                    frame.base(),
                     PageFlags::new().write(true),
                 )
                 .expect("failed to map RTC")
