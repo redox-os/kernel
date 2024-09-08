@@ -33,7 +33,7 @@ pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct KernelArgs {
     kernel_base: u64,
     kernel_size: u64,
@@ -225,7 +225,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
     crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct KernelArgsAp {
     // TODO: u32?
     cpu_id: u64,

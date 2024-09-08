@@ -308,7 +308,7 @@ bitflags! {
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct IdtEntry {
     offsetl: u16,
     selector: u16,

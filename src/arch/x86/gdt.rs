@@ -129,7 +129,7 @@ pub struct ProcessorControlRegion {
     pub _all_ones: u8,
 }
 
-// NOTE: Despite not using #[repr(packed)], we do know that while there may be some padding
+// NOTE: Despite not using #[repr(C, packed)], we do know that while there may be some padding
 // inserted before and after the TSS, the main TSS structure will remain intact.
 #[repr(C, align(16))]
 pub struct TssWrapper(pub TaskStateSegment);
@@ -233,7 +233,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 }
 
 #[derive(Copy, Clone, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct GdtEntry {
     pub limitl: u16,
     pub offsetl: u16,

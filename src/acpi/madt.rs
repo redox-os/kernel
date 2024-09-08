@@ -221,7 +221,7 @@ impl Madt {
 
 /// MADT Local APIC
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct MadtLocalApic {
     /// Processor ID
     pub processor: u8,
@@ -233,7 +233,7 @@ pub struct MadtLocalApic {
 
 /// MADT I/O APIC
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct MadtIoApic {
     /// I/O APIC ID
     pub id: u8,
@@ -247,7 +247,7 @@ pub struct MadtIoApic {
 
 /// MADT Interrupt Source Override
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct MadtIntSrcOverride {
     /// Bus Source
     pub bus_source: u8,

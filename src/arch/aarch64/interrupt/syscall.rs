@@ -5,7 +5,7 @@ pub unsafe extern "C" fn do_exception_unhandled() {}
 pub unsafe extern "C" fn do_exception_synchronous() {}
 
 #[allow(dead_code)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct SyscallStack {
     pub elr_el1: usize,
     pub padding: usize,

@@ -25,7 +25,7 @@ pub enum BootloaderMemoryKind {
 
 // Keep synced with OsMemoryEntry in bootloader
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct BootloaderMemoryEntry {
     pub base: u64,
     pub size: u64,

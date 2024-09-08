@@ -26,7 +26,7 @@ bitflags! {
 }
 
 // https://www.kernel.org/doc/html/v5.9/virt/kvm/msr.html
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 struct PvclockVcpuTimeInfo {
     version: u32,

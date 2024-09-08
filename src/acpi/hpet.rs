@@ -9,7 +9,7 @@ use crate::{
 
 use super::{find_sdt, sdt::Sdt, ACPI_TABLE};
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GenericAddressStructure {
     _address_space: u8,
@@ -19,7 +19,7 @@ pub struct GenericAddressStructure {
     pub address: u64,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct Hpet {
     pub header: Sdt,
