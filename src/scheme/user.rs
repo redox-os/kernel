@@ -65,7 +65,7 @@ enum State {
     Waiting {
         context: Weak<RwSpinlock<Context>>,
         fd: Option<Arc<RwLock<FileDescription>>>,
-        borrowed: PageSpan,
+        callee_responsible: PageSpan,
         canceling: bool,
     },
     Responded(Response),
@@ -236,9 +236,14 @@ impl UserInner {
         u32::try_from(idx).map_err(|_| Error::new(EAGAIN))
     }
 
-    pub fn call(&self, opcode: Opcode, args: impl Args, borrowed: PageSpan) -> Result<usize> {
+    pub fn call(
+        &self,
+        opcode: Opcode,
+        args: impl Args,
+        caller_responsible: &mut PageSpan,
+    ) -> Result<usize> {
         let ctx = process::current()?.read().caller_ctx();
-        match self.call_extended(ctx, None, opcode, args, borrowed)? {
+        match self.call_extended(ctx, None, opcode, args, caller_responsible)? {
             Response::Regular(code, _) => Error::demux(code),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
@@ -250,7 +255,7 @@ impl UserInner {
         fd: Option<Arc<RwLock<FileDescription>>>,
         opcode: Opcode,
         args: impl Args,
-        borrowed: PageSpan,
+        caller_responsible: &mut PageSpan,
     ) -> Result<Response> {
         self.call_extended_inner(
             fd,
@@ -266,7 +271,7 @@ impl UserInner {
                     a
                 },
             },
-            borrowed,
+            caller_responsible,
         )
     }
 
@@ -274,7 +279,7 @@ impl UserInner {
         &self,
         fd: Option<Arc<RwLock<FileDescription>>>,
         sqe: Sqe,
-        borrowed: PageSpan,
+        caller_responsible: &mut PageSpan,
     ) -> Result<Response> {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
@@ -289,7 +294,11 @@ impl UserInner {
                 context: Arc::downgrade(&current_context),
                 fd,
                 canceling: false,
-                borrowed,
+
+                // This is the part that the scheme handler will deallocate when responding. It
+                // starts as empty, so the caller can unmap it (optimal for TLB), but is populated
+                // the caller is interrupted by SIGKILL.
+                callee_responsible: PageSpan::empty(),
             };
         }
 
@@ -299,29 +308,44 @@ impl UserInner {
         loop {
             context::switch();
 
-            let eintr_if_sigkill = || {
+            let mut states = self.states.lock();
+
+            let mut eintr_if_sigkill = |callee_responsible: &mut PageSpan| {
+                // If SIGKILL was found without waiting for scheme, EINTR directly. In that
+                // case, data loss doesn't matter.
                 if context::current().read().being_sigkilled {
-                    // EINTR directly if SIGKILL was found without waiting for scheme. Data loss
-                    // doesn't matter.
+                    // Callee must deallocate memory, rather than the caller. This is less optimal
+                    // for TLB, but we don't really have any other choice. The scheme must be able
+                    // to access the borrowed memory until it has responded to the request.
+                    *callee_responsible = core::mem::replace(caller_responsible, PageSpan::empty());
+
                     Err(Error::new(EINTR))
                 } else {
                     Ok(())
                 }
             };
 
-            let mut states = self.states.lock();
-
             match states.get_mut(sqe.tag as usize) {
                 // invalid state
                 None => return Err(Error::new(EBADFD)),
                 Some(o) => match mem::replace(o, State::Placeholder) {
                     // signal wakeup while awaiting cancelation
-                    old_state @ State::Waiting {
-                        canceling: true, ..
+                    State::Waiting {
+                        canceling: true,
+                        mut callee_responsible,
+                        context,
+                        fd,
                     } => {
-                        *o = old_state;
+                        let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
+                        *o = State::Waiting {
+                            canceling: true,
+                            callee_responsible,
+                            context,
+                            fd,
+                        };
                         drop(states);
-                        eintr_if_sigkill()?;
+                        maybe_eintr?;
+
                         context::current().write().block("UserInner::call");
                     }
                     // spurious wakeup
@@ -329,17 +353,18 @@ impl UserInner {
                         canceling: false,
                         fd,
                         context,
-                        borrowed,
+                        mut callee_responsible,
                     } => {
+                        let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
                         *o = State::Waiting {
                             canceling: true,
                             fd,
                             context,
-                            borrowed,
+                            callee_responsible,
                         };
 
                         drop(states);
-                        eintr_if_sigkill()?;
+                        maybe_eintr?;
 
                         // TODO: Is this too dangerous when the states lock is held?
                         self.todo.send(Sqe {
@@ -404,10 +429,13 @@ impl UserInner {
             },
         )?;
 
+        let base = dst_page.start_address().data();
+        let len = buf.len();
+
         Ok(CaptureGuard {
+            base,
+            len,
             destroyed: false,
-            base: dst_page.start_address().data(),
-            len: buf.len(),
             head: CopyInfo {
                 src: Some(tail),
                 dst: None,
@@ -416,6 +444,11 @@ impl UserInner {
                 src: None,
                 dst: None,
             },
+            span: {
+                let (first_page, page_count, _offset) = page_range_containing(base, len);
+                PageSpan::new(first_page, page_count)
+            },
+            addrsp: Some(dst_addr_space),
         })
     }
 
@@ -455,6 +488,8 @@ impl UserInner {
                     src: None,
                     dst: None,
                 },
+                span: PageSpan::empty(),
+                addrsp: None,
             });
         }
 
@@ -481,6 +516,12 @@ impl UserInner {
                     src: None,
                     dst: None,
                 },
+                span: {
+                    let (first_page, page_count, _offset) =
+                        page_range_containing(user_buf.addr(), user_buf.len());
+                    PageSpan::new(first_page, page_count)
+                },
+                addrsp: Some(dst_space_lock),
             });
         }
 
@@ -650,12 +691,18 @@ impl UserInner {
 
         drop(dst_space);
 
+        let base = free_span.base.start_address().data() + offset;
         Ok(CaptureGuard {
             destroyed: false,
-            base: free_span.base.start_address().data() + offset,
+            base,
             len: user_buf.len(),
             head,
             tail,
+            span: {
+                let (first_page, page_count, _offset) = page_range_containing(base, user_buf.len());
+                PageSpan::new(first_page, page_count)
+            },
+            addrsp: Some(dst_space_lock),
         })
     }
 
@@ -1018,7 +1065,7 @@ impl UserInner {
                     context,
                     fd,
                     canceling,
-                    borrowed,
+                    callee_responsible,
                 } => {
                     if let Response::Regular(ref mut code, _) = response
                         && !canceling
@@ -1044,7 +1091,7 @@ impl UserInner {
                     }
 
                     let unpin = true;
-                    AddrSpace::current()?.munmap(borrowed, unpin)?;
+                    AddrSpace::current()?.munmap(callee_responsible, unpin)?;
                 }
             },
             // invalid state
@@ -1158,7 +1205,7 @@ impl UserInner {
                 ],
                 caller: pid.get() as u64,
             },
-            PageSpan::empty(),
+            &mut PageSpan::empty(),
         )?;
 
         // TODO: I've previously tested that this works, but because the scheme trait all of
@@ -1234,9 +1281,11 @@ pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     destroyed: bool,
     base: usize,
     len: usize,
+    span: PageSpan,
 
     head: CopyInfo<READ, WRITE>,
     tail: CopyInfo<READ, WRITE>,
+    addrsp: Option<Arc<AddrSpaceWrapper>>,
 }
 impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
     fn base(&self) -> usize {
@@ -1245,9 +1294,8 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
     fn len(&self) -> usize {
         self.len
     }
-    fn span(&self) -> PageSpan {
-        let (first_page, page_count, _offset) = page_range_containing(self.base, self.len);
-        PageSpan::new(first_page, page_count)
+    fn span(&mut self) -> &mut PageSpan {
+        &mut self.span
     }
 }
 struct CopyInfo<const READ: bool, const WRITE: bool> {
@@ -1281,6 +1329,10 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         } = self.tail
         {
             dst.copy_from_slice(&src.buf()[..dst.len()])?;
+        }
+        let unpin = true;
+        if let Some(ref addrsp) = self.addrsp {
+            addrsp.munmap(self.span, unpin)?;
         }
 
         Ok(())
@@ -1317,7 +1369,7 @@ impl UserScheme {
 impl KernelScheme for UserScheme {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.copy_and_capture_tail(path.as_bytes())?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         match inner.call_extended(
             ctx,
             None,
@@ -1337,7 +1389,7 @@ impl KernelScheme for UserScheme {
     }
     fn rmdir(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.copy_and_capture_tail(path.as_bytes())?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         inner.call(
             Opcode::Rmdir,
             [address.base(), address.len()],
@@ -1348,7 +1400,7 @@ impl KernelScheme for UserScheme {
 
     fn unlink(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.copy_and_capture_tail(path.as_bytes())?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         inner.call(
             Opcode::Unlink,
             [address.base(), address.len()],
@@ -1363,13 +1415,17 @@ impl KernelScheme for UserScheme {
             return Err(Error::new(ESPIPE));
         }
         inner
-            .call(Opcode::Fsize, [file], PageSpan::empty())
+            .call(Opcode::Fsize, [file], &mut PageSpan::empty())
             .map(|o| o as u64)
     }
 
     fn fchmod(&self, file: usize, mode: u16) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fchmod, [file, mode as usize], PageSpan::empty())?;
+        inner.call(
+            Opcode::Fchmod,
+            [file, mode as usize],
+            &mut PageSpan::empty(),
+        )?;
         Ok(())
     }
 
@@ -1388,26 +1444,26 @@ impl KernelScheme for UserScheme {
         inner.call(
             Opcode::Fchown,
             [file, uid as usize, gid as usize],
-            PageSpan::empty(),
+            &mut PageSpan::empty(),
         )?;
         Ok(())
     }
 
     fn fcntl(&self, file: usize, cmd: usize, arg: usize) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fcntl, [file, cmd, arg], PageSpan::empty())
+        inner.call(Opcode::Fcntl, [file, cmd, arg], &mut PageSpan::empty())
     }
 
     fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner
-            .call(Opcode::Fevent, [file, flags.bits()], PageSpan::empty())
+            .call(Opcode::Fevent, [file, flags.bits()], &mut PageSpan::empty())
             .map(EventFlags::from_bits_truncate)
     }
 
     fn frename(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.copy_and_capture_tail(path.as_bytes())?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         inner.call(
             Opcode::Frename,
             [file, address.base(), address.len()],
@@ -1418,24 +1474,24 @@ impl KernelScheme for UserScheme {
 
     fn fsync(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fsync, [file], PageSpan::empty())?;
+        inner.call(Opcode::Fsync, [file], &mut PageSpan::empty())?;
         Ok(())
     }
 
     fn ftruncate(&self, file: usize, len: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Ftruncate, [file, len], PageSpan::empty())?;
+        inner.call(Opcode::Ftruncate, [file, len], &mut PageSpan::empty())?;
         Ok(())
     }
 
     fn close(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Close, [file], PageSpan::empty())?;
+        inner.call(Opcode::Close, [file], &mut PageSpan::empty())?;
         Ok(())
     }
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(buf)?;
+        let mut address = inner.capture_user(buf)?;
         let result = inner.call_extended(
             ctx,
             None,
@@ -1459,7 +1515,7 @@ impl KernelScheme for UserScheme {
     }
     fn kfpath(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(buf)?;
+        let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Fpath,
             [file, address.base(), address.len()],
@@ -1482,7 +1538,7 @@ impl KernelScheme for UserScheme {
         }
 
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(buf)?;
+        let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Read,
             [
@@ -1516,7 +1572,7 @@ impl KernelScheme for UserScheme {
         }
 
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(buf)?;
+        let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Write,
             [
@@ -1541,11 +1597,15 @@ impl KernelScheme for UserScheme {
         if inner.v2 {
             return None;
         }
-        Some(inner.call(Opcode::Fsize, [id, pos as usize, whence], PageSpan::empty()))
+        Some(inner.call(
+            Opcode::Fsize,
+            [id, pos as usize, whence],
+            &mut PageSpan::empty(),
+        ))
     }
     fn kfutimens(&self, file: usize, buf: UserSliceRo) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(buf)?;
+        let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Futimens,
             [file, address.base(), address.len()],
@@ -1557,12 +1617,12 @@ impl KernelScheme for UserScheme {
     fn getdents(
         &self,
         file: usize,
-        stat: UserSliceWo,
+        buf: UserSliceWo,
         header_size: u16,
         opaque_id_start: u64,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(stat)?;
+        let mut address = inner.capture_user(buf)?;
         // TODO: Support passing the 16-byte record_len of the last dent, to make it possible to
         // iterate backwards without first interating forward? The last entry will contain the
         // opaque id to pass to the next getdents. Since this field is small, this would fit in the
@@ -1583,7 +1643,7 @@ impl KernelScheme for UserScheme {
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(stat)?;
+        let mut address = inner.capture_user(stat)?;
         let result = inner.call(
             Opcode::Fstat,
             [file, address.base(), address.len()],
@@ -1594,7 +1654,7 @@ impl KernelScheme for UserScheme {
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let address = inner.capture_user(stat)?;
+        let mut address = inner.capture_user(stat)?;
         let result = inner.call(
             Opcode::Fstatvfs,
             [file, address.base(), address.len()],
@@ -1623,7 +1683,7 @@ impl KernelScheme for UserScheme {
             None,
             Opcode::Munmap,
             [number, size, flags.bits(), offset],
-            PageSpan::empty(),
+            &mut PageSpan::empty(),
         )?;
 
         match res {
@@ -1646,7 +1706,7 @@ impl KernelScheme for UserScheme {
             Some(desc),
             Opcode::Sendfd,
             [number, flags.bits()],
-            PageSpan::empty(),
+            &mut PageSpan::empty(),
         )?;
 
         match res {
