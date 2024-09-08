@@ -5,7 +5,10 @@ use core::{
 };
 use hashbrown::HashMap;
 use spin::RwLock;
-use syscall::O_FSYNC;
+use syscall::{
+    dirent::{DirentBuf, DirentKind},
+    O_FSYNC,
+};
 
 use crate::{
     context::{self, file::InternalFlags, process},
@@ -24,25 +27,11 @@ use crate::{
 
 use super::{CallerCtx, KernelScheme, KernelSchemes, OpenResult};
 
-struct FolderInner {
-    data: Box<[u8]>,
-}
-
-impl FolderInner {
-    fn read(&self, buf: UserSliceWo, offset: u64) -> Result<usize> {
-        let avail_buf = usize::try_from(offset)
-            .ok()
-            .and_then(|o| self.data.get(o..))
-            .unwrap_or(&[]);
-        buf.copy_common_bytes_from_slice(avail_buf)
-    }
-}
-
 #[derive(Clone)]
 enum Handle {
     Scheme(Arc<UserInner>),
     File(Arc<Box<[u8]>>),
-    Folder(Arc<FolderInner>),
+    List { ens: SchemeNamespace },
 }
 
 pub struct RootScheme {
@@ -111,23 +100,10 @@ impl KernelScheme for RootScheme {
 
             Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
         } else if path.is_empty() {
-            let scheme_ns = process::current()?.read().ens;
-
-            let mut data = Vec::new();
-            {
-                let schemes = scheme::schemes();
-                for (name, _scheme_id) in schemes.iter_name(scheme_ns) {
-                    data.extend_from_slice(name.as_bytes());
-                    data.push(b'\n');
-                }
-            }
-
-            let inner = Arc::new(FolderInner {
-                data: data.into_boxed_slice(),
-            });
+            let ens = process::current()?.read().ens;
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-            self.handles.write().insert(id, Handle::Folder(inner));
+            self.handles.write().insert(id, Handle::List { ens });
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         } else {
             let inner = Arc::new(path.as_bytes().to_vec().into_boxed_slice());
@@ -175,7 +151,7 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(_) => Err(Error::new(EBADF)),
             Handle::File(_) => Err(Error::new(EBADF)),
-            Handle::Folder(inner) => Ok(inner.data.len() as u64),
+            Handle::List { .. } => Ok(0),
         }
     }
 
@@ -189,7 +165,7 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(inner) => inner.fevent(flags),
             Handle::File(_) => Err(Error::new(EBADF)),
-            Handle::Folder(_) => Err(Error::new(EBADF)),
+            Handle::List { .. } => Err(Error::new(EBADF)),
         }
     }
 
@@ -210,7 +186,7 @@ impl KernelScheme for RootScheme {
             Handle::File(inner) => {
                 bytes_copied += buf.copy_common_bytes_from_slice(&inner)?;
             }
-            Handle::Folder(_) => (),
+            Handle::List { .. } => (),
         }
 
         Ok(bytes_copied)
@@ -226,7 +202,7 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(inner) => inner.fsync(),
             Handle::File(_) => Err(Error::new(EBADF)),
-            Handle::Folder(_) => Err(Error::new(EBADF)),
+            Handle::List { .. } => Err(Error::new(EBADF)),
         }
     }
 
@@ -248,7 +224,7 @@ impl KernelScheme for RootScheme {
         &self,
         file: usize,
         buf: UserSliceWo,
-        offset: u64,
+        _offset: u64,
         flags: u32,
         _stored_flags: u32,
     ) -> Result<usize> {
@@ -261,8 +237,23 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(inner) => inner.read(buf, flags),
             Handle::File(_) => Err(Error::new(EBADF)),
-            Handle::Folder(inner) => inner.read(buf, offset),
+            Handle::List { .. } => Err(Error::new(EISDIR)),
         }
+    }
+    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+        let Handle::List { ens } = *self.handles.read().get(&id).ok_or(Error::new(EBADF))? else {
+            return Err(Error::new(ENOTDIR));
+        };
+
+        let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
+        {
+            let schemes = scheme::schemes();
+            for (name, _scheme_id) in schemes.iter_name(ens) {
+                buf.entry(DirentKind::Unspecified, name)?;
+            }
+        }
+
+        Ok(buf.finalize())
     }
 
     fn kwrite(
@@ -281,7 +272,7 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(inner) => inner.write(buf),
             Handle::File(_) => Err(Error::new(EBADF)),
-            Handle::Folder(_) => Err(Error::new(EBADF)),
+            Handle::List { .. } => Err(Error::new(EISDIR)),
         }
     }
 
@@ -295,23 +286,14 @@ impl KernelScheme for RootScheme {
         buf.copy_exactly(&match handle {
             Handle::Scheme(_) => Stat {
                 st_mode: MODE_FILE,
-                st_uid: 0,
-                st_gid: 0,
-                st_size: 0,
                 ..Default::default()
             },
             Handle::File(_) => Stat {
                 st_mode: MODE_FILE,
-                st_uid: 0,
-                st_gid: 0,
-                st_size: 0,
                 ..Default::default()
             },
-            Handle::Folder(inner) => Stat {
+            Handle::List { .. } => Stat {
                 st_mode: MODE_DIR,
-                st_uid: 0,
-                st_gid: 0,
-                st_size: inner.data.len() as u64,
                 ..Default::default()
             },
         })?;

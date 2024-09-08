@@ -1,3 +1,5 @@
+use syscall::dirent::Buffer;
+
 use crate::{
     memory::PAGE_SIZE,
     paging::{Page, VirtualAddress},
@@ -230,4 +232,23 @@ pub fn validate_region(address: usize, size: usize) -> Result<(Page, usize)> {
         Page::containing_address(VirtualAddress::new(address)),
         size / PAGE_SIZE,
     ))
+}
+impl Buffer<'static> for UserSliceWo {
+    fn empty() -> Self {
+        UserSliceWo::empty()
+    }
+    fn length(&self) -> usize {
+        self.len()
+    }
+    fn split_at(self, index: usize) -> Option<[Self; 2]> {
+        let (a, b) = self.split_at(index)?;
+        Some([a, b])
+    }
+    fn copy_from_slice_exact(self, src: &[u8]) -> Result<()> {
+        self.copy_exactly(src)
+    }
+    fn zero_out(self) -> Result<()> {
+        // TODO: Implement this. Don't need to as long as the header size is constant, for now.
+        Ok(())
+    }
 }

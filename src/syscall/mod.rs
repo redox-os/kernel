@@ -4,7 +4,9 @@
 
 extern crate syscall;
 
-use syscall::{RwFlags, EINVAL, SIGKILL};
+use core::mem::size_of;
+
+use syscall::{dirent::DirentHeader, RwFlags, EINVAL, SIGKILL};
 
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
@@ -102,6 +104,18 @@ pub fn syscall(
                         scheme.kfmap(number, &addrspace, &map, false)
                     })
                 }
+            }
+            SYS_GETDENTS => {
+                let header_size = u16::try_from(e).map_err(|_| Error::new(EINVAL))?;
+
+                if usize::from(header_size) != size_of::<DirentHeader>() {
+                    // TODO: allow? If so, zero_out must be implemented for UserSlice
+                    return Err(Error::new(EINVAL));
+                }
+
+                file_op_generic(fd, |scheme, number| {
+                    scheme.getdents(number, UserSlice::wo(c, d)?, header_size)
+                })
             }
             SYS_FUTIMENS => file_op_generic(fd, |scheme, number| {
                 scheme.kfutimens(number, UserSlice::ro(c, d)?)

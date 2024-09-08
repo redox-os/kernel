@@ -451,6 +451,9 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
+    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
 
     fn fsync(&self, id: usize) -> Result<()> {
         Ok(())

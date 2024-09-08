@@ -1,3 +1,7 @@
+use ::syscall::{
+    dirent::{DirentBuf, DirentKind},
+    EIO, EISDIR, ENOTDIR,
+};
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{
     str,
@@ -31,10 +35,9 @@ mod scheme_num;
 mod syscall;
 mod uname;
 
-struct Handle {
-    path: &'static str,
-    data: Vec<u8>,
-    mode: u16,
+enum Handle {
+    TopLevel,
+    Resource { path: &'static str, data: Vec<u8> },
 }
 
 type SysFn = fn() -> Result<Vec<u8>>;
@@ -74,23 +77,9 @@ impl KernelScheme for SysScheme {
         let path = path.trim_matches('/');
 
         if path.is_empty() {
-            let mut data = Vec::new();
-            for entry in FILES.iter() {
-                if !data.is_empty() {
-                    data.push(b'\n');
-                }
-                data.extend_from_slice(entry.0.as_bytes());
-            }
-
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-            HANDLES.write().insert(
-                id,
-                Handle {
-                    path: "",
-                    data,
-                    mode: MODE_DIR | 0o444,
-                },
-            );
+
+            HANDLES.write().insert(id, Handle::TopLevel);
             return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
         } else {
             //Have to iterate to get the path without allocation
@@ -100,10 +89,9 @@ impl KernelScheme for SysScheme {
                     let data = entry.1()?;
                     HANDLES.write().insert(
                         id,
-                        Handle {
+                        Handle::Resource {
                             path: entry.0,
                             data,
-                            mode: MODE_FILE | 0o444,
                         },
                     );
                     return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
@@ -115,32 +103,28 @@ impl KernelScheme for SysScheme {
     }
 
     fn fsize(&self, id: usize) -> Result<u64> {
-        let mut handles = HANDLES.write();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-
-        Ok(handle.data.len() as u64)
-    }
-
-    fn fsync(&self, _id: usize) -> Result<()> {
-        Ok(())
+        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+            Handle::TopLevel => Ok(0),
+            Handle::Resource { data, .. } => Ok(data.len() as u64),
+        }
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        HANDLES
-            .write()
-            .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(()))
+        HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
+        Ok(())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
         let handles = HANDLES.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let path = match handles.get(&id).ok_or(Error::new(EBADF))? {
+            Handle::TopLevel => "",
+            Handle::Resource { path, .. } => path,
+        };
 
         const FIRST: &[u8] = b"sys:";
         let mut bytes_read = buf.copy_common_bytes_from_slice(FIRST)?;
 
         if let Some(remaining) = buf.advance(FIRST.len()) {
-            bytes_read += remaining.copy_common_bytes_from_slice(handle.path.as_bytes())?;
+            bytes_read += remaining.copy_common_bytes_from_slice(path.as_bytes())?;
         }
 
         Ok(bytes_read)
@@ -157,25 +141,47 @@ impl KernelScheme for SysScheme {
             return Ok(0);
         };
 
-        let mut handles = HANDLES.write();
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+            Handle::TopLevel => return Err(Error::new(EISDIR)),
+            Handle::Resource { data, .. } => {
+                let avail_buf = data.get(pos..).unwrap_or(&[]);
 
-        let avail_buf = handle.data.get(pos..).unwrap_or(&[]);
-
-        buffer.copy_common_bytes_from_slice(avail_buf)
+                buffer.copy_common_bytes_from_slice(avail_buf)
+            }
+        }
+    }
+    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+            Handle::Resource { .. } => return Err(Error::new(ENOTDIR)),
+            Handle::TopLevel => {
+                let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
+                for (name, _) in FILES {
+                    buf.entry(DirentKind::Regular, name)?;
+                }
+                Ok(buf.finalize())
+            }
+        }
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
-        let handles = HANDLES.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let stat = match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+            Handle::Resource { data, .. } => Stat {
+                st_mode: 0o444 | MODE_FILE,
+                st_uid: 0,
+                st_gid: 0,
+                st_size: data.len() as u64,
+                ..Default::default()
+            },
+            Handle::TopLevel => Stat {
+                st_mode: 0o444 | MODE_DIR,
+                st_uid: 0,
+                st_gid: 0,
+                st_size: 0,
+                ..Default::default()
+            },
+        };
 
-        buf.copy_exactly(&Stat {
-            st_mode: handle.mode,
-            st_uid: 0,
-            st_gid: 0,
-            st_size: handle.data.len() as u64,
-            ..Default::default()
-        })?;
+        buf.copy_exactly(&stat)?;
 
         Ok(())
     }

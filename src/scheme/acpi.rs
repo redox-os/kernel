@@ -7,6 +7,10 @@ use core::{
 use alloc::{boxed::Box, collections::BTreeMap};
 
 use spin::{Mutex, Once, RwLock};
+use syscall::{
+    dirent::{DirentBuf, DirentKind},
+    EIO,
+};
 
 use crate::{
     acpi::{RxsdtEnum, RXSDT_ENUM},
@@ -46,8 +50,6 @@ static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
 
 static DATA: Once<Box<[u8]>> = Once::new();
-
-const TOPLEVEL_CONTENTS: &[u8] = b"rxsdt\nkstop\n";
 
 static KSTOP_WAITCOND: WaitCondition = WaitCondition::new();
 static KSTOP_FLAG: Mutex<bool> = Mutex::new(false);
@@ -169,7 +171,7 @@ impl KernelScheme for AcpiScheme {
         Ok(match handle.kind {
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len() as u64,
             HandleKind::ShutdownPipe => 1,
-            HandleKind::TopLevel => TOPLEVEL_CONTENTS.len() as u64,
+            HandleKind::TopLevel => 0,
         })
     }
     // TODO
@@ -227,7 +229,7 @@ impl KernelScheme for AcpiScheme {
                 return dst_buf.copy_exactly(&[0x42]).map(|()| 1);
             }
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?,
-            HandleKind::TopLevel => TOPLEVEL_CONTENTS,
+            HandleKind::TopLevel => return Err(Error::new(EISDIR)),
         };
 
         let src_offset = core::cmp::min(offset, data.len());
@@ -236,6 +238,20 @@ impl KernelScheme for AcpiScheme {
             .expect("expected data to be at least data.len() bytes long");
 
         dst_buf.copy_common_bytes_from_slice(src_buf)
+    }
+    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+        let Some(Handle {
+            kind: HandleKind::TopLevel,
+            ..
+        }) = HANDLES.read().get(&id)
+        else {
+            return Err(Error::new(ENOTDIR));
+        };
+
+        let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
+        buf.entry(DirentKind::Regular, "rxsdt")?;
+        buf.entry(DirentKind::Socket, "kstop")?;
+        Ok(buf.finalize())
     }
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         let handles = HANDLES.read();
@@ -253,10 +269,7 @@ impl KernelScheme for AcpiScheme {
             }
             HandleKind::TopLevel => Stat {
                 st_mode: MODE_DIR,
-                st_size: TOPLEVEL_CONTENTS
-                    .len()
-                    .try_into()
-                    .unwrap_or(u64::max_value()),
+                st_size: 0,
                 ..Default::default()
             },
             HandleKind::ShutdownPipe => Stat {

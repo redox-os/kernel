@@ -769,6 +769,18 @@ impl UserInner {
                         gid: (sqe.args[3] >> 32) as u32, // offset hi
                     });
                 }
+                Opcode::Getdents => {
+                    return Ok(Packet {
+                        id: u64::from(sqe.tag) + 1,
+                        pid: sqe.caller as usize,
+                        a: SYS_GETDENTS,
+                        b: sqe.args[0] as usize,
+                        c: sqe.args[1] as usize,
+                        d: sqe.args[2] as usize,
+                        uid: sqe.args[3] as u32,
+                        gid: (sqe.args[3] >> 32) as u32,
+                    });
+                }
 
                 Opcode::Mremap => SYS_MREMAP,
                 Opcode::Msync => KSMSG_MSYNC,
@@ -1537,6 +1549,17 @@ impl KernelScheme for UserScheme {
         let result = inner.call(
             Opcode::Futimens,
             [file, address.base(), address.len()],
+            address.span(),
+        );
+        address.release()?;
+        result
+    }
+    fn getdents(&self, file: usize, stat: UserSliceWo, header_size: u16) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let address = inner.capture_user(stat)?;
+        let result = inner.call(
+            Opcode::Getdents,
+            [file, address.base(), address.len(), header_size.into()],
             address.span(),
         );
         address.release()?;

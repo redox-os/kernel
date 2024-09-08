@@ -296,19 +296,19 @@ pub unsafe fn init(
     let real_size = 0x100000;
     let real_end = real_base + real_size;
 
-    let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let kernel_size_aligned = kernel_size.next_multiple_of(A::PAGE_SIZE);
     let kernel_end = kernel_base + kernel_size_aligned;
 
-    let stack_size_aligned = ((stack_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let stack_size_aligned = stack_size.next_multiple_of(A::PAGE_SIZE);
     let stack_end = stack_base + stack_size_aligned;
 
-    let env_size_aligned = ((env_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let env_size_aligned = env_size.next_multiple_of(A::PAGE_SIZE);
     let env_end = env_base + env_size_aligned;
 
-    let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let acpi_size_aligned = acpi_size.next_multiple_of(A::PAGE_SIZE);
     let acpi_end = acpi_base + acpi_size_aligned;
 
-    let initfs_size_aligned = ((initfs_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let initfs_size_aligned = initfs_size.next_multiple_of(A::PAGE_SIZE);
     let initfs_end = initfs_base + initfs_size_aligned;
 
     let bootloader_areas = slice::from_raw_parts(
@@ -329,7 +329,7 @@ pub unsafe fn init(
         let mut base = bootloader_area.base as usize;
         let mut size = bootloader_area.size as usize;
 
-        log::debug!("{:X}:{:X}", base, size);
+        log::info!("{:X}:{:X}", base, size);
 
         // Page align base
         let base_offset = (A::PAGE_SIZE - (base & A::PAGE_OFFSET_MASK)) & A::PAGE_OFFSET_MASK;
