@@ -69,9 +69,8 @@ pub fn monotonic_absolute() -> Option<u128> {
             if cur_version & 1 == 1 {
                 continue;
             }
-            let elapsed_ticks = x86::time::rdtsc()
-                .checked_sub(addr_of!((*ptr).tsc_timestamp).read_volatile())
-                .unwrap();
+            let elapsed_ticks =
+                x86::time::rdtsc().saturating_sub(addr_of!((*ptr).tsc_timestamp).read_volatile());
             let tsc_shift = addr_of!((*ptr).tsc_shift).read_volatile();
             let elapsed = if tsc_shift >= 0 {
                 elapsed_ticks.checked_shl(tsc_shift as u32).unwrap()
