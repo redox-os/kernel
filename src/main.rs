@@ -42,6 +42,7 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 #![feature(allocator_api)]
+#![feature(asm_const)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
 #![feature(let_chains)]

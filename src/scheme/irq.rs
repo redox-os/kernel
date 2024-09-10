@@ -10,7 +10,7 @@ use core::{
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use spin::{Mutex, Once, RwLock};
-use syscall::dirent::{DirentBuf, DirentKind};
+use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
 use crate::{
     arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved},
@@ -216,7 +216,17 @@ impl crate::scheme::KernelScheme for IrqScheme {
         HANDLES.write().insert(fd, handle);
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
-    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+    fn getdents(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        header_size: u16,
+        opaque_id_start: u64,
+    ) -> Result<usize> {
+        let Ok(opaque) = usize::try_from(opaque_id_start) else {
+            return Ok(0);
+        };
+
         use core::fmt::Write;
 
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
@@ -224,26 +234,43 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
         match *HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => {
-                // list every logical CPU in the format of e.g. `cpu-1b`
-                for cpu_id in CPUS.get().expect("IRQ scheme not initialized") {
-                    intermediate.clear();
-                    write!(&mut intermediate, "cpu-{:02x}", cpu_id).unwrap();
-                    buf.entry(DirentKind::Directory, &intermediate)?;
+                let cpus = CPUS.get().expect("IRQ scheme not initialized");
+
+                if bsp_apic_id().is_some() && opaque == 0 {
+                    buf.entry(DirEntry {
+                        inode: 0,
+                        next_opaque_id: 1,
+                        kind: DirentKind::CharDev,
+                        name: "bsp",
+                    })?;
                 }
 
-                if bsp_apic_id().is_some() {
-                    buf.entry(DirentKind::CharDev, "bsp")?;
+                // list every logical CPU in the format of e.g. `cpu-1b`
+                for cpu_id in cpus.iter().filter(|i| opaque <= usize::from(**i)) {
+                    intermediate.clear();
+                    write!(&mut intermediate, "cpu-{:02x}", cpu_id).unwrap();
+                    buf.entry(DirEntry {
+                        kind: DirentKind::Directory,
+                        name: &intermediate,
+                        inode: 0,
+                        next_opaque_id: u64::from(*cpu_id + 1),
+                    })?;
                 }
             }
             Handle::Avail(cpu_id) => {
-                for vector in available_irqs_iter(LogicalCpuId::new(cpu_id.into())) {
+                for vector in available_irqs_iter(LogicalCpuId::new(cpu_id.into())).skip(opaque) {
                     let irq = vector_to_irq(vector);
                     if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
                         continue;
                     }
                     intermediate.clear();
                     write!(intermediate, "{}", irq).unwrap();
-                    buf.entry(DirentKind::CharDev, &intermediate)?;
+                    buf.entry(DirEntry {
+                        inode: 0,
+                        kind: DirentKind::CharDev,
+                        name: &intermediate,
+                        next_opaque_id: u64::from(vector) + 1,
+                    })?;
                 }
             }
             _ => return Err(Error::new(ENOTDIR)),

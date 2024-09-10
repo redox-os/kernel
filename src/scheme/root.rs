@@ -6,7 +6,7 @@ use core::{
 use hashbrown::HashMap;
 use spin::RwLock;
 use syscall::{
-    dirent::{DirentBuf, DirentKind},
+    dirent::{DirEntry, DirentBuf, DirentKind},
     O_FSYNC,
 };
 
@@ -240,7 +240,13 @@ impl KernelScheme for RootScheme {
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }
     }
-    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+    fn getdents(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        header_size: u16,
+        opaque: u64,
+    ) -> Result<usize> {
         let Handle::List { ens } = *self.handles.read().get(&id).ok_or(Error::new(EBADF))? else {
             return Err(Error::new(ENOTDIR));
         };
@@ -248,8 +254,16 @@ impl KernelScheme for RootScheme {
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
         {
             let schemes = scheme::schemes();
-            for (name, _scheme_id) in schemes.iter_name(ens) {
-                buf.entry(DirentKind::Unspecified, name)?;
+            for (name, scheme_id) in schemes
+                .iter_name(ens)
+                .filter(|(_, s)| opaque <= s.get() as u64)
+            {
+                buf.entry(DirEntry {
+                    kind: DirentKind::Unspecified,
+                    name,
+                    inode: 0,
+                    next_opaque_id: scheme_id.get() as u64 + 1,
+                })?;
             }
         }
 

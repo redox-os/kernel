@@ -8,7 +8,7 @@ use alloc::{boxed::Box, collections::BTreeMap};
 
 use spin::{Mutex, Once, RwLock};
 use syscall::{
-    dirent::{DirentBuf, DirentKind},
+    dirent::{DirEntry, DirentBuf, DirentKind},
     EIO,
 };
 
@@ -239,7 +239,13 @@ impl KernelScheme for AcpiScheme {
 
         dst_buf.copy_common_bytes_from_slice(src_buf)
     }
-    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+    fn getdents(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        header_size: u16,
+        opaque: u64,
+    ) -> Result<usize> {
         let Some(Handle {
             kind: HandleKind::TopLevel,
             ..
@@ -249,8 +255,22 @@ impl KernelScheme for AcpiScheme {
         };
 
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
-        buf.entry(DirentKind::Regular, "rxsdt")?;
-        buf.entry(DirentKind::Socket, "kstop")?;
+        if opaque == 0 {
+            buf.entry(DirEntry {
+                kind: DirentKind::Regular,
+                name: "rxsdt",
+                inode: 0,
+                next_opaque_id: 1,
+            })?;
+        }
+        if opaque <= 1 {
+            buf.entry(DirEntry {
+                kind: DirentKind::Socket,
+                name: "kstop",
+                inode: 0,
+                next_opaque_id: u64::MAX,
+            })?;
+        }
         Ok(buf.finalize())
     }
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {

@@ -8,7 +8,6 @@ use crate::{context, cpu_id, interrupt, syscall};
 #[panic_handler]
 fn rust_begin_unwind(info: &PanicInfo) -> ! {
     println!("KERNEL PANIC: {}", info);
-    loop {}
 
     unsafe {
         interrupt::stack_trace();

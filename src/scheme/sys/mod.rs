@@ -1,5 +1,5 @@
 use ::syscall::{
-    dirent::{DirentBuf, DirentKind},
+    dirent::{DirEntry, DirentBuf, DirentKind},
     EIO, EISDIR, ENOTDIR,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
@@ -150,13 +150,27 @@ impl KernelScheme for SysScheme {
             }
         }
     }
-    fn getdents(&self, id: usize, buf: UserSliceWo, header_size: u16) -> Result<usize> {
+    fn getdents(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        header_size: u16,
+        first_index: u64,
+    ) -> Result<usize> {
+        let Ok(first_index) = usize::try_from(first_index) else {
+            return Ok(0);
+        };
         match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
             Handle::Resource { .. } => return Err(Error::new(ENOTDIR)),
             Handle::TopLevel => {
                 let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
-                for (name, _) in FILES {
-                    buf.entry(DirentKind::Regular, name)?;
+                for (this_idx, (name, _)) in FILES.iter().enumerate().skip(first_index) {
+                    buf.entry(DirEntry {
+                        inode: this_idx as u64,
+                        next_opaque_id: this_idx as u64 + 1,
+                        kind: DirentKind::Regular,
+                        name,
+                    })?;
                 }
                 Ok(buf.finalize())
             }

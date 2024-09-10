@@ -114,7 +114,7 @@ pub fn syscall(
                 }
 
                 file_op_generic(fd, |scheme, number| {
-                    scheme.getdents(number, UserSlice::wo(c, d)?, header_size)
+                    scheme.getdents(number, UserSlice::wo(c, d)?, header_size, f as u64)
                 })
             }
             SYS_FUTIMENS => file_op_generic(fd, |scheme, number| {

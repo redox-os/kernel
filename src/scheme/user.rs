@@ -1554,12 +1554,28 @@ impl KernelScheme for UserScheme {
         address.release()?;
         result
     }
-    fn getdents(&self, file: usize, stat: UserSliceWo, header_size: u16) -> Result<usize> {
+    fn getdents(
+        &self,
+        file: usize,
+        stat: UserSliceWo,
+        header_size: u16,
+        opaque_id_start: u64,
+    ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let address = inner.capture_user(stat)?;
+        // TODO: Support passing the 16-byte record_len of the last dent, to make it possible to
+        // iterate backwards without first interating forward? The last entry will contain the
+        // opaque id to pass to the next getdents. Since this field is small, this would fit in the
+        // extra_raw field of `Cqe`s.
         let result = inner.call(
             Opcode::Getdents,
-            [file, address.base(), address.len(), header_size.into()],
+            [
+                file,
+                address.base(),
+                address.len(),
+                header_size.into(),
+                opaque_id_start as usize,
+            ],
             address.span(),
         );
         address.release()?;
