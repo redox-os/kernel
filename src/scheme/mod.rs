@@ -6,9 +6,12 @@
 //! The kernel validates paths and file descriptors before they are passed to schemes,
 //! also stripping the scheme identifier of paths if necessary.
 
+// TODO: Move handling of the global namespace to userspace.
+
 use alloc::{boxed::Box, collections::BTreeMap, string::ToString, sync::Arc, vec::Vec};
-use core::sync::atomic::AtomicUsize;
-use hashbrown::HashMap;
+use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use indexmap::IndexMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::{EventFlags, MunmapFlags, SendFdFlags};
 
@@ -89,7 +92,7 @@ int_like!(SchemeId, usize);
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
 pub struct SchemeIter<'a> {
-    inner: Option<hashbrown::hash_map::Iter<'a, Box<str>, SchemeId>>,
+    inner: Option<indexmap::map::Iter<'a, Box<str>, SchemeId>>,
 }
 
 impl<'a> Iterator for SchemeIter<'a> {
@@ -103,7 +106,7 @@ impl<'a> Iterator for SchemeIter<'a> {
 /// Scheme list type
 pub struct SchemeList {
     map: HashMap<SchemeId, KernelSchemes>,
-    pub(crate) names: HashMap<SchemeNamespace, HashMap<Box<str>, SchemeId>>,
+    pub(crate) names: HashMap<SchemeNamespace, IndexMap<Box<str>, SchemeId, DefaultHashBuilder>>,
     next_ns: usize,
     next_id: usize,
 }
@@ -157,7 +160,8 @@ impl SchemeList {
     /// Initialize the null namespace
     fn new_null(&mut self) {
         let ns = SchemeNamespace(0);
-        self.names.insert(ns, HashMap::new());
+        self.names
+            .insert(ns, IndexMap::with_hasher(BuildHasherDefault::default()));
 
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
@@ -172,7 +176,8 @@ impl SchemeList {
     fn new_ns(&mut self) -> SchemeNamespace {
         let ns = SchemeNamespace(self.next_ns);
         self.next_ns += 1;
-        self.names.insert(ns, HashMap::new());
+        self.names
+            .insert(ns, IndexMap::with_hasher(BuildHasherDefault::default()));
 
         self.insert(ns, "", |scheme_id| {
             KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))

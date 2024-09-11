@@ -103,9 +103,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.2.5"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b0b929d511467233429c45a44ac1dcaa21ba0f5ba11e4879e6ed28ddb4f9df4"
+checksum = "68b900aa2f7301e21c36462b170ee99994de34dff39a4a6a528e80e7376d07e5"
 dependencies = [
  "equivalent",
  "hashbrown",
@@ -123,6 +123,7 @@ dependencies = [
  "fdt",
  "goblin",
  "hashbrown",
+ "indexmap",
  "linked_list_allocator 0.9.1",
  "log",
  "raw-cpuid",

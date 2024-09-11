@@ -254,15 +254,16 @@ impl KernelScheme for RootScheme {
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
         {
             let schemes = scheme::schemes();
-            for (name, scheme_id) in schemes
+            for (i, (name, _)) in schemes
                 .iter_name(ens)
-                .filter(|(_, s)| opaque <= s.get() as u64)
+                .enumerate()
+                .skip_while(|(i, _)| (*i as u64) < opaque)
             {
                 buf.entry(DirEntry {
                     kind: DirentKind::Unspecified,
                     name,
                     inode: 0,
-                    next_opaque_id: scheme_id.get() as u64 + 1,
+                    next_opaque_id: i as u64 + 1,
                 })?;
             }
         }
