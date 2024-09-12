@@ -51,7 +51,6 @@ default = [
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",
-  "syscall_debug",
 ]
 
 # Activates some limited code-overwriting optimizations, based on CPU features.
