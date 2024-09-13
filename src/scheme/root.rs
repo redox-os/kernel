@@ -258,6 +258,7 @@ impl KernelScheme for RootScheme {
                 .iter_name(ens)
                 .enumerate()
                 .skip_while(|(i, _)| (*i as u64) < opaque)
+                .filter(|(_, (name, _))| !name.is_empty())
             {
                 buf.entry(DirEntry {
                     kind: DirentKind::Unspecified,
