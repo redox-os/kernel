@@ -49,8 +49,8 @@
 #![feature(naked_functions)]
 #![feature(sync_unsafe_cell)]
 #![feature(variant_count)]
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
 #[macro_use]
 extern crate alloc;
@@ -147,11 +147,7 @@ mod syscall;
 /// Time
 mod time;
 
-/// Tests
-#[cfg(test)]
-mod tests;
-
-#[global_allocator]
+#[cfg_attr(not(test), global_allocator)]
 static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// Get the current CPU's scheduling ID
