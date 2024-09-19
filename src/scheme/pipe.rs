@@ -66,11 +66,17 @@ impl KernelScheme for PipeScheme {
 
         let mut ready = EventFlags::empty();
 
-        if is_writer_not_reader && flags == EVENT_WRITE && pipe.queue.lock().len() <= MAX_QUEUE_SIZE
+        if is_writer_not_reader
+            && flags.contains(EVENT_WRITE)
+            && (pipe.queue.lock().len() <= MAX_QUEUE_SIZE
+                || !pipe.reader_is_alive.load(Ordering::Acquire))
         {
             ready |= EventFlags::EVENT_WRITE;
         }
-        if !is_writer_not_reader && flags == EVENT_READ && !pipe.queue.lock().is_empty() {
+        if !is_writer_not_reader
+            && flags.contains(EVENT_READ)
+            && (!pipe.queue.lock().is_empty() || !pipe.writer_is_alive.load(Ordering::Acquire))
+        {
             ready |= EventFlags::EVENT_READ;
         }
 
