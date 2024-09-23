@@ -91,7 +91,7 @@ unsafe fn inner(
             let flags = A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_DEFAULT_TABLE;
             mapper
                 .table()
-                .set_entry(i, PageEntry::new(phys.data() | flags));
+                .set_entry(i, PageEntry::new(phys.data(), flags));
         }
 
         // Map all physical areas at PHYS_OFFSET
@@ -154,10 +154,7 @@ unsafe fn inner(
             for i in 0..pages {
                 let phys = PhysicalAddress::new(phys + i * A::PAGE_SIZE);
                 let virt = VirtualAddress::new(virt + i * A::PAGE_SIZE);
-                let flags = PageFlags::new()
-                    .write(true)
-                    // Write combining flag
-                    .custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
+                let flags = PageFlags::new().write(true).write_combining(true);
                 let flush = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");

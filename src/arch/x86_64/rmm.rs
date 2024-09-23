@@ -141,10 +141,7 @@ unsafe fn inner(
             for i in 0..pages {
                 let phys = PhysicalAddress::new(phys + i * A::PAGE_SIZE);
                 let virt = VirtualAddress::new(virt + i * A::PAGE_SIZE);
-                let flags = PageFlags::new()
-                    .write(true)
-                    // Write combining flag
-                    .custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
+                let flags = PageFlags::new().write(true).write_combining(true);
                 let flush = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
