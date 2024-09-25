@@ -55,17 +55,9 @@ const PATH_MAX: usize = PAGE_SIZE;
 
 /// Open syscall
 pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
-    let (pid, uid, gid, scheme_ns, umask) = match process::current()?.read() {
-        ref process => (
-            process.pid.into(),
-            process.euid,
-            process.egid,
-            process.ens,
-            process.umask,
-        ),
+    let (pid, uid, gid, scheme_ns) = match process::current()?.read() {
+        ref process => (process.pid.into(), process.euid, process.egid, process.ens),
     };
-
-    let flags = (flags & (!0o777)) | ((flags & 0o777) & (!(umask & 0o777)));
 
     // TODO: BorrowedHtBuf!
 

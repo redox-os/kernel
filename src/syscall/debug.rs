@@ -190,7 +190,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_SETREGID => format!("setregid({}, {})", b, c),
         SYS_SETRENS => format!("setrens({}, {})", b, c),
         SYS_SETREUID => format!("setreuid({}, {})", b, c),
-        SYS_UMASK => format!("umask({:#o}", b),
         SYS_WAITPID => format!("waitpid({}, {:#X}, {:?})", b, c, WaitFlags::from_bits(d)),
         SYS_YIELD => format!("yield()"),
         _ => format!(

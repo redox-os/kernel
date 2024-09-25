@@ -620,18 +620,6 @@ pub fn setpgid(pid: ProcessId, pgid: ProcessId) -> Result<()> {
     }
 }
 
-pub fn umask(mask: usize) -> Result<usize> {
-    let previous;
-    {
-        let process_lock = process::current()?;
-        let mut process = process_lock.write();
-        previous = process.umask;
-        process.umask = mask;
-    }
-
-    Ok(previous)
-}
-
 fn reap(pid: ProcessId) -> Result<ProcessId> {
     let process_lock = Arc::clone(
         process::PROCESSES

@@ -238,7 +238,6 @@ pub fn syscall(
             SYS_SETREUID => setreuid(b as u32, c as u32).map(|()| 0),
             SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
             SYS_SETREGID => setregid(b as u32, c as u32).map(|()| 0),
-            SYS_UMASK => umask(b),
             SYS_VIRTTOPHYS => virttophys(b),
 
             SYS_MREMAP => mremap(b, c, d, e, f),

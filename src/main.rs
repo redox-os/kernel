@@ -213,7 +213,6 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
         egid: 0,
         rns: SchemeNamespace::new(0),
         ens: SchemeNamespace::new(0),
-        umask: 0o22,
     })
     .expect("failed to create init process");
 

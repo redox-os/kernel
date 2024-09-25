@@ -54,8 +54,6 @@ pub struct ProcessInfo {
     pub egid: u32,
     /// The effective namespace id
     pub ens: SchemeNamespace,
-    /// Process umask
-    pub umask: usize,
 }
 impl Deref for Process {
     type Target = ProcessInfo;
