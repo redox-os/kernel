@@ -4,7 +4,9 @@
 
 extern crate syscall;
 
-use syscall::{RwFlags, EINVAL, SIGKILL};
+use core::mem::size_of;
+
+use syscall::{dirent::DirentHeader, RtSigInfo, RwFlags, EINVAL, SIGKILL};
 
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
@@ -103,6 +105,18 @@ pub fn syscall(
                     })
                 }
             }
+            SYS_GETDENTS => {
+                let header_size = u16::try_from(e).map_err(|_| Error::new(EINVAL))?;
+
+                if usize::from(header_size) != size_of::<DirentHeader>() {
+                    // TODO: allow? If so, zero_out must be implemented for UserSlice
+                    return Err(Error::new(EINVAL));
+                }
+
+                file_op_generic(fd, |scheme, number| {
+                    scheme.getdents(number, UserSlice::wo(c, d)?, header_size, f as u64)
+                })
+            }
             SYS_FUTIMENS => file_op_generic(fd, |scheme, number| {
                 scheme.kfutimens(number, UserSlice::ro(c, d)?)
             }),
@@ -186,7 +200,17 @@ pub fn syscall(
             SYS_GETPPID => getppid().map(ProcessId::into),
 
             SYS_EXIT => exit(b),
-            SYS_KILL => kill(ProcessId::from(b), c),
+            SYS_KILL => kill(ProcessId::from(b), c, KillMode::Idempotent),
+            SYS_SIGENQUEUE => kill(
+                ProcessId::from(b),
+                c,
+                KillMode::Queued(unsafe {
+                    UserSlice::ro(d, size_of::<RtSigInfo>())?.read_exact()?
+                }),
+            ),
+            SYS_SIGDEQUEUE => {
+                sigdequeue(UserSlice::wo(b, size_of::<RtSigInfo>())?, c as u32).map(|()| 0)
+            }
             SYS_WAITPID => waitpid(
                 ProcessId::from(b),
                 if c == 0 {
@@ -214,7 +238,6 @@ pub fn syscall(
             SYS_SETREUID => setreuid(b as u32, c as u32).map(|()| 0),
             SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
             SYS_SETREGID => setregid(b as u32, c as u32).map(|()| 0),
-            SYS_UMASK => umask(b),
             SYS_VIRTTOPHYS => virttophys(b),
 
             SYS_MREMAP => mremap(b, c, d, e, f),

@@ -1,14 +1,8 @@
-use core::{
-    cell::SyncUnsafeCell,
-    cmp, mem, slice,
-    sync::atomic::{self, AtomicUsize, Ordering},
-};
+use core::{cell::SyncUnsafeCell, cmp, mem, slice};
 use rmm::{
     Arch, BumpAllocator, MemoryArea, PageFlags, PageMapper, PhysicalAddress, TableKind,
     VirtualAddress, KILOBYTE, MEGABYTE,
 };
-
-use crate::{cpu_set::LogicalCpuId, memory::TheFrameAllocator};
 
 use super::CurrentRmmArch as RmmA;
 
@@ -24,7 +18,7 @@ pub enum BootloaderMemoryKind {
 
 // Keep synced with OsMemoryEntry in bootloader
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct BootloaderMemoryEntry {
     pub base: u64,
     pub size: u64,
@@ -141,10 +135,7 @@ unsafe fn inner(
             for i in 0..pages {
                 let phys = PhysicalAddress::new(phys + i * A::PAGE_SIZE);
                 let virt = VirtualAddress::new(virt + i * A::PAGE_SIZE);
-                let flags = PageFlags::new()
-                    .write(true)
-                    // Write combining flag
-                    .custom_flag(EntryFlags::HUGE_PAGE.bits(), true);
+                let flags = PageFlags::new().write(true).write_combining(true);
                 let flush = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
@@ -190,92 +181,6 @@ pub fn areas() -> &'static [MemoryArea] {
     unsafe { &(&*AREAS.get())[..AREA_COUNT.get().read().into()] }
 }
 
-const NO_PROCESSOR: usize = !0;
-static LOCK_OWNER: AtomicUsize = AtomicUsize::new(NO_PROCESSOR);
-static LOCK_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-// TODO: Support, perhaps via const generics, embedding address checking in PageMapper, thereby
-// statically enforcing that the kernel mapper can only map things in the kernel half, and vice
-// versa.
-/// A guard to the global lock protecting the upper 128 TiB of kernel address space.
-///
-/// NOTE: Use this with great care! Since heap allocations may also require this lock when the heap
-/// needs to be expended, it must not be held while memory allocations are done!
-// TODO: Make the lock finer-grained so that e.g. the heap part can be independent from e.g.
-// PHYS_PML4?
-pub struct KernelMapper {
-    mapper: crate::paging::PageMapper,
-    ro: bool,
-}
-impl KernelMapper {
-    fn lock_inner(current_processor: usize) -> bool {
-        loop {
-            match LOCK_OWNER.compare_exchange_weak(
-                NO_PROCESSOR,
-                current_processor,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                // already owned by this hardware thread
-                Err(id) if id == current_processor => break,
-                // either CAS failed, or some other hardware thread holds the lock
-                Err(_) => core::hint::spin_loop(),
-            }
-        }
-
-        let prev_count = LOCK_COUNT.fetch_add(1, Ordering::Relaxed);
-        atomic::compiler_fence(Ordering::Acquire);
-
-        prev_count > 0
-    }
-    pub unsafe fn lock_for_manual_mapper(
-        current_processor: LogicalCpuId,
-        mapper: crate::paging::PageMapper,
-    ) -> Self {
-        let ro = Self::lock_inner(current_processor.get() as usize);
-        Self { mapper, ro }
-    }
-    pub fn lock_manually(current_processor: LogicalCpuId) -> Self {
-        unsafe {
-            Self::lock_for_manual_mapper(
-                current_processor,
-                PageMapper::current(TableKind::Kernel, TheFrameAllocator),
-            )
-        }
-    }
-    pub fn lock() -> Self {
-        Self::lock_manually(crate::cpu_id())
-    }
-    pub fn get_mut(&mut self) -> Option<&mut crate::paging::PageMapper> {
-        if self.ro {
-            None
-        } else {
-            Some(&mut self.mapper)
-        }
-    }
-}
-impl core::ops::Deref for KernelMapper {
-    type Target = crate::paging::PageMapper;
-
-    fn deref(&self) -> &Self::Target {
-        &self.mapper
-    }
-}
-impl core::ops::DerefMut for KernelMapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.mapper
-    }
-}
-impl Drop for KernelMapper {
-    fn drop(&mut self) {
-        if LOCK_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
-            LOCK_OWNER.store(NO_PROCESSOR, Ordering::Release);
-        }
-        atomic::compiler_fence(Ordering::Release);
-    }
-}
-
 pub unsafe fn init(
     kernel_base: usize,
     kernel_size: usize,
@@ -296,19 +201,19 @@ pub unsafe fn init(
     let real_size = 0x100000;
     let real_end = real_base + real_size;
 
-    let kernel_size_aligned = ((kernel_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let kernel_size_aligned = kernel_size.next_multiple_of(A::PAGE_SIZE);
     let kernel_end = kernel_base + kernel_size_aligned;
 
-    let stack_size_aligned = ((stack_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let stack_size_aligned = stack_size.next_multiple_of(A::PAGE_SIZE);
     let stack_end = stack_base + stack_size_aligned;
 
-    let env_size_aligned = ((env_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let env_size_aligned = env_size.next_multiple_of(A::PAGE_SIZE);
     let env_end = env_base + env_size_aligned;
 
-    let acpi_size_aligned = ((acpi_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let acpi_size_aligned = acpi_size.next_multiple_of(A::PAGE_SIZE);
     let acpi_end = acpi_base + acpi_size_aligned;
 
-    let initfs_size_aligned = ((initfs_size + (A::PAGE_SIZE - 1)) / A::PAGE_SIZE) * A::PAGE_SIZE;
+    let initfs_size_aligned = initfs_size.next_multiple_of(A::PAGE_SIZE);
     let initfs_end = initfs_base + initfs_size_aligned;
 
     let bootloader_areas = slice::from_raw_parts(
@@ -329,7 +234,7 @@ pub unsafe fn init(
         let mut base = bootloader_area.base as usize;
         let mut size = bootloader_area.size as usize;
 
-        log::debug!("{:X}:{:X}", base, size);
+        log::info!("{:X}:{:X}", base, size);
 
         // Page align base
         let base_offset = (A::PAGE_SIZE - (base & A::PAGE_OFFSET_MASK)) & A::PAGE_OFFSET_MASK;

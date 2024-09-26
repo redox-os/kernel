@@ -2,9 +2,7 @@ use core::mem;
 
 use crate::{
     memory::{allocate_p2frame, Frame},
-    paging::{
-        KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE,
-    },
+    paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
 };
 
 use super::{find_sdt, sdt::Sdt};
@@ -14,6 +12,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use crate::{
     device::local_apic::the_local_apic,
     interrupt,
+    memory::KernelMapper,
     start::{kstart_ap, AP_READY, CPU_COUNT},
 };
 
@@ -221,7 +220,7 @@ impl Madt {
 
 /// MADT Local APIC
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct MadtLocalApic {
     /// Processor ID
     pub processor: u8,
@@ -233,7 +232,7 @@ pub struct MadtLocalApic {
 
 /// MADT I/O APIC
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct MadtIoApic {
     /// I/O APIC ID
     pub id: u8,
@@ -247,7 +246,7 @@ pub struct MadtIoApic {
 
 /// MADT Interrupt Source Override
 #[derive(Clone, Copy, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct MadtIntSrcOverride {
     /// Bus Source
     pub bus_source: u8,

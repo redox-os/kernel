@@ -2,8 +2,8 @@ use rmm::VirtualAddress;
 
 use crate::{
     exception_stack,
-    interrupt::stack_trace,
     memory::{ArchIntCtx, GenericPfFlags},
+    panic::stack_trace,
     syscall,
     syscall::flag::*,
 };

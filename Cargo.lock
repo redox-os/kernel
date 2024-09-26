@@ -76,11 +76,8 @@ checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "fdt"
-version = "0.1.0"
-source = "git+https://gitlab.redox-os.org/rosehuds/fdt.git#7358607679114ccab5f97e14894ed3b59c5d42d6"
-dependencies = [
- "byteorder",
-]
+version = "0.2.0-alpha1"
+source = "git+https://github.com/repnop/fdt.git?rev=2fb1409edd1877c714a0aa36b6a7c5351004be54#2fb1409edd1877c714a0aa36b6a7c5351004be54"
 
 [[package]]
 name = "goblin"
@@ -103,9 +100,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.2.5"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b0b929d511467233429c45a44ac1dcaa21ba0f5ba11e4879e6ed28ddb4f9df4"
+checksum = "68b900aa2f7301e21c36462b170ee99994de34dff39a4a6a528e80e7376d07e5"
 dependencies = [
  "equivalent",
  "hashbrown",
@@ -123,6 +120,7 @@ dependencies = [
  "fdt",
  "goblin",
  "hashbrown",
+ "indexmap",
  "linked_list_allocator 0.9.1",
  "log",
  "raw-cpuid",
@@ -226,7 +224,7 @@ checksum = "64072665120942deff5fd5425d6c1811b854f4939e7f1c01ce755f64432bbea7"
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.3"
+version = "0.5.6"
 dependencies = [
  "bitflags 2.4.2",
 ]

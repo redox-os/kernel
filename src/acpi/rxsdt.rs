@@ -1,6 +1,5 @@
+use crate::memory::KernelMapper;
 use alloc::boxed::Box;
-
-use crate::paging::KernelMapper;
 
 use super::get_sdt;
 

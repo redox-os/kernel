@@ -1,6 +1,8 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
+mod kernel_mapper;
+
 use core::{
     cell::SyncUnsafeCell,
     mem,
@@ -8,6 +10,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+pub use kernel_mapper::KernelMapper;
 use spin::Mutex;
 
 pub use crate::paging::{PhysicalAddress, RmmA, RmmArch, PAGE_MASK, PAGE_SIZE};

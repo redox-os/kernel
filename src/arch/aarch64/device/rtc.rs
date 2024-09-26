@@ -1,8 +1,8 @@
 use core::ptr::read_volatile;
 
 use crate::{
-    memory::Frame,
-    paging::{KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress},
+    memory::{Frame, KernelMapper},
+    paging::{Page, PageFlags, PhysicalAddress, VirtualAddress},
     time,
 };
 

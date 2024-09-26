@@ -5,7 +5,7 @@ use crate::{memory::ArchIntCtx, syscall::IntRegisters};
 use super::super::flags::*;
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ScratchRegisters {
     pub edx: usize,
     pub ecx: usize,
@@ -21,7 +21,7 @@ impl ScratchRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct PreservedRegisters {
     pub ebp: usize,
     pub esi: usize,
@@ -39,7 +39,7 @@ impl PreservedRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct IretRegisters {
     pub eip: usize,
     pub cs: usize,
@@ -67,7 +67,7 @@ impl IretRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct InterruptStack {
     pub gs: usize,
     pub preserved: PreservedRegisters,
@@ -177,7 +177,7 @@ impl InterruptStack {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct InterruptErrorStack {
     pub code: usize,
     pub inner: InterruptStack,

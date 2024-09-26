@@ -10,7 +10,7 @@ pub mod uart_pl011;
 pub unsafe fn init() {
     info!("IRQCHIP INIT");
     let data = DTB_BINARY.get().unwrap();
-    let fdt = fdt::DeviceTree::new(data).unwrap();
+    let fdt = fdt::Fdt::new(data).unwrap();
     irqchip::init(&fdt);
     info!("GIT INIT");
     generic_timer::init();

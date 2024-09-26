@@ -1,10 +1,7 @@
 use core::ptr::{read_volatile, write_volatile};
+use fdt::{node::FdtNode, Fdt};
 
-use byteorder::{ByteOrder, BE};
-use fdt::{DeviceTree, Node};
-
-use crate::init::device_tree::find_compatible_node;
-use log::{debug, info};
+use log::info;
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -46,30 +43,29 @@ impl GenericInterruptController {
             irq_range: (0, 0),
         }
     }
-    pub fn parse(fdt: &DeviceTree) -> Result<(usize, usize, usize, usize)> {
-        if let Some(node) = find_compatible_node(fdt, "arm,cortex-a15-gic") {
+    pub fn parse(fdt: &Fdt) -> Result<(usize, usize, usize, usize)> {
+        if let Some(node) = fdt.find_compatible(&["arm,cortex-a15-gic"]) {
             return GenericInterruptController::parse_inner(&node);
         } else {
             return Err(Error::new(EINVAL));
         }
     }
-    fn parse_inner(node: &Node) -> Result<(usize, usize, usize, usize)> {
+    fn parse_inner(node: &FdtNode) -> Result<(usize, usize, usize, usize)> {
         //assert address_cells == 0x2, size_cells == 0x2
-        let reg = node.properties().find(|p| p.name.contains("reg")).unwrap();
+        let reg = node.reg().unwrap();
         let mut regs = (0, 0, 0, 0);
         let mut idx = 0;
 
-        for chunk in reg.data.chunks(8) {
-            let val = BE::read_u64(chunk) as usize;
-            debug!("idx{} = {:08x}", idx, val);
+        for chunk in reg {
+            if chunk.size.is_none() {
+                break;
+            }
             match idx {
-                0 => regs.0 = val,
-                1 => regs.1 = val,
-                2 => regs.2 = val,
-                3 => regs.3 = val,
+                0 => (regs.0, regs.1) = (chunk.starting_address as usize, chunk.size.unwrap()),
+                2 => (regs.2, regs.3) = (chunk.starting_address as usize, chunk.size.unwrap()),
                 _ => break,
             }
-            idx += 1;
+            idx += 2;
         }
 
         if idx == 4 {
@@ -83,7 +79,7 @@ impl GenericInterruptController {
 impl InterruptController for GenericInterruptController {
     fn irq_init(
         &mut self,
-        fdt: &DeviceTree,
+        fdt: &Fdt,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,

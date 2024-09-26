@@ -1,11 +1,10 @@
+use crate::memory::KernelMapper;
 use core::{
     alloc::{GlobalAlloc, Layout},
     ptr::{self, NonNull},
 };
 use linked_list_allocator::Heap;
 use spin::Mutex;
-
-use crate::paging::KernelMapper;
 
 static HEAP: Mutex<Option<Heap>> = Mutex::new(None);
 

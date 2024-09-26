@@ -3,13 +3,13 @@ use core::{mem, ptr};
 use core::ptr::{read_volatile, write_volatile};
 
 use crate::{
-    memory::Frame,
-    paging::{entry::EntryFlags, KernelMapper, PageFlags, PhysicalAddress},
+    memory::{Frame, KernelMapper},
+    paging::{entry::EntryFlags, PageFlags, PhysicalAddress},
 };
 
 use super::{find_sdt, sdt::Sdt, ACPI_TABLE};
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GenericAddressStructure {
     _address_space: u8,
@@ -19,7 +19,7 @@ pub struct GenericAddressStructure {
     pub address: u64,
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
 pub struct Hpet {
     pub header: Sdt,

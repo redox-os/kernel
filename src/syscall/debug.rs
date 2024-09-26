@@ -190,7 +190,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_SETREGID => format!("setregid({}, {})", b, c),
         SYS_SETRENS => format!("setrens({}, {})", b, c),
         SYS_SETREUID => format!("setreuid({}, {})", b, c),
-        SYS_UMASK => format!("umask({:#o}", b),
         SYS_WAITPID => format!("waitpid({}, {:#X}, {:?})", b, c, WaitFlags::from_bits(d)),
         SYS_YIELD => format!("yield()"),
         _ => format!(
@@ -219,7 +218,7 @@ impl SyscallDebugInfo {
 }
 #[cfg(feature = "syscall_debug")]
 pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
-    let do_debug = if crate::context::current().read().name.contains("sigchld") {
+    let do_debug = if false && crate::context::current().read().name.contains("acpid") {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
         } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {

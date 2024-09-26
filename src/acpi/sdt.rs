@@ -1,7 +1,7 @@
 use core::mem;
 
 #[derive(Copy, Clone, Debug)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct Sdt {
     pub signature: [u8; 4],
     pub length: u32,

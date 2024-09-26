@@ -1,7 +1,7 @@
 use crate::syscall::IntRegisters;
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct ScratchRegisters {
     pub x0: usize,
     pub x1: usize,
@@ -56,7 +56,7 @@ impl ScratchRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct PreservedRegisters {
     //TODO: is X30 a preserved register?
     pub x19: usize,
@@ -91,7 +91,7 @@ impl PreservedRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct IretRegisters {
     // occurred
     // The exception vector disambiguates at which EL the interrupt
@@ -111,7 +111,7 @@ impl IretRegisters {
 }
 
 #[derive(Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct InterruptStack {
     pub iret: IretRegisters,
     pub scratch: ScratchRegisters,

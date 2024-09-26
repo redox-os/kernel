@@ -13,11 +13,11 @@ use crate::{
     scheme::{self, FileHandle, KernelScheme},
     syscall::{
         self,
-        data::{GrantDesc, Map, PtraceEvent, SetSighandlerData, Stat},
+        data::{GrantDesc, Map, PtraceEvent, SenderInfo, SetSighandlerData, Stat},
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
-        EnvRegisters, FloatRegisters, IntRegisters, KillTarget,
+        EnvRegisters, FloatRegisters, IntRegisters, KillMode, KillTarget,
     },
 };
 
@@ -585,7 +585,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 ptrace::close_session(pid);
 
                 if excl {
-                    syscall::kill(pid, SIGKILL)?;
+                    syscall::kill(pid, SIGKILL, KillMode::Idempotent)?;
                 }
 
                 let threads = process.read().threads.clone();
@@ -1326,6 +1326,7 @@ impl ContextHandle {
                         proc_control: addrsp.borrow_frame_enforce_rw_allocated(
                             Page::containing_address(VirtualAddress::new(data.proc_control_addr)),
                         )?,
+                        rtqs: Vec::new(),
                     })
                 } else {
                     None
@@ -1437,7 +1438,9 @@ impl ContextHandle {
                 Ok(mem::size_of_val(&mask))
             }
             ContextHandle::Status => {
-                let user_data = buf.read_usize()?;
+                let mut args = buf.usizes();
+
+                let user_data = args.next().ok_or(Error::new(EINVAL))??;
                 if user_data != usize::MAX {
                     // TODO: lwp_park/lwp_unpark?
                     return Err(Error::new(EOPNOTSUPP));
@@ -1459,19 +1462,50 @@ impl ContextHandle {
                 if is_current {
                     crate::syscall::exit_this_context();
                 } else {
-                    crate::syscall::wait_for_exit(context);
+                    crate::syscall::wait_for_exit(Arc::clone(&context));
                 }
+                // The following functionality simplifies the cleanup step when detached threads
+                // terminate.
+                if let Some(post_unmap) = args.next() {
+                    let base = post_unmap?;
+                    let size = args.next().ok_or(Error::new(EINVAL))??;
 
-                Ok(mem::size_of::<usize>())
+                    if size == 0 {
+                        return Ok(3 * mem::size_of::<usize>());
+                    }
+
+                    let addrsp = Arc::clone(context.read().addr_space()?);
+                    let res = addrsp.munmap(
+                        PageSpan::validate_nonempty(VirtualAddress::new(base), size)
+                            .ok_or(Error::new(EINVAL))?,
+                        false,
+                    )?;
+                    for r in res {
+                        let _ = r.unmap();
+                    }
+                    Ok(3 * mem::size_of::<usize>())
+                } else {
+                    Ok(mem::size_of::<usize>())
+                }
             }
             ContextHandle::Signal => {
+                let me = {
+                    let p = process::current()?;
+                    let p = p.read();
+                    SenderInfo {
+                        pid: p.pid.get().try_into().unwrap_or(0),
+                        ruid: p.ruid,
+                    }
+                };
                 let sig = buf.read_u32()?;
                 let mut killed_self = false;
                 crate::syscall::process::send_signal(
                     KillTarget::Thread(context),
                     sig as usize,
+                    KillMode::Idempotent,
                     false,
                     &mut killed_self,
+                    me,
                 )?;
                 if killed_self {
                     Err(Error::new(EINTR))

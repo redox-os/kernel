@@ -8,7 +8,10 @@ use spin::{Once, RwLock};
 
 use log::info;
 
-use crate::paging::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch};
+use crate::{
+    memory::KernelMapper,
+    paging::{PageFlags, PhysicalAddress, RmmA, RmmArch},
+};
 
 use self::{hpet::Hpet, madt::Madt, rsdp::RSDP, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
 

@@ -1,8 +1,8 @@
 use x86::irq::PageFaultError;
 
 use crate::{
-    interrupt::stack_trace, interrupt_error, interrupt_stack, ksignal, memory::GenericPfFlags,
-    paging::VirtualAddress, ptrace, syscall::flag::*,
+    interrupt_error, interrupt_stack, ksignal, memory::GenericPfFlags, paging::VirtualAddress,
+    panic::stack_trace, ptrace, syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {

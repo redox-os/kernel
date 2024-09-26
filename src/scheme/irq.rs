@@ -10,6 +10,7 @@ use core::{
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use spin::{Mutex, Once, RwLock};
+use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
 use crate::{
     arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved},
@@ -68,8 +69,8 @@ pub extern "C" fn irq_trigger(irq: u8) {
 
 enum Handle {
     Irq { ack: AtomicUsize, irq: u8 },
-    Avail(u8, Vec<u8>), // CPU id, data, offset
-    TopLevel(Vec<u8>),  // data, offset
+    Avail(u8), // CPU id
+    TopLevel,
     Bsp,
 }
 impl Handle {
@@ -175,27 +176,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 return Err(Error::new(EISDIR));
             }
 
-            // list every logical CPU in the format of e.g. `cpu-1b`
-
-            let mut bytes = String::new();
-
-            use core::fmt::Write;
-
-            for cpu_id in CPUS.get().expect("IRQ scheme not initialized") {
-                writeln!(bytes, "cpu-{:02x}", cpu_id).unwrap();
-            }
-
-            if bsp_apic_id().is_some() {
-                writeln!(bytes, "bsp").unwrap();
-            }
-
-            // TODO: When signals are used for IRQs, there will probably also be a file
-            // `irq:signal` that maps IRQ numbers and their source APIC IDs to signal numbers.
-
-            (
-                Handle::TopLevel(bytes.into_bytes()),
-                InternalFlags::POSITIONED,
-            )
+            (Handle::TopLevel, InternalFlags::POSITIONED)
         } else {
             if path_str == "bsp" {
                 if bsp_apic_id().is_none() {
@@ -208,21 +189,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 let path_str = path_str[2..].trim_end_matches('/');
 
                 if path_str.is_empty() {
-                    let mut data = String::new();
-                    use core::fmt::Write;
-
-                    for vector in available_irqs_iter(LogicalCpuId::new(cpu_id.into())) {
-                        let irq = vector_to_irq(vector);
-                        if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
-                            continue;
-                        }
-                        writeln!(data, "{}", irq).unwrap();
-                    }
-
-                    (
-                        Handle::Avail(cpu_id, data.into_bytes()),
-                        InternalFlags::POSITIONED,
-                    )
+                    (Handle::Avail(cpu_id), InternalFlags::POSITIONED)
                 } else if path_str.starts_with('/') {
                     let path_str = &path_str[1..];
                     Self::open_ext_irq(flags, cpu_id, path_str)?
@@ -249,15 +216,66 @@ impl crate::scheme::KernelScheme for IrqScheme {
         HANDLES.write().insert(fd, handle);
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
+    fn getdents(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        header_size: u16,
+        opaque_id_start: u64,
+    ) -> Result<usize> {
+        let Ok(opaque) = usize::try_from(opaque_id_start) else {
+            return Ok(0);
+        };
 
-    fn fsize(&self, id: usize) -> Result<u64> {
-        let handles_guard = HANDLES.read();
-        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
+        use core::fmt::Write;
 
-        match *handle {
-            Handle::Avail(_, ref buf) | Handle::TopLevel(ref buf) => Ok(buf.len() as u64),
-            _ => Err(Error::new(ESPIPE)),
+        let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
+        let mut intermediate = String::new();
+
+        match *HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+            Handle::TopLevel => {
+                let cpus = CPUS.get().expect("IRQ scheme not initialized");
+
+                if bsp_apic_id().is_some() && opaque == 0 {
+                    buf.entry(DirEntry {
+                        inode: 0,
+                        next_opaque_id: 1,
+                        kind: DirentKind::CharDev,
+                        name: "bsp",
+                    })?;
+                }
+
+                // list every logical CPU in the format of e.g. `cpu-1b`
+                for cpu_id in cpus.iter().filter(|i| opaque <= usize::from(**i)) {
+                    intermediate.clear();
+                    write!(&mut intermediate, "cpu-{:02x}", cpu_id).unwrap();
+                    buf.entry(DirEntry {
+                        kind: DirentKind::Directory,
+                        name: &intermediate,
+                        inode: 0,
+                        next_opaque_id: u64::from(*cpu_id + 1),
+                    })?;
+                }
+            }
+            Handle::Avail(cpu_id) => {
+                for vector in available_irqs_iter(LogicalCpuId::new(cpu_id.into())).skip(opaque) {
+                    let irq = vector_to_irq(vector);
+                    if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
+                        continue;
+                    }
+                    intermediate.clear();
+                    write!(intermediate, "{}", irq).unwrap();
+                    buf.entry(DirEntry {
+                        inode: 0,
+                        kind: DirentKind::CharDev,
+                        name: &intermediate,
+                        next_opaque_id: u64::from(vector) + 1,
+                    })?;
+                }
+            }
+            _ => return Err(Error::new(ENOTDIR)),
         }
+        Ok(buf.finalize())
     }
 
     fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
@@ -345,16 +363,16 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 st_nlink: 1,
                 ..Default::default()
             },
-            Handle::Avail(cpu_id, ref buf) => Stat {
+            Handle::Avail(cpu_id) => Stat {
                 st_mode: MODE_DIR | 0o700,
-                st_size: buf.len() as u64,
+                st_size: 0,
                 st_ino: INO_AVAIL | u64::from(cpu_id) << 32,
                 st_nlink: 2,
                 ..Default::default()
             },
-            Handle::TopLevel(ref buf) => Stat {
+            Handle::TopLevel => Stat {
                 st_mode: MODE_DIR | 0o500,
-                st_size: buf.len() as u64,
+                st_size: 0,
                 st_ino: INO_TOPLEVEL,
                 st_nlink: 1,
                 ..Default::default()
@@ -370,8 +388,8 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let scheme_path = match handle {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
             Handle::Bsp => format!("irq:bsp"),
-            Handle::Avail(cpu_id, _) => format!("irq:cpu-{:2x}", cpu_id),
-            Handle::TopLevel(_) => format!("irq:"),
+            Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id),
+            Handle::TopLevel => format!("irq:"),
         }
         .into_bytes();
 
@@ -381,7 +399,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         &self,
         file: usize,
         buffer: UserSliceWo,
-        offset: u64,
+        _offset: u64,
         _flags: u32,
         _stored_flags: u32,
     ) -> Result<usize> {
@@ -416,13 +434,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     Err(Error::new(EBADFD))
                 }
             }
-            Handle::Avail(_, ref buf) | Handle::TopLevel(ref buf) => {
-                let src = usize::try_from(offset)
-                    .ok()
-                    .and_then(|o| buf.get(o..))
-                    .unwrap_or(&[]);
-                buffer.copy_common_bytes_from_slice(src)
-            }
+            Handle::Avail(_) | Handle::TopLevel => Err(Error::new(EISDIR)),
         }
     }
 }

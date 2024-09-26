@@ -42,16 +42,16 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 #![feature(allocator_api)]
-#![feature(asm_const)] // TODO: Relax requirements of most asm invocations
+#![feature(asm_const)]
+#![feature(core_intrinsics)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
-#![feature(new_uninit)]
 #![feature(sync_unsafe_cell)]
 #![feature(variant_count)]
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
 #[macro_use]
 extern crate alloc;
@@ -124,7 +124,6 @@ use spinning_top::RwSpinlock;
 mod memory;
 
 /// Panic
-#[cfg(not(test))]
 mod panic;
 
 mod percpu;
@@ -148,11 +147,7 @@ mod syscall;
 /// Time
 mod time;
 
-/// Tests
-#[cfg(test)]
-mod tests;
-
-#[global_allocator]
+#[cfg_attr(not(test), global_allocator)]
 static ALLOCATOR: allocator::Allocator = allocator::Allocator;
 
 /// Get the current CPU's scheduling ID
@@ -217,7 +212,6 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
         egid: 0,
         rns: SchemeNamespace::new(0),
         ens: SchemeNamespace::new(0),
-        umask: 0o22,
     })
     .expect("failed to create init process");
 

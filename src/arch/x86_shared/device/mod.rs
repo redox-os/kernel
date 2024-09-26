@@ -1,3 +1,5 @@
+use crate::memory::KernelMapper;
+
 pub mod cpu;
 #[cfg(feature = "acpi")]
 pub mod hpet;
@@ -12,8 +14,6 @@ pub mod system76_ec;
 
 #[cfg(feature = "x86_kvm_pv")]
 pub mod tsc;
-
-use crate::paging::KernelMapper;
 
 pub unsafe fn init() {
     pic::init();
