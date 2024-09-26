@@ -57,7 +57,7 @@ impl Madt {
 
             if cfg!(feature = "multi_core") {
                 // Map trampoline
-                let trampoline_frame = Frame::containing_address(PhysicalAddress::new(TRAMPOLINE));
+                let trampoline_frame = Frame::containing(PhysicalAddress::new(TRAMPOLINE));
                 let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
                 let (result, page_table_physaddr) = unsafe {
                     //TODO: do not have writable and executable!
@@ -66,7 +66,7 @@ impl Madt {
                     let result = mapper
                         .get_mut()
                         .expect("expected kernel page table not to be recursively locked while initializing MADT")
-                        .map_phys(trampoline_page.start_address(), trampoline_frame.start_address(), PageFlags::new().execute(true).write(true))
+                        .map_phys(trampoline_page.start_address(), trampoline_frame.base(), PageFlags::new().execute(true).write(true))
                         .expect("failed to map trampoline");
 
                     (result, mapper.table().phys().data())
@@ -95,7 +95,7 @@ impl Madt {
                                     // Allocate a stack
                                     let stack_start = allocate_p2frame(4)
                                         .expect("no more frames in acpi stack_start")
-                                        .start_address()
+                                        .base()
                                         .data()
                                         + crate::PHYS_OFFSET;
                                     let stack_end = stack_start + (PAGE_SIZE << 4);

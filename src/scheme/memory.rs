@@ -165,7 +165,7 @@ impl MemoryScheme {
                 }
 
                 Grant::physmap(
-                    Frame::containing_address(PhysicalAddress::new(physical_address)),
+                    Frame::containing(PhysicalAddress::new(physical_address)),
                     PageSpan::new(dst_page, page_count.get()),
                     page_flags,
                     dst_mapper,

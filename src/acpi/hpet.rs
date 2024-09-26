@@ -70,7 +70,7 @@ impl GenericAddressStructure {
     pub unsafe fn init(&self, mapper: &mut KernelMapper) {
         use crate::paging::{Page, VirtualAddress};
 
-        let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
+        let frame = Frame::containing(PhysicalAddress::new(self.address as usize));
         let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
 
         mapper
@@ -80,7 +80,7 @@ impl GenericAddressStructure {
             )
             .map_phys(
                 page.start_address(),
-                frame.start_address(),
+                frame.base(),
                 PageFlags::new()
                     .write(true)
                     .custom_flag(EntryFlags::NO_CACHE.bits(), true),
@@ -101,14 +101,14 @@ impl GenericAddressStructure {
 #[cfg(not(target_arch = "x86"))]
 impl GenericAddressStructure {
     pub unsafe fn init(&self, mapper: &mut KernelMapper) {
-        let frame = Frame::containing_address(PhysicalAddress::new(self.address as usize));
+        let frame = Frame::containing(PhysicalAddress::new(self.address as usize));
         let (_, result) = mapper
             .get_mut()
             .expect(
                 "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
             )
             .map_linearly(
-                frame.start_address(),
+                frame.base(),
                 PageFlags::new()
                     .write(true)
                     .custom_flag(EntryFlags::NO_CACHE.bits(), true),

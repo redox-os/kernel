@@ -1038,7 +1038,7 @@ impl UserInner {
                     } => context.status = Status::Runnable,
                     _ => (),
                 }
-                context.fmap_ret = Some(Frame::containing_address(frame));
+                context.fmap_ret = Some(Frame::containing(frame));
             }
             ParsedCqe::TriggerFevent { number, flags } => {
                 event::trigger(self.scheme_id, number, flags)

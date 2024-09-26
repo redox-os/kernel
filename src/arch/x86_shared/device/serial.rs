@@ -28,8 +28,7 @@ pub unsafe fn init() {
 
             let mut active_table = ActivePageTable::new();
             let page = Page::containing_address(VirtualAddress::new(address));
-            let frame =
-                Frame::containing_address(PhysicalAddress::new(address - crate::PHYS_OFFSET));
+            let frame = Frame::containing(PhysicalAddress::new(address - crate::PHYS_OFFSET));
             let result = active_table.map_to(
                 page,
                 frame,

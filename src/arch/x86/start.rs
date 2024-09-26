@@ -203,7 +203,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         BSP_READY.store(true, Ordering::SeqCst);
 
         crate::Bootstrap {
-            base: crate::memory::Frame::containing_address(crate::paging::PhysicalAddress::new(
+            base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
                 args.bootstrap_base as usize,
             )),
             page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,

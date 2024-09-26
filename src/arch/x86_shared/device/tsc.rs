@@ -130,12 +130,9 @@ pub unsafe fn init() -> bool {
             .contains(KvmFeatureBits::CLOCKSOURCE2 | KvmFeatureBits::CLOCKSOURCE_STABLE)
     {
         let frame = allocate_frame().expect("failed to allocate timer page");
-        x86::msr::wrmsr(
-            MSR_KVM_SYSTEM_TIME_NEW,
-            (frame.start_address().data() as u64) | 1,
-        );
-        let ptr = crate::paging::RmmA::phys_to_virt(frame.start_address()).data()
-            as *const PvclockVcpuTimeInfo;
+        x86::msr::wrmsr(MSR_KVM_SYSTEM_TIME_NEW, (frame.base().data() as u64) | 1);
+        let ptr =
+            crate::paging::RmmA::phys_to_virt(frame.base()).data() as *const PvclockVcpuTimeInfo;
         PercpuBlock::current()
             .misc_arch_info
             .tsc_info

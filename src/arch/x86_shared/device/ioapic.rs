@@ -233,11 +233,11 @@ pub fn src_overrides() -> &'static [Override] {
 pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static MadtIoApic) {
     // map the I/O APIC registers
 
-    let frame = Frame::containing_address(PhysicalAddress::new(madt_ioapic.address as usize));
+    let frame = Frame::containing(PhysicalAddress::new(madt_ioapic.address as usize));
     #[cfg(target_arch = "x86")]
     let page = Page::containing_address(rmm::VirtualAddress::new(crate::IOAPIC_OFFSET));
     #[cfg(target_arch = "x86_64")]
-    let page = Page::containing_address(RmmA::phys_to_virt(frame.start_address()));
+    let page = Page::containing_address(RmmA::phys_to_virt(frame.base()));
 
     assert!(mapper.translate(page.start_address()).is_none());
 
@@ -246,7 +246,7 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static Mad
         .expect("expected KernelMapper not to be locked re-entrant while mapping I/O APIC memory")
         .map_phys(
             page.start_address(),
-            frame.start_address(),
+            frame.base(),
             PageFlags::new()
                 .write(true)
                 .custom_flag(EntryFlags::NO_CACHE.bits(), true),

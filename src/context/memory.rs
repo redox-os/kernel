@@ -1127,7 +1127,7 @@ impl Grant {
 
         unsafe {
             mapper
-                .map_phys(page.start_address(), frame.start_address(), flags)
+                .map_phys(page.start_address(), frame.base(), flags)
                 .ok_or(Error::new(ENOMEM))?
                 .ignore();
 
@@ -1166,11 +1166,9 @@ impl Grant {
         for (i, page) in span.pages().enumerate().take(MAX_EAGER_PAGES) {
             let frame = phys.next_by(i);
             unsafe {
-                let Some(result) = mapper.map_phys(
-                    page.start_address(),
-                    frame.start_address(),
-                    flags.write(false),
-                ) else {
+                let Some(result) =
+                    mapper.map_phys(page.start_address(), frame.base(), flags.write(false))
+                else {
                     break;
                 };
                 result.ignore();
@@ -1212,7 +1210,7 @@ impl Grant {
 
             unsafe {
                 let result = mapper
-                    .map_phys(page.start_address(), frame.start_address(), flags)
+                    .map_phys(page.start_address(), frame.base(), flags)
                     .expect("TODO: page table OOM");
                 result.ignore();
 
@@ -1254,11 +1252,9 @@ impl Grant {
                     .add_ref(RefKind::Cow)
                     .expect("the static zeroed frame cannot be shared!");
 
-                let Some(result) = mapper.map_phys(
-                    page.start_address(),
-                    the_frame.start_address(),
-                    flags.write(false),
-                ) else {
+                let Some(result) =
+                    mapper.map_phys(page.start_address(), the_frame.base(), flags.write(false))
+                else {
                     break;
                 };
                 result.ignore();
@@ -1337,7 +1333,7 @@ impl Grant {
                             .utable
                             .translate(src_page.start_address())
                         {
-                            Some((phys, _)) => Frame::containing_address(phys),
+                            Some((phys, _)) => Frame::containing(phys),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
                                 let (frame, _, new_guard) = correct_inner(
@@ -1361,7 +1357,7 @@ impl Grant {
                             .utable
                             .remap_with(src_page.start_address(), |flags| flags.write(false))
                         {
-                            Some((_, phys, _)) => Frame::containing_address(phys),
+                            Some((_, phys, _)) => Frame::containing(phys),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
                                 let (frame, _, new_guard) = correct_inner(
@@ -1396,7 +1392,7 @@ impl Grant {
                                 .table
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, flags| {
-                                    (new_cow_frame.start_address(), flags)
+                                    (new_cow_frame.base(), flags)
                                 })
                                 .expect("page did exist");
 
@@ -1436,7 +1432,7 @@ impl Grant {
                     let flush = mapper
                         .map_phys(
                             dst_page.start_address(),
-                            frame.start_address(),
+                            frame.base(),
                             new_flags.write(new_flags.has_write() && !is_cow),
                         )
                         .unwrap();
@@ -1547,7 +1543,7 @@ impl Grant {
                     continue;
                 };
 
-                let writable = match get_page_info(Frame::containing_address(phys)) {
+                let writable = match get_page_info(Frame::containing(phys)) {
                     None => true,
                     Some(i) => {
                         if i.add_ref(RefKind::Shared).is_err() {
@@ -1569,7 +1565,7 @@ impl Grant {
                     flush.ignore();
 
                     dst_flusher.queue(
-                        Frame::containing_address(phys),
+                        Frame::containing(phys),
                         None,
                         TlbShootdownActions::NEW_MAPPING,
                     );
@@ -1627,23 +1623,19 @@ impl Grant {
                     unsafe {
                         flush.ignore();
                     }
-                    let frame = Frame::containing_address(phys);
+                    let frame = Frame::containing(phys);
                     src_flusher.queue(frame, None, TlbShootdownActions::REVOKE_WRITE);
                     frame
                 }
                 RefKind::Shared => {
                     if let Some((phys, _)) = src_mapper.translate(src_page.start_address()) {
-                        Frame::containing_address(phys)
+                        Frame::containing(phys)
                     } else {
                         // TODO: Omit the unnecessary subsequent add_ref call.
                         let new_frame = init_frame(RefCount::One).expect("TODO: handle OOM");
                         let src_flush = unsafe {
                             src_mapper
-                                .map_phys(
-                                    src_page.start_address(),
-                                    new_frame.start_address(),
-                                    flags,
-                                )
+                                .map_phys(src_page.start_address(), new_frame.base(), flags)
                                 .expect("TODO: handle OOM")
                         };
                         unsafe {
@@ -1675,7 +1667,7 @@ impl Grant {
                         unsafe {
                             if let Some((_flags, phys, flush)) = src_mapper
                                 .remap_with_full(src_page.start_address(), |_, f| {
-                                    (new_frame.start_address(), f)
+                                    (new_frame.base(), f)
                                 })
                             {
                                 // TODO: flush.ignore() is correct, but seems to be amplifying a
@@ -1686,7 +1678,7 @@ impl Grant {
 
                                 // FIXME: Is MOVE correct?
                                 src_flusher.queue(
-                                    Frame::containing_address(phys),
+                                    Frame::containing(phys),
                                     None,
                                     TlbShootdownActions::MOVE,
                                 );
@@ -1720,7 +1712,7 @@ impl Grant {
             let Some(map_result) = (unsafe {
                 dst_mapper.map_phys(
                     dst_page,
-                    src_frame.start_address(),
+                    src_frame.base(),
                     flags.write(flags.has_write() && allows_writable),
                 )
             }) else {
@@ -1777,11 +1769,7 @@ impl Grant {
             unsafe {
                 flush.ignore();
             }
-            src_flusher.queue(
-                Frame::containing_address(phys),
-                None,
-                TlbShootdownActions::MOVE,
-            );
+            src_flusher.queue(Frame::containing(phys), None, TlbShootdownActions::MOVE);
 
             let dst_mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
 
@@ -1795,7 +1783,7 @@ impl Grant {
                 flush.ignore();
             }
             dst_flusher.queue(
-                Frame::containing_address(phys),
+                Frame::containing(phys),
                 None,
                 TlbShootdownActions::NEW_MAPPING,
             );
@@ -1823,9 +1811,9 @@ impl Grant {
                     continue;
                 };
                 flush.ignore();
-                //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing_address(mapper.translate(page.start_address()).unwrap().0));
+                //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing(mapper.translate(page.start_address()).unwrap().0));
                 flusher.queue(
-                    Frame::containing_address(phys),
+                    Frame::containing(phys),
                     None,
                     TlbShootdownActions::change_of_flags(old_flags, flags),
                 );
@@ -1888,7 +1876,7 @@ impl Grant {
 
         if is_phys_contiguous {
             let (phys_base, _) = mapper.translate(self.base.start_address()).unwrap();
-            let base_frame = Frame::containing_address(phys_base);
+            let base_frame = Frame::containing(phys_base);
 
             for i in 0..self.info.page_count {
                 unsafe {
@@ -1897,7 +1885,7 @@ impl Grant {
                         .expect("all physborrowed grants must be fully Present in the page tables");
                     flush.ignore();
 
-                    assert_eq!(phys, base_frame.next_by(i).start_address());
+                    assert_eq!(phys, base_frame.next_by(i).base());
                 }
             }
 
@@ -1918,11 +1906,7 @@ impl Grant {
                     flush.ignore();
                 }
 
-                flusher.queue(
-                    Frame::containing_address(phys),
-                    None,
-                    TlbShootdownActions::FREE,
-                );
+                flusher.queue(Frame::containing(phys), None, TlbShootdownActions::FREE);
             }
         }
 
@@ -2269,7 +2253,7 @@ impl Drop for Table {
             }
         }
         unsafe {
-            deallocate_frame(Frame::containing_address(self.utable.table().phys()));
+            deallocate_frame(Frame::containing(self.utable.table().phys()));
         }
     }
 }
@@ -2435,7 +2419,7 @@ fn map_zeroed(
 
     unsafe {
         mapper
-            .map_phys(page.start_address(), new_frame.start_address(), page_flags)
+            .map_phys(page.start_address(), new_frame.base(), page_flags)
             .ok_or(PfError::Oom)?
             .ignore();
     }
@@ -2449,8 +2433,8 @@ pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
     // TODO: For new frames, when the kernel's linear phys=>virt mappings are 4k, this is almost
     // guaranteed to cause either one (or two) TLB misses.
 
-    let dst = unsafe { RmmA::phys_to_virt(dst.start_address()).data() as *mut u8 };
-    let src = unsafe { RmmA::phys_to_virt(src.start_address()).data() as *const u8 };
+    let dst = unsafe { RmmA::phys_to_virt(dst.base()).data() as *mut u8 };
+    let src = unsafe { RmmA::phys_to_virt(src.base()).data() as *const u8 };
 
     unsafe {
         dst.copy_from_nonoverlapping(src, PAGE_SIZE);
@@ -2511,7 +2495,7 @@ fn correct_inner<'l>(
         .table
         .utable
         .translate(faulting_page.start_address())
-        .map(|(phys, _page_flags)| Frame::containing_address(phys));
+        .map(|(phys, _page_flags)| Frame::containing(phys));
     let faulting_pageinfo_opt = faulting_frame_opt.map(|frame| (frame, get_page_info(frame)));
 
     // TODO: Aligned readahead? AMD Zen3+ CPUs can smash 4 4k pages that are 16k-aligned, into a
@@ -2594,7 +2578,7 @@ fn correct_inner<'l>(
                 let src_frame = if let Some((phys, _)) =
                     guard.table.utable.translate(src_page.start_address())
                 {
-                    Frame::containing_address(phys)
+                    Frame::containing(phys)
                 } else {
                     // Grant was valid (TODO check), but we need to correct the underlying page.
                     // TODO: Access mode
@@ -2654,7 +2638,7 @@ fn correct_inner<'l>(
                                 .table
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, f| {
-                                    (new_frame.start_address(), f)
+                                    (new_frame.base(), f)
                                 });
                         }
 
@@ -2731,11 +2715,10 @@ fn correct_inner<'l>(
 
     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
     let Some(flush) = (unsafe {
-        addr_space.table.utable.map_phys(
-            faulting_page.start_address(),
-            frame.start_address(),
-            new_flags,
-        )
+        addr_space
+            .table
+            .utable
+            .map_phys(faulting_page.start_address(), frame.base(), new_flags)
     }) else {
         // TODO
         return Err(PfError::Oom);

@@ -441,7 +441,7 @@ pub unsafe fn check_consistency(
                             | Provider::External { .. }
                             | Provider::FmapBorrowed { .. }
                     );
-                    let frame = Frame::containing_address(physaddr);
+                    let frame = Frame::containing(physaddr);
                     if new_as {
                         tree.entry(frame).or_insert((0, p)).0 += 1;
                     }

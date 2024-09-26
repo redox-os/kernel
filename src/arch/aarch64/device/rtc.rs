@@ -23,19 +23,19 @@ impl Pl031rtc {
     unsafe fn init(&mut self) {
         let mut mapper = KernelMapper::lock();
 
-        let start_frame = Frame::containing_address(PhysicalAddress::new(0x09010000));
-        let end_frame = Frame::containing_address(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
+        let start_frame = Frame::containing(PhysicalAddress::new(0x09010000));
+        let end_frame = Frame::containing(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
 
         for frame in Frame::range_inclusive(start_frame, end_frame) {
             let page = Page::containing_address(VirtualAddress::new(
-                frame.start_address().data() + crate::PHYS_OFFSET,
+                frame.base().data() + crate::PHYS_OFFSET,
             ));
             mapper
                 .get_mut()
                 .expect("failed to access KernelMapper for mapping RTC")
                 .map_phys(
                     page.start_address(),
-                    frame.start_address(),
+                    frame.base(),
                     PageFlags::new().write(true),
                 )
                 .expect("failed to map RTC")
