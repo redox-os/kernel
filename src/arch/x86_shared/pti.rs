@@ -39,7 +39,7 @@ pub unsafe fn map() {
     //
     //     // Map kernel heap
     //     let address = active_table.p4()[::KERNEL_HEAP_PML4].address();
-    //     let frame = Frame::containing_address(address);
+    //     let frame = Frame::containing(address);
     //     let mut flags = active_table.p4()[::KERNEL_HEAP_PML4].flags();
     //     flags.remove(EntryFlags::PRESENT);
     //     active_table.p4_mut()[::KERNEL_HEAP_PML4].set(frame, flags);
@@ -69,7 +69,7 @@ pub unsafe extern "C" fn unmap() {
     //
     //     // Unmap kernel heap
     //     let address = active_table.p4()[::KERNEL_HEAP_PML4].address();
-    //     let frame = Frame::containing_address(address);
+    //     let frame = Frame::containing(address);
     //     let mut flags = active_table.p4()[::KERNEL_HEAP_PML4].flags();
     //     flags.insert(EntryFlags::PRESENT);
     //     active_table.p4_mut()[::KERNEL_HEAP_PML4].set(frame, flags);

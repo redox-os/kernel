@@ -205,7 +205,7 @@ pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
             use crate::paging::{RmmA, RmmArch};
 
             // Physical pages are mapped linearly. So is the linearly mapped virtual memory.
-            let base_address = RmmA::phys_to_virt(frames.start_address());
+            let base_address = RmmA::phys_to_virt(frames.base());
 
             // Stack always grows downwards.
             let address = base_address.data() + BACKUP_STACK_SIZE;

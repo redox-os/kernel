@@ -207,8 +207,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         .next_power_of_two()
         .trailing_zeros();
     let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
-    let pcr =
-        &mut *(RmmA::phys_to_virt(pcr_frame.start_address()).data() as *mut ProcessorControlRegion);
+    let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion);
 
     pcr.self_ref = pcr as *mut ProcessorControlRegion as usize;
 
