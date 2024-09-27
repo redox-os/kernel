@@ -74,6 +74,12 @@ impl KernelScheme for RootScheme {
                 let path_box = path.to_string().into_boxed_str();
                 let mut schemes = scheme::schemes_mut();
 
+                let v2 = flags & O_FSYNC == O_FSYNC;
+
+                if !v2 {
+                    //log::warn!("Context {} opened a v1 scheme", context::current().read().name);
+                }
+
                 let (_scheme_id, inner) =
                     schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
                         let inner = Arc::new(UserInner::new(
@@ -81,7 +87,7 @@ impl KernelScheme for RootScheme {
                             scheme_id,
                             // TODO: This is a hack, but eventually the legacy interface will be
                             // removed.
-                            flags & O_FSYNC == O_FSYNC,
+                            v2,
                             id,
                             path_box,
                             flags,

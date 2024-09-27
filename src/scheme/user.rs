@@ -1533,11 +1533,12 @@ impl KernelScheme for UserScheme {
         call_flags: u32,
         stored_flags: u32,
     ) -> Result<usize> {
-        if call_flags != stored_flags {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        if call_flags != stored_flags && !inner.v2 {
             self.fcntl(file, F_SETFL, call_flags as usize)?;
         }
 
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Read,
@@ -1552,7 +1553,7 @@ impl KernelScheme for UserScheme {
         );
         address.release()?;
 
-        if call_flags != stored_flags {
+        if call_flags != stored_flags && !inner.v2 {
             self.fcntl(file, F_SETFL, stored_flags as usize)?;
         }
 
@@ -1567,11 +1568,11 @@ impl KernelScheme for UserScheme {
         call_flags: u32,
         stored_flags: u32,
     ) -> Result<usize> {
-        if call_flags != stored_flags {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        if call_flags != stored_flags && !inner.v2 {
             self.fcntl(file, F_SETFL, call_flags as usize)?;
         }
 
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Write,
@@ -1586,7 +1587,7 @@ impl KernelScheme for UserScheme {
         );
         address.release()?;
 
-        if call_flags != stored_flags {
+        if call_flags != stored_flags && !inner.v2 {
             self.fcntl(file, F_SETFL, stored_flags as usize)?;
         }
 
