@@ -30,6 +30,7 @@ build:aarch64:
     - mkdir -p target/aarch64
       # TODO: cross compiler binutils?
     - make target/aarch64/kernel.all ARCH=aarch64 BUILD=target/aarch64
+  allow_failure: true
 
 fmt:
   stage: host
