@@ -48,6 +48,7 @@
 #![feature(iter_next_chunk)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
+#![feature(new_uninit)]
 #![feature(sync_unsafe_cell)]
 #![feature(variant_count)]
 #![cfg_attr(not(test), no_std)]

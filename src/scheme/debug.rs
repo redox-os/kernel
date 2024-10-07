@@ -45,6 +45,9 @@ enum SpecialFds {
     Default = !0,
     NoPreserve = !0 - 1,
     DisableGraphicalDebug = !0 - 2,
+
+    #[cfg(feature = "profiling")]
+    CtlProfiling = !0 - 3,
 }
 
 impl KernelScheme for DebugScheme {
@@ -69,6 +72,9 @@ impl KernelScheme for DebugScheme {
             p if p.starts_with("profiling-") => {
                 path[10..].parse().map_err(|_| Error::new(ENOENT))?
             }
+
+            #[cfg(feature = "profiling")]
+            "ctl-profiling" => SpecialFds::CtlProfiling as usize,
 
             _ => return Err(Error::new(ENOENT)),
         };
@@ -97,7 +103,6 @@ impl KernelScheme for DebugScheme {
         Ok(())
     }
 
-    /// Close the file `number`
     fn close(&self, id: usize) -> Result<()> {
         let _handle = {
             let mut handles = HANDLES.write();
@@ -113,9 +118,14 @@ impl KernelScheme for DebugScheme {
         };
 
         if handle.num == SpecialFds::NoPreserve as usize
-            && handle.num == SpecialFds::DisableGraphicalDebug as usize
+            || handle.num == SpecialFds::DisableGraphicalDebug as usize
         {
-            return Err(Error::new(EINVAL));
+            return Err(Error::new(EBADF));
+        }
+
+        #[cfg(feature = "profiling")]
+        if handle.num == SpecialFds::CtlProfiling as usize {
+            return Err(Error::new(EBADF));
         }
 
         #[cfg(feature = "profiling")]
@@ -140,6 +150,23 @@ impl KernelScheme for DebugScheme {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
+
+        #[cfg(feature = "profiling")]
+        if handle.num == SpecialFds::CtlProfiling as usize {
+            let mut dst = [0];
+            buf.copy_to_slice(&mut dst)?;
+
+            let is_profiling = match dst[0] {
+                b'0' => false,
+                b'1' => true,
+                _ => return Err(Error::new(EINVAL)),
+            };
+            log::info!("Wrote {is_profiling} to IS_PROFILING");
+            crate::profiling::IS_PROFILING.store(is_profiling, Ordering::Relaxed);
+
+            return Ok(1);
+        }
+
         if handle.num != SpecialFds::Default as usize
             && handle.num != SpecialFds::NoPreserve as usize
         {

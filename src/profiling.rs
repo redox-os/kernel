@@ -15,7 +15,7 @@ use crate::{
     syscall::{error::*, usercopy::UserSliceWo},
 };
 
-const N: usize = 64 * 1024 * 1024;
+const N: usize = 16 * 1024 * 1024;
 
 pub const HARDCODED_CPU_COUNT: u32 = 4;
 
@@ -96,7 +96,7 @@ const NULL: AtomicPtr<RingBuffer> = AtomicPtr::new(core::ptr::null_mut());
 pub static BUFS: [AtomicPtr<RingBuffer>; 4] = [NULL; 4];
 
 pub const PROFILE_TOGGLEABLE: bool = true;
-pub static IS_PROFILING: AtomicBool = AtomicBool::new(true);
+pub static IS_PROFILING: AtomicBool = AtomicBool::new(false);
 
 pub fn serio_command(index: usize, data: u8) {
     if PROFILE_TOGGLEABLE {
@@ -255,5 +255,5 @@ pub fn maybe_setup_timer(idt: &mut Idt, cpu_id: LogicalCpuId) {
         return;
     }
     idt.entries[32].set_func(aux_timer);
-    idt.set_reserved(32, true);
+    idt.set_reserved_mut(32, true);
 }
