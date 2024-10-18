@@ -44,6 +44,7 @@
 #![feature(allocator_api)]
 #![feature(asm_const)]
 #![feature(core_intrinsics)]
+#![allow(internal_features)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
 #![feature(let_chains)]
@@ -90,7 +91,7 @@ mod allocator;
 #[allow(dead_code)] // TODO
 mod acpi;
 
-#[cfg(all(any(target_arch = "aarch64")))]
+#[cfg(dtb)]
 mod dtb;
 
 /// Logical CPU ID and bitset types

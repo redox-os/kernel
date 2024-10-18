@@ -2,12 +2,7 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{
-    borrow::Cow,
-    collections::BTreeSet,
-    sync::{Arc, Weak},
-    vec::Vec,
-};
+use alloc::{borrow::Cow, collections::BTreeSet, sync::Arc, vec::Vec};
 
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use spinning_top::RwSpinlock;
@@ -214,7 +209,7 @@ pub fn spawn(
         }
 
         #[cfg(target_arch = "aarch64")]
-        unsafe {
+        {
             context
                 .arch
                 .set_lr(crate::interrupt::syscall::enter_usermode as usize);

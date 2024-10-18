@@ -632,7 +632,7 @@ fn reap(pid: ProcessId) -> Result<ProcessId> {
     loop {
         // TODO: exit WaitCondition?
         {
-            let mut process = process_lock.read();
+            let process = process_lock.read();
             if process
                 .threads
                 .iter()

@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, string::ToString, sync::Arc};
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},

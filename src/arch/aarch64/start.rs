@@ -10,12 +10,10 @@ use crate::devices::graphical_debug;
 
 use fdt::Fdt;
 use log::info;
-use rmm::PhysicalAddress;
 
 use crate::{
     allocator, device, dtb,
     dtb::register_dev_memory_ranges,
-    memory::{Frame, PAGE_SIZE},
     paging,
     startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
 };

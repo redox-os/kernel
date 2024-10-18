@@ -28,7 +28,7 @@ use crate::{
 
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 use self::acpi::AcpiScheme;
-#[cfg(all(any(target_arch = "aarch64")))]
+#[cfg(dtb)]
 use self::dtb::DtbScheme;
 
 use self::{
@@ -40,7 +40,7 @@ use self::{
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
 #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
 pub mod acpi;
-#[cfg(all(any(target_arch = "aarch64")))]
+#[cfg(dtb)]
 pub mod dtb;
 
 /// `debug:` - provides access to serial console
@@ -148,7 +148,7 @@ impl SchemeList {
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             insert_globals(&[Acpi]);
 
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(dtb)]
             insert_globals(&[Dtb]);
         }
 
@@ -202,7 +202,7 @@ impl SchemeList {
         let ns = self.new_ns();
 
         // These schemes should only be available on the root
-        #[cfg(all(any(target_arch = "aarch64")))]
+        #[cfg(dtb)]
         {
             self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb)
                 .unwrap();
@@ -539,7 +539,7 @@ pub enum GlobalSchemes {
     #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
     Acpi,
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(dtb)]
     Dtb,
 }
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
@@ -578,7 +578,7 @@ impl core::ops::Deref for GlobalSchemes {
             Self::ProcRestricted => &ProcScheme::<false>,
             #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
             Self::Acpi => &AcpiScheme,
-            #[cfg(target_arch = "aarch64")]
+            #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
         }
     }
@@ -595,7 +595,7 @@ pub fn init_globals() {
     {
         AcpiScheme::init();
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(dtb)]
     {
         DtbScheme::init();
     }

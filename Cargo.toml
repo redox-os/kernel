@@ -5,9 +5,9 @@ build = "build.rs"
 edition = "2021"
 
 [build-dependencies]
-cc = "1.0.3"
-rustc-cfg = "0.3.0"
-toml = "0.7"
+cc = "1.0"
+rustc-cfg = "0.5"
+toml = "0.8"
 
 [dependencies]
 bitflags = "2"

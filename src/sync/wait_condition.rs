@@ -2,7 +2,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use spin::{Mutex, MutexGuard};
+use spin::Mutex;
 use spinning_top::RwSpinlock;
 
 use crate::context::{self, Context};

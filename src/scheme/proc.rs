@@ -1,12 +1,12 @@
 use crate::{
-    arch::paging::{Page, RmmA, RmmArch, VirtualAddress},
+    arch::paging::{Page, VirtualAddress},
     context::{
         self,
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
         process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
-        Context, ContextRef, Status,
+        Context, Status,
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -21,6 +21,7 @@ use crate::{
     },
 };
 
+use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 use ::syscall::{SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
@@ -37,8 +38,6 @@ use core::{
 };
 use spin::RwLock;
 use spinning_top::RwSpinlock;
-
-use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -1682,6 +1681,8 @@ fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Resu
 
 #[cfg(target_arch = "x86_64")]
 fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Result<()> {
+    use crate::memory::RmmA;
+    use rmm::Arch;
     if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize))
         && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize)))
     {

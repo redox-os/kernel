@@ -1,6 +1,7 @@
 use crate::{
     arch::{consts::KERNEL_OFFSET, paging::entry::EntryFlags, rmm::page_flags, CurrentRmmArch},
     memory::PAGE_SIZE,
+    startup::memory::BootloaderMemoryKind::Null,
 };
 use core::{
     cmp::{max, min},
@@ -11,7 +12,6 @@ use rmm::{
     Arch, BumpAllocator, MemoryArea, PageFlags, PageMapper, PhysicalAddress, TableKind,
     VirtualAddress, KILOBYTE, MEGABYTE,
 };
-use crate::startup::memory::BootloaderMemoryKind::Null;
 
 // Keep synced with OsMemoryKind in bootloader
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

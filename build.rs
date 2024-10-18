@@ -43,7 +43,7 @@ fn main() {
     println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
 
     let out_dir = env::var("OUT_DIR").unwrap();
-    let cfg = Cfg::new(env::var_os("TARGET").unwrap()).unwrap();
+    let cfg = Cfg::of(env::var("TARGET").unwrap().as_str()).unwrap();
     let arch_str = cfg.target_arch.as_str();
 
     match arch_str {
@@ -56,6 +56,7 @@ fn main() {
                 .target("aarch64-unknown-redox")
                 .compile("early_init");
             */
+            println!("cargo:rustc-cfg=dtb");
         }
         "x86" => {
             println!("cargo:rerun-if-changed=src/asm/x86/trampoline.asm");

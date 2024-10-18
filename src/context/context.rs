@@ -17,7 +17,6 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::FileHandle,
-    sync::WaitCondition,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
