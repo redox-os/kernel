@@ -175,7 +175,7 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
         0b010101 => {
             let scratch = &stack.scratch;
             let ret = syscall::syscall(
-                scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, stack,
+                scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4,
             );
             stack.scratch.x0 = ret;
         }

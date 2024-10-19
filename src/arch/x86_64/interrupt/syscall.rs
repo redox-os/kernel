@@ -75,7 +75,6 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
             scratch.rdx,
             scratch.r10,
             scratch.r8,
-            &mut *stack,
         );
         (*stack).scratch.rax = ret;
     }

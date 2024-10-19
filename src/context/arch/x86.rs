@@ -6,8 +6,15 @@ use crate::{
     syscall::FloatRegisters,
 };
 
+use crate::{
+    arch::{interrupt::InterruptStack, paging::PageMapper},
+    context::{context::Kstack, memory::Table},
+    memory::RmmA,
+};
 use core::mem::offset_of;
+use rmm::{Arch, TableKind, VirtualAddress};
 use spin::Once;
+use syscall::{error::*, EnvRegisters};
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
@@ -62,10 +69,41 @@ impl Context {
         }
     }
 
-    pub fn set_stack(&mut self, address: usize) {
+    fn set_stack(&mut self, address: usize) {
         self.esp = address;
     }
+
+    pub(crate) fn setup_initial_call(
+        &mut self,
+        stack: &Kstack,
+        func: extern "C" fn(),
+        userspace_allowed: bool,
+    ) {
+        let mut stack_top = stack.initial_top();
+
+        const INT_REGS_SIZE: usize = core::mem::size_of::<InterruptStack>();
+
+        unsafe {
+            if userspace_allowed {
+                // Zero-initialize InterruptStack registers.
+                stack_top = stack_top.sub(INT_REGS_SIZE);
+                stack_top.write_bytes(0_u8, INT_REGS_SIZE);
+                (&mut *stack_top.cast::<InterruptStack>()).init();
+
+                stack_top = stack_top.sub(core::mem::size_of::<usize>());
+                stack_top
+                    .cast::<usize>()
+                    .write(crate::interrupt::syscall::enter_usermode as usize);
+            }
+
+            stack_top = stack_top.sub(core::mem::size_of::<usize>());
+            stack_top.cast::<usize>().write(func as usize);
+        }
+
+        self.set_stack(stack_top as usize);
+    }
 }
+
 impl super::Context {
     pub fn get_fx_regs(&self) -> FloatRegisters {
         let mut regs = unsafe { self.kfx.as_ptr().cast::<FloatRegisters>().read() };
@@ -120,6 +158,50 @@ impl super::Context {
             regs.preserved.esi,
             regs.preserved.edi,
         ])
+    }
+
+    pub(crate) fn write_current_env_regs(&mut self, regs: EnvRegisters) -> Result<()> {
+        if RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize))
+            && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))
+        {
+            unsafe {
+                (&mut *pcr()).gdt[GDT_USER_FS].set_offset(regs.fsbase);
+                (&mut *pcr()).gdt[GDT_USER_GS].set_offset(regs.gsbase);
+            }
+            self.arch.fsbase = regs.fsbase as usize;
+            self.arch.gsbase = regs.gsbase as usize;
+            Ok(())
+        } else {
+            Err(Error::new(EINVAL))
+        }
+    }
+
+    pub(crate) fn write_env_regs(&mut self, regs: EnvRegisters) -> Result<()> {
+        if RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize))
+            && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))
+        {
+            self.arch.fsbase = regs.fsbase as usize;
+            self.arch.gsbase = regs.gsbase as usize;
+            Ok(())
+        } else {
+            Err(Error::new(EINVAL))
+        }
+    }
+
+    pub(crate) fn read_current_env_regs(&self) -> Result<EnvRegisters> {
+        unsafe {
+            Ok(EnvRegisters {
+                fsbase: (&*pcr()).gdt[GDT_USER_FS].offset(),
+                gsbase: (&*pcr()).gdt[GDT_USER_GS].offset(),
+            })
+        }
+    }
+
+    pub(crate) fn read_env_regs(&self) -> Result<EnvRegisters> {
+        Ok(EnvRegisters {
+            fsbase: self.arch.fsbase as u32,
+            gsbase: self.arch.gsbase as u32,
+        })
     }
 }
 
@@ -226,4 +308,34 @@ unsafe extern "cdecl" fn switch_to_inner() {
         switch_hook = sym crate::context::switch_finish_hook,
         options(noreturn),
     );
+}
+
+/// Allocates a new identically mapped ktable and empty utable (same memory on x86)
+pub fn setup_new_utable() -> Result<Table> {
+    use crate::memory::KernelMapper;
+
+    let utable = unsafe {
+        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
+            .ok_or(Error::new(ENOMEM))?
+    };
+
+    {
+        let active_ktable = KernelMapper::lock();
+
+        let copy_mapping = |p4_no| unsafe {
+            let entry = active_ktable
+                .table()
+                .entry(p4_no)
+                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
+
+            utable.table().set_entry(p4_no, entry)
+        };
+
+        // Copy higher half (kernel) mappings
+        for i in 512..1024 {
+            copy_mapping(i);
+        }
+    }
+
+    Ok(Table { utable })
 }

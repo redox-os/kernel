@@ -34,7 +34,6 @@ interrupt_stack!(syscall, |stack| {
             scratch.edx,
             preserved.esi,
             preserved.edi,
-            stack,
         );
         stack.scratch.eax = ret;
     })

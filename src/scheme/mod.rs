@@ -356,7 +356,7 @@ impl SchemeList {
                 }
             }
             for name in remove {
-                assert!(names.remove(&name).is_some());
+                assert!(names.swap_remove(&name).is_some());
             }
         }
     }

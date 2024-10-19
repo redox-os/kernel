@@ -11,7 +11,6 @@ use syscall::ENOMEM;
 use crate::{
     context::memory::AddrSpaceWrapper,
     cpu_set::LogicalCpuSet,
-    interrupt::InterruptStack,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     sync::WaitMap,
@@ -182,42 +181,9 @@ pub fn spawn(
     {
         let mut context = context_lock.write();
         let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));
-
-        let mut stack_top = stack.initial_top();
-
-        const INT_REGS_SIZE: usize = core::mem::size_of::<crate::interrupt::InterruptStack>();
-
-        if userspace_allowed {
-            unsafe {
-                // Zero-initialize InterruptStack registers.
-                stack_top = stack_top.sub(INT_REGS_SIZE);
-                stack_top.write_bytes(0_u8, INT_REGS_SIZE);
-                (&mut *stack_top.cast::<InterruptStack>()).init();
-            }
-        }
-        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-        unsafe {
-            if userspace_allowed {
-                stack_top = stack_top.sub(core::mem::size_of::<usize>());
-                stack_top
-                    .cast::<usize>()
-                    .write(crate::interrupt::syscall::enter_usermode as usize);
-            }
-
-            stack_top = stack_top.sub(core::mem::size_of::<usize>());
-            stack_top.cast::<usize>().write(func as usize);
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        {
-            context
-                .arch
-                .set_lr(crate::interrupt::syscall::enter_usermode as usize);
-            context.arch.set_x28(func as usize);
-            context.arch.set_context_handle();
-        }
-
-        context.arch.set_stack(stack_top as usize);
+        context
+            .arch
+            .setup_initial_call(&stack, func, userspace_allowed);
 
         context.kstack = Some(stack);
         context.userspace = userspace_allowed;

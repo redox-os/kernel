@@ -24,7 +24,7 @@ use self::{
     usercopy::UserSlice,
 };
 
-use crate::{interrupt::InterruptStack, percpu::PercpuBlock};
+use crate::percpu::PercpuBlock;
 
 use crate::{
     context::{memory::AddrSpace, process::ProcessId},
@@ -60,15 +60,8 @@ pub mod usercopy;
 
 /// This function is the syscall handler of the kernel, it is composed of an inner function that returns a `Result<usize>`. After the inner function runs, the syscall
 /// function calls [`Error::mux`] on it.
-pub fn syscall(
-    a: usize,
-    b: usize,
-    c: usize,
-    d: usize,
-    e: usize,
-    f: usize,
-    _stack: &mut InterruptStack,
-) -> usize {
+#[must_use]
+pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> usize {
     #[inline(always)]
     fn inner(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> Result<usize> {
         let fd = FileHandle::from(b);

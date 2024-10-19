@@ -1,7 +1,13 @@
+use crate::{
+    arch::{device::cpu::registers::control_regs, interrupt::InterruptStack, paging::PageMapper},
+    context::{context::Kstack, memory::Table},
+    percpu::PercpuBlock,
+    syscall::FloatRegisters,
+};
 use core::{arch::asm, mem, mem::offset_of, ptr, sync::atomic::AtomicBool};
+use rmm::TableKind;
 use spin::Once;
-
-use crate::{percpu::PercpuBlock, syscall::FloatRegisters};
+use syscall::{EnvRegisters, Error, Result, ENOMEM};
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
@@ -62,21 +68,47 @@ impl Context {
         }
     }
 
-    pub fn set_stack(&mut self, address: usize) {
+    fn set_stack(&mut self, address: usize) {
         self.sp = address;
     }
 
-    pub fn set_x28(&mut self, x28: usize) {
+    fn set_x28(&mut self, x28: usize) {
         self.x28 = x28;
     }
 
-    pub fn set_lr(&mut self, address: usize) {
+    fn set_lr(&mut self, address: usize) {
         self.lr = address;
     }
 
-    pub fn set_context_handle(&mut self) {
+    fn set_context_handle(&mut self) {
         let address = self as *const _ as usize;
         self.tpidrro_el0 = address;
+    }
+
+    pub(crate) fn setup_initial_call(
+        &mut self,
+        stack: &Kstack,
+        func: extern "C" fn(),
+        userspace_allowed: bool,
+    ) {
+        let mut stack_top = stack.initial_top();
+
+        const INT_REGS_SIZE: usize = core::mem::size_of::<InterruptStack>();
+
+        if userspace_allowed {
+            unsafe {
+                // Zero-initialize InterruptStack registers.
+                stack_top = stack_top.sub(INT_REGS_SIZE);
+                stack_top.write_bytes(0_u8, INT_REGS_SIZE);
+                (&mut *stack_top.cast::<InterruptStack>()).init();
+            }
+        }
+
+        self.set_lr(crate::interrupt::syscall::enter_usermode as usize);
+        self.set_x28(func as usize);
+        self.set_context_handle();
+
+        self.set_stack(stack_top as usize);
     }
 
     #[allow(unused)]
@@ -130,6 +162,36 @@ impl super::Context {
         Some([
             scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4,
         ])
+    }
+
+    pub(crate) fn write_current_env_regs(&self, regs: EnvRegisters) -> Result<()> {
+        unsafe {
+            control_regs::tpidr_el0_write(regs.tpidr_el0 as u64);
+            control_regs::tpidrro_el0_write(regs.tpidrro_el0 as u64);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write_env_regs(&mut self, regs: EnvRegisters) -> Result<()> {
+        self.arch.tpidr_el0 = regs.tpidr_el0;
+        self.arch.tpidrro_el0 = regs.tpidrro_el0;
+        Ok(())
+    }
+
+    pub(crate) fn read_current_env_regs(&self) -> Result<EnvRegisters> {
+        unsafe {
+            Ok(EnvRegisters {
+                tpidr_el0: control_regs::tpidr_el0() as usize,
+                tpidrro_el0: control_regs::tpidrro_el0() as usize,
+            })
+        }
+    }
+
+    pub(crate) fn read_env_regs(&self) -> Result<EnvRegisters> {
+        Ok(EnvRegisters {
+            tpidr_el0: self.arch.tpidr_el0,
+            tpidrro_el0: self.arch.tpidrro_el0,
+        })
     }
 }
 
@@ -323,4 +385,14 @@ unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
         switch_hook = sym crate::context::switch_finish_hook,
         options(noreturn),
     );
+}
+
+/// Allocates a new empty utable
+pub fn setup_new_utable() -> Result<Table> {
+    let utable = unsafe {
+        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
+            .ok_or(Error::new(ENOMEM))?
+    };
+
+    Ok(Table { utable })
 }

@@ -12,6 +12,7 @@ use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
     arch::paging::PAGE_SIZE,
+    context::arch::setup_new_utable,
     cpu_set::LogicalCpuSet,
     memory::{
         deallocate_frame, deallocate_p2frame, get_page_info, init_frame, the_zeroed_frame,
@@ -2258,84 +2259,6 @@ impl Drop for Table {
     }
 }
 
-/// Allocates a new empty utable
-#[cfg(target_arch = "aarch64")]
-pub fn setup_new_utable() -> Result<Table> {
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
-            .ok_or(Error::new(ENOMEM))?
-    };
-
-    Ok(Table { utable })
-}
-
-/// Allocates a new identically mapped ktable and empty utable (same memory on x86)
-#[cfg(target_arch = "x86")]
-pub fn setup_new_utable() -> Result<Table> {
-    use crate::memory::KernelMapper;
-
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
-            .ok_or(Error::new(ENOMEM))?
-    };
-
-    {
-        let active_ktable = KernelMapper::lock();
-
-        let copy_mapping = |p4_no| unsafe {
-            let entry = active_ktable
-                .table()
-                .entry(p4_no)
-                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
-
-            utable.table().set_entry(p4_no, entry)
-        };
-
-        // Copy higher half (kernel) mappings
-        for i in 512..1024 {
-            copy_mapping(i);
-        }
-    }
-
-    Ok(Table { utable })
-}
-
-/// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
-#[cfg(target_arch = "x86_64")]
-pub fn setup_new_utable() -> Result<Table> {
-    use crate::memory::{KernelMapper, TheFrameAllocator};
-
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, TheFrameAllocator).ok_or(Error::new(ENOMEM))?
-    };
-
-    {
-        let active_ktable = KernelMapper::lock();
-
-        let copy_mapping = |p4_no| unsafe {
-            let entry = active_ktable
-                .table()
-                .entry(p4_no)
-                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
-
-            utable.table().set_entry(p4_no, entry)
-        };
-        // TODO: Just copy all 256 mappings? Or copy KERNEL_PML4+KERNEL_PERCPU_PML4 (needed for
-        // paranoid ISRs which can occur anywhere; we don't want interrupts to triple fault!) and
-        // map lazily via page faults in the kernel.
-
-        // Copy kernel image mapping
-        copy_mapping(crate::KERNEL_PML4);
-
-        // Copy kernel heap mapping
-        copy_mapping(crate::KERNEL_HEAP_PML4);
-
-        // Copy physmap mapping
-        copy_mapping(crate::PHYS_PML4);
-    }
-
-    Ok(Table { utable })
-}
 #[derive(Clone, Copy, PartialEq)]
 pub enum AccessMode {
     Read,

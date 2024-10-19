@@ -1630,147 +1630,19 @@ impl ContextHandle {
         }
     }
 }
-#[cfg(target_arch = "aarch64")]
+
 fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Result<()> {
-    use crate::device::cpu::registers::control_regs;
-
     if context::is_current(&context) {
-        unsafe {
-            control_regs::tpidr_el0_write(regs.tpidr_el0 as u64);
-            control_regs::tpidrro_el0_write(regs.tpidrro_el0 as u64);
-        }
+        context::current().write().write_current_env_regs(regs)
     } else {
-        try_stop_context(context, |context| {
-            context.arch.tpidr_el0 = regs.tpidr_el0;
-            context.arch.tpidrro_el0 = regs.tpidrro_el0;
-            Ok(())
-        })?;
+        try_stop_context(context, |context| context.write_env_regs(regs))
     }
-    Ok(())
 }
 
-#[cfg(target_arch = "x86")]
-fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Result<()> {
-    if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize))
-        && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize)))
-    {
-        return Err(Error::new(EINVAL));
-    }
-
+fn read_env_regs(context: Arc<RwSpinlock<Context>>) -> Result<EnvRegisters> {
     if context::is_current(&context) {
-        unsafe {
-            (&mut *crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_FS].set_offset(regs.fsbase);
-            (&mut *crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_GS].set_offset(regs.gsbase);
-
-            match context.write().arch {
-                ref mut arch => {
-                    arch.fsbase = regs.fsbase as usize;
-                    arch.gsbase = regs.gsbase as usize;
-                }
-            }
-        }
+        context::current().read().read_current_env_regs()
     } else {
-        try_stop_context(context, |context| {
-            context.arch.fsbase = regs.fsbase as usize;
-            context.arch.gsbase = regs.gsbase as usize;
-            Ok(())
-        })?;
+        try_stop_context(context, |context| context.read_env_regs())
     }
-    Ok(())
-}
-
-#[cfg(target_arch = "x86_64")]
-fn write_env_regs(context: Arc<RwSpinlock<Context>>, regs: EnvRegisters) -> Result<()> {
-    use crate::memory::RmmA;
-    use rmm::Arch;
-    if !(RmmA::virt_is_valid(VirtualAddress::new(regs.fsbase as usize))
-        && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize)))
-    {
-        return Err(Error::new(EINVAL));
-    }
-
-    if context::is_current(&context) {
-        unsafe {
-            x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
-            // We have to write to KERNEL_GSBASE, because when the kernel returns to
-            // userspace, it will have executed SWAPGS first.
-            x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
-
-            match context::current().write().arch {
-                ref mut arch => {
-                    arch.fsbase = regs.fsbase as usize;
-                    arch.gsbase = regs.gsbase as usize;
-                }
-            }
-        }
-    } else {
-        try_stop_context(context, |context| {
-            context.arch.fsbase = regs.fsbase as usize;
-            context.arch.gsbase = regs.gsbase as usize;
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
-#[cfg(target_arch = "aarch64")]
-fn read_env_regs(context: Arc<RwSpinlock<Context>>) -> Result<EnvRegisters> {
-    use crate::device::cpu::registers::control_regs;
-
-    let (tpidr_el0, tpidrro_el0) = if context::is_current(&context) {
-        unsafe {
-            (
-                control_regs::tpidr_el0() as usize,
-                control_regs::tpidrro_el0() as usize,
-            )
-        }
-    } else {
-        try_stop_context(context, |context| {
-            Ok((context.arch.tpidr_el0, context.arch.tpidrro_el0))
-        })?
-    };
-    Ok(EnvRegisters {
-        tpidr_el0,
-        tpidrro_el0,
-    })
-}
-
-#[cfg(target_arch = "x86")]
-fn read_env_regs(context: Arc<RwSpinlock<Context>>) -> Result<EnvRegisters> {
-    let (fsbase, gsbase) = if context::is_current(&context) {
-        unsafe {
-            (
-                (&*crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_FS].offset() as u64,
-                (&*crate::gdt::pcr()).gdt[crate::gdt::GDT_USER_GS].offset() as u64,
-            )
-        }
-    } else {
-        try_stop_context(context, |context| {
-            Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
-        })?
-    };
-    Ok(EnvRegisters {
-        fsbase: fsbase as _,
-        gsbase: gsbase as _,
-    })
-}
-
-#[cfg(target_arch = "x86_64")]
-fn read_env_regs(context: Arc<RwSpinlock<Context>>) -> Result<EnvRegisters> {
-    // TODO: Avoid rdmsr if fsgsbase is not enabled, if this is worth optimizing for.
-    let (fsbase, gsbase) = if context::is_current(&context) {
-        unsafe {
-            (
-                x86::msr::rdmsr(x86::msr::IA32_FS_BASE),
-                x86::msr::rdmsr(x86::msr::IA32_KERNEL_GSBASE),
-            )
-        }
-    } else {
-        try_stop_context(context, |context| {
-            Ok((context.arch.fsbase as u64, context.arch.gsbase as u64))
-        })?
-    };
-    Ok(EnvRegisters {
-        fsbase: fsbase as _,
-        gsbase: gsbase as _,
-    })
 }
