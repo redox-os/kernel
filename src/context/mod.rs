@@ -38,6 +38,10 @@ mod arch;
 #[path = "arch/x86_64.rs"]
 mod arch;
 
+#[cfg(target_arch = "riscv64")]
+#[path = "arch/riscv64.rs"]
+mod arch;
+
 /// Context struct
 pub mod context;
 

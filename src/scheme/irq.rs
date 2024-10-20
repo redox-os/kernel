@@ -12,15 +12,13 @@ use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use spin::{Mutex, Once, RwLock};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
-use crate::{
-    arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved},
-    context::file::InternalFlags,
-};
+use crate::context::file::InternalFlags;
+
+use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved};
 
 use crate::{
     cpu_set::LogicalCpuId,
     event,
-    interrupt::irq::acknowledge,
     syscall::{
         data::Stat,
         error::*,
@@ -28,6 +26,9 @@ use crate::{
         usercopy::{UserSliceRo, UserSliceWo},
     },
 };
+
+#[cfg(not(target_arch = "riscv64"))]
+use crate::interrupt::irq::acknowledge;
 
 use super::{CallerCtx, GlobalSchemes, OpenResult};
 
@@ -329,6 +330,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     return Ok(0);
                 }
                 handle_ack.store(ack, Ordering::SeqCst);
+                #[cfg(not(target_arch = "riscv64"))]
                 unsafe {
                     acknowledge(handle_irq as usize);
                 }

@@ -16,7 +16,7 @@ hashbrown = { version = "0.14.3", default-features = false, features = ["ahash",
 linked_list_allocator = "0.9.0"
 log = "0.4"
 redox-path = "0.2.0"
-redox_syscall = { path = "syscall", default-features = false }
+redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git", branch = "master", default-features = false }
 slab_allocator = { path = "slab_allocator", optional = true }
 spin = "0.9.8"
 spinning_top = { version = "0.3", features = ["arc_lock"] }
@@ -35,7 +35,7 @@ features = ["elf32", "elf64"]
 version = "0.1.16"
 default-features = false
 
-[target.'cfg(target_arch = "aarch64")'.dependencies]
+[target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
 byteorder = { version = "1", default-features = false }
 fdt = { git = "https://github.com/repnop/fdt.git", rev = "2fb1409edd1877c714a0aa36b6a7c5351004be54" }
 

@@ -1,7 +1,7 @@
 use crate::startup::memory::{register_memory_region, BootloaderMemoryKind};
 use alloc::vec::Vec;
 use core::slice;
-use fdt::Fdt;
+use fdt::{node::NodeProperty, Fdt};
 use spin::once::Once;
 
 pub static DTB_BINARY: Once<Vec<u8>> = Once::new();
@@ -84,11 +84,14 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
     }
 }
 
-pub fn diag_uart_range(dtb: &Fdt) -> Option<(usize, usize, bool, bool)> {
+pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'a str)> {
     let stdout_path = dtb.chosen().stdout().unwrap();
     let uart_node = stdout_path.node();
     let skip_init = uart_node.property("skip-init").is_some();
     let cts_event_walkaround = uart_node.property("cts-event-walkaround").is_some();
+    let compatible = uart_node
+        .property("compatible")
+        .and_then(NodeProperty::as_str)?;
 
     let mut reg = uart_node.reg().unwrap();
     let memory = reg.nth(0).unwrap();
@@ -98,6 +101,7 @@ pub fn diag_uart_range(dtb: &Fdt) -> Option<(usize, usize, bool, bool)> {
         memory.size.unwrap(),
         skip_init,
         cts_event_walkaround,
+        compatible,
     ))
 }
 

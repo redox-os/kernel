@@ -19,3 +19,9 @@ pub use self::x86_64::*;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[macro_use]
 mod x86_shared;
+
+#[cfg(target_arch = "riscv64")]
+#[macro_use]
+pub mod riscv64;
+#[cfg(target_arch = "riscv64")]
+pub use self::riscv64::*;

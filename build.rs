@@ -88,6 +88,9 @@ fn main() {
                 panic!("nasm failed with exit status {}", status);
             }
         }
+        "riscv64" => {
+            println!("cargo:rustc-cfg=dtb");
+        }
         _ => (),
     }
 

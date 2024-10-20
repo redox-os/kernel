@@ -31,7 +31,7 @@ pub unsafe fn init_early(dtb: &Fdt) {
         return;
     }
 
-    if let Some((phys, _size, skip_init, cts)) = diag_uart_range(dtb) {
+    if let Some((phys, _size, skip_init, cts, _)) = diag_uart_range(dtb) {
         let virt = crate::PHYS_OFFSET + phys;
         {
             let mut serial_port = SerialPort::new(virt, skip_init, cts);

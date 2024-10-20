@@ -65,7 +65,15 @@ impl SerialPort<Pio<u8>> {
 }
 
 impl SerialPort<Mmio<u32>> {
+    #[allow(dead_code)]
     pub unsafe fn new(base: usize) -> &'static mut SerialPort<Mmio<u32>> {
+        &mut *(base as *mut Self)
+    }
+}
+
+impl SerialPort<Mmio<u8>> {
+    #[allow(dead_code)]
+    pub unsafe fn new(base: usize) -> &'static mut SerialPort<Mmio<u8>> {
         &mut *(base as *mut Self)
     }
 }

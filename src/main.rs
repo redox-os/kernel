@@ -54,6 +54,9 @@
 #![feature(variant_count)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
+#![feature(option_get_or_insert_default)]
+#![feature(array_chunks)]
+#![feature(if_let_guard)]
 
 #[macro_use]
 extern crate alloc;
