@@ -2,14 +2,19 @@ use alloc::boxed::Box;
 use log::info;
 
 use crate::{
-    arch::device::irqchip::IRQ_CHIP, context, context::timeout,
-    device::cpu::registers::control_regs, dtb::DTB_BINARY, interrupt::irq::trigger, time,
+    context,
+    context::timeout,
+    device::cpu::registers::control_regs,
+    dtb::{
+        irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+        DTB_BINARY,
+    },
+    interrupt::irq::trigger,
+    time,
 };
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use fdt::Fdt;
-
-use super::irqchip::{register_irq, InterruptHandler};
 
 bitflags! {
     struct TimerCtrlFlags: u32 {

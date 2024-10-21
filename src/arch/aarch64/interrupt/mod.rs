@@ -51,22 +51,7 @@ pub fn pause() {
     unsafe { asm!("nop") };
 }
 
-pub fn available_irqs_iter(_cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
-    0..0
-}
-
 pub fn bsp_apic_id() -> Option<u32> {
     //TODO
     None
-}
-
-#[inline]
-pub fn is_reserved(_cpu_id: LogicalCpuId, _index: u8) -> bool {
-    //TODO
-    true
-}
-
-#[inline]
-pub fn set_reserved(_cpu_id: LogicalCpuId, _index: u8, _reserved: bool) {
-    //TODO
 }

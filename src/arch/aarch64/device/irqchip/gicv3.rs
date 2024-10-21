@@ -3,12 +3,11 @@ use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
 
 use super::gic::GicDistIf;
+use crate::dtb::irqchip::{InterruptController, IrqDesc};
 use syscall::{
     error::{Error, EINVAL},
     Result,
 };
-
-use super::{InterruptController, IrqDesc};
 
 #[derive(Debug)]
 pub struct GicV3 {

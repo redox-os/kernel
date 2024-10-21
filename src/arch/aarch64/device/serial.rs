@@ -3,8 +3,11 @@ use spin::Mutex;
 
 use crate::{device::uart_pl011::SerialPort, interrupt::irq::trigger};
 
-use super::irqchip::{register_irq, InterruptHandler, IRQ_CHIP};
-use crate::dtb::{diag_uart_range, DTB_BINARY};
+use crate::dtb::{
+    diag_uart_range,
+    irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+    DTB_BINARY,
+};
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use fdt::Fdt;

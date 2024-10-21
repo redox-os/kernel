@@ -5,6 +5,7 @@ use fdt::{
 };
 
 pub mod cpu;
+pub mod irqchip;
 pub mod serial;
 
 fn string_property(name: &str) -> bool {

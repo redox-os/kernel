@@ -4,13 +4,12 @@ use core::{
 };
 use fdt::{node::FdtNode, Fdt};
 
+use crate::dtb::irqchip::{InterruptController, IrqDesc};
 use log::{debug, info};
 use syscall::{
     error::{Error, EINVAL},
     Result,
 };
-
-use super::{InterruptController, IrqDesc};
 
 const LOCAL_CONTROL: u32 = 0x000;
 const LOCAL_PRESCALER: u32 = 0x008;

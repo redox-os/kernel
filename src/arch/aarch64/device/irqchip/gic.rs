@@ -1,13 +1,12 @@
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
 
+use crate::dtb::irqchip::{InterruptController, IrqDesc};
 use log::info;
 use syscall::{
     error::{Error, EINVAL},
     Result,
 };
-
-use super::{InterruptController, IrqDesc};
 
 static GICD_CTLR: u32 = 0x000;
 static GICD_TYPER: u32 = 0x004;

@@ -1,4 +1,4 @@
-use crate::device::irqchip::IRQ_CHIP;
+use crate::dtb::irqchip::IRQ_CHIP;
 
 exception_stack!(irq_at_el0, |_stack| {
     let irq = IRQ_CHIP.irq_ack();
@@ -42,10 +42,6 @@ pub unsafe fn trigger(irq: u32) {
 
     irq_trigger(irq);
     IRQ_CHIP.irq_eoi(irq);
-}
-
-pub unsafe fn acknowledge(_irq: usize) {
-    // TODO
 }
 
 /*

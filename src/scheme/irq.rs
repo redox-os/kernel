@@ -14,9 +14,13 @@ use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
 use crate::context::file::InternalFlags;
 
-use crate::arch::interrupt::{available_irqs_iter, bsp_apic_id, is_reserved, set_reserved};
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+use crate::arch::interrupt::{available_irqs_iter, irq::acknowledge, is_reserved, set_reserved};
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+use crate::dtb::irqchip::{acknowledge, available_irqs_iter, is_reserved, set_reserved};
 
 use crate::{
+    arch::interrupt::bsp_apic_id,
     cpu_set::LogicalCpuId,
     event,
     syscall::{
@@ -26,9 +30,6 @@ use crate::{
         usercopy::{UserSliceRo, UserSliceWo},
     },
 };
-
-#[cfg(not(target_arch = "riscv64"))]
-use crate::interrupt::irq::acknowledge;
 
 use super::{CallerCtx, GlobalSchemes, OpenResult};
 
@@ -330,7 +331,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     return Ok(0);
                 }
                 handle_ack.store(ack, Ordering::SeqCst);
-                #[cfg(not(target_arch = "riscv64"))]
+
                 unsafe {
                     acknowledge(handle_irq as usize);
                 }

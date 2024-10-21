@@ -1,18 +1,16 @@
 use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::arch::device::irqchip::IRQ_CHIP;
 use byteorder::{ByteOrder, BE};
 use fdt::{node::FdtNode, Fdt};
 
 use log::{debug, error, info};
 
+use crate::dtb::irqchip::{InterruptController, InterruptHandler, IrqDesc, IRQ_CHIP};
 use syscall::{
     error::{Error, EINVAL},
     Result,
 };
-
-use super::{InterruptController, InterruptHandler, IrqDesc};
 
 #[inline(always)]
 fn ffs(num: u32) -> u32 {

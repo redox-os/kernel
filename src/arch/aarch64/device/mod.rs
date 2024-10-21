@@ -1,4 +1,4 @@
-use crate::{dtb::DTB_BINARY, info};
+use crate::{dtb, dtb::DTB_BINARY, info};
 
 pub mod cpu;
 pub mod generic_timer;
@@ -11,7 +11,7 @@ pub unsafe fn init() {
     info!("IRQCHIP INIT");
     let data = DTB_BINARY.get().unwrap();
     let fdt = fdt::Fdt::new(data).unwrap();
-    irqchip::init(&fdt);
+    dtb::irqchip::init(&fdt);
     info!("GIT INIT");
     generic_timer::init();
 }
