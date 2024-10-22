@@ -1,5 +1,7 @@
 use crate::{
     arch::riscv64::sbi::SBI,
+    context,
+    context::timeout,
     dtb::irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
 };
 use alloc::{boxed::Box, vec::Vec};
@@ -7,7 +9,6 @@ use byteorder::{ByteOrder, BE};
 use core::{arch::asm, cmp::max};
 use fdt::node::FdtNode;
 use spin::Mutex;
-
 // This is a Core-Local Interruptor (CLINT). A single device directly routed into each HLIC
 // It is responsible for local timer and IPI interrupts
 // An example DTS:
@@ -40,6 +41,12 @@ impl InterruptHandler for ClintConnector {
             .as_mut()
             .unwrap()
             .irq_handler(self.hart_id, self.irq);
+        if self.irq == IRQ_TIMER {
+            // a bit of hack, but it is a really bad idea to call scheduler
+            // from inside clint irq handler
+            timeout::trigger();
+            context::switch::tick();
+        }
     }
 }
 

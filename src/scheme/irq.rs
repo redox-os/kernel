@@ -8,17 +8,18 @@ use core::{
 };
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use log::{debug, info};
 
 use spin::{Mutex, Once, RwLock};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
 use crate::context::file::InternalFlags;
 
+use super::{CallerCtx, GlobalSchemes, OpenResult};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use crate::arch::interrupt::{available_irqs_iter, irq::acknowledge, is_reserved, set_reserved};
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-use crate::dtb::irqchip::{acknowledge, available_irqs_iter, is_reserved, set_reserved};
-
+use crate::dtb::irqchip::{acknowledge, available_irqs_iter, is_reserved, set_reserved, IRQ_CHIP};
 use crate::{
     arch::interrupt::bsp_apic_id,
     cpu_set::LogicalCpuId,
@@ -31,8 +32,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, GlobalSchemes, OpenResult};
-
+///
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
@@ -53,6 +53,7 @@ const TOTAL_IRQ_COUNT: u8 = 224;
 const INO_TOPLEVEL: u64 = 0x8002_0000_0000_0000;
 const INO_AVAIL: u64 = 0x8000_0000_0000_0000;
 const INO_BSP: u64 = 0x8001_0000_0000_0000;
+const INO_PHANDLE: u64 = 0x8003_0000_0000_0000;
 
 /// Add to the input queue
 #[no_mangle]
@@ -69,10 +70,12 @@ pub extern "C" fn irq_trigger(irq: u8) {
     }
 }
 
+#[allow(dead_code)]
 enum Handle {
     Irq { ack: AtomicUsize, irq: u8 },
     Avail(u8), // CPU id
     TopLevel,
+    Phandle(u8, Vec<u8>),
     Bsp,
 }
 impl Handle {
@@ -134,6 +137,7 @@ impl IrqScheme {
                 if flags & O_CREAT == 0 && flags & O_STAT == 0 {
                     return Err(Error::new(EINVAL));
                 }
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 if flags & O_STAT == 0 {
                     if is_reserved(LogicalCpuId::new(cpu_id.into()), irq_to_vector(irq_number)) {
                         return Err(Error::new(EEXIST));
@@ -156,6 +160,49 @@ impl IrqScheme {
             },
         )
     }
+
+    #[cfg(dtb)]
+    unsafe fn open_phandle_irq(
+        flags: usize,
+        phandle: usize,
+        path_str: &str,
+    ) -> Result<(Handle, InternalFlags)> {
+        let mut path_iter = path_str.split(',');
+        let addr = path_iter.next_chunk::<3>().or(Err(Error::new(ENOENT)))?;
+        if path_iter.next().is_some() {
+            return Err(Error::new(ENOENT));
+        }
+        let addr = [
+            u32::from_str(addr[0]).or(Err(Error::new(ENOENT)))?,
+            u32::from_str(addr[1]).or(Err(Error::new(ENOENT)))?,
+            u32::from_str(addr[2]).or(Err(Error::new(ENOENT)))?,
+        ];
+        let ic_idx = IRQ_CHIP
+            .phandle_to_ic_idx(phandle as u32)
+            .ok_or(Error::new(ENOENT))?;
+        Ok({
+            if flags & O_CREAT == 0 && flags & O_STAT == 0 {
+                return Err(Error::new(EINVAL));
+            }
+            let irq_number = IRQ_CHIP
+                .irq_xlate(ic_idx, &addr)
+                .or(Err(Error::new(ENOENT)))?;
+            debug!("open_phandle_irq  virq={}", irq_number);
+            if flags & O_STAT == 0 {
+                if is_reserved(LogicalCpuId::new(0), irq_number as u8) {
+                    return Err(Error::new(EEXIST));
+                }
+                set_reserved(LogicalCpuId::new(0), irq_number as u8, true);
+            }
+            (
+                Handle::Irq {
+                    ack: AtomicUsize::new(0),
+                    irq: irq_number as u8,
+                },
+                InternalFlags::empty(),
+            )
+        })
+    }
 }
 
 const fn irq_to_vector(irq: u8) -> u8 {
@@ -176,6 +223,26 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let (handle, int_flags) = if path_str.is_empty() {
             if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
                 return Err(Error::new(EISDIR));
+            }
+            // list every logical CPU in the format of e.g. `cpu-1b`
+
+            let mut bytes = String::new();
+
+            use core::fmt::Write;
+
+            for cpu_id in CPUS.get().expect("IRQ scheme not initialized") {
+                writeln!(bytes, "cpu-{:02x}", cpu_id).unwrap();
+            }
+
+            if bsp_apic_id().is_some() {
+                writeln!(bytes, "bsp").unwrap();
+            }
+
+            #[cfg(dtb)]
+            unsafe {
+                for chip in &IRQ_CHIP.irq_chip_list.chips {
+                    writeln!(bytes, "phandle-{}", chip.phandle).unwrap();
+                }
             }
 
             (Handle::TopLevel, InternalFlags::POSITIONED)
@@ -198,6 +265,29 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 } else {
                     return Err(Error::new(ENOENT));
                 }
+            } else if cfg!(dtb) && path_str.starts_with("phandle-") {
+                #[cfg(dtb)]
+                unsafe {
+                    let (phandle_str, path_str) =
+                        path_str[8..].split_once('/').unwrap_or((path_str, ""));
+                    let phandle = usize::from_str(phandle_str).or(Err(Error::new(ENOENT)))?;
+                    if path_str.is_empty() {
+                        let has_any = IRQ_CHIP.irq_iter_for(phandle as u32).next().is_some();
+                        if has_any {
+                            let data = String::new();
+                            (
+                                Handle::Phandle(phandle as u8, data.into_bytes()),
+                                InternalFlags::POSITIONED,
+                            )
+                        } else {
+                            return Err(Error::new(ENOENT));
+                        }
+                    } else {
+                        Self::open_phandle_irq(flags, phandle, path_str)?
+                    }
+                }
+                #[cfg(not(dtb))]
+                panic!("")
             } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
                 if plain_irq_number < BASE_IRQ_COUNT {
                     (
@@ -331,7 +421,6 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     return Ok(0);
                 }
                 handle_ack.store(ack, Ordering::SeqCst);
-
                 unsafe {
                     acknowledge(handle_irq as usize);
                 }
@@ -373,6 +462,13 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 st_nlink: 2,
                 ..Default::default()
             },
+            Handle::Phandle(phandle, ref buf) => Stat {
+                st_mode: MODE_DIR | 0o700,
+                st_size: buf.len() as u64,
+                st_ino: INO_PHANDLE | u64::from(phandle) << 32,
+                st_nlink: 2,
+                ..Default::default()
+            },
             Handle::TopLevel => Stat {
                 st_mode: MODE_DIR | 0o500,
                 st_size: 0,
@@ -392,6 +488,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
             Handle::Bsp => format!("irq:bsp"),
             Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id),
+            Handle::Phandle(phandle, _) => format!("irq:phandle-{}", phandle),
             Handle::TopLevel => format!("irq:"),
         }
         .into_bytes();
@@ -437,7 +534,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     Err(Error::new(EBADFD))
                 }
             }
-            Handle::Avail(_) | Handle::TopLevel => Err(Error::new(EISDIR)),
+            Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) => Err(Error::new(EISDIR)),
         }
     }
 }

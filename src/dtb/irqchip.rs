@@ -252,7 +252,6 @@ impl IrqChipCore {
         self.irq_chip_list.chips[ic_idx].ic.irq_to_virq(hwirq)
     }
 
-    #[cfg(target_arch = "riscv64")]
     pub fn irq_xlate(&self, ic_idx: usize, irq_data: &[u32; 3]) -> Result<usize, Error> {
         self.irq_chip_list.chips[ic_idx].ic.irq_xlate(irq_data)
     }
@@ -285,6 +284,16 @@ impl IrqChipCore {
             .chips
             .iter()
             .position(|x| x.phandle == phandle)
+    }
+
+    pub fn irq_iter_for(&self, ic_idx: u32) -> impl Iterator<Item = u8> + '_ {
+        self.irq_desc.iter().filter_map(move |x| {
+            if x.basic.ic_idx == ic_idx as usize {
+                Some(x.basic.ic_irq as u8)
+            } else {
+                None
+            }
+        })
     }
 }
 
