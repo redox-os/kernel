@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::boxed::Box;
 use byteorder::{ByteOrder, BE};
 use fdt::Fdt;
 use log::info;
@@ -7,7 +7,10 @@ use syscall::Mmio;
 
 use crate::{
     devices::uart_16550,
-    dtb::{diag_uart_range, DTB_BINARY},
+    dtb::{
+        diag_uart_range,
+        irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+    },
     scheme::{
         debug::{debug_input, debug_notify},
         irq::irq_trigger,
@@ -32,6 +35,18 @@ impl SerialPort {
 pub static COM1: Mutex<Option<SerialPort>> = Mutex::new(None);
 
 pub struct Com1Irq {}
+
+impl InterruptHandler for Com1Irq {
+    fn irq_handler(&mut self, irq: u32) {
+        if let Some(ref mut serial_port) = *COM1.lock() {
+            serial_port.receive();
+        };
+        unsafe {
+            irq_trigger(irq as u8);
+            IRQ_CHIP.irq_eoi(irq);
+        }
+    }
+}
 
 pub unsafe fn init_early(dtb: &Fdt) {
     if COM1.lock().is_some() {
@@ -58,8 +73,6 @@ pub unsafe fn init_early(dtb: &Fdt) {
 }
 
 pub unsafe fn init(fdt: &Fdt) -> Option<()> {
-    let data = DTB_BINARY.get().unwrap();
-    let fdt = Fdt::new(data).unwrap();
     if let Some(node) = fdt.find_compatible(&["ns16550a"]) {
         let interrupts = node.property("interrupts").unwrap();
         let mut intr_data: [u32; 3] = [0, 0, 0];
@@ -70,8 +83,20 @@ pub unsafe fn init(fdt: &Fdt) -> Option<()> {
             let val = BE::read_u32(chunk);
             intr_data[idx] = val;
         }
+
+        let interrupt_parent = node.interrupt_parent()?;
+        let phandle = interrupt_parent.property("phandle")?.as_usize()? as u32;
+        let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle)?;
+
+        let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+            .ic
+            .irq_xlate(&intr_data)
+            .unwrap();
+        info!("serial_port virq = {}", virq);
+        register_irq(virq as u32, Box::new(Com1Irq {}));
+        IRQ_CHIP.irq_enable(virq as u32);
     }
-    if let Some(ref mut serial_port) = *COM1.lock() {
+    if let Some(ref mut _serial_port) = *COM1.lock() {
         // serial_port.enable_irq(); // FIXME receive int is enabled by default in 16550. Disable by default?
     }
     Some(())

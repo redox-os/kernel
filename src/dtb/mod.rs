@@ -28,12 +28,13 @@ pub unsafe fn init(dtb: Option<(usize, usize)>) {
 }
 
 pub fn travel_interrupt_ctrl(fdt: &Fdt) {
-    let root_intr_parent = fdt
+    if let Some(root_intr_parent) = fdt
         .root()
         .property("interrupt-parent")
         .and_then(NodeProperty::as_usize)
-        .unwrap();
-    debug!("root parent = 0x{:08x}", root_intr_parent);
+    {
+        debug!("root parent = 0x{:08x}", root_intr_parent);
+    }
     for node in fdt.all_nodes() {
         if node.property("interrupt-controller").is_some() {
             let compatible = node.property("compatible").unwrap().as_str().unwrap();

@@ -1,12 +1,10 @@
-use alloc::vec::Vec;
-use core::ptr::{read_volatile, write_volatile};
-
 use byteorder::{ByteOrder, BE};
+use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
-
 use log::{debug, error, info};
 
-use crate::dtb::irqchip::{InterruptController, InterruptHandler, IrqDesc, IRQ_CHIP};
+use super::InterruptController;
+use crate::dtb::irqchip::{InterruptHandler, IrqDesc, IRQ_CHIP};
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -81,25 +79,17 @@ impl Bcm2835ArmInterruptController {
         if let Some(interrupt_parent) = node.property("interrupt-parent") {
             let phandle = interrupt_parent.as_usize().unwrap() as u32;
             let interrupts = node.property("interrupts").unwrap();
-            let mut intr_data = Vec::new();
-            for chunk in interrupts.value.chunks(4) {
-                let val = BE::read_u32(chunk);
-                intr_data.push(val);
-            }
-            let mut ic_idx = IRQ_CHIP.irq_chip_list.root_idx;
-            let mut i = 0;
-            while i < IRQ_CHIP.irq_chip_list.chips.len() {
-                let item = &IRQ_CHIP.irq_chip_list.chips[i];
-                if item.phandle == phandle {
-                    ic_idx = i;
-                    break;
-                }
-                i += 1;
-            }
+            let irq = interrupts
+                .value
+                .array_chunks::<4>()
+                .map(|f| BE::read_u32(f))
+                .next_chunk::<3>()
+                .unwrap();
+            let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
             //PHYS_NONSECURE_PPI only
             let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
                 .ic
-                .irq_xlate(&intr_data, 0)
+                .irq_xlate(&irq)
                 .unwrap();
             info!("bcm2835arm_ctrl virq = {}", virq);
             ret_virq = Some(virq);
@@ -134,8 +124,8 @@ impl InterruptController for Bcm2835ArmInterruptController {
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-    ) -> Result<Option<usize>> {
-        let (base, _size, virq) = match Bcm2835ArmInterruptController::parse(fdt) {
+    ) -> Result<()> {
+        let (base, _size, _virq) = match Bcm2835ArmInterruptController::parse(fdt) {
             Ok((a, b, c)) => (a, b, c),
             Err(_) => return Err(Error::new(EINVAL)),
         };
@@ -160,7 +150,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
             *irq_idx = idx + cnt;
         }
 
-        Ok(virq)
+        Ok(())
     }
 
     fn irq_ack(&mut self) -> u32 {
@@ -259,44 +249,21 @@ impl InterruptController for Bcm2835ArmInterruptController {
             _ => return,
         }
     }
-    fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
+    fn irq_xlate(&self, irq_data: &[u32; 3]) -> Result<usize> {
         //assert interrupt-cells == 0x2
-        let mut i = 0;
-        //assert interrupt-cells == 0x2
-        for chunk in irq_data.chunks(2) {
-            if i == idx {
-                let bank = chunk[0] as usize;
-                let irq = chunk[1] as usize;
-                //TODO: check bank && irq
-                let hwirq = bank << 5 | irq;
-                let off = hwirq + self.irq_range.0;
-                return Ok(off);
-            }
-            i += 1;
-        }
-        Err(Error::new(EINVAL))
+        let bank = irq_data[0] as usize;
+        let irq = irq_data[1] as usize;
+        //TODO: check bank && irq
+        let hwirq = bank << 5 | irq;
+        let off = hwirq + self.irq_range.0;
+        return Ok(off);
     }
-    fn irq_to_virq(&mut self, hwirq: u32) -> Option<usize> {
+
+    fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
         if hwirq > 95 {
             None
         } else {
             Some(self.irq_range.0 + hwirq as usize)
-        }
-    }
-
-    fn irq_handler(&mut self, _irq: u32) {
-        unsafe {
-            let irq = self.irq_ack();
-            if let Some(virq) = self.irq_to_virq(irq)
-                && virq < 1024
-            {
-                if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
-                    handler.irq_handler(virq as u32);
-                }
-            } else {
-                error!("unexpected irq num {}", irq);
-            }
-            self.irq_eoi(irq);
         }
     }
 }

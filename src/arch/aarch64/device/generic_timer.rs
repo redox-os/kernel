@@ -1,18 +1,15 @@
 use alloc::boxed::Box;
-use log::info;
+use log::{error, info};
 
+use super::ic_for_chip;
 use crate::{
     context,
     context::timeout,
     device::cpu::registers::control_regs,
-    dtb::{
-        irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
-        DTB_BINARY,
-    },
+    dtb::irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     interrupt::irq::trigger,
     time,
 };
-use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use fdt::Fdt;
 
@@ -24,42 +21,33 @@ bitflags! {
     }
 }
 
-pub unsafe fn init() {
+pub unsafe fn init(fdt: &Fdt) {
     let mut timer = GenericTimer {
         clk_freq: 0,
         reload_count: 0,
     };
     timer.init();
-    let data = DTB_BINARY.get().unwrap();
-    let fdt = Fdt::new(data).unwrap();
     if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
         let interrupts = node.property("interrupts").unwrap();
-        let mut intr_data = Vec::new();
-        for chunk in interrupts.value.chunks(4) {
-            let val = BE::read_u32(chunk);
-            intr_data.push(val);
-        }
-        let mut ic_idx = IRQ_CHIP.irq_chip_list.root_idx;
-        if let Some(interrupt_parent) = node.property("interrupt-parent") {
-            let phandle = interrupt_parent.as_usize().unwrap() as u32;
-            let mut i = 0;
-            while i < IRQ_CHIP.irq_chip_list.chips.len() {
-                let item = &IRQ_CHIP.irq_chip_list.chips[i];
-                if item.phandle == phandle {
-                    ic_idx = i;
-                    break;
-                }
-                i += 1;
-            }
-        }
-        //PHYS_NONSECURE_PPI only
-        let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-            .ic
-            .irq_xlate(&intr_data, 1)
+        let irq = interrupts
+            .value
+            .array_chunks::<4>()
+            .map(|f| BE::read_u32(f))
+            .skip(3)
+            .next_chunk::<3>()
             .unwrap();
-        info!("generic_timer virq = {}", virq);
-        register_irq(virq as u32, Box::new(timer));
-        IRQ_CHIP.irq_enable(virq as u32);
+        if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
+            //PHYS_NONSECURE_PPI only
+            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                .ic
+                .irq_xlate(&irq)
+                .unwrap();
+            info!("generic_timer virq = {}", virq);
+            register_irq(virq as u32, Box::new(timer));
+            IRQ_CHIP.irq_enable(virq as u32);
+        } else {
+            error!("Failed to find irq parent for generic timer");
+        }
     }
 }
 

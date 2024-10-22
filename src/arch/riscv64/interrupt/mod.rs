@@ -7,9 +7,6 @@ mod exception;
 pub mod syscall;
 pub mod trace;
 
-pub use self::trace::StackTrace;
-
-use crate::cpu_set::LogicalCpuId;
 pub use handler::InterruptStack;
 
 pub fn bsp_apic_id() -> Option<u32> {

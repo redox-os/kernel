@@ -1,10 +1,10 @@
+use super::InterruptController;
+use crate::dtb::irqchip::{InterruptHandler, IrqDesc};
 use core::{
     arch::asm,
     ptr::{read_volatile, write_volatile},
 };
 use fdt::{node::FdtNode, Fdt};
-
-use crate::dtb::irqchip::{InterruptController, IrqDesc};
 use log::{debug, info};
 use syscall::{
     error::{Error, EINVAL},
@@ -102,6 +102,10 @@ impl Bcm2836ArmInterruptController {
     }
 }
 
+impl InterruptHandler for Bcm2836ArmInterruptController {
+    fn irq_handler(&mut self, _irq: u32) {}
+}
+
 impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_init(
         &mut self,
@@ -109,7 +113,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-    ) -> Result<Option<usize>> {
+    ) -> Result<()> {
         let (base, _size) = match Bcm2836ArmInterruptController::parse(fdt) {
             Ok((a, b)) => (a, b),
             Err(_) => return Err(Error::new(EINVAL)),
@@ -138,7 +142,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
             *irq_idx = idx + cnt;
         }
 
-        Ok(None)
+        Ok(())
     }
 
     fn irq_ack(&mut self) -> u32 {
@@ -190,25 +194,16 @@ impl InterruptController for Bcm2836ArmInterruptController {
             }
         }
     }
-    fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
-        let mut i = 0;
+    fn irq_xlate(&self, irq_data: &[u32; 3]) -> Result<usize> {
         //assert interrupt-cells == 0x2
-        for chunk in irq_data.chunks(2) {
-            if i == idx {
-                let off = chunk[0] as usize + self.irq_range.0;
-                return Ok(off);
-            }
-            i += 1;
-        }
-        Err(Error::new(EINVAL))
+        let off = irq_data[0] as usize + self.irq_range.0;
+        return Ok(off);
     }
-    fn irq_to_virq(&mut self, hwirq: u32) -> Option<usize> {
+    fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
         if hwirq > LOCAL_IRQ_LAST {
             None
         } else {
             Some(self.irq_range.0 + hwirq as usize)
         }
     }
-
-    fn irq_handler(&mut self, _irq: u32) {}
 }

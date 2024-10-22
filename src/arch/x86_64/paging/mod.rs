@@ -23,6 +23,8 @@ pub mod entry {
 
 pub mod mapper;
 
+pub const ENTRY_COUNT: usize = RmmA::PAGE_ENTRIES;
+
 /// Size of pages
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
 pub const PAGE_MASK: usize = RmmA::PAGE_OFFSET_MASK;

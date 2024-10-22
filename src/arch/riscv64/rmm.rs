@@ -1,4 +1,3 @@
-use super::CurrentRmmArch as RmmA;
 use rmm::{Arch, PageFlags, VirtualAddress};
 
 pub struct KernelMapper {

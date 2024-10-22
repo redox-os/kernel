@@ -20,10 +20,7 @@ use crate::{
 
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug;
-use crate::{
-    devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY, FRAMEBUFFER},
-    dtb::register_dev_memory_ranges,
-};
+use crate::dtb::register_dev_memory_ranges;
 
 /// Test of zero values in BSS.
 static mut BSS_TEST_ZERO: usize = 0;

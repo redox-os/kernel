@@ -1,11 +1,14 @@
-use core::{
-    arch::global_asm,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use core::{arch::global_asm, sync::atomic::Ordering};
 use log::{error, info};
 use rmm::VirtualAddress;
 
-use crate::{memory::GenericPfFlags, panic::stack_trace, ptrace, syscall, syscall::flag::*};
+use crate::{
+    arch::{device::irqchip, start::BOOT_HART_ID},
+    memory::GenericPfFlags,
+    panic::stack_trace,
+    ptrace, syscall,
+    syscall::flag::*,
+};
 
 const BREAKPOINT: usize = 3;
 const USERMODE_ECALL: usize = 8;
@@ -133,7 +136,12 @@ unsafe fn handle_system_exception(scause: usize, regs: &InterruptStack) {
     loop {}
 }
 
-unsafe fn handle_interrupt(interrupt: usize) {}
+unsafe fn handle_interrupt(interrupt: usize) {
+    // FIXME retrieve from percpu area
+    // For now all the interrupts go to boot hart so this suffices...
+    let hart: usize = BOOT_HART_ID.load(Ordering::Relaxed);
+    irqchip::hlic::interrupt(hart, interrupt);
+}
 
 unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
     if scause == USERMODE_ECALL {

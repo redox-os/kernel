@@ -1,7 +1,7 @@
+use super::InterruptController;
+use crate::dtb::irqchip::{InterruptHandler, IrqDesc};
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
-
-use crate::dtb::irqchip::{InterruptController, IrqDesc};
 use log::info;
 use syscall::{
     error::{Error, EINVAL},
@@ -75,6 +75,10 @@ impl GenericInterruptController {
     }
 }
 
+impl InterruptHandler for GenericInterruptController {
+    fn irq_handler(&mut self, _irq: u32) {}
+}
+
 impl InterruptController for GenericInterruptController {
     fn irq_init(
         &mut self,
@@ -82,7 +86,7 @@ impl InterruptController for GenericInterruptController {
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-    ) -> Result<Option<usize>> {
+    ) -> Result<()> {
         let (dist_addr, _dist_size, cpu_addr, _cpu_size) =
             match GenericInterruptController::parse(fdt) {
                 Ok(regs) => regs,
@@ -117,7 +121,7 @@ impl InterruptController for GenericInterruptController {
         info!("gic irq_range = ({}, {})", idx, idx + cnt);
         self.irq_range = (idx, idx + cnt);
         *irq_idx = idx + cnt;
-        Ok(None)
+        Ok(())
     }
     fn irq_ack(&mut self) -> u32 {
         unsafe { self.gic_cpu_if.irq_ack() }
@@ -131,31 +135,22 @@ impl InterruptController for GenericInterruptController {
     fn irq_disable(&mut self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
     }
-    fn irq_xlate(&mut self, irq_data: &[u32], idx: usize) -> Result<usize> {
-        let mut i = 0;
-        for chunk in irq_data.chunks(3) {
-            if i == idx {
-                let mut off = match chunk[0] {
-                    0 => chunk[1] as usize + 32, //SPI
-                    1 => chunk[1] as usize + 16, //PPI,
-                    _ => return Err(Error::new(EINVAL)),
-                };
-                off += self.irq_range.0;
-                return Ok(off);
-            }
-            i += 1;
-        }
-        Err(Error::new(EINVAL))
+    fn irq_xlate(&self, irq_data: &[u32; 3]) -> Result<usize> {
+        let mut off = match irq_data[0] {
+            0 => irq_data[1] as usize + 32, //SPI
+            1 => irq_data[1] as usize + 16, //PPI,
+            _ => return Err(Error::new(EINVAL)),
+        };
+        off += self.irq_range.0;
+        return Ok(off);
     }
-    fn irq_to_virq(&mut self, hwirq: u32) -> Option<usize> {
+    fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
         if hwirq >= self.gic_dist_if.nirqs {
             None
         } else {
             Some(self.irq_range.0 + hwirq as usize)
         }
     }
-
-    fn irq_handler(&mut self, _irq: u32) {}
 }
 
 #[derive(Debug)]

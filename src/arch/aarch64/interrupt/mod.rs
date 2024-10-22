@@ -10,8 +10,6 @@ pub mod irq;
 pub mod syscall;
 pub mod trace;
 
-use crate::cpu_set::LogicalCpuId;
-
 pub use self::handler::InterruptStack;
 
 /// Clear interrupts

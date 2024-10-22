@@ -1,4 +1,6 @@
-use crate::{dtb, dtb::DTB_BINARY, info};
+use crate::info;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use fdt::Fdt;
 
 pub mod cpu;
 pub mod generic_timer;
@@ -7,18 +9,35 @@ pub mod rtc;
 pub mod serial;
 pub mod uart_pl011;
 
-pub unsafe fn init() {
-    info!("IRQCHIP INIT");
-    let data = DTB_BINARY.get().unwrap();
-    let fdt = fdt::Fdt::new(data).unwrap();
-    dtb::irqchip::init(&fdt);
-    info!("GIT INIT");
-    generic_timer::init();
+use crate::dtb::irqchip::IRQ_CHIP;
+use irqchip::ic_for_chip;
+
+pub static ROOT_IC_IDX: AtomicUsize = AtomicUsize::new(0);
+
+unsafe fn init_root_ic(fdt: &Fdt) {
+    let root_irqc_phandle = fdt
+        .root()
+        .property("interrupt-parent")
+        .unwrap()
+        .as_usize()
+        .unwrap();
+    let ic_idx = IRQ_CHIP
+        .phandle_to_ic_idx(root_irqc_phandle as u32)
+        .unwrap();
+    ROOT_IC_IDX.store(ic_idx, Ordering::Relaxed);
 }
 
-pub unsafe fn init_noncore() {
+pub unsafe fn init(fdt: &Fdt) {
+    info!("IRQCHIP INIT");
+    crate::dtb::irqchip::init(&fdt);
+    init_root_ic(&fdt);
+    info!("GIT INIT");
+    generic_timer::init(fdt);
+}
+
+pub unsafe fn init_noncore(fdt: &Fdt) {
     info!("SERIAL INIT");
-    serial::init();
+    serial::init(fdt);
     info!("RTC INIT");
     rtc::init();
 }

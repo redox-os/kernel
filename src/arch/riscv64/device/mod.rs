@@ -1,12 +1,17 @@
-use crate::{arch::time, dtb::DTB_BINARY};
+use crate::{
+    arch::{device::irqchip::hlic, time},
+    dtb::DTB_BINARY,
+};
 use fdt::{
     node::{FdtNode, NodeProperty},
     Fdt,
 };
 
 pub mod cpu;
-pub mod irqchip;
+pub(crate) mod irqchip;
 pub mod serial;
+
+use crate::arch::device::irqchip::init_clint;
 
 fn string_property(name: &str) -> bool {
     name == "compatible"
@@ -59,11 +64,15 @@ unsafe fn init_intc(cpu: &FdtNode) {
         .find(|x| x.name == "interrupt-controller")
         .unwrap();
     assert_eq!(intc_node.compatible().unwrap().first(), "riscv,cpu-intc");
+    // This controller is hardwired into interrupt handler code and has no Mmios
+    hlic::init(); // enable interrupts at HLIC level
 }
 
 pub unsafe fn init() {
     let data = DTB_BINARY.get().unwrap();
     let fdt = Fdt::new(data).unwrap();
+
+    crate::dtb::irqchip::init(&fdt);
 
     let cpu = fdt.find_node(format!("/cpus/cpu@{}", 0).as_str()).unwrap();
     init_intc(&cpu);
@@ -84,6 +93,7 @@ pub unsafe fn init_noncore() {
     let data = DTB_BINARY.get().unwrap();
     let fdt = Fdt::new(data).unwrap();
 
+    init_clint(&fdt);
     serial::init(&fdt);
 }
 

@@ -3,15 +3,16 @@ use spin::Mutex;
 
 use crate::{device::uart_pl011::SerialPort, interrupt::irq::trigger};
 
-use crate::dtb::{
-    diag_uart_range,
-    irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
-    DTB_BINARY,
+use crate::{
+    arch::device::irqchip::ic_for_chip,
+    dtb::{
+        diag_uart_range,
+        irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+    },
 };
-use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use fdt::Fdt;
-use log::info;
+use log::{error, info};
 
 pub static COM1: Mutex<Option<SerialPort>> = Mutex::new(None);
 
@@ -45,36 +46,26 @@ pub unsafe fn init_early(dtb: &Fdt) {
     }
 }
 
-pub unsafe fn init() {
-    let data = DTB_BINARY.get().unwrap();
-    let fdt = Fdt::new(data).unwrap();
+pub unsafe fn init(fdt: &Fdt) {
     if let Some(node) = fdt.find_compatible(&["arm,pl011"]) {
         let interrupts = node.property("interrupts").unwrap();
-        let mut intr_data = Vec::new();
-        for chunk in interrupts.value.chunks(4) {
-            let val = BE::read_u32(chunk);
-            intr_data.push(val);
-        }
-        let mut ic_idx = IRQ_CHIP.irq_chip_list.root_idx;
-        if let Some(interrupt_parent) = node.property("interrupt-parent") {
-            let phandle = interrupt_parent.as_usize().unwrap() as u32;
-            let mut i = 0;
-            while i < IRQ_CHIP.irq_chip_list.chips.len() {
-                let item = &IRQ_CHIP.irq_chip_list.chips[i];
-                if item.phandle == phandle {
-                    ic_idx = i;
-                    break;
-                }
-                i += 1;
-            }
-        }
-        let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-            .ic
-            .irq_xlate(&intr_data, 0)
+        let irq = interrupts
+            .value
+            .array_chunks::<4>()
+            .map(|f| BE::read_u32(f))
+            .next_chunk::<3>()
             .unwrap();
-        info!("serial_port virq = {}", virq);
-        register_irq(virq as u32, Box::new(Com1Irq {}));
-        IRQ_CHIP.irq_enable(virq as u32);
+        if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
+            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                .ic
+                .irq_xlate(&irq)
+                .unwrap();
+            info!("serial_port virq = {}", virq);
+            register_irq(virq as u32, Box::new(Com1Irq {}));
+            IRQ_CHIP.irq_enable(virq as u32);
+        } else {
+            error!("serial port irq parent not found");
+        }
     }
     if let Some(ref mut serial_port) = *COM1.lock() {
         serial_port.enable_irq();

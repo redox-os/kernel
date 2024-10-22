@@ -69,11 +69,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         } else {
             None
         };
+        let dtb = dtb.unwrap();
 
-        if let Some(dt) = &dtb {
-            // Try to find serial port prior to logging
-            device::serial::init_early(dt);
-        }
+        // Try to find serial port prior to logging
+        device::serial::init_early(&dtb);
 
         // Convert env to slice
         let env = slice::from_raw_parts(
@@ -138,12 +137,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             tmp = out(reg) _,
         );
 
-        if let Some(dt) = &dtb {
-            //in uefi boot mode, ignore memory node, just read the device memory range
-            //register_memory_ranges(dt);
+        //in uefi boot mode, ignore memory node, just read the device memory range
+        //register_memory_ranges(&dtb);
 
-            register_dev_memory_ranges(dt);
-        }
+        register_dev_memory_ranges(&dtb);
 
         register_bootloader_areas(args.areas_base, args.areas_size);
 
@@ -202,10 +199,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         dtb::init(Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size)));
 
         // Initialize devices
-        device::init();
+        device::init(&dtb);
 
         // Initialize all of the non-core devices not otherwise needed to complete initialization
-        device::init_noncore();
+        device::init_noncore(&dtb);
 
         BSP_READY.store(true, Ordering::SeqCst);
 
