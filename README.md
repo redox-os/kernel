@@ -6,6 +6,10 @@ Redox OS Microkernel
 [![SLOCs counter](https://tokei.rs/b1/github/redox-os/kernel?category=code)](https://github.com/XAMPPRocky/tokei)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
+## Requirements
+
+* [`nasm`](https://nasm.us/) needs to be available on the PATH at build time.
+
 ## Building The Documentation
 
 Use this command:

@@ -8,7 +8,7 @@ fn_single_line = false # default
 force_explicit_abi = true # default
 format_strings = false # default
 hard_tabs = false # default
-hide_parse_errors = false # default
+show_parse_errors = true # default
 imports_granularity = "Crate" # default = Preserve
 imports_indent = "Block" # default
 imports_layout = "Mixed" # default

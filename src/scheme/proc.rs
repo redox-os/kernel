@@ -532,7 +532,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         match handle {
             Handle::Process {
                 kind: ProcHandle::Trace { pid, .. },
-                process,
+                process: _,
             } => ptrace::Session::with_session(*pid, |session| {
                 Ok(session.data.lock().session_fevent_flags())
             }),
@@ -1519,7 +1519,7 @@ impl ContextHandle {
     }
     fn kreadoff(
         &self,
-        id: usize,
+        _id: usize,
         context: Arc<RwSpinlock<Context>>,
         buf: UserSliceWo,
         offset: u64,
