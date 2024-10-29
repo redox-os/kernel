@@ -6,6 +6,7 @@ mod gic;
 mod gicv3;
 mod irq_bcm2835;
 mod irq_bcm2836;
+mod null;
 
 pub(crate) fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> {
     if ic_str.contains("arm,gic-v3") {
@@ -18,7 +19,8 @@ pub(crate) fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> 
         Some(Box::new(irq_bcm2835::Bcm2835ArmInterruptController::new()))
     } else {
         log::warn!("no driver for interrupt controller {:?}", ic_str);
-        None
+        //TODO: return None and handle it properly
+        Some(Box::new(null::Null))
     }
 }
 
