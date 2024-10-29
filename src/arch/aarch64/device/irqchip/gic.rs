@@ -43,7 +43,10 @@ impl GenericInterruptController {
         }
     }
     pub fn parse(fdt: &Fdt) -> Result<(usize, usize, usize, usize)> {
-        if let Some(node) = fdt.find_compatible(&["arm,cortex-a15-gic"]) {
+        if let Some(node) = fdt.find_compatible(&[
+            "arm,cortex-a15-gic",
+            "arm,gic-400",
+        ]) {
             return GenericInterruptController::parse_inner(&node);
         } else {
             return Err(Error::new(EINVAL));
