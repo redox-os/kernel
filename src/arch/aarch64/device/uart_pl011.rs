@@ -106,12 +106,11 @@ pub struct SerialPort {
     dma_ctrl_reg: u8,
     ifls: u32,
     fifo_size: u32,
-    skip_init: bool,
     cts_event_walkaround: bool,
 }
 
 impl SerialPort {
-    pub const fn new(base: usize, skip_init: bool, cts_event_walkaround: bool) -> SerialPort {
+    pub const fn new(base: usize, cts_event_walkaround: bool) -> SerialPort {
         SerialPort {
             base: base,
             data_reg: 0x00,
@@ -129,7 +128,6 @@ impl SerialPort {
             dma_ctrl_reg: 0x48,
             ifls: 0x12, // RX4_8 | TX4_8
             fifo_size: 32,
-            skip_init: skip_init,
             cts_event_walkaround: cts_event_walkaround,
         }
     }
@@ -145,10 +143,6 @@ impl SerialPort {
     }
 
     pub fn init(&mut self, with_irq: bool) {
-        if self.skip_init {
-            return;
-        }
-
         //Disable UART first
         self.write_reg(self.ctrl_reg, 0x0);
 

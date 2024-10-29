@@ -90,9 +90,14 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
         }
     }
 
-    let soc_node = dt.find_node("/soc").unwrap();
-    let reg = soc_node.ranges().unwrap();
-
+    let Some(soc_node) = dt.find_node("/soc") else {
+        log::warn!("failed to find /soc in devicetree");
+        return;
+    };
+    let Some(reg) = soc_node.ranges() else {
+        log::warn!("devicetree /soc has no ranges");
+        return;
+    };
     for chunk in reg {
         log::debug!(
             "dev mem 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
@@ -133,12 +138,12 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'
         .property("compatible")
         .and_then(NodeProperty::as_str)?;
 
-    let mut reg = uart_node.reg().unwrap();
-    let memory = reg.nth(0).unwrap();
+    let mut reg = uart_node.reg()?;
+    let memory = reg.nth(0)?;
 
     Some((
         memory.starting_address as usize,
-        memory.size.unwrap(),
+        memory.size?,
         skip_init,
         cts_event_walkaround,
         compatible,
