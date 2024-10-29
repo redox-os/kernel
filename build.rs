@@ -48,14 +48,6 @@ fn main() {
 
     match arch_str {
         "aarch64" => {
-            // Build pre kstart init asm code for aarch64
-            /*TODO: do we need any of this?
-            println!("cargo:rerun-if-changed=src/arch/aarch64/init/pre_kstart/early_init.S");
-            cc::Build::new()
-                .file("src/arch/aarch64/init/pre_kstart/early_init.S")
-                .target("aarch64-unknown-redox")
-                .compile("early_init");
-            */
             println!("cargo:rustc-cfg=dtb");
         }
         "x86" => {
