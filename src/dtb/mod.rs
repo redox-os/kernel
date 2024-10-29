@@ -125,7 +125,7 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
 }
 
 pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'a str)> {
-    let stdout_path = dtb.chosen().stdout().unwrap();
+    let stdout_path = dtb.chosen().stdout()?;
     let uart_node = stdout_path.node();
     let skip_init = uart_node.property("skip-init").is_some();
     let cts_event_walkaround = uart_node.property("cts-event-walkaround").is_some();

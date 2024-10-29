@@ -29,6 +29,7 @@ pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
+#[derive(Debug)]
 #[repr(C, packed(8))]
 pub struct KernelArgs {
     kernel_base: usize,
@@ -52,7 +53,7 @@ pub struct KernelArgs {
 #[no_mangle]
 pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
     let bootstrap = {
-        let args = &*args_ptr;
+        let args = args_ptr.read();
 
         // BSS should already be zero
         {
@@ -63,17 +64,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
         KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
-        let dtb = if args.dtb_base != 0 {
-            let data = unsafe { slice::from_raw_parts(args.dtb_base as *const u8, args.dtb_size) };
-            Fdt::new(data).ok()
-        } else {
-            None
-        };
-        let dtb = dtb.unwrap();
-
-        // Try to find serial port prior to logging
-        device::serial::init_early(&dtb);
-
         // Convert env to slice
         let env = slice::from_raw_parts(
             (crate::PHYS_OFFSET + args.env_base) as *const u8,
@@ -83,6 +73,22 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init(env);
+
+        // Get DTB data
+        let dtb_data = if args.dtb_base != 0 {
+            Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size))
+        } else {
+            None
+        };
+        let dtb_res = dtb_data
+            .map(|(base, size)| unsafe { slice::from_raw_parts(base as *const u8, size) })
+            .ok_or(fdt::FdtError::BadPtr)
+            .and_then(|data| Fdt::new(data));
+
+        // Try to find serial port prior to logging
+        if let Ok(dtb) = &dtb_res {
+            device::serial::init_early(dtb);
+        }
 
         // Initialize logger
         crate::log::init_logger(|r| {
@@ -95,6 +101,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 r.args()
             );
         });
+        log::set_max_level(::log::LevelFilter::Debug);
 
         info!("Redox OS starting...");
         info!(
@@ -137,18 +144,12 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             tmp = out(reg) _,
         );
 
-        //in uefi boot mode, ignore memory node, just read the device memory range
-        //register_memory_ranges(&dtb);
-
-        register_dev_memory_ranges(&dtb);
-
-        register_bootloader_areas(args.areas_base, args.areas_size);
-
-        /* NOT USED WITH UEFI
-        let env_size = device_tree::fill_env_data(crate::PHYS_OFFSET + dtb_base, dtb_size, env_base);
-        */
-
         // Initialize RMM
+        register_bootloader_areas(args.areas_base, args.areas_size);
+        if let Ok(dtb) = &dtb_res {
+            register_dev_memory_ranges(dtb);
+        }
+
         register_memory_region(
             args.kernel_base,
             args.kernel_size,
@@ -196,7 +197,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Activate memory logging
         crate::log::init();
 
-        dtb::init(Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size)));
+        dtb::init(dtb_data);
+
+        //TODO: do not require DTB here?
+        let dtb = dtb_res.unwrap();
 
         // Initialize devices
         device::init(&dtb);
