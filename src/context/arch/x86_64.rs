@@ -233,6 +233,11 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
+    // Update contexts' timestamps
+    let switch_time = crate::time::monotonic();
+    prev.cpu_time += switch_time.saturating_sub(prev.switch_time);
+    next.switch_time = switch_time;
+
     let pcr = crate::gdt::pcr();
 
     if let Some(ref stack) = next.kstack {
