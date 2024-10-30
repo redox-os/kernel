@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-#[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(feature = "acpi")]
 use self::acpi::AcpiScheme;
 #[cfg(dtb)]
 use self::dtb::DtbScheme;
@@ -38,7 +38,7 @@ use self::{
 };
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
-#[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(feature = "acpi")]
 pub mod acpi;
 #[cfg(dtb)]
 pub mod dtb;
@@ -145,7 +145,7 @@ impl SchemeList {
                 ProcRestricted,
             ]);
 
-            #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+            #[cfg(feature = "acpi")]
             insert_globals(&[Acpi]);
 
             #[cfg(dtb)]
@@ -207,7 +207,7 @@ impl SchemeList {
             self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb)
                 .unwrap();
         }
-        #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+        #[cfg(feature = "acpi")]
         {
             self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi)
                 .unwrap();
@@ -536,7 +536,7 @@ pub enum GlobalSchemes {
     ProcFull,
     ProcRestricted,
 
-    #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(feature = "acpi")]
     Acpi,
 
     #[cfg(dtb)]
@@ -576,7 +576,7 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Sys => &SysScheme,
             Self::ProcFull => &ProcScheme::<true>,
             Self::ProcRestricted => &ProcScheme::<false>,
-            #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+            #[cfg(feature = "acpi")]
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
@@ -591,7 +591,7 @@ impl GlobalSchemes {
 
 #[cold]
 pub fn init_globals() {
-    #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+    #[cfg(feature = "acpi")]
     {
         AcpiScheme::init();
     }

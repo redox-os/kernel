@@ -22,19 +22,15 @@ static GICC_CTLR: u32 = 0x0000;
 static GICC_PMR: u32 = 0x0004;
 
 pub struct GenericInterruptController {
-    gic_dist_if: GicDistIf,
-    gic_cpu_if: GicCpuIf,
-    irq_range: (usize, usize),
+    pub gic_dist_if: GicDistIf,
+    pub gic_cpu_if: GicCpuIf,
+    pub irq_range: (usize, usize),
 }
 
 impl GenericInterruptController {
     pub fn new() -> Self {
-        let gic_dist_if = GicDistIf {
-            address: 0,
-            ncpus: 0,
-            nirqs: 0,
-        };
-        let gic_cpu_if = GicCpuIf { address: 0 };
+        let gic_dist_if = GicDistIf::default();
+        let gic_cpu_if = GicCpuIf::default();
 
         GenericInterruptController {
             gic_dist_if,
@@ -82,25 +78,22 @@ impl InterruptHandler for GenericInterruptController {
 impl InterruptController for GenericInterruptController {
     fn irq_init(
         &mut self,
-        fdt: &Fdt,
+        fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> Result<()> {
-        let (dist_addr, _dist_size, cpu_addr, _cpu_size) =
-            match GenericInterruptController::parse(fdt) {
-                Ok(regs) => regs,
-                Err(err) => return Err(err),
-            };
+        if let Some(fdt) = fdt_opt {
+            let (dist_addr, _dist_size, cpu_addr, _cpu_size) =
+                match GenericInterruptController::parse(fdt) {
+                    Ok(regs) => regs,
+                    Err(err) => return Err(err),
+                };
 
-        unsafe {
-            self.gic_cpu_if.init(crate::PHYS_OFFSET + cpu_addr);
-            self.gic_dist_if.init(crate::PHYS_OFFSET + dist_addr);
-
-            // Enable CPU0's GIC interface
-            self.gic_cpu_if.write(GICC_CTLR, 1);
-            // Set CPU0's Interrupt Priority Mask
-            self.gic_cpu_if.write(GICC_PMR, 0xff);
+            unsafe {
+                self.gic_dist_if.init(crate::PHYS_OFFSET + dist_addr);
+                self.gic_cpu_if.init(crate::PHYS_OFFSET + cpu_addr);
+            }
         }
         let idx = *irq_idx;
         let cnt = if self.gic_dist_if.nirqs > 1024 {
@@ -153,7 +146,7 @@ impl InterruptController for GenericInterruptController {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct GicDistIf {
     pub address: usize,
     pub ncpus: u32,
@@ -232,13 +225,19 @@ impl GicDistIf {
     }
 }
 
+#[derive(Debug, Default)]
 pub struct GicCpuIf {
     pub address: usize,
 }
 
 impl GicCpuIf {
-    fn init(&mut self, addr: usize) {
+    pub unsafe fn init(&mut self, addr: usize) {
         self.address = addr;
+
+        // Enable CPU0's GIC interface
+        self.write(GICC_CTLR, 1);
+        // Set CPU0's Interrupt Priority Mask
+        self.write(GICC_PMR, 0xff);
     }
 
     unsafe fn irq_ack(&mut self) -> u32 {

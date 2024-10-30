@@ -109,12 +109,13 @@ impl InterruptHandler for Plic {
 impl InterruptController for Plic {
     fn irq_init(
         &mut self,
-        fdt: &Fdt,
+        fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> syscall::Result<()> {
         let desc = unsafe { &IRQ_CHIP.irq_chip_list.chips[ic_idx] };
+        let fdt = fdt_opt.unwrap();
         let my_node = fdt.find_phandle(desc.phandle).unwrap();
 
         // MMIO region

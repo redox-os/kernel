@@ -120,12 +120,12 @@ impl Bcm2835ArmInterruptController {
 impl InterruptController for Bcm2835ArmInterruptController {
     fn irq_init(
         &mut self,
-        fdt: &Fdt,
+        fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> Result<()> {
-        let (base, _size, _virq) = match Bcm2835ArmInterruptController::parse(fdt) {
+        let (base, _size, _virq) = match Bcm2835ArmInterruptController::parse(fdt_opt.unwrap()) {
             Ok((a, b, c)) => (a, b, c),
             Err(_) => return Err(Error::new(EINVAL)),
         };

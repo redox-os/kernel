@@ -11,21 +11,17 @@ use syscall::{
 
 #[derive(Debug)]
 pub struct GicV3 {
-    gic_dist_if: GicDistIf,
-    gic_cpu_if: GicV3CpuIf,
-    gicrs: Vec<(usize, usize)>,
+    pub gic_dist_if: GicDistIf,
+    pub gic_cpu_if: GicV3CpuIf,
+    pub gicrs: Vec<(usize, usize)>,
     //TODO: GICC, GICH, GICV?
-    irq_range: (usize, usize),
+    pub irq_range: (usize, usize),
 }
 
 impl GicV3 {
     pub fn new() -> Self {
         GicV3 {
-            gic_dist_if: GicDistIf {
-                address: 0,
-                ncpus: 0,
-                nirqs: 0,
-            },
+            gic_dist_if: GicDistIf::default(),
             gic_cpu_if: GicV3CpuIf,
             gicrs: Vec::new(),
             irq_range: (0, 0),
@@ -78,12 +74,14 @@ impl InterruptHandler for GicV3 {
 impl InterruptController for GicV3 {
     fn irq_init(
         &mut self,
-        fdt: &Fdt,
+        fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> Result<()> {
-        self.parse(fdt)?;
+        if let Some(fdt) = fdt_opt {
+            self.parse(fdt)?;
+        }
         log::info!("{:X?}", self);
 
         unsafe {
@@ -145,7 +143,7 @@ impl InterruptController for GicV3 {
 pub struct GicV3CpuIf;
 
 impl GicV3CpuIf {
-    unsafe fn init(&mut self) {
+    pub unsafe fn init(&mut self) {
         // Enable system register access
         {
             let value = 1_usize;

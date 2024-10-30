@@ -86,12 +86,13 @@ impl InterruptHandler for Hlic {
 impl InterruptController for Hlic {
     fn irq_init(
         &mut self,
-        fdt: &Fdt,
+        fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
     ) -> syscall::Result<()> {
         let desc = unsafe { &IRQ_CHIP.irq_chip_list.chips[ic_idx] };
+        let fdt = fdt_opt.unwrap();
         let cpu_node = fdt
             .find_all_nodes("/cpus/cpu")
             .find(|x| {

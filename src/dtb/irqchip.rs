@@ -13,7 +13,7 @@ pub trait InterruptHandler {
 pub trait InterruptController: InterruptHandler {
     fn irq_init(
         &mut self,
-        fdt: &Fdt,
+        fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
@@ -170,7 +170,12 @@ impl IrqChipList {
         roots
     }
 
-    fn init_inner3(&mut self, fdt: &Fdt, irq_desc: &mut [IrqDesc; 1024], mut queue: Vec<usize>) {
+    fn init_inner3(
+        &mut self,
+        fdt_opt: Option<&Fdt>,
+        irq_desc: &mut [IrqDesc; 1024],
+        mut queue: Vec<usize>,
+    ) {
         //run init
         let mut irq_idx: usize = 0;
         let mut queue_idx = 0;
@@ -190,7 +195,7 @@ impl IrqChipList {
             }
             cur_chip
                 .ic
-                .irq_init(fdt, irq_desc, cur_idx, &mut irq_idx)
+                .irq_init(fdt_opt, irq_desc, cur_idx, &mut irq_idx)
                 .expect("Failed to initialize irq chip");
 
             let cur_chip = &self.chips[cur_idx];
@@ -269,14 +274,16 @@ impl IrqChipCore {
         }
     }
 
-    pub fn init(&mut self, fdt: &Fdt) {
+    pub fn init(&mut self, fdt_opt: Option<&Fdt>) {
         for (i, desc) in self.irq_desc.iter_mut().enumerate() {
             desc.basic.idx = i;
         }
-        self.irq_chip_list.init_inner1(fdt);
+        if let Some(fdt) = fdt_opt {
+            self.irq_chip_list.init_inner1(fdt);
+        }
         let roots = self.irq_chip_list.init_inner2();
         self.irq_chip_list
-            .init_inner3(fdt, &mut self.irq_desc, roots);
+            .init_inner3(fdt_opt, &mut self.irq_desc, roots);
     }
 
     pub fn phandle_to_ic_idx(&self, phandle: u32) -> Option<usize> {
@@ -320,7 +327,7 @@ pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore {
 pub fn init(fdt: &Fdt) {
     travel_interrupt_ctrl(fdt);
     unsafe {
-        IRQ_CHIP.init(fdt);
+        IRQ_CHIP.init(Some(fdt));
     }
 }
 

@@ -38,8 +38,8 @@ pub struct KernelArgs {
     stack_size: usize,
     env_base: usize,
     env_size: usize,
-    dtb_base: usize,
-    dtb_size: usize,
+    hwdesc_base: usize,
+    hwdesc_size: usize,
     areas_base: usize,
     areas_size: usize,
 
@@ -74,20 +74,46 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init(env);
 
-        // Get DTB data
-        let dtb_data = if args.dtb_base != 0 {
-            Some((crate::PHYS_OFFSET + args.dtb_base, args.dtb_size))
+        // Get hardware descriptor data
+        //TODO: use env {DTB,RSDT}_{BASE,SIZE}?
+        let hwdesc_data = if args.hwdesc_base != 0 {
+            Some(unsafe {
+                slice::from_raw_parts(
+                    (crate::PHYS_OFFSET + args.hwdesc_base) as *const u8,
+                    args.hwdesc_size,
+                )
+            })
         } else {
             None
         };
-        let dtb_res = dtb_data
-            .map(|(base, size)| unsafe { slice::from_raw_parts(base as *const u8, size) })
+
+        let dtb_res = hwdesc_data
             .ok_or(fdt::FdtError::BadPtr)
             .and_then(|data| Fdt::new(data));
+
+        let rsdp_opt = hwdesc_data.and_then(|data| {
+            if data.starts_with(b"RSD PTR ") {
+                Some(data.as_ptr())
+            } else {
+                None
+            }
+        });
 
         // Try to find serial port prior to logging
         if let Ok(dtb) = &dtb_res {
             device::serial::init_early(dtb);
+        } else {
+            /*
+            //TODO: This is for QEMU debugging when using ACPI
+            use crate::device::{
+                serial::{SerialKind, COM1},
+                uart_pl011,
+            };
+            let mut serial_port =
+                uart_pl011::SerialPort::new(crate::PHYS_OFFSET + 0x9000000, false);
+            serial_port.init(false);
+            *COM1.lock() = Some(SerialKind::Pl011(serial_port))
+            */
         }
 
         // Initialize logger
@@ -120,9 +146,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             args.env_base + args.env_size
         );
         info!(
-            "RSDPs: {:X}:{:X}",
-            { args.dtb_base },
-            args.dtb_base + args.dtb_size
+            "HWDESC: {:X}:{:X}",
+            { args.hwdesc_base },
+            args.hwdesc_base + args.hwdesc_size
         );
         info!(
             "Areas: {:X}:{:X}",
@@ -148,6 +174,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         register_bootloader_areas(args.areas_base, args.areas_size);
         if let Ok(dtb) = &dtb_res {
             register_dev_memory_ranges(dtb);
+        } else {
+            //TODO: THIS IS JUST FOR QEMU SERIAL WHEN ACPI
+            register_memory_region(0x9000000, 0x1000, BootloaderMemoryKind::Device);
         }
 
         register_memory_region(
@@ -166,8 +195,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             BootloaderMemoryKind::IdentityMap,
         );
         register_memory_region(
-            args.dtb_base,
-            args.dtb_size,
+            args.hwdesc_base,
+            args.hwdesc_size,
             BootloaderMemoryKind::IdentityMap,
         );
         register_memory_region(
@@ -197,15 +226,20 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Activate memory logging
         crate::log::init();
 
-        dtb::init(dtb_data);
-
         // Initialize devices
         match dtb_res {
             Ok(dtb) => {
+                dtb::init(hwdesc_data.map(|slice| (slice.as_ptr() as usize, slice.len())));
                 device::init_devicetree(&dtb);
             }
             Err(err) => {
+                dtb::init(None);
                 log::warn!("failed to parse DTB: {}", err);
+
+                #[cfg(feature = "acpi")]
+                {
+                    crate::acpi::init(rsdp_opt);
+                }
             }
         }
 

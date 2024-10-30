@@ -130,7 +130,9 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
 
         // TODO: Don't touch ACPI tables in kernel?
 
-        rxsdt.map_all();
+        for sdt in rxsdt.iter() {
+            get_sdt(sdt, &mut KernelMapper::lock());
+        }
 
         for sdt_address in rxsdt.iter() {
             let sdt = &*((sdt_address + crate::PHYS_OFFSET) as *const Sdt);

@@ -16,7 +16,7 @@ impl InterruptHandler for Null {
 impl InterruptController for Null {
     fn irq_init(
         &mut self,
-        _fdt: &Fdt,
+        _fdt_opt: Option<&Fdt>,
         _irq_desc: &mut [IrqDesc; 1024],
         _ic_idx: usize,
         _irq_idx: &mut usize,
