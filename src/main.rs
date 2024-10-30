@@ -90,7 +90,7 @@ use crate::arch::*;
 mod allocator;
 
 /// ACPI table parsing
-#[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
+#[cfg(feature = "acpi")]
 #[allow(dead_code)] // TODO
 mod acpi;
 

@@ -8,7 +8,6 @@ use core::{
 };
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
-use log::{debug, info};
 
 use spin::{Mutex, Once, RwLock};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
@@ -187,7 +186,7 @@ impl IrqScheme {
             let irq_number = IRQ_CHIP
                 .irq_xlate(ic_idx, &addr)
                 .or(Err(Error::new(ENOENT)))?;
-            debug!("open_phandle_irq  virq={}", irq_number);
+            log::debug!("open_phandle_irq  virq={}", irq_number);
             if flags & O_STAT == 0 {
                 if is_reserved(LogicalCpuId::new(0), irq_number as u8) {
                     return Err(Error::new(EEXIST));

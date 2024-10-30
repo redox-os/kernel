@@ -1,7 +1,6 @@
 use alloc::boxed::Box;
 use spin::Mutex;
 
-
 use crate::{
     arch::device::irqchip::ic_for_chip,
     device::uart_pl011,
@@ -28,8 +27,8 @@ impl SerialKind {
     pub fn enable_irq(&mut self) {
         //TODO: implement for NS16550
         match self {
-            Self::Ns16550u8(_) => {},
-            Self::Ns16550u32(_) => {},
+            Self::Ns16550u8(_) => {}
+            Self::Ns16550u32(_) => {}
             Self::Pl011(inner) => inner.enable_irq(),
         }
     }
@@ -42,13 +41,13 @@ impl SerialKind {
                     debug_input(c);
                 }
                 debug_notify();
-            },
+            }
             Self::Ns16550u32(inner) => {
                 while let Some(c) = inner.receive() {
                     debug_input(c);
                 }
                 debug_notify();
-            },
+            }
             Self::Pl011(inner) => inner.receive(),
         }
     }
@@ -105,9 +104,14 @@ pub unsafe fn init_early(dtb: &Fdt) {
             Some(serial) => {
                 info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
                 *COM1.lock() = Some(serial);
-            },
+            }
             None => {
-                log::warn!("UART {:?} at {:#X} size {:#X}: no driver found", compatible, virt, size);
+                log::warn!(
+                    "UART {:?} at {:#X} size {:#X}: no driver found",
+                    compatible,
+                    virt,
+                    size
+                );
             }
         }
     }

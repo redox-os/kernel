@@ -78,3 +78,12 @@ impl Iterator for PageIter {
         }
     }
 }
+
+/// Round down to the nearest multiple of page size
+pub fn round_down_pages(number: usize) -> usize {
+    number - number % PAGE_SIZE
+}
+/// Round up to the nearest multiple of page size
+pub fn round_up_pages(number: usize) -> usize {
+    round_down_pages(number + PAGE_SIZE - 1)
+}

@@ -4,7 +4,7 @@ use spin::MutexGuard;
 use crate::log::{Log, LOG};
 
 #[cfg(feature = "serial_debug")]
-use super::device::serial::{COM1, SerialKind};
+use super::device::serial::{SerialKind, COM1};
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY};
 
