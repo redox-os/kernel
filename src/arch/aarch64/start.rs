@@ -199,14 +199,15 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         dtb::init(dtb_data);
 
-        //TODO: do not require DTB here?
-        let dtb = dtb_res.unwrap();
-
         // Initialize devices
-        device::init(&dtb);
-
-        // Initialize all of the non-core devices not otherwise needed to complete initialization
-        device::init_noncore(&dtb);
+        match dtb_res {
+            Ok(dtb) => {
+                device::init_devicetree(&dtb);
+            }
+            Err(err) => {
+                log::warn!("failed to parse DTB: {}", err);
+            }
+        }
 
         BSP_READY.store(true, Ordering::SeqCst);
 

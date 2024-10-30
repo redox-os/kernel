@@ -1,53 +1,35 @@
 use core::ptr::read_volatile;
 
-use crate::{
-    memory::{Frame, KernelMapper},
-    paging::{Page, PageFlags, PhysicalAddress, VirtualAddress},
-    time,
-};
+use crate::time;
 
-static RTC_DR: u32 = 0x000;
+static RTC_DR: usize = 0x000;
 
-static mut PL031_RTC: Pl031rtc = Pl031rtc { address: 0 };
-
-pub unsafe fn init() {
-    PL031_RTC.init();
-    *time::START.lock() = (PL031_RTC.time() as u128) * time::NANOS_PER_SEC;
+pub unsafe fn init(fdt: &fdt::Fdt) {
+    if let Some(node) = fdt.find_compatible(&["arm,pl031"]) {
+        match node.reg().and_then(|mut iter| iter.next()) {
+            Some(reg) => {
+                let mut rtc = Pl031rtc {
+                    phys: reg.starting_address as usize,
+                };
+                log::info!("PL031 RTC at {:#x}", rtc.phys);
+                *time::START.lock() = (rtc.time() as u128) * time::NANOS_PER_SEC;
+            }
+            None => {
+                log::warn!("No PL031 RTC registers");
+            }
+        }
+    } else {
+        log::warn!("No PL031 RTC found");
+    }
 }
 
 struct Pl031rtc {
-    pub address: usize,
+    pub phys: usize,
 }
 
 impl Pl031rtc {
-    unsafe fn init(&mut self) {
-        let mut mapper = KernelMapper::lock();
-
-        let start_frame = Frame::containing(PhysicalAddress::new(0x09010000));
-        let end_frame = Frame::containing(PhysicalAddress::new(0x09010000 + 0x1000 - 1));
-
-        for frame in Frame::range_inclusive(start_frame, end_frame) {
-            let page = Page::containing_address(VirtualAddress::new(
-                frame.base().data() + crate::PHYS_OFFSET,
-            ));
-            mapper
-                .get_mut()
-                .expect("failed to access KernelMapper for mapping RTC")
-                .map_phys(
-                    page.start_address(),
-                    frame.base(),
-                    PageFlags::new().write(true),
-                )
-                .expect("failed to map RTC")
-                .flush();
-        }
-
-        self.address = crate::PHYS_OFFSET + 0x09010000;
-    }
-
-    unsafe fn read(&self, reg: u32) -> u32 {
-        let val = read_volatile((self.address + reg as usize) as *const u32);
-        val
+    unsafe fn read(&self, reg: usize) -> u32 {
+        read_volatile((crate::PHYS_OFFSET + self.phys + reg) as *const u32)
     }
 
     pub fn time(&mut self) -> u64 {
