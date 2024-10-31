@@ -78,7 +78,7 @@ pub(super) fn init(madt: Madt) {
                             // Set the ap_ready to 0, volatile
                             unsafe {
                                 ap_ready.write(0);
-                                ap_cpu_id.write(ap_local_apic.id.into());
+                                ap_cpu_id.write(ap_local_apic.processor.into());
                                 ap_page_table.write(page_table_physaddr as u64);
                                 ap_stack_start.write(stack_start as u64);
                                 ap_stack_end.write(stack_end as u64);
@@ -89,7 +89,7 @@ pub(super) fn init(madt: Madt) {
                             };
                             AP_READY.store(false, Ordering::SeqCst);
 
-                            print!("        AP {}:", ap_local_apic.id);
+                            print!("        AP {} APIC {}:", ap_local_apic.processor, ap_local_apic.id);
 
                             // Send INIT IPI
                             {
