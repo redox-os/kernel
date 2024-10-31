@@ -15,6 +15,8 @@ use crate::{
 
 use self::{hpet::Hpet, madt::Madt, rsdp::RSDP, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
 
+#[cfg(target_arch = "aarch64")]
+mod gtdt;
 pub mod hpet;
 pub mod madt;
 mod rsdp;
@@ -149,6 +151,8 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
         // TODO: Let userspace setup HPET, and then provide an interface to specify which timer to
         // use?
         Hpet::init();
+        #[cfg(target_arch = "aarch64")]
+        gtdt::Gtdt::init();
     } else {
         println!("NO RSDP FOUND");
     }
