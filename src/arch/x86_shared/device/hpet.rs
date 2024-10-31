@@ -25,13 +25,12 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
 
     // Disable HPET
     {
-        let mut config_word = hpet.base_address.read_u64(GENERAL_CONFIG_OFFSET);
+        let mut config_word = hpet.read_u64(GENERAL_CONFIG_OFFSET);
         config_word &= !(LEG_RT_CNF | ENABLE_CNF);
-        hpet.base_address
-            .write_u64(GENERAL_CONFIG_OFFSET, config_word);
+        hpet.write_u64(GENERAL_CONFIG_OFFSET, config_word);
     }
 
-    let capability = hpet.base_address.read_u64(CAPABILITY_OFFSET);
+    let capability = hpet.read_u64(CAPABILITY_OFFSET);
     if capability & LEG_RT_CAP == 0 {
         log::warn!("HPET missing capability LEG_RT_CAP");
         return false;
@@ -40,29 +39,26 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
     let period_fs = capability >> 32;
     let divisor = (pit::RATE as u64 * 1_000_000) / period_fs;
 
-    let t0_capabilities = hpet.base_address.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
+    let t0_capabilities = hpet.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
     if t0_capabilities & PER_INT_CAP == 0 {
         log::warn!("HPET T0 missing capability PER_INT_CAP");
         return false;
     }
 
-    let counter = hpet.base_address.read_u64(MAIN_COUNTER_OFFSET);
+    let counter = hpet.read_u64(MAIN_COUNTER_OFFSET);
 
     let t0_config_word: u64 = TN_VAL_SET_CNF | TN_TYPE_CNF | TN_INT_ENB_CNF;
-    hpet.base_address
-        .write_u64(T0_CONFIG_CAPABILITY_OFFSET, t0_config_word);
+    hpet.write_u64(T0_CONFIG_CAPABILITY_OFFSET, t0_config_word);
     // set accumulator value
-    hpet.base_address
-        .write_u64(T0_COMPARATOR_OFFSET, counter + divisor);
+    hpet.write_u64(T0_COMPARATOR_OFFSET, counter + divisor);
     // set interval
-    hpet.base_address.write_u64(T0_COMPARATOR_OFFSET, divisor);
+    hpet.write_u64(T0_COMPARATOR_OFFSET, divisor);
 
     // Enable interrupts from the HPET
     {
-        let mut config_word: u64 = hpet.base_address.read_u64(GENERAL_CONFIG_OFFSET);
+        let mut config_word: u64 = hpet.read_u64(GENERAL_CONFIG_OFFSET);
         config_word |= LEG_RT_CNF | ENABLE_CNF;
-        hpet.base_address
-            .write_u64(GENERAL_CONFIG_OFFSET, config_word);
+        hpet.write_u64(GENERAL_CONFIG_OFFSET, config_word);
     }
 
     println!("HPET After Init");
@@ -74,7 +70,7 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
 pub unsafe fn debug(hpet: &mut Hpet) {
     println!("HPET @ {:#x}", { hpet.base_address.address });
 
-    let capability = hpet.base_address.read_u64(CAPABILITY_OFFSET);
+    let capability = hpet.read_u64(CAPABILITY_OFFSET);
     {
         println!("  caps: {:#x}", capability);
         println!("    clock period: {}", (capability >> 32) as u32);
@@ -88,16 +84,16 @@ pub unsafe fn debug(hpet: &mut Hpet) {
         println!("    revision: {}", capability as u8);
     }
 
-    let config_word = hpet.base_address.read_u64(GENERAL_CONFIG_OFFSET);
+    let config_word = hpet.read_u64(GENERAL_CONFIG_OFFSET);
     println!("  config: {:#x}", config_word);
 
-    let interrupt_status = hpet.base_address.read_u64(GENERAL_INTERRUPT_OFFSET);
+    let interrupt_status = hpet.read_u64(GENERAL_INTERRUPT_OFFSET);
     println!("  interrupt status: {:#x}", interrupt_status);
 
-    let counter = hpet.base_address.read_u64(MAIN_COUNTER_OFFSET);
+    let counter = hpet.read_u64(MAIN_COUNTER_OFFSET);
     println!("  counter: {:#x}", counter);
 
-    let t0_capabilities = hpet.base_address.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
+    let t0_capabilities = hpet.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
     println!("  T0 caps: {:#x}", t0_capabilities);
     println!(
         "    interrupt routing: {:#x}",
@@ -105,6 +101,6 @@ pub unsafe fn debug(hpet: &mut Hpet) {
     );
     println!("    flags: {:#x}", t0_capabilities as u16);
 
-    let t0_comparator = hpet.base_address.read_u64(T0_COMPARATOR_OFFSET);
+    let t0_comparator = hpet.read_u64(T0_COMPARATOR_OFFSET);
     println!("  T0 comparator: {:#x}", t0_comparator);
 }

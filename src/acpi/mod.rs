@@ -23,6 +23,8 @@ mod rsdp;
 mod rsdt;
 mod rxsdt;
 pub mod sdt;
+#[cfg(target_arch = "aarch64")]
+mod spcr;
 mod xsdt;
 
 unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::paging::PageMapper) {
@@ -62,6 +64,16 @@ pub fn get_sdt(sdt_address: usize, mapper: &mut KernelMapper) -> &'static Sdt {
         );
     }
     sdt
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GenericAddressStructure {
+    pub address_space: u8,
+    pub bit_width: u8,
+    pub bit_offset: u8,
+    pub access_size: u8,
+    pub address: u64,
 }
 
 pub enum RxsdtEnum {
@@ -145,6 +157,9 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
             }
         }
 
+        //TODO: support this on any arch
+        #[cfg(target_arch = "aarch64")]
+        spcr::Spcr::init();
         // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
         // to initialize enumerated processors to userspace?
         Madt::init();

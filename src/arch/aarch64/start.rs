@@ -102,18 +102,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Try to find serial port prior to logging
         if let Ok(dtb) = &dtb_res {
             device::serial::init_early(dtb);
-        } else {
-            /*
-            //TODO: This is for QEMU debugging when using ACPI
-            use crate::device::{
-                serial::{SerialKind, COM1},
-                uart_pl011,
-            };
-            let mut serial_port =
-                uart_pl011::SerialPort::new(crate::PHYS_OFFSET + 0x9000000, false);
-            serial_port.init(false);
-            *COM1.lock() = Some(SerialKind::Pl011(serial_port))
-            */
         }
 
         // Initialize logger
@@ -174,9 +162,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         register_bootloader_areas(args.areas_base, args.areas_size);
         if let Ok(dtb) = &dtb_res {
             register_dev_memory_ranges(dtb);
-        } else {
-            //TODO: THIS IS JUST FOR QEMU SERIAL WHEN ACPI
-            register_memory_region(0x9000000, 0x1000, BootloaderMemoryKind::Device);
         }
 
         register_memory_region(

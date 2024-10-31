@@ -2,22 +2,9 @@ use core::{mem, ptr};
 
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::{
-    memory::{Frame, KernelMapper},
-    paging::{entry::EntryFlags, PageFlags, PhysicalAddress},
-};
+use crate::memory::{map_device_memory, PhysicalAddress, PAGE_SIZE};
 
-use super::{find_sdt, sdt::Sdt, ACPI_TABLE};
-
-#[repr(C, packed)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct GenericAddressStructure {
-    _address_space: u8,
-    _bit_width: u8,
-    _bit_offset: u8,
-    _access_size: u8,
-    pub address: u64,
-}
+use super::{find_sdt, sdt::Sdt, GenericAddressStructure, ACPI_TABLE};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
@@ -56,8 +43,16 @@ impl Hpet {
     pub fn new(sdt: &'static Sdt) -> Option<Hpet> {
         if &sdt.signature == b"HPET" && sdt.length as usize >= mem::size_of::<Hpet>() {
             let s = unsafe { ptr::read((sdt as *const Sdt) as *const Hpet) };
-            unsafe { s.base_address.init(&mut KernelMapper::lock()) };
-            Some(s)
+            if s.base_address.address_space == 0 {
+                unsafe { s.map() };
+                Some(s)
+            } else {
+                log::warn!(
+                    "HPET has unsupported address space {}",
+                    s.base_address.address_space
+                );
+                None
+            }
         } else {
             None
         }
@@ -66,14 +61,18 @@ impl Hpet {
 
 //TODO: x86 use assumes only one HPET and only one GenericAddressStructure
 #[cfg(target_arch = "x86")]
-impl GenericAddressStructure {
-    pub unsafe fn init(&self, mapper: &mut KernelMapper) {
-        use crate::paging::{Page, VirtualAddress};
+impl Hpet {
+    pub unsafe fn map(&self) {
+        use crate::{
+            memory::{Frame, KernelMapper},
+            paging::{entry::EntryFlags, Page, VirtualAddress},
+        };
+        use rmm::PageFlags;
 
-        let frame = Frame::containing(PhysicalAddress::new(self.address as usize));
+        let frame = Frame::containing(PhysicalAddress::new(self.base_address.address as usize));
         let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
 
-        mapper
+        KernelMapper::lock()
             .get_mut()
             .expect(
                 "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
@@ -99,31 +98,23 @@ impl GenericAddressStructure {
 }
 
 #[cfg(not(target_arch = "x86"))]
-impl GenericAddressStructure {
-    pub unsafe fn init(&self, mapper: &mut KernelMapper) {
-        let frame = Frame::containing(PhysicalAddress::new(self.address as usize));
-        let (_, result) = mapper
-            .get_mut()
-            .expect(
-                "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
-            )
-            .map_linearly(
-                frame.base(),
-                PageFlags::new()
-                    .write(true)
-                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
-            )
-            .expect("failed to map memory for GenericAddressStructure");
-        result.flush();
+impl Hpet {
+    pub unsafe fn map(&self) {
+        map_device_memory(
+            PhysicalAddress::new(self.base_address.address as usize),
+            PAGE_SIZE,
+        );
     }
 
     pub unsafe fn read_u64(&self, offset: usize) -> u64 {
-        read_volatile((self.address as usize + offset + crate::PHYS_OFFSET) as *const u64)
+        read_volatile(
+            (self.base_address.address as usize + offset + crate::PHYS_OFFSET) as *const u64,
+        )
     }
 
     pub unsafe fn write_u64(&mut self, offset: usize, value: u64) {
         write_volatile(
-            (self.address as usize + offset + crate::PHYS_OFFSET) as *mut u64,
+            (self.base_address.address as usize + offset + crate::PHYS_OFFSET) as *mut u64,
             value,
         );
     }

@@ -89,7 +89,10 @@ pub(super) fn init(madt: Madt) {
                             };
                             AP_READY.store(false, Ordering::SeqCst);
 
-                            print!("        AP {} APIC {}:", ap_local_apic.processor, ap_local_apic.id);
+                            print!(
+                                "        AP {} APIC {}:",
+                                ap_local_apic.processor, ap_local_apic.id
+                            );
 
                             // Send INIT IPI
                             {

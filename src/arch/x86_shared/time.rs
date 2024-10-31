@@ -19,11 +19,11 @@ fn hpet_or_pit() -> u128 {
         //TODO: improve performance
 
         // Current count
-        let counter = unsafe { hpet.base_address.read_u64(hpet::MAIN_COUNTER_OFFSET) };
+        let counter = unsafe { hpet.read_u64(hpet::MAIN_COUNTER_OFFSET) };
         // Comparator holds next interrupt count
-        let comparator = unsafe { hpet.base_address.read_u64(hpet::T0_COMPARATOR_OFFSET) };
+        let comparator = unsafe { hpet.read_u64(hpet::T0_COMPARATOR_OFFSET) };
         // Get period in femtoseconds
-        let capability = unsafe { hpet.base_address.read_u64(hpet::CAPABILITY_OFFSET) };
+        let capability = unsafe { hpet.read_u64(hpet::CAPABILITY_OFFSET) };
 
         // There seems to be a bug in qemu on macos that causes the calculation to produce 0 for
         // period_fs and hence a divide by zero calculating the divisor - workaround it while we

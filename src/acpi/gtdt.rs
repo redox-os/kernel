@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use core::{mem, ptr};
+use core::mem;
 
 use super::{find_sdt, sdt::Sdt};
 use crate::{
@@ -58,10 +58,9 @@ impl Gtdt {
         unsafe { IRQ_CHIP.irq_enable(gsiv as u32) };
     }
 
-    pub fn new(sdt: &'static Sdt) -> Option<Gtdt> {
+    pub fn new(sdt: &'static Sdt) -> Option<&'static Gtdt> {
         if &sdt.signature == b"GTDT" && sdt.length as usize >= mem::size_of::<Gtdt>() {
-            let s = unsafe { ptr::read((sdt as *const Sdt) as *const Gtdt) };
-            Some(s)
+            Some(unsafe { &*((sdt as *const Sdt) as *const Gtdt) })
         } else {
             None
         }

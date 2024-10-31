@@ -1,5 +1,4 @@
 use alloc::{boxed::Box, vec::Vec};
-use rmm::{Arch, PageFlags};
 
 use super::{Madt, MadtEntry};
 use crate::{
@@ -7,27 +6,9 @@ use crate::{
         gic::{GenericInterruptController, GicCpuIf, GicDistIf},
         gicv3::{GicV3, GicV3CpuIf},
     },
-    dtb::irqchip::{InterruptController, IrqChipItem, IRQ_CHIP},
-    memory::{Frame, KernelMapper, PhysicalAddress},
-    paging::{entry::EntryFlags, RmmA},
+    dtb::irqchip::{IrqChipItem, IRQ_CHIP},
+    memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };
-
-unsafe fn map_gic_page(phys: PhysicalAddress) {
-    let frame = Frame::containing(phys);
-    let (_, result) = KernelMapper::lock()
-        .get_mut()
-        .expect("KernelMapper locked re-entrant while mapping memory for GIC")
-        .map_linearly(
-            frame.base(),
-            PageFlags::new()
-                .write(true)
-                .custom_flag(EntryFlags::NO_CACHE.bits(), true),
-        )
-        .expect("failed to map memory for GIC");
-    result.flush();
-}
-
-fn add_irqchip(irqchip: Box<dyn InterruptController>) {}
 
 pub(super) fn init(madt: Madt) {
     let mut gicd_opt = None;
@@ -55,8 +36,8 @@ pub(super) fn init(madt: Madt) {
     let mut gic_dist_if = GicDistIf::default();
     unsafe {
         let phys = PhysicalAddress::new(gicd.physical_base_address as usize);
-        map_gic_page(phys);
-        gic_dist_if.init(RmmA::phys_to_virt(phys).data());
+        let virt = map_device_memory(phys, PAGE_SIZE);
+        gic_dist_if.init(virt.data());
     };
     log::info!("{:#x?}", gic_dist_if);
     match gicd.gic_version {
@@ -65,8 +46,8 @@ pub(super) fn init(madt: Madt) {
                 let mut gic_cpu_if = GicCpuIf::default();
                 unsafe {
                     let phys = PhysicalAddress::new(gicc.physical_base_address as usize);
-                    map_gic_page(phys);
-                    gic_cpu_if.init(RmmA::phys_to_virt(phys).data())
+                    let virt = map_device_memory(phys, PAGE_SIZE);
+                    gic_cpu_if.init(virt.data())
                 };
                 log::info!("{:#x?}", gic_cpu_if);
                 let gic = GenericInterruptController {
