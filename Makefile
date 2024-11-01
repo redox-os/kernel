@@ -1,21 +1,28 @@
-export RUST_TARGET_PATH=targets
+SOURCE:=$(dir $(realpath $(lastword $(MAKEFILE_LIST))))
+BUILD?=$(CURDIR)
+export RUST_TARGET_PATH=$(SOURCE)/targets
 
 ifeq ($(TARGET),)
-	ARCH?=$(shell uname -a)
+	ARCH?=$(shell uname -m)
 else
 	ARCH?=$(shell echo "$(TARGET)" | cut -d - -f1)
 endif
 
-BUILD?=target/$(ARCH)-unknown-kernel
+ifeq ($(ARCH),riscv64gc)
+	ARCH:=riscv64
+endif
+GNU_TARGET=$(ARCH)-unknown-redox
+
 
 all: $(BUILD)/kernel $(BUILD)/kernel.sym
 
-LD_SCRIPT=linkers/$(ARCH).ld
-TARGET_SPEC=targets/$(ARCH)-unknown-kernel.json
+LD_SCRIPT=$(SOURCE)/linkers/$(ARCH).ld
+TARGET_SPEC=$(RUST_TARGET_PATH)/$(ARCH)-unknown-kernel.json
 
-$(BUILD)/kernel.all: $(LD_SCRIPT) $(TARGET_SPEC) $(shell find . -name "*.rs" -type f)
+$(BUILD)/kernel.all: $(LD_SCRIPT) $(TARGET_SPEC) $(shell find $(SOURCE) -name "*.rs" -type f)
 	cargo rustc \
 		--bin kernel \
+		--manifest-path "$(SOURCE)/Cargo.toml" \
 		--target "$(TARGET_SPEC)" \
 		--release \
 		-Z build-std=core,alloc \
@@ -25,13 +32,13 @@ $(BUILD)/kernel.all: $(LD_SCRIPT) $(TARGET_SPEC) $(shell find . -name "*.rs" -ty
 		--emit link="$(BUILD)/kernel.all"
 
 $(BUILD)/kernel.sym: $(BUILD)/kernel.all
-	$(TARGET)-objcopy \
+	$(GNU_TARGET)-objcopy \
 		--only-keep-debug \
 		"$(BUILD)/kernel.all" \
 		"$(BUILD)/kernel.sym"
 
 $(BUILD)/kernel: $(BUILD)/kernel.all
-	$(TARGET)-objcopy \
+	$(GNU_TARGET)-objcopy \
 		--strip-debug \
 		"$(BUILD)/kernel.all" \
 		"$(BUILD)/kernel"

@@ -117,6 +117,7 @@ mod elf;
 mod event;
 
 /// External functions
+#[cfg(not(test))]
 mod externs;
 
 /// Logging
