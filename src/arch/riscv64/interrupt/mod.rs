@@ -9,10 +9,6 @@ pub mod trace;
 
 pub use handler::InterruptStack;
 
-pub fn bsp_apic_id() -> Option<u32> {
-    Some(0)
-}
-
 /// Clear interrupts
 #[inline(always)]
 pub unsafe fn disable() {

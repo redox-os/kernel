@@ -20,7 +20,6 @@ use crate::arch::interrupt::{available_irqs_iter, irq::acknowledge, is_reserved,
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 use crate::dtb::irqchip::{acknowledge, available_irqs_iter, is_reserved, set_reserved, IRQ_CHIP};
 use crate::{
-    arch::interrupt::bsp_apic_id,
     cpu_set::LogicalCpuId,
     event,
     syscall::{
@@ -72,7 +71,7 @@ pub extern "C" fn irq_trigger(irq: u8) {
 #[allow(dead_code)]
 enum Handle {
     Irq { ack: AtomicUsize, irq: u8 },
-    Avail(u8), // CPU id
+    Avail(LogicalCpuId),
     TopLevel,
     Phandle(u8, Vec<u8>),
     Bsp,
@@ -101,7 +100,7 @@ impl IrqScheme {
                 Some(madt) => madt
                     .iter()
                     .filter_map(|entry| match entry {
-                        MadtEntry::LocalApic(apic) => Some(apic.id),
+                        MadtEntry::LocalApic(apic) => Some(apic.processor),
                         _ => None,
                     })
                     .collect::<Vec<_>>(),
@@ -116,11 +115,11 @@ impl IrqScheme {
 
         CPUS.call_once(|| cpus);
     }
-    fn open_ext_irq(flags: usize, cpu_id: u8, path_str: &str) -> Result<(Handle, InternalFlags)> {
+    fn open_ext_irq(flags: usize, cpu_id: LogicalCpuId, path_str: &str) -> Result<(Handle, InternalFlags)> {
         let irq_number = u8::from_str(path_str).or(Err(Error::new(ENOENT)))?;
 
         Ok(
-            if irq_number < BASE_IRQ_COUNT && Some(u32::from(cpu_id)) == bsp_apic_id() {
+            if irq_number < BASE_IRQ_COUNT && cpu_id == LogicalCpuId::BSP {
                 // Give legacy IRQs only to `irq:{0..15}` and `irq:cpu-<BSP>/{0..15}` (same handles).
                 //
                 // The only CPUs don't have the legacy IRQs in their IDTs.
@@ -138,11 +137,11 @@ impl IrqScheme {
                 }
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 if flags & O_STAT == 0 {
-                    if is_reserved(LogicalCpuId::new(cpu_id.into()), irq_to_vector(irq_number)) {
+                    if is_reserved(cpu_id, irq_to_vector(irq_number)) {
                         return Err(Error::new(EEXIST));
                     }
                     set_reserved(
-                        LogicalCpuId::new(cpu_id.into()),
+                        cpu_id,
                         irq_to_vector(irq_number),
                         true,
                     );
@@ -228,13 +227,11 @@ impl crate::scheme::KernelScheme for IrqScheme {
             let mut bytes = String::new();
 
             use core::fmt::Write;
+            
+            writeln!(bytes, "bsp").unwrap();
 
             for cpu_id in CPUS.get().expect("IRQ scheme not initialized") {
                 writeln!(bytes, "cpu-{:02x}", cpu_id).unwrap();
-            }
-
-            if bsp_apic_id().is_some() {
-                writeln!(bytes, "bsp").unwrap();
             }
 
             #[cfg(dtb)]
@@ -247,9 +244,6 @@ impl crate::scheme::KernelScheme for IrqScheme {
             (Handle::TopLevel, InternalFlags::POSITIONED)
         } else {
             if path_str == "bsp" {
-                if bsp_apic_id().is_none() {
-                    return Err(Error::new(ENOENT));
-                }
                 (Handle::Bsp, InternalFlags::empty())
             } else if path_str.starts_with("cpu-") {
                 let path_str = &path_str[4..];
@@ -257,10 +251,10 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 let path_str = path_str[2..].trim_end_matches('/');
 
                 if path_str.is_empty() {
-                    (Handle::Avail(cpu_id), InternalFlags::POSITIONED)
+                    (Handle::Avail(LogicalCpuId::new(cpu_id.into())), InternalFlags::POSITIONED)
                 } else if path_str.starts_with('/') {
                     let path_str = &path_str[1..];
-                    Self::open_ext_irq(flags, cpu_id, path_str)?
+                    Self::open_ext_irq(flags, LogicalCpuId::new(cpu_id.into()), path_str)?
                 } else {
                     return Err(Error::new(ENOENT));
                 }
@@ -327,7 +321,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             Handle::TopLevel => {
                 let cpus = CPUS.get().expect("IRQ scheme not initialized");
 
-                if bsp_apic_id().is_some() && opaque == 0 {
+                if opaque == 0 {
                     buf.entry(DirEntry {
                         inode: 0,
                         next_opaque_id: 1,
@@ -349,9 +343,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 }
             }
             Handle::Avail(cpu_id) => {
-                for vector in available_irqs_iter(LogicalCpuId::new(cpu_id.into())).skip(opaque) {
+                for vector in available_irqs_iter(cpu_id).skip(opaque) {
                     let irq = vector_to_irq(vector);
-                    if Some(u32::from(cpu_id)) == bsp_apic_id() && irq < BASE_IRQ_COUNT {
+                    if cpu_id == LogicalCpuId::BSP && irq < BASE_IRQ_COUNT {
                         continue;
                     }
                     intermediate.clear();
@@ -457,7 +451,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             Handle::Avail(cpu_id) => Stat {
                 st_mode: MODE_DIR | 0o700,
                 st_size: 0,
-                st_ino: INO_AVAIL | u64::from(cpu_id) << 32,
+                st_ino: INO_AVAIL | u64::from(cpu_id.get()) << 32,
                 st_nlink: 2,
                 ..Default::default()
             },
@@ -486,7 +480,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let scheme_path = match handle {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
             Handle::Bsp => format!("irq:bsp"),
-            Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id),
+            Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id.get()),
             Handle::Phandle(phandle, _) => format!("irq:phandle-{}", phandle),
             Handle::TopLevel => format!("irq:"),
         }
@@ -526,12 +520,8 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 if buffer.len() < mem::size_of::<usize>() {
                     return Err(Error::new(EINVAL));
                 }
-                if let Some(bsp_apic_id) = bsp_apic_id() {
-                    buffer.write_u32(bsp_apic_id)?;
-                    Ok(mem::size_of::<usize>())
-                } else {
-                    Err(Error::new(EBADFD))
-                }
+                buffer.write_u32(LogicalCpuId::BSP.get())?;
+                Ok(mem::size_of::<usize>())
             }
             Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) => Err(Error::new(EISDIR)),
         }

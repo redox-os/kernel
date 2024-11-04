@@ -48,8 +48,3 @@ pub unsafe fn halt() {
 pub fn pause() {
     unsafe { asm!("nop") };
 }
-
-pub fn bsp_apic_id() -> Option<u32> {
-    //TODO
-    None
-}

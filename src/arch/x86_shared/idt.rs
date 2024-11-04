@@ -153,7 +153,7 @@ const fn new_idt_reservations() -> [AtomicU32; 8] {
     ]
 }
 
-/// Initialize the IDT for a
+/// Initialize the IDT for a processor
 pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
     let mut idts_guard = IDTS.write();
     let idts_btree = idts_guard.get_or_insert_with(HashMap::new);

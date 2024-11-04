@@ -80,6 +80,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             args.env_size as usize,
         );
 
+        // Set up serial debug
+        #[cfg(feature = "serial_debug")]
+        device::serial::init();
+
         // Set up graphical debug
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init(env);

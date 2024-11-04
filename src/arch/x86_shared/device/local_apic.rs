@@ -34,18 +34,6 @@ pub struct LocalApic {
     pub x2: bool,
 }
 
-static BSP_APIC_ID: AtomicU32 = AtomicU32::new(u32::max_value());
-
-#[no_mangle]
-pub fn bsp_apic_id() -> Option<u32> {
-    let value = BSP_APIC_ID.load(atomic::Ordering::SeqCst);
-    if value < u32::max_value() {
-        Some(value)
-    } else {
-        None
-    }
-}
-
 impl LocalApic {
     unsafe fn init(&mut self, mapper: &mut KernelMapper) {
         let mapper = mapper
@@ -81,7 +69,6 @@ impl LocalApic {
         }
 
         self.init_ap();
-        BSP_APIC_ID.store(self.id(), atomic::Ordering::SeqCst);
     }
 
     unsafe fn init_ap(&mut self) {
