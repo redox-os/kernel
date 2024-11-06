@@ -1,7 +1,6 @@
 use core::{
     cell::SyncUnsafeCell,
     ptr::{read_volatile, write_volatile},
-    sync::atomic::{self, AtomicU32},
 };
 use x86::msr::*;
 

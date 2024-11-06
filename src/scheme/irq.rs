@@ -115,7 +115,11 @@ impl IrqScheme {
 
         CPUS.call_once(|| cpus);
     }
-    fn open_ext_irq(flags: usize, cpu_id: LogicalCpuId, path_str: &str) -> Result<(Handle, InternalFlags)> {
+    fn open_ext_irq(
+        flags: usize,
+        cpu_id: LogicalCpuId,
+        path_str: &str,
+    ) -> Result<(Handle, InternalFlags)> {
         let irq_number = u8::from_str(path_str).or(Err(Error::new(ENOENT)))?;
 
         Ok(
@@ -140,11 +144,7 @@ impl IrqScheme {
                     if is_reserved(cpu_id, irq_to_vector(irq_number)) {
                         return Err(Error::new(EEXIST));
                     }
-                    set_reserved(
-                        cpu_id,
-                        irq_to_vector(irq_number),
-                        true,
-                    );
+                    set_reserved(cpu_id, irq_to_vector(irq_number), true);
                 }
                 (
                     Handle::Irq {
@@ -227,7 +227,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             let mut bytes = String::new();
 
             use core::fmt::Write;
-            
+
             writeln!(bytes, "bsp").unwrap();
 
             for cpu_id in CPUS.get().expect("IRQ scheme not initialized") {
@@ -251,7 +251,10 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 let path_str = path_str[2..].trim_end_matches('/');
 
                 if path_str.is_empty() {
-                    (Handle::Avail(LogicalCpuId::new(cpu_id.into())), InternalFlags::POSITIONED)
+                    (
+                        Handle::Avail(LogicalCpuId::new(cpu_id.into())),
+                        InternalFlags::POSITIONED,
+                    )
                 } else if path_str.starts_with('/') {
                     let path_str = &path_str[1..];
                     Self::open_ext_irq(flags, LogicalCpuId::new(cpu_id.into()), path_str)?

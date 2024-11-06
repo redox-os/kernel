@@ -3,9 +3,7 @@
 pub mod ipi;
 pub mod trace;
 
-pub use super::{
-    idt::{available_irqs_iter, is_reserved, set_reserved},
-};
+pub use super::idt::{available_irqs_iter, is_reserved, set_reserved};
 
 /// Clear interrupts
 #[inline(always)]
