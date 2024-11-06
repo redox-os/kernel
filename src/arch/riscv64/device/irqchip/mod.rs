@@ -14,7 +14,7 @@ mod clint;
 pub fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> {
     if ic_str.contains("riscv,cpu-intc") {
         Some(Box::new(hlic::Hlic::new()))
-    } else if ic_str.contains("riscv,plic0") {
+    } else if ic_str.contains("sifive,plic-1.0.0") {
         Some(Box::new(plic::Plic::new()))
     } else {
         log::warn!("no driver for interrupt controller {:?}", ic_str);
