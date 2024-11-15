@@ -1,5 +1,8 @@
 use super::InterruptController;
-use crate::dtb::irqchip::{InterruptHandler, IrqDesc};
+use crate::dtb::{
+    get_mmio_address,
+    irqchip::{InterruptHandler, IrqDesc},
+};
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
 use log::info;
@@ -40,12 +43,12 @@ impl GenericInterruptController {
     }
     pub fn parse(fdt: &Fdt) -> Result<(usize, usize, usize, usize)> {
         if let Some(node) = fdt.find_compatible(&["arm,cortex-a15-gic", "arm,gic-400"]) {
-            return GenericInterruptController::parse_inner(&node);
+            return GenericInterruptController::parse_inner(fdt, &node);
         } else {
             return Err(Error::new(EINVAL));
         }
     }
-    fn parse_inner(node: &FdtNode) -> Result<(usize, usize, usize, usize)> {
+    fn parse_inner(fdt: &Fdt, node: &FdtNode) -> Result<(usize, usize, usize, usize)> {
         //assert address_cells == 0x2, size_cells == 0x2
         let reg = node.reg().unwrap();
         let mut regs = (0, 0, 0, 0);
@@ -55,9 +58,10 @@ impl GenericInterruptController {
             if chunk.size.is_none() {
                 break;
             }
+            let addr = get_mmio_address(fdt, node, &chunk).unwrap();
             match idx {
-                0 => (regs.0, regs.1) = (chunk.starting_address as usize, chunk.size.unwrap()),
-                2 => (regs.2, regs.3) = (chunk.starting_address as usize, chunk.size.unwrap()),
+                0 => (regs.0, regs.1) = (addr, chunk.size.unwrap()),
+                2 => (regs.2, regs.3) = (addr, chunk.size.unwrap()),
                 _ => break,
             }
             idx += 2;

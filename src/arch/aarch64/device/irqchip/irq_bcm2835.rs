@@ -4,7 +4,10 @@ use fdt::{node::FdtNode, Fdt};
 use log::{debug, error, info};
 
 use super::InterruptController;
-use crate::dtb::irqchip::{InterruptHandler, IrqDesc, IRQ_CHIP};
+use crate::dtb::{
+    get_mmio_address,
+    irqchip::{InterruptHandler, IrqDesc, IRQ_CHIP},
+};
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -64,15 +67,15 @@ impl Bcm2835ArmInterruptController {
     }
     pub fn parse(fdt: &Fdt) -> Result<(usize, usize, Option<usize>)> {
         if let Some(node) = fdt.find_compatible(&["brcm,bcm2836-armctrl-ic"]) {
-            return unsafe { Bcm2835ArmInterruptController::parse_inner(&node) };
+            return unsafe { Bcm2835ArmInterruptController::parse_inner(fdt, &node) };
         } else {
             return Err(Error::new(EINVAL));
         }
     }
-    unsafe fn parse_inner(node: &FdtNode) -> Result<(usize, usize, Option<usize>)> {
+    unsafe fn parse_inner(fdt: &Fdt, node: &FdtNode) -> Result<(usize, usize, Option<usize>)> {
         //assert address_cells == 0x1, size_cells == 0x1
         let mem = node.reg().unwrap().nth(0).unwrap();
-        let base = mem.starting_address as u32;
+        let base = get_mmio_address(fdt, node, &mem).unwrap();
         let size = mem.size.unwrap() as u32;
         let mut ret_virq = None;
 

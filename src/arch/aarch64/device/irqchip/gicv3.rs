@@ -3,7 +3,10 @@ use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
 
 use super::{gic::GicDistIf, InterruptController};
-use crate::dtb::irqchip::{InterruptHandler, IrqDesc};
+use crate::dtb::{
+    get_mmio_address,
+    irqchip::{InterruptHandler, IrqDesc},
+};
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -46,16 +49,19 @@ impl GicV3 {
 
         // Read registers
         let mut chunks = node.reg().unwrap();
-        if let Some(gicd) = chunks.next() {
+        if let Some(gicd) = chunks.next()
+            && let Some(addr) = get_mmio_address(fdt, &node, &gicd)
+        {
             unsafe {
-                self.gic_dist_if
-                    .init(crate::PHYS_OFFSET + gicd.starting_address as usize);
+                self.gic_dist_if.init(crate::PHYS_OFFSET + addr);
             }
         }
         for _ in 0..gicrs {
             if let Some(gicr) = chunks.next() {
-                self.gicrs
-                    .push((gicr.starting_address as usize, gicr.size.unwrap()));
+                self.gicrs.push((
+                    get_mmio_address(fdt, &node, &gicr).unwrap(),
+                    gicr.size.unwrap(),
+                ));
             }
         }
 

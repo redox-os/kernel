@@ -4,7 +4,11 @@ use crate::startup::memory::{register_memory_region, BootloaderMemoryKind};
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use core::slice;
-use fdt::{node::NodeProperty, Fdt};
+use fdt::{
+    node::{FdtNode, NodeProperty},
+    standard_nodes::MemoryRegion,
+    Fdt,
+};
 use log::debug;
 use spin::once::Once;
 
@@ -114,19 +118,54 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
         );
     }
 
-    // also add all soc-internal devices please because they might not be shown in ranges
+    // also add all soc-internal devices because they might not be shown in ranges
+    // (identity-mapped soc bus may have empty ranges)
     for device in soc_node.children() {
         if let Some(reg) = device.reg() {
             for entry in reg {
                 if let Some(size) = entry.size {
                     let addr = entry.starting_address as usize;
-                    log::debug!("soc device {} 0x{:08x} 0x{:08x}", device.name, addr, size);
-
-                    register_memory_region(addr, size, BootloaderMemoryKind::Device);
+                    if let Some(mapped_addr) = get_mmio_address(dt, &device, &entry) {
+                        debug!(
+                            "soc device {} 0x{:08x} -> 0x{:08x} size 0x{:08x}",
+                            device.name, addr, mapped_addr, size
+                        );
+                        register_memory_region(mapped_addr, size, BootloaderMemoryKind::Device);
+                    }
                 }
             }
         }
     }
+}
+
+pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> Option<usize> {
+    /* DT spec 2.3.8 "ranges":
+     * The ranges property provides a means of defining a mapping or translation between
+     * the address space of the bus (the child address space) and the address space of the bus
+     * node’s parent (the parent address space).
+     * If the property is defined with an <empty> value, it specifies that the parent and child
+     * address space is identical, and no address translation is required.
+     * If the property is not present in a bus node, it is assumed that no mapping exists between
+     * children of the node and the parent address space.
+     */
+
+    // FIXME assumes all the devices are connected to CPUs via the /soc bus
+    let mut mapped_addr = region.starting_address as usize;
+    let size = region.size.unwrap_or(0).saturating_sub(1);
+    let last_address = mapped_addr.saturating_add(size);
+    if let Some(parent) = fdt.find_node("/soc") {
+        let mut ranges = parent.ranges().map(|f| f.peekable())?;
+        if ranges.peek().is_some() {
+            let parent_range = ranges.find(|x| {
+                x.child_bus_address <= mapped_addr && last_address - x.child_bus_address <= x.size
+            })?;
+            mapped_addr = parent_range
+                .parent_bus_address
+                .checked_add(mapped_addr - parent_range.child_bus_address)?;
+            let _ = mapped_addr.checked_add(size)?;
+        }
+    }
+    Some(mapped_addr)
 }
 
 pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'a str)> {
@@ -140,9 +179,10 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'
 
     let mut reg = uart_node.reg()?;
     let memory = reg.nth(0)?;
+    let address = get_mmio_address(dtb, &uart_node, &memory)?;
 
     Some((
-        memory.starting_address as usize,
+        address,
         memory.size?,
         skip_init,
         cts_event_walkaround,

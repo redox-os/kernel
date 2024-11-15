@@ -1,16 +1,17 @@
+use crate::{dtb::get_mmio_address, time};
 use core::ptr::read_volatile;
-
-use crate::time;
 
 static RTC_DR: usize = 0x000;
 
 pub unsafe fn init(fdt: &fdt::Fdt) {
     if let Some(node) = fdt.find_compatible(&["arm,pl031"]) {
-        match node.reg().and_then(|mut iter| iter.next()) {
-            Some(reg) => {
-                let mut rtc = Pl031rtc {
-                    phys: reg.starting_address as usize,
-                };
+        match node
+            .reg()
+            .and_then(|mut iter| iter.next())
+            .and_then(|region| get_mmio_address(fdt, &node, &region))
+        {
+            Some(phys) => {
+                let mut rtc = Pl031rtc { phys };
                 log::info!("PL031 RTC at {:#x}", rtc.phys);
                 *time::START.lock() = (rtc.time() as u128) * time::NANOS_PER_SEC;
             }
