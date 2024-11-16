@@ -1,6 +1,9 @@
 pub mod irqchip;
 
-use crate::startup::memory::{register_memory_region, BootloaderMemoryKind};
+use crate::{
+    dtb::irqchip::IrqCell,
+    startup::memory::{register_memory_region, BootloaderMemoryKind},
+};
 use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use core::slice;
@@ -166,6 +169,32 @@ pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> 
         }
     }
     Some(mapped_addr)
+}
+
+pub fn interrupt_parent<'a>(fdt: &'a Fdt, node: &'a FdtNode) -> Option<FdtNode<'a, 'a>> {
+    // FIXME traverse device tree up
+    node.interrupt_parent()
+        .or_else(|| fdt.find_node("/soc").and_then(|soc| soc.interrupt_parent()))
+        .or_else(|| fdt.find_node("/").and_then(|node| node.interrupt_parent()))
+}
+
+pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
+    let interrupts = node.property("interrupts").unwrap();
+    let parent_interrupt_cells = interrupt_parent(fdt, node)
+        .unwrap()
+        .interrupt_cells()
+        .unwrap();
+    let mut intr = interrupts
+        .value
+        .array_chunks::<4>()
+        .map(|f| BE::read_u32(f))
+        .skip(parent_interrupt_cells * idx);
+    match parent_interrupt_cells {
+        1 => Some(IrqCell::L1(intr.next()?)),
+        2 if let Ok([a, b]) = intr.next_chunk() => Some(IrqCell::L2(a, b)),
+        3 if let Ok([a, b, c]) = intr.next_chunk() => Some(IrqCell::L3(a, b, c)),
+        _ => None,
+    }
 }
 
 pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'a str)> {

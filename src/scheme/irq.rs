@@ -165,16 +165,10 @@ impl IrqScheme {
         phandle: usize,
         path_str: &str,
     ) -> Result<(Handle, InternalFlags)> {
-        let mut path_iter = path_str.split(',');
-        let addr = path_iter.next_chunk::<3>().or(Err(Error::new(ENOENT)))?;
-        if path_iter.next().is_some() {
-            return Err(Error::new(ENOENT));
-        }
-        let addr = [
-            u32::from_str(addr[0]).or(Err(Error::new(ENOENT)))?,
-            u32::from_str(addr[1]).or(Err(Error::new(ENOENT)))?,
-            u32::from_str(addr[2]).or(Err(Error::new(ENOENT)))?,
-        ];
+        let addr: Vec<u32> = path_str
+            .split(',')
+            .map(|x| u32::from_str(x).or(Err(Error::new(ENOENT))))
+            .try_collect()?;
         let ic_idx = IRQ_CHIP
             .phandle_to_ic_idx(phandle as u32)
             .ok_or(Error::new(ENOENT))?;
@@ -183,7 +177,7 @@ impl IrqScheme {
                 return Err(Error::new(EINVAL));
             }
             let irq_number = IRQ_CHIP
-                .irq_xlate(ic_idx, &addr)
+                .irq_xlate(ic_idx, addr.as_slice())
                 .or(Err(Error::new(ENOENT)))?;
             log::debug!("open_phandle_irq  virq={}", irq_number);
             if flags & O_STAT == 0 {

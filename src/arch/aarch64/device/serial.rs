@@ -6,13 +6,12 @@ use crate::{
     device::uart_pl011,
     devices::uart_16550,
     dtb::{
-        diag_uart_range,
+        diag_uart_range, get_interrupt,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
     interrupt::irq::trigger,
     scheme::debug::{debug_input, debug_notify},
 };
-use byteorder::{ByteOrder, BE};
 use fdt::Fdt;
 use log::{error, info};
 use syscall::Mmio;
@@ -120,17 +119,11 @@ pub unsafe fn init_early(dtb: &Fdt) {
 pub unsafe fn init(fdt: &Fdt) {
     //TODO: find actual serial device, not just any PL011
     if let Some(node) = fdt.find_compatible(&["arm,pl011"]) {
-        let interrupts = node.property("interrupts").unwrap();
-        let irq = interrupts
-            .value
-            .array_chunks::<4>()
-            .map(|f| BE::read_u32(f))
-            .next_chunk::<3>()
-            .unwrap();
+        let irq = get_interrupt(fdt, &node, 0).unwrap();
         if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
             let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
                 .ic
-                .irq_xlate(&irq)
+                .irq_xlate(irq)
                 .unwrap();
             info!("serial_port virq = {}", virq);
             register_irq(virq as u32, Box::new(Com1Irq {}));

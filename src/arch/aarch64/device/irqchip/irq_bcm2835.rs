@@ -1,12 +1,11 @@
-use byteorder::{ByteOrder, BE};
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
 use log::{debug, error, info};
 
 use super::InterruptController;
 use crate::dtb::{
-    get_mmio_address,
-    irqchip::{InterruptHandler, IrqDesc, IRQ_CHIP},
+    get_interrupt, get_mmio_address,
+    irqchip::{InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
 };
 use syscall::{
     error::{Error, EINVAL},
@@ -81,18 +80,12 @@ impl Bcm2835ArmInterruptController {
 
         if let Some(interrupt_parent) = node.property("interrupt-parent") {
             let phandle = interrupt_parent.as_usize().unwrap() as u32;
-            let interrupts = node.property("interrupts").unwrap();
-            let irq = interrupts
-                .value
-                .array_chunks::<4>()
-                .map(|f| BE::read_u32(f))
-                .next_chunk::<3>()
-                .unwrap();
+            let irq = get_interrupt(fdt, node, 0).unwrap();
             let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
             //PHYS_NONSECURE_PPI only
             let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
                 .ic
-                .irq_xlate(&irq)
+                .irq_xlate(irq)
                 .unwrap();
             info!("bcm2835arm_ctrl virq = {}", virq);
             ret_virq = Some(virq);
@@ -252,14 +245,17 @@ impl InterruptController for Bcm2835ArmInterruptController {
             _ => return,
         }
     }
-    fn irq_xlate(&self, irq_data: &[u32; 3]) -> Result<usize> {
+    fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
         //assert interrupt-cells == 0x2
-        let bank = irq_data[0] as usize;
-        let irq = irq_data[1] as usize;
-        //TODO: check bank && irq
-        let hwirq = bank << 5 | irq;
-        let off = hwirq + self.irq_range.0;
-        return Ok(off);
+        match irq_data {
+            IrqCell::L2(bank, irq) => {
+                //TODO: check bank && irq
+                let hwirq = (bank as usize) << 5 | (irq as usize);
+                let off = hwirq + self.irq_range.0;
+                Ok(off)
+            }
+            _ => Err(Error::new(EINVAL)),
+        }
     }
 
     fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {

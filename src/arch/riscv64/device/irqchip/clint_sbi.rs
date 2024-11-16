@@ -1,7 +1,7 @@
 use crate::{
     context,
     context::timeout,
-    dtb::irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+    dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
 };
 use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, BE};
@@ -91,16 +91,16 @@ impl Clint {
 
             // FIXME dirty hack map M-mode interrupts (handled by SBI) to S-mode interrupts we get from SBI
             // Why aren't S-mode interrupts in the DTB already?
-            let irq0 = map_interrupt(irq0);
-            let irq1 = map_interrupt(irq1);
+            let irq0 = IrqCell::L1(map_interrupt(irq0));
+            let irq1 = IrqCell::L1(map_interrupt(irq1));
 
             let virq0 = hlic
                 .ic
-                .irq_xlate(&[irq0, 0, 0])
+                .irq_xlate(irq0)
                 .expect("Couldn't get virq 0 from HLIC");
             let virq1 = hlic
                 .ic
-                .irq_xlate(&[irq1, 0, 0])
+                .irq_xlate(irq1)
                 .expect("Couldn't get virq 1 from HLIC");
             register_irq(virq0 as u32, Box::new(ClintConnector { hart_id, irq: 0 }));
             register_irq(virq1 as u32, Box::new(ClintConnector { hart_id, irq: 1 }));

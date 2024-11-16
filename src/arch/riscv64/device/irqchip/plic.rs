@@ -2,13 +2,13 @@ use crate::{
     arch::{device::irqchip::hlic, start::BOOT_HART_ID},
     dtb::{
         get_mmio_address,
-        irqchip::{InterruptController, InterruptHandler, IrqDesc, IRQ_CHIP},
+        irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
     },
 };
 use core::{mem, num::NonZero, sync::atomic::Ordering};
 use fdt::Fdt;
 use log::{error, info};
-use syscall::{Error, Io, Mmio, ENODEV};
+use syscall::{Error, Io, Mmio, EINVAL};
 
 #[repr(packed(4))]
 #[repr(C)]
@@ -147,7 +147,7 @@ impl InterruptController for Plic {
         self.context = desc
             .parents
             .iter()
-            .position(|x| x.parent_interrupt[0] != u32::MAX && x.parent == hlic_ic_idx)
+            .position(|x| x.parent_interrupt.is_some() && x.parent == hlic_ic_idx)
             .unwrap();
         info!("PLIC: using context {}", self.context);
 
@@ -181,11 +181,10 @@ impl InterruptController for Plic {
         regs.enable(self.context, NonZero::new(irq_num as usize).unwrap(), false);
     }
 
-    fn irq_xlate(&self, irq_data: &[u32; 3]) -> syscall::Result<usize> {
-        if (irq_data[0] as usize) < self.ndev {
-            Ok(self.virq_base + irq_data[0] as usize)
-        } else {
-            Err(Error::new(ENODEV))
+    fn irq_xlate(&self, irq_data: IrqCell) -> syscall::Result<usize> {
+        match irq_data {
+            IrqCell::L1(irq) => Ok(self.virq_base + irq as usize),
+            _ => Err(Error::new(EINVAL)),
         }
     }
 

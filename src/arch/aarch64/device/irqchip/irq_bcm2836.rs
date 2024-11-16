@@ -1,7 +1,7 @@
 use super::InterruptController;
 use crate::dtb::{
     get_mmio_address,
-    irqchip::{InterruptHandler, IrqDesc},
+    irqchip::{InterruptHandler, IrqCell, IrqDesc},
 };
 use core::{
     arch::asm,
@@ -198,10 +198,12 @@ impl InterruptController for Bcm2836ArmInterruptController {
             }
         }
     }
-    fn irq_xlate(&self, irq_data: &[u32; 3]) -> Result<usize> {
+    fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
         //assert interrupt-cells == 0x2
-        let off = irq_data[0] as usize + self.irq_range.0;
-        return Ok(off);
+        match irq_data {
+            IrqCell::L2(irq, _) => Ok(irq as usize + self.irq_range.0),
+            _ => Err(Error::new(EINVAL)),
+        }
     }
     fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
         if hwirq > LOCAL_IRQ_LAST {
