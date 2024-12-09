@@ -1,4 +1,6 @@
 //! Filesystem syscalls
+use core::num::NonZeroUsize;
+
 use alloc::{sync::Arc, vec::Vec};
 use redox_path::RedoxPath;
 use spin::RwLock;
@@ -10,6 +12,7 @@ use crate::{
         memory::{AddrSpace, PageSpan},
         process,
     },
+    memory::AddRefError,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
     syscall::{data::Stat, error::*, flag::*},
@@ -491,16 +494,54 @@ pub fn mremap(
     let new_page_count = new_size.div_ceil(PAGE_SIZE);
     let requested_dst_base = Some(new_base).filter(|_| new_address != 0);
 
-    let base = addr_space.r#move(
-        None,
-        src_span,
-        requested_dst_base,
-        new_page_count,
-        map_flags,
-        &mut Vec::new(),
-    )?;
+    if mremap_flags.contains(MremapFlags::KEEP_OLD) {
+        // TODO: This is a hack! Find a better interface for replacing this, perhaps a capability
+        // for non-CoW-borrowed i.e. owned frames, that can be inserted into address spaces.
+        if new_page_count != 1 {
+            return Err(Error::new(EOPNOTSUPP));
+        }
+        let raii_frame = addr_space.borrow_frame_enforce_rw_allocated(src_span.base)?;
 
-    Ok(base.start_address().data())
+        let info = crate::memory::get_page_info(raii_frame.get()).ok_or(Error::new(EINVAL))?;
+
+        match info.add_ref(crate::memory::RefKind::Shared) {
+            Ok(()) => (),
+            Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
+            Err(AddRefError::CowToShared) => return Err(Error::new(EINVAL)),
+            Err(AddRefError::SharedToCow) => unreachable!(),
+        }
+
+        let base = addr_space.acquire_write().mmap(
+            &addr_space,
+            requested_dst_base,
+            NonZeroUsize::new(1).unwrap(),
+            map_flags,
+            &mut Vec::new(),
+            |page, page_flags, mapper, flusher| {
+                crate::context::memory::Grant::allocated_shared_one_page(
+                    raii_frame.take(),
+                    page,
+                    page_flags,
+                    mapper,
+                    flusher,
+                    false,
+                )
+            },
+        )?;
+
+        Ok(base.start_address().data())
+    } else {
+        let base = addr_space.r#move(
+            None,
+            src_span,
+            requested_dst_base,
+            new_page_count,
+            map_flags,
+            &mut Vec::new(),
+        )?;
+
+        Ok(base.start_address().data())
+    }
 }
 
 pub fn lseek(fd: FileHandle, pos: i64, whence: usize) -> Result<usize> {
