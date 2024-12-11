@@ -1102,6 +1102,22 @@ pub struct GrantFileRef {
 impl Grant {
     // TODO: PageCount newtype, to avoid confusion between bytes and pages?
 
+    // `base` must be mapped by the caller.
+    pub fn allocated_one_page_nomap(base: Page, flags: PageFlags<RmmA>) -> Grant {
+        Grant {
+            base,
+            info: GrantInfo {
+                page_count: 1,
+                flags,
+                mapped: true,
+                provider: Provider::Allocated {
+                    cow_file_ref: None,
+                    phys_contiguous: false,
+                },
+            },
+        }
+    }
+
     // TODO: is_pinned
     pub fn allocated_shared_one_page(
         frame: Frame,

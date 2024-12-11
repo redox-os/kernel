@@ -370,6 +370,11 @@ impl RaiiFrame {
     pub fn get(&self) -> Frame {
         self.inner
     }
+    pub fn take(self) -> Frame {
+        let f = self.get();
+        core::mem::forget(self);
+        f
+    }
 }
 
 impl Drop for RaiiFrame {
