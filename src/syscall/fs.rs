@@ -9,10 +9,9 @@ use crate::{
     context::{
         self,
         file::{FileDescription, FileDescriptor, InternalFlags},
-        memory::{AddrSpace, PageSpan},
+        memory::{AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions},
         process,
     },
-    memory::AddRefError,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
     syscall::{data::Stat, error::*, flag::*},
@@ -500,16 +499,8 @@ pub fn mremap(
         if new_page_count != 1 {
             return Err(Error::new(EOPNOTSUPP));
         }
+
         let raii_frame = addr_space.borrow_frame_enforce_rw_allocated(src_span.base)?;
-
-        let info = crate::memory::get_page_info(raii_frame.get()).ok_or(Error::new(EINVAL))?;
-
-        match info.add_ref(crate::memory::RefKind::Shared) {
-            Ok(()) => (),
-            Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
-            Err(AddRefError::CowToShared) => return Err(Error::new(EINVAL)),
-            Err(AddRefError::SharedToCow) => unreachable!(),
-        }
 
         let base = addr_space.acquire_write().mmap(
             &addr_space,
@@ -518,14 +509,19 @@ pub fn mremap(
             map_flags,
             &mut Vec::new(),
             |page, page_flags, mapper, flusher| {
-                crate::context::memory::Grant::allocated_shared_one_page(
-                    raii_frame.take(),
-                    page,
-                    page_flags,
-                    mapper,
-                    flusher,
-                    false,
-                )
+                let frame = raii_frame.take();
+                // XXX: add_ref(RefKind::Shared) is internally done by borrow_frame_enforce_rw_allocated(src_span.base).
+                // The page does not get unref-ed as we call take() on the `raii_frame`.
+                unsafe {
+                    mapper
+                        .map_phys(page.start_address(), frame.base(), page_flags)
+                        .ok_or(Error::new(ENOMEM))?
+                        .ignore();
+
+                    flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
+                }
+
+                Ok(Grant::allocated_one_page_nomap(page, page_flags))
             },
         )?;
 
