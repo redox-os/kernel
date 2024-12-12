@@ -1,4 +1,6 @@
 //! Filesystem syscalls
+use core::num::NonZeroUsize;
+
 use alloc::{sync::Arc, vec::Vec};
 use redox_path::RedoxPath;
 use spin::RwLock;
@@ -7,7 +9,7 @@ use crate::{
     context::{
         self,
         file::{FileDescription, FileDescriptor, InternalFlags},
-        memory::{AddrSpace, PageSpan},
+        memory::{AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions},
         process,
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
@@ -491,16 +493,51 @@ pub fn mremap(
     let new_page_count = new_size.div_ceil(PAGE_SIZE);
     let requested_dst_base = Some(new_base).filter(|_| new_address != 0);
 
-    let base = addr_space.r#move(
-        None,
-        src_span,
-        requested_dst_base,
-        new_page_count,
-        map_flags,
-        &mut Vec::new(),
-    )?;
+    if mremap_flags.contains(MremapFlags::KEEP_OLD) {
+        // TODO: This is a hack! Find a better interface for replacing this, perhaps a capability
+        // for non-CoW-borrowed i.e. owned frames, that can be inserted into address spaces.
+        if new_page_count != 1 {
+            return Err(Error::new(EOPNOTSUPP));
+        }
 
-    Ok(base.start_address().data())
+        let raii_frame = addr_space.borrow_frame_enforce_rw_allocated(src_span.base)?;
+
+        let base = addr_space.acquire_write().mmap(
+            &addr_space,
+            requested_dst_base,
+            NonZeroUsize::new(1).unwrap(),
+            map_flags,
+            &mut Vec::new(),
+            |page, page_flags, mapper, flusher| {
+                let frame = raii_frame.take();
+                // XXX: add_ref(RefKind::Shared) is internally done by borrow_frame_enforce_rw_allocated(src_span.base).
+                // The page does not get unref-ed as we call take() on the `raii_frame`.
+                unsafe {
+                    mapper
+                        .map_phys(page.start_address(), frame.base(), page_flags)
+                        .ok_or(Error::new(ENOMEM))?
+                        .ignore();
+
+                    flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
+                }
+
+                Ok(Grant::allocated_one_page_nomap(page, page_flags))
+            },
+        )?;
+
+        Ok(base.start_address().data())
+    } else {
+        let base = addr_space.r#move(
+            None,
+            src_span,
+            requested_dst_base,
+            new_page_count,
+            map_flags,
+            &mut Vec::new(),
+        )?;
+
+        Ok(base.start_address().data())
+    }
 }
 
 pub fn lseek(fd: FileHandle, pos: i64, whence: usize) -> Result<usize> {
