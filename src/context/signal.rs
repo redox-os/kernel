@@ -80,7 +80,8 @@ pub fn excp_handler(_signal: usize) {
 
     let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         drop(context);
-        crate::syscall::process::exit(SIGKILL << 8);
+        // TODO: Send exception event to process manager
+        todo!()
     };
 
     // TODO

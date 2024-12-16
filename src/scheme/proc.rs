@@ -5,7 +5,6 @@ use crate::{
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
-        process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
         Context, Status,
     },
     memory::PAGE_SIZE,
@@ -17,7 +16,7 @@ use crate::{
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
-        EnvRegisters, FloatRegisters, IntRegisters, KillMode, KillTarget,
+        EnvRegisters, FloatRegisters, IntRegisters, KillMode,
     },
 };
 
@@ -97,11 +96,6 @@ enum RegsKind {
 }
 #[derive(Clone)]
 enum ProcHandle {
-    Trace {
-        pid: ProcessId,
-        clones: Vec<ProcessId>,
-        excl: bool,
-    },
     Static {
         ty: &'static str,
         bytes: Box<[u8]>,
@@ -158,10 +152,6 @@ enum Handle {
         context: Arc<RwSpinlock<Context>>,
         kind: ContextHandle,
     },
-    Process {
-        process: Arc<RwLock<Process>>,
-        kind: ProcHandle,
-    },
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -169,65 +159,6 @@ enum Attr {
     Gid,
     // TODO: namespace, tid, etc.
 }
-impl Handle {
-    fn needs_child_process(&self) -> bool {
-        matches!(
-            self,
-            Self::Process {
-                kind: ProcHandle::Trace { .. } | ProcHandle::SessionId,
-                ..
-            } | Self::Context {
-                kind: ContextHandle::Regs(_)
-                    | ContextHandle::Filetable { .. }
-                    | ContextHandle::NewFiletable { .. }
-                    | ContextHandle::AddrSpace { .. }
-                    | ContextHandle::CurrentAddrSpace
-                    | ContextHandle::CurrentFiletable
-                    | ContextHandle::Sighandler,
-                ..
-            }
-        )
-    }
-    fn needs_root(&self) -> bool {
-        matches!(
-            self,
-            Self::Process {
-                kind: ProcHandle::Attr { .. },
-                ..
-            }
-        )
-    }
-}
-impl Handle {
-    fn continue_ignored_children(&mut self) -> Option<()> {
-        let Handle::Process {
-            kind: ProcHandle::Trace { clones, .. },
-            ..
-        } = self
-        else {
-            return None;
-        };
-
-        for pid in clones.drain(..) {
-            if ptrace::is_traced(pid) {
-                continue;
-            }
-            let Some(child_process) = process::PROCESSES.read().get(&pid).map(Arc::clone) else {
-                continue;
-            };
-            for thread in child_process
-                .read()
-                .threads
-                .iter()
-                .filter_map(|t| t.upgrade())
-            {
-                thread.write().status = context::Status::Runnable;
-            }
-        }
-        Some(())
-    }
-}
-
 pub struct ProcScheme<const FULL: bool>;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -256,7 +187,6 @@ fn new_handle((handle, fl): (Handle, InternalFlags)) -> Result<(usize, InternalF
 }
 
 enum OpenTy {
-    Proc(ProcessId),
     Ctxt(Arc<RwSpinlock<Context>>),
 }
 
@@ -309,44 +239,6 @@ impl<const FULL: bool> ProcScheme<FULL> {
             _ => return Ok(None),
         }))
     }
-    fn openat_process(
-        &self,
-        target: &Arc<RwLock<Process>>,
-        name: &str,
-        flags: usize,
-    ) -> Result<Option<(ProcHandle, bool)>> {
-        Ok(Some(match name {
-            "trace" => (
-                ProcHandle::Trace {
-                    pid: target.read().pid,
-                    clones: Vec::new(),
-                    excl: flags & O_EXCL == O_EXCL,
-                },
-                false,
-            ),
-            "exe" => (
-                ProcHandle::Static {
-                    ty: "exe",
-                    // FIXME: allow opening any thread
-                    bytes: target
-                        .read()
-                        .threads
-                        .first()
-                        .and_then(|f| f.upgrade())
-                        .ok_or(Error::new(ESRCH))?
-                        .read()
-                        .name
-                        .as_bytes()
-                        .into(),
-                },
-                true,
-            ),
-            "uid" => (ProcHandle::Attr { attr: Attr::Uid }, true),
-            "gid" => (ProcHandle::Attr { attr: Attr::Gid }, true),
-            "session_id" => (ProcHandle::SessionId, true),
-            _ => return Ok(None),
-        }))
-    }
     fn open_inner(
         &self,
         ty: OpenTy,
@@ -355,42 +247,24 @@ impl<const FULL: bool> ProcScheme<FULL> {
         uid: u32,
         gid: u32,
     ) -> Result<(usize, InternalFlags)> {
-        let target = match ty {
-            OpenTy::Proc(pid) => {
-                let processes = process::PROCESSES.read();
-                Arc::clone(processes.get(&pid).ok_or(Error::new(ESRCH))?)
-            }
-            OpenTy::Ctxt(ref context) => Arc::clone(&context.read().process),
-        };
-
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = {
-            if let Some((kind, positioned)) = self.openat_process(&target, operation_name, flags)? {
-                (
-                    Handle::Process {
-                        process: Arc::clone(&target),
-                        kind,
-                    },
-                    positioned,
-                )
+            let context = match ty {
+                OpenTy::Proc(_) => target
+                    .read()
+                    .threads
+                    .first()
+                    .ok_or(Error::new(ESRCH))?
+                    .upgrade()
+                    .ok_or(Error::new(ESRCH))?,
+                OpenTy::Ctxt(ref ctxt) => Arc::clone(&ctxt),
+            };
+            if let Some((kind, positioned)) =
+                self.openat_context(operation_name, Arc::clone(&context))?
+            {
+                (Handle::Context { context, kind }, positioned)
             } else {
-                let context = match ty {
-                    OpenTy::Proc(_) => target
-                        .read()
-                        .threads
-                        .first()
-                        .ok_or(Error::new(ESRCH))?
-                        .upgrade()
-                        .ok_or(Error::new(ESRCH))?,
-                    OpenTy::Ctxt(ref ctxt) => Arc::clone(&ctxt),
-                };
-                if let Some((kind, positioned)) =
-                    self.openat_context(operation_name, Arc::clone(&context))?
-                {
-                    (Handle::Context { context, kind }, positioned)
-                } else {
-                    return Err(Error::new(EINVAL));
-                }
+                return Err(Error::new(EINVAL));
             }
         };
 
@@ -399,36 +273,6 @@ impl<const FULL: bool> ProcScheme<FULL> {
 
             if let ProcessStatus::Exited(_) = target.status {
                 return Err(Error::new(ESRCH));
-            }
-
-            // Unless root, check security
-            if handle.needs_child_process() && uid != 0 && gid != 0 {
-                let current = process::current()?;
-                let current = current.read();
-
-                // Are we the process?
-                if target.pid != current.pid {
-                    // Do we own the process?
-                    if uid != target.euid && gid != target.egid {
-                        return Err(Error::new(EPERM));
-                    }
-
-                    // Is it a subprocess of us? In the future, a capability could
-                    // bypass this check.
-                    match process::ancestors(&*process::PROCESSES.read(), target.ppid)
-                        .find(|&(pid, _context)| pid == current.pid)
-                    {
-                        Some((id, context)) => {
-                            // Paranoid sanity check, as ptrace security holes
-                            // wouldn't be fun
-                            assert_eq!(id, current.pid);
-                            assert_eq!(id, context.read().pid);
-                        }
-                        None => return Err(Error::new(EPERM)),
-                    }
-                }
-            } else if handle.needs_root() && (uid != 0 || gid != 0) {
-                return Err(Error::new(EPERM));
             }
 
             let filetable_opt = match handle {
@@ -477,27 +321,6 @@ impl<const FULL: bool> ProcScheme<FULL> {
             },
         ))?;
 
-        if let Handle::Process {
-            kind: ProcHandle::Trace { pid, .. },
-            ..
-        } = handle
-        {
-            if !ptrace::try_new_session(pid, id) {
-                // There is no good way to handle id being occupied for nothing
-                // here, is there?
-                return Err(Error::new(EBUSY));
-            }
-
-            if flags & O_TRUNC == O_TRUNC {
-                let target = target.read();
-                for thread in target.threads.iter().filter_map(|t| t.upgrade()) {
-                    thread.write().status = context::Status::HardBlocked {
-                        reason: HardBlockedReason::PtraceStop,
-                    };
-                }
-            }
-        }
-
         Ok((id, int_fl))
     }
 }
@@ -505,21 +328,6 @@ impl<const FULL: bool> ProcScheme<FULL> {
 impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let mut parts = path.splitn(2, '/');
-        let pid_str = parts.next().ok_or(Error::new(ENOENT))?;
-
-        let pid = if pid_str == "current" {
-            OpenTy::Ctxt(context::current())
-        } else if pid_str == "new" || pid_str == "new-child" {
-            OpenTy::Ctxt(new_child()?)
-        } else if pid_str == "new-thread" {
-            OpenTy::Ctxt(new_thread()?)
-        } else if !FULL {
-            return Err(Error::new(EACCES));
-        } else {
-            OpenTy::Proc(ProcessId::new(
-                pid_str.parse().map_err(|_| Error::new(ENOENT))?,
-            ))
-        };
 
         self.open_inner(pid, parts.next(), flags, ctx.uid, ctx.gid)
             .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
@@ -530,19 +338,12 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
-            Handle::Process {
-                kind: ProcHandle::Trace { pid, .. },
-                process: _,
-            } => ptrace::Session::with_session(*pid, |session| {
-                Ok(session.data.lock().session_fevent_flags())
-            }),
             _ => Ok(EventFlags::empty()),
         }
     }
 
     fn close(&self, id: usize) -> Result<()> {
         let mut handle = HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
-        handle.continue_ignored_children();
 
         match handle {
             Handle::Context {
@@ -576,26 +377,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 context,
             } => {
                 context.write().files = new_ft;
-            }
-            Handle::Process {
-                kind: ProcHandle::Trace { pid, excl, .. },
-                process,
-            } => {
-                ptrace::close_session(pid);
-
-                if excl {
-                    syscall::kill(pid, SIGKILL, KillMode::Idempotent)?;
-                }
-
-                let threads = process.read().threads.clone();
-
-                for thread in threads {
-                    let Some(context) = thread.upgrade() else {
-                        continue;
-                    };
-                    let mut context = context.write();
-                    context.status = context::Status::Runnable;
-                }
             }
             _ => (),
         }
@@ -694,9 +475,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
 
         match handle {
             Handle::Context { context, kind } => kind.kreadoff(id, context, buf, offset),
-            Handle::Process { process, kind } => {
-                kind.kreadoff(id, process, buf, offset, read_flags)
-            }
         }
     }
     fn kwriteoff(
@@ -713,12 +491,10 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handle = {
             let mut handles = HANDLES.write();
             let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-            handle.continue_ignored_children();
             handle.clone()
         };
 
         match handle {
-            Handle::Process { process, kind } => kind.kwriteoff(process, buf),
             Handle::Context { context, kind } => kind.kwriteoff(id, context, buf),
         }
     }
@@ -727,21 +503,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let path = match handle {
-            Handle::Process { process, kind } => format!(
-                "proc:{}/{}",
-                process.read().pid.get(),
-                match kind {
-                    ProcHandle::Attr {
-                        attr: Attr::Uid, ..
-                    } => "uid",
-                    ProcHandle::Attr {
-                        attr: Attr::Gid, ..
-                    } => "gid",
-                    ProcHandle::Trace { .. } => "trace",
-                    ProcHandle::Static { ty, .. } => ty,
-                    ProcHandle::SessionId => "session_id",
-                },
-            ),
             Handle::Context { context, kind } => format!(
                 "proc:{}/{}",
                 context.read().pid.get(),
@@ -818,17 +579,12 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 kind: ContextHandle::OpenViaDup,
                 context,
             } => {
-                let (uid, gid) = match &*process::current()?.read() {
-                    process => (process.euid, process.egid),
-                };
                 return self
                     .open_inner(
                         OpenTy::Ctxt(context),
                         Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
                             .filter(|s| !s.is_empty()),
                         O_RDWR | O_CLOEXEC,
-                        uid,
-                        gid,
                     )
                     .map(|(r, fl)| OpenResult::SchemeLocal(r, fl));
             }
@@ -922,38 +678,6 @@ extern "C" fn clone_handler() {
     // usermode.
 }
 
-fn new_thread() -> Result<Arc<RwSpinlock<Context>>> {
-    let current_process = process::current()?;
-    context::spawn(true, current_process, clone_handler)
-}
-
-fn new_child() -> Result<Arc<RwSpinlock<Context>>> {
-    let new_context = {
-        let current_process_info = process::current()?.read().info;
-        let new_process = process::new_process(|new_pid| ProcessInfo {
-            pid: new_pid,
-            ppid: current_process_info.pid,
-            ..current_process_info
-        })?;
-        context::spawn(true, new_process, clone_handler)?
-    };
-
-    if ptrace::send_event(crate::syscall::ptrace_event!(
-        PTRACE_EVENT_CLONE,
-        new_context.read().pid.into()
-    ))
-    .is_some()
-    {
-        // Freeze the clone, allow ptrace to put breakpoints
-        // to it before it starts
-        let mut context = new_context.write();
-        context.status = context::Status::HardBlocked {
-            reason: HardBlockedReason::PtraceStop,
-        };
-    }
-
-    Ok(new_context)
-}
 fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
     let (scheme_id, number) = match &*context::current()
         .read()
@@ -983,10 +707,6 @@ fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
 impl Handle {
     fn fsize(&self) -> Result<u64> {
         match self {
-            Self::Process {
-                kind: ProcHandle::Static { ref bytes, .. },
-                ..
-            } => Ok(bytes.len() as u64),
             Self::Context {
                 kind:
                     ContextHandle::Filetable { ref data, .. }
@@ -994,183 +714,6 @@ impl Handle {
                 ..
             } => Ok(data.len() as u64),
             _ => Ok(0),
-        }
-    }
-}
-impl ProcHandle {
-    fn kwriteoff(self, process: Arc<RwLock<Process>>, buf: UserSliceRo) -> Result<usize> {
-        match self {
-            Self::Static { .. } => Err(Error::new(EBADF)),
-            Self::Trace { pid, .. } => {
-                let op = buf.read_u64()?;
-                let op = PtraceFlags::from_bits(op).ok_or(Error::new(EINVAL))?;
-
-                // Set next breakpoint
-                ptrace::Session::with_session(pid, |session| {
-                    session.data.lock().set_breakpoint(
-                        Some(op).filter(|op| op.intersects(PTRACE_STOP_MASK | PTRACE_EVENT_MASK)),
-                    );
-                    Ok(())
-                })?;
-
-                let first = process
-                    .read()
-                    .threads
-                    .first()
-                    .and_then(|f| f.upgrade())
-                    .ok_or(Error::new(ESRCH))?;
-
-                if op.contains(PTRACE_STOP_SINGLESTEP) {
-                    try_stop_context(first, |context| match context.regs_mut() {
-                        None => {
-                            println!(
-                                "{}:{}: Couldn't read registers from stopped process",
-                                file!(),
-                                line!()
-                            );
-                            Err(Error::new(ENOTRECOVERABLE))
-                        }
-                        Some(stack) => {
-                            stack.set_singlestep(true);
-                            Ok(())
-                        }
-                    })?;
-                }
-
-                // disable the ptrace_stop flag, which is used in some cases
-                for thread in process.read().threads.iter().filter_map(|t| t.upgrade()) {
-                    thread.write().status = context::Status::HardBlocked {
-                        reason: HardBlockedReason::PtraceStop,
-                    };
-                }
-
-                // and notify the tracee's WaitCondition, which is used in other cases
-                ptrace::Session::with_session(pid, |session| {
-                    session.tracee.notify();
-                    Ok(())
-                })?;
-
-                Ok(mem::size_of::<u64>())
-            }
-            Self::Attr { attr } => {
-                // TODO: What limit?
-                let mut str_buf = [0_u8; 32];
-                let bytes_copied = buf.copy_common_bytes_to_slice(&mut str_buf)?;
-
-                let id = core::str::from_utf8(&str_buf[..bytes_copied])
-                    .map_err(|_| Error::new(EINVAL))?
-                    .parse::<u32>()
-                    .map_err(|_| Error::new(EINVAL))?;
-
-                match attr {
-                    Attr::Uid => process.write().euid = id,
-                    Attr::Gid => process.write().egid = id,
-                }
-                Ok(buf.len())
-            }
-            Self::SessionId => {
-                let session_id = ProcessId::new(buf.read_usize()?);
-
-                if session_id != process.read().pid {
-                    // Session ID can only be set to this process's ID
-                    return Err(Error::new(EPERM));
-                }
-
-                for (_pid, process_lock) in process::PROCESSES.read().iter() {
-                    if session_id == process_lock.read().pgid {
-                        // The session ID cannot match the PGID of any process
-                        return Err(Error::new(EPERM));
-                    }
-                }
-
-                {
-                    let mut process = process.write();
-                    process.pgid = session_id;
-                    process.session_id = session_id;
-                }
-
-                Ok(buf.len())
-            }
-        }
-    }
-    fn kreadoff(
-        self,
-        id: usize,
-        process: Arc<RwLock<Process>>,
-        buf: UserSliceWo,
-        offset: u64,
-        read_flags: u32,
-    ) -> Result<usize> {
-        match self {
-            Self::Static { bytes, .. } => read_from(buf, &bytes, offset),
-            Self::Trace { pid, .. } => {
-                // Wait for event
-                if (read_flags as usize) & O_NONBLOCK != O_NONBLOCK {
-                    ptrace::wait(pid)?;
-                }
-
-                // Check if process exists
-                let _ = process::PROCESSES
-                    .read()
-                    .get(&pid)
-                    .ok_or(Error::new(ESRCH))?;
-
-                let mut src_buf = [PtraceEvent::default(); 4];
-
-                // Read events
-                let src_len = src_buf.len();
-                let slice = &mut src_buf
-                    [..core::cmp::min(src_len, buf.len() / mem::size_of::<PtraceEvent>())];
-
-                let (read, reached) = ptrace::Session::with_session(pid, |session| {
-                    let mut data = session.data.lock();
-                    Ok((data.recv_events(slice), data.is_reached()))
-                })?;
-                let mut handles = HANDLES.write();
-                let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-                let Handle::Process {
-                    kind: ProcHandle::Trace { ref mut clones, .. },
-                    ..
-                } = handle
-                else {
-                    return Err(Error::new(EBADFD));
-                };
-
-                // Save child processes in a list of processes to restart
-                for event in &slice[..read] {
-                    if event.cause == PTRACE_EVENT_CLONE {
-                        clones.push(ProcessId::from(event.a));
-                    }
-                }
-
-                // If there are no events, and breakpoint isn't reached, we
-                // must not have waited.
-                if read == 0 && !reached {
-                    return Err(Error::new(EAGAIN));
-                }
-
-                for (dst, src) in buf
-                    .in_exact_chunks(mem::size_of::<PtraceEvent>())
-                    .zip(slice.iter())
-                {
-                    dst.copy_exactly(src)?;
-                }
-
-                // Return read events
-                Ok(read * mem::size_of::<PtraceEvent>())
-            }
-            Self::SessionId => {
-                read_from(buf, &process.read().session_id.get().to_ne_bytes(), offset)
-            }
-            Self::Attr { attr } => {
-                let src_buf = match (attr, process.read()) {
-                    (Attr::Uid, process) => process.euid.to_string(),
-                    (Attr::Gid, process) => process.egid.to_string(),
-                }
-                .into_bytes();
-
-                read_from(buf, &src_buf, offset)
-            }
         }
     }
 }
@@ -1357,7 +900,6 @@ impl ContextHandle {
                     return Err(Error::new(EBADF));
                 };
                 let filetable = match *entry.get_mut() {
-                    Handle::Process { .. } => return Err(Error::new(EBADF)),
                     Handle::Context {
                         kind: ContextHandle::Filetable { ref filetable, .. },
                         ..
@@ -1445,18 +987,6 @@ impl ContextHandle {
                 }
                 let is_current = context::is_current(&context);
 
-                {
-                    let process = Arc::clone(&context.read().process);
-                    let mut process = process.write();
-                    if let Some(pos) = process
-                        .threads
-                        .iter()
-                        .position(|p| Weak::as_ptr(p) == Arc::as_ptr(&context))
-                    {
-                        process.threads.remove(pos);
-                    }
-                }
-
                 if is_current {
                     crate::syscall::exit_this_context();
                 } else {
@@ -1487,14 +1017,6 @@ impl ContextHandle {
                 }
             }
             ContextHandle::Signal => {
-                let me = {
-                    let p = process::current()?;
-                    let p = p.read();
-                    SenderInfo {
-                        pid: p.pid.get().try_into().unwrap_or(0),
-                        ruid: p.ruid,
-                    }
-                };
                 let sig = buf.read_u32()?;
                 let mut killed_self = false;
                 crate::syscall::process::send_signal(

@@ -18,7 +18,7 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::FileHandle,
+    scheme::{FileHandle, SchemeNamespace},
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
@@ -26,11 +26,9 @@ use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 use super::{
     empty_cr3,
     memory::{AddrSpaceWrapper, GrantFileRef},
-    process::{Process, ProcessId},
 };
 
 /// The status of a context - used for scheduling
-/// See `syscall::process::waitpid` and the `sync` module for examples of usage
 #[derive(Clone, Debug)]
 pub enum Status {
     Runnable,
@@ -124,13 +122,9 @@ impl PartialEq for WaitpidKey {
 
 impl Eq for WaitpidKey {}
 
-/// A context, which identifies either a process or a thread
+/// A context, which is typically mapped to a userspace thread
 #[derive(Debug)]
 pub struct Context {
-    /// The process ID of this context
-    pub pid: ProcessId,
-    /// Process state shared with other threads
-    pub process: Arc<RwLock<Process>>,
     /// Signal handler
     pub sig: Option<SignalState>,
     /// Status of context
@@ -183,6 +177,11 @@ pub struct Context {
     pub userspace: bool,
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
+
+    // TODO: Temporary replacement for existing kernel logic, replace with capabilities!
+    pub is_privileged: bool,
+    pub ens: SchemeNamespace,
+    pub rns: SchemeNamespace,
 }
 
 #[derive(Debug)]
@@ -203,10 +202,8 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new(pid: ProcessId, process: Arc<RwLock<Process>>) -> Result<Context> {
+    pub fn new() -> Result<Context> {
         let this = Context {
-            pid,
-            process,
             sig: None,
             status: Status::HardBlocked {
                 reason: HardBlockedReason::NotYetStarted,
@@ -230,6 +227,10 @@ impl Context {
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
+
+            is_privileged: false,
+            ens: 0.into(),
+            rns: 0.into(),
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),

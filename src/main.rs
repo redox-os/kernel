@@ -64,10 +64,7 @@ extern crate bitflags;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::{
-    context::{
-        process::{new_process, ProcessInfo, INIT},
-        switch::SwitchResult,
-    },
+    context::switch::SwitchResult,
     scheme::SchemeNamespace,
 };
 
@@ -202,8 +199,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
-    let pid = syscall::getpid();
-    info!("BSP: {:?} {}", pid, cpu_count);
+    info!("BSP: {}", cpu_count);
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
@@ -211,30 +207,12 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    let process = new_process(|_| ProcessInfo {
-        pid: INIT,
-        ppid: INIT,
-        pgid: INIT,
-        session_id: INIT,
-        ruid: 0,
-        rgid: 0,
-        euid: 0,
-        egid: 0,
-        rns: SchemeNamespace::new(0),
-        ens: SchemeNamespace::new(0),
-    })
-    .expect("failed to create init process");
-
-    match context::spawn(true, process, userspace_init) {
+    match context::spawn(true, userspace_init) {
         Ok(context_lock) => {
             {
                 let mut context = context_lock.write();
                 context.status = context::Status::Runnable;
                 context.name = "bootstrap".into();
-
-                let mut process = context.process.write();
-                process.rns = SchemeNamespace::from(1);
-                process.ens = SchemeNamespace::from(1);
             }
             INIT_THREAD.call_once(move || context_lock);
         }

@@ -17,10 +17,7 @@ use crate::{
     syscall::error::{Error, Result},
 };
 
-use self::{
-    context::Kstack,
-    process::{Process, ProcessId, ProcessInfo},
-};
+use self::context::Kstack;
 pub use self::{
     context::{BorrowedHtBuf, Context, Status, WaitpidKey},
     switch::switch,
@@ -54,9 +51,6 @@ pub mod file;
 /// Memory struct - contains a set of pages for a context
 pub mod memory;
 
-/// Process handling - TODO move to userspace
-pub mod process;
-
 /// Signal handling
 pub mod signal;
 
@@ -70,23 +64,11 @@ pub const CONTEXT_MAX_FILES: usize = 65_536;
 
 pub use self::arch::empty_cr3;
 
-static KMAIN_PROCESS: Once<Arc<RwLock<Process>>> = Once::new();
-
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
 static CONTEXTS: RwLock<BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
 pub fn init() {
-    let pid = ProcessId::new(0);
-    let process = KMAIN_PROCESS.call_once(|| {
-        Arc::new(RwLock::new(Process {
-            info: ProcessInfo::default(),
-            waitpid: Arc::new(WaitMap::new()),
-            threads: Vec::new(),
-            status: process::ProcessStatus::PossiblyRunnable,
-        }))
-    });
-
     let mut context =
         Context::new(pid, Arc::clone(process)).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
@@ -135,10 +117,6 @@ pub fn is_current(context: &Arc<RwSpinlock<Context>>) -> bool {
         .with_context(|current| Arc::ptr_eq(context, current))
 }
 
-pub fn current_pid() -> Result<ProcessId> {
-    Ok(current().read().pid)
-}
-
 pub struct ContextRef(pub Arc<RwSpinlock<Context>>);
 impl ContextRef {
     pub fn upgrade(&self) -> Option<Arc<RwSpinlock<Context>>> {
@@ -166,7 +144,6 @@ impl Eq for ContextRef {}
 /// Spawn a context from a function.
 pub fn spawn(
     userspace_allowed: bool,
-    process: Arc<RwLock<Process>>,
     func: extern "C" fn(),
 ) -> Result<Arc<RwSpinlock<Context>>> {
     let stack = Kstack::new()?;

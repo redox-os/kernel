@@ -255,16 +255,17 @@ pub fn switch() -> SwitchResult {
                 _next_guard: next_context_guard,
             }));
 
-        let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
+        /*let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
             .get(&next_context.pid)
             .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
         {
             (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
         } else {
             (None, PtraceFlags::empty())
-        };
+        };*/
+        let ptrace_flags = PtraceFlags::empty();
 
-        *percpu.ptrace_session.borrow_mut() = ptrace_session;
+        //*percpu.ptrace_session.borrow_mut() = ptrace_session;
         percpu.ptrace_flags.set(ptrace_flags);
         prev_context.inside_syscall = percpu.inside_syscall.replace(next_context.inside_syscall);
 

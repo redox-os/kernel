@@ -97,7 +97,7 @@ impl Session {
     }
 }
 
-type SessionMap = HashMap<ProcessId, Arc<Session>>;
+type SessionMap = HashMap<ContextId, Arc<Session>>;
 
 static SESSIONS: Once<RwLock<SessionMap>> = Once::new();
 

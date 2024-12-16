@@ -10,7 +10,6 @@ use spin::RwLock;
 
 use crate::context::{
     memory::{AddrSpace, Grant, PageSpan},
-    process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
     Context, ContextRef, WaitpidKey,
 };
 
@@ -20,10 +19,7 @@ use crate::{
     ptrace,
     syscall::{
         error::*,
-        flag::{
-            wifcontinued, wifstopped, MapFlags, WaitFlags, PTRACE_STOP_EXIT, SIGCONT, WCONTINUED,
-            WNOHANG, WUNTRACED,
-        },
+        flag::MapFlags,
         ptrace_event,
     },
     Bootstrap, CurrentRmmArch,
@@ -72,133 +68,8 @@ pub fn wait_for_exit(context_lock: Arc<RwSpinlock<Context>>) {
     }
 }
 
-pub fn exit(status: usize) -> ! {
-    if matches!(
-        mem::replace(
-            &mut process::current().unwrap().write().status,
-            ProcessStatus::Exiting
-        ),
-        ProcessStatus::Exiting
-    ) {
-        // already exiting the current process, so just set our status to Dead and context switch.
-        exit_this_context();
-    }
-
-    ptrace::breakpoint_callback(
-        PTRACE_STOP_EXIT,
-        Some(ptrace_event!(PTRACE_STOP_EXIT, status)),
-    );
-
-    let current_pid;
-    let current_ruid;
-    {
-        let current_context = context::current();
-        let current_process = process::current().expect("no active process during exit syscall");
-        current_pid = current_process.read().pid;
-
-        let threads = core::mem::take(&mut current_process.write().threads);
-
-        for context_lock in threads.into_iter().filter_map(|t| t.upgrade()) {
-            // Current context must be closed last, as it would otherwise be impossible to context
-            // switch back, if closing file descriptors require scheme calls.
-            if Arc::ptr_eq(&context_lock, &current_context) {
-                continue;
-            }
-            wait_for_exit(context_lock);
-        }
-
-        {
-            // PGID and PPID must be grabbed after close, as context switches could change PGID or PPID if parent exits
-            let (pgid, ppid) = {
-                let process = current_process.read();
-                current_ruid = process.ruid;
-                (process.pgid, process.ppid)
-            };
-            if let Some(parent) = process::PROCESSES.read().get(&ppid).map(Arc::clone) {
-                let _ = send_signal(
-                    KillTarget::Process(parent),
-                    SIGCHLD,
-                    KillMode::Idempotent,
-                    true,
-                    &mut false,
-                    SenderInfo {
-                        pid: current_pid.get().try_into().unwrap_or(0),
-                        ruid: current_ruid,
-                    },
-                );
-            }
-
-            // Transfer child processes to parent (TODO: to init)
-            {
-                let processes = context::process::PROCESSES.read();
-                for (_child_pid, child_process_lock) in processes.iter() {
-                    let mut process = child_process_lock.write();
-                    if process.ppid == current_pid {
-                        process.ppid = ppid;
-                    }
-                }
-            }
-
-            current_process.write().status = ProcessStatus::Exited(status);
-
-            let children = current_process.write().waitpid.receive_all();
-
-            {
-                let processes = process::PROCESSES.read();
-                if let Some(parent_lock) = processes.get(&ppid) {
-                    let waitpid = Arc::clone(&parent_lock.write().waitpid);
-
-                    for (c_pid, c_status) in children {
-                        waitpid.send(c_pid, c_status);
-                    }
-
-                    waitpid.send(
-                        WaitpidKey {
-                            pid: Some(current_pid),
-                            pgid: Some(pgid),
-                        },
-                        (current_pid, status),
-                    );
-                }
-            }
-
-            // Alert any tracers waiting of this process
-            ptrace::close_tracee(current_pid);
-        }
-    }
-    exit_this_context();
-}
-
-pub fn getpid() -> Result<ProcessId> {
-    context::current_pid()
-}
-
-pub fn getpgid(pid: ProcessId) -> Result<ProcessId> {
-    let process_lock = if pid.get() == 0 {
-        process::current()?
-    } else {
-        Arc::clone(
-            process::PROCESSES
-                .read()
-                .get(&pid)
-                .ok_or(Error::new(ESRCH))?,
-        )
-    };
-    let process = process_lock.read();
-    Ok(process.pgid)
-}
-
-pub fn getppid() -> Result<ProcessId> {
-    Ok(process::current()?.read().ppid)
-}
-
-pub enum KillTarget {
-    Process(Arc<RwLock<Process>>),
-    Thread(Arc<RwSpinlock<Context>>),
-}
-
 pub fn send_signal(
-    target: KillTarget,
+    context: Arc<RwLock<Context>>,
     sig: usize,
     mode: KillMode,
     is_sigchld_to_parent: bool,
@@ -229,13 +100,9 @@ pub fn send_signal(
     enum SendResult {
         Succeeded,
         SucceededSigchld {
-            ppid: ProcessId,
-            pgid: ProcessId,
             orig_signal: usize,
         },
         SucceededSigcont {
-            ppid: ProcessId,
-            pgid: ProcessId,
         },
         FullQ,
         Invalid,
@@ -290,8 +157,6 @@ pub fn send_signal(
             }
             // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
             return SendResult::SucceededSigcont {
-                ppid: proc_info.ppid,
-                pgid: proc_info.pgid,
             };
         }
         drop(process_guard);
@@ -325,8 +190,6 @@ pub fn send_signal(
             }
 
             return SendResult::SucceededSigchld {
-                ppid: proc_info.ppid,
-                pgid: proc_info.pgid,
                 orig_signal: sig,
             };
         }
@@ -429,42 +292,8 @@ pub fn send_signal(
             pgid,
             orig_signal,
         } => {
-            let parent = process::PROCESSES
-                .read()
-                .get(&ppid)
-                .map(Arc::clone)
-                .ok_or(Error::new(ESRCH))?;
-            let waitpid = Arc::clone(&parent.read().waitpid);
-            waitpid.send(
-                WaitpidKey {
-                    pid: Some(proc_info.pid),
-                    pgid: Some(pgid),
-                },
-                (proc_info.pid, (orig_signal << 8) | 0x7f),
-            );
-            send_signal(
-                KillTarget::Process(parent),
-                SIGCHLD,
-                mode,
-                true,
-                killed_self,
-                sender,
-            )?;
         }
         SendResult::SucceededSigcont { ppid, pgid } => {
-            let parent = process::PROCESSES
-                .read()
-                .get(&ppid)
-                .map(Arc::clone)
-                .ok_or(Error::new(ESRCH))?;
-            let waitpid = Arc::clone(&parent.read().waitpid);
-            waitpid.send(
-                WaitpidKey {
-                    pid: Some(proc_info.pid),
-                    pgid: Some(pgid),
-                },
-                (proc_info.pid, 0xffff),
-            );
             // POSIX XSI allows but does not require SIGCONT to send signals to the parent.
             //send_signal(KillTarget::Process(parent), SIGCHLD, true, killed_self)?;
         }
@@ -479,106 +308,6 @@ pub enum KillMode {
     Queued(RtSigInfo),
 }
 
-pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
-    let (current_ruid, current_euid, current_pgid, current_pid) = {
-        let process_lock = process::current()?;
-        let process = process_lock.read();
-        (process.ruid, process.euid, process.pgid, process.pid)
-    };
-    let sender = SenderInfo {
-        pid: current_pid.get().try_into().unwrap_or(0),
-        ruid: current_ruid,
-    };
-
-    let mut found = 0;
-    let mut sent = 0;
-    let mut killed_self = false;
-
-    // Non-root users cannot kill arbitrarily.
-    let can_send = |proc_info: &ProcessInfo| {
-        current_euid == 0 || current_euid == proc_info.ruid || current_ruid == proc_info.ruid
-    };
-
-    {
-        let processes = process::PROCESSES.read();
-
-        if pid.get() as isize > 0 {
-            // Send to a single process
-            if let Some(process_lock) = processes.get(&pid).map(Arc::clone) {
-                found += 1;
-                if can_send(&process_lock.read().info) {
-                    sent += 1;
-                    send_signal(
-                        KillTarget::Process(process_lock),
-                        sig,
-                        mode,
-                        false,
-                        &mut killed_self,
-                        sender,
-                    )?;
-                }
-            }
-        } else if pid.get() == 1_usize.wrapping_neg() {
-            // Send to every process with permission, except for init
-            for (pid, process_lock) in processes.iter() {
-                if pid.get() <= 1 {
-                    continue;
-                }
-                found += 1;
-                if can_send(&process_lock.read().info) {
-                    sent += 1;
-                    send_signal(
-                        KillTarget::Process(Arc::clone(process_lock)),
-                        sig,
-                        mode,
-                        false,
-                        &mut killed_self,
-                        sender,
-                    )?;
-                }
-            }
-        } else {
-            let pgid = if pid.get() == 0 {
-                current_pgid
-            } else {
-                ProcessId::from(pid.get().wrapping_neg())
-            };
-
-            // Send to every process in the process group whose ID
-            for (_pid, process_lock) in processes.iter() {
-                if process_lock.read().pgid != pgid {
-                    continue;
-                }
-                found += 1;
-
-                if can_send(&process_lock.read().info) {
-                    sent += 1;
-                    send_signal(
-                        KillTarget::Process(Arc::clone(process_lock)),
-                        sig,
-                        mode,
-                        false,
-                        &mut killed_self,
-                        sender,
-                    )?;
-                }
-            }
-        }
-    }
-
-    if found == 0 {
-        Err(Error::new(ESRCH))
-    } else if sent == 0 {
-        Err(Error::new(EPERM))
-    } else if killed_self {
-        // Inform userspace it should check its own mask
-
-        Err(Error::new(EINTR))
-    } else {
-        Ok(0)
-    }
-}
-
 pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
@@ -586,222 +315,6 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
         .ok_or(Error::new(EINVAL))?;
 
     AddrSpace::current()?.mprotect(span, flags)
-}
-
-pub fn setpgid(pid: ProcessId, pgid: ProcessId) -> Result<()> {
-    let current_pid = context::current_pid()?;
-
-    let processes = process::PROCESSES.read();
-
-    let process_lock = if pid.get() == 0 {
-        process::current()?
-    } else {
-        Arc::clone(processes.get(&pid).ok_or(Error::new(ESRCH))?)
-    };
-
-    let mut process = process_lock.write();
-    if process.pid == current_pid || process.ppid == current_pid {
-        if pgid.get() == 0 {
-            process.pgid = process.pid;
-        } else {
-            process.pgid = pgid;
-        }
-        Ok(())
-    } else {
-        Err(Error::new(ESRCH))
-    }
-}
-
-fn reap(pid: ProcessId) -> Result<ProcessId> {
-    let process_lock = Arc::clone(
-        process::PROCESSES
-            .read()
-            .get(&pid)
-            .ok_or(Error::new(ESRCH))?,
-    );
-
-    // Spin until not running
-    loop {
-        // TODO: exit WaitCondition?
-        {
-            let process = process_lock.read();
-            if process
-                .threads
-                .iter()
-                .all(|t| t.upgrade().map_or(true, |t| !t.read().running))
-            {
-                break;
-            }
-        }
-
-        // TODO: context switch?
-        interrupt::pause();
-    }
-
-    let _ = process::PROCESSES
-        .write()
-        .remove(&pid)
-        .ok_or(Error::new(ESRCH))?;
-
-    Ok(pid)
-}
-
-pub fn waitpid(
-    pid: ProcessId,
-    status_ptr: Option<UserSliceWo>,
-    flags: WaitFlags,
-) -> Result<ProcessId> {
-    let (ppid, waitpid) = {
-        let process_lock = process::current()?;
-        let process = process_lock.read();
-        (process.pid, Arc::clone(&process.waitpid))
-    };
-
-    let write_status = |value| {
-        status_ptr
-            .map(|ptr| ptr.write_usize(value))
-            .unwrap_or(Ok(()))
-    };
-
-    let grim_reaper = |w_pid: ProcessId, status: usize| -> Option<Result<ProcessId>> {
-        if wifcontinued(status) {
-            if flags & WCONTINUED == WCONTINUED {
-                Some(write_status(status).map(|()| w_pid))
-            } else {
-                None
-            }
-        } else if wifstopped(status) {
-            if flags & WUNTRACED == WUNTRACED {
-                Some(write_status(status).map(|()| w_pid))
-            } else {
-                None
-            }
-        } else {
-            Some(write_status(status).and_then(|()| reap(w_pid)))
-        }
-    };
-
-    loop {
-        let res_opt = if pid.get() == 0 {
-            // Check for existence of child
-            {
-                let mut found = false;
-
-                let processes = process::PROCESSES.read();
-                for (_id, process_lock) in processes.iter() {
-                    let process = process_lock.read();
-                    if process.ppid == ppid {
-                        found = true;
-                        break;
-                    }
-                }
-
-                if !found {
-                    return Err(Error::new(ECHILD));
-                }
-            }
-            if flags & WNOHANG == WNOHANG {
-                if let Some((_wid, (w_pid, status))) = waitpid.receive_any_nonblock() {
-                    grim_reaper(w_pid, status)
-                } else {
-                    Some(Ok(ProcessId::from(0)))
-                }
-            } else {
-                let (_wid, (w_pid, status)) = waitpid.receive_any("waitpid any");
-                grim_reaper(w_pid, status)
-            }
-        } else if (pid.get() as isize) < 0 {
-            let pgid = ProcessId::from(-(pid.get() as isize) as usize);
-
-            // Check for existence of child in process group PGID
-            {
-                let mut found = false;
-
-                let processes = process::PROCESSES.read();
-                for (_pid, process_lock) in processes.iter() {
-                    let process = process_lock.read();
-                    if process.pgid == pgid {
-                        found = true;
-                        break;
-                    }
-                }
-
-                if !found {
-                    return Err(Error::new(ECHILD));
-                }
-            }
-
-            if flags & WNOHANG == WNOHANG {
-                if let Some((w_pid, status)) = waitpid.receive_nonblock(&WaitpidKey {
-                    pid: None,
-                    pgid: Some(pgid),
-                }) {
-                    grim_reaper(w_pid, status)
-                } else {
-                    Some(Ok(ProcessId::from(0)))
-                }
-            } else {
-                let (w_pid, status) = waitpid
-                    .receive(
-                        &WaitpidKey {
-                            pid: None,
-                            pgid: Some(pgid),
-                        },
-                        "waitpid pgid",
-                    )
-                    .ok_or(Error::new(EINTR))?;
-                grim_reaper(w_pid, status)
-            }
-        } else {
-            let status = {
-                let process_lock = Arc::clone(
-                    process::PROCESSES
-                        .read()
-                        .get(&pid)
-                        .ok_or(Error::new(ESRCH))?,
-                );
-                let process_guard = process_lock.read();
-
-                if process_guard.ppid != ppid {
-                    return Err(Error::new(ECHILD));
-                }
-                process_guard.status
-            };
-
-            if let ProcessStatus::Exited(status) = status {
-                let _ = waitpid.receive_nonblock(&WaitpidKey {
-                    pid: Some(pid),
-                    pgid: None,
-                });
-                grim_reaper(pid, status)
-            } else if flags & WNOHANG == WNOHANG {
-                let res = waitpid.receive_nonblock(&WaitpidKey {
-                    pid: Some(pid),
-                    pgid: None,
-                });
-                if let Some((w_pid, status)) = res {
-                    grim_reaper(w_pid, status)
-                } else {
-                    Some(Ok(ProcessId::from(0)))
-                }
-            } else {
-                let (w_pid, status) = waitpid
-                    .receive(
-                        &WaitpidKey {
-                            pid: Some(pid),
-                            pgid: None,
-                        },
-                        "waitpid pid",
-                    )
-                    .ok_or(Error::new(EINTR))?;
-                grim_reaper(w_pid, status)
-            }
-        };
-
-        if let Some(res) = res_opt {
-            return res;
-        }
-    }
 }
 
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {

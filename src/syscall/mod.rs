@@ -194,12 +194,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
                 clock_gettime(b, UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?).map(|()| 0)
             }
             SYS_FUTEX => futex(b, c, d, e, f),
-            SYS_GETPID => getpid().map(ProcessId::into),
-            SYS_GETPGID => getpgid(ProcessId::from(b)).map(ProcessId::into),
-            SYS_GETPPID => getppid().map(ProcessId::into),
 
-            SYS_EXIT => exit(b),
-            SYS_KILL => kill(ProcessId::from(b), c, KillMode::Idempotent),
             SYS_SIGENQUEUE => kill(
                 ProcessId::from(b),
                 c,
@@ -210,33 +205,16 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
             SYS_SIGDEQUEUE => {
                 sigdequeue(UserSlice::wo(b, size_of::<RtSigInfo>())?, c as u32).map(|()| 0)
             }
-            SYS_WAITPID => waitpid(
-                ProcessId::from(b),
-                if c == 0 {
-                    None
-                } else {
-                    Some(UserSlice::wo(c, core::mem::size_of::<usize>())?)
-                },
-                WaitFlags::from_bits_truncate(d),
-            )
-            .map(ProcessId::into),
             SYS_IOPL => iopl(b),
-            SYS_GETEGID => getegid(),
             SYS_GETENS => getens(),
-            SYS_GETEUID => geteuid(),
-            SYS_GETGID => getgid(),
             SYS_GETNS => getns(),
-            SYS_GETUID => getuid(),
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
             SYS_MKNS => mkns(UserSlice::ro(
                 b,
                 c.checked_mul(core::mem::size_of::<[usize; 2]>())
                     .ok_or(Error::new(EOVERFLOW))?,
             )?),
-            SYS_SETPGID => setpgid(ProcessId::from(b), ProcessId::from(c)).map(|()| 0),
-            SYS_SETREUID => setreuid(b as u32, c as u32).map(|()| 0),
             SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
-            SYS_SETREGID => setregid(b as u32, c as u32).map(|()| 0),
             SYS_VIRTTOPHYS => virttophys(b),
 
             SYS_MREMAP => mremap(b, c, d, e, f),
