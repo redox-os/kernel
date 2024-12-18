@@ -6,11 +6,13 @@ use crate::{
     context,
     context::timeout,
     device::cpu::registers::control_regs,
-    dtb::irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+    dtb::{
+        get_interrupt,
+        irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+    },
     interrupt::irq::trigger,
     time,
 };
-use byteorder::{ByteOrder, BE};
 use fdt::Fdt;
 
 bitflags! {
@@ -28,19 +30,12 @@ pub unsafe fn init(fdt: &Fdt) {
     };
     timer.init();
     if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
-        let interrupts = node.property("interrupts").unwrap();
-        let irq = interrupts
-            .value
-            .array_chunks::<4>()
-            .map(|f| BE::read_u32(f))
-            .skip(3)
-            .next_chunk::<3>()
-            .unwrap();
+        let irq = get_interrupt(fdt, &node, 0).unwrap();
         if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
             //PHYS_NONSECURE_PPI only
             let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
                 .ic
-                .irq_xlate(&irq)
+                .irq_xlate(irq)
                 .unwrap();
             info!("generic_timer virq = {}", virq);
             register_irq(virq as u32, Box::new(timer));

@@ -57,7 +57,7 @@
 #![feature(option_get_or_insert_default)]
 #![feature(array_chunks)]
 #![feature(if_let_guard)]
-
+#![feature(iterator_try_collect)]
 #[macro_use]
 extern crate alloc;
 

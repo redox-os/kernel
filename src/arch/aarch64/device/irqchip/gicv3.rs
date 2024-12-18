@@ -3,7 +3,10 @@ use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
 
 use super::{gic::GicDistIf, InterruptController};
-use crate::dtb::irqchip::{InterruptHandler, IrqDesc};
+use crate::dtb::{
+    get_mmio_address,
+    irqchip::{InterruptHandler, IrqCell, IrqDesc},
+};
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -46,16 +49,19 @@ impl GicV3 {
 
         // Read registers
         let mut chunks = node.reg().unwrap();
-        if let Some(gicd) = chunks.next() {
+        if let Some(gicd) = chunks.next()
+            && let Some(addr) = get_mmio_address(fdt, &node, &gicd)
+        {
             unsafe {
-                self.gic_dist_if
-                    .init(crate::PHYS_OFFSET + gicd.starting_address as usize);
+                self.gic_dist_if.init(crate::PHYS_OFFSET + addr);
             }
         }
         for _ in 0..gicrs {
             if let Some(gicr) = chunks.next() {
-                self.gicrs
-                    .push((gicr.starting_address as usize, gicr.size.unwrap()));
+                self.gicrs.push((
+                    get_mmio_address(fdt, &node, &gicr).unwrap(),
+                    gicr.size.unwrap(),
+                ));
             }
         }
 
@@ -121,14 +127,13 @@ impl InterruptController for GicV3 {
     fn irq_disable(&mut self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
     }
-    fn irq_xlate(&self, irq_data: &[u32; 3]) -> Result<usize> {
-        let mut off = match irq_data[0] {
-            0 => irq_data[1] as usize + 32, //SPI
-            1 => irq_data[1] as usize + 16, //PPI,
+    fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
+        let off = match irq_data {
+            IrqCell::L2(0, irq) => irq as usize + 32, // SPI
+            IrqCell::L2(1, irq) => irq as usize + 16, // PPI
             _ => return Err(Error::new(EINVAL)),
         };
-        off += self.irq_range.0;
-        return Ok(off);
+        return Ok(off + self.irq_range.0);
     }
     fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
         if hwirq >= self.gic_dist_if.nirqs {

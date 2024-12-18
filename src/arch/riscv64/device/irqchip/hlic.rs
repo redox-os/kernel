@@ -1,8 +1,8 @@
-use crate::dtb::irqchip::{InterruptController, InterruptHandler, IrqDesc, IRQ_CHIP};
+use crate::dtb::irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP};
 use alloc::vec::Vec;
 use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
-use syscall::{Error, ENOENT};
+use syscall::{Error, EINVAL};
 
 // This is a hart-local interrupt controller, a root of irqchip tree
 // An example DTS:
@@ -137,11 +137,10 @@ impl InterruptController for Hlic {
         // Not bothering with this, all interrupts are enabled at all times
     }
 
-    fn irq_xlate(&self, irq_data: &[u32; 3]) -> syscall::Result<usize> {
-        let irq = irq_data[0];
-        match irq {
-            0..=0xF => Ok(self.virq_base + irq as usize),
-            _ => Err(Error::new(ENOENT)),
+    fn irq_xlate(&self, irq_data: IrqCell) -> syscall::Result<usize> {
+        match irq_data {
+            IrqCell::L1(irq) if irq <= 0xF => Ok(self.virq_base + irq as usize),
+            _ => Err(Error::new(EINVAL)),
         }
     }
 
