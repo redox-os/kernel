@@ -43,6 +43,9 @@ fdt = { git = "https://github.com/repnop/fdt.git", rev = "2fb1409edd1877c714a0aa
 raw-cpuid = "10.2.0"
 x86 = { version = "0.47.0", default-features = false }
 
+[target.'cfg(any(target_arch = "riscv64", target_arch = "riscv32"))'.dependencies]
+sbi-rt = "0.0.3"
+
 [features]
 default = [
   "acpi",

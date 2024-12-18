@@ -1,5 +1,4 @@
 use crate::{
-    arch::riscv64::sbi::SBI,
     context,
     context::timeout,
     dtb::irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
@@ -127,8 +126,7 @@ impl Clint {
 
                 self.next_event[hart_id] =
                     max(self.next_event[hart_id], mtime as u64) + self.freq / TICKS_PER_SECOND;
-                SBI.set_timer(self.next_event[hart_id])
-                    .expect("SBI timer cannot be set!");
+                sbi_rt::set_timer(self.next_event[hart_id]).expect("SBI timer cannot be set!");
             }
             _ => {
                 panic!("Unexpected CLINT irq")
@@ -145,7 +143,6 @@ impl Clint {
             )
         };
         self.next_event[hart] = mtime as u64 + (self.freq / TICKS_PER_SECOND);
-        SBI.set_timer(self.next_event[hart])
-            .expect("SBI timer cannot be set!");
+        sbi_rt::set_timer(self.next_event[hart]).expect("SBI timer cannot be set!");
     }
 }
