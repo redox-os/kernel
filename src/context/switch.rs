@@ -30,9 +30,6 @@ enum UpdateResult {
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
 ///
-/// # Safety
-/// This function is unsafe because it modifies the `context`'s state directly without synchronization.
-///
 /// # Parameters
 /// - `context`: The context (process/thread) to be checked.
 /// - `cpu_id`: The logical ID of the CPU on which the context is being scheduled.
@@ -40,7 +37,7 @@ enum UpdateResult {
 /// # Returns
 /// - `UpdateResult::CanSwitch`: If the context can be switched to.
 /// - `UpdateResult::Skip`: If the context should be skipped (e.g., it's running on another CPU).
-unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> UpdateResult {
+fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> UpdateResult {
     // Ignore contexts that are already running.
     if context.running {
         return UpdateResult::Skip;
@@ -139,11 +136,11 @@ pub enum SwitchResult {
 pub fn switch() -> SwitchResult {
     let percpu = PercpuBlock::current();
 
-    //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
+    // Set PIT Interrupt counter to 0, giving each process same amount of PIT ticks.
     percpu.switch_internals.pit_ticks.set(0);
 
     // Acquire the global lock to ensure exclusive access during context switch and avoid
-    // issues that would be caused by the unsafe operations below
+    // issues that would be caused by the unsafe operations below.
     // TODO: Better memory orderings?
     while arch::CONTEXT_SWITCH_LOCK
         .compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed)
@@ -154,141 +151,144 @@ pub fn switch() -> SwitchResult {
     }
 
     let cpu_id = crate::cpu_id();
+    let prev_context = crate::context::current();
+    let idle_context = percpu.switch_internals.idle_context();
 
-    let mut switch_context_opt = None;
-    {
-        let contexts = contexts();
+    // A closure that attempts to lock a given `context` and checks if it is in
+    // a state that allows switching to it. If so, it returns a writable guard
+    // for the `context`; otherwise, it returns `None`.
+    let switchable_context_guard = |context: &Arc<RwSpinlock<_>>| {
+        // Lock the context.
+        let mut context_guard = context.write_arc();
 
-        // Lock the previous context.
-        let prev_context_lock = crate::context::current();
-        let prev_context_guard = prev_context_lock.write_arc();
-
-        let idle_context = percpu.switch_internals.idle_context();
-
-        // Stateful flag used to skip the idle process the first time it shows up.
-        // After that, this flag is set to `false` so the idle process can be
-        // picked up.
-        let mut skip_idle = true;
-
-        // Attempt to locate the next context to switch to.
-        for next_context_lock in contexts
-            // Include all contexts with IDs greater than the current...
-            .range((
-                Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
-                Bound::Unbounded,
-            ))
-            // ... and all contexts with IDs less than the current...
-            .chain(contexts.range((
-                Bound::Unbounded,
-                Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
-            )))
-            .filter_map(ContextRef::upgrade)
-            // ... and the idle context...
-            .chain(Some(Arc::clone(&idle_context)))
-        // ... but not the current context (note the `Bound::Excluded`),
-        // which is already locked.
-        {
-            if Arc::ptr_eq(&next_context_lock, &idle_context) && skip_idle {
-                // Skip idle process the first time it shows up, but allow it
-                // to be picked up again the next time.
-                skip_idle = false;
-                continue;
-            }
-
-            // Lock next context
-            let mut next_context_guard = next_context_lock.write_arc();
-
-            // Check if the context is runnable and can be switched to.
-            if let UpdateResult::CanSwitch =
-                unsafe { update_runnable(&mut *next_context_guard, cpu_id) }
-            {
-                // Store locks for previous and next context and break out from loop
-                // for the switch
-                switch_context_opt = Some((prev_context_guard, next_context_guard));
-                break;
-            }
+        // Check if the context is runnable and can be switched to.
+        if let UpdateResult::CanSwitch = update_runnable(&mut *context_guard, cpu_id) {
+            Some(context_guard)
+        } else {
+            None
         }
     };
 
-    // Switch process states, TSS stack pointer, and store new context ID
-    if let Some((mut prev_context_guard, mut next_context_guard)) = switch_context_opt {
-        // Update context states and prepare for the switch.
-        let prev_context = &mut *prev_context_guard;
-        let next_context = &mut *next_context_guard;
+    // Stores the context to switch to, if there's one available.
+    let mut switch_context_opt = None;
 
-        // Set the previous context as "not running"
-        prev_context.running = false;
+    {
+        // Acquire a read lock for the set of contexts.
+        let contexts = contexts();
 
-        // Set the next context as "running"
-        next_context.running = true;
-        // Set the CPU ID for the next context
-        next_context.cpu_id = Some(cpu_id);
-
-        let percpu = PercpuBlock::current();
-        unsafe {
-            percpu.switch_internals.set_current_context(Arc::clone(
-                ArcRwSpinlockWriteGuard::rwlock(&next_context_guard),
-            ));
-        }
-
-        // FIXME set the switch result in arch::switch_to instead
-        let prev_context =
-            unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard) };
-        let next_context =
-            unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard) };
-
-        percpu
-            .switch_internals
-            .switch_result
-            .set(Some(SwitchResultInner {
-                _prev_guard: prev_context_guard,
-                _next_guard: next_context_guard,
-            }));
-
-        let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
-            .get(&next_context.pid)
-            .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
+        // Try to find a context to switch to.
+        for context in contexts
+            // Include all contexts with IDs greater than the previous...
+            .range((
+                Bound::Excluded(ContextRef(Arc::clone(&prev_context))),
+                Bound::Unbounded,
+            ))
+            // ... and then all contexts with IDs less than the previous...
+            .chain(contexts.range((
+                Bound::Unbounded,
+                Bound::Excluded(ContextRef(Arc::clone(&prev_context))),
+            )))
+            // ... but exclude the idle context.
+            .filter(|context| !Arc::ptr_eq(context.get_lock(), &idle_context))
         {
-            (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
-        } else {
-            (None, PtraceFlags::empty())
-        };
-
-        *percpu.ptrace_session.borrow_mut() = ptrace_session;
-        percpu.ptrace_flags.set(ptrace_flags);
-        prev_context.inside_syscall = percpu.inside_syscall.replace(next_context.inside_syscall);
-
-        #[cfg(feature = "syscall_debug")]
-        {
-            prev_context.syscall_debug_info = percpu
-                .syscall_debug_info
-                .replace(next_context.syscall_debug_info);
-            prev_context.syscall_debug_info.on_switch_from();
-            next_context.syscall_debug_info.on_switch_to();
+            switch_context_opt = switchable_context_guard(context.get_lock());
+            if switch_context_opt.is_some() {
+                // Found a context. Break out from the loop for the switch.
+                break;
+            }
         }
-
-        percpu
-            .switch_internals
-            .being_sigkilled
-            .set(next_context.being_sigkilled);
-
-        unsafe {
-            arch::switch_to(prev_context, next_context);
-        }
-
-        // NOTE: After switch_to is called, the return address can even be different from the
-        // current return address, meaning that we cannot use local variables here, and that we
-        // need to use the `switch_finish_hook` to be able to release the locks. Newly created
-        // contexts will return directly to the function pointer passed to context::spawn, and not
-        // reach this code until the next context switch back.
-
-        SwitchResult::Switched
-    } else {
-        // No target was found, unset global lock and return
-        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-
-        SwitchResult::AllContextsIdle
     }
+
+    // If a context wasn't found, try the idle context.
+    if switch_context_opt.is_none() {
+        switch_context_opt = switchable_context_guard(&idle_context);
+    }
+
+    // Get a mutable guard for the next context.
+    let Some(mut next_context_guard) = switch_context_opt else {
+        // No target was found. Unset global lock and return.
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+        return SwitchResult::AllContextsIdle;
+    };
+
+    // Switch process states, TSS stack pointer, and store new context ID.
+
+    // Lock the previous context.
+    let mut prev_context_guard = prev_context.write_arc();
+
+    // Update context states and prepare for the switch.
+    let prev_context = &mut *prev_context_guard;
+    let next_context = &mut *next_context_guard;
+
+    // Set the previous context as "not running"
+    prev_context.running = false;
+
+    // Set the next context as "running"
+    next_context.running = true;
+    // Set the CPU ID for the next context
+    next_context.cpu_id = Some(cpu_id);
+
+    let percpu = PercpuBlock::current();
+    unsafe {
+        percpu
+            .switch_internals
+            .set_current_context(Arc::clone(ArcRwSpinlockWriteGuard::rwlock(
+                &next_context_guard,
+            )));
+    }
+
+    // FIXME set the switch result in arch::switch_to instead
+    let prev_context =
+        unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard) };
+    let next_context =
+        unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard) };
+
+    percpu
+        .switch_internals
+        .switch_result
+        .set(Some(SwitchResultInner {
+            _prev_guard: prev_context_guard,
+            _next_guard: next_context_guard,
+        }));
+
+    let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
+        .get(&next_context.pid)
+        .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
+    {
+        (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
+    } else {
+        (None, PtraceFlags::empty())
+    };
+
+    *percpu.ptrace_session.borrow_mut() = ptrace_session;
+    percpu.ptrace_flags.set(ptrace_flags);
+    prev_context.inside_syscall = percpu.inside_syscall.replace(next_context.inside_syscall);
+
+    #[cfg(feature = "syscall_debug")]
+    {
+        prev_context.syscall_debug_info = percpu
+            .syscall_debug_info
+            .replace(next_context.syscall_debug_info);
+        prev_context.syscall_debug_info.on_switch_from();
+        next_context.syscall_debug_info.on_switch_to();
+    }
+
+    percpu
+        .switch_internals
+        .being_sigkilled
+        .set(next_context.being_sigkilled);
+
+    unsafe {
+        arch::switch_to(prev_context, next_context);
+    }
+
+    // NOTE: After switch_to is called, the return address can even be different from the
+    // current return address, meaning that we cannot use local variables here, and that we
+    // need to use the `switch_finish_hook` to be able to release the locks. Newly created
+    // contexts will return directly to the function pointer passed to context::spawn, and not
+    // reach this code until the next context switch back.
+
+    SwitchResult::Switched
 }
 
 /// Holds per-CPU state necessary for context switching.
