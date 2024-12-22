@@ -142,11 +142,9 @@ enum ContextHandle {
     MmapMinAddr(Arc<AddrSpaceWrapper>),
 }
 #[derive(Clone)]
-enum Handle {
-    Context {
-        context: Arc<RwSpinlock<Context>>,
-        kind: ContextHandle,
-    },
+struct Handle {
+    context: Arc<RwSpinlock<Context>>,
+    kind: ContextHandle,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attr {
@@ -164,7 +162,7 @@ static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 #[allow(dead_code)]
 pub fn foreach_addrsp(mut f: impl FnMut(&Arc<AddrSpaceWrapper>)) {
     for (_, handle) in HANDLES.read().iter() {
-        let Handle::Context {
+        let Handle {
             kind: ContextHandle::AddrSpace { addrspace, .. },
             ..
         } = handle
@@ -246,7 +244,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
             if let Some((kind, positioned)) =
                 self.openat_context(operation_name, Arc::clone(&context))?
             {
-                (Handle::Context { context, kind }, positioned)
+                (Handle { context, kind }, positioned)
             } else {
                 return Err(Error::new(EINVAL));
             }
@@ -254,7 +252,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
 
         {
             let filetable_opt = match handle {
-                Handle::Context {
+                Handle {
                     kind:
                         ContextHandle::Filetable {
                             ref filetable,
@@ -262,7 +260,7 @@ impl<const FULL: bool> ProcScheme<FULL> {
                         },
                     ..
                 } => Some((filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?, data)),
-                Handle::Context {
+                Handle {
                     kind:
                         ContextHandle::NewFiletable {
                             ref filetable,
@@ -304,13 +302,20 @@ impl<const FULL: bool> ProcScheme<FULL> {
 }
 
 impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
-    fn kopen(&self, _path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
-        if flags & O_CREAT == 0 {
-            return Err(Error::new(EINVAL));
-        }
-        let context = context::spawn(true, clone_handler)?;
+    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+        let context = match path {
+            "new" => context::spawn(true, clone_handler)?,
+            "current" => context::current(),
+            _ => return Err(Error::new(ENOENT)),
+        };
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(id, Handle::Context { context, kind: ContextHandle::OpenViaDup });
+        HANDLES.write().insert(
+            id,
+            Handle {
+                context,
+                kind: ContextHandle::OpenViaDup,
+            },
+        );
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
@@ -327,7 +332,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handle = HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
-            Handle::Context {
+            Handle {
                 context,
                 kind:
                     ContextHandle::AwaitingAddrSpaceChange {
@@ -348,12 +353,12 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     0
                 ));
             }
-            Handle::Context {
+            Handle {
                 kind: ContextHandle::AddrSpace { addrspace } | ContextHandle::MmapMinAddr(addrspace),
                 ..
             } => drop(addrspace),
 
-            Handle::Context {
+            Handle {
                 kind: ContextHandle::AwaitingFiletableChange { new_ft },
                 context,
             } => {
@@ -371,7 +376,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         consume: bool,
     ) -> Result<usize> {
         let handle = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.clone();
-        let Handle::Context { kind, .. } = handle;
+        let Handle { kind, .. } = handle;
 
         match kind {
             ContextHandle::AddrSpace { ref addrspace } => {
@@ -453,7 +458,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         };
 
         match handle {
-            Handle::Context { context, kind } => kind.kreadoff(id, context, buf, offset),
+            Handle { context, kind } => kind.kreadoff(id, context, buf, offset),
         }
     }
     fn kwriteoff(
@@ -474,7 +479,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         };
 
         match handle {
-            Handle::Context { context, kind } => kind.kwriteoff(id, context, buf),
+            Handle { context, kind } => kind.kwriteoff(id, context, buf),
         }
     }
     fn kfstat(&self, id: usize, buffer: UserSliceWo) -> Result<()> {
@@ -525,7 +530,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let buf = &array[..raw_buf.len()];
 
         new_handle(match info {
-            Handle::Context {
+            Handle {
                 kind: ContextHandle::OpenViaDup,
                 context,
             } => {
@@ -539,7 +544,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     .map(|(r, fl)| OpenResult::SchemeLocal(r, fl));
             }
 
-            Handle::Context {
+            Handle {
                 kind:
                     ContextHandle::Filetable {
                         ref filetable,
@@ -558,7 +563,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     .map_err(|_| Error::new(ENOMEM))?;
 
                 handle(
-                    Handle::Context {
+                    Handle {
                         kind: ContextHandle::NewFiletable {
                             filetable: new_filetable,
                             data: data.clone(),
@@ -568,7 +573,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     true,
                 )
             }
-            Handle::Context {
+            Handle {
                 kind: ContextHandle::AddrSpace { ref addrspace },
                 context,
             } => {
@@ -616,7 +621,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     _ => return Err(Error::new(EINVAL)),
                 };
 
-                handle(Handle::Context { context, kind }, true)
+                handle(Handle { context, kind }, true)
             }
             _ => return Err(Error::new(EINVAL)),
         })
@@ -656,13 +661,9 @@ fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
 }
 impl Handle {
     fn fsize(&self) -> Result<u64> {
-        match self {
-            Self::Context {
-                kind:
-                    ContextHandle::Filetable { ref data, .. }
-                    | ContextHandle::NewFiletable { ref data, .. },
-                ..
-            } => Ok(data.len() as u64),
+        match self.kind {
+            ContextHandle::Filetable { ref data, .. }
+            | ContextHandle::NewFiletable { ref data, .. } => Ok(data.len() as u64),
             _ => Ok(0),
         }
     }
@@ -850,11 +851,11 @@ impl ContextHandle {
                     return Err(Error::new(EBADF));
                 };
                 let filetable = match *entry.get_mut() {
-                    Handle::Context {
+                    Handle {
                         kind: ContextHandle::Filetable { ref filetable, .. },
                         ..
                     } => filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?,
-                    Handle::Context {
+                    Handle {
                         kind:
                             ContextHandle::NewFiletable {
                                 ref filetable,
@@ -863,7 +864,7 @@ impl ContextHandle {
                         ..
                     } => {
                         let ft = Arc::clone(&filetable);
-                        *entry.get_mut() = Handle::Context {
+                        *entry.get_mut() = Handle {
                             kind: ContextHandle::Filetable {
                                 filetable: Arc::downgrade(&filetable),
                                 data: data.clone(),
@@ -876,7 +877,7 @@ impl ContextHandle {
                     _ => return Err(Error::new(EBADF)),
                 };
 
-                *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle::Context {
+                *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle {
                     kind: ContextHandle::AwaitingFiletableChange { new_ft: filetable },
                     context,
                 };
@@ -893,7 +894,7 @@ impl ContextHandle {
                 verify_scheme(hopefully_this_scheme)?;
 
                 let mut handles = HANDLES.write();
-                let Handle::Context {
+                let Handle {
                     kind: ContextHandle::AddrSpace { ref addrspace },
                     ..
                 } = handles.get(&number).ok_or(Error::new(EBADF))?
@@ -901,7 +902,7 @@ impl ContextHandle {
                     return Err(Error::new(EBADF));
                 };
 
-                *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle::Context {
+                *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle {
                     context,
                     kind: Self::AwaitingAddrSpaceChange {
                         new: Arc::clone(addrspace),
