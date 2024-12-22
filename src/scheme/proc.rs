@@ -304,13 +304,14 @@ impl<const FULL: bool> ProcScheme<FULL> {
 }
 
 impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
-        let mut parts = path.splitn(2, '/');
-
-        let pid = todo!();
-
-        self.open_inner(pid, parts.next(), flags)
-            .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+    fn kopen(&self, _path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+        if flags & O_CREAT == 0 {
+            return Err(Error::new(EINVAL));
+        }
+        let context = context::spawn(true, clone_handler)?;
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write().insert(id, Handle::Context { context, kind: ContextHandle::OpenViaDup });
+        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
