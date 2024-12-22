@@ -6,15 +6,13 @@ extern crate syscall;
 
 use core::mem::size_of;
 
-use syscall::{dirent::DirentHeader, CallFlags, RtSigInfo, RwFlags, EINVAL, SIGKILL};
+use syscall::{dirent::DirentHeader, CallFlags, RwFlags, EINVAL};
 
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
 
-pub use self::{
-    driver::*, fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region,
-};
+pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region};
 
 use self::{
     data::{Map, TimeSpec},
@@ -27,8 +25,8 @@ use self::{
 use crate::percpu::PercpuBlock;
 
 use crate::{
-    context::{memory::AddrSpace, process::ProcessId},
-    scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
+    context::memory::AddrSpace,
+    scheme::{memory::MemoryScheme, FileHandle},
 };
 
 /// Debug
@@ -36,9 +34,6 @@ pub mod debug;
 
 #[cfg(feature = "syscall_debug")]
 use self::debug::{debug_end, debug_start};
-
-/// Driver syscalls
-pub mod driver;
 
 /// Filesystem syscalls
 pub mod fs;
@@ -195,7 +190,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
             }
             SYS_FUTEX => futex(b, c, d, e, f),
 
-            SYS_SIGENQUEUE => kill(
+            /*SYS_SIGENQUEUE => kill(
                 ProcessId::from(b),
                 c,
                 KillMode::Queued(unsafe {
@@ -204,8 +199,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
             ),
             SYS_SIGDEQUEUE => {
                 sigdequeue(UserSlice::wo(b, size_of::<RtSigInfo>())?, c as u32).map(|()| 0)
-            }
-            SYS_IOPL => iopl(b),
+            }*/
+            //SYS_IOPL => iopl(b),
             SYS_GETENS => getens(),
             SYS_GETNS => getns(),
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
@@ -214,9 +209,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
                 c.checked_mul(core::mem::size_of::<[usize; 2]>())
                     .ok_or(Error::new(EOVERFLOW))?,
             )?),
-            SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
-            SYS_VIRTTOPHYS => virttophys(b),
-
+            //SYS_VIRTTOPHYS => virttophys(b),
             SYS_MREMAP => mremap(b, c, d, e, f),
 
             _ => return Err(Error::new(ENOSYS)),
@@ -237,7 +230,8 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
     percpu.inside_syscall.set(false);
 
     if percpu.switch_internals.being_sigkilled.get() {
-        exit(SIGKILL);
+        todo!()
+        //exit(SIGKILL);
     }
 
     // errormux turns Result<usize> into -errno

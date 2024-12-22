@@ -3,7 +3,6 @@
 //! of the scheme.
 
 use crate::{
-    context::{self, process::ProcessId},
     event,
     percpu::PercpuBlock,
     scheme::GlobalSchemes,
@@ -13,8 +12,7 @@ use crate::{
 
 use alloc::{collections::VecDeque, sync::Arc};
 use core::cmp;
-use hashbrown::hash_map::{Entry, HashMap};
-use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::Mutex;
 
 //  ____                _
 // / ___|  ___  ___ ___(_) ___  _ __  ___
@@ -82,64 +80,33 @@ pub struct Session {
     pub tracer: WaitCondition,
 }
 impl Session {
-    pub fn with_session<F, T>(pid: ProcessId, callback: F) -> Result<T>
-    where
-        F: FnOnce(&Session) -> Result<T>,
-    {
-        let sessions = sessions();
-        let session = sessions.get(&pid).ok_or_else(|| {
-            println!("session doesn't exist - returning ENODEV.");
-            println!("can this ever happen?");
-            Error::new(ENODEV)
-        })?;
-
-        callback(session)
+    pub fn current() -> Option<Arc<Session>> {
+        PercpuBlock::current()
+            .ptrace_session
+            .borrow()
+            .as_ref()?
+            .upgrade()
     }
-}
-
-type SessionMap = HashMap<ContextId, Arc<Session>>;
-
-static SESSIONS: Once<RwLock<SessionMap>> = Once::new();
-
-fn init_sessions() -> RwLock<SessionMap> {
-    RwLock::new(HashMap::new())
-}
-pub(crate) fn sessions() -> RwLockReadGuard<'static, SessionMap> {
-    SESSIONS.call_once(init_sessions).read()
-}
-fn sessions_mut() -> RwLockWriteGuard<'static, SessionMap> {
-    SESSIONS.call_once(init_sessions).write()
-}
-
-/// Try to create a new session, but fail if one already exists for this
-/// process
-pub fn try_new_session(pid: ProcessId, file_id: usize) -> bool {
-    let mut sessions = sessions_mut();
-
-    match sessions.entry(pid) {
-        Entry::Occupied(_) => false,
-        Entry::Vacant(vacant) => {
-            vacant.insert(Arc::new(Session {
-                data: Mutex::new(SessionData {
-                    breakpoint: None,
-                    events: VecDeque::new(),
-                    file_id,
-                }),
-                tracee: WaitCondition::new(),
-                tracer: WaitCondition::new(),
-            }));
-            true
-        }
+    pub fn try_new(file_id: usize) -> Result<Arc<Session>> {
+        Arc::try_new(Session {
+            data: Mutex::new(SessionData {
+                breakpoint: None,
+                events: VecDeque::new(),
+                file_id,
+            }),
+            tracee: WaitCondition::new(),
+            tracer: WaitCondition::new(),
+        })
+        .map_err(|_| Error::new(ENOMEM))
     }
 }
 
 /// Remove the session from the list of open sessions and notify any
 /// waiting processes
-pub fn close_session(pid: ProcessId) {
-    if let Some(session) = sessions_mut().remove(&pid) {
-        session.tracer.notify();
-        session.tracee.notify();
-    }
+// TODO
+pub fn close_session(session: &Session) {
+    session.tracer.notify();
+    session.tracee.notify();
 }
 
 /// Wake up the tracer to make sure it catches on that the tracee is dead. This
@@ -148,18 +115,11 @@ pub fn close_session(pid: ProcessId) {
 /// session will *actually* be closed. This is partly to ensure ENOSRCH is
 /// returned rather than ENODEV (which occurs when there's no session - should
 /// never really happen).
-pub fn close_tracee(pid: ProcessId) {
-    if let Some(session) = sessions().get(&pid) {
-        session.tracer.notify();
+pub fn close_tracee(session: &Session) {
+    session.tracer.notify();
 
-        let data = session.data.lock();
-        proc_trigger_event(data.file_id, EVENT_READ);
-    }
-}
-
-/// Returns true if a session is attached to this process
-pub fn is_traced(pid: ProcessId) -> bool {
-    sessions().contains_key(&pid)
+    let data = session.data.lock();
+    proc_trigger_event(data.file_id, EVENT_READ);
 }
 
 /// Trigger a notification to the event: scheme
@@ -171,10 +131,7 @@ fn proc_trigger_event(file_id: usize, flags: EventFlags) {
 /// the tracer to wake up and poll for events. Returns Some(()) if an
 /// event was sent.
 pub fn send_event(event: PtraceEvent) -> Option<()> {
-    let id = context::current().read().pid;
-
-    let sessions = sessions();
-    let session = sessions.get(&id)?;
+    let session = Session::current()?;
     let mut data = session.data.lock();
     let breakpoint = data.breakpoint.as_ref()?;
 
@@ -208,17 +165,8 @@ pub(crate) struct Breakpoint {
 ///
 /// Note: Don't call while holding any locks or allocated data, this will
 /// switch contexts and may in fact just never terminate.
-pub fn wait(pid: ProcessId) -> Result<()> {
+pub fn wait(session: Arc<Session>) -> Result<()> {
     loop {
-        let session = {
-            let sessions = sessions();
-
-            match sessions.get(&pid) {
-                Some(session) => Arc::clone(session),
-                _ => return Ok(()),
-            }
-        };
-
         // Lock the data, to make sure we're reading the final value before going
         // to sleep.
         let data = session.data.lock();
@@ -286,11 +234,7 @@ pub fn breakpoint_callback(
 /// detecting whether or not the tracer decided to use sysemu mode.
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub fn next_breakpoint() -> Option<PtraceFlags> {
-    let context_lock = context::current();
-    let context = context_lock.read();
-
-    let sessions = sessions();
-    let session = sessions.get(&context.pid)?;
+    let session = Session::current()?;
     let data = session.data.lock();
     let breakpoint = data.breakpoint?;
 

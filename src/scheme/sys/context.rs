@@ -100,20 +100,13 @@ pub fn resource() -> Result<Vec<u8>> {
             } else {
                 format!("{} B", memory)
             };
-            let process = context.process.read();
 
             string.push_str(&format!(
-                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
-                context.pid.get(),
-                process.pgid.get(),
-                process.ppid.get(),
-                process.session_id.get(),
-                process.ruid,
-                process.rgid,
-                process.rns.get(),
-                process.euid,
-                process.egid,
-                process.ens.get(),
+                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
+                context.pid,
+                context.euid,
+                context.egid,
+                context.ens.get(),
                 stat_string,
                 cpu_string,
                 affinity,

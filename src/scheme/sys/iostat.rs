@@ -12,19 +12,17 @@ pub fn resource() -> Result<Vec<u8>> {
             for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
                 let context = context_ref.read();
                 rows.push((
-                    context.pid,
+                    context.debug_id,
                     context.name.clone(),
                     context.files.read().clone(),
                 ));
             }
         }
 
-        for row in rows.iter() {
-            let id: usize = row.0.into();
-            let name = &row.1;
+        for (id, name, fs) in rows.iter() {
             let _ = writeln!(string, "{}: {}", id, name);
 
-            for (fd, f) in row.2.iter().enumerate() {
+            for (fd, f) in fs.iter().enumerate() {
                 let file = match *f {
                     None => continue,
                     Some(ref file) => file.clone(),

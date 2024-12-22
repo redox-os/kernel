@@ -1,7 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::context;
-use crate::{scheme, syscall::error::Result};
+use crate::{context, scheme, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
     let scheme_ns = context::current().read().ens;

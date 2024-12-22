@@ -96,14 +96,9 @@ enum RegsKind {
 }
 #[derive(Clone)]
 enum ProcHandle {
-    Static {
-        ty: &'static str,
-        bytes: Box<[u8]>,
-    },
+    Static { ty: &'static str, bytes: Box<[u8]> },
     SessionId,
-    Attr {
-        attr: Attr,
-    },
+    Attr { attr: Attr },
 }
 #[derive(Clone)]
 enum ContextHandle {
@@ -244,21 +239,10 @@ impl<const FULL: bool> ProcScheme<FULL> {
         ty: OpenTy,
         operation_str: Option<&str>,
         flags: usize,
-        uid: u32,
-        gid: u32,
     ) -> Result<(usize, InternalFlags)> {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = {
-            let context = match ty {
-                OpenTy::Proc(_) => target
-                    .read()
-                    .threads
-                    .first()
-                    .ok_or(Error::new(ESRCH))?
-                    .upgrade()
-                    .ok_or(Error::new(ESRCH))?,
-                OpenTy::Ctxt(ref ctxt) => Arc::clone(&ctxt),
-            };
+            let OpenTy::Ctxt(context) = ty;
             if let Some((kind, positioned)) =
                 self.openat_context(operation_name, Arc::clone(&context))?
             {
@@ -269,12 +253,6 @@ impl<const FULL: bool> ProcScheme<FULL> {
         };
 
         {
-            let target = target.read();
-
-            if let ProcessStatus::Exited(_) = target.status {
-                return Err(Error::new(ESRCH));
-            }
-
             let filetable_opt = match handle {
                 Handle::Context {
                     kind:
@@ -329,7 +307,9 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let mut parts = path.splitn(2, '/');
 
-        self.open_inner(pid, parts.next(), flags, ctx.uid, ctx.gid)
+        let pid = todo!();
+
+        self.open_inner(pid, parts.next(), flags)
             .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
     }
 
@@ -343,7 +323,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     }
 
     fn close(&self, id: usize) -> Result<()> {
-        let mut handle = HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
+        let handle = HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
 
         match handle {
             Handle::Context {
@@ -390,9 +370,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         consume: bool,
     ) -> Result<usize> {
         let handle = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.clone();
-        let Handle::Context { kind, .. } = handle else {
-            return Err(Error::new(EBADF));
-        };
+        let Handle::Context { kind, .. } = handle;
 
         match kind {
             ContextHandle::AddrSpace { ref addrspace } => {
@@ -497,35 +475,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         match handle {
             Handle::Context { context, kind } => kind.kwriteoff(id, context, buf),
         }
-    }
-    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let handles = HANDLES.read();
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-        let path = match handle {
-            Handle::Context { context, kind } => format!(
-                "proc:{}/{}",
-                context.read().pid.get(),
-                match kind {
-                    ContextHandle::Regs(RegsKind::Float) => "regs/float",
-                    ContextHandle::Regs(RegsKind::Int) => "regs/int",
-                    ContextHandle::Regs(RegsKind::Env) => "regs/env",
-                    ContextHandle::Name => "name",
-                    ContextHandle::Sighandler => "sighandler",
-                    ContextHandle::Filetable { .. } => "filetable",
-                    ContextHandle::AddrSpace { .. } => "addrspace",
-                    ContextHandle::CurrentAddrSpace => "current-addrspace",
-                    ContextHandle::CurrentFiletable => "current-filetable",
-                    ContextHandle::OpenViaDup => "open-via-dup",
-                    ContextHandle::MmapMinAddr(_) => "mmap-min-addr",
-                    ContextHandle::SchedAffinity => "sched-affinity",
-
-                    _ => return Err(Error::new(EOPNOTSUPP)),
-                }
-            ),
-        };
-
-        buf.copy_common_bytes_from_slice(path.as_bytes())
     }
     fn kfstat(&self, id: usize, buffer: UserSliceWo) -> Result<()> {
         let handles = HANDLES.read();
@@ -1017,6 +966,7 @@ impl ContextHandle {
                 }
             }
             ContextHandle::Signal => {
+                /*
                 let sig = buf.read_u32()?;
                 let mut killed_self = false;
                 crate::syscall::process::send_signal(
@@ -1032,6 +982,8 @@ impl ContextHandle {
                 } else {
                     Ok(4)
                 }
+                */
+                Err(Error::new(EOPNOTSUPP))
             }
             Self::OpenViaDup
             | Self::AwaitingAddrSpaceChange { .. }

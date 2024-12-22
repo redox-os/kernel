@@ -2,9 +2,9 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{borrow::Cow, collections::BTreeSet, sync::Arc, vec::Vec};
+use alloc::{borrow::Cow, collections::BTreeSet, sync::Arc};
 
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use spinning_top::RwSpinlock;
 use syscall::ENOMEM;
 
@@ -13,13 +13,12 @@ use crate::{
     cpu_set::LogicalCpuSet,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
-    sync::WaitMap,
     syscall::error::{Error, Result},
 };
 
 use self::context::Kstack;
 pub use self::{
-    context::{BorrowedHtBuf, Context, Status, WaitpidKey},
+    context::{BorrowedHtBuf, Context, Status},
     switch::switch,
 };
 
@@ -69,8 +68,7 @@ pub use self::arch::empty_cr3;
 static CONTEXTS: RwLock<BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
 pub fn init() {
-    let mut context =
-        Context::new(pid, Arc::clone(process)).expect("failed to create kmain context");
+    let mut context = Context::new().expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
     context.name = Cow::Borrowed("kmain");
@@ -142,23 +140,16 @@ impl PartialEq for ContextRef {
 impl Eq for ContextRef {}
 
 /// Spawn a context from a function.
-pub fn spawn(
-    userspace_allowed: bool,
-    func: extern "C" fn(),
-) -> Result<Arc<RwSpinlock<Context>>> {
+pub fn spawn(userspace_allowed: bool, func: extern "C" fn()) -> Result<Arc<RwSpinlock<Context>>> {
     let stack = Kstack::new()?;
 
-    let context_lock = Arc::try_new(RwSpinlock::new(Context::new(
-        process.read().pid,
-        Arc::clone(&process),
-    )?))
-    .map_err(|_| Error::new(ENOMEM))?;
+    let context_lock =
+        Arc::try_new(RwSpinlock::new(Context::new()?)).map_err(|_| Error::new(ENOMEM))?;
 
     CONTEXTS
         .write()
         .insert(ContextRef(Arc::clone(&context_lock)));
 
-    process.write().threads.push(Arc::downgrade(&context_lock));
     {
         let mut context = context_lock.write();
         let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));

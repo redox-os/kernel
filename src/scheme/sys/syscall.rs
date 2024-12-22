@@ -13,20 +13,17 @@ pub fn resource() -> Result<Vec<u8>> {
             for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
                 let context = context_ref.read();
                 rows.push((
-                    context.pid.get(),
+                    context.debug_id,
                     context.name.clone(),
                     context.current_syscall(),
                 ));
             }
         }
 
-        for row in rows.iter() {
-            let id: usize = row.0.into();
-            let name = &row.1;
-
+        for &(id, ref name, sc) in rows.iter() {
             let _ = writeln!(string, "{}: {}", id, name);
 
-            if let Some([a, b, c, d, e, f]) = row.2 {
+            if let Some([a, b, c, d, e, f]) = sc {
                 let _ = writeln!(
                     string,
                     "  {}",

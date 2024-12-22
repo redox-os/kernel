@@ -11,7 +11,7 @@ use syscall::{
 };
 
 use crate::{
-    context::{self, file::InternalFlags, process},
+    context::{self, file::InternalFlags},
     scheme::{
         self,
         user::{UserInner, UserScheme},
@@ -114,7 +114,7 @@ impl KernelScheme for RootScheme {
 
             Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
         } else if path.is_empty() {
-            let ens = process::current()?.read().ens;
+            let ens = context::current().read().ens;
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::List { ens });

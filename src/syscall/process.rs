@@ -10,18 +10,14 @@ use spin::RwLock;
 
 use crate::context::{
     memory::{AddrSpace, Grant, PageSpan},
-    Context, ContextRef, WaitpidKey,
+    Context, ContextRef,
 };
 
 use crate::{
     context, interrupt,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
-    syscall::{
-        error::*,
-        flag::MapFlags,
-        ptrace_event,
-    },
+    syscall::{error::*, flag::MapFlags, ptrace_event},
     Bootstrap, CurrentRmmArch,
 };
 
@@ -76,6 +72,7 @@ pub fn send_signal(
     killed_self: &mut bool,
     sender: SenderInfo,
 ) -> Result<()> {
+    /*
     if sig > 64 {
         return Err(Error::new(EINVAL));
     }
@@ -299,6 +296,8 @@ pub fn send_signal(
         }
     }
 
+    Ok(())
+        */
     Ok(())
 }
 

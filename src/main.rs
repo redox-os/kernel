@@ -63,10 +63,7 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{
-    context::switch::SwitchResult,
-    scheme::SchemeNamespace,
-};
+use crate::{context::switch::SwitchResult, scheme::SchemeNamespace};
 
 use crate::consts::*;
 
@@ -243,8 +240,7 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     }
     context::init();
 
-    let pid = syscall::getpid();
-    info!("AP {}: {:?}", cpu_id, pid);
+    info!("AP {}", cpu_id);
 
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();

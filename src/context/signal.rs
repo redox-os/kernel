@@ -15,7 +15,8 @@ pub fn signal_handler() {
     if being_sigkilled {
         drop(context_guard);
         drop(context_lock);
-        crate::syscall::process::exit(SIGKILL << 8);
+        //crate::syscall::process::exit(SIGKILL << 8);
+        todo!()
     }
 
     /*let thumbs_down = ptrace::breakpoint_callback(
