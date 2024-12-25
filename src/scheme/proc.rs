@@ -301,10 +301,25 @@ impl<const FULL: bool> ProcScheme<FULL> {
     }
 }
 
+fn new_context() -> Result<Arc<RwSpinlock<Context>>> {
+    let (euid, egid, ens) = match context::current().read() {
+        ref cur => (cur.euid, cur.egid, cur.ens),
+    };
+
+    let context = context::spawn(true, clone_handler)?;
+    {
+        let mut guard = context.write();
+        guard.euid = euid;
+        guard.egid = egid;
+        guard.ens = ens;
+    }
+    Ok(context)
+}
+
 impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         let context = match path {
-            "new" => context::spawn(true, clone_handler)?,
+            "new" => new_context()?,
             "current" => context::current(),
             _ => return Err(Error::new(ENOENT)),
         };

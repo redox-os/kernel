@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 
 use crate::{
     context,
-    scheme::{self, SchemeNamespace},
+    scheme,
     syscall::error::*,
 };
 
@@ -10,14 +10,6 @@ use super::{
     copy_path_to_buf,
     usercopy::{UserSlice, UserSliceRo},
 };
-
-pub fn getens() -> Result<usize> {
-    Ok(context::current().read().ens.into())
-}
-
-pub fn getns() -> Result<usize> {
-    Ok(context::current().read().rns.into())
-}
 
 pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
     let (uid, from) = match context::current().read() {

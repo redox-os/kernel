@@ -200,9 +200,6 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
             SYS_SIGDEQUEUE => {
                 sigdequeue(UserSlice::wo(b, size_of::<RtSigInfo>())?, c as u32).map(|()| 0)
             }*/
-            //SYS_IOPL => iopl(b),
-            SYS_GETENS => getens(),
-            SYS_GETNS => getns(),
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
             SYS_MKNS => mkns(UserSlice::ro(
                 b,

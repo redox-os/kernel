@@ -122,7 +122,6 @@ pub struct Context {
 
     // TODO: Temporary replacement for existing kernel logic, replace with capabilities!
     pub ens: SchemeNamespace,
-    pub rns: SchemeNamespace,
     pub euid: u32,
     pub egid: u32,
     pub pid: usize,
@@ -175,7 +174,6 @@ impl Context {
             being_sigkilled: false,
 
             ens: 0.into(),
-            rns: 0.into(),
             euid: u32::MAX,
             egid: u32::MAX,
             pid: usize::MAX,

@@ -210,6 +210,11 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
                 let mut context = context_lock.write();
                 context.status = context::Status::Runnable;
                 context.name = "bootstrap".into();
+
+                // TODO: Remove these from kernel
+                context.ens = SchemeNamespace::from(1);
+                context.euid = 0;
+                context.egid = 0;
             }
             INIT_THREAD.call_once(move || context_lock);
         }
