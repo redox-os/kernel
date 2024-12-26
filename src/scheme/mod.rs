@@ -137,8 +137,7 @@ impl SchemeList {
                 Irq,
                 Time,
                 Sys,
-                ProcFull,
-                ProcRestricted,
+                Proc,
             ]);
 
             #[cfg(feature = "acpi")]
@@ -162,8 +161,6 @@ impl SchemeList {
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
         self.insert_global(ns, "memory", GlobalSchemes::Memory)
-            .unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
             .unwrap();
         self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
     }
@@ -209,9 +206,7 @@ impl SchemeList {
         self.insert_global(ns, "debug", GlobalSchemes::Debug)
             .unwrap();
         self.insert_global(ns, "irq", GlobalSchemes::Irq).unwrap();
-        self.insert_global(ns, "proc", GlobalSchemes::ProcFull)
-            .unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
+        self.insert_global(ns, "kernel.proc", GlobalSchemes::Proc)
             .unwrap();
         self.insert_global(ns, "serio", GlobalSchemes::Serio)
             .unwrap();
@@ -538,8 +533,7 @@ pub enum GlobalSchemes {
     Irq,
     Time,
     Sys,
-    ProcFull,
-    ProcRestricted,
+    Proc,
 
     #[cfg(feature = "acpi")]
     Acpi,
@@ -578,8 +572,7 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Irq => &IrqScheme,
             Self::Time => &TimeScheme,
             Self::Sys => &SysScheme,
-            Self::ProcFull => &ProcScheme::<true>,
-            Self::ProcRestricted => &ProcScheme::<false>,
+            Self::Proc => &ProcScheme,
             #[cfg(feature = "acpi")]
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]

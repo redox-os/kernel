@@ -156,7 +156,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_CLOCK_GETTIME => format!("clock_gettime({}, {:?})", b, unsafe {
             read_struct::<TimeSpec>(c)
         }),
-        SYS_EXIT => format!("exit({})", b),
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,
@@ -166,17 +165,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             e,
             f
         ),
-        SYS_GETEGID => format!("getegid()"),
-        SYS_GETENS => format!("getens()"),
-        SYS_GETEUID => format!("geteuid()"),
-        SYS_GETGID => format!("getgid()"),
-        SYS_GETNS => format!("getns()"),
-        SYS_GETPGID => format!("getpgid()"),
-        SYS_GETPID => format!("getpid()"),
-        SYS_GETPPID => format!("getppid()"),
-        SYS_GETUID => format!("getuid()"),
         SYS_IOPL => format!("iopl({})", b),
-        SYS_KILL => format!("kill({}, {})", b, c),
         SYS_MKNS => format!(
             "mkns({:p} len: {})",
             // TODO: Print out all scheme names?
@@ -194,10 +183,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             d
         ),
         SYS_VIRTTOPHYS => format!("virttophys({:#X})", b),
-        SYS_SETREGID => format!("setregid({}, {})", b, c),
-        SYS_SETRENS => format!("setrens({}, {})", b, c),
-        SYS_SETREUID => format!("setreuid({}, {})", b, c),
-        SYS_WAITPID => format!("waitpid({}, {:#X}, {:?})", b, c, WaitFlags::from_bits(d)),
         SYS_YIELD => format!("yield()"),
         _ => format!(
             "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X})",

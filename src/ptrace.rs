@@ -124,7 +124,7 @@ pub fn close_tracee(session: &Session) {
 
 /// Trigger a notification to the event: scheme
 fn proc_trigger_event(file_id: usize, flags: EventFlags) {
-    event::trigger(GlobalSchemes::ProcFull.scheme_id(), file_id, flags);
+    event::trigger(GlobalSchemes::Proc.scheme_id(), file_id, flags);
 }
 
 /// Dispatch an event to any tracer tracing `self`. This will cause

@@ -21,7 +21,7 @@ use crate::{
 };
 
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
-use ::syscall::{SigProcControl, Sigcontrol};
+use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
     collections::{btree_map::Entry, BTreeMap},
@@ -30,10 +30,10 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    mem,
+    mem::{self, size_of},
     num::NonZeroUsize,
     slice, str,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use spin::RwLock;
 use spinning_top::RwSpinlock;
@@ -95,13 +95,12 @@ enum RegsKind {
     Env,
 }
 #[derive(Clone)]
-enum ProcHandle {
-    Static { ty: &'static str, bytes: Box<[u8]> },
-    SessionId,
-    Attr { attr: Attr },
-}
-#[derive(Clone)]
 enum ContextHandle {
+    // Opened by the process manager, after which it is locked. This capability is used to open
+    // Attr handles, to set ens/euid/egid/pid.
+    Authority,
+    Attr,
+
     Status, // writing usize::MAX causes exit
     Signal, // writing sends signal
 
@@ -152,7 +151,7 @@ enum Attr {
     Gid,
     // TODO: namespace, tid, etc.
 }
-pub struct ProcScheme<const FULL: bool>;
+pub struct ProcScheme;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
@@ -181,9 +180,10 @@ fn new_handle((handle, fl): (Handle, InternalFlags)) -> Result<(usize, InternalF
 
 enum OpenTy {
     Ctxt(Arc<RwSpinlock<Context>>),
+    Auth,
 }
 
-impl<const FULL: bool> ProcScheme<FULL> {
+impl ProcScheme {
     fn openat_context(
         &self,
         path: &str,
@@ -239,14 +239,26 @@ impl<const FULL: bool> ProcScheme<FULL> {
         flags: usize,
     ) -> Result<(usize, InternalFlags)> {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
-        let (mut handle, positioned) = {
-            let OpenTy::Ctxt(context) = ty;
-            if let Some((kind, positioned)) =
+        let (mut handle, positioned) = match ty {
+            OpenTy::Ctxt(context) => if let Some((kind, positioned)) =
                 self.openat_context(operation_name, Arc::clone(&context))?
             {
                 (Handle { context, kind }, positioned)
             } else {
                 return Err(Error::new(EINVAL));
+            }
+            OpenTy::Auth => {
+                extern "C" fn ret() {}
+                let context = match operation_str.ok_or(Error::new(ENOENT))? {
+                    "new-context" => context::spawn(true, ret)?,
+                    "cur-context" => context::current(),
+                    _ => return Err(Error::new(ENOENT)),
+                };
+
+                (Handle {
+                    context,
+                    kind: ContextHandle::OpenViaDup,
+                }, false)
             }
         };
 
@@ -301,34 +313,22 @@ impl<const FULL: bool> ProcScheme<FULL> {
     }
 }
 
-fn new_context() -> Result<Arc<RwSpinlock<Context>>> {
-    let (euid, egid, ens) = match context::current().read() {
-        ref cur => (cur.euid, cur.egid, cur.ens),
-    };
-
-    let context = context::spawn(true, clone_handler)?;
-    {
-        let mut guard = context.write();
-        guard.euid = euid;
-        guard.egid = egid;
-        guard.ens = ens;
-    }
-    Ok(context)
-}
-
-impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
+impl KernelScheme for ProcScheme {
     fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
-        let context = match path {
-            "new" => new_context()?,
-            "current" => context::current(),
-            _ => return Err(Error::new(ENOENT)),
-        };
+        if path != "authority" {
+            return Err(Error::new(ENOENT));
+        }
+        static LOCK: AtomicBool = AtomicBool::new(false);
+        if LOCK.swap(true, Ordering::Relaxed) {
+            return Err(Error::new(EEXIST));
+        }
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().insert(
             id,
             Handle {
-                context,
-                kind: ContextHandle::OpenViaDup,
+                // TODO: placeholder
+                context: context::current(),
+                kind: ContextHandle::Authority,
             },
         );
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
@@ -545,6 +545,11 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let buf = &array[..raw_buf.len()];
 
         new_handle(match info {
+            Handle { kind: ContextHandle::Authority, .. } => return self.open_inner(OpenTy::Auth,
+                Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
+                            .filter(|s| !s.is_empty()),
+                            O_RDWR | O_CLOEXEC,
+                ).map(|(r, fl)| OpenResult::SchemeLocal(r, fl)),
             Handle {
                 kind: ContextHandle::OpenViaDup,
                 context,
@@ -643,11 +648,6 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
     }
 }
-extern "C" fn clone_handler() {
-    // This function will return to the syscall return assembly, and subsequently transition to
-    // usermode.
-}
-
 fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
     let (scheme_id, number) = match &*context::current()
         .read()
@@ -668,7 +668,7 @@ fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
 fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
     if !matches!(
         scheme,
-        KernelSchemes::Global(GlobalSchemes::ProcFull | GlobalSchemes::ProcRestricted)
+        KernelSchemes::Global(GlobalSchemes::Proc)
     ) {
         return Err(Error::new(EBADF));
     }
@@ -1002,9 +1002,7 @@ impl ContextHandle {
                 */
                 Err(Error::new(EOPNOTSUPP))
             }
-            Self::OpenViaDup
-            | Self::AwaitingAddrSpaceChange { .. }
-            | Self::AwaitingFiletableChange { .. } => Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
     fn kreadoff(
@@ -1111,7 +1109,18 @@ impl ContextHandle {
 
                 buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
                 Ok(mem::size_of_val(&mask))
-            } // TODO: Replace write() with SYS_DUP_FORWARD.
+            } // TODO: Replace write() with SYS_SENDFD?
+            ContextHandle::Attr => {
+                let (euid, egid, ens, pid) = match context.read() {
+                    ref c => (c.euid, c.egid, c.ens.get() as u32, c.pid as u32),
+                };
+                buf.copy_common_bytes_from_slice(&ProcSchemeAttrs {
+                    pid,
+                    euid,
+                    egid,
+                    ens,
+                })
+            }
 
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
