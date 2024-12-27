@@ -145,6 +145,13 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
                 Ok(times)
             }),
         ),
+        SYS_CALL => format!(
+            "call({b}, {c:x}+{d}, {:?}, {:0x?}",
+            CallFlags::from_bits_retain(e & !0xff),
+            // TODO: u64
+            UserSlice::ro(f, (e & 0xff) * 8)
+                .and_then(|buf| buf.usizes().collect::<Result<Vec<usize>>>()),
+        ),
 
         SYS_CLOCK_GETTIME => format!("clock_gettime({}, {:?})", b, unsafe {
             read_struct::<TimeSpec>(c)

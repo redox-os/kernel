@@ -15,8 +15,8 @@ use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
-    FobtainFdFlags, MunmapFlags, SendFdFlags, F_SETFL, KSMSG_CANCEL, MAP_FIXED_NOREPLACE,
-    SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
+    CallFlags, FobtainFdFlags, MunmapFlags, SendFdFlags, F_SETFL, KSMSG_CANCEL,
+    MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
 };
 
 use crate::{
@@ -38,9 +38,9 @@ use crate::{
     syscall::{
         data::{Map, Packet},
         error::*,
-        flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ, PROT_WRITE},
+        flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
         number::*,
-        usercopy::{UserSlice, UserSliceRo, UserSliceWo},
+        usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -465,12 +465,10 @@ impl UserInner {
         context_weak: &Weak<RwSpinlock<Context>>,
         user_buf: UserSlice<READ, WRITE>,
     ) -> Result<CaptureGuard<READ, WRITE>> {
-        let (mode, map_flags) = match (READ, WRITE) {
-            (true, false) => (Mode::Ro, PROT_READ),
-            (false, true) => (Mode::Wo, PROT_WRITE),
+        let mut map_flags = MapFlags::empty();
+        map_flags.set(MapFlags::PROT_READ, READ);
+        map_flags.set(MapFlags::PROT_WRITE, WRITE);
 
-            _ => unreachable!(),
-        };
         if user_buf.is_empty() {
             // NOTE: Rather than returning NULL, we return a dummy dangling address, that is
             // happens to be non-canonical on x86. This relieves scheme handlers from having to
@@ -549,22 +547,18 @@ impl UserInner {
 
             let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
 
-            match mode {
-                Mode::Ro => {
-                    array.buf_mut()[..offset].fill(0_u8);
-                    array.buf_mut()[offset + len..].fill(0_u8);
+            if READ {
+                array.buf_mut()[..offset].fill(0_u8);
+                array.buf_mut()[offset + len..].fill(0_u8);
 
-                    let slice = &mut array.buf_mut()[offset..][..len];
-                    let head_part_of_buf =
-                        user_buf.limit(len).expect("always smaller than max len");
+                let slice = &mut array.buf_mut()[offset..][..len];
+                let head_part_of_buf = user_buf.limit(len).expect("always smaller than max len");
 
-                    head_part_of_buf
-                        .reinterpret_unchecked::<true, false>()
-                        .copy_to_slice(slice)?;
-                }
-                Mode::Wo => {
-                    array.buf_mut().fill(0_u8);
-                }
+                head_part_of_buf
+                    .reinterpret_unchecked::<true, false>()
+                    .copy_to_slice(slice)?;
+            } else {
+                array.buf_mut().fill(0_u8);
             }
 
             dst_space.mmap(
@@ -583,7 +577,7 @@ impl UserInner {
 
             let head = CopyInfo {
                 src: Some(array),
-                dst: (mode == Mode::Wo).then_some(head_part_of_buf.reinterpret_unchecked()),
+                dst: WRITE.then_some(head_part_of_buf.reinterpret_unchecked()),
             };
 
             head
@@ -651,20 +645,17 @@ impl UserInner {
             let mut array = BorrowedHtBuf::tail()?;
             let frame = array.frame();
 
-            match mode {
-                Mode::Ro => {
-                    let (to_copy, to_zero) = array.buf_mut().split_at_mut(tail_size);
+            if READ {
+                let (to_copy, to_zero) = array.buf_mut().split_at_mut(tail_size);
 
-                    to_zero.fill(0_u8);
+                to_zero.fill(0_u8);
 
-                    // FIXME: remove reinterpret_unchecked
-                    tail_part_of_buf
-                        .reinterpret_unchecked::<true, false>()
-                        .copy_to_slice(to_copy)?;
-                }
-                Mode::Wo => {
-                    array.buf_mut().fill(0_u8);
-                }
+                // FIXME: remove reinterpret_unchecked
+                tail_part_of_buf
+                    .reinterpret_unchecked::<true, false>()
+                    .copy_to_slice(to_copy)?;
+            } else {
+                array.buf_mut().fill(0_u8);
             }
 
             dst_space.mmap(
@@ -683,7 +674,7 @@ impl UserInner {
 
             CopyInfo {
                 src: Some(array),
-                dst: (mode == Mode::Wo).then_some(tail_part_of_buf.reinterpret_unchecked()),
+                dst: WRITE.then_some(tail_part_of_buf.reinterpret_unchecked()),
             }
         } else {
             CopyInfo {
@@ -1734,12 +1725,44 @@ impl KernelScheme for UserScheme {
             Response::Fd(_) => Err(Error::new(EIO)),
         }
     }
-}
+    fn kcall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        _flags: CallFlags,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-#[derive(PartialEq)]
-pub enum Mode {
-    Ro,
-    Wo,
+        let mut address = inner.capture_user(payload)?;
+
+        let mut sqe = Sqe {
+            opcode: Opcode::Call as u8,
+            sqe_flags: SqeFlags::empty(),
+            _rsvd: 0,
+            tag: inner.next_id()?,
+            caller: 0, // TODO?
+            args: [
+                id as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[3..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+        let res = inner.call_extended_inner(None, sqe, &mut address.span())?;
+
+        match res {
+            Response::Regular(res, _) => Error::demux(res),
+            Response::Fd(_) => Err(Error::new(EIO)),
+        }
+    }
 }
 
 pub trait Args: Copy {
