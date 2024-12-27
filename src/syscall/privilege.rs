@@ -1,10 +1,6 @@
 use alloc::vec::Vec;
 
-use crate::{
-    context,
-    scheme,
-    syscall::error::*,
-};
+use crate::{context, scheme, syscall::error::*};
 
 use super::{
     copy_path_to_buf,

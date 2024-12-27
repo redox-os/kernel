@@ -229,6 +229,20 @@ impl ProcScheme {
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status, false),
             "signal" => (ContextHandle::Signal, false),
+            _ if path.starts_with("attrs-") => {
+                let auth_fd = path["attrs-".len()..]
+                    .parse::<usize>()
+                    .map_err(|_| Error::new(ENOENT))?;
+                let (hopefully_this_scheme, number) = extract_scheme_number(auth_fd)?;
+                verify_scheme(hopefully_this_scheme)?;
+                if !matches!(
+                    HANDLES.read().get(&number).ok_or(Error::new(ENOENT))?.kind,
+                    ContextHandle::Authority
+                ) {
+                    return Err(Error::new(ENOENT));
+                }
+                (ContextHandle::Attr, false)
+            }
             _ => return Ok(None),
         }))
     }
@@ -240,12 +254,14 @@ impl ProcScheme {
     ) -> Result<(usize, InternalFlags)> {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
-            OpenTy::Ctxt(context) => if let Some((kind, positioned)) =
-                self.openat_context(operation_name, Arc::clone(&context))?
-            {
-                (Handle { context, kind }, positioned)
-            } else {
-                return Err(Error::new(EINVAL));
+            OpenTy::Ctxt(context) => {
+                if let Some((kind, positioned)) =
+                    self.openat_context(operation_name, Arc::clone(&context))?
+                {
+                    (Handle { context, kind }, positioned)
+                } else {
+                    return Err(Error::new(EINVAL));
+                }
             }
             OpenTy::Auth => {
                 extern "C" fn ret() {}
@@ -255,10 +271,13 @@ impl ProcScheme {
                     _ => return Err(Error::new(ENOENT)),
                 };
 
-                (Handle {
-                    context,
-                    kind: ContextHandle::OpenViaDup,
-                }, false)
+                (
+                    Handle {
+                        context,
+                        kind: ContextHandle::OpenViaDup,
+                    },
+                    false,
+                )
             }
         };
 
@@ -545,11 +564,19 @@ impl KernelScheme for ProcScheme {
         let buf = &array[..raw_buf.len()];
 
         new_handle(match info {
-            Handle { kind: ContextHandle::Authority, .. } => return self.open_inner(OpenTy::Auth,
-                Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
+            Handle {
+                kind: ContextHandle::Authority,
+                ..
+            } => {
+                return self
+                    .open_inner(
+                        OpenTy::Auth,
+                        Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
                             .filter(|s| !s.is_empty()),
-                            O_RDWR | O_CLOEXEC,
-                ).map(|(r, fl)| OpenResult::SchemeLocal(r, fl)),
+                        O_RDWR | O_CLOEXEC,
+                    )
+                    .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+            }
             Handle {
                 kind: ContextHandle::OpenViaDup,
                 context,
@@ -666,10 +693,7 @@ fn extract_scheme_number(fd: usize) -> Result<(KernelSchemes, usize)> {
     Ok((scheme, number))
 }
 fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
-    if !matches!(
-        scheme,
-        KernelSchemes::Global(GlobalSchemes::Proc)
-    ) {
+    if !matches!(scheme, KernelSchemes::Global(GlobalSchemes::Proc)) {
         return Err(Error::new(EBADF));
     }
     Ok(())
@@ -1001,6 +1025,15 @@ impl ContextHandle {
                 }
                 */
                 Err(Error::new(EOPNOTSUPP))
+            }
+            ContextHandle::Attr => {
+                let info = unsafe { buf.read_exact::<ProcSchemeAttrs>()? };
+                let mut guard = context.write();
+                guard.pid = info.pid as usize;
+                guard.ens = (info.ens as usize).into();
+                guard.euid = info.euid;
+                guard.egid = info.egid;
+                Ok(size_of::<ProcSchemeAttrs>())
             }
             _ => Err(Error::new(EBADF)),
         }

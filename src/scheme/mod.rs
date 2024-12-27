@@ -128,17 +128,7 @@ impl SchemeList {
         // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
         {
             use GlobalSchemes::*;
-            insert_globals(&[
-                Debug,
-                Event,
-                Memory,
-                Pipe,
-                Serio,
-                Irq,
-                Time,
-                Sys,
-                Proc,
-            ]);
+            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, Sys, Proc]);
 
             #[cfg(feature = "acpi")]
             insert_globals(&[Acpi]);
