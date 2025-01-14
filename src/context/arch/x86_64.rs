@@ -329,7 +329,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
     use Context as Cx;
 
-    core::arch::asm!(
+    core::arch::naked_asm!(
         // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
         //
         // - the current parameters are passed in the registers `rdi`, `rsi`,
@@ -389,7 +389,6 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
         off_rsp = const(offset_of!(Cx, rsp)),
 
         switch_hook = sym crate::context::switch_finish_hook,
-        options(noreturn),
     );
 }
 

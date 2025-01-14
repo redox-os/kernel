@@ -4,7 +4,7 @@ use crate::{
     percpu::PercpuBlock,
     syscall::FloatRegisters,
 };
-use core::{arch::asm, mem, mem::offset_of, ptr, sync::atomic::AtomicBool};
+use core::{mem, mem::offset_of, ptr, sync::atomic::AtomicBool};
 use rmm::TableKind;
 use spin::Once;
 use syscall::{EnvRegisters, Error, Result, ENOMEM};
@@ -206,7 +206,7 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 #[target_feature(enable = "neon")]
 #[naked]
 unsafe extern "C" fn fp_save(float_regs: &mut FloatRegisters) {
-    asm!(
+    core::arch::naked_asm!(
     "stp q0, q1, [x0, {0} + 16 * 0]",
     "stp q2, q3, [x0, {0} + 16 * 2]",
     "stp q4, q5, [x0, {0} + 16 * 4]",
@@ -232,14 +232,13 @@ unsafe extern "C" fn fp_save(float_regs: &mut FloatRegisters) {
     const mem::offset_of!(FloatRegisters, fp_simd_regs),
     const mem::offset_of!(FloatRegisters, fpcr),
     const mem::offset_of!(FloatRegisters, fpsr),
-    options(noreturn),
     );
 }
 
 #[target_feature(enable = "neon")]
 #[naked]
 unsafe extern "C" fn fp_load(float_regs: &mut FloatRegisters) {
-    asm!(
+    core::arch::naked_asm!(
     "ldp q0, q1, [x0, {0} + 16 * 0]",
     "ldp q2, q3, [x0, {0} + 16 * 2]",
     "ldp q4, q5, [x0, {0} + 16 * 4]",
@@ -265,7 +264,6 @@ unsafe extern "C" fn fp_load(float_regs: &mut FloatRegisters) {
     const mem::offset_of!(FloatRegisters, fp_simd_regs),
     const mem::offset_of!(FloatRegisters, fpcr),
     const mem::offset_of!(FloatRegisters, fpsr),
-    options(noreturn),
     );
 }
 
@@ -287,7 +285,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
 #[naked]
 unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
-    core::arch::asm!(
+    core::arch::naked_asm!(
         "
         str x19, [x0, #{off_x19}]
         ldr x19, [x1, #{off_x19}]
@@ -383,7 +381,6 @@ unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
         off_sp = const(offset_of!(Context, sp)),
 
         switch_hook = sym crate::context::switch_finish_hook,
-        options(noreturn),
     );
 }
 

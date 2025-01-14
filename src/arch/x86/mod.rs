@@ -32,7 +32,7 @@ pub mod flags {
 #[naked]
 #[link_section = ".usercopy-fns"]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    core::arch::asm!(
+    core::arch::naked_asm!(
         "
             push edi
             push esi
@@ -47,8 +47,7 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
 
             xor eax, eax
             ret
-    ",
-        options(noreturn)
+    "
     );
 }
 pub use arch_copy_to_user as arch_copy_from_user;

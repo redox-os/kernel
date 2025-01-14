@@ -381,7 +381,7 @@ macro_rules! exception_stack {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
                 $code
             }
-            core::arch::asm!(concat!(
+            core::arch::naked_asm!(concat!(
                 // Backup all userspace registers to stack
                 push_preserved!(),
                 push_scratch!(),
@@ -398,21 +398,18 @@ macro_rules! exception_stack {
                 pop_preserved!(),
 
                 "eret\n",
-            ), sym inner, options(noreturn));
+            ), sym inner);
         }
     };
 }
 #[naked]
 pub unsafe extern "C" fn enter_usermode() -> ! {
-    core::arch::asm!(
-        concat!(
-            "blr x28\n",
-            // Restore all userspace registers
-            pop_special!(),
-            pop_scratch!(),
-            pop_preserved!(),
-            "eret\n",
-        ),
-        options(noreturn)
-    );
+    core::arch::naked_asm!(concat!(
+        "blr x28\n",
+        // Restore all userspace registers
+        pop_special!(),
+        pop_scratch!(),
+        pop_preserved!(),
+        "eret\n",
+    ));
 }

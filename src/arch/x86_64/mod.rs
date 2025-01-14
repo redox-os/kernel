@@ -44,10 +44,9 @@ pub mod flags {
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     // TODO: spectre_v1
 
-    core::arch::asm!(
-        alternative!(
-            feature: "smap",
-            then: ["
+    core::arch::naked_asm!(alternative!(
+        feature: "smap",
+        then: ["
             xor eax, eax
             mov rcx, rdx
             stac
@@ -55,15 +54,13 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
             clac
             ret
         "],
-            default: ["
+        default: ["
             xor eax, eax
             mov rcx, rdx
             rep movsb
             ret
         "]
-        ),
-        options(noreturn)
-    );
+    ));
 }
 pub use arch_copy_to_user as arch_copy_from_user;
 

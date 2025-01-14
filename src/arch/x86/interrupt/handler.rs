@@ -276,7 +276,7 @@ macro_rules! interrupt_stack {
                     $code
                 }
             }
-            core::arch::asm!(concat!(
+            core::arch::naked_asm!(concat!(
                 // Backup all userspace registers to stack
                 "push eax\n",
                 push_scratch!(),
@@ -306,11 +306,7 @@ macro_rules! interrupt_stack {
 
                 "iretd\n",
             ),
-
             inner = sym inner,
-
-            options(noreturn),
-
             );
         }
     };
@@ -327,7 +323,7 @@ macro_rules! interrupt {
                 $code
             }
 
-            core::arch::asm!(concat!(
+            core::arch::naked_asm!(concat!(
                 // Backup all userspace registers to stack
                 "push eax\n",
                 push_scratch!(),
@@ -352,10 +348,7 @@ macro_rules! interrupt {
 
                 "iretd\n",
             ),
-
             inner = sym inner,
-
-            options(noreturn),
             );
         }
     };
@@ -373,7 +366,7 @@ macro_rules! interrupt_error {
                 }
             }
 
-            core::arch::asm!(concat!(
+            core::arch::naked_asm!(concat!(
                 // Move eax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
                 "xchg [esp], eax\n",
@@ -414,24 +407,20 @@ macro_rules! interrupt_error {
                 // The error code has already been popped, so use the regular macro.
                 "iretd\n",
             ),
-
-            inner = sym inner,
-
-            options(noreturn));
+            inner = sym inner);
         }
     };
 }
 #[naked]
 unsafe extern "C" fn usercopy_trampoline() {
-    core::arch::asm!(
+    core::arch::naked_asm!(
         "
         pop esi
         pop edi
 
         mov eax, 1
         ret
-    ",
-        options(noreturn)
+    "
     );
 }
 
@@ -454,18 +443,15 @@ impl ArchIntCtx for InterruptStack {
 
 #[naked]
 pub unsafe extern "C" fn enter_usermode() {
-    core::arch::asm!(
-        concat!(
-            // TODO: Unmap PTI
-            // $crate::arch::x86::pti::unmap();
+    core::arch::naked_asm!(concat!(
+        // TODO: Unmap PTI
+        // $crate::arch::x86::pti::unmap();
 
-            // Exit kernel TLS segment
-            exit_gs!(),
-            // Restore all userspace registers
-            pop_preserved!(),
-            pop_scratch!(),
-            "iretd\n",
-        ),
-        options(noreturn)
-    )
+        // Exit kernel TLS segment
+        exit_gs!(),
+        // Restore all userspace registers
+        pop_preserved!(),
+        pop_scratch!(),
+        "iretd\n",
+    ))
 }

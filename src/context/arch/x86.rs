@@ -252,7 +252,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 unsafe extern "cdecl" fn switch_to_inner() {
     use Context as Cx;
 
-    core::arch::asm!(
+    core::arch::naked_asm!(
         // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
         //
         // - the current parameters are passed in the registers `edi`, `esi`,
@@ -306,7 +306,6 @@ unsafe extern "cdecl" fn switch_to_inner() {
         off_esp = const(offset_of!(Cx, esp)),
 
         switch_hook = sym crate::context::switch_finish_hook,
-        options(noreturn),
     );
 }
 

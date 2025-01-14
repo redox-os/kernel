@@ -43,7 +43,7 @@ pub use arch_copy_to_user as arch_copy_from_user;
 #[link_section = ".usercopy-fns"]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     // x0, x1, x2
-    core::arch::asm!(
+    core::arch::naked_asm!(
         "
         mov x4, x0
         mov x0, 0
@@ -61,8 +61,7 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
         b 2b
     3:
         ret
-    ",
-        options(noreturn)
+    "
     );
 }
 

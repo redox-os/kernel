@@ -149,7 +149,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
 #[naked]
 unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
-    core::arch::asm!(r#"
+    core::arch::naked_asm!(r#"
         sd s1, {off_s1}(a0)
         ld s1, {off_s1}(a1)
 
@@ -219,7 +219,6 @@ unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
     off_sstatus = const(offset_of!(Context, sstatus)),
 
     switch_hook = sym crate::context::switch_finish_hook,
-    options(noreturn),
     );
 }
 

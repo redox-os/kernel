@@ -369,7 +369,7 @@ macro_rules! interrupt_stack {
                     $code
                 }
             }
-            core::arch::asm!(concat!(
+            core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
                 "cld;",
 
@@ -407,9 +407,6 @@ macro_rules! interrupt_stack {
             IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
 
             PCR_GDT_OFFSET = const(core::mem::offset_of!(crate::gdt::ProcessorControlRegion, gdt)),
-
-            options(noreturn),
-
             );
         }
     };
@@ -426,7 +423,7 @@ macro_rules! interrupt {
                 $code
             }
 
-            core::arch::asm!(concat!(
+            core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
                 "cld;",
 
@@ -452,8 +449,6 @@ macro_rules! interrupt {
             ),
 
             inner = sym inner,
-
-            options(noreturn),
             );
         }
     };
@@ -471,7 +466,7 @@ macro_rules! interrupt_error {
                 }
             }
 
-            core::arch::asm!(concat!(
+            core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
                 "cld;",
 
@@ -510,8 +505,7 @@ macro_rules! interrupt_error {
 
             inner = sym inner,
             rax_offset = const(::core::mem::size_of::<$crate::interrupt::handler::PreservedRegisters>() + ::core::mem::size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
-
-            options(noreturn));
+            );
         }
     };
 }

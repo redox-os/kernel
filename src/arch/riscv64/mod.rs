@@ -14,14 +14,14 @@ pub mod stop;
 pub mod time;
 
 pub use ::rmm::RiscV64Sv48Arch as CurrentRmmArch;
-use core::arch::asm;
+use core::arch::naked_asm;
 
 pub use arch_copy_to_user as arch_copy_from_user;
 
 #[link_section = ".usercopy-fns"]
 #[naked]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    asm!(
+    naked_asm!(
         "
         addi   sp, sp, -16
         sd     fp, 0(sp)
@@ -58,8 +58,7 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
         bne    a2, x0, 4b
     5:  mv     a0, x0
         ret
-    ",
-        options(noreturn)
+    "
     )
 }
 
