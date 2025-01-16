@@ -69,7 +69,7 @@ impl KernelScheme for ITimerScheme {
 
         let mut specs_read = 0;
 
-        for current_chunk in buf.in_exact_chunks(mem::size_of::<ITimerScheme>()) {
+        for current_chunk in buf.in_exact_chunks(mem::size_of::<ITimerSpec>()) {
             current_chunk.copy_exactly(&ITimerSpec::default())?;
 
             specs_read += 1;
