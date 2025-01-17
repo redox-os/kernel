@@ -141,8 +141,9 @@ pub fn current_pid() -> Result<ProcessId> {
 
 pub struct ContextRef(pub Arc<RwSpinlock<Context>>);
 impl ContextRef {
-    pub fn upgrade(&self) -> Option<Arc<RwSpinlock<Context>>> {
-        Some(Arc::clone(&self.0))
+    #[inline]
+    pub fn get_lock(&self) -> &Arc<RwSpinlock<Context>> {
+        &self.0
     }
 }
 

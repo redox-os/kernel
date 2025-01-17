@@ -1,4 +1,4 @@
-use crate::{context, scheme, syscall::error::Result};
+use crate::{context::contexts, scheme, syscall::error::Result};
 use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
@@ -8,9 +8,8 @@ pub fn resource() -> Result<Vec<u8>> {
     {
         let mut rows = Vec::new();
         {
-            let contexts = context::contexts();
-            for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
-                let context = context_ref.read();
+            for context_ref in contexts().iter() {
+                let context = context_ref.get_lock().read();
                 rows.push((
                     context.pid,
                     context.name.clone(),
