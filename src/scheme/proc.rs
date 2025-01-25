@@ -619,8 +619,10 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     return Err(Error::new(EBUSY));
                 }
 
-                let (requested_dst_page, _) =
-                    crate::syscall::validate_region(map.address, map.size)?;
+                let PageSpan {
+                    base: requested_dst_page,
+                    ..
+                } = crate::syscall::validate_region(map.address, map.size)?;
                 let src_span =
                     PageSpan::validate_nonempty(VirtualAddress::new(map.offset), map.size)
                         .ok_or(Error::new(EINVAL))?;
@@ -1192,8 +1194,7 @@ impl ContextHandle {
                     op @ ADDRSPACE_OP_MMAP | op @ ADDRSPACE_OP_TRANSFER => {
                         let fd = next()??;
                         let offset = next()??;
-                        let (page, page_count) =
-                            crate::syscall::validate_region(next()??, next()??)?;
+                        let page_span = crate::syscall::validate_region(next()??, next()??)?;
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
                         if !flags.contains(MapFlags::MAP_FIXED) {
@@ -1207,26 +1208,24 @@ impl ContextHandle {
                             &addrspace,
                             &Map {
                                 offset,
-                                size: page_count * PAGE_SIZE,
-                                address: page.start_address().data(),
+                                size: page_span.count * PAGE_SIZE,
+                                address: page_span.base.start_address().data(),
                                 flags,
                             },
                             op == ADDRSPACE_OP_TRANSFER,
                         )?;
                     }
                     ADDRSPACE_OP_MUNMAP => {
-                        let (page, page_count) =
-                            crate::syscall::validate_region(next()??, next()??)?;
+                        let page_span = crate::syscall::validate_region(next()??, next()??)?;
 
                         let unpin = false;
-                        addrspace.munmap(PageSpan::new(page, page_count), unpin)?;
+                        addrspace.munmap(page_span, unpin)?;
                     }
                     ADDRSPACE_OP_MPROTECT => {
-                        let (page, page_count) =
-                            crate::syscall::validate_region(next()??, next()??)?;
+                        let page_span = crate::syscall::validate_region(next()??, next()??)?;
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
-                        addrspace.mprotect(PageSpan::new(page, page_count), flags)?;
+                        addrspace.mprotect(page_span, flags)?;
                     }
                     _ => return Err(Error::new(EINVAL)),
                 }
