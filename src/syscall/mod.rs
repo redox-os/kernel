@@ -17,7 +17,7 @@ pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy:
 use self::{
     data::{Map, TimeSpec},
     error::{Error, Result, ENOSYS, EOVERFLOW},
-    flag::{EventFlags, MapFlags, WaitFlags},
+    flag::{EventFlags, MapFlags},
     number::*,
     usercopy::UserSlice,
 };
