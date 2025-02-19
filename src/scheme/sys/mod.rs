@@ -26,6 +26,10 @@ use super::{CallerCtx, KernelScheme, OpenResult};
 mod block;
 mod context;
 mod cpu;
+
+#[cfg(feature = "sys_fdstat")]
+mod fdstat;
+
 mod exe;
 mod iostat;
 mod irq;
@@ -52,6 +56,8 @@ const FILES: &[(&'static str, SysFn)] = &[
     ("block", block::resource),
     ("context", context::resource),
     ("cpu", cpu::resource),
+    #[cfg(feature = "sys_fdstat")]
+    ("fdstat", fdstat::resource),
     ("exe", exe::resource),
     ("iostat", iostat::resource),
     ("irq", irq::resource),
