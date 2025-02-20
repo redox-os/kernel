@@ -38,6 +38,7 @@ mod scheme;
 mod scheme_num;
 mod syscall;
 mod uname;
+mod stat;
 
 enum Handle {
     TopLevel,
@@ -69,6 +70,7 @@ const FILES: &[(&'static str, SysFn)] = &[
     ("env", || Ok(Vec::from(crate::init_env()))),
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     ("spurious_irq", interrupt::irq::spurious_irq_resource),
+    ("stat", stat::resource),
     // Disabled because the debugger is inherently unsafe and probably will break the system.
     /*
     ("trigger_debugger", || unsafe {

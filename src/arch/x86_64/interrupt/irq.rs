@@ -100,6 +100,7 @@ pub unsafe fn acknowledge(irq: usize) {
 
 /// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
 pub unsafe fn eoi(irq: u8) {
+    crate::cpu_stats::add_irq(crate::cpu_id(), irq);
     match irq_method() {
         IrqMethod::Pic => {
             if irq < 16 {

@@ -97,6 +97,9 @@ mod dtb;
 /// Logical CPU ID and bitset types
 mod cpu_set;
 
+/// Stats for the CPUs
+mod cpu_stats;
+
 /// Context management
 mod context;
 
@@ -119,6 +122,7 @@ mod externs;
 
 /// Logging
 mod log;
+use cpu_set::LogicalCpuId;
 use ::log::info;
 use alloc::sync::Arc;
 use spinning_top::RwSpinlock;
@@ -191,6 +195,7 @@ static INIT_THREAD: spin::Once<Arc<RwSpinlock<crate::context::Context>>> = spin:
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     CPU_COUNT.store(cpu_count, Ordering::SeqCst);
+    cpu_stats::add_cpu(LogicalCpuId::BSP);
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
@@ -261,6 +266,7 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     }
     context::init();
 
+    cpu_stats::add_cpu(cpu_id);
     let pid = syscall::getpid();
     info!("AP {}: {:?}", cpu_id, pid);
 

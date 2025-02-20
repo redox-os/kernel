@@ -31,6 +31,7 @@ exception_stack!(irq_at_el1, |_stack| {
 
 //TODO
 pub unsafe fn trigger(irq: u32) {
+    crate::cpu_stats::add_irq(crate::cpu_id(), irq);
     extern "C" {
         fn irq_trigger(irq: u32);
     }
