@@ -71,10 +71,7 @@ impl UnmapResult {
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
-            fd.into_inner().try_close(
-                // wait_for_result
-                false,
-            )?;
+            fd.into_inner().try_close()?;
         }
         funmap_result?;
 

@@ -1102,10 +1102,7 @@ impl UserInner {
         }
 
         if let Some(to_close) = to_close {
-            let _ = to_close.try_close(
-                // wait_for_result
-                false,
-            );
+            let _ = to_close.try_close();
         }
         Ok(())
     }
