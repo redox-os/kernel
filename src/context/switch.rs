@@ -15,10 +15,14 @@ use syscall::PtraceFlags;
 use crate::{
     context::{arch, contexts, Context},
     cpu_set::LogicalCpuId,
-    cpu_stats, interrupt,
+    interrupt,
     percpu::PercpuBlock,
     ptrace, time,
 };
+
+#[cfg(feature = "sys_stat")]
+use crate::cpu_stats;
+
 
 use super::ContextRef;
 
@@ -138,8 +142,11 @@ pub enum SwitchResult {
 ///   to an idle context.
 pub fn switch() -> SwitchResult {
     let percpu = PercpuBlock::current();
-    cpu_stats::add_context_switch();
-    cpu_stats::add_time(percpu.cpu_id, percpu.switch_internals.pit_ticks.get());
+    #[cfg(feature = "sys_stat")]
+    {
+        cpu_stats::add_context_switch();
+        cpu_stats::add_time(percpu.cpu_id, percpu.switch_internals.pit_ticks.get());
+    }
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
     percpu.switch_internals.pit_ticks.set(0);
@@ -283,10 +290,13 @@ pub fn switch() -> SwitchResult {
         // need to use the `switch_finish_hook` to be able to release the locks. Newly created
         // contexts will return directly to the function pointer passed to context::spawn, and not
         // reach this code until the next context switch back.
-        if next_context.userspace {
-            cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::User);
-        } else {
-            cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::Kernel);
+        #[cfg(feature = "sys_stat")]
+        {
+            if next_context.userspace {
+                cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::User);
+            } else {
+                cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::Kernel);
+            }
         }
 
         SwitchResult::Switched
@@ -294,7 +304,9 @@ pub fn switch() -> SwitchResult {
         // No target was found, unset global lock and return
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
+        #[cfg(feature = "sys_stat")]
         cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::Idle);
+
         SwitchResult::AllContextsIdle
     }
 }

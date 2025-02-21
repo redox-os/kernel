@@ -8,7 +8,6 @@ use crate::{
         process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
         Context, Status,
     },
-    cpu_stats,
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme},
@@ -21,6 +20,9 @@ use crate::{
         EnvRegisters, FloatRegisters, IntRegisters, KillMode, KillTarget,
     },
 };
+
+#[cfg(feature = "sys_stat")]
+use crate::cpu_stats;
 
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 use ::syscall::{SigProcControl, Sigcontrol};
@@ -163,6 +165,7 @@ enum Handle {
         process: Arc<RwLock<Process>>,
         kind: ProcHandle,
     },
+    #[cfg(feature = "sys_stat")]
     Stats {
         data: Vec<u8>,
     },
@@ -506,7 +509,8 @@ impl<const FULL: bool> ProcScheme<FULL> {
     }
 }
 
-fn proc_stats() -> Result<OpenResult> {
+#[cfg(feature = "sys_stat")]
+fn sys_stats() -> Result<OpenResult> {
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let data = cpu_stats::get_scheme_data()?;
     HANDLES.write().insert(id, Handle::Stats { data });
@@ -518,14 +522,19 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let mut parts = path.splitn(2, '/');
         let pid_str = parts.next().ok_or(Error::new(ENOENT))?;
 
+        #[cfg(feature = "sys_stat")]
+        {
+            if pid_str == "stat" {
+                return sys_stats();
+            }
+        }
+
         let pid = if pid_str == "current" {
             OpenTy::Ctxt(context::current())
         } else if pid_str == "new" || pid_str == "new-child" {
             OpenTy::Ctxt(new_child()?)
         } else if pid_str == "new-thread" {
             OpenTy::Ctxt(new_thread()?)
-        } else if pid_str == "stat" {
-            return proc_stats();
         } else if !FULL {
             return Err(Error::new(EACCES));
         } else {
@@ -708,6 +717,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             Handle::Process { process, kind } => {
                 kind.kreadoff(id, process, buf, offset, read_flags)
             }
+            #[cfg(feature = "sys_stat")]
             Handle::Stats { data } => {
                 let Ok(pos) = usize::try_from(offset) else {
                     return Ok(0);
@@ -739,6 +749,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         match handle {
             Handle::Process { process, kind } => kind.kwriteoff(process, buf),
             Handle::Context { context, kind } => kind.kwriteoff(id, context, buf),
+            #[cfg(feature = "sys_stat")]
             Handle::Stats { .. } => Ok(0),
         }
     }
@@ -782,6 +793,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     _ => return Err(Error::new(EOPNOTSUPP)),
                 }
             ),
+            #[cfg(feature = "sys_stat")]
             Handle::Stats { .. } => String::from("proc:stats"),
         };
 
@@ -792,6 +804,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         let stats = match handle {
+            #[cfg(feature = "sys_stat")]
             Handle::Stats { data } => Stat {
                 st_mode: 0o444 | MODE_FILE,
                 st_uid: 0,
@@ -813,10 +826,10 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn fsize(&self, id: usize) -> Result<u64> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-        if let Handle::Stats { data } = handle {
-            Ok(data.len() as u64)
-        } else {
-            handle.fsize()
+        match handle {
+            #[cfg(feature = "sys_stat")]
+            Handle::Stats { data } => Ok(data.len() as u64),
+            _ => handle.fsize(),
         }
     }
 

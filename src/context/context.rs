@@ -12,13 +12,15 @@ use crate::{
     common::aligned_box::AlignedBox,
     context::{self, arch, file::FileDescriptor},
     cpu_set::{LogicalCpuId, LogicalCpuSet},
-    cpu_stats,
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::FileHandle,
 };
+#[cfg(feature = "sys_stat")]
+use crate::cpu_stats;
+
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 
@@ -233,6 +235,7 @@ impl Context {
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
         };
+        #[cfg(feature = "sys_stat")]
         cpu_stats::add_process();
         Ok(this)
     }
