@@ -502,6 +502,9 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn close(&self, id: usize) -> Result<()> {
         Ok(())
     }
+    fn on_close(&self, id: usize) -> Result<()> {
+        self.close(id)
+    }
 }
 
 #[derive(Debug)]

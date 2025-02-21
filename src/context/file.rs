@@ -78,14 +78,14 @@ impl FileDescription {
             .ok_or(Error::new(EBADF))?
             .clone();
 
-        scheme.close(self.number)
+        scheme.on_close(self.number)
     }
 }
 
 impl FileDescriptor {
     pub fn close(self) -> Result<()> {
-        if let Ok(file) = Arc::try_unwrap(self.description) {
-            file.into_inner().try_close()?;
+        if let Ok(file) = Arc::try_unwrap(self.description).map(RwLock::into_inner) {
+            file.try_close()?;
         }
         Ok(())
     }
