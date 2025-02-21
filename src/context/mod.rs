@@ -2,6 +2,8 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
+use core::num::NonZeroUsize;
+
 use alloc::{borrow::Cow, collections::BTreeSet, sync::Arc};
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -68,7 +70,8 @@ pub use self::arch::empty_cr3;
 static CONTEXTS: RwLock<BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
 pub fn init() {
-    let mut context = Context::new().expect("failed to create kmain context");
+    let owner = None; // kmain not owned by any fd
+    let mut context = Context::new(owner).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
     context.name = Cow::Borrowed("kmain");
@@ -140,11 +143,15 @@ impl PartialEq for ContextRef {
 impl Eq for ContextRef {}
 
 /// Spawn a context from a function.
-pub fn spawn(userspace_allowed: bool, func: extern "C" fn()) -> Result<Arc<RwSpinlock<Context>>> {
+pub fn spawn(
+    userspace_allowed: bool,
+    owner_proc_id: Option<NonZeroUsize>,
+    func: extern "C" fn(),
+) -> Result<Arc<RwSpinlock<Context>>> {
     let stack = Kstack::new()?;
 
-    let context_lock =
-        Arc::try_new(RwSpinlock::new(Context::new()?)).map_err(|_| Error::new(ENOMEM))?;
+    let context_lock = Arc::try_new(RwSpinlock::new(Context::new(owner_proc_id)?))
+        .map_err(|_| Error::new(ENOMEM))?;
 
     CONTEXTS
         .write()

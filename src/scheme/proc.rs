@@ -266,7 +266,19 @@ impl ProcScheme {
             OpenTy::Auth => {
                 extern "C" fn ret() {}
                 let context = match operation_str.ok_or(Error::new(ENOENT))? {
-                    "new-context" => context::spawn(true, ret)?,
+                    "new-context" => {
+                        let id = NonZeroUsize::new(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+                            .ok_or(Error::new(EMFILE))?;
+                        let context = context::spawn(true, Some(id), ret)?;
+                        HANDLES.write().insert(
+                            id.get(),
+                            Handle {
+                                context,
+                                kind: ContextHandle::OpenViaDup,
+                            },
+                        );
+                        return Ok((id.get(), InternalFlags::empty()));
+                    }
                     "cur-context" => context::current(),
                     _ => return Err(Error::new(ENOENT)),
                 };

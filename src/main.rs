@@ -204,7 +204,8 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    match context::spawn(true, userspace_init) {
+    let owner = None; // kmain not owned by any fd
+    match context::spawn(true, owner, userspace_init) {
         Ok(context_lock) => {
             {
                 let mut context = context_lock.write();

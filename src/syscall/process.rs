@@ -2,15 +2,20 @@ use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::{mem, num::NonZeroUsize, sync::atomic::Ordering};
 use spinning_top::RwSpinlock;
 use syscall::{
-    sig_bit, RtSigInfo, SenderInfo, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU,
+    sig_bit, EventFlags, RtSigInfo, SenderInfo, SIGCHLD, SIGKILL, SIGSTOP, SIGTERM, SIGTSTP,
+    SIGTTIN, SIGTTOU,
 };
 
 use rmm::Arch;
 use spin::RwLock;
 
-use crate::context::{
-    memory::{AddrSpace, Grant, PageSpan},
-    Context, ContextRef,
+use crate::{
+    context::{
+        memory::{AddrSpace, Grant, PageSpan},
+        Context, ContextRef,
+    },
+    event,
+    scheme::GlobalSchemes,
 };
 
 use crate::{
@@ -47,7 +52,18 @@ pub fn exit_this_context() -> ! {
     }
     drop(addrspace_opt);
     // TODO: Should status == Status::HardBlocked be handled differently?
-    context_lock.write().status = context::Status::Dead;
+    let owner = {
+        let mut guard = context_lock.write();
+        guard.status = context::Status::Dead;
+        guard.owner_proc_id
+    };
+    if let Some(owner) = owner {
+        let _ = event::trigger(
+            GlobalSchemes::Proc.scheme_id(),
+            owner.get(),
+            EventFlags::EVENT_READ,
+        );
+    }
     let _ = context::contexts_mut().remove(&ContextRef(context_lock));
     context::switch();
     unreachable!();

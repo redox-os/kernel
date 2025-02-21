@@ -227,8 +227,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
     percpu.inside_syscall.set(false);
 
     if percpu.switch_internals.being_sigkilled.get() {
-        todo!()
-        //exit(SIGKILL);
+        exit_this_context();
     }
 
     // errormux turns Result<usize> into -errno

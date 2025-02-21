@@ -25,6 +25,7 @@ use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 
 use super::{
     empty_cr3,
+    file::FileDescription,
     memory::{AddrSpaceWrapper, GrantFileRef},
 };
 
@@ -120,6 +121,9 @@ pub struct Context {
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
 
+    // TODO: id can reappear after wraparound?
+    pub owner_proc_id: Option<NonZeroUsize>,
+
     // TODO: Temporary replacement for existing kernel logic, replace with capabilities!
     pub ens: SchemeNamespace,
     pub euid: u32,
@@ -145,9 +149,9 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new() -> Result<Context> {
+    pub fn new(owner_proc_id: Option<NonZeroUsize>) -> Result<Context> {
         static DEBUG_ID: AtomicU32 = AtomicU32::new(1);
-        let this = Context {
+        let this = Self {
             debug_id: DEBUG_ID.fetch_add(1, Ordering::Relaxed),
             sig: None,
             status: Status::HardBlocked {
@@ -172,6 +176,7 @@ impl Context {
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
+            owner_proc_id,
 
             ens: 0.into(),
             euid: u32::MAX,
