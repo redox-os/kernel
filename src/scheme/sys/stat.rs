@@ -2,14 +2,35 @@ use alloc::{string::String, vec::Vec};
 
 use crate::{
     context::{contexts, ContextRef, Status},
-    cpu_stats::{self, get_context_switch_count, get_processes_count, irq_counts},
+    cpu_stats::{get_all, get_context_switch_count, get_processes_count, irq_counts},
     syscall::error::Result,
     time::START,
 };
 
+/// Get the /scheme/proc/stat data
 pub fn resource() -> Result<Vec<u8>> {
-    let mut cpu_stats = String::new();
-    let stats = cpu_stats::get_all();
+    let start_time_sec = *START.lock() / 1_000_000_000;
+
+    let (processes_running, processes_blocked) = get_processes_stats();
+    let res = format!(
+        "{}{}\n\
+        ctxt: {}\n\
+        btime: {start_time_sec}\n\
+        processes: {}\n\
+        procs_running: {processes_running}\n\
+        procs_blocked: {processes_blocked}",
+        get_cpu_stats(),
+        get_irq_stats(),
+        get_context_switch_count(),
+        get_processes_count(),
+    );
+
+    Ok(res.into_bytes())
+}
+
+fn get_cpu_stats() -> String {
+    let mut cpu_data = String::new();
+    let stats = get_all();
 
     let mut total_user = 0;
     let mut total_nice = 0;
@@ -26,10 +47,12 @@ pub fn resource() -> Result<Vec<u8>> {
         total_io_wait += stat.io_wait;
         total_irq += stat.irq;
         total_soft += stat.irq_soft;
-        cpu_stats += &format!("{stat}\n");
+        cpu_data += &format!("{stat}\n");
     }
-    let start_time_sec = *START.lock() / 1_000_000_000;
+    format!("cpu  {total_user} {total_nice} {total_kernel} {total_idle} {total_io_wait} {total_irq} {total_soft}\n{cpu_data}")
+}
 
+fn get_irq_stats() -> String {
     let irq = irq_counts();
     let mut irq_total = 0;
     let per_irq = irq
@@ -40,28 +63,25 @@ pub fn resource() -> Result<Vec<u8>> {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let irq_counts = format!("intr {irq_total} {per_irq}");
+    format!("intr {irq_total} {per_irq}")
+}
 
-    let mut processes_running = 0;
-    let mut processes_blocked = 0;
-    let contexts = contexts();
-    for context in contexts.iter() {
-        let Some(context) = ContextRef::upgrade(context) else {
-            continue;
-        };
-        let status = context.read().status.clone();
+fn get_processes_stats() -> (u64, u64) {
+    let mut running = 0;
+    let mut blocked = 0;
+
+    let statuses = contexts()
+        .iter()
+        .filter_map(ContextRef::upgrade)
+        .map(|context| context.read_arc().status.clone())
+        .collect::<Vec<_>>();
+
+    for status in statuses {
         if matches!(status, Status::Runnable) {
-            processes_running += 1;
+            running += 1;
         } else if !matches!(status, Status::Dead) {
-            processes_blocked += 1;
+            blocked += 1;
         }
     }
-
-    let res = format!(
-        "      user niced kernel idle iowait irq softirq\ncpu  {total_user} {total_nice} {total_kernel} {total_idle} {total_io_wait} {total_irq} {total_soft}\n{cpu_stats}{irq_counts}\nctxt: {}\nbtime: {start_time_sec}\nprocesses: {}\nprocs_running: {processes_running}\nprocs_blocked: {processes_blocked}",
-        get_context_switch_count(),
-        get_processes_count(),
-    );
-
-    Ok(res.into_bytes())
+    (running, blocked)
 }

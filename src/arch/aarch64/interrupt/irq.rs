@@ -1,4 +1,4 @@
-use crate::{arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP};
+use crate::{arch::device::ROOT_IC_IDX, cpu_stats, dtb::irqchip::IRQ_CHIP};
 use core::sync::atomic::Ordering;
 
 unsafe fn irq_ack() -> (u32, Option<usize>) {
@@ -31,7 +31,7 @@ exception_stack!(irq_at_el1, |_stack| {
 
 //TODO
 pub unsafe fn trigger(irq: u32) {
-    crate::cpu_stats::add_irq(crate::cpu_id(), irq);
+    cpu_stats::add_irq(crate::cpu_id(), irq);
     extern "C" {
         fn irq_trigger(irq: u32);
     }
