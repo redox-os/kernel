@@ -3,12 +3,17 @@ use core::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use hashbrown::HashMap;
 use log::warn;
 use spin::{Lazy, Mutex};
 
-use crate::cpu_set::LogicalCpuId;
+use crate::{
+    context::{contexts, ContextRef, Status},
+    cpu_set::LogicalCpuId,
+    syscall::error::Result,
+    time::START,
+};
 
 /// Contains the statistics that depend on each individual CPU
 static CPU_STATS: Lazy<Mutex<HashMap<LogicalCpuId, CpuStats>>> =
@@ -19,7 +24,6 @@ static CONTEXT_SWITCH_COUNT: AtomicU64 = AtomicU64::new(0);
 static IRQ_COUNT: [AtomicU64; 256] = [const { AtomicU64::new(0) }; 256];
 /// Number of processes that were created.
 static PROCESSES_COUNT: AtomicU64 = AtomicU64::new(0);
-
 
 /// Current state of a CPU
 #[derive(Copy, Clone, Debug, Default)]
@@ -68,6 +72,92 @@ impl CpuStats {
     }
 }
 
+/// Get the /scheme/proc/stat data as displayed to the user.
+pub fn get_scheme_data() -> Result<Vec<u8>> {
+    let start_time_sec = *START.lock() / 1_000_000_000;
+
+    let (processes_running, processes_blocked) = get_processes_stats();
+    let res = format!(
+        "{}{}\n\
+        ctxt: {}\n\
+        btime: {start_time_sec}\n\
+        processes: {}\n\
+        procs_running: {processes_running}\n\
+        procs_blocked: {processes_blocked}",
+        get_cpu_stats(),
+        get_irq_stats(),
+        get_context_switch_count(),
+        get_processes_count(),
+    );
+
+    Ok(res.into_bytes())
+}
+
+/// Formats CPU stats.
+fn get_cpu_stats() -> String {
+    let mut cpu_data = String::new();
+    let stats = get_all();
+
+    let mut total_user = 0;
+    let mut total_nice = 0;
+    let mut total_kernel = 0;
+    let mut total_idle = 0;
+    let mut total_io_wait = 0;
+    let mut total_irq = 0;
+    let mut total_soft = 0;
+    for stat in stats {
+        total_user += stat.user;
+        total_nice += stat.nice;
+        total_kernel += stat.kernel;
+        total_idle += stat.idle;
+        total_io_wait += stat.io_wait;
+        total_irq += stat.irq;
+        total_soft += stat.irq_soft;
+        cpu_data += &format!("{stat}\n");
+    }
+    format!(
+        "cpu  {total_user} {total_nice} {total_kernel} {total_idle} \
+        {total_io_wait} {total_irq} {total_soft}\n\
+        {cpu_data}"
+    )
+}
+
+/// Formats IRQ stats.
+fn get_irq_stats() -> String {
+    let irq = irq_counts();
+    let mut irq_total = 0;
+    let per_irq = irq
+        .iter()
+        .map(|c| {
+            irq_total += *c;
+            format!("{c}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("intr {irq_total} {per_irq}")
+}
+
+/// Format processes stats.
+fn get_processes_stats() -> (u64, u64) {
+    let mut running = 0;
+    let mut blocked = 0;
+
+    let statuses = contexts()
+        .iter()
+        .filter_map(ContextRef::upgrade)
+        .map(|context| context.read_arc().status.clone())
+        .collect::<Vec<_>>();
+
+    for status in statuses {
+        if matches!(status, Status::Runnable) {
+            running += 1;
+        } else if !matches!(status, Status::Dead) {
+            blocked += 1;
+        }
+    }
+    (running, blocked)
+}
+
 /// Initializes stats for a logical CPU
 ///
 /// # Parameters
@@ -82,7 +172,7 @@ pub fn add_context_switch() {
 }
 
 /// Get the number of context switches.
-pub fn get_context_switch_count() -> u64 {
+fn get_context_switch_count() -> u64 {
     CONTEXT_SWITCH_COUNT.load(Ordering::SeqCst)
 }
 
@@ -92,12 +182,12 @@ pub fn add_process() {
 }
 
 /// Get the number of processes created.
-pub fn get_processes_count() -> u64 {
+fn get_processes_count() -> u64 {
     PROCESSES_COUNT.load(Ordering::SeqCst)
 }
 
 /// Get the stats for all the CPUs
-pub fn get_all() -> Vec<CpuStats> {
+fn get_all() -> Vec<CpuStats> {
     let mut res: Vec<_> = CPU_STATS.lock().values().cloned().collect();
     res.sort_unstable_by_key(|stat| stat.id.get());
 
@@ -161,8 +251,11 @@ pub fn add_irq(cpu_id: LogicalCpuId, irq: u8) {
 }
 
 /// Get the count of each interrupt.
-pub fn irq_counts() -> Vec<u64> {
-    IRQ_COUNT.iter().map(|count| count.load(Ordering::SeqCst)).collect()
+fn irq_counts() -> Vec<u64> {
+    IRQ_COUNT
+        .iter()
+        .map(|count| count.load(Ordering::SeqCst))
+        .collect()
 }
 
 impl Display for CpuStats {

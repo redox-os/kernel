@@ -1,24 +1,19 @@
 use crate::{
-    arch::paging::{Page, VirtualAddress},
-    context::{
+    arch::paging::{Page, VirtualAddress}, context::{
         self,
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
         process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
         Context, Status,
-    },
-    memory::PAGE_SIZE,
-    ptrace,
-    scheme::{self, FileHandle, KernelScheme},
-    syscall::{
+    }, cpu_stats, memory::PAGE_SIZE, ptrace, scheme::{self, FileHandle, KernelScheme}, syscall::{
         self,
         data::{GrantDesc, Map, PtraceEvent, SenderInfo, SetSighandlerData, Stat},
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
         EnvRegisters, FloatRegisters, IntRegisters, KillMode, KillTarget,
-    },
+    }
 };
 
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
@@ -161,6 +156,9 @@ enum Handle {
     Process {
         process: Arc<RwLock<Process>>,
         kind: ProcHandle,
+    },
+    Stats {
+        data: Vec<u8>,
     },
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -502,6 +500,13 @@ impl<const FULL: bool> ProcScheme<FULL> {
     }
 }
 
+fn proc_stats() -> Result<OpenResult> {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    let data = cpu_stats::get_scheme_data()?;
+    HANDLES.write().insert(id, Handle::Stats { data });
+    Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
+}
+
 impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let mut parts = path.splitn(2, '/');
@@ -513,6 +518,8 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             OpenTy::Ctxt(new_child()?)
         } else if pid_str == "new-thread" {
             OpenTy::Ctxt(new_thread()?)
+        } else if pid_str == "stat" {
+            return proc_stats();
         } else if !FULL {
             return Err(Error::new(EACCES));
         } else {
@@ -695,6 +702,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
             Handle::Process { process, kind } => {
                 kind.kreadoff(id, process, buf, offset, read_flags)
             }
+            Handle::Stats { data } => {
+                let Ok(pos) = usize::try_from(offset) else {
+                    return Ok(0);
+                };
+                let avail_buf = data.get(pos..).unwrap_or(&[]);
+
+                buf.copy_common_bytes_from_slice(avail_buf)
+            }
         }
     }
     fn kwriteoff(
@@ -718,6 +733,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         match handle {
             Handle::Process { process, kind } => kind.kwriteoff(process, buf),
             Handle::Context { context, kind } => kind.kwriteoff(id, context, buf),
+            Handle::Stats { .. } => Ok(0),
         }
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
@@ -760,6 +776,7 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                     _ => return Err(Error::new(EOPNOTSUPP)),
                 }
             ),
+            Handle::Stats { .. } => String::from("proc:stats"),
         };
 
         buf.copy_common_bytes_from_slice(path.as_bytes())
@@ -768,12 +785,21 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        buffer.copy_exactly(&Stat {
-            st_mode: MODE_FILE | 0o666,
-            st_size: handle.fsize()?,
-
-            ..Stat::default()
-        })?;
+        let stats = match handle {
+            Handle::Stats { data } => Stat {
+                st_mode: 0o444 | MODE_FILE,
+                st_uid: 0,
+                st_gid: 0,
+                st_size: data.len() as u64,
+                ..Default::default()
+            },
+            _ => Stat {
+                st_mode: MODE_FILE | 0o666,
+                st_size: handle.fsize()?,
+                ..Stat::default()
+            },
+        };
+        buffer.copy_exactly(&stats)?;
 
         Ok(())
     }
@@ -781,8 +807,11 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
     fn fsize(&self, id: usize) -> Result<u64> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
-
-        handle.fsize()
+        if let Handle::Stats { data } = handle {
+            Ok(data.len() as u64)
+        } else {
+            handle.fsize()
+        }
     }
 
     /// Dup is currently used to implement clone() and execve().
