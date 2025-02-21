@@ -14,6 +14,7 @@ static CPU_STATS: Lazy<Mutex<HashMap<LogicalCpuId, CpuStats>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static CONTEXT_SWITCH_COUNT: AtomicU64 = AtomicU64::new(0);
 static IRQ_COUNT: Lazy<Mutex<[u64; 255]>> = Lazy::new(|| Mutex::new([0; 255]));
+static PROCESSES_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Copy, Clone, Debug)]
 pub enum CpuState {
@@ -29,7 +30,9 @@ pub struct CpuStats {
     pub nice: usize,
     pub kernel: usize,
     pub idle: usize,
+    pub io_wait: usize,
     pub irq: usize,
+    pub irq_soft: usize,
     state: CpuState,
 }
 
@@ -41,7 +44,9 @@ impl CpuStats {
             nice: 0,
             kernel: 0,
             idle: 0,
+            io_wait: 0,
             irq: 0,
+            irq_soft: 0,
             state: CpuState::Idle,
         }
     }
@@ -55,8 +60,16 @@ pub fn add_context_switch() {
     CONTEXT_SWITCH_COUNT.fetch_add(1, Ordering::SeqCst);
 }
 
+pub fn add_process() {
+    PROCESSES_COUNT.fetch_add(1, Ordering::SeqCst);
+}
+
 pub fn get_context_switch_count() -> u64 {
     CONTEXT_SWITCH_COUNT.load(Ordering::SeqCst)
+}
+
+pub fn get_processes_count() -> u64 {
+    PROCESSES_COUNT.load(Ordering::SeqCst)
 }
 
 pub fn get_all() -> Vec<CpuStats> {
@@ -107,13 +120,15 @@ impl Display for CpuStats {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
-            "cpu{} {} {} {} {} {}",
+            "cpu{} {} {} {} {} {} {} {}",
             self.id.get(),
             self.user,
             self.nice,
             self.kernel,
             self.idle,
-            self.irq
+            self.io_wait,
+            self.irq,
+            self.irq_soft,
         )
     }
 }

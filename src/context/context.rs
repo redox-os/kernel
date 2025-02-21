@@ -232,6 +232,7 @@ impl Context {
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
         };
+        crate::cpu_stats::add_process();
         Ok(this)
     }
 
