@@ -168,22 +168,22 @@ pub fn add_cpu(cpu_id: LogicalCpuId) {
 
 /// Add a context switch to the count.
 pub fn add_context_switch() {
-    CONTEXT_SWITCH_COUNT.fetch_add(1, Ordering::SeqCst);
+    CONTEXT_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Get the number of context switches.
 fn get_context_switch_count() -> u64 {
-    CONTEXT_SWITCH_COUNT.load(Ordering::SeqCst)
+    CONTEXT_SWITCH_COUNT.load(Ordering::Relaxed)
 }
 
 /// Add a process creation to the count.
 pub fn add_process() {
-    PROCESSES_COUNT.fetch_add(1, Ordering::SeqCst);
+    PROCESSES_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Get the number of processes created.
 fn get_processes_count() -> u64 {
-    PROCESSES_COUNT.load(Ordering::SeqCst)
+    PROCESSES_COUNT.load(Ordering::Relaxed)
 }
 
 /// Get the stats for all the CPUs
@@ -241,7 +241,7 @@ pub fn add_time(cpu_id: LogicalCpuId, ticks: usize) {
 /// * `cpu_id` - The logical CPU ID handling the IRQ,
 /// * `irq` - The ID of the interrupt that happened.
 pub fn add_irq(cpu_id: LogicalCpuId, irq: u8) {
-    IRQ_COUNT[irq as usize].fetch_add(1, Ordering::SeqCst);
+    IRQ_COUNT[irq as usize].fetch_add(1, Ordering::Relaxed);
     let mut lock = CPU_STATS.lock();
     let Some(stats) = lock.get_mut(&cpu_id) else {
         warn!("could not set cpu state for cpu {cpu_id}: cpu is not registered");
@@ -254,7 +254,7 @@ pub fn add_irq(cpu_id: LogicalCpuId, irq: u8) {
 fn irq_counts() -> Vec<u64> {
     IRQ_COUNT
         .iter()
-        .map(|count| count.load(Ordering::SeqCst))
+        .map(|count| count.load(Ordering::Relaxed))
         .collect()
 }
 
