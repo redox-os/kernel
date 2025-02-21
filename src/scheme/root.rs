@@ -7,7 +7,7 @@ use hashbrown::HashMap;
 use spin::RwLock;
 use syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    O_FSYNC,
+    O_EXLOCK, O_FSYNC,
 };
 
 use crate::{
@@ -75,9 +75,16 @@ impl KernelScheme for RootScheme {
                 let mut schemes = scheme::schemes_mut();
 
                 let v2 = flags & O_FSYNC == O_FSYNC;
+                let new_close = flags & O_EXLOCK == O_EXLOCK;
 
                 if !v2 {
                     //log::warn!("Context {} opened a v1 scheme", context::current().read().name);
+                }
+                if !new_close {
+                    log::warn!(
+                        "Context {} opened a non-async-close scheme",
+                        context::current().read().name
+                    );
                 }
 
                 let (_scheme_id, inner) =
@@ -88,6 +95,7 @@ impl KernelScheme for RootScheme {
                             // TODO: This is a hack, but eventually the legacy interface will be
                             // removed.
                             v2,
+                            new_close,
                             id,
                             path_box,
                             flags,

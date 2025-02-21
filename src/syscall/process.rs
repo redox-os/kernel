@@ -50,7 +50,10 @@ pub fn exit_this_context() -> ! {
     // Files must be closed while context is valid so that messages can be passed
     for file_opt in close_files.into_iter() {
         if let Some(file) = file_opt {
-            let _ = file.close();
+            let _ = file.close(
+                // wait_for_result
+                false,
+            );
         }
     }
     drop(addrspace_opt);

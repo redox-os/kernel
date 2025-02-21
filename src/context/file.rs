@@ -70,7 +70,7 @@ pub struct FileDescriptor {
 impl FileDescription {
     /// Try closing a file, although at this point the description will be destroyed anyway, if
     /// doing so fails.
-    pub fn try_close(self) -> Result<()> {
+    pub fn try_close(self, wait_for_res: bool) -> Result<()> {
         event::unregister_file(self.scheme, self.number);
 
         let scheme = scheme::schemes()
@@ -78,14 +78,18 @@ impl FileDescription {
             .ok_or(Error::new(EBADF))?
             .clone();
 
-        scheme.close(self.number)
+        if wait_for_res {
+            scheme.close(self.number)
+        } else {
+            scheme.on_close(self.number)
+        }
     }
 }
 
 impl FileDescriptor {
-    pub fn close(self) -> Result<()> {
-        if let Ok(file) = Arc::try_unwrap(self.description) {
-            file.into_inner().try_close()?;
+    pub fn close(self, wait_for_res: bool) -> Result<()> {
+        if let Ok(file) = Arc::try_unwrap(self.description).map(RwLock::into_inner) {
+            file.try_close(wait_for_res)?;
         }
         Ok(())
     }

@@ -52,6 +52,7 @@ pub struct UserInner {
     pub name: Box<str>,
     pub scheme_id: SchemeId,
     v2: bool,
+    supports_on_close: bool,
     context: Weak<RwSpinlock<Context>>,
     todo: WaitQueue<Sqe>,
 
@@ -196,6 +197,7 @@ impl UserInner {
         root_id: SchemeId,
         scheme_id: SchemeId,
         v2: bool,
+        new_close: bool,
         handle_id: usize,
         name: Box<str>,
         _flags: usize,
@@ -206,6 +208,7 @@ impl UserInner {
             handle_id,
             name,
             v2,
+            supports_on_close: new_close,
             scheme_id,
             context,
             todo: WaitQueue::new(),
@@ -1099,7 +1102,10 @@ impl UserInner {
         }
 
         if let Some(to_close) = to_close {
-            let _ = to_close.try_close();
+            let _ = to_close.try_close(
+                // wait_for_result
+                false,
+            );
         }
         Ok(())
     }
@@ -1487,6 +1493,22 @@ impl KernelScheme for UserScheme {
     fn close(&self, file: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner.call(Opcode::Close, [file], &mut PageSpan::empty())?;
+        Ok(())
+    }
+    fn on_close(&self, id: usize) -> Result<()> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        if !inner.supports_on_close {
+            return self.close(id);
+        }
+
+        inner.todo.send(Sqe {
+            opcode: Opcode::CloseMsg as u8,
+            sqe_flags: SqeFlags::empty(),
+            _rsvd: 0,
+            tag: 0,
+            args: [id as u64, 0, 0, 0, 0, 0],
+            caller: 0, // TODO?
+        });
         Ok(())
     }
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {

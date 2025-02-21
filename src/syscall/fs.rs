@@ -177,7 +177,10 @@ pub fn close(fd: FileHandle) -> Result<()> {
         context.remove_file(fd).ok_or(Error::new(EBADF))?
     };
 
-    file.close()
+    file.close(
+        // wait_for_result
+        true,
+    )
 }
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
