@@ -96,7 +96,7 @@ impl IrqScheme {
         let cpus = {
             use crate::acpi::madt::*;
 
-            match unsafe { MADT.as_ref() } {
+            match madt() {
                 Some(madt) => madt
                     .iter()
                     .filter_map(|entry| match entry {
