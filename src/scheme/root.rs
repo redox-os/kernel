@@ -81,10 +81,10 @@ impl KernelScheme for RootScheme {
                     //log::warn!("Context {} opened a v1 scheme", context::current().read().name);
                 }
                 if !new_close {
-                    log::warn!(
+                    /*log::warn!(
                         "Context {} opened a non-async-close scheme",
                         context::current().read().name
-                    );
+                    );*/
                 }
 
                 let (_scheme_id, inner) =
