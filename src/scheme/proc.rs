@@ -1,19 +1,25 @@
 use crate::{
-    arch::paging::{Page, VirtualAddress}, context::{
+    arch::paging::{Page, VirtualAddress},
+    context::{
         self,
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
         process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
         Context, Status,
-    }, cpu_stats, memory::PAGE_SIZE, ptrace, scheme::{self, FileHandle, KernelScheme}, syscall::{
+    },
+    cpu_stats,
+    memory::PAGE_SIZE,
+    ptrace,
+    scheme::{self, FileHandle, KernelScheme},
+    syscall::{
         self,
         data::{GrantDesc, Map, PtraceEvent, SenderInfo, SetSighandlerData, Stat},
         error::*,
         flag::*,
         usercopy::{UserSliceRo, UserSliceWo},
         EnvRegisters, FloatRegisters, IntRegisters, KillMode, KillTarget,
-    }
+    },
 };
 
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};

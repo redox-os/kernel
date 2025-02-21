@@ -122,9 +122,9 @@ mod externs;
 
 /// Logging
 mod log;
-use cpu_set::LogicalCpuId;
 use ::log::info;
 use alloc::sync::Arc;
+use cpu_set::LogicalCpuId;
 use spinning_top::RwSpinlock;
 
 /// Memory management

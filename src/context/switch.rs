@@ -13,7 +13,11 @@ use spinning_top::{guard::ArcRwSpinlockWriteGuard, RwSpinlock};
 use syscall::PtraceFlags;
 
 use crate::{
-    context::{arch, contexts, Context}, cpu_set::LogicalCpuId, cpu_stats, interrupt, percpu::PercpuBlock, ptrace, time
+    context::{arch, contexts, Context},
+    cpu_set::LogicalCpuId,
+    cpu_stats, interrupt,
+    percpu::PercpuBlock,
+    ptrace, time,
 };
 
 use super::ContextRef;
@@ -281,7 +285,6 @@ pub fn switch() -> SwitchResult {
         // reach this code until the next context switch back.
         if next_context.userspace {
             cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::User);
-            
         } else {
             cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::Kernel);
         }

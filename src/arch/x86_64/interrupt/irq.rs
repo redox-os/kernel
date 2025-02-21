@@ -3,13 +3,19 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use alloc::vec::Vec;
 
 use crate::{
-    context::{self, timeout}, cpu_stats, device::{
+    context::{self, timeout},
+    cpu_stats,
+    device::{
         ioapic, local_apic, pic, pit,
         serial::{COM1, COM2},
-    }, interrupt, interrupt_stack, ipi::{ipi, IpiKind, IpiTarget}, scheme::{
+    },
+    interrupt, interrupt_stack,
+    ipi::{ipi, IpiKind, IpiTarget},
+    scheme::{
         debug::{debug_input, debug_notify},
         serio::serio_input,
-    }, time
+    },
+    time,
 };
 
 #[repr(u8)]
