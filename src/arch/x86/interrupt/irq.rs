@@ -114,9 +114,9 @@ unsafe fn pic_mask(irq: u8) {
     debug_assert!(irq < 16);
 
     if irq >= 8 {
-        pic::SLAVE.mask_set(irq - 8);
+        pic::slave().mask_set(irq - 8);
     } else {
-        pic::MASTER.mask_set(irq);
+        pic::master().mask_set(irq);
     }
 }
 
@@ -128,10 +128,10 @@ unsafe fn pic_eoi(irq: u8) {
     debug_assert!(irq < 16);
 
     if irq >= 8 {
-        pic::MASTER.ack();
-        pic::SLAVE.ack();
+        pic::master().ack();
+        pic::slave().ack();
     } else {
-        pic::MASTER.ack();
+        pic::master().ack();
     }
 }
 
@@ -143,9 +143,9 @@ unsafe fn pic_unmask(irq: usize) {
     debug_assert!(irq < 16);
 
     if irq >= 8 {
-        pic::SLAVE.mask_clear(irq as u8 - 8);
+        pic::slave().mask_clear(irq as u8 - 8);
     } else {
-        pic::MASTER.mask_clear(irq as u8);
+        pic::master().mask_clear(irq as u8);
     }
 }
 
@@ -213,7 +213,7 @@ interrupt!(floppy, || {
 });
 
 interrupt!(lpt1, || {
-    if irq_method() == IrqMethod::Pic && pic::MASTER.isr() & (1 << 7) == 0 {
+    if irq_method() == IrqMethod::Pic && pic::master().isr() & (1 << 7) == 0 {
         // the IRQ was spurious, ignore it but increment a counter.
         SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
         return;
@@ -262,9 +262,9 @@ interrupt!(ata1, || {
 });
 
 interrupt!(ata2, || {
-    if irq_method() == IrqMethod::Pic && pic::SLAVE.isr() & (1 << 7) == 0 {
+    if irq_method() == IrqMethod::Pic && pic::slave().isr() & (1 << 7) == 0 {
         SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
-        pic::MASTER.ack();
+        pic::master().ack();
         return;
     }
     trigger(15);

@@ -4,9 +4,10 @@ use crate::{
     startup::memory::BootloaderMemoryKind::Null,
 };
 use core::{
+    cell::SyncUnsafeCell,
     cmp::{max, min},
-    mem, slice,
-    slice::Iter,
+    mem,
+    slice::{self, Iter},
 };
 use rmm::{
     Arch, BumpAllocator, MemoryArea, PageFlags, PageMapper, PhysicalAddress, TableKind,
@@ -127,14 +128,14 @@ impl MemoryMap {
     }
 }
 
-static mut MEMORY_MAP: MemoryMap = MemoryMap {
+static MEMORY_MAP: SyncUnsafeCell<MemoryMap> = SyncUnsafeCell::new(MemoryMap {
     entries: [MemoryEntry {
         start: 0,
         end: 0,
         kind: BootloaderMemoryKind::Null,
     }; 512],
     size: 0,
-};
+});
 
 fn align_up(x: usize) -> usize {
     (x.saturating_add(PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE
@@ -146,7 +147,7 @@ fn align_down(x: usize) -> usize {
 pub fn register_memory_region(base: usize, size: usize, kind: BootloaderMemoryKind) {
     if kind != Null && size != 0 {
         log::debug!("Registering {:?} memory {:X} size {:X}", kind, base, size);
-        unsafe { MEMORY_MAP.register(base, size, kind) }
+        unsafe { (*MEMORY_MAP.get()).register(base, size, kind) }
     }
 }
 
@@ -167,7 +168,7 @@ pub fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
 }
 
 unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: MemoryEntry) {
-    for reservation in MEMORY_MAP.non_free() {
+    for reservation in (*MEMORY_MAP.get()).non_free() {
         if area.end > reservation.start && area.end <= reservation.end {
             log::info!(
                 "Memory {:X}:{:X} overlaps with reservation {:X}:{:X}",
@@ -304,7 +305,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         }
     }
 
-    let kernel_area = MEMORY_MAP.kernel().unwrap();
+    let kernel_area = (*MEMORY_MAP.get()).kernel().unwrap();
     let kernel_base = kernel_area.start;
     let kernel_size = kernel_area.end - kernel_area.start;
     // Map kernel at KERNEL_OFFSET and identity map too
@@ -324,7 +325,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         flush.ignore(); // Not the active table
     }
 
-    for area in MEMORY_MAP.identity_mapped() {
+    for area in (*MEMORY_MAP.get()).identity_mapped() {
         let base = area.start;
         let size = area.end - area.start;
         for i in 0..size / PAGE_SIZE {
@@ -339,7 +340,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
     }
 
     //map dev mem
-    for area in MEMORY_MAP.devices() {
+    for area in (*MEMORY_MAP.get()).devices() {
         let base = area.start;
         let size = area.end - area.start;
         for i in 0..size / PAGE_SIZE {
@@ -399,7 +400,7 @@ pub unsafe fn init(low_limit: Option<usize>, high_limit: Option<usize>) {
     let mut area_i = 0;
 
     // Copy initial memory map, and page align it
-    for area in MEMORY_MAP.free() {
+    for area in (*MEMORY_MAP.get()).free() {
         log::debug!("{:X}:{:X}", area.start, area.end);
 
         if let Some(area) = area.intersect(&physmem_limit) {

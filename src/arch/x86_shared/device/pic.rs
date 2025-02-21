@@ -1,43 +1,57 @@
+use core::cell::SyncUnsafeCell;
+
 use crate::{
     arch::interrupt::irq,
     syscall::io::{Io, Pio},
 };
 
-pub static mut MASTER: Pic = Pic::new(0x20);
-pub static mut SLAVE: Pic = Pic::new(0xA0);
+static MASTER: SyncUnsafeCell<Pic> = SyncUnsafeCell::new(Pic::new(0x20));
+static SLAVE: SyncUnsafeCell<Pic> = SyncUnsafeCell::new(Pic::new(0xA0));
+
+// SAFETY: must be main thread
+pub unsafe fn master<'a>() -> &'a mut Pic {
+    &mut *MASTER.get()
+}
+// SAFETY: must be main thread
+pub unsafe fn slave<'a>() -> &'a mut Pic {
+    &mut *SLAVE.get()
+}
 
 pub unsafe fn init() {
+    let master = master();
+    let slave = slave();
+
     // Start initialization
-    MASTER.cmd.write(0x11);
-    SLAVE.cmd.write(0x11);
+    master.cmd.write(0x11);
+    slave.cmd.write(0x11);
 
     // Set offsets
-    MASTER.data.write(0x20);
-    SLAVE.data.write(0x28);
+    master.data.write(0x20);
+    slave.data.write(0x28);
 
     // Set up cascade
-    MASTER.data.write(4);
-    SLAVE.data.write(2);
+    master.data.write(4);
+    slave.data.write(2);
 
     // Set up interrupt mode (1 is 8086/88 mode, 2 is auto EOI)
-    MASTER.data.write(1);
-    SLAVE.data.write(1);
+    master.data.write(1);
+    slave.data.write(1);
 
     // Unmask interrupts
-    MASTER.data.write(0);
-    SLAVE.data.write(0);
+    master.data.write(0);
+    slave.data.write(0);
 
     // Ack remaining interrupts
-    MASTER.ack();
-    SLAVE.ack();
+    master.ack();
+    slave.ack();
 
     // probably already set to PIC, but double-check
     irq::set_irq_method(irq::IrqMethod::Pic);
 }
 
 pub unsafe fn disable() {
-    MASTER.data.write(0xFF);
-    SLAVE.data.write(0xFF);
+    master().data.write(0xFF);
+    slave().data.write(0xFF);
 }
 
 pub struct Pic {

@@ -1,4 +1,4 @@
-use core::mem;
+use core::{cell::SyncUnsafeCell, mem};
 
 use super::{find_sdt, sdt::Sdt};
 
@@ -22,7 +22,10 @@ mod arch;
 #[path = "arch/other.rs"]
 mod arch;
 
-pub static mut MADT: Option<Madt> = None;
+static MADT: SyncUnsafeCell<Option<Madt>> = SyncUnsafeCell::new(None);
+pub fn madt() -> Option<&'static Madt> {
+    unsafe { &*MADT.get() }.as_ref()
+}
 pub const FLAG_PCAT: u32 = 1;
 
 impl Madt {
@@ -37,7 +40,7 @@ impl Madt {
 
         if let Some(madt) = madt {
             // safe because no APs have been started yet.
-            unsafe { MADT = Some(madt) };
+            unsafe { MADT.get().write(Some(madt)) };
 
             println!("  APIC: {:>08X}: {}", madt.local_address, madt.flags);
 

@@ -44,7 +44,7 @@ pub const GDT_F_LONG_MODE: u8 = 1 << 5;
 
 const IOBITMAP_SIZE: u32 = 65536 / 8;
 
-static mut INIT_GDT: [GdtEntry; 3] = [
+static INIT_GDT: [GdtEntry; 3] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code

@@ -1,4 +1,4 @@
-use core::{fmt, ptr};
+use core::{cell::SyncUnsafeCell, fmt, ptr};
 
 use alloc::vec::Vec;
 use spin::Mutex;
@@ -83,6 +83,8 @@ pub struct IoApic {
     gsi_start: u32,
     count: u8,
 }
+unsafe impl Send for IoApic {}
+unsafe impl Sync for IoApic {}
 impl IoApic {
     #[allow(dead_code)]
     pub fn new(regs_base: *const u32, gsi_start: u32) -> Self {
@@ -217,16 +219,20 @@ pub struct Override {
 
 // static mut because only the AP initializes the I/O Apic, and when that is done, it's solely
 // accessed immutably.
-static mut IOAPICS: Option<Vec<IoApic>> = None;
+static IOAPICS: SyncUnsafeCell<Option<Vec<IoApic>>> = SyncUnsafeCell::new(None);
 
 // static mut for the same reason as above
-static mut SRC_OVERRIDES: Option<Vec<Override>> = None;
+static SRC_OVERRIDES: SyncUnsafeCell<Option<Vec<Override>>> = SyncUnsafeCell::new(None);
 
 pub fn ioapics() -> &'static [IoApic] {
-    unsafe { IOAPICS.as_ref().map_or(&[], |vector| &vector[..]) }
+    unsafe { &*IOAPICS.get() }
+        .as_ref()
+        .map_or(&[], |vector| &vector[..])
 }
 pub fn src_overrides() -> &'static [Override] {
-    unsafe { SRC_OVERRIDES.as_ref().map_or(&[], |vector| &vector[..]) }
+    unsafe { &*SRC_OVERRIDES.get() }
+        .as_ref()
+        .map_or(&[], |vector| &vector[..])
 }
 
 #[cfg(feature = "acpi")]
@@ -263,7 +269,7 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static Mad
         "mismatched ACPI MADT I/O APIC ID, and the ID reported by the I/O APIC"
     );
 
-    IOAPICS.get_or_insert_with(Vec::new).push(ioapic);
+    (*IOAPICS.get()).get_or_insert_with(Vec::new).push(ioapic);
 }
 #[cfg(feature = "acpi")]
 pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
@@ -295,7 +301,9 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
         polarity,
         trigger_mode,
     };
-    SRC_OVERRIDES.get_or_insert_with(Vec::new).push(over);
+    (*SRC_OVERRIDES.get())
+        .get_or_insert_with(Vec::new)
+        .push(over);
 }
 
 #[allow(dead_code)]
@@ -305,7 +313,7 @@ pub unsafe fn init(active_table: &mut KernelMapper) {
     // search the madt for all IOAPICs.
     #[cfg(feature = "acpi")]
     {
-        let madt: &'static Madt = match madt::MADT.as_ref() {
+        let madt: &'static Madt = match madt::madt() {
             Some(m) => m,
             // TODO: Parse MP tables too.
             None => return,

@@ -3,7 +3,10 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 use core::slice;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use core::{
+    cell::SyncUnsafeCell,
+    sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+};
 
 use log::info;
 
@@ -21,9 +24,9 @@ use crate::{
 };
 
 /// Test of zero values in BSS.
-static mut BSS_TEST_ZERO: usize = 0;
+static BSS_TEST_ZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(0);
 /// Test of non-zero values in data.
-static mut DATA_TEST_NONZERO: usize = usize::max_value();
+static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::max_value());
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -69,8 +72,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // BSS should already be zero
         {
-            assert_eq!(BSS_TEST_ZERO, 0);
-            assert_eq!(DATA_TEST_NONZERO, usize::max_value());
+            assert_eq!(BSS_TEST_ZERO.get().read(), 0);
+            assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
         }
 
         KERNEL_BASE.store(args.kernel_base as usize, Ordering::SeqCst);
@@ -262,8 +265,8 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         let _stack_start = args.stack_start as usize;
         let stack_end = args.stack_end as usize;
 
-        assert_eq!(BSS_TEST_ZERO, 0);
-        assert_eq!(DATA_TEST_NONZERO, usize::max_value());
+        assert_eq!(BSS_TEST_ZERO.get().read(), 0);
+        assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
 
         // Set up GDT before paging
         gdt::init();
