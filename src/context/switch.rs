@@ -20,6 +20,9 @@ use crate::{
     ptrace, time,
 };
 
+#[cfg(feature = "sys_stat")]
+use crate::cpu_stats;
+
 use super::ContextRef;
 
 enum UpdateResult {
@@ -138,6 +141,13 @@ pub enum SwitchResult {
 ///   to an idle context.
 pub fn switch() -> SwitchResult {
     let percpu = PercpuBlock::current();
+    #[cfg(feature = "sys_stat")]
+    {
+        cpu_stats::add_context_switch();
+        percpu
+            .stats
+            .add_time(percpu.switch_internals.pit_ticks.get());
+    }
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
     percpu.switch_internals.pit_ticks.set(0);
@@ -281,11 +291,24 @@ pub fn switch() -> SwitchResult {
         // need to use the `switch_finish_hook` to be able to release the locks. Newly created
         // contexts will return directly to the function pointer passed to context::spawn, and not
         // reach this code until the next context switch back.
+        #[cfg(feature = "sys_stat")]
+        {
+            if next_context.userspace {
+                percpu.stats.set_state(cpu_stats::CpuState::User);
+            } else {
+                percpu.stats.set_state(cpu_stats::CpuState::Kernel);
+            }
+        }
 
         SwitchResult::Switched
     } else {
         // No target was found, unset global lock and return
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+
+        #[cfg(feature = "sys_stat")]
+        {
+            percpu.stats.set_state(cpu_stats::CpuState::Idle);
+        }
 
         SwitchResult::AllContextsIdle
     }

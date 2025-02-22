@@ -70,6 +70,7 @@ qemu_debug = []
 serial_debug = []
 system76_ec_debug = []
 slab = ["slab_allocator"]
+sys_stat = []
 x86_kvm_pv = []
 
 debugger = ["syscall_debug"]

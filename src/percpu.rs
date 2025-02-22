@@ -13,6 +13,12 @@ use crate::{
     ptrace::Session,
 };
 
+#[cfg(feature = "sys_stat")]
+use {
+    crate::cpu_stats::{CpuStats, CpuStatsData},
+    alloc::vec::Vec,
+};
+
 #[cfg(feature = "syscall_debug")]
 use crate::syscall::debug::SyscallDebugInfo;
 
@@ -41,6 +47,9 @@ pub struct PercpuBlock {
     pub syscall_debug_info: Cell<SyscallDebugInfo>,
 
     pub misc_arch_info: crate::device::ArchPercpuMisc,
+
+    #[cfg(feature = "sys_stat")]
+    pub stats: CpuStats,
 }
 
 const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
@@ -50,6 +59,20 @@ static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
 #[allow(unused)]
 pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
     ALL_PERCPU_BLOCKS[id.get() as usize].store(block, Ordering::Release)
+}
+
+#[cfg(feature = "sys_stat")]
+pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
+    let mut res = ALL_PERCPU_BLOCKS
+        .iter()
+        .filter_map(|block| unsafe { block.load(Ordering::Relaxed).as_ref() })
+        .map(|block| {
+            let stats = &block.stats;
+            (block.cpu_id, stats.into())
+        })
+        .collect::<Vec<_>>();
+    res.sort_unstable_by_key(|(id, _stats)| id.get());
+    res
 }
 
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
@@ -163,6 +186,9 @@ impl PercpuBlock {
             profiling: None,
 
             misc_arch_info: Default::default(),
+
+            #[cfg(feature = "sys_stat")]
+            stats: CpuStats::default(),
         }
     }
 }
