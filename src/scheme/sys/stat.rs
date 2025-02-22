@@ -37,22 +37,17 @@ fn get_cpu_stats() -> String {
     let mut total_nice = 0;
     let mut total_kernel = 0;
     let mut total_idle = 0;
-    let mut total_io_wait = 0;
     let mut total_irq = 0;
-    let mut total_soft = 0;
     for (id, stat) in stats {
         total_user += stat.user;
         total_nice += stat.nice;
         total_kernel += stat.kernel;
         total_idle += stat.idle;
-        total_io_wait += stat.io_wait;
         total_irq += stat.irq;
-        total_soft += stat.irq_soft;
         cpu_data += &format!("{}\n", stat.to_string(id));
     }
     format!(
-        "cpu  {total_user} {total_nice} {total_kernel} {total_idle} \
-        {total_io_wait} {total_irq} {total_soft}\n\
+        "cpu  {total_user} {total_nice} {total_kernel} {total_idle} {total_irq}\n\
         {cpu_data}"
     )
 }

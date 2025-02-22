@@ -37,12 +37,8 @@ pub struct CpuStats {
     pub kernel: usize,
     /// Number of ticks spent idle
     pub idle: usize,
-    /// Number of ticks spent waiting for I/O
-    pub io_wait: usize,
     /// Number of times the CPU handled an interrupt
     pub irq: usize,
-    /// Number of times the CPU handled a soft interrupt
-    pub irq_soft: usize,
     /// Current state of the CPU
     pub state: CpuState,
 }
@@ -78,15 +74,13 @@ impl CpuStats {
 
     pub fn to_string(&self, cpu_id: LogicalCpuId) -> String {
         format!(
-            "cpu{} {} {} {} {} {} {} {}",
+            "cpu{} {} {} {} {} {}",
             cpu_id.get(),
             self.user,
             self.nice,
             self.kernel,
             self.idle,
-            self.io_wait,
             self.irq,
-            self.irq_soft,
         )
     }
 }
