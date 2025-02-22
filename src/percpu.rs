@@ -3,10 +3,7 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
-use alloc::{
-    sync::{Arc, Weak},
-    vec::Vec,
-};
+use alloc::sync::{Arc, Weak};
 use rmm::Arch;
 use syscall::PtraceFlags;
 
@@ -17,7 +14,10 @@ use crate::{
 };
 
 #[cfg(feature = "sys_stat")]
-use crate::cpu_stats::CpuStats;
+use {
+    crate::cpu_stats::{CpuStats, CpuStatsData},
+    alloc::vec::Vec,
+};
 
 #[cfg(feature = "syscall_debug")]
 use crate::syscall::debug::SyscallDebugInfo;
@@ -49,7 +49,7 @@ pub struct PercpuBlock {
     pub misc_arch_info: crate::device::ArchPercpuMisc,
 
     #[cfg(feature = "sys_stat")]
-    pub stats: RefCell<CpuStats>,
+    pub stats: CpuStats,
 }
 
 const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
@@ -61,11 +61,15 @@ pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
     ALL_PERCPU_BLOCKS[id.get() as usize].store(block, Ordering::Release)
 }
 
-pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStats)> {
+#[cfg(feature = "sys_stat")]
+pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
     let mut res = ALL_PERCPU_BLOCKS
         .iter()
-        .filter_map(|block| unsafe { block.load(Ordering::Acquire).as_ref() })
-        .map(|block| (block.cpu_id, *block.stats.borrow()))
+        .filter_map(|block| unsafe { block.load(Ordering::Relaxed).as_ref() })
+        .map(|block| {
+            let stats = &block.stats;
+            (block.cpu_id, stats.into())
+        })
         .collect::<Vec<_>>();
     res.sort_unstable_by_key(|(id, _stats)| id.get());
     res
@@ -184,7 +188,7 @@ impl PercpuBlock {
             misc_arch_info: Default::default(),
 
             #[cfg(feature = "sys_stat")]
-            stats: RefCell::new(CpuStats::default()),
+            stats: CpuStats::default(),
         }
     }
 }

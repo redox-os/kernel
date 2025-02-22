@@ -35,7 +35,7 @@ exception_stack!(irq_at_el1, |_stack| {
 //TODO
 pub unsafe fn trigger(irq: u32) {
     #[cfg(feature = "sys_stat")]
-    PercpuBlock::current().stats.borrow_mut().add_irq(irq);
+    PercpuBlock::current().stats.add_irq(irq);
 
     extern "C" {
         fn irq_trigger(irq: u32);

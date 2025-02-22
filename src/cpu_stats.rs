@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use alloc::{string::String, vec::Vec};
 
@@ -12,23 +12,36 @@ static IRQ_COUNT: [AtomicU64; 256] = [const { AtomicU64::new(0) }; 256];
 static CONTEXTS_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Current state of a CPU
+#[repr(u8)]
 #[derive(Copy, Clone, Debug, Default)]
 pub enum CpuState {
     /// Waiting for runnable context
     #[default]
-    Idle,
+    Idle = 0,
     /// Runnnig a kernel context
-    Kernel,
+    Kernel = 1,
     /// Running a context in the userspace
-    User,
+    User = 2,
 }
 
 /// Statistics for the CPUs.
-///
-/// At the moment, I/O wait and irq_soft are not tracked so will always be 0.
-/// TODO: Implement I/O wait and Soft IRQ tracking if necessary
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct CpuStats {
+    /// Number of ticks spent on userspace contexts
+    user: AtomicUsize,
+    /// Number of ticks spent on Niced userspace contexts
+    nice: AtomicUsize,
+    /// Number of ticks spent on kernel contexts
+    kernel: AtomicUsize,
+    /// Number of ticks spent idle
+    idle: AtomicUsize,
+    /// Number of times the CPU handled an interrupt
+    irq: AtomicUsize,
+    /// Current state of the CPU
+    state: AtomicU8,
+}
+
+pub struct CpuStatsData {
     /// Number of ticks spent on userspace contexts
     pub user: usize,
     /// Number of ticks spent on Niced userspace contexts
@@ -39,24 +52,30 @@ pub struct CpuStats {
     pub idle: usize,
     /// Number of times the CPU handled an interrupt
     pub irq: usize,
-    /// Current state of the CPU
-    pub state: CpuState,
 }
 
 impl CpuStats {
+    /// Set the CPU's current state
+    ///
+    /// # Parameters
+    /// * `new_state` - The state of the CPU for the following ticks.
+    pub fn set_state(&self, new_state: CpuState) {
+        self.state.store(new_state as u8, Ordering::Relaxed);
+    }
+
     /// Increments time statistics of a CPU
     ///
     /// Which statistic is incremented depends on the [`State`] of the CPU.
     ///
     /// # Parameters
-    /// * `cpu_id` - ID of the CPU whose time stats to increment,
     /// * `ticks` - NUmber of ticks to add.
-    pub fn add_time(&mut self, ticks: usize) {
-        match self.state {
-            CpuState::Idle => self.idle += ticks,
-            CpuState::User => self.user += ticks,
-            CpuState::Kernel => self.kernel += ticks,
-        }
+    pub fn add_time(&self, ticks: usize) {
+        match self.state.load(Ordering::Relaxed) {
+            val if val == CpuState::Idle as u8 => self.idle.fetch_add(ticks, Ordering::Relaxed),
+            val if val == CpuState::User as u8 => self.user.fetch_add(ticks, Ordering::Relaxed),
+            val if val == CpuState::Kernel as u8 => self.kernel.fetch_add(ticks, Ordering::Relaxed),
+            _ => unreachable!("all possible values are covered"),
+        };
     }
 
     /// Add an IRQ event to both the global count and the CPU that handled it.
@@ -65,13 +84,14 @@ impl CpuStats {
     /// for all architectures.
     ///
     /// # Parameters
-    /// * `cpu_id` - The logical CPU ID handling the IRQ,
     /// * `irq` - The ID of the interrupt that happened.
-    pub fn add_irq(&mut self, irq: u8) {
+    pub fn add_irq(&self, irq: u8) {
         IRQ_COUNT[irq as usize].fetch_add(1, Ordering::Relaxed);
-        self.irq += 1;
+        self.irq.fetch_add(1, Ordering::Relaxed);
     }
+}
 
+impl CpuStatsData {
     pub fn to_string(&self, cpu_id: LogicalCpuId) -> String {
         format!(
             "cpu{} {} {} {} {} {}",
@@ -82,6 +102,18 @@ impl CpuStats {
             self.idle,
             self.irq,
         )
+    }
+}
+
+impl Into<CpuStatsData> for &CpuStats {
+    fn into(self) -> CpuStatsData {
+        CpuStatsData {
+            user: self.user.load(Ordering::Relaxed),
+            nice: self.nice.load(Ordering::Relaxed),
+            kernel: self.kernel.load(Ordering::Relaxed),
+            idle: self.idle.load(Ordering::Relaxed),
+            irq: self.irq.load(Ordering::Relaxed),
+        }
     }
 }
 

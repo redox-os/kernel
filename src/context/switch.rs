@@ -146,7 +146,6 @@ pub fn switch() -> SwitchResult {
         cpu_stats::add_context_switch();
         percpu
             .stats
-            .borrow_mut()
             .add_time(percpu.switch_internals.pit_ticks.get());
     }
 
@@ -295,9 +294,9 @@ pub fn switch() -> SwitchResult {
         #[cfg(feature = "sys_stat")]
         {
             if next_context.userspace {
-                percpu.stats.borrow_mut().state = cpu_stats::CpuState::User;
+                percpu.stats.set_state(cpu_stats::CpuState::User);
             } else {
-                percpu.stats.borrow_mut().state = cpu_stats::CpuState::Kernel;
+                percpu.stats.set_state(cpu_stats::CpuState::Kernel);
             }
         }
 
@@ -308,7 +307,7 @@ pub fn switch() -> SwitchResult {
 
         #[cfg(feature = "sys_stat")]
         {
-            percpu.stats.borrow_mut().state = cpu_stats::CpuState::Idle;
+            percpu.stats.set_state(cpu_stats::CpuState::Idle);
         }
 
         SwitchResult::AllContextsIdle

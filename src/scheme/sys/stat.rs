@@ -7,7 +7,7 @@ use crate::{
 };
 use alloc::{string::String, vec::Vec};
 
-/// Get the /scheme/proc/stat data as displayed to the user.
+/// Get the sys:stat data as displayed to the user.
 pub fn resource() -> Result<Vec<u8>> {
     let start_time_sec = *START.lock() / 1_000_000_000;
 
@@ -64,7 +64,7 @@ fn get_irq_stats() -> String {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    format!("intr {irq_total} {per_irq}")
+    format!("IRQs {irq_total} {per_irq}")
 }
 
 /// Format contexts stats.
