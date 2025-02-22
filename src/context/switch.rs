@@ -23,7 +23,6 @@ use crate::{
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;
 
-
 use super::ContextRef;
 
 enum UpdateResult {
@@ -145,7 +144,10 @@ pub fn switch() -> SwitchResult {
     #[cfg(feature = "sys_stat")]
     {
         cpu_stats::add_context_switch();
-        cpu_stats::add_time(percpu.cpu_id, percpu.switch_internals.pit_ticks.get());
+        percpu
+            .stats
+            .borrow_mut()
+            .add_time(percpu.switch_internals.pit_ticks.get());
     }
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
@@ -293,9 +295,9 @@ pub fn switch() -> SwitchResult {
         #[cfg(feature = "sys_stat")]
         {
             if next_context.userspace {
-                cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::User);
+                percpu.stats.borrow_mut().state = cpu_stats::CpuState::User;
             } else {
-                cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::Kernel);
+                percpu.stats.borrow_mut().state = cpu_stats::CpuState::Kernel;
             }
         }
 
@@ -305,7 +307,9 @@ pub fn switch() -> SwitchResult {
         arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
         #[cfg(feature = "sys_stat")]
-        cpu_stats::set_state(percpu.cpu_id, cpu_stats::CpuState::Idle);
+        {
+            percpu.stats.borrow_mut().state = cpu_stats::CpuState::Idle;
+        }
 
         SwitchResult::AllContextsIdle
     }

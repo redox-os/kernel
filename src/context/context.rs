@@ -7,6 +7,8 @@ use core::{
 use spin::RwLock;
 use syscall::{RtSigInfo, SigProcControl, Sigcontrol};
 
+#[cfg(feature = "sys_stat")]
+use crate::cpu_stats;
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
     common::aligned_box::AlignedBox,
@@ -18,9 +20,6 @@ use crate::{
     percpu::PercpuBlock,
     scheme::FileHandle,
 };
-#[cfg(feature = "sys_stat")]
-use crate::cpu_stats;
-
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 

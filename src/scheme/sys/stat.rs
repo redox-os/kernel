@@ -1,6 +1,7 @@
 use crate::{
     context::{contexts, ContextRef, Status},
-    cpu_stats::{get_all, get_context_switch_count, get_contexts_count, irq_counts},
+    cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
+    percpu::get_all_stats,
     syscall::error::Result,
     time::START,
 };
@@ -30,7 +31,7 @@ pub fn resource() -> Result<Vec<u8>> {
 /// Formats CPU stats.
 fn get_cpu_stats() -> String {
     let mut cpu_data = String::new();
-    let stats = get_all();
+    let stats = get_all_stats();
 
     let mut total_user = 0;
     let mut total_nice = 0;
@@ -39,7 +40,7 @@ fn get_cpu_stats() -> String {
     let mut total_io_wait = 0;
     let mut total_irq = 0;
     let mut total_soft = 0;
-    for stat in stats {
+    for (id, stat) in stats {
         total_user += stat.user;
         total_nice += stat.nice;
         total_kernel += stat.kernel;
@@ -47,7 +48,7 @@ fn get_cpu_stats() -> String {
         total_io_wait += stat.io_wait;
         total_irq += stat.irq;
         total_soft += stat.irq_soft;
-        cpu_data += &format!("{stat}\n");
+        cpu_data += &format!("{}\n", stat.to_string(id));
     }
     format!(
         "cpu  {total_user} {total_nice} {total_kernel} {total_idle} \

@@ -2,7 +2,7 @@ use crate::{arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP};
 use core::sync::atomic::Ordering;
 
 #[cfg(feature = "sys_stat")]
-use crate::cpu_stats;
+use crate::percpu::PercpuBlock;
 
 unsafe fn irq_ack() -> (u32, Option<usize>) {
     let ic = &mut IRQ_CHIP.irq_chip_list.chips[ROOT_IC_IDX.load(Ordering::Relaxed)].ic;
@@ -35,7 +35,7 @@ exception_stack!(irq_at_el1, |_stack| {
 //TODO
 pub unsafe fn trigger(irq: u32) {
     #[cfg(feature = "sys_stat")]
-    cpu_stats::add_irq(crate::cpu_id(), irq);
+    PercpuBlock::current().stats.borrow_mut().add_irq(irq);
 
     extern "C" {
         fn irq_trigger(irq: u32);

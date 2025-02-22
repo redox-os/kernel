@@ -19,7 +19,7 @@ use crate::{
 };
 
 #[cfg(feature = "sys_stat")]
-use crate::cpu_stats;
+use crate::percpu::PercpuBlock;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,7 +104,7 @@ pub unsafe fn acknowledge(irq: usize) {
 /// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
 pub unsafe fn eoi(irq: u8) {
     #[cfg(feature = "sys_stat")]
-    cpu_stats::add_irq(crate::cpu_id(), irq);
+    PercpuBlock::current().stats.borrow_mut().add_irq(irq);
 
     match irq_method() {
         IrqMethod::Pic => {
