@@ -14,9 +14,9 @@ pub fn resource() -> Result<Vec<u8>> {
     let (contexts_running, contexts_blocked) = get_contexts_stats();
     let res = format!(
         "{}{}\n\
-        ctxt: {}\n\
-        btime: {start_time_sec}\n\
-        contexts: {}\n\
+        boot_time: {start_time_sec}\n\
+        context_switches: {}\n\
+        contexts_created: {}\n\
         contexts_running: {contexts_running}\n\
         contexts_blocked: {contexts_blocked}",
         get_cpu_stats(),
