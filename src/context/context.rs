@@ -7,6 +7,8 @@ use core::{
 use spin::RwLock;
 use syscall::{RtSigInfo, SigProcControl, Sigcontrol};
 
+#[cfg(feature = "sys_stat")]
+use crate::cpu_stats;
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
     common::aligned_box::AlignedBox,
@@ -232,6 +234,8 @@ impl Context {
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
         };
+        #[cfg(feature = "sys_stat")]
+        cpu_stats::add_context();
         Ok(this)
     }
 

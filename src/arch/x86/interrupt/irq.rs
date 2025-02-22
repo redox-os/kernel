@@ -18,6 +18,9 @@ use crate::{
     time,
 };
 
+#[cfg(feature = "sys_stat")]
+use crate::percpu::PercpuBlock;
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IrqMethod {
@@ -100,6 +103,9 @@ pub unsafe fn acknowledge(irq: usize) {
 
 /// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
 pub unsafe fn eoi(irq: u8) {
+    #[cfg(feature = "sys_stat")]
+    PercpuBlock::current().stats.add_irq(irq);
+
     match irq_method() {
         IrqMethod::Pic => {
             if irq < 16 {
