@@ -1,6 +1,7 @@
 use syscall::dirent::Buffer;
 
 use crate::{
+    context::memory::PageSpan,
     memory::PAGE_SIZE,
     paging::{Page, VirtualAddress},
 };
@@ -220,15 +221,14 @@ fn is_kernel_mem(slice: &[u8]) -> bool {
 /// - the length is not page-aligned,
 /// - the region is empty (EINVAL), or
 /// - any byte in the region exceeds USER_END_OFFSET (EFAULT).
-// TODO: Return PageSpan
-pub fn validate_region(address: usize, size: usize) -> Result<(Page, usize)> {
+pub fn validate_region(address: usize, size: usize) -> Result<PageSpan> {
     if address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || size == 0 {
         return Err(Error::new(EINVAL));
     }
     if address.saturating_add(size) > crate::USER_END_OFFSET {
         return Err(Error::new(EFAULT));
     }
-    Ok((
+    Ok(PageSpan::new(
         Page::containing_address(VirtualAddress::new(address)),
         size / PAGE_SIZE,
     ))
