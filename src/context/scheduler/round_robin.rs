@@ -1,130 +1,27 @@
 ///! This module provides a context-switching mechanism that utilizes a simple round-robin scheduler.
 ///! The scheduler iterates over available contexts, selecting the next context to run, while
 ///! handling process states and synchronization.
-use core::{
-    cell::{Cell, RefCell},
-    mem,
-    ops::Bound,
-    sync::atomic::Ordering,
-};
+use core::{mem, ops::Bound, sync::atomic::Ordering};
 
 use alloc::sync::Arc;
-use spinning_top::{guard::ArcRwSpinlockWriteGuard, RwSpinlock};
+use spinning_top::guard::ArcRwSpinlockWriteGuard;
 use syscall::PtraceFlags;
 
 use crate::{
     context::{arch, contexts, Context},
-    cpu_set::LogicalCpuId,
     interrupt,
     percpu::PercpuBlock,
-    ptrace, time,
+    ptrace,
 };
 
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;
 
-use super::ContextRef;
-
-enum UpdateResult {
-    CanSwitch,
-    Skip,
-}
-
-/// Determines if a given context is eligible to be scheduled on a given CPU (in
-/// principle, the current CPU).
-///
-/// # Safety
-/// This function is unsafe because it modifies the `context`'s state directly without synchronization.
-///
-/// # Parameters
-/// - `context`: The context (process/thread) to be checked.
-/// - `cpu_id`: The logical ID of the CPU on which the context is being scheduled.
-///
-/// # Returns
-/// - `UpdateResult::CanSwitch`: If the context can be switched to.
-/// - `UpdateResult::Skip`: If the context should be skipped (e.g., it's running on another CPU).
-unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> UpdateResult {
-    // Ignore contexts that are already running.
-    if context.running {
-        return UpdateResult::Skip;
-    }
-
-    // Ignore contexts assigned to other CPUs.
-    if !context.sched_affinity.contains(cpu_id) {
-        return UpdateResult::Skip;
-    }
-
-    //TODO: HACK TO WORKAROUND HANGS BY PINNING TO ONE CPU
-    if !context.cpu_id.map_or(true, |x| x == cpu_id) {
-        return UpdateResult::Skip;
-    }
-
-    // If context is soft-blocked and has a wake-up time, check if it should wake up.
-    if context.status.is_soft_blocked() {
-        if let Some(wake) = context.wake {
-            let current = time::monotonic();
-            if current >= wake {
-                context.wake = None;
-                context.unblock_no_ipi();
-            }
-        }
-    }
-
-    // If the context is runnable, indicate it can be switched to.
-    if context.status.is_runnable() {
-        UpdateResult::CanSwitch
-    } else {
-        UpdateResult::Skip
-    }
-}
-
-struct SwitchResultInner {
-    _prev_guard: ArcRwSpinlockWriteGuard<Context>,
-    _next_guard: ArcRwSpinlockWriteGuard<Context>,
-}
-
-/// Tick function to update PIT ticks and trigger a context switch if necessary.
-///
-/// Called periodically, this function increments a per-CPU tick counter and performs a context
-/// switch if the counter reaches a set threshold (e.g., every 3 ticks).
-///
-/// The function also calls the signal handler after switching contexts.
-pub fn tick() {
-    let ticks_cell = &PercpuBlock::current().switch_internals.pit_ticks;
-
-    let new_ticks = ticks_cell.get() + 1;
-    ticks_cell.set(new_ticks);
-
-    // Trigger a context switch after every 3 ticks (approx. 6.75 ms).
-    if new_ticks >= 3 {
-        switch();
-        crate::context::signal::signal_handler();
-    }
-}
-
-/// Finishes the context switch by clearing any temporary data and resetting the lock.
-///
-/// This function is called after a context switch is completed to perform cleanup, including
-/// clearing the switch result data and releasing the context switch lock.
-///
-/// # Safety
-/// This function involves unsafe operations such as resetting state and releasing locks.
-pub unsafe extern "C" fn switch_finish_hook() {
-    if let Some(switch_result) = PercpuBlock::current().switch_internals.switch_result.take() {
-        drop(switch_result);
-    } else {
-        // TODO: unreachable_unchecked()?
-        crate::arch::stop::emergency_reset();
-    }
-    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-    crate::percpu::switch_arch_hook();
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SwitchResult {
-    Switched,
-    AllContextsIdle,
-}
+use super::{
+    super::ContextRef,
+    context_switch::{SwitchResult, SwitchResultInner, UpdateResult},
+    support::update_runnable,
+};
 
 /// Selects and switches to the next context using a round-robin scheduler.
 ///
@@ -311,74 +208,5 @@ pub fn switch() -> SwitchResult {
         }
 
         SwitchResult::AllContextsIdle
-    }
-}
-
-/// Holds per-CPU state necessary for context switching.
-///
-/// This struct contains information such as the idle context, current context, and PIT tick counts,
-/// as well as fields required for managing ptrace sessions and signals.
-#[derive(Default)]
-pub struct ContextSwitchPercpu {
-    switch_result: Cell<Option<SwitchResultInner>>,
-    pit_ticks: Cell<usize>,
-
-    current_ctxt: RefCell<Option<Arc<RwSpinlock<Context>>>>,
-
-    /// The idle process.
-    idle_ctxt: RefCell<Option<Arc<RwSpinlock<Context>>>>,
-
-    pub(crate) being_sigkilled: Cell<bool>,
-}
-
-impl ContextSwitchPercpu {
-    /// Applies a function to the current context, allowing controlled access.
-    ///
-    /// # Parameters
-    /// - `f`: A closure that receives a reference to the current context and returns a value.
-    ///
-    /// # Returns
-    /// The result of applying `f` to the current context.
-    pub fn with_context<T>(&self, f: impl FnOnce(&Arc<RwSpinlock<Context>>) -> T) -> T {
-        f(&*self
-            .current_ctxt
-            .borrow()
-            .as_ref()
-            .expect("not inside of context"))
-    }
-
-    /// Sets the current context to a new value.
-    ///
-    /// # Safety
-    /// This function is unsafe as it modifies the context state directly.
-    ///
-    /// # Parameters
-    /// - `new`: The new context to be set as the current context.
-    pub unsafe fn set_current_context(&self, new: Arc<RwSpinlock<Context>>) {
-        *self.current_ctxt.borrow_mut() = Some(new);
-    }
-
-    /// Sets the idle context to a new value.
-    ///
-    /// # Safety
-    /// This function is unsafe as it modifies the idle context state directly.
-    ///
-    /// # Parameters
-    /// - `new`: The new context to be set as the idle context.
-    pub unsafe fn set_idle_context(&self, new: Arc<RwSpinlock<Context>>) {
-        *self.idle_ctxt.borrow_mut() = Some(new);
-    }
-
-    /// Retrieves the current idle context.
-    ///
-    /// # Returns
-    /// A reference to the idle context.
-    pub fn idle_context(&self) -> Arc<RwSpinlock<Context>> {
-        Arc::clone(
-            self.idle_ctxt
-                .borrow()
-                .as_ref()
-                .expect("no idle context present"),
-        )
     }
 }

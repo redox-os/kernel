@@ -1,3 +1,5 @@
 target
 /config.toml
 .gitlab-ci-local/
+flake.nix
+flake.lock

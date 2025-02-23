@@ -64,10 +64,7 @@ extern crate bitflags;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::{
-    context::{
-        process::{new_process, ProcessInfo, INIT},
-        switch::SwitchResult,
-    },
+    context::process::{new_process, ProcessInfo, INIT},
     scheme::SchemeNamespace,
 };
 
@@ -125,6 +122,7 @@ mod externs;
 mod log;
 use ::log::info;
 use alloc::sync::Arc;
+use context::scheduler::SwitchResult;
 use spinning_top::RwSpinlock;
 
 /// Memory management

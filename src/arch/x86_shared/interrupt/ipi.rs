@@ -20,5 +20,5 @@ interrupt!(pit, || {
     the_local_apic().eoi();
 
     // Switch after a sufficient amount of time since the last switch.
-    context::switch::tick();
+    context::scheduler::tick();
 });

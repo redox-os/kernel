@@ -9,5 +9,8 @@ extraEnv = ["RUST_TARGET_PATH=targets"]
 # target = "aarch64-unknown-kernel"
 
 [[language-server.rust-analyzer.config.check]]
-targets = ["x86_64-unknown-kernel", "i686-unknown-kernel", "aarch64-unknown-kernel"]
-
+targets = [
+  "x86_64-unknown-kernel",
+  "i686-unknown-kernel",
+  "aarch64-unknown-kernel",
+]

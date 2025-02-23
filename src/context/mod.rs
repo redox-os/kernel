@@ -23,7 +23,7 @@ use self::{
 };
 pub use self::{
     context::{BorrowedHtBuf, Context, Status, WaitpidKey},
-    switch::switch,
+    scheduler::switch,
 };
 
 #[cfg(target_arch = "aarch64")]
@@ -46,7 +46,7 @@ mod arch;
 pub mod context;
 
 /// Context switch function
-pub mod switch;
+pub mod scheduler;
 
 /// File struct - defines a scheme and a file number
 pub mod file;
@@ -63,7 +63,7 @@ pub mod signal;
 /// Timeout handling
 pub mod timeout;
 
-pub use self::switch::switch_finish_hook;
+pub use self::scheduler::switch_finish_hook;
 
 /// Maximum context files
 pub const CONTEXT_MAX_FILES: usize = 65_536;
