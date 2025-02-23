@@ -417,6 +417,7 @@ pub struct PageInfo {
 }
 
 enum PageInfoKind<'info> {
+    #[expect(dead_code)]
     Used(PageInfoUsed<'info>),
     Free(PageInfoFree<'info>),
 }

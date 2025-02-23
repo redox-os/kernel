@@ -6,6 +6,11 @@ mod round_robin;
 #[cfg(feature = "scheduler_round_robin")]
 pub use round_robin::*;
 
+#[cfg(feature = "scheduler_eevdf")]
+mod eevdf;
+#[cfg(feature = "scheduler_eevdf")]
+pub use eevdf::*;
+
 pub use context_switch::{ContextSwitchPercpu, SwitchResult};
 pub use support::{switch_finish_hook, tick};
 

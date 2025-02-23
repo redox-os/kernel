@@ -29,6 +29,12 @@ use super::{
     process::{Process, ProcessId},
 };
 
+#[cfg(feature = "scheduler_eevdf")]
+use super::{
+    scheduler::{NodeHandleRef, RequestTimings},
+    ContextRef,
+};
+
 /// The status of a context - used for scheduling
 /// See `syscall::process::waitpid` and the `sync` module for examples of usage
 #[derive(Clone, Debug)]
@@ -59,7 +65,10 @@ impl Status {
 
 #[derive(Clone, Debug)]
 pub enum HardBlockedReason {
-    AwaitingMmap { file_ref: GrantFileRef },
+    #[expect(dead_code)]
+    AwaitingMmap {
+        file_ref: GrantFileRef,
+    },
     // TODO: PageFaultOom?
     NotYetStarted,
     PtraceStop,
@@ -183,6 +192,16 @@ pub struct Context {
     pub userspace: bool,
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
+
+    #[cfg(feature = "scheduler_eevdf")]
+    pub eevdf_data: EevdfData,
+}
+
+#[cfg(feature = "scheduler_eevdf")]
+#[derive(Default, Debug)]
+pub struct EevdfData {
+    pub node: Option<NodeHandleRef<ContextRef>>,
+    pub timings: RequestTimings,
 }
 
 #[derive(Debug)]
@@ -233,6 +252,9 @@ impl Context {
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
+
+            #[cfg(feature = "scheduler_eevdf")]
+            eevdf_data: EevdfData::default(),
         };
         #[cfg(feature = "sys_stat")]
         cpu_stats::add_context();

@@ -163,6 +163,12 @@ impl PartialEq for ContextRef {
 }
 impl Eq for ContextRef {}
 
+impl Clone for ContextRef {
+    fn clone(&self) -> Self {
+        ContextRef(Arc::clone(&self.0))
+    }
+}
+
 /// Spawn a context from a function.
 pub fn spawn(
     userspace_allowed: bool,

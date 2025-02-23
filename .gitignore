@@ -3,3 +3,9 @@ target
 .gitlab-ci-local/
 flake.nix
 flake.lock
+.helix/snippets
+.helix/languages.toml
+bacon.toml
+.config/nextest.toml
+.direnv/
+.envrc
