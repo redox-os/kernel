@@ -68,7 +68,7 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
     }
 
     if was_interrupted {
-        return Err(Error::new(EINTR));
+        Err(Error::new(EINTR))
     } else {
         Ok(())
     }
