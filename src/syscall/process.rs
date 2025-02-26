@@ -69,17 +69,6 @@ pub fn exit_this_context() -> ! {
     unreachable!();
 }
 
-pub fn wait_for_exit(context_lock: Arc<RwSpinlock<Context>>) {
-    {
-        let mut ctxt = context_lock.write();
-        ctxt.status = context::Status::Runnable;
-        ctxt.being_sigkilled = true;
-    }
-    while !matches!(context_lock.read().status, context::Status::Dead) {
-        context::switch();
-    }
-}
-
 pub fn send_signal(
     context: Arc<RwLock<Context>>,
     sig: usize,

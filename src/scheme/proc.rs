@@ -990,31 +990,31 @@ impl ContextHandle {
                 let is_current = context::is_current(&context);
 
                 if is_current {
+                    // The following functionality simplifies the cleanup step when detached threads
+                    // terminate.
+                    if let Some(post_unmap) = args.next() {
+                        let base = post_unmap?;
+                        let size = args.next().ok_or(Error::new(EINVAL))??;
+
+                        if size == 0 {
+                            return Ok(3 * mem::size_of::<usize>());
+                        }
+
+                        let addrsp = Arc::clone(context.read().addr_space()?);
+                        let res = addrsp.munmap(
+                            PageSpan::validate_nonempty(VirtualAddress::new(base), size)
+                                .ok_or(Error::new(EINVAL))?,
+                            false,
+                        )?;
+                        for r in res {
+                            let _ = r.unmap();
+                        }
+                    }
                     crate::syscall::exit_this_context();
                 } else {
-                    crate::syscall::wait_for_exit(Arc::clone(&context));
-                }
-                // The following functionality simplifies the cleanup step when detached threads
-                // terminate.
-                if let Some(post_unmap) = args.next() {
-                    let base = post_unmap?;
-                    let size = args.next().ok_or(Error::new(EINVAL))??;
-
-                    if size == 0 {
-                        return Ok(3 * mem::size_of::<usize>());
-                    }
-
-                    let addrsp = Arc::clone(context.read().addr_space()?);
-                    let res = addrsp.munmap(
-                        PageSpan::validate_nonempty(VirtualAddress::new(base), size)
-                            .ok_or(Error::new(EINVAL))?,
-                        false,
-                    )?;
-                    for r in res {
-                        let _ = r.unmap();
-                    }
-                    Ok(3 * mem::size_of::<usize>())
-                } else {
+                    let mut ctxt = context.write();
+                    ctxt.status = context::Status::Runnable;
+                    ctxt.being_sigkilled = true;
                     Ok(mem::size_of::<usize>())
                 }
             }
