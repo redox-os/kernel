@@ -48,9 +48,7 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
     // reason?
     context::switch();
 
-    if current_context.write().wake.take().is_some() {
-        return Err(Error::new(EINTR));
-    }
+    let was_interrupted = current_context.write().wake.take().is_some();
 
     if let Some(rem_buf) = rem_buf_opt {
         let current = time::monotonic();
@@ -69,7 +67,11 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
         })?;
     }
 
-    Ok(())
+    if was_interrupted {
+        Err(Error::new(EINTR))
+    } else {
+        Ok(())
+    }
 }
 
 pub fn sched_yield() -> Result<()> {
