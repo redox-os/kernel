@@ -15,7 +15,7 @@ Redox OS Microkernel
 Use this command:
 
 ```sh
-cargo doc --open --target x86_64-unknown-none`.
+cargo doc --open --target x86_64-unknown-none
 ```
 
 ## Debugging
