@@ -17,6 +17,7 @@ pub struct UserSlice<const READ: bool, const WRITE: bool> {
 }
 pub type UserSliceRo = UserSlice<true, false>;
 pub type UserSliceWo = UserSlice<false, true>;
+pub type UserSliceRw = UserSlice<true, true>;
 
 impl<const READ: bool, const WRITE: bool> UserSlice<READ, WRITE> {
     pub fn empty() -> Self {
@@ -204,6 +205,11 @@ impl UserSliceRo {
 }
 impl UserSliceWo {
     pub fn wo(base: usize, size: usize) -> Result<Self> {
+        Self::new(base, size)
+    }
+}
+impl UserSliceRw {
+    pub fn rw(base: usize, size: usize) -> Result<Self> {
         Self::new(base, size)
     }
 }

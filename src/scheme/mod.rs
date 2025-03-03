@@ -13,7 +13,7 @@ use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::{EventFlags, MunmapFlags, SendFdFlags};
+use syscall::{CallFlags, EventFlags, MunmapFlags, SendFdFlags};
 
 use crate::{
     context::{
@@ -22,7 +22,7 @@ use crate::{
     },
     syscall::{
         error::*,
-        usercopy::{UserSliceRo, UserSliceWo},
+        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -504,6 +504,15 @@ pub trait KernelScheme: Send + Sync + 'static {
     }
     fn on_close(&self, id: usize) -> Result<()> {
         self.close(id)
+    }
+    fn kcall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
     }
 }
 

@@ -6,7 +6,7 @@ extern crate syscall;
 
 use core::mem::size_of;
 
-use syscall::{dirent::DirentHeader, RtSigInfo, RwFlags, EINVAL, SIGKILL};
+use syscall::{dirent::DirentHeader, CallFlags, RtSigInfo, RwFlags, EINVAL, SIGKILL};
 
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
@@ -174,6 +174,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
             }
 
             SYS_CLOSE => close(fd).map(|()| 0),
+            SYS_CALL => call(
+                fd,
+                UserSlice::rw(c, d)?,
+                CallFlags::from_bits(e & !0xff).ok_or(Error::new(EINVAL))?,
+                UserSlice::ro(f, (e & 0xff) * 8)?,
+            ),
 
             SYS_OPEN => open(UserSlice::ro(b, c)?, d).map(FileHandle::into),
             SYS_RMDIR => rmdir(UserSlice::ro(b, c)?).map(|()| 0),
