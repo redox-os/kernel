@@ -1,5 +1,5 @@
 //! Filesystem syscalls
-use core::num::NonZeroUsize;
+use core::{mem::size_of, num::NonZeroUsize};
 
 use alloc::{sync::Arc, vec::Vec};
 use redox_path::RedoxPath;
@@ -17,7 +17,7 @@ use crate::{
     syscall::{data::Stat, error::*, flag::*},
 };
 
-use super::usercopy::{UserSlice, UserSliceRo, UserSliceWo};
+use super::usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo};
 
 pub fn file_op_generic<T>(
     fd: FileHandle,
@@ -248,6 +248,24 @@ pub fn dup2(fd: FileHandle, new_fd: FileHandle, buf: UserSliceRo) -> Result<File
             .ok_or(Error::new(EMFILE))
     }
 }
+pub fn call(
+    fd: FileHandle,
+    payload: UserSliceRw,
+    flags: CallFlags,
+    metadata: UserSliceRo,
+) -> Result<usize> {
+    let mut meta = [0_u64; 3];
+
+    // TODO: bytemuck/plain
+    let copied = metadata.copy_common_bytes_to_slice(unsafe {
+        core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+    })?;
+
+    file_op_generic(fd, |scheme, number| {
+        scheme.kcall(number, payload, flags, &meta[..copied / 8])
+    })
+}
+
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
     let requested_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
 
