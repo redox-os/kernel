@@ -1,5 +1,5 @@
 use crate::{
-    context,
+    context::{self, scheduler::context_leave},
     syscall::{
         data::TimeSpec,
         error::*,
@@ -42,6 +42,12 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 
         context.wake = Some(end);
         context.block("nanosleep");
+        if cfg!(feature = "scheduler_eevdf") {
+            context_leave(
+                &mut context,
+                context::ContextRef(alloc::sync::Arc::clone(&current_context)),
+            );
+        }
     }
 
     // TODO: The previous wakeup reason was most likely signals, but is there any other possible

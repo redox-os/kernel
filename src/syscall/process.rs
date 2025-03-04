@@ -11,6 +11,7 @@ use spin::RwLock;
 use crate::context::{
     memory::{AddrSpace, Grant, PageSpan},
     process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
+    scheduler::{context_join, context_leave},
     Context, ContextRef, WaitpidKey,
 };
 
@@ -56,16 +57,31 @@ pub fn exit_this_context() -> ! {
     drop(addrspace_opt);
     // TODO: Should status == Status::HardBlocked be handled differently?
     context_lock.write().status = context::Status::Dead;
+
+    #[cfg(feature = "scheduler_eevdf")]
+    context_leave(
+        &mut context_lock.write(),
+        ContextRef(Arc::clone(&context_lock)),
+    );
+
     let _ = context::contexts_mut().remove(&ContextRef(context_lock));
+
     context::switch();
     unreachable!();
 }
 
 pub fn wait_for_exit(context_lock: Arc<RwSpinlock<Context>>) {
+    log::trace!("waiting for exit for context {:?}", context_lock.read().pid);
+    let previous_status = context_lock.read().status.clone();
     {
         let mut ctxt = context_lock.write();
         ctxt.status = context::Status::Runnable;
         ctxt.being_sigkilled = true;
+        if cfg!(feature = "scheduler_eevdf")
+            && !matches!(previous_status, context::Status::Runnable)
+        {
+            context_join(&mut ctxt, ContextRef(Arc::clone(&context_lock)));
+        }
     }
     while !matches!(context_lock.read().status, context::Status::Dead) {
         context::switch();
@@ -269,13 +285,13 @@ pub fn send_signal(
                 drop(context_guard);
 
                 // TODO: which threads should become Runnable?
-                for thread in process_lock
+                for thread_lock in process_lock
                     .read()
                     .threads
                     .iter()
                     .filter_map(|t| t.upgrade())
                 {
-                    let mut thread = thread.write();
+                    let mut thread = thread_lock.write();
                     if let Some((tctl, _, _)) = thread.sigcontrol() {
                         tctl.word[0].fetch_and(
                             !(sig_bit(SIGSTOP)
@@ -285,7 +301,10 @@ pub fn send_signal(
                             Ordering::Relaxed,
                         );
                     }
-                    thread.unblock();
+                    let unblocked = thread.unblock();
+                    if cfg!(feature = "scheduler_eevdf") && unblocked {
+                        context_join(&mut thread, ContextRef(Arc::clone(&context_lock)));
+                    }
                 }
             }
             // POSIX XSI allows but does not reqiure SIGCHLD to be sent when SIGCONT occurs.
@@ -302,7 +321,9 @@ pub fn send_signal(
                     .sigcontrol()
                     .map_or(false, |(_, proc, _)| proc.signal_will_stop(sig)))
         {
+            log::info!("setting status to blocked (pid = {:?})", context_guard.pid);
             context_guard.status = context::Status::Blocked;
+            context_leave(&mut context_guard, ContextRef(Arc::clone(&context_lock)));
             drop(context_guard);
             process_lock.write().status = ProcessStatus::Stopped(sig);
 
@@ -332,7 +353,10 @@ pub fn send_signal(
         }
         if sig == SIGKILL {
             context_guard.being_sigkilled = true;
-            context_guard.unblock();
+            let unblocked = context_guard.unblock();
+            if cfg!(feature = "scheduler_eevdf") && unblocked {
+                context_join(&mut context_guard, ContextRef(Arc::clone(&context_lock)));
+            }
             drop(context_guard);
             *killed_self |= is_self;
 
@@ -348,7 +372,10 @@ pub fn send_signal(
 
                     let _was_new = tctl.word[sig_group].fetch_or(sig_bit(sig), Ordering::Release);
                     if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0 {
-                        context_guard.unblock();
+                        let unblocked = context_guard.unblock();
+                        if cfg!(feature = "scheduler_eevdf") && unblocked {
+                            context_join(&mut context_guard, ContextRef(Arc::clone(&context_lock)));
+                        }
                         *killed_self |= is_self;
                     }
                 }
@@ -395,14 +422,17 @@ pub fn send_signal(
                     pctl.pending.fetch_or(sig_bit(sig), Ordering::Release);
                     drop(context_guard);
 
-                    for thread in proc.read().threads.iter().filter_map(|t| t.upgrade()) {
-                        let mut thread = thread.write();
+                    for thread_lock in proc.read().threads.iter().filter_map(|t| t.upgrade()) {
+                        let mut thread = thread_lock.write();
                         let Some((tctl, _, _)) = thread.sigcontrol() else {
                             continue;
                         };
                         if (tctl.word[sig_group].load(Ordering::Relaxed) >> 32) & sig_bit(sig) != 0
                         {
-                            thread.unblock();
+                            let unblocked = thread.unblock();
+                            if cfg!(feature = "scheduler_eevdf") && unblocked {
+                                context_join(&mut thread, ContextRef(Arc::clone(&thread_lock)));
+                            }
                             *killed_self |= is_self;
                             break;
                         }

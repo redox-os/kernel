@@ -9,26 +9,39 @@ use spin::RwLock;
 
 use crate::cpu_set::{parts, LogicalCpuId, LogicalCpuSet, RawMask};
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+use super::virtual_time::VirtualTime;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RequestTimings {
-    pub eligible: u64,
-    pub deadline: u64,
+    pub eligible: VirtualTime,
+    pub deadline: VirtualTime,
     pub affinity: RawMask,
 }
 
+#[cfg(test)]
 impl RequestTimings {
-    pub fn new(eligible: u64, deadline: u64) -> Self {
+    pub fn new(eligible: f64, deadline: f64) -> Self {
         Self {
-            eligible,
-            deadline,
+            eligible: VirtualTime::new(eligible),
+            deadline: VirtualTime::new(deadline),
             affinity: LogicalCpuSet::all().to_raw(),
         }
     }
 
-    pub fn new_with_affinity(eligible: u64, deadline: u64, affinity: &LogicalCpuSet) -> Self {
+    pub fn new_with_affinity(eligible: f64, deadline: f64, affinity: [usize; 2]) -> Self {
         Self {
-            affinity: affinity.to_raw(),
+            affinity,
             ..Self::new(eligible, deadline)
+        }
+    }
+}
+
+impl Default for RequestTimings {
+    fn default() -> Self {
+        Self {
+            eligible: VirtualTime::new(0.0),
+            deadline: VirtualTime::new(0.0),
+            affinity: LogicalCpuSet::all().to_raw(),
         }
     }
 }
@@ -49,12 +62,12 @@ impl Ord for RequestTimings {
 }
 
 pub struct RequestNode<T> {
-    pub data: Vec<T>,
+    pub contexts: Vec<T>,
     timings: RequestTimings,
     height: u8,
     left: Option<NodeHandle<T>>,
     right: Option<NodeHandle<T>>,
-    min_deadline: Vec<(RawMask, u64)>,
+    min_deadline: Vec<(RawMask, VirtualTime)>,
 }
 pub type NodeHandle<T> = Arc<RwLock<RequestNode<T>>>;
 pub type NodeHandleRef<T> = Weak<RwLock<RequestNode<T>>>;
@@ -62,7 +75,7 @@ pub type NodeHandleRef<T> = Weak<RwLock<RequestNode<T>>>;
 impl<T> RequestNode<T> {
     pub fn new(data: T, timings: RequestTimings) -> NodeHandle<T> {
         Arc::new(RwLock::new(Self {
-            data: vec![data],
+            contexts: vec![data],
             timings,
             height: 1,
             left: None,
@@ -84,15 +97,17 @@ impl<T> Debug for RequestNode<T> {
 
 pub trait NodeExt<T> {
     fn affinity(&self) -> Option<RawMask>;
-    fn append_data(&self, data: T);
+    fn append_context(&self, data: T);
     fn balance(&self) -> i8;
-    fn data_len(&self) -> usize;
-    fn deadline(&self) -> Option<u64>;
-    fn eligible(&self) -> Option<u64>;
+    fn deadline(&self) -> Option<VirtualTime>;
+    fn eligible(&self) -> Option<VirtualTime>;
     fn height(&self) -> u8;
-    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: u64) -> bool;
+    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: VirtualTime) -> bool;
     fn left(&self) -> Option<NodeHandle<T>>;
-    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<u64>;
+    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<VirtualTime>;
+    fn min_eligible(&self) -> Option<VirtualTime>;
+    fn nb_nodes(&self) -> u64;
+    fn num_contexts(&self) -> usize;
     fn right(&self) -> Option<NodeHandle<T>>;
     fn set_left(&self, left: Option<NodeHandle<T>>);
     fn set_right(&self, right: Option<NodeHandle<T>>);
@@ -108,8 +123,8 @@ impl<T> NodeExt<T> for &NodeHandle<T> {
         Some(self.read().timings.affinity)
     }
 
-    fn append_data(&self, data: T) {
-        self.write().data.push(data);
+    fn append_context(&self, data: T) {
+        self.write().contexts.push(data);
     }
 
     fn balance(&self) -> i8 {
@@ -131,15 +146,11 @@ impl<T> NodeExt<T> for &NodeHandle<T> {
         }
     }
 
-    fn data_len(&self) -> usize {
-        self.read().data.len()
-    }
-
-    fn deadline(&self) -> Option<u64> {
+    fn deadline(&self) -> Option<VirtualTime> {
         Some(self.read().timings.deadline)
     }
 
-    fn eligible(&self) -> Option<u64> {
+    fn eligible(&self) -> Option<VirtualTime> {
         Some(self.read().timings.eligible)
     }
 
@@ -147,7 +158,7 @@ impl<T> NodeExt<T> for &NodeHandle<T> {
         self.read().height
     }
 
-    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: u64) -> bool {
+    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: VirtualTime) -> bool {
         let (word, bit) = parts(cpu_id);
         let affinity = self.read().timings.affinity;
         affinity[word] & (1 << bit) != 0 && current_time >= self.read().timings.eligible
@@ -157,15 +168,58 @@ impl<T> NodeExt<T> for &NodeHandle<T> {
         self.read().left.clone()
     }
 
-    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<u64> {
-        let mut res = u64::MAX;
+    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<VirtualTime> {
+        let mut res = VirtualTime::new(f64::MAX);
         let (word, bit) = parts(cpu_id);
-        for (affinity, min_deadline) in self.write().min_deadline.iter_mut() {
+        for (affinity, min_deadline) in self.write().min_deadline.iter() {
             if affinity[word] & (1 << bit) != 0 && *min_deadline < res {
                 res = *min_deadline;
             }
         }
         Some(res)
+    }
+
+    fn min_eligible(&self) -> Option<VirtualTime> {
+        Some(
+            match (
+                self.read().timings.eligible,
+                self.left().min_eligible(),
+                self.right().min_eligible(),
+            ) {
+                (s, None, None) => s,
+                (s, Some(l), Some(r)) => {
+                    if s < l && s < r {
+                        s
+                    } else if l < r {
+                        l
+                    } else {
+                        r
+                    }
+                }
+                (s, None, Some(r)) => {
+                    if s < r {
+                        s
+                    } else {
+                        r
+                    }
+                }
+                (s, Some(l), None) => {
+                    if s < l {
+                        s
+                    } else {
+                        l
+                    }
+                }
+            },
+        )
+    }
+
+    fn nb_nodes(&self) -> u64 {
+        1 + self.left().nb_nodes() + self.right().nb_nodes()
+    }
+
+    fn num_contexts(&self) -> usize {
+        self.read().contexts.len()
     }
 
     fn right(&self) -> Option<NodeHandle<T>> {
@@ -181,7 +235,7 @@ impl<T> NodeExt<T> for &NodeHandle<T> {
     }
 
     fn shrink_data(&self) {
-        self.write().data.remove(0);
+        self.write().contexts.remove(0);
     }
 
     fn timings(&self) -> Option<RequestTimings> {
@@ -191,17 +245,18 @@ impl<T> NodeExt<T> for &NodeHandle<T> {
     fn to_string(&self, depth: usize) -> String {
         let tab = vec!["  "; depth + 1].join("");
         let mut res = format!(
-            "Request: eligible: {}, deadline: {}, height: {} (min deadline: {})",
+            "Request: eligible: {}, deadline: {}, height: {}, contexts: {} (min deadline: {})",
             self.eligible().unwrap_or_default(),
             self.deadline().unwrap_or_default(),
             self.height(),
+            self.num_contexts(),
             self.read()
                 .min_deadline
                 .iter()
                 .map(|(set, deadline)| {
                     let mut affinity = LogicalCpuSet::empty();
                     affinity.override_from(set);
-                    format!("{} => {deadline}", affinity.to_string())
+                    format!("{affinity:?} => {deadline}")
                 })
                 .collect::<Vec<_>>()
                 .join(", "),
@@ -263,9 +318,9 @@ impl<T> NodeExt<T> for Option<&NodeHandle<T>> {
         self.and_then(|node| node.affinity())
     }
 
-    fn append_data(&self, data: T) {
+    fn append_context(&self, data: T) {
         if let Some(node) = self {
-            node.append_data(data);
+            node.append_context(data);
         }
     }
 
@@ -273,15 +328,11 @@ impl<T> NodeExt<T> for Option<&NodeHandle<T>> {
         self.map_or(0, |node| node.balance())
     }
 
-    fn data_len(&self) -> usize {
-        self.map_or(0, |node| node.data_len())
-    }
-
-    fn deadline(&self) -> Option<u64> {
+    fn deadline(&self) -> Option<VirtualTime> {
         self.and_then(|node| node.deadline())
     }
 
-    fn eligible(&self) -> Option<u64> {
+    fn eligible(&self) -> Option<VirtualTime> {
         self.and_then(|node| node.eligible())
     }
 
@@ -289,7 +340,7 @@ impl<T> NodeExt<T> for Option<&NodeHandle<T>> {
         self.map_or(0, |node| node.height())
     }
 
-    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: u64) -> bool {
+    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: VirtualTime) -> bool {
         self.map_or(false, |node| node.is_eligible(cpu_id, current_time))
     }
 
@@ -297,8 +348,20 @@ impl<T> NodeExt<T> for Option<&NodeHandle<T>> {
         self.and_then(|node| node.left())
     }
 
-    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<u64> {
+    fn min_eligible(&self) -> Option<VirtualTime> {
+        self.and_then(|node| node.min_eligible())
+    }
+
+    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<VirtualTime> {
         self.and_then(|node| node.min_deadline(cpu_id))
+    }
+
+    fn nb_nodes(&self) -> u64 {
+        self.map_or(0, |node| node.nb_nodes())
+    }
+
+    fn num_contexts(&self) -> usize {
+        self.map_or(0, |node| node.num_contexts())
     }
 
     fn right(&self) -> Option<NodeHandle<T>> {
@@ -349,9 +412,9 @@ impl<T> NodeExt<T> for Option<NodeHandle<T>> {
         self.as_ref().and_then(|node| node.affinity())
     }
 
-    fn append_data(&self, data: T) {
+    fn append_context(&self, data: T) {
         if let Some(node) = self {
-            node.append_data(data);
+            node.append_context(data);
         }
     }
 
@@ -359,15 +422,11 @@ impl<T> NodeExt<T> for Option<NodeHandle<T>> {
         self.as_ref().map_or(0, |node| node.balance())
     }
 
-    fn data_len(&self) -> usize {
-        self.as_ref().map_or(0, |node| node.data_len())
-    }
-
-    fn deadline(&self) -> Option<u64> {
+    fn deadline(&self) -> Option<VirtualTime> {
         self.as_ref().and_then(|node| node.deadline())
     }
 
-    fn eligible(&self) -> Option<u64> {
+    fn eligible(&self) -> Option<VirtualTime> {
         self.as_ref().and_then(|node| node.eligible())
     }
 
@@ -375,7 +434,7 @@ impl<T> NodeExt<T> for Option<NodeHandle<T>> {
         self.as_ref().map_or(0, |node| node.height())
     }
 
-    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: u64) -> bool {
+    fn is_eligible(&self, cpu_id: LogicalCpuId, current_time: VirtualTime) -> bool {
         self.as_ref()
             .map_or(false, |node| node.is_eligible(cpu_id, current_time))
     }
@@ -384,8 +443,20 @@ impl<T> NodeExt<T> for Option<NodeHandle<T>> {
         self.as_ref().and_then(|node| node.left())
     }
 
-    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<u64> {
+    fn min_eligible(&self) -> Option<VirtualTime> {
+        self.as_ref().and_then(|node| node.min_eligible())
+    }
+
+    fn min_deadline(&self, cpu_id: LogicalCpuId) -> Option<VirtualTime> {
         self.as_ref().and_then(|node| node.min_deadline(cpu_id))
+    }
+
+    fn nb_nodes(&self) -> u64 {
+        self.as_ref().map_or(0, |node| node.nb_nodes())
+    }
+
+    fn num_contexts(&self) -> usize {
+        self.as_ref().map_or(0, |node| node.num_contexts())
     }
 
     fn right(&self) -> Option<NodeHandle<T>> {
@@ -434,8 +505,8 @@ impl<T> NodeExt<T> for Option<NodeHandle<T>> {
 
 pub fn swap_nodes<T>(node1: &NodeHandle<T>, node2: &NodeHandle<T>) {
     swap(
-        &mut node1.as_ref().write().data,
-        &mut node2.as_ref().write().data,
+        &mut node1.as_ref().write().contexts,
+        &mut node2.as_ref().write().contexts,
     );
     swap(
         &mut node1.as_ref().write().timings,

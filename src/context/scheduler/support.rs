@@ -60,19 +60,21 @@ pub unsafe extern "C" fn switch_finish_hook() {
 /// - `UpdateResult::CanSwitch`: If the context can be switched to.
 /// - `UpdateResult::Skip`: If the context should be skipped (e.g., it's running on another CPU).
 pub unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> UpdateResult {
-    // Ignore contexts that are already running.
-    if context.running {
-        return UpdateResult::Skip;
-    }
+    if !cfg!(feature = "scheduler_eevdf") {
+        // Ignore contexts that are already running.
+        if context.running {
+            return UpdateResult::Skip;
+        }
 
-    // Ignore contexts assigned to other CPUs.
-    if !context.sched_affinity.contains(cpu_id) {
-        return UpdateResult::Skip;
-    }
+        // Ignore contexts assigned to other CPUs.
+        if !context.sched_affinity.contains(cpu_id) {
+            return UpdateResult::Skip;
+        }
 
-    //TODO: HACK TO WORKAROUND HANGS BY PINNING TO ONE CPU
-    if !context.cpu_id.map_or(true, |x| x == cpu_id) {
-        return UpdateResult::Skip;
+        //TODO: HACK TO WORKAROUND HANGS BY PINNING TO ONE CPU
+        if !context.cpu_id.map_or(true, |x| x == cpu_id) {
+            return UpdateResult::Skip;
+        }
     }
 
     // If context is soft-blocked and has a wake-up time, check if it should wake up.
@@ -80,6 +82,10 @@ pub unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Up
         if let Some(wake) = context.wake {
             let current = time::monotonic();
             if current >= wake {
+                if context.pid.get() == 18 {
+                    log::debug!("... waking {:?}", context.pid);
+                }
+                log::debug!("waking up process {:?}", context.pid);
                 context.wake = None;
                 context.unblock_no_ipi();
             }
@@ -87,6 +93,7 @@ pub unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Up
     }
 
     // If the context is runnable, indicate it can be switched to.
+    log::debug!("Context {:?} status is {:?}", context.pid, context.status);
     if context.status.is_runnable() {
         UpdateResult::CanSwitch
     } else {

@@ -26,6 +26,9 @@ pub use self::{
     scheduler::switch,
 };
 
+#[cfg(feature = "scheduler_eevdf")]
+use scheduler::context_join;
+
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
 mod arch;
@@ -76,7 +79,10 @@ static KMAIN_PROCESS: Once<Arc<RwLock<Process>>> = Once::new();
 // the context file descriptors.
 static CONTEXTS: RwLock<BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
+static LOCK: spin::Mutex<()> = spin::Mutex::new(());
+
 pub fn init() {
+    let _lock = LOCK.lock();
     let pid = ProcessId::new(0);
     let process = KMAIN_PROCESS.call_once(|| {
         Arc::new(RwLock::new(Process {
@@ -105,13 +111,21 @@ pub fn init() {
         .write()
         .insert(ContextRef(Arc::clone(&context_lock)));
 
+    // log::info!("joining from context::init for {:?}", crate::cpu_id());
+    // #[cfg(feature = "scheduler_eevdf")]
+    // context_join(ContextRef(Arc::clone(&context_lock)));
+
+    log::trace!("finishing init for {:?}", crate::cpu_id());
     unsafe {
         let percpu = PercpuBlock::current();
+        log::trace!("settitng current context");
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        log::trace!("setting idle context");
         percpu.switch_internals.set_idle_context(context_lock);
     }
+    log::trace!("finished context::init for {:?}", crate::cpu_id());
 }
 
 /// Get the global schemes list, const
@@ -177,6 +191,11 @@ pub fn spawn(
 ) -> Result<Arc<RwSpinlock<Context>>> {
     let stack = Kstack::new()?;
 
+    log::trace!(
+        "beginning spawn for process {:?} on {:?}",
+        process.read().pid,
+        crate::cpu_id()
+    );
     let context_lock = Arc::try_new(RwSpinlock::new(Context::new(
         process.read().pid,
         Arc::clone(&process),
@@ -186,6 +205,12 @@ pub fn spawn(
     CONTEXTS
         .write()
         .insert(ContextRef(Arc::clone(&context_lock)));
+
+    #[cfg(feature = "scheduler_eevdf")]
+    context_join(
+        &mut context_lock.write(),
+        ContextRef(Arc::clone(&context_lock)),
+    );
 
     process.write().threads.push(Arc::downgrade(&context_lock));
     {
@@ -198,5 +223,6 @@ pub fn spawn(
         context.kstack = Some(stack);
         context.userspace = userspace_allowed;
     }
+    log::trace!("finished spawn for {:?}", crate::cpu_id());
     Ok(context_lock)
 }

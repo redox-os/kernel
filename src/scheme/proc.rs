@@ -6,7 +6,8 @@ use crate::{
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
         process::{self, Process, ProcessId, ProcessInfo, ProcessStatus},
-        Context, Status,
+        scheduler::{context_join, context_leave},
+        Context, ContextRef, Status,
     },
     memory::PAGE_SIZE,
     ptrace,
@@ -58,6 +59,9 @@ fn try_stop_context<T>(
     let (prev_status, mut running) = {
         let mut context = context_ref.write();
 
+        if cfg!(feature = "scheduler_eevdf") {
+            context_leave(&mut context, ContextRef(Arc::clone(&context_ref)));
+        }
         (
             core::mem::replace(
                 &mut context.status,
@@ -76,15 +80,21 @@ fn try_stop_context<T>(
         running = context_ref.read().running;
     }
 
-    let mut context = context_ref.write();
-    assert!(
-        !context.running,
-        "process can't have been restarted, we stopped it!"
-    );
+    let ret;
+    {
+        let mut context = context_ref.write();
+        assert!(
+            !context.running,
+            "process can't have been restarted, we stopped it!"
+        );
 
-    let ret = callback(&mut *context);
+        ret = callback(&mut *context);
 
-    context.status = prev_status;
+        context.status = prev_status;
+        if cfg!(feature = "scheduler_eevdf") && context.status.is_runnable() {
+            context_join(&mut context, ContextRef(Arc::clone(&context_ref)));
+        }
+    }
 
     ret
 }
@@ -222,6 +232,9 @@ impl Handle {
                 .filter_map(|t| t.upgrade())
             {
                 thread.write().status = context::Status::Runnable;
+                if cfg!(feature = "scheduler_eevdf") {
+                    context_join(&mut thread.write(), ContextRef(Arc::clone(&thread)));
+                }
             }
         }
         Some(())
@@ -494,6 +507,9 @@ impl<const FULL: bool> ProcScheme<FULL> {
                     thread.write().status = context::Status::HardBlocked {
                         reason: HardBlockedReason::PtraceStop,
                     };
+                    if cfg!(feature = "scheduler_eevdf") {
+                        context_leave(&mut thread.write(), ContextRef(Arc::clone(&thread)));
+                    }
                 }
             }
         }
@@ -590,11 +606,14 @@ impl<const FULL: bool> KernelScheme for ProcScheme<FULL> {
                 let threads = process.read().threads.clone();
 
                 for thread in threads {
-                    let Some(context) = thread.upgrade() else {
+                    let Some(context_lock) = thread.upgrade() else {
                         continue;
                     };
-                    let mut context = context.write();
+                    let mut context = context_lock.write();
                     context.status = context::Status::Runnable;
+                    if cfg!(feature = "scheduler_eevdf") {
+                        context_join(&mut context, ContextRef(Arc::clone(&context_lock)));
+                    }
                 }
             }
             _ => (),
@@ -950,6 +969,9 @@ fn new_child() -> Result<Arc<RwSpinlock<Context>>> {
         context.status = context::Status::HardBlocked {
             reason: HardBlockedReason::PtraceStop,
         };
+        if cfg!(feature = "scheduler_eevdf") {
+            context_leave(&mut context, ContextRef(Arc::clone(&new_context)));
+        }
     }
 
     Ok(new_context)
@@ -1042,6 +1064,9 @@ impl ProcHandle {
                     thread.write().status = context::Status::HardBlocked {
                         reason: HardBlockedReason::PtraceStop,
                     };
+                    if cfg!(feature = "scheduler_eevdf") {
+                        context_leave(&mut thread.write(), ContextRef(Arc::clone(&thread)));
+                    }
                 }
 
                 // and notify the tracee's WaitCondition, which is used in other cases
@@ -1334,15 +1359,18 @@ impl ContextHandle {
 
                 Ok(mem::size_of::<SetSighandlerData>())
             }
-            ContextHandle::Start => match context.write().status {
-                ref mut status @ Status::HardBlocked {
-                    reason: HardBlockedReason::NotYetStarted,
-                } => {
-                    *status = Status::Runnable;
-                    Ok(buf.len())
-                }
-                _ => return Err(Error::new(EINVAL)),
-            },
+            ContextHandle::Start => {
+                let current_status = context.read().status.clone();
+                let res = match current_status {
+                    Status::HardBlocked {
+                        reason: HardBlockedReason::NotYetStarted,
+                    } => Ok(buf.len()),
+                    _ => return Err(Error::new(EINVAL)),
+                };
+                context.write().status = Status::Runnable;
+                context_join(&mut context.write(), ContextRef(Arc::clone(&context)));
+                res
+            }
             ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } => {
                 Err(Error::new(EBADF))
             }

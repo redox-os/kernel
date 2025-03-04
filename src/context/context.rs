@@ -30,10 +30,7 @@ use super::{
 };
 
 #[cfg(feature = "scheduler_eevdf")]
-use super::{
-    scheduler::{NodeHandleRef, RequestTimings},
-    ContextRef,
-};
+use super::scheduler::EevdfData;
 
 /// The status of a context - used for scheduling
 /// See `syscall::process::waitpid` and the `sync` module for examples of usage
@@ -195,13 +192,6 @@ pub struct Context {
 
     #[cfg(feature = "scheduler_eevdf")]
     pub eevdf_data: EevdfData,
-}
-
-#[cfg(feature = "scheduler_eevdf")]
-#[derive(Default, Debug)]
-pub struct EevdfData {
-    pub node: Option<NodeHandleRef<ContextRef>>,
-    pub timings: RequestTimings,
 }
 
 #[derive(Debug)]

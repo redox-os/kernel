@@ -5,7 +5,11 @@ use alloc::{
 use spin::Mutex;
 use spinning_top::RwSpinlock;
 
-use crate::context::{self, Context};
+use crate::context::{
+    self,
+    scheduler::{context_join, context_leave},
+    Context, ContextRef,
+};
 
 #[derive(Debug)]
 pub struct WaitCondition {
@@ -25,7 +29,13 @@ impl WaitCondition {
         let len = contexts.len();
         while let Some(context_weak) = contexts.pop() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write().unblock();
+                let unblocked = context_ref.write().unblock();
+                if cfg!(feature = "scheduler_eevdf") && unblocked {
+                    context_join(
+                        &mut context_ref.write(),
+                        ContextRef(Arc::clone(&context_ref)),
+                    );
+                }
             }
         }
         len
@@ -37,7 +47,13 @@ impl WaitCondition {
         let len = contexts.len();
         for context_weak in contexts.iter() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write().unblock();
+                let unblocked = context_ref.write().unblock();
+                if cfg!(feature = "scheduler_eevdf") && unblocked {
+                    context_join(
+                        &mut context_ref.write(),
+                        ContextRef(Arc::clone(&context_ref)),
+                    );
+                }
             }
         }
         len
@@ -54,7 +70,10 @@ impl WaitCondition {
                 {
                     return false;
                 }
-                context.block(reason);
+                let was_runnable = context.block(reason);
+                if cfg!(feature = "scheduler_eevdf") && was_runnable {
+                    context_leave(&mut context, ContextRef(Arc::clone(&current_context_ref)))
+                }
             }
 
             self.contexts
