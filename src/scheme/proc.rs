@@ -11,12 +11,11 @@ use crate::{
     ptrace,
     scheme::{self, FileHandle, KernelScheme},
     syscall::{
-        self,
-        data::{GrantDesc, Map, PtraceEvent, SenderInfo, SetSighandlerData, Stat},
+        data::{GrantDesc, Map, SetSighandlerData, Stat},
         error::*,
         flag::*,
-        usercopy::{UserSliceRo, UserSliceWo},
-        EnvRegisters, FloatRegisters, IntRegisters, KillMode,
+        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
+        EnvRegisters, FloatRegisters, IntRegisters,
     },
 };
 
@@ -25,7 +24,7 @@ use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
     collections::{btree_map::Entry, BTreeMap},
-    string::{String, ToString},
+    string::String,
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -144,12 +143,6 @@ enum ContextHandle {
 struct Handle {
     context: Arc<RwSpinlock<Context>>,
     kind: ContextHandle,
-}
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Attr {
-    Uid,
-    Gid,
-    // TODO: namespace, tid, etc.
 }
 pub struct ProcScheme;
 
@@ -506,6 +499,34 @@ impl KernelScheme for ProcScheme {
         match handle {
             Handle { context, kind } => kind.kreadoff(id, context, buf, offset),
         }
+    }
+    fn kcall(
+        &self,
+        id: usize,
+        _payload: UserSliceRw,
+        _flags: CallFlags,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        // TODO: simplify
+        let handle = {
+            let mut handles = HANDLES.write();
+            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        let ContextHandle::OpenViaDup = handle.kind else {
+            return Err(Error::new(EBADF));
+        };
+
+        let verb: u8 = (*metadata.get(0).ok_or(Error::new(EINVAL))?)
+            .try_into()
+            .map_err(|_| Error::new(EINVAL))?;
+        let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
+
+        match verb {
+            ProcSchemeVerb::Iopl => context::current().write().set_userspace_io_allowed(true),
+        }
+        Ok(0)
     }
     fn kwriteoff(
         &self,
