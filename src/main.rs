@@ -55,7 +55,6 @@
 #![feature(array_chunks)]
 #![feature(if_let_guard)]
 #![feature(iterator_try_collect)]
-#![cfg_attr(feature = "profiling", feature(new_zeroed_alloc))]
 #[macro_use]
 extern crate alloc;
 
@@ -65,7 +64,10 @@ extern crate bitflags;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::{
-    context::process::{new_process, ProcessInfo, INIT},
+    context::{
+        process::{new_process, ProcessInfo, INIT},
+        scheduler::SwitchResult,
+    },
     scheme::SchemeNamespace,
 };
 
@@ -123,7 +125,6 @@ mod externs;
 mod log;
 use ::log::info;
 use alloc::sync::Arc;
-use context::scheduler::SwitchResult;
 use spinning_top::RwSpinlock;
 
 /// Memory management

@@ -118,7 +118,7 @@ pub fn switch() -> SwitchResult {
         #[cfg(feature = "syscall_debug")]
         {
             prev_context.syscall_debug_info = percpu
-                .syscall_debug_debug
+                .syscall_debug_info
                 .replace(next_context.syscall_debug_info);
             prev_context.syscall_debug_info.on_switch_from();
             next_context.syscall_debug_info.on_switch_to();

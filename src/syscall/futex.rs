@@ -16,8 +16,7 @@ use crate::{
     context::{
         self,
         memory::{AddrSpace, AddrSpaceWrapper},
-        scheduler::{context_join, context_leave},
-        Context, ContextRef,
+        Context,
     },
     memory::PhysicalAddress,
     paging::{Page, VirtualAddress},
@@ -150,9 +149,6 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                     }
 
                     context.block("futex");
-                    if cfg!(feature = "scheduler_eevdf") {
-                        context_leave(&mut context, ContextRef(Arc::clone(&context_lock)));
-                    }
                 }
 
                 futexes.push_back(FutexEntry {
@@ -191,13 +187,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                         i += 1;
                         continue;
                     }
-                    let unblocked = futexes[i].context_lock.write().unblock();
-                    if cfg!(feature = "scheduler_eevdf") && unblocked {
-                        context_join(
-                            &mut futexes[i].context_lock.write(),
-                            ContextRef(Arc::clone(&futexes[i].context_lock)),
-                        );
-                    }
+                    futexes[i].context_lock.write().unblock();
                     futexes.swap_remove_back(i);
                     woken += 1;
                 }

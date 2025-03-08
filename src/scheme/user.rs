@@ -28,9 +28,7 @@ use crate::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
         },
-        process,
-        scheduler::{context_join, context_leave},
-        BorrowedHtBuf, Context, ContextRef, Status,
+        process, BorrowedHtBuf, Context, Status,
     },
     event,
     memory::Frame,
@@ -294,15 +292,7 @@ impl UserInner {
 
         {
             let mut states = self.states.lock();
-
             current_context.write().block("UserScheme::call");
-            if cfg!(feature = "scheduler_eevdf") {
-                context_leave(
-                    &mut current_context.write(),
-                    ContextRef(Arc::clone(&current_context)),
-                );
-            }
-
             states[sqe.tag as usize] = State::Waiting {
                 context: Arc::downgrade(&current_context),
                 fd,
@@ -359,14 +349,7 @@ impl UserInner {
                         drop(states);
                         maybe_eintr?;
 
-                        let context_lock = context::current();
-                        context_lock.write().block("UserInner::call");
-                        if cfg!(feature = "scheduler_eevdf") {
-                            context_leave(
-                                &mut context_lock.write(),
-                                ContextRef(Arc::clone(&context_lock)),
-                            );
-                        }
+                        context::current().write().block("UserInner::call");
                     }
                     // spurious wakeup
                     State::Waiting {
@@ -394,14 +377,7 @@ impl UserInner {
                             ..Default::default()
                         });
                         event::trigger(self.root_id, self.handle_id, EVENT_READ);
-                        let context_lock = context::current();
-                        context_lock.write().block("UserInner::call");
-                        if cfg!(feature = "scheduler_eevdf") {
-                            context_leave(
-                                &mut context_lock.write(),
-                                ContextRef(Arc::clone(&context_lock)),
-                            );
-                        }
+                        context::current().write().block("UserInner::call");
                     }
 
                     // invalid state
@@ -1040,7 +1016,7 @@ impl UserInner {
                     }
                 };
 
-                let context_lock = context.upgrade().ok_or(Error::new(ESRCH))?;
+                let context = context.upgrade().ok_or(Error::new(ESRCH))?;
 
                 let (frame, _) = AddrSpace::current()?
                     .acquire_read()
@@ -1049,16 +1025,11 @@ impl UserInner {
                     .translate(base_addr)
                     .ok_or(Error::new(EFAULT))?;
 
-                let mut context = context_lock.write();
+                let mut context = context.write();
                 match context.status {
                     Status::HardBlocked {
                         reason: HardBlockedReason::AwaitingMmap { .. },
-                    } => {
-                        if cfg!(feature = "scheduler_eevdf") {
-                            context_join(&mut context, ContextRef(Arc::clone(&context_lock)));
-                        };
-                        context.status = Status::Runnable
-                    }
+                    } => context.status = Status::Runnable,
                     _ => (),
                 }
                 context.fmap_ret = Some(Frame::containing(frame));
@@ -1107,10 +1078,7 @@ impl UserInner {
                         .map(RwLock::into_inner);
 
                     if let Some(context) = context.upgrade() {
-                        let unblocked = context.write().unblock();
-                        if cfg!(feature = "scheduler_eevdf") && unblocked {
-                            context_join(&mut context.write(), ContextRef(Arc::clone(&context)));
-                        }
+                        context.write().unblock();
                         *o = State::Responded(response);
                     } else {
                         states.remove(tag as usize);

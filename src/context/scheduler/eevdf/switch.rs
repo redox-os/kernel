@@ -45,7 +45,7 @@ pub fn get_next_context(
     ArcRwLockWriteGuard<RawRwSpinlock, Context>,
     ArcRwLockWriteGuard<RawRwSpinlock, Context>,
 )> {
-    wake_sleeping_contexts();
+    process_contexts_status_change();
 
     let mut contexts_string = alloc::string::String::new();
     for ctx in contexts()
@@ -62,7 +62,11 @@ pub fn get_next_context(
         REQUEST_TREE.read().min_eligible(),
         *VIRTUAL_TIME.read(),
         TOTAL_WEIGHTS.load(Ordering::Acquire),
-        contexts().iter().filter_map(|ctx| ctx.upgrade()).filter(|ctx| matches!(ctx.read().status,Status::Runnable)).count(),
+        contexts()
+        .iter()
+        .filter_map(|ctx| ctx.upgrade())
+        .filter(|ctx| matches!(ctx.read().status, Status::Runnable))
+        .count(),
     );
 
     let idle_context = percpu.switch_internals.idle_context();
@@ -137,7 +141,7 @@ pub fn get_next_context(
 /// # Parameters
 /// * `context` - A write lock on the context,
 /// * `context_ref` - The context’s reference.
-pub fn context_join(context: &mut Context, context_ref: ContextRef) {
+fn context_join(context: &mut Context, context_ref: ContextRef) {
     if !context.status.is_runnable()
         && !matches!(
             context.status,
@@ -210,29 +214,33 @@ pub fn context_leave(context: &mut Context, context_ref: ContextRef) {
     tree.remove(context_ref.clone(), context.eevdf_data.timings);
 }
 
-fn get_context_to_wake() -> alloc::vec::Vec<ContextRef> {
+fn process_contexts_status_change() {
     let now = time::monotonic();
-    contexts()
-        .iter()
-        .filter(|ctx| {
-            ctx.upgrade()
-                .map_or(false, |ctx| ctx.read().wake.is_some_and(|wake| wake < now))
-        })
-        .cloned()
-        .collect()
-}
-
-fn wake_sleeping_contexts() {
-    for context_ref in get_context_to_wake() {
-        let Some(lock) = context_ref.upgrade() else {
-            continue;
+    log::debug!("iterating over all contexts");
+    contexts().iter().for_each(|ctx_ref| {
+        let Some(mut ctx) = ctx_ref.upgrade().and_then(|lock| lock.try_write_arc()) else {
+            log::debug!("couldn’t get the context or a lock on it");
+            return;
         };
-        let mut context = lock.write();
-        context.wake = None;
-        context.status = Status::Runnable;
-        context.status_reason = "";
-        context_join(&mut context, context_ref.clone());
-    }
+        // Ignore the idle context
+        if ctx.pid.get() == 0 {
+            return;
+        }
+        log::debug!("Looking at context {:?}", ctx.pid);
+        if ctx.wake.is_some_and(|wake| wake < now) {
+            log::debug!(" .. wake time has passed");
+            ctx.wake = None;
+            ctx.unblock_no_ipi();
+        }
+        if ctx.status.is_runnable() && !ctx.eevdf_data.has_joined {
+            log::debug!(".. became runnable");
+            context_join(&mut ctx, ctx_ref.clone());
+        } else if !ctx.status.is_runnable() && ctx.eevdf_data.has_joined {
+            log::debug!(".. not runnable anymore");
+            context_leave(&mut ctx, ctx_ref.clone());
+        }
+        drop(ctx);
+    });
 }
 
 fn forward_time() {
@@ -261,7 +269,7 @@ fn issue_new_request(
     used: usize,
 ) {
     let mut context = context_lock.write();
-    if !context.eevdf_data.has_joined {
+    if !context.status.is_runnable() {
         // Context was running, but removed itself from the tree
         // so we don’t want to add it back here, it’ll do so explicitely.
         return;

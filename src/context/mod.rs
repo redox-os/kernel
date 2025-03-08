@@ -26,9 +26,6 @@ pub use self::{
     scheduler::switch,
 };
 
-#[cfg(feature = "scheduler_eevdf")]
-use scheduler::context_join;
-
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
 mod arch;
@@ -110,10 +107,6 @@ pub fn init() {
     CONTEXTS
         .write()
         .insert(ContextRef(Arc::clone(&context_lock)));
-
-    // log::info!("joining from context::init for {:?}", crate::cpu_id());
-    // #[cfg(feature = "scheduler_eevdf")]
-    // context_join(ContextRef(Arc::clone(&context_lock)));
 
     log::trace!("finishing init for {:?}", crate::cpu_id());
     unsafe {
@@ -205,12 +198,6 @@ pub fn spawn(
     CONTEXTS
         .write()
         .insert(ContextRef(Arc::clone(&context_lock)));
-
-    #[cfg(feature = "scheduler_eevdf")]
-    context_join(
-        &mut context_lock.write(),
-        ContextRef(Arc::clone(&context_lock)),
-    );
 
     process.write().threads.push(Arc::downgrade(&context_lock));
     {
