@@ -173,7 +173,7 @@ interrupt_stack!(pit_stack, |_stack| {
     timeout::trigger();
 
     // Switch after a sufficient amount of time since the last switch.
-    context::switch::tick();
+    context::scheduler::tick();
 });
 
 interrupt!(keyboard, || {
