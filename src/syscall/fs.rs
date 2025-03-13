@@ -71,20 +71,19 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 
     // Display a deprecation warning for any usage of the legacy scheme syntax (scheme:/path)
     // FIXME remove entries from this list as the respective programs get updated
-    // if path_buf.contains(':')
-    //     && !path_buf.starts_with(':')
-    //     && path_buf != "rand:" // FIXME Remove exception at next rustc update
-    //     && !path_buf.starts_with("thisproc:") // bootstrap needs redox-rt update
-    //     && !path_buf.starts_with("display")
-    //     && !path_buf.starts_with("orbital:")
-    // {
-    //     let name = context::current().read().name.clone();
-    //     if !name.contains("cosmic")
-    //     // FIXME cosmic apps need crate updates
-    //     {
-    //         println!("deprecated: legacy path {:?} used by {}", path_buf, name);
-    //     }
-    // }
+    if path_buf.contains(':')
+        && !path_buf.starts_with(':')
+        && path_buf != "null:" // FIXME Remove exception at next rustc update (rust#138457)
+        && path_buf != "sys:exe" // FIXME Remove exception at next rustc update (rust#138457)
+        && !path_buf.starts_with("orbital:")
+    {
+        let name = context::current().read().name.clone();
+        if name.contains("cosmic") && (path_buf == "event:" || path_buf.starts_with("time:")) {
+            // FIXME cosmic apps likely need crate updates
+        } else {
+            println!("deprecated: legacy path {:?} used by {}", path_buf, name);
+        }
+    }
 
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
