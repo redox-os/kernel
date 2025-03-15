@@ -18,6 +18,9 @@ pub mod tsc;
 pub unsafe fn init() {
     pic::init();
     local_apic::init(&mut KernelMapper::lock());
+
+    // Run here for the side-effect of printing if KVM was used to avoid interleaved logs.
+    tsc::get_kvm_support();
 }
 pub unsafe fn init_after_acpi() {
     // this will disable the IOAPIC if needed.

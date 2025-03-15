@@ -214,7 +214,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
         ];
 
         if feature_is_enabled {
-            log::info!("feature {} origcode {:x?}", name, code);
+            log::trace!("feature {} origcode {:x?}", name, code);
             let (dst, dst_nops) = code.split_at_mut(altcode.len());
             dst.copy_from_slice(altcode);
 

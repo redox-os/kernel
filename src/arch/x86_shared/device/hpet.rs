@@ -21,7 +21,7 @@ const PER_INT_CAP: u64 = 0x10;
 
 pub unsafe fn init(hpet: &mut Hpet) -> bool {
     println!("HPET Before Init");
-    debug(hpet);
+    debug(hpet, true);
 
     // Disable HPET
     {
@@ -62,16 +62,16 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
     }
 
     println!("HPET After Init");
-    debug(hpet);
+    debug(hpet, false);
 
     true
 }
 
-pub unsafe fn debug(hpet: &mut Hpet) {
+pub unsafe fn debug(hpet: &mut Hpet, print_caps: bool) {
     println!("HPET @ {:#x}", { hpet.base_address.address });
 
-    let capability = hpet.read_u64(CAPABILITY_OFFSET);
-    {
+    if print_caps {
+        let capability = hpet.read_u64(CAPABILITY_OFFSET);
         println!("  caps: {:#x}", capability);
         println!("    clock period: {}", (capability >> 32) as u32);
         println!("    ID: {:#x}", (capability >> 16) as u16);

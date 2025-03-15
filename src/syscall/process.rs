@@ -863,6 +863,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
     log::info!("Bootstrap entry point: {:X}", bootstrap_entry);
     assert_ne!(bootstrap_entry, 0);
+    println!("\n");
 
     // Start in a minimal environment without any stack.
 
