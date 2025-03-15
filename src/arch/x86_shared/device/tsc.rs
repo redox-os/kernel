@@ -11,7 +11,7 @@ use spin::Once;
 
 use crate::{memory::allocate_frame, percpu::PercpuBlock};
 
-struct KvmSupport {
+pub struct KvmSupport {
     max_leaf: u32,
     supp_feats: KvmFeatureBits,
 }
@@ -41,8 +41,6 @@ struct PvclockVcpuTimeInfo {
 
 const MSR_KVM_SYSTEM_TIME_NEW: u32 = 0x4b564d01;
 const MSR_KVM_WALL_CLOCK_NEW: u32 = 0x4b564d00;
-
-static KVM_SUPPORT: Once<Option<KvmSupport>> = Once::new();
 
 pub struct TscPercpu {
     vcpu_page: Cell<*const PvclockVcpuTimeInfo>,
@@ -97,13 +95,10 @@ pub fn monotonic_absolute() -> Option<u128> {
     }
 }
 
-pub unsafe fn init() -> bool {
-    let cpuid = crate::cpuid::cpuid();
-    if !cpuid.get_feature_info().map_or(false, |f| f.has_tsc()) {
-        return false;
-    }
+pub fn get_kvm_support() -> &'static Option<KvmSupport> {
+    static KVM_SUPPORT: Once<Option<KvmSupport>> = Once::new();
 
-    let kvm_support = KVM_SUPPORT.call_once(|| {
+    KVM_SUPPORT.call_once(|| {
         let res = unsafe { __cpuid(0x4000_0000) };
         if [res.ebx, res.ecx, res.edx].map(u32::to_le_bytes) != [*b"KVMK", *b"VMKV", *b"M\0\0\0"] {
             return None;
@@ -122,7 +117,16 @@ pub unsafe fn init() -> bool {
             max_leaf,
             supp_feats,
         })
-    });
+    })
+}
+
+pub unsafe fn init() -> bool {
+    let cpuid = crate::cpuid::cpuid();
+    if !cpuid.get_feature_info().map_or(false, |f| f.has_tsc()) {
+        return false;
+    }
+
+    let kvm_support = get_kvm_support();
 
     if let Some(kvm_support) = kvm_support
         && kvm_support

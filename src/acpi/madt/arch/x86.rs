@@ -50,7 +50,7 @@ pub(super) fn init(madt: Madt) {
         }
 
         for madt_entry in madt.iter() {
-            println!("      {:#x?}", madt_entry);
+            println!("      {:x?}", madt_entry);
             match madt_entry {
                 MadtEntry::LocalApic(ap_local_apic) => {
                     if ap_local_apic.id == me {
