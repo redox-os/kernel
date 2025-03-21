@@ -23,7 +23,7 @@ use self::{
 };
 pub use self::{
     context::{BorrowedHtBuf, Context, Status, WaitpidKey},
-    switch::switch,
+    scheduler::switch,
 };
 
 #[cfg(target_arch = "aarch64")]
@@ -46,7 +46,7 @@ mod arch;
 pub mod context;
 
 /// Context switch function
-pub mod switch;
+pub mod scheduler;
 
 /// File struct - defines a scheme and a file number
 pub mod file;
@@ -63,7 +63,7 @@ pub mod signal;
 /// Timeout handling
 pub mod timeout;
 
-pub use self::switch::switch_finish_hook;
+pub use self::scheduler::switch_finish_hook;
 
 /// Maximum context files
 pub const CONTEXT_MAX_FILES: usize = 65_536;
@@ -76,7 +76,10 @@ static KMAIN_PROCESS: Once<Arc<RwLock<Process>>> = Once::new();
 // the context file descriptors.
 static CONTEXTS: RwLock<BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
+static LOCK: spin::Mutex<()> = spin::Mutex::new(());
+
 pub fn init() {
+    let _lock = LOCK.lock();
     let pid = ProcessId::new(0);
     let process = KMAIN_PROCESS.call_once(|| {
         Arc::new(RwLock::new(Process {
@@ -105,13 +108,17 @@ pub fn init() {
         .write()
         .insert(ContextRef(Arc::clone(&context_lock)));
 
+    log::trace!("finishing init for {:?}", crate::cpu_id());
     unsafe {
         let percpu = PercpuBlock::current();
+        log::trace!("settitng current context");
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        log::trace!("setting idle context");
         percpu.switch_internals.set_idle_context(context_lock);
     }
+    log::trace!("finished context::init for {:?}", crate::cpu_id());
 }
 
 /// Get the global schemes list, const
@@ -163,6 +170,12 @@ impl PartialEq for ContextRef {
 }
 impl Eq for ContextRef {}
 
+impl Clone for ContextRef {
+    fn clone(&self) -> Self {
+        ContextRef(Arc::clone(&self.0))
+    }
+}
+
 /// Spawn a context from a function.
 pub fn spawn(
     userspace_allowed: bool,
@@ -171,6 +184,11 @@ pub fn spawn(
 ) -> Result<Arc<RwSpinlock<Context>>> {
     let stack = Kstack::new()?;
 
+    log::trace!(
+        "beginning spawn for process {:?} on {:?}",
+        process.read().pid,
+        crate::cpu_id()
+    );
     let context_lock = Arc::try_new(RwSpinlock::new(Context::new(
         process.read().pid,
         Arc::clone(&process),
@@ -192,5 +210,6 @@ pub fn spawn(
         context.kstack = Some(stack);
         context.userspace = userspace_allowed;
     }
+    log::trace!("finished spawn for {:?}", crate::cpu_id());
     Ok(context_lock)
 }

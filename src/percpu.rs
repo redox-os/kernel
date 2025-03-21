@@ -8,7 +8,7 @@ use rmm::Arch;
 use syscall::PtraceFlags;
 
 use crate::{
-    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
+    context::{empty_cr3, memory::AddrSpaceWrapper, scheduler::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     ptrace::Session,
 };

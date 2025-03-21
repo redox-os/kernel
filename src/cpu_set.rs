@@ -49,7 +49,7 @@ const SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;
 #[derive(Debug)]
 pub struct LogicalCpuSet([AtomicUsize; SET_WORDS]);
 
-fn parts(id: LogicalCpuId) -> (usize, u32) {
+pub fn parts(id: LogicalCpuId) -> (usize, u32) {
     ((id.get() / usize::BITS) as usize, id.get() % usize::BITS)
 }
 impl LogicalCpuSet {
