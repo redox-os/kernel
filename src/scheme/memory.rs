@@ -10,6 +10,7 @@ use crate::{
     },
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
     paging::VirtualAddress,
+    syscall::usercopy::UserSliceRw,
 };
 
 use crate::paging::entry::EntryFlags;
@@ -31,6 +32,7 @@ pub struct MemoryScheme;
 enum HandleTy {
     Allocated = 0,
     PhysBorrow = 1,
+    Translation = 2,
 }
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -53,6 +55,7 @@ fn from_raw(raw: u32) -> Option<(HandleTy, MemoryType, HandleFlags)> {
         match raw & 0xFF {
             0 => HandleTy::Allocated,
             1 => HandleTy::PhysBorrow,
+            2 => HandleTy::Translation,
 
             _ => return None,
         },
@@ -189,6 +192,7 @@ impl KernelScheme for MemoryScheme {
         let handle_ty = match before_memty {
             "" | "zeroed" => HandleTy::Allocated,
             "physical" => HandleTy::PhysBorrow,
+            "translation" => HandleTy::Translation,
 
             _ => return Err(Error::new(ENOENT)),
         };
@@ -228,6 +232,36 @@ impl KernelScheme for MemoryScheme {
             InternalFlags::empty(),
         ))
     }
+    fn kcall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        _flags: syscall::CallFlags,
+        _metadata: &[u64],
+    ) -> Result<usize> {
+        let (handle_ty, _, _) = u32::try_from(id)
+            .ok()
+            .and_then(from_raw)
+            .ok_or(Error::new(EBADF))?;
+
+        match handle_ty {
+            HandleTy::Translation => {
+                let virt = VirtualAddress::new(payload.read_usize()?);
+                let (phys, _) = AddrSpace::current()?
+                    .acquire_read()
+                    .table
+                    .utable
+                    .translate(virt)
+                    .ok_or(Error::new(ENOENT))?;
+                payload.write_usize(phys.data())?;
+
+                // could just return address directly, but physaddrs might conflict with the bit
+                // patterns reserved for error codes
+                Ok(0)
+            }
+            HandleTy::Allocated | HandleTy::PhysBorrow => Err(Error::new(EOPNOTSUPP)),
+        }
+    }
 
     fn kfmap(
         &self,
@@ -248,6 +282,7 @@ impl KernelScheme for MemoryScheme {
                 flags.contains(HandleFlags::PHYS_CONTIGUOUS),
             ),
             HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty),
+            HandleTy::Translation => Err(Error::new(EOPNOTSUPP)),
         }
     }
     fn kfstatvfs(&self, _file: usize, dst: UserSliceWo) -> Result<()> {
