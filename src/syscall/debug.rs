@@ -165,7 +165,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             e,
             f
         ),
-        SYS_IOPL => format!("iopl({})", b),
         SYS_MKNS => format!(
             "mkns({:p} len: {})",
             // TODO: Print out all scheme names?
@@ -182,7 +181,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             d
         ),
-        SYS_VIRTTOPHYS => format!("virttophys({:#X})", b),
         SYS_YIELD => format!("yield()"),
         _ => format!(
             "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
