@@ -81,9 +81,9 @@ pub fn excp_handler(_signal: usize) {
 
     let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         drop(context);
-        // TODO: Send exception event to process manager
-        todo!()
+        drop(current);
+        crate::syscall::exit_this_context();
     };
 
-    // TODO
+    // TODO: call exception handler, similar to the signal handler case
 }
