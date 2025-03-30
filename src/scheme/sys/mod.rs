@@ -1,6 +1,11 @@
+// TODO: This scheme can be simplified significantly, and through it, several other APIs where it's
+// dubious whether they require dedicated schemes (like irq, dtb, acpi). In particular, the kernel
+// could abandon the filesystem-like APIs here in favor of SYS_CALL, and instead let userspace wrap
+// those to say shell-accessible fs-like APIs.
+
 use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    EIO, EISDIR, ENOTDIR,
+    EBADFD, EIO, EISDIR, ENOTDIR,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{
@@ -17,7 +22,7 @@ use crate::{
         data::Stat,
         error::{Error, Result, EBADF, ENOENT},
         flag::{MODE_DIR, MODE_FILE},
-        usercopy::UserSliceWo,
+        usercopy::{UserSliceRo, UserSliceWo},
     },
 };
 
@@ -44,10 +49,17 @@ mod stat;
 
 enum Handle {
     TopLevel,
-    Resource { path: &'static str, data: Vec<u8> },
+    Resource {
+        path: &'static str,
+        data: Option<Vec<u8>>,
+    },
 }
 
-type SysFn = fn() -> Result<Vec<u8>>;
+enum Kind {
+    Rd(fn() -> Result<Vec<u8>>),
+    Wr(fn(&[u8]) -> Result<usize>),
+}
+use Kind::*;
 
 /// System information scheme
 pub struct SysScheme;
@@ -55,32 +67,36 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
 static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
-const FILES: &[(&'static str, SysFn)] = &[
-    ("block", block::resource),
-    ("context", context::resource),
-    ("cpu", cpu::resource),
+const FILES: &[(&'static str, Kind)] = &[
+    ("block", Rd(block::resource)),
+    ("context", Rd(context::resource)),
+    ("cpu", Rd(cpu::resource)),
     #[cfg(feature = "sys_fdstat")]
-    ("fdstat", fdstat::resource),
-    ("exe", exe::resource),
-    ("iostat", iostat::resource),
-    ("irq", irq::resource),
-    ("log", log::resource),
-    ("scheme", scheme::resource),
-    ("scheme_num", scheme_num::resource),
-    ("syscall", syscall::resource),
-    ("uname", uname::resource),
-    ("env", || Ok(Vec::from(crate::init_env()))),
+    ("fdstat", Rd(fdstat::resource)),
+    ("exe", Rd(exe::resource)),
+    ("iostat", Rd(iostat::resource)),
+    ("irq", Rd(irq::resource)),
+    ("log", Rd(log::resource)),
+    ("scheme", Rd(scheme::resource)),
+    ("scheme_num", Rd(scheme_num::resource)),
+    ("syscall", Rd(syscall::resource)),
+    ("uname", Rd(uname::resource)),
+    ("env", Rd(|| Ok(Vec::from(crate::init_env())))),
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    ("spurious_irq", interrupt::irq::spurious_irq_resource),
+    ("spurious_irq", Rd(interrupt::irq::spurious_irq_resource)),
     #[cfg(feature = "sys_stat")]
-    ("stat", stat::resource),
+    ("stat", Rd(stat::resource)),
     // Disabled because the debugger is inherently unsafe and probably will break the system.
     /*
-    ("trigger_debugger", || unsafe {
+    ("trigger_debugger", Rd(|| unsafe {
         crate::debugger::debugger(None);
         Ok(Vec::new())
-    }),
+    })),
     */
+    (
+        "update_time_offset",
+        Wr(crate::time::sys_update_time_offset),
+    ),
 ];
 
 impl KernelScheme for SysScheme {
@@ -91,32 +107,35 @@ impl KernelScheme for SysScheme {
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
             HANDLES.write().insert(id, Handle::TopLevel);
-            return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
+
+            Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         } else {
             //Have to iterate to get the path without allocation
-            for entry in FILES.iter() {
-                if &entry.0 == &path {
-                    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-                    let data = entry.1()?;
-                    HANDLES.write().insert(
-                        id,
-                        Handle::Resource {
-                            path: entry.0,
-                            data,
-                        },
-                    );
-                    return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
-                }
-            }
-        }
+            let entry = FILES
+                .iter()
+                .find(|(entry_path, _)| *entry_path == path)
+                .ok_or(Error::new(ENOENT))?;
 
-        Err(Error::new(ENOENT))
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let data = match entry.1 {
+                Rd(r) => Some(r()?),
+                Wr(_) => None,
+            };
+            HANDLES.write().insert(
+                id,
+                Handle::Resource {
+                    path: entry.0,
+                    data,
+                },
+            );
+            Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
+        }
     }
 
     fn fsize(&self, id: usize) -> Result<u64> {
         match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => Ok(0),
-            Handle::Resource { data, .. } => Ok(data.len() as u64),
+            Handle::Resource { data, .. } => Ok(data.as_ref().map_or(0, |d| d.len() as u64)),
         }
     }
 
@@ -153,11 +172,42 @@ impl KernelScheme for SysScheme {
         };
 
         match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
-            Handle::TopLevel => return Err(Error::new(EISDIR)),
-            Handle::Resource { data, .. } => {
+            Handle::TopLevel | Handle::Resource { data: None, .. } => {
+                return Err(Error::new(EISDIR))
+            }
+            Handle::Resource {
+                data: Some(ref data),
+                ..
+            } => {
                 let avail_buf = data.get(pos..).unwrap_or(&[]);
 
                 buffer.copy_common_bytes_from_slice(avail_buf)
+            }
+        }
+    }
+    fn kwriteoff(
+        &self,
+        id: usize,
+        buffer: UserSliceRo,
+        _pos: u64,
+        _flags: u32,
+        _stored_flags: u32,
+    ) -> Result<usize> {
+        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+            Handle::TopLevel | Handle::Resource { data: Some(_), .. } => {
+                return Err(Error::new(EISDIR))
+            }
+            Handle::Resource { data: None, path } => {
+                let mut intermediate = [0_u8; 256];
+                let len = buffer.copy_common_bytes_to_slice(&mut intermediate)?;
+                let (_, Wr(handler)) = FILES
+                    .iter()
+                    .find(|(entry_path, _)| entry_path == path)
+                    .ok_or(Error::new(EBADFD))?
+                else {
+                    return Err(Error::new(EBADFD))?;
+                };
+                handler(&intermediate[..len])
             }
         }
     }
@@ -191,10 +241,10 @@ impl KernelScheme for SysScheme {
     fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
         let stat = match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
             Handle::Resource { data, .. } => Stat {
-                st_mode: 0o444 | MODE_FILE,
+                st_mode: 0o666 | MODE_FILE,
                 st_uid: 0,
                 st_gid: 0,
-                st_size: data.len() as u64,
+                st_size: data.as_ref().map_or(0, |d| d.len() as u64),
                 ..Default::default()
             },
             Handle::TopLevel => Stat {
