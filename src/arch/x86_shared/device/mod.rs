@@ -7,7 +7,6 @@ pub mod ioapic;
 pub mod local_apic;
 pub mod pic;
 pub mod pit;
-pub mod rtc;
 pub mod serial;
 #[cfg(feature = "system76_ec_debug")]
 pub mod system76_ec;
@@ -62,8 +61,6 @@ pub unsafe fn init_noncore() {
         log::info!("PIT used as system timer");
     }
 
-    log::info!("Initializing RTC");
-    rtc::init();
     log::info!("Initializing serial");
     serial::init();
     log::info!("Finished initializing devices");
