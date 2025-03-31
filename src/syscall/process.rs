@@ -490,14 +490,6 @@ pub fn kill(pid: ProcessId, sig: usize, mode: KillMode) -> Result<usize> {
         ruid: current_ruid,
     };
 
-    if current_euid == 0 && pid.get() == 1 {
-        match sig {
-            SIGTERM => unsafe { crate::stop::kreset() },
-            SIGKILL => unsafe { crate::stop::kstop() },
-            _ => return Ok(0), // error?
-        }
-    }
-
     let mut found = 0;
     let mut sent = 0;
     let mut killed_self = false;
