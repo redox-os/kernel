@@ -144,8 +144,6 @@ pub struct SignalState {
     /// Offset within the control pages of respective word-aligned structs.
     pub threadctl_off: u16,
     pub procctl_off: u16,
-
-    pub rtqs: Vec<VecDeque<RtSigInfo>>,
 }
 
 impl Context {

@@ -190,23 +190,12 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
             }
             SYS_FUTEX => futex(b, c, d, e, f),
 
-            /*SYS_SIGENQUEUE => kill(
-                ProcessId::from(b),
-                c,
-                KillMode::Queued(unsafe {
-                    UserSlice::ro(d, size_of::<RtSigInfo>())?.read_exact()?
-                }),
-            ),
-            SYS_SIGDEQUEUE => {
-                sigdequeue(UserSlice::wo(b, size_of::<RtSigInfo>())?, c as u32).map(|()| 0)
-            }*/
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
             SYS_MKNS => mkns(UserSlice::ro(
                 b,
                 c.checked_mul(core::mem::size_of::<[usize; 2]>())
                     .ok_or(Error::new(EOVERFLOW))?,
             )?),
-            //SYS_VIRTTOPHYS => virttophys(b),
             SYS_MREMAP => mremap(b, c, d, e, f),
 
             _ => return Err(Error::new(ENOSYS)),
