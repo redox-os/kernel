@@ -4,10 +4,10 @@ use crate::{
         self,
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
-        memory::{handle_notify_files, AddrSpaceWrapper, Grant, PageSpan},
+        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
         Context, Status,
     },
-    memory::PAGE_SIZE,
+    memory::{get_page_info, AddRefError, RefKind, PAGE_SIZE},
     ptrace,
     scheme::{self, FileHandle, KernelScheme},
     syscall::{
@@ -415,7 +415,7 @@ impl KernelScheme for ProcScheme {
         consume: bool,
     ) -> Result<usize> {
         let handle = HANDLES.read().get(&id).ok_or(Error::new(EBADF))?.clone();
-        let Handle { kind, .. } = handle;
+        let Handle { kind, ref context } = handle;
 
         match kind {
             ContextHandle::AddrSpace { ref addrspace } => {
@@ -478,6 +478,44 @@ impl KernelScheme for ProcScheme {
                 handle_notify_files(notify_files);
 
                 Ok(result_base.start_address().data())
+            }
+            ContextHandle::Sighandler => {
+                let context = context.read();
+                let sig = context.sig.as_ref().ok_or(Error::new(EBADF))?;
+                let frame = match map.offset {
+                    // tctl
+                    0 => &sig.thread_control,
+                    // pctl
+                    PAGE_SIZE => &sig.proc_control,
+                    _ => return Err(Error::new(EINVAL)),
+                };
+                let info = get_page_info(frame.get()).ok_or(Error::new(EBADFD))?;
+                match info.add_ref(RefKind::Shared) {
+                    Ok(()) => (),
+                    Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
+                    Err(AddRefError::CowToShared) => unreachable!("cannot be CoW since it's a kernel RaiiFrame that at some point was made Shared"),
+                    Err(AddRefError::SharedToCow) => unreachable!("wasn't requested"),
+                }
+                // TODO: Allocated or AllocatedShared?
+                let addrsp = AddrSpace::current()?;
+                let page = addrsp.acquire_write().mmap(
+                    &addrsp,
+                    None,
+                    NonZeroUsize::new(1).unwrap(),
+                    MapFlags::PROT_READ | MapFlags::PROT_WRITE,
+                    &mut Vec::new(),
+                    |page, flags, mapper, flusher| {
+                        Grant::allocated_shared_one_page(
+                            frame.get(),
+                            page,
+                            flags,
+                            mapper,
+                            flusher,
+                            false,
+                        )
+                    },
+                )?;
+                Ok(page.start_address().data())
             }
             _ => Err(Error::new(EBADF)),
         }
@@ -1197,6 +1235,18 @@ impl ContextHandle {
                     egid,
                     ens,
                 })
+            }
+            ContextHandle::Sighandler => {
+                let data = match context.read().sig {
+                    Some(ref sig) => SetSighandlerData {
+                        excp_handler: sig.excp_handler.map_or(0, NonZeroUsize::get),
+                        user_handler: sig.user_handler.get(),
+                        proc_control_addr: sig.procctl_off.into(),
+                        thread_control_addr: sig.threadctl_off.into(),
+                    },
+                    None => SetSighandlerData::default(),
+                };
+                buf.copy_common_bytes_from_slice(&data)
             }
 
             // TODO: Find a better way to switch address spaces, since they also require switching
