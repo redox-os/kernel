@@ -5,7 +5,7 @@
 
 use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    EBADFD, EIO, EISDIR, ENOTDIR,
+    EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
 use alloc::{collections::BTreeMap, vec::Vec};
 use core::{
@@ -97,10 +97,21 @@ const FILES: &[(&'static str, Kind)] = &[
         "update_time_offset",
         Wr(crate::time::sys_update_time_offset),
     ),
+    (
+        "kstop",
+        Wr(|arg| unsafe {
+            match arg.trim_ascii() {
+                b"shutdown" => crate::stop::kstop(),
+                b"reset" => crate::stop::kreset(),
+                b"emergency_reset" => crate::stop::emergency_reset(),
+                _ => Err(Error::new(EINVAL)),
+            }
+        }),
+    ),
 ];
 
 impl KernelScheme for SysScheme {
-    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
         let path = path.trim_matches('/');
 
         if path.is_empty() {
@@ -115,6 +126,10 @@ impl KernelScheme for SysScheme {
                 .iter()
                 .find(|(entry_path, _)| *entry_path == path)
                 .ok_or(Error::new(ENOENT))?;
+
+            if matches!(entry.1, Wr(_)) && ctx.uid != 0 {
+                return Err(Error::new(EPERM));
+            }
 
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
             let data = match entry.1 {
