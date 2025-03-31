@@ -22,7 +22,10 @@ pub unsafe fn emergency_reset() -> ! {
     core::arch::asm!(
         "
         cli
-        lidt cs:0
+        sidt [rsp+16]
+        // set IDT limit to zero
+        mov word ptr [rsp+16], 0
+        lidt [rsp+16]
         int $3
     ",
         options(noreturn)
