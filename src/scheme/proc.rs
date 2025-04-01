@@ -1090,6 +1090,11 @@ impl ContextHandle {
                         }
                         Ok(size_of::<usize>())
                     }
+                    ContextVerb::Interrupt => {
+                        let mut guard = context.write();
+                        guard.unblock();
+                        Ok(size_of::<usize>())
+                    }
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
                             // The following functionality simplifies the cleanup step when detached threads
