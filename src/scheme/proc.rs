@@ -100,7 +100,9 @@ enum ContextHandle {
     Authority,
     Attr,
 
-    Status, // writing usize::MAX causes exit
+    Status {
+        privileged: bool,
+    }, // can write ContextVerb
     Signal, // writing sends signal
 
     Regs(RegsKind),
@@ -220,12 +222,22 @@ impl ProcScheme {
                 false,
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
-            "status" => (ContextHandle::Status, false),
+            "status" => (ContextHandle::Status { privileged: false }, false),
             "signal" => (ContextHandle::Signal, false),
-            _ if path.starts_with("attrs-") => {
-                let auth_fd = path["attrs-".len()..]
+            _ if path.starts_with("auth-") => {
+                let nonprefix = &path["auth-".len()..];
+                let next_dash = nonprefix.find('-').ok_or(Error::new(ENOENT))?;
+                let auth_fd = nonprefix[..next_dash]
                     .parse::<usize>()
                     .map_err(|_| Error::new(ENOENT))?;
+                let actual_name = &nonprefix[next_dash + 1..];
+
+                let handle = match actual_name {
+                    "attrs" => ContextHandle::Attr,
+                    "status" => ContextHandle::Status { privileged: true },
+                    _ => return Err(Error::new(ENOENT)),
+                };
+
                 let (hopefully_this_scheme, number) = extract_scheme_number(auth_fd)?;
                 verify_scheme(hopefully_this_scheme)?;
                 if !matches!(
@@ -234,7 +246,8 @@ impl ProcScheme {
                 ) {
                     return Err(Error::new(ENOENT));
                 }
-                (ContextHandle::Attr, false)
+
+                (handle, false)
             }
             _ => return Ok(None),
         }))
@@ -1037,43 +1050,76 @@ impl ContextHandle {
 
                 Ok(mem::size_of_val(&mask))
             }
-            ContextHandle::Status => {
+            ContextHandle::Status { privileged } => {
                 let mut args = buf.usizes();
 
                 let user_data = args.next().ok_or(Error::new(EINVAL))??;
-                if user_data != usize::MAX {
-                    // TODO: lwp_park/lwp_unpark?
-                    return Err(Error::new(EOPNOTSUPP));
-                }
-                let is_current = context::is_current(&context);
 
-                if is_current {
-                    // The following functionality simplifies the cleanup step when detached threads
-                    // terminate.
-                    if let Some(post_unmap) = args.next() {
-                        let base = post_unmap?;
-                        let size = args.next().ok_or(Error::new(EINVAL))??;
+                let context_verb =
+                    ContextVerb::try_from_raw(user_data).ok_or(Error::new(EINVAL))?;
 
-                        if size == 0 {
-                            return Ok(3 * mem::size_of::<usize>());
+                match context_verb {
+                    // TODO: lwp_park/lwp_unpark for bypassing procmgr?
+                    ContextVerb::Unstop | ContextVerb::Stop if !privileged => {
+                        return Err(Error::new(EPERM))
+                    }
+                    ContextVerb::Stop => {
+                        let mut guard = context.write();
+
+                        match guard.status {
+                            Status::Dead => return Err(Error::new(EOWNERDEAD)),
+                            Status::HardBlocked {
+                                reason: HardBlockedReason::AwaitingMmap { .. },
+                            } => todo!(),
+                            _ => (),
                         }
+                        guard.status = Status::HardBlocked {
+                            reason: HardBlockedReason::Stopped,
+                        };
+                        // TODO: wait for context to be switched away from, and/or IPI?
+                        Ok(size_of::<usize>())
+                    }
+                    ContextVerb::Unstop => {
+                        let mut guard = context.write();
 
-                        let addrsp = Arc::clone(context.read().addr_space()?);
-                        let res = addrsp.munmap(
-                            PageSpan::validate_nonempty(VirtualAddress::new(base), size)
-                                .ok_or(Error::new(EINVAL))?,
-                            false,
-                        )?;
-                        for r in res {
-                            let _ = r.unmap();
+                        if let Status::HardBlocked {
+                            reason: HardBlockedReason::Stopped,
+                        } = guard.status
+                        {
+                            guard.status = Status::Runnable;
+                        }
+                        Ok(size_of::<usize>())
+                    }
+                    ContextVerb::ForceKill => {
+                        if context::is_current(&context) {
+                            // The following functionality simplifies the cleanup step when detached threads
+                            // terminate.
+                            if let Some(post_unmap) = args.next() {
+                                let base = post_unmap?;
+                                let size = args.next().ok_or(Error::new(EINVAL))??;
+
+                                if size == 0 {
+                                    return Ok(3 * mem::size_of::<usize>());
+                                }
+
+                                let addrsp = Arc::clone(context.read().addr_space()?);
+                                let res = addrsp.munmap(
+                                    PageSpan::validate_nonempty(VirtualAddress::new(base), size)
+                                        .ok_or(Error::new(EINVAL))?,
+                                    false,
+                                )?;
+                                for r in res {
+                                    let _ = r.unmap();
+                                }
+                            }
+                            crate::syscall::exit_this_context();
+                        } else {
+                            let mut ctxt = context.write();
+                            ctxt.status = context::Status::Runnable;
+                            ctxt.being_sigkilled = true;
+                            Ok(mem::size_of::<usize>())
                         }
                     }
-                    crate::syscall::exit_this_context();
-                } else {
-                    let mut ctxt = context.write();
-                    ctxt.status = context::Status::Runnable;
-                    ctxt.being_sigkilled = true;
-                    Ok(mem::size_of::<usize>())
                 }
             }
             ContextHandle::Signal => {
@@ -1213,7 +1259,7 @@ impl ContextHandle {
                 buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
                 Ok(mem::size_of_val(&mask))
             } // TODO: Replace write() with SYS_SENDFD?
-            ContextHandle::Status => {
+            ContextHandle::Status { .. } => {
                 let status = match context.read().status {
                     Status::Runnable => ContextStatus::Runnable,
                     Status::Blocked => ContextStatus::Blocked,
@@ -1221,6 +1267,9 @@ impl ContextHandle {
                     Status::HardBlocked {
                         reason: HardBlockedReason::NotYetStarted,
                     } => ContextStatus::NotYetStarted,
+                    Status::HardBlocked {
+                        reason: HardBlockedReason::Stopped,
+                    } => ContextStatus::Stopped,
                     _ => ContextStatus::Other,
                 };
                 buf.copy_common_bytes_from_slice(&(status as usize).to_ne_bytes())

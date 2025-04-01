@@ -58,7 +58,11 @@ impl Status {
 
 #[derive(Clone, Debug)]
 pub enum HardBlockedReason {
-    AwaitingMmap { file_ref: GrantFileRef },
+    /// "SIGSTOP", only procmgr is allowed to switch contexts this state
+    Stopped,
+    AwaitingMmap {
+        file_ref: GrantFileRef,
+    },
     // TODO: PageFaultOom?
     NotYetStarted,
     PtraceStop,
