@@ -1,7 +1,7 @@
 //! Filesystem syscalls
 use core::num::NonZeroUsize;
 
-use alloc::{sync::Arc, vec::Vec, string::String};
+use alloc::{string::String, sync::Arc, vec::Vec};
 use redox_path::RedoxPath;
 use spin::RwLock;
 
@@ -80,9 +80,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 
     // Display a deprecation warning for any usage of the legacy scheme syntax (scheme:/path)
     // FIXME remove entries from this list as the respective programs get updated
-    if path_buf.contains(':')
-        && !is_legacy(&path_buf)
-    {
+    if path_buf.contains(':') && !is_legacy(&path_buf) {
         let name = context::current().read().name.clone();
         if name.contains("cosmic") && (path_buf == "event:" || path_buf.starts_with("time:")) {
             // FIXME cosmic apps likely need crate updates
@@ -127,10 +125,9 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
         .ok_or(Error::new(EMFILE))
 }
 
-
 pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    
+
     if is_legacy(&path_buf) {
         // TODO
         return Err(Error::new(EINVAL));
@@ -139,37 +136,36 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
     let context_ref = context::current();
     let context = context_ref.read();
     let caller_ctx = process::current()?.read().caller_ctx();
-        
-    let folder_or_scheme = context.get_file(fh)
-        .ok_or(Error::new(EBADF))?;
+
+    let folder_or_scheme = context.get_file(fh).ok_or(Error::new(EBADF))?;
 
     let description = folder_or_scheme.description.read();
     let new_description = {
-            let scheme = scheme::schemes()
-                .get(description.scheme)
-                .ok_or(Error::new(EBADF))?
-                .clone();
+        let scheme = scheme::schemes()
+            .get(description.scheme)
+            .ok_or(Error::new(EBADF))?
+            .clone();
 
-            match scheme.kopenat(description.number, raw_path, flags, caller_ctx)? {
-                OpenResult::SchemeLocal(number, internal_flags) => {
-                    Arc::new(RwLock::new(FileDescription {
-                        offset: 0,
-                        internal_flags,
-                        scheme: description.scheme,
-                        number,
-                        flags: description.flags,
-                    }))
-                }
-                OpenResult::External(desc) => desc,
+        match scheme.kopenat(description.number, raw_path, flags, caller_ctx)? {
+            OpenResult::SchemeLocal(number, internal_flags) => {
+                Arc::new(RwLock::new(FileDescription {
+                    offset: 0,
+                    internal_flags,
+                    scheme: description.scheme,
+                    number,
+                    flags: description.flags,
+                }))
             }
-        };
+            OpenResult::External(desc) => desc,
+        }
+    };
 
-        let new_file = FileDescriptor {
-            description: new_description,
-            cloexec: false,
-        };
+    let new_file = FileDescriptor {
+        description: new_description,
+        cloexec: false,
+    };
 
-        context.add_file(new_file).ok_or(Error::new(EMFILE))
+    context.add_file(new_file).ok_or(Error::new(EMFILE))
 }
 
 /// rmdir syscall
