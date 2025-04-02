@@ -146,6 +146,21 @@ impl KernelScheme for PipeScheme {
         Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
     }
 
+    fn kopenat(&self, id: usize, _user_buf: UserSliceRo, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+        let (_, key) = from_raw_id(id);
+
+        let folder_or_scheme = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+
+        if folder_or_scheme.has_run_dup.swap(true, Ordering::SeqCst) {
+            return Err(Error::new(EBADF));
+        }
+
+        Ok(OpenResult::SchemeLocal(
+            key | WRITE_NOT_READ_BIT,
+            InternalFlags::empty(),
+        ))
+    }
+
     fn kread(
         &self,
         id: usize,

@@ -386,6 +386,10 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(ENOENT))
     }
 
+    fn kopenat(&self, id: usize, path: UserSliceRo, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+        Err(Error::new(ENOENT))
+    }
+
     fn kfmap(
         &self,
         number: usize,
