@@ -19,7 +19,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
+use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult, StrOrBytes};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
@@ -149,15 +149,20 @@ impl KernelScheme for PipeScheme {
     fn kopenat(
         &self,
         id: usize,
-        _user_buf: UserSliceRo,
+        user_buf: StrOrBytes,
         _flags: usize,
         _ctx: CallerCtx,
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);
 
-        let folder_or_scheme = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+        let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        if buf == "write" {
+            return Err(Error::new(EINVAL));
+        }
 
-        if folder_or_scheme.has_run_dup.swap(true, Ordering::SeqCst) {
+        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+
+        if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
             return Err(Error::new(EBADF));
         }
 

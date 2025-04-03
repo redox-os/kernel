@@ -13,7 +13,7 @@ use crate::{
         process,
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
+    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
     syscall::{data::Stat, error::*, flag::*},
 };
 
@@ -127,9 +127,8 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 
 pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
     if is_legacy(&path_buf) {
-        // TODO
+        // TODO: implement
         return Err(Error::new(EINVAL));
     }
 
@@ -137,16 +136,21 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
     let context = context_ref.read();
     let caller_ctx = process::current()?.read().caller_ctx();
 
-    let folder_or_scheme = context.get_file(fh).ok_or(Error::new(EBADF))?;
+    let pipe = context.get_file(fh).ok_or(Error::new(EBADF))?;
 
-    let description = folder_or_scheme.description.read();
+    let description = pipe.description.read();
     let new_description = {
         let scheme = scheme::schemes()
             .get(description.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 
-        match scheme.kopenat(description.number, raw_path, flags, caller_ctx)? {
+        match scheme.kopenat(
+            description.number,
+            StrOrBytes::from_str(&path_buf),
+            flags,
+            caller_ctx,
+        )? {
             OpenResult::SchemeLocal(number, internal_flags) => {
                 Arc::new(RwLock::new(FileDescription {
                     offset: 0,
