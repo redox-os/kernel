@@ -1395,7 +1395,7 @@ impl KernelScheme for UserScheme {
         let result = inner.call_extended(
             ctx,
             None,
-            Opcode::Dup, // TODO: use OpenAt
+            Opcode::OpenAt,
             [file, address.base(), address.len(), flags],
             address.span(),
         );

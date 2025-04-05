@@ -58,9 +58,6 @@ pub mod time;
 /// Safely copying memory between user and kernel memory
 pub mod usercopy;
 
-// TODO: Remove this
-const SYS_OPENAT: usize = SYS_CLASS_PATH | SYS_RET_FILE | 7;
-
 /// This function is the syscall handler of the kernel, it is composed of an inner function that returns a `Result<usize>`. After the inner function runs, the syscall
 /// function calls [`Error::mux`] on it.
 #[must_use]
