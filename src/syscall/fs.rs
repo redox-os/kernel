@@ -260,9 +260,25 @@ pub fn call(
         core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
     })?;
 
-    file_op_generic(fd, |scheme, number| {
-        scheme.kcall(number, payload, flags, &meta[..copied / 8])
+    let file = (match (
+        context::current().read(),
+        flags.contains(CallFlags::CONSUME),
+    ) {
+        (ctxt, true) => ctxt.remove_file(fd),
+        (ctxt, false) => ctxt.get_file(fd),
     })
+    .ok_or(Error::new(EBADF))?;
+
+    let (scheme_id, number) = {
+        let desc = file.description.read();
+        (desc.scheme, desc.number)
+    };
+    let scheme = scheme::schemes()
+        .get(scheme_id)
+        .ok_or(Error::new(EBADFD))?
+        .clone();
+
+    scheme.kcall(number, payload, flags, &meta[..copied / 8])
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
