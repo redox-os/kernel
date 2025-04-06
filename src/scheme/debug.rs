@@ -61,12 +61,7 @@ impl KernelScheme for DebugScheme {
 
             "no-preserve" => SpecialFds::NoPreserve as usize,
 
-            "disable-graphical-debug" => {
-                #[cfg(feature = "graphical_debug")]
-                graphical_debug::fini();
-
-                SpecialFds::DisableGraphicalDebug as usize
-            }
+            "disable-graphical-debug" => SpecialFds::DisableGraphicalDebug as usize,
 
             #[cfg(feature = "profiling")]
             p if p.starts_with("profiling-") => {
@@ -163,6 +158,13 @@ impl KernelScheme for DebugScheme {
             crate::profiling::IS_PROFILING.store(is_profiling, Ordering::Relaxed);
 
             return Ok(1);
+        }
+
+        if handle.num == SpecialFds::DisableGraphicalDebug as usize {
+            #[cfg(feature = "graphical_debug")]
+            graphical_debug::fini();
+
+            return Ok(0);
         }
 
         if handle.num != SpecialFds::Default as usize
