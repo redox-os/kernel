@@ -66,7 +66,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::{
     context::{
         process::{new_process, ProcessInfo, INIT},
-        switch::SwitchResult,
+        scheduler::SwitchResult,
     },
     scheme::SchemeNamespace,
 };

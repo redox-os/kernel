@@ -1,18 +1,21 @@
 //! Intrinsics for panic handling
 
-use core::{panic::PanicInfo, slice, str, sync::atomic::Ordering};
+use core::{slice, str, sync::atomic::Ordering};
 use goblin::elf::sym;
 use rmm::VirtualAddress;
 use rustc_demangle::demangle;
 
 use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
-    context, cpu_id,
     elf::Elf,
-    interrupt,
     memory::KernelMapper,
     start::KERNEL_SIZE,
-    syscall,
+};
+
+#[cfg(not(test))]
+use {
+    crate::{context, cpu_id, interrupt, syscall},
+    core::panic::PanicInfo,
 };
 
 /// Required to handle panics

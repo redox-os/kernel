@@ -12,7 +12,10 @@ toml = "0.8"
 [dependencies]
 bitflags = "2"
 bitfield = "0.13.2"
-hashbrown = { version = "0.14.3", default-features = false, features = ["ahash", "inline-more"] }
+hashbrown = { version = "0.14.3", default-features = false, features = [
+  "ahash",
+  "inline-more",
+] }
 linked_list_allocator = "0.9.0"
 log = "0.4"
 redox-path = "0.2.0"
@@ -54,6 +57,8 @@ default = [
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",
+  "scheduler_eevdf",
+  # "scheduler_round_robin",
 ]
 
 # Activates some limited code-overwriting optimizations, based on CPU features.
@@ -67,10 +72,12 @@ profiling = []
 #TODO: remove when threading issues are fixed
 pti = []
 qemu_debug = []
+scheduler_eevdf = []
+scheduler_round_robin = []
 serial_debug = []
-system76_ec_debug = []
 slab = ["slab_allocator"]
 sys_stat = []
+system76_ec_debug = []
 x86_kvm_pv = []
 
 debugger = ["syscall_debug"]
@@ -89,3 +96,6 @@ panic = "abort"
 lto = true
 
 debug = "full"
+
+[dev-dependencies]
+test-log = "0.2.17"

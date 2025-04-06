@@ -2754,6 +2754,7 @@ enum PageQueueEntry {
         phys_contiguous_count: Option<NonZeroUsize>,
     },
     Other {
+        #[expect(dead_code)]
         actions: TlbShootdownActions,
         //page: Page,
     },

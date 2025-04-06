@@ -55,6 +55,7 @@ pub struct ProcessInfo {
     /// The effective namespace id
     pub ens: SchemeNamespace,
 }
+
 impl Deref for Process {
     type Target = ProcessInfo;
 
