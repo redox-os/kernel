@@ -49,7 +49,7 @@ sbi-rt = "0.0.3"
 [features]
 default = [
   "acpi",
-  "multi_core",
+  #TODO: issues with Alder Lake and newer CPUs: "multi_core",
   "graphical_debug",
   "serial_debug",
   "self_modifying",
