@@ -1,7 +1,7 @@
 //! Filesystem syscalls
-use core::{mem::size_of, num::NonZeroUsize};
+use core::num::NonZeroUsize;
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 use redox_path::RedoxPath;
 use spin::RwLock;
 
@@ -13,7 +13,7 @@ use crate::{
         process,
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult},
+    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
     syscall::{data::Stat, error::*, flag::*},
 };
 
@@ -42,18 +42,27 @@ pub fn file_op_generic_ext<T>(
 
     op(&*scheme, file.description, desc)
 }
-pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<alloc::string::String> {
+pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<String> {
     let mut path_buf = vec![0_u8; max_len];
     if raw_path.len() > path_buf.len() {
         return Err(Error::new(ENAMETOOLONG));
     }
     let path_len = raw_path.copy_common_bytes_to_slice(&mut path_buf)?;
     path_buf.truncate(path_len);
-    alloc::string::String::from_utf8(path_buf).map_err(|_| Error::new(EINVAL))
+    String::from_utf8(path_buf).map_err(|_| Error::new(EINVAL))
     //core::str::from_utf8(&path_buf[..path_len]).map_err(|_| Error::new(EINVAL))
 }
 // TODO: Define elsewhere
 const PATH_MAX: usize = PAGE_SIZE;
+
+#[inline]
+fn is_legacy(path_buf: &String) -> bool {
+    // FIXME remove entries from this list as the respective programs get updated
+    path_buf.starts_with(':')
+        || path_buf == "null:" // FIXME Remove exception at next rustc update (rust#138457)
+        || path_buf == "sys:exe" // FIXME Remove exception at next rustc update (rust#138457)
+        || path_buf.starts_with("orbital:")
+}
 
 /// Open syscall
 pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
@@ -71,12 +80,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 
     // Display a deprecation warning for any usage of the legacy scheme syntax (scheme:/path)
     // FIXME remove entries from this list as the respective programs get updated
-    if path_buf.contains(':')
-        && !path_buf.starts_with(':')
-        && path_buf != "null:" // FIXME Remove exception at next rustc update (rust#138457)
-        && path_buf != "sys:exe" // FIXME Remove exception at next rustc update (rust#138457)
-        && !path_buf.starts_with("orbital:")
-    {
+    if path_buf.contains(':') && !is_legacy(&path_buf) {
         let name = context::current().read().name.clone();
         if name.contains("cosmic") && (path_buf == "event:" || path_buf.starts_with("time:")) {
             // FIXME cosmic apps likely need crate updates
@@ -119,6 +123,53 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
             cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         })
         .ok_or(Error::new(EMFILE))
+}
+
+pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    if is_legacy(&path_buf) {
+        // TODO: implement
+        return Err(Error::new(EINVAL));
+    }
+
+    let context_ref = context::current();
+    let context = context_ref.read();
+    let caller_ctx = process::current()?.read().caller_ctx();
+
+    let pipe = context.get_file(fh).ok_or(Error::new(EBADF))?;
+
+    let description = pipe.description.read();
+    let new_description = {
+        let scheme = scheme::schemes()
+            .get(description.scheme)
+            .ok_or(Error::new(EBADF))?
+            .clone();
+
+        match scheme.kopenat(
+            description.number,
+            StrOrBytes::from_str(&path_buf),
+            flags,
+            caller_ctx,
+        )? {
+            OpenResult::SchemeLocal(number, internal_flags) => {
+                Arc::new(RwLock::new(FileDescription {
+                    offset: 0,
+                    internal_flags,
+                    scheme: description.scheme,
+                    number,
+                    flags: description.flags,
+                }))
+            }
+            OpenResult::External(desc) => desc,
+        }
+    };
+
+    let new_file = FileDescriptor {
+        description: new_description,
+        cloexec: false,
+    };
+
+    context.add_file(new_file).ok_or(Error::new(EMFILE))
 }
 
 /// rmdir syscall
