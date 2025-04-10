@@ -1265,17 +1265,21 @@ impl ContextHandle {
                 Ok(mem::size_of_val(&mask))
             } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
-                let status = match context.read().status {
-                    Status::Runnable => ContextStatus::Runnable,
-                    Status::Blocked => ContextStatus::Blocked,
-                    Status::Dead => ContextStatus::Dead,
-                    Status::HardBlocked {
-                        reason: HardBlockedReason::NotYetStarted,
-                    } => ContextStatus::NotYetStarted,
-                    Status::HardBlocked {
-                        reason: HardBlockedReason::Stopped,
-                    } => ContextStatus::Stopped,
-                    _ => ContextStatus::Other,
+                let status = {
+                    let context = context.read();
+                    match context.status {
+                        Status::Dead => ContextStatus::Dead,
+                        Status::Runnable if context.being_sigkilled => ContextStatus::Dead,
+                        Status::Runnable => ContextStatus::Runnable,
+                        Status::Blocked => ContextStatus::Blocked,
+                        Status::HardBlocked {
+                            reason: HardBlockedReason::NotYetStarted,
+                        } => ContextStatus::NotYetStarted,
+                        Status::HardBlocked {
+                            reason: HardBlockedReason::Stopped,
+                        } => ContextStatus::Stopped,
+                        _ => ContextStatus::Other,
+                    }
                 };
                 buf.copy_common_bytes_from_slice(&(status as usize).to_ne_bytes())
             }
