@@ -303,9 +303,9 @@ impl UserInner {
                 // the caller is interrupted by SIGKILL.
                 callee_responsible: PageSpan::empty(),
             };
+            self.todo.send(sqe);
         }
 
-        self.todo.send(sqe);
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         loop {
@@ -830,7 +830,7 @@ impl UserInner {
                     return Ok(Packet {
                         id: 0,
                         a: KSMSG_CANCEL,
-                        b: sqe.tag as usize,
+                        b: sqe.tag as usize + 1,
                         c: 0,
                         d: 0,
                         pid: sqe.caller as usize,
@@ -1061,15 +1061,23 @@ impl UserInner {
                     canceling,
                     callee_responsible,
                 } => {
+                    // Convert ECANCELED to EINTR if a request was being canceled (currently always
+                    // due to signals).
+                    if let Response::Regular(ref mut code, _) = response
+                        && canceling
+                        && *code == Error::mux(Err(Error::new(ECANCELED)))
+                    {
+                        *code = Error::mux(Err(Error::new(EINTR)));
+                    }
+
+                    // TODO: Require ECANCELED?
                     if let Response::Regular(ref mut code, _) = response
                         && !canceling
                         && *code == Error::mux(Err(Error::new(EINTR)))
                     {
                         // EINTR is valid after cancelation has been requested, but not otherwise.
-                        // This is because the kernel-assisted signal trampoline will be invoked
-                        // after a syscall returns EINTR.
-                        //
-                        // TODO: Reserve another error code for user-caused vs kernel-caused EINTR?
+                        // This is because the userspace signal trampoline will be invoked after a
+                        // syscall returns EINTR.
                         *code = Error::mux(Err(Error::new(EIO)));
                     }
 
