@@ -103,7 +103,6 @@ enum ContextHandle {
     Status {
         privileged: bool,
     }, // can write ContextVerb
-    Signal, // writing sends signal
 
     Regs(RegsKind),
     Name,
@@ -223,7 +222,6 @@ impl ProcScheme {
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status { privileged: false }, false),
-            "signal" => (ContextHandle::Signal, false),
             _ if path.starts_with("auth-") => {
                 let nonprefix = &path["auth-".len()..];
                 let next_dash = nonprefix.find('-').ok_or(Error::new(ENOENT))?;
@@ -1126,26 +1124,6 @@ impl ContextHandle {
                         }
                     }
                 }
-            }
-            ContextHandle::Signal => {
-                /*
-                let sig = buf.read_u32()?;
-                let mut killed_self = false;
-                crate::syscall::process::send_signal(
-                    KillTarget::Thread(context),
-                    sig as usize,
-                    KillMode::Idempotent,
-                    false,
-                    &mut killed_self,
-                    me,
-                )?;
-                if killed_self {
-                    Err(Error::new(EINTR))
-                } else {
-                    Ok(4)
-                }
-                */
-                Err(Error::new(EOPNOTSUPP))
             }
             ContextHandle::Attr => {
                 let info = unsafe { buf.read_exact::<ProcSchemeAttrs>()? };
