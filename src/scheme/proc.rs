@@ -1095,29 +1095,33 @@ impl ContextHandle {
                     }
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
+                            //log::trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {
                                 let base = post_unmap?;
                                 let size = args.next().ok_or(Error::new(EINVAL))??;
 
-                                if size == 0 {
-                                    return Ok(3 * mem::size_of::<usize>());
-                                }
-
-                                let addrsp = Arc::clone(context.read().addr_space()?);
-                                let res = addrsp.munmap(
-                                    PageSpan::validate_nonempty(VirtualAddress::new(base), size)
+                                if size > 0 {
+                                    let addrsp = Arc::clone(context.read().addr_space()?);
+                                    let res = addrsp.munmap(
+                                        PageSpan::validate_nonempty(
+                                            VirtualAddress::new(base),
+                                            size,
+                                        )
                                         .ok_or(Error::new(EINVAL))?,
-                                    false,
-                                )?;
-                                for r in res {
-                                    let _ = r.unmap();
+                                        false,
+                                    )?;
+                                    for r in res {
+                                        let _ = r.unmap();
+                                    }
                                 }
                             }
                             crate::syscall::exit_this_context();
                         } else {
                             let mut ctxt = context.write();
+                            //log::trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
                             ctxt.status = context::Status::Runnable;
                             ctxt.being_sigkilled = true;
                             Ok(mem::size_of::<usize>())
