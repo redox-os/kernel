@@ -11,7 +11,7 @@
     "vendor": "unknown",
     "linker": "rust-lld",
     "linker-flavor": "gnu-lld",
-    "features": "+strict-align,-neon,-fp-armv8,+tpidr-el1",
+    "features": "+strict-align,-neon,+fp-armv8,+tpidr-el1",
     "dynamic-linking": false,
     "executables": true,
     "relocation-model": "pic",
