@@ -166,7 +166,7 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
 
     let new_file = FileDescriptor {
         description: new_description,
-        cloexec: false,
+        cloexec: flags & O_CLOEXEC != 0,
     };
 
     context.add_file(new_file).ok_or(Error::new(EMFILE))
