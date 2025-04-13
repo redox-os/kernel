@@ -1,11 +1,11 @@
-use alloc::{borrow::Cow, collections::VecDeque, sync::Arc, vec::Vec};
+use alloc::{borrow::Cow, sync::Arc, vec::Vec};
 use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
 use spin::RwLock;
-use syscall::{RtSigInfo, SigProcControl, Sigcontrol};
+use syscall::{SigProcControl, Sigcontrol};
 
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;
