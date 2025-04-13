@@ -17,6 +17,23 @@ pub unsafe fn kreset() -> ! {
     emergency_reset();
 }
 
+#[cfg(target_arch = "x86")]
+pub unsafe fn emergency_reset() -> ! {
+    // Use triple fault to guarantee reset
+    core::arch::asm!(
+        "
+        cli
+        sidt [esp+16]
+        // set IDT limit to zero
+        mov word ptr [esp+16], 0
+        lidt [esp+16]
+        int $3
+    ",
+        options(noreturn)
+    );
+}
+
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn emergency_reset() -> ! {
     // Use triple fault to guarantee reset
     core::arch::asm!(
