@@ -32,9 +32,9 @@ use self::acpi::AcpiScheme;
 use self::dtb::DtbScheme;
 
 use self::{
-    debug::DebugScheme, event::EventScheme, irq::IrqScheme, itimer::ITimerScheme,
-    memory::MemoryScheme, pipe::PipeScheme, proc::ProcScheme, root::RootScheme, serio::SerioScheme,
-    sys::SysScheme, time::TimeScheme, user::UserScheme,
+    debug::DebugScheme, event::EventScheme, irq::IrqScheme, memory::MemoryScheme, pipe::PipeScheme,
+    proc::ProcScheme, root::RootScheme, serio::SerioScheme, sys::SysScheme, time::TimeScheme,
+    user::UserScheme,
 };
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
@@ -51,9 +51,6 @@ pub mod event;
 
 /// `irq:` - allows userspace handling of IRQs
 pub mod irq;
-
-/// `itimer:` - support for getitimer and setitimer
-pub mod itimer;
 
 /// `memory:` - a scheme for accessing physical memory
 pub mod memory;
@@ -139,7 +136,6 @@ impl SchemeList {
                 Serio,
                 Irq,
                 Time,
-                ITimer,
                 Sys,
                 ProcFull,
                 ProcRestricted,
@@ -184,8 +180,6 @@ impl SchemeList {
         })
         .unwrap();
         self.insert_global(ns, "event", GlobalSchemes::Event)
-            .unwrap();
-        self.insert_global(ns, "itimer", GlobalSchemes::ITimer)
             .unwrap();
         self.insert_global(ns, "memory", GlobalSchemes::Memory)
             .unwrap();
@@ -543,7 +537,6 @@ pub enum GlobalSchemes {
     Serio,
     Irq,
     Time,
-    ITimer,
     Sys,
     ProcFull,
     ProcRestricted,
@@ -584,7 +577,6 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Serio => &SerioScheme,
             Self::Irq => &IrqScheme,
             Self::Time => &TimeScheme,
-            Self::ITimer => &ITimerScheme,
             Self::Sys => &SysScheme,
             Self::ProcFull => &ProcScheme::<true>,
             Self::ProcRestricted => &ProcScheme::<false>,
