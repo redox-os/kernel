@@ -270,18 +270,6 @@ fn run_userspace() -> ! {
     }
 }
 
-/// Allow exception handlers to send signal to arch-independent kernel
-pub fn ksignal(signal: usize) {
-    let current = context::current();
-
-    info!("SIGNAL {signal}, CPU {}, PID {current:p}", cpu_id(),);
-    {
-        let context = current.read();
-        info!("NAME {}", context.name);
-    }
-    crate::context::signal::excp_handler(signal);
-}
-
 // TODO: Use this macro on aarch64 too.
 
 macro_rules! linker_offsets(

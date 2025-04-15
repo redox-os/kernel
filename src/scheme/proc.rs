@@ -1065,7 +1065,7 @@ impl ContextHandle {
                         let mut guard = context.write();
 
                         match guard.status {
-                            Status::Dead => return Err(Error::new(EOWNERDEAD)),
+                            Status::Dead { .. } => return Err(Error::new(EOWNERDEAD)),
                             Status::HardBlocked {
                                 reason: HardBlockedReason::AwaitingMmap { .. },
                             } => todo!(),
@@ -1118,7 +1118,7 @@ impl ContextHandle {
                                     }
                                 }
                             }
-                            crate::syscall::exit_this_context();
+                            crate::syscall::exit_this_context(None);
                         } else {
                             let mut ctxt = context.write();
                             //log::trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
@@ -1250,8 +1250,17 @@ impl ContextHandle {
                 let status = {
                     let context = context.read();
                     match context.status {
-                        Status::Dead => ContextStatus::Dead,
-                        Status::Runnable if context.being_sigkilled => ContextStatus::Dead,
+                        Status::Dead { excp: None } => ContextStatus::Dead,
+                        Status::Runnable if context.being_sigkilled => ContextStatus::ForceKilled,
+                        Status::Dead { excp: Some(excp) } => {
+                            let (status, payload) =
+                                buf.split_at(size_of::<usize>()).ok_or(Error::new(EINVAL))?;
+                            status.copy_from_slice(
+                                &(ContextStatus::UnhandledExcp as usize).to_ne_bytes(),
+                            )?;
+                            let len = payload.copy_common_bytes_from_slice(&excp)?;
+                            return Ok(size_of::<usize>() + len);
+                        }
                         Status::Runnable => ContextStatus::Runnable,
                         Status::Blocked => ContextStatus::Blocked,
                         Status::HardBlocked {

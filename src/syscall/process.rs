@@ -23,7 +23,7 @@ use crate::{
 
 use super::usercopy::UserSliceWo;
 
-pub fn exit_this_context() -> ! {
+pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
     let close_files;
     let addrspace_opt;
 
@@ -49,7 +49,7 @@ pub fn exit_this_context() -> ! {
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
         let mut guard = context_lock.write();
-        guard.status = context::Status::Dead;
+        guard.status = context::Status::Dead { excp };
         guard.owner_proc_id
     };
     if let Some(owner) = owner {

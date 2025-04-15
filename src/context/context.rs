@@ -44,7 +44,9 @@ pub enum Status {
     HardBlocked {
         reason: HardBlockedReason,
     },
-    Dead,
+    Dead {
+        excp: Option<syscall::Exception>,
+    },
 }
 
 impl Status {

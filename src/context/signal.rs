@@ -75,15 +75,32 @@ pub fn signal_handler() {
         Ordering::Release,
     );
 }
-pub fn excp_handler(_signal: usize) {
+pub fn excp_handler(excp: syscall::Exception) {
     let current = context::current();
-    let context = current.write();
 
-    let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+    let mut context = current.write();
+
+    let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+        // TODO: Let procmgr print this?
+        log::info!(
+            "UNHANDLED EXCEPTION, CPU {}, PID {current:p}, NAME {}",
+            crate::cpu_id(),
+            context.name
+        );
         drop(context);
-        drop(current);
-        crate::syscall::exit_this_context();
+        // TODO: Allow exceptions to be caught by tracer etc, without necessarily exiting the
+        // context (closing files, dropping AddrSpace, etc)
+        crate::syscall::process::exit_this_context(Some(excp));
     };
-
-    // TODO: call exception handler, similar to the signal handler case
+    // TODO
+    /*
+    let Some(regs) = context.regs_mut() else {
+        // TODO: unhandled exception in this case too?
+        return;
+    };
+    let old_ip = regs.instr_pointer();
+    let old_archdep_reg = regs.ar
+    let (tctl, pctl, sigst) = context.sigcontrol().expect("already checked");
+    tctl.saved_ip.set(excp.rsp);
+    tctl.saved_archdep_reg*/
 }

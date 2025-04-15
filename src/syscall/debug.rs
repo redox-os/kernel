@@ -208,7 +208,7 @@ impl SyscallDebugInfo {
 }
 #[cfg(feature = "syscall_debug")]
 pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
-    let do_debug = if crate::context::current().read().name.contains("bash") {
+    let do_debug = if false && crate::context::current().read().name.contains("bash") {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
         } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
