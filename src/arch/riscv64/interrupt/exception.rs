@@ -1,13 +1,15 @@
+use ::syscall::Exception;
 use core::{arch::global_asm, sync::atomic::Ordering};
 use log::{error, info};
 use rmm::VirtualAddress;
 
 use crate::{
     arch::{device::irqchip, start::BOOT_HART_ID},
+    context::signal::excp_handler,
     memory::GenericPfFlags,
     panic::stack_trace,
-    ptrace, syscall,
-    syscall::flag::*,
+    ptrace,
+    syscall::{self, flag::*},
 };
 
 const BREAKPOINT: usize = 3;
@@ -171,13 +173,16 @@ unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
     );
     regs.dump();
 
+    // TODO
+    /*
     let signal = match scause {
         0 | 4 | 6 | 18 | 19 => SIGBUS, // misaligned / machine check
         2 | 8 | 9 => SIGILL,           // Illegal instruction / breakpoint / ecall
         BREAKPOINT => SIGTRAP,
         _ => SIGSEGV,
     };
-    crate::ksignal(signal);
+    */
+    excp_handler(Exception { kind: scause });
 }
 
 unsafe fn page_fault(scause: usize, regs: &mut InterruptStack, user_mode: bool) -> bool {
