@@ -1,9 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use crate::{
-    context,
-    syscall::flag::{SigcontrolFlags, SIGKILL},
-};
+use crate::{context, syscall::flag::SigcontrolFlags};
 
 pub fn signal_handler() {
     let context_lock = context::current();
@@ -15,8 +12,7 @@ pub fn signal_handler() {
     if being_sigkilled {
         drop(context_guard);
         drop(context_lock);
-        //crate::syscall::process::exit(SIGKILL << 8);
-        todo!()
+        crate::syscall::process::exit_this_context(None);
     }
 
     /*let thumbs_down = ptrace::breakpoint_callback(
