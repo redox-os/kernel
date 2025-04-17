@@ -9,7 +9,7 @@ else
 endif
 
 ifeq ($(ARCH),riscv64gc)
-	ARCH:=riscv64
+	override ARCH:=riscv64
 endif
 GNU_TARGET=$(ARCH)-unknown-redox
 
