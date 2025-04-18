@@ -74,7 +74,9 @@ pub fn init() {
     let mut context = Context::new(owner).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
-    context.name = Cow::Borrowed("kmain");
+
+    context.name.clear();
+    context.name.push_str("kmain");
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
 

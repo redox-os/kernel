@@ -28,6 +28,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
@@ -105,7 +106,6 @@ enum ContextHandle {
     }, // can write ContextVerb
 
     Regs(RegsKind),
-    Name,
     Sighandler,
     Start,
     NewFiletable {
@@ -207,7 +207,6 @@ impl ProcScheme {
             "regs/float" => (ContextHandle::Regs(RegsKind::Float), false),
             "regs/int" => (ContextHandle::Regs(RegsKind::Int), false),
             "regs/env" => (ContextHandle::Regs(RegsKind::Env), false),
-            "name" => (ContextHandle::Name, true),
             "sighandler" => (ContextHandle::Sighandler, false),
             "start" => (ContextHandle::Start, false),
             "open_via_dup" => (ContextHandle::OpenViaDup, false),
@@ -885,16 +884,6 @@ impl ContextHandle {
                     Ok(mem::size_of::<EnvRegisters>())
                 }
             },
-            ContextHandle::Name => {
-                // TODO: What limit?
-                let mut name_buf = [0_u8; 256];
-                let bytes_copied = buf.copy_common_bytes_to_slice(&mut name_buf)?;
-
-                let utf8 = alloc::string::String::from_utf8(name_buf[..bytes_copied].to_vec())
-                    .map_err(|_| Error::new(EINVAL))?;
-                context.write().name = utf8.into();
-                Ok(buf.len())
-            }
             ContextHandle::Sighandler => {
                 let data = unsafe { buf.read_exact::<SetSighandlerData>()? };
 
@@ -1132,6 +1121,11 @@ impl ContextHandle {
             ContextHandle::Attr => {
                 let info = unsafe { buf.read_exact::<ProcSchemeAttrs>()? };
                 let mut guard = context.write();
+
+                // length must statically match
+                guard.name = ArrayString::from_byte_string(&info.debug_name)
+                    .map_err(|_| Error::new(EINVAL))?;
+
                 guard.pid = info.pid as usize;
                 guard.ens = (info.ens as usize).into();
                 guard.euid = info.euid;
@@ -1233,7 +1227,6 @@ impl ContextHandle {
 
                 Ok(grants_read * mem::size_of::<GrantDesc>())
             }
-            ContextHandle::Name => read_from(buf, context.read().name.as_bytes(), offset),
 
             ContextHandle::Filetable { data, .. } => read_from(buf, &data, offset),
             ContextHandle::MmapMinAddr(ref addrspace) => {
@@ -1275,14 +1268,18 @@ impl ContextHandle {
                 buf.copy_common_bytes_from_slice(&(status as usize).to_ne_bytes())
             }
             ContextHandle::Attr => {
-                let (euid, egid, ens, pid) = match context.read() {
-                    ref c => (c.euid, c.egid, c.ens.get() as u32, c.pid as u32),
+                let mut debug_name = [0; 32];
+                let (euid, egid, ens, pid, name) = match context.read() {
+                    ref c => (c.euid, c.egid, c.ens.get() as u32, c.pid as u32, c.name),
                 };
+                let min = name.len().min(debug_name.len());
+                debug_name[..min].copy_from_slice(&name.as_bytes()[..min]);
                 buf.copy_common_bytes_from_slice(&ProcSchemeAttrs {
                     pid,
                     euid,
                     egid,
                     ens,
+                    debug_name,
                 })
             }
             ContextHandle::Sighandler => {

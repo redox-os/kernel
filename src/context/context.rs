@@ -1,4 +1,5 @@
 use alloc::{borrow::Cow, sync::Arc, vec::Vec};
+use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
@@ -70,6 +71,8 @@ pub enum HardBlockedReason {
     PtraceStop,
 }
 
+const CONTEXT_NAME_CAPAC: usize = 32;
+
 /// A context, which is typically mapped to a userspace thread
 #[derive(Debug)]
 pub struct Context {
@@ -117,8 +120,7 @@ pub struct Context {
     /// mappings are universal and independent on address spaces or contexts.
     pub addr_space: Option<Arc<AddrSpaceWrapper>>,
     /// The name of the context
-    // TODO: fixed size ArrayString?
-    pub name: Cow<'static, str>,
+    pub name: ArrayString<CONTEXT_NAME_CAPAC>,
     /// The open files in the scheme
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
@@ -175,7 +177,7 @@ impl Context {
             kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
             kstack: None,
             addr_space: None,
-            name: Cow::Borrowed(""),
+            name: ArrayString::new(),
             files: Arc::new(RwLock::new(Vec::new())),
             userspace: false,
             fmap_ret: None,
