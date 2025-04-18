@@ -7,23 +7,8 @@ use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
     let mut string = format!(
-        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
-        "PID",
-        "PGID",
-        "PPID",
-        "SID",
-        "RUID",
-        "RGID",
-        "RNS",
-        "EUID",
-        "EGID",
-        "ENS",
-        "STAT",
-        "CPU",
-        "AFFINITY",
-        "TIME",
-        "MEM",
-        "NAME"
+        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
+        "PID", "EUID", "EGID", "ENS", "STAT", "CPU", "AFFINITY", "TIME", "MEM", "NAME"
     );
     {
         let contexts = context::contexts();
