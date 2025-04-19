@@ -16,8 +16,7 @@ hashbrown = { version = "0.14.3", default-features = false, features = ["ahash",
 linked_list_allocator = "0.9.0"
 log = "0.4"
 redox-path = "0.2.0"
-#redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git", branch = "master", default-features = false }
-redox_syscall = { git = "https://gitlab.redox-os.org/4lDO2/syscall.git", branch = "nuke_proc", default-features = false }
+redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git", branch = "master", default-features = false }
 slab_allocator = { path = "slab_allocator", optional = true }
 spin = "0.9.8"
 spinning_top = { version = "0.3", features = ["arc_lock"] }
