@@ -47,11 +47,6 @@ impl<'a> Writer<'a> {
                 serial.write(buf);
             }
         }
-
-        {
-            let buf = sbi_rt::Physical::new(buf.len(), buf.as_ptr() as usize, 0);
-            let _ = sbi_rt::console_write(buf).ok();
-        }
     }
 }
 
