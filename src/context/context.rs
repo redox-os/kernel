@@ -185,9 +185,9 @@ impl Context {
             owner_proc_id,
 
             ens: 0.into(),
-            euid: u32::MAX,
-            egid: u32::MAX,
-            pid: usize::MAX,
+            euid: 0,
+            egid: 0,
+            pid: 0,
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),

@@ -76,7 +76,7 @@ pub fn init() {
     context.sched_affinity.atomic_set(crate::cpu_id());
 
     context.name.clear();
-    context.name.push_str("kmain");
+    context.name.push_str("[kmain]");
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
 
