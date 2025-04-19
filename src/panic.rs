@@ -31,7 +31,7 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
     // This could deadlock, but at this point we are going to halt anyways
     {
         let context = context_lock.read();
-        println!("NAME: {}", context.name);
+        println!("NAME: {}, DEBUG ID: {}", context.name, context.debug_id);
 
         if let Some([a, b, c, d, e, f]) = context.current_syscall() {
             println!("SYSCALL: {}", syscall::debug::format_call(a, b, c, d, e, f));

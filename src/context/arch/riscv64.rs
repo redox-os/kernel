@@ -127,6 +127,7 @@ impl super::Context {
             None => Err(Error::new(ESRCH)),
         }
     }
+    pub fn set_userspace_io_allowed(&mut self, _allowed: bool) {}
 }
 
 pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();

@@ -28,7 +28,7 @@ use crate::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
         },
-        process, BorrowedHtBuf, Context, Status,
+        BorrowedHtBuf, Context, Status,
     },
     event,
     memory::Frame,
@@ -245,7 +245,7 @@ impl UserInner {
         args: impl Args,
         caller_responsible: &mut PageSpan,
     ) -> Result<usize> {
-        let ctx = process::current()?.read().caller_ctx();
+        let ctx = context::current().read().caller_ctx();
         match self.call_extended(ctx, None, opcode, args, caller_responsible)? {
             Response::Regular(code, _) => Error::demux(code),
             Response::Fd(_) => Err(Error::new(EIO)),
@@ -909,9 +909,9 @@ impl UserInner {
                 required_page_count as u64,
                 0,
                 0,
-                uid_gid_hack_merge(current_uid_gid()?),
+                uid_gid_hack_merge(current_uid_gid()),
             ],
-            caller: context::current().read().pid.get() as u64,
+            caller: context::current().read().pid as u64,
         });
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
@@ -1203,9 +1203,9 @@ impl UserInner {
                     map.flags.bits() as u64,
                     map.offset as u64,
                     0,
-                    uid_gid_hack_merge(current_uid_gid()?),
+                    uid_gid_hack_merge(current_uid_gid()),
                 ],
-                caller: pid.get() as u64,
+                caller: pid as u64,
             },
             &mut PageSpan::empty(),
         )?;
@@ -1432,11 +1432,9 @@ impl KernelScheme for UserScheme {
     }
 
     fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<()> {
-        {
-            let process_lock = process::current()?;
-            let process = process_lock.read();
-            if process.euid != 0 {
-                if uid != process.euid || gid != process.egid {
+        match context::current().read() {
+            ref cx => {
+                if cx.euid != 0 && (uid != cx.euid || gid != cx.egid) {
                     return Err(Error::new(EPERM));
                 }
             }
@@ -1696,7 +1694,7 @@ impl KernelScheme for UserScheme {
     fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let ctx = process::current()?.read().caller_ctx();
+        let ctx = context::current().read().caller_ctx();
         let res = inner.call_extended(
             ctx,
             None,
@@ -1719,7 +1717,7 @@ impl KernelScheme for UserScheme {
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let ctx = process::current()?.read().caller_ctx();
+        let ctx = context::current().read().caller_ctx();
         let res = inner.call_extended(
             ctx,
             Some(desc),
@@ -1794,8 +1792,8 @@ impl<const N: usize> Args for [usize; N] {
 fn uid_gid_hack_merge([uid, gid]: [u32; 2]) -> u64 {
     u64::from(uid) | (u64::from(gid) << 32)
 }
-fn current_uid_gid() -> Result<[u32; 2]> {
-    Ok(match process::current()?.read() {
+fn current_uid_gid() -> [u32; 2] {
+    match context::current().read() {
         ref p => [p.euid, p.egid],
-    })
+    }
 }

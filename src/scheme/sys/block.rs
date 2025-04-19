@@ -12,11 +12,7 @@ pub fn resource() -> Result<Vec<u8>> {
             let contexts = context::contexts();
             for context_lock in contexts.iter().filter_map(|r| r.upgrade()) {
                 let context = context_lock.read();
-                rows.push((
-                    context.pid.get(),
-                    context.name.clone(),
-                    context.status_reason,
-                ));
+                rows.push((context.pid, context.name.clone(), context.status_reason));
             }
         }
 

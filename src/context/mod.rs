@@ -2,9 +2,11 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{borrow::Cow, collections::BTreeSet, sync::Arc, vec::Vec};
+use core::num::NonZeroUsize;
 
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use alloc::{borrow::Cow, collections::BTreeSet, sync::Arc};
+
+use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use spinning_top::RwSpinlock;
 use syscall::ENOMEM;
 
@@ -13,16 +15,12 @@ use crate::{
     cpu_set::LogicalCpuSet,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
-    sync::WaitMap,
     syscall::error::{Error, Result},
 };
 
-use self::{
-    context::Kstack,
-    process::{Process, ProcessId, ProcessInfo},
-};
+use self::context::Kstack;
 pub use self::{
-    context::{BorrowedHtBuf, Context, Status, WaitpidKey},
+    context::{BorrowedHtBuf, Context, Status},
     switch::switch,
 };
 
@@ -54,9 +52,6 @@ pub mod file;
 /// Memory struct - contains a set of pages for a context
 pub mod memory;
 
-/// Process handling - TODO move to userspace
-pub mod process;
-
 /// Signal handling
 pub mod signal;
 
@@ -70,28 +65,18 @@ pub const CONTEXT_MAX_FILES: usize = 65_536;
 
 pub use self::arch::empty_cr3;
 
-static KMAIN_PROCESS: Once<Arc<RwLock<Process>>> = Once::new();
-
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
 static CONTEXTS: RwLock<BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
 pub fn init() {
-    let pid = ProcessId::new(0);
-    let process = KMAIN_PROCESS.call_once(|| {
-        Arc::new(RwLock::new(Process {
-            info: ProcessInfo::default(),
-            waitpid: Arc::new(WaitMap::new()),
-            threads: Vec::new(),
-            status: process::ProcessStatus::PossiblyRunnable,
-        }))
-    });
-
-    let mut context =
-        Context::new(pid, Arc::clone(process)).expect("failed to create kmain context");
+    let owner = None; // kmain not owned by any fd
+    let mut context = Context::new(owner).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
-    context.name = Cow::Borrowed("kmain");
+
+    context.name.clear();
+    context.name.push_str("[kmain]");
 
     self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
 
@@ -135,10 +120,6 @@ pub fn is_current(context: &Arc<RwSpinlock<Context>>) -> bool {
         .with_context(|current| Arc::ptr_eq(context, current))
 }
 
-pub fn current_pid() -> Result<ProcessId> {
-    Ok(current().read().pid)
-}
-
 pub struct ContextRef(pub Arc<RwSpinlock<Context>>);
 impl ContextRef {
     pub fn upgrade(&self) -> Option<Arc<RwSpinlock<Context>>> {
@@ -166,22 +147,18 @@ impl Eq for ContextRef {}
 /// Spawn a context from a function.
 pub fn spawn(
     userspace_allowed: bool,
-    process: Arc<RwLock<Process>>,
+    owner_proc_id: Option<NonZeroUsize>,
     func: extern "C" fn(),
 ) -> Result<Arc<RwSpinlock<Context>>> {
     let stack = Kstack::new()?;
 
-    let context_lock = Arc::try_new(RwSpinlock::new(Context::new(
-        process.read().pid,
-        Arc::clone(&process),
-    )?))
-    .map_err(|_| Error::new(ENOMEM))?;
+    let context_lock = Arc::try_new(RwSpinlock::new(Context::new(owner_proc_id)?))
+        .map_err(|_| Error::new(ENOMEM))?;
 
     CONTEXTS
         .write()
         .insert(ContextRef(Arc::clone(&context_lock)));
 
-    process.write().threads.push(Arc::downgrade(&context_lock));
     {
         let mut context = context_lock.write();
         let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));

@@ -63,13 +63,7 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{
-    context::{
-        process::{new_process, ProcessInfo, INIT},
-        switch::SwitchResult,
-    },
-    scheme::SchemeNamespace,
-};
+use crate::{context::switch::SwitchResult, scheme::SchemeNamespace};
 
 use crate::consts::*;
 
@@ -202,8 +196,7 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
-    let pid = syscall::getpid();
-    info!("BSP: {:?} {}", pid, cpu_count);
+    info!("BSP: {}", cpu_count);
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
@@ -211,30 +204,19 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    let process = new_process(|_| ProcessInfo {
-        pid: INIT,
-        ppid: INIT,
-        pgid: INIT,
-        session_id: INIT,
-        ruid: 0,
-        rgid: 0,
-        euid: 0,
-        egid: 0,
-        rns: SchemeNamespace::new(0),
-        ens: SchemeNamespace::new(0),
-    })
-    .expect("failed to create init process");
-
-    match context::spawn(true, process, userspace_init) {
+    let owner = None; // kmain not owned by any fd
+    match context::spawn(true, owner, userspace_init) {
         Ok(context_lock) => {
             {
                 let mut context = context_lock.write();
                 context.status = context::Status::Runnable;
-                context.name = "bootstrap".into();
+                context.name.clear();
+                context.name.push_str("[bootstrap]");
 
-                let mut process = context.process.write();
-                process.rns = SchemeNamespace::from(1);
-                process.ens = SchemeNamespace::from(1);
+                // TODO: Remove these from kernel
+                context.ens = SchemeNamespace::from(1);
+                context.euid = 0;
+                context.egid = 0;
             }
             INIT_THREAD.call_once(move || context_lock);
         }
@@ -265,8 +247,7 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     }
     context::init();
 
-    let pid = syscall::getpid();
-    info!("AP {}: {:?}", cpu_id, pid);
+    info!("AP {}", cpu_id);
 
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
@@ -288,18 +269,6 @@ fn run_userspace() -> ! {
             }
         }
     }
-}
-
-/// Allow exception handlers to send signal to arch-independent kernel
-pub fn ksignal(signal: usize) {
-    let current = context::current();
-
-    info!("SIGNAL {signal}, CPU {}, PID {current:p}", cpu_id(),);
-    {
-        let context = current.read();
-        info!("NAME {}", context.name);
-    }
-    crate::context::signal::excp_handler(signal);
 }
 
 // TODO: Use this macro on aarch64 too.
