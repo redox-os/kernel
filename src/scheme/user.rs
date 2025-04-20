@@ -1727,7 +1727,7 @@ impl KernelScheme for UserScheme {
         )?;
 
         match res {
-            Response::Regular(res, _) => Ok(res),
+            Response::Regular(res, _) => Error::demux(res),
             Response::Fd(_) => Err(Error::new(EIO)),
         }
     }
