@@ -1122,9 +1122,16 @@ impl ContextHandle {
                 let info = unsafe { buf.read_exact::<ProcSchemeAttrs>()? };
                 let mut guard = context.write();
 
-                // length must statically match
-                guard.name = ArrayString::from_byte_string(&info.debug_name)
+                let len = info
+                    .debug_name
+                    .iter()
+                    .position(|c| *c == 0)
+                    .unwrap_or(info.debug_name.len())
+                    .min(guard.name.capacity());
+                let debug_name = core::str::from_utf8(&info.debug_name[..len])
                     .map_err(|_| Error::new(EINVAL))?;
+                guard.name.clear();
+                guard.name.push_str(debug_name);
 
                 guard.pid = info.pid as usize;
                 guard.ens = (info.ens as usize).into();
