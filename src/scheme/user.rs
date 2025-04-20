@@ -1713,7 +1713,7 @@ impl KernelScheme for UserScheme {
         number: usize,
         desc: Arc<RwLock<FileDescription>>,
         flags: SendFdFlags,
-        _arg: u64,
+        arg: u64,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
@@ -1722,7 +1722,7 @@ impl KernelScheme for UserScheme {
             ctx,
             Some(desc),
             Opcode::Sendfd,
-            [number, flags.bits()],
+            [number, flags.bits(), arg as usize],
             &mut PageSpan::empty(),
         )?;
 
