@@ -24,7 +24,17 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
     unsafe {
         stack_trace();
     }
-    let context_lock = context::current();
+
+    let Some(context_lock) = context::try_current() else {
+        println!("CPU {}, CID <none>", cpu_id());
+
+        println!("HALT");
+        loop {
+            unsafe {
+                interrupt::halt();
+            }
+        }
+    };
 
     println!("CPU {}, CID {:p}", cpu_id(), context_lock);
 

@@ -114,6 +114,11 @@ pub fn current() -> Arc<RwSpinlock<Context>> {
         .switch_internals
         .with_context(|context| Arc::clone(context))
 }
+pub fn try_current() -> Option<Arc<RwSpinlock<Context>>> {
+    PercpuBlock::current()
+        .switch_internals
+        .try_with_context(|context| context.map(Arc::clone))
+}
 pub fn is_current(context: &Arc<RwSpinlock<Context>>) -> bool {
     PercpuBlock::current()
         .switch_internals
