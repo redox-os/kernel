@@ -129,8 +129,8 @@ impl InterruptController for GicV3 {
     }
     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
         let off = match irq_data {
-            IrqCell::L2(0, irq) => irq as usize + 32, // SPI
-            IrqCell::L2(1, irq) => irq as usize + 16, // PPI
+            IrqCell::L3(0, irq, _flags) => irq as usize + 32, // SPI
+            IrqCell::L3(1, irq, _flags) => irq as usize + 16, // PPI
             _ => return Err(Error::new(EINVAL)),
         };
         return Ok(off + self.irq_range.0);
