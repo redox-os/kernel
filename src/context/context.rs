@@ -5,7 +5,7 @@ use core::{
     num::NonZeroUsize,
 };
 use spin::RwLock;
-use syscall::{RtSigInfo, SigProcControl, Sigcontrol};
+use syscall::{RtSigInfo, SigProcControl, Sigcontrol, EBUSY};
 
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;
@@ -482,16 +482,15 @@ impl BorrowedHtBuf {
         })
     }
     pub fn tail() -> Result<Self> {
-        Ok(Self {
-            inner: Some(
-                context::current()
-                    .write()
-                    .syscall_tail
-                    .take()
-                    .ok_or(Error::new(EAGAIN))?,
-            ),
-            head_and_not_tail: false,
-        })
+        if let Some(mut guard) = context::current().try_write() {
+            let val = guard.syscall_tail.take().ok_or(Error::new(EAGAIN));
+            Ok(Self {
+                inner: Some(val?),
+                head_and_not_tail: false,
+            })
+        } else {
+            Err(Error::new(EBUSY))
+        }
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
         unsafe {

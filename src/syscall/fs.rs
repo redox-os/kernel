@@ -127,30 +127,36 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
 
 pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+
     if is_legacy(&path_buf) {
         // TODO: implement
         return Err(Error::new(EINVAL));
     }
 
-    let context_ref = context::current();
-    let context = context_ref.read();
-    let caller_ctx = process::current()?.read().caller_ctx();
-
-    let pipe = context.get_file(fh).ok_or(Error::new(EBADF))?;
+    let pipe = context::current()
+        .read()
+        .get_file(fh)
+        .ok_or(Error::new(EBADF))?;
 
     let description = pipe.description.read();
+
+    let caller_ctx = process::current()?.read().caller_ctx();
+
     let new_description = {
         let scheme = scheme::schemes()
             .get(description.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 
-        match scheme.kopenat(
+        // FIXME: This is returning Err(Function not implemented)
+        let res = scheme.kopenat(
             description.number,
             StrOrBytes::from_str(&path_buf),
             flags,
             caller_ctx,
-        )? {
+        );
+
+        match res? {
             OpenResult::SchemeLocal(number, internal_flags) => {
                 Arc::new(RwLock::new(FileDescription {
                     offset: 0,
@@ -163,15 +169,16 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
             OpenResult::External(desc) => desc,
         }
     };
-
     let new_file = FileDescriptor {
         description: new_description,
         cloexec: flags & O_CLOEXEC != 0,
     };
 
-    context.add_file(new_file).ok_or(Error::new(EMFILE))
+    context::current()
+        .read()
+        .add_file(new_file)
+        .ok_or(Error::new(EMFILE))
 }
-
 /// rmdir syscall
 pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
     let (scheme_ns, caller_ctx) = match process::current()?.read() {

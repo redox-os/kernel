@@ -754,6 +754,7 @@ impl UserInner {
             pid: sqe.caller as usize,
             a: match opc {
                 Opcode::Open => SYS_OPEN,
+                Opcode::OpenAt => SYS_OPENAT,
                 Opcode::Rmdir => SYS_RMDIR,
                 Opcode::Unlink => SYS_UNLINK,
                 Opcode::Close => SYS_CLOSE,
@@ -1398,8 +1399,9 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
     ) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let path = path.as_bytes();
-        let mut address = inner.copy_and_capture_tail(path)?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
+        // FIXME: This is returning Ok(Regular(18446744073709551578, 0))
+        // Which breaks in `Error::demux(code)?`
         let result = inner.call_extended(
             ctx,
             None,

@@ -91,11 +91,13 @@ int_like!(SchemeId, usize);
 // Unique identifier for a file descriptor.
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
+#[allow(dead_code)]
 pub enum StrOrBytes<'a> {
     Str(&'a str),
     Bytes(&'a [u8]),
 }
 
+#[allow(dead_code)]
 impl<'a> StrOrBytes<'a> {
     pub fn as_str(&self) -> Result<&str, core::str::Utf8Error> {
         match self {
