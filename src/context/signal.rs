@@ -79,8 +79,9 @@ pub fn excp_handler(excp: syscall::Exception) {
     let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         // TODO: Let procmgr print this?
         log::info!(
-            "UNHANDLED EXCEPTION, CPU {}, PID {current:p}, NAME {}",
+            "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {current:p}",
             crate::cpu_id(),
+            context.pid,
             context.name
         );
         drop(context);
