@@ -517,11 +517,7 @@ impl UserInner {
                     src: None,
                     dst: None,
                 },
-                span: {
-                    let (first_page, page_count, _offset) =
-                        page_range_containing(user_buf.addr(), user_buf.len());
-                    PageSpan::new(first_page, page_count)
-                },
+                span: PageSpan::empty(),
                 addrsp: Some(dst_space_lock),
             });
         }
@@ -1333,7 +1329,9 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
             dst.copy_from_slice(&src.buf()[..dst.len()])?;
         }
         let unpin = true;
-        if let Some(ref addrsp) = self.addrsp {
+        if let Some(ref addrsp) = self.addrsp
+            && !self.span.is_empty()
+        {
             addrsp.munmap(self.span, unpin)?;
         }
 
