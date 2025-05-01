@@ -1,15 +1,19 @@
+use syscall::Exception;
 use x86::irq::PageFaultError;
 
 use crate::{
-    interrupt_error, interrupt_stack, ksignal, memory::GenericPfFlags, paging::VirtualAddress,
-    panic::stack_trace, ptrace, syscall::flag::*,
+    context::signal::excp_handler, interrupt, interrupt_error, interrupt_stack,
+    memory::GenericPfFlags, paging::VirtualAddress, panic::stack_trace, ptrace, syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {
     println!("Divide by zero");
     stack.dump();
     stack_trace();
-    ksignal(SIGFPE);
+    excp_handler(Exception {
+        kind: 0,
+        ..Default::default()
+    });
 });
 
 interrupt_stack!(debug, @paranoid, |stack| {
@@ -31,7 +35,10 @@ interrupt_stack!(debug, @paranoid, |stack| {
     if !handled {
         println!("Debug trap");
         stack.dump();
-        ksignal(SIGTRAP);
+        excp_handler(Exception {
+            kind: 1,
+            ..Default::default()
+        });
     }
 });
 
@@ -57,7 +64,10 @@ interrupt_stack!(breakpoint, |stack| {
     if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
         println!("Breakpoint trap");
         stack.dump();
-        ksignal(SIGTRAP);
+        excp_handler(Exception {
+            kind: 3,
+            ..Default::default()
+        });
     }
 });
 
@@ -65,63 +75,94 @@ interrupt_stack!(overflow, |stack| {
     println!("Overflow trap");
     stack.dump();
     stack_trace();
-    ksignal(SIGFPE);
+    excp_handler(Exception {
+        kind: 4,
+        ..Default::default()
+    });
 });
 
 interrupt_stack!(bound_range, |stack| {
     println!("Bound range exceeded fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGSEGV);
+    excp_handler(Exception {
+        kind: 5,
+        ..Default::default()
+    });
 });
 
 interrupt_stack!(invalid_opcode, |stack| {
     println!("Invalid opcode fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGILL);
+    excp_handler(Exception {
+        kind: 6,
+        ..Default::default()
+    });
 });
 
 interrupt_stack!(device_not_available, |stack| {
     println!("Device not available fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGILL);
+    excp_handler(Exception {
+        kind: 7,
+        ..Default::default()
+    });
 });
 
 interrupt_error!(double_fault, |stack| {
     println!("Double fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGSEGV);
+    loop {
+        interrupt::disable();
+        interrupt::halt();
+    }
 });
 
 interrupt_error!(invalid_tss, |stack| {
     println!("Invalid TSS fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGSEGV);
+    excp_handler(Exception {
+        kind: 10,
+        code: stack.code,
+        ..Default::default()
+    });
 });
 
 interrupt_error!(segment_not_present, |stack| {
     println!("Segment not present fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGSEGV);
+    excp_handler(Exception {
+        kind: 11,
+        code: stack.code,
+        ..Default::default()
+    });
 });
 
 interrupt_error!(stack_segment, |stack| {
     println!("Stack segment fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGSEGV);
+    excp_handler(Exception {
+        kind: 12,
+        code: stack.code,
+        ..Default::default()
+    });
 });
 
 interrupt_error!(protection, |stack| {
     println!("Protection fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGSEGV);
+    excp_handler(Exception {
+        kind: 13,
+        code: stack.code,
+        ..Default::default()
+    });
 });
 
 interrupt_error!(page, |stack| {
@@ -154,7 +195,11 @@ interrupt_error!(page, |stack| {
         println!("Page fault: {:>08X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
         stack_trace();
-        ksignal(SIGSEGV);
+        excp_handler(Exception {
+            kind: 14,
+            code: stack.code,
+            address: cr2.data(),
+        });
     }
 });
 
@@ -162,40 +207,59 @@ interrupt_stack!(fpu_fault, |stack| {
     println!("FPU floating point fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGFPE);
+    excp_handler(Exception {
+        kind: 16,
+        ..Default::default()
+    });
 });
 
 interrupt_error!(alignment_check, |stack| {
     println!("Alignment check fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGBUS);
+    excp_handler(Exception {
+        kind: 17,
+        code: stack.code,
+        ..Default::default()
+    });
 });
 
 interrupt_stack!(machine_check, @paranoid, |stack| {
     println!("Machine check fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGBUS);
+    loop {
+        interrupt::disable();
+        interrupt::halt();
+    }
 });
 
 interrupt_stack!(simd, |stack| {
     println!("SIMD floating point fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGFPE);
+    excp_handler(Exception {
+        kind: 19,
+        ..Default::default()
+    });
 });
 
 interrupt_stack!(virtualization, |stack| {
     println!("Virtualization fault");
     stack.dump();
     stack_trace();
-    ksignal(SIGBUS);
+    loop {
+        interrupt::disable();
+        interrupt::halt();
+    }
 });
 
 interrupt_error!(security, |stack| {
     println!("Security exception");
     stack.dump();
     stack_trace();
-    ksignal(SIGBUS);
+    loop {
+        interrupt::disable();
+        interrupt::halt();
+    }
 });

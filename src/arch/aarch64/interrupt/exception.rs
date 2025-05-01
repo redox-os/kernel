@@ -1,11 +1,12 @@
+use ::syscall::Exception;
 use rmm::VirtualAddress;
 
 use crate::{
+    context::signal::excp_handler,
     exception_stack,
     memory::{ArchIntCtx, GenericPfFlags},
     panic::stack_trace,
-    syscall,
-    syscall::flag::*,
+    syscall::{self, flag::*},
 };
 
 use super::InterruptStack;
@@ -190,7 +191,9 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
                 //crate::debugger::debugger(None);
                 stack.dump();
                 stack_trace();
-                crate::ksignal(SIGSEGV);
+                excp_handler(Exception {
+                    kind: 0, // TODO
+                });
             }
         }
     }

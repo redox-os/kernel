@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
 
-use crate::{context::process, scheme, syscall::error::Result};
+use crate::{context, scheme, syscall::error::Result};
 
 pub fn resource() -> Result<Vec<u8>> {
-    let scheme_ns = process::current()?.read().ens;
+    let scheme_ns = context::current().read().ens;
 
     let mut data = Vec::new();
 

@@ -255,16 +255,17 @@ pub fn switch() -> SwitchResult {
                 _next_guard: next_context_guard,
             }));
 
-        let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
+        /*let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
             .get(&next_context.pid)
             .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
         {
             (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
         } else {
             (None, PtraceFlags::empty())
-        };
+        };*/
+        let ptrace_flags = PtraceFlags::empty();
 
-        *percpu.ptrace_session.borrow_mut() = ptrace_session;
+        //*percpu.ptrace_session.borrow_mut() = ptrace_session;
         percpu.ptrace_flags.set(ptrace_flags);
         prev_context.inside_syscall = percpu.inside_syscall.replace(next_context.inside_syscall);
 
@@ -340,11 +341,22 @@ impl ContextSwitchPercpu {
     /// # Returns
     /// The result of applying `f` to the current context.
     pub fn with_context<T>(&self, f: impl FnOnce(&Arc<RwSpinlock<Context>>) -> T) -> T {
-        f(&*self
+        f(self
             .current_ctxt
             .borrow()
             .as_ref()
             .expect("not inside of context"))
+    }
+
+    /// Applies a function to the current context, allowing controlled access.
+    ///
+    /// # Parameters
+    /// - `f`: A closure that receives a reference to the current context and returns a value.
+    ///
+    /// # Returns
+    /// The result of applying `f` to the current context if any.
+    pub fn try_with_context<T>(&self, f: impl FnOnce(Option<&Arc<RwSpinlock<Context>>>) -> T) -> T {
+        f(self.current_ctxt.borrow().as_ref())
     }
 
     /// Sets the current context to a new value.

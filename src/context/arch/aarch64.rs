@@ -193,6 +193,7 @@ impl super::Context {
             tpidrro_el0: self.arch.tpidrro_el0,
         })
     }
+    pub fn set_userspace_io_allowed(&mut self, _allowed: bool) {}
 }
 
 pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();

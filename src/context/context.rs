@@ -1,11 +1,12 @@
-use alloc::{borrow::Cow, collections::VecDeque, sync::Arc, vec::Vec};
+use alloc::{borrow::Cow, sync::Arc, vec::Vec};
+use arrayvec::ArrayString;
 use core::{
-    cmp::Ordering,
     mem::{self, size_of},
     num::NonZeroUsize,
+    sync::atomic::{AtomicU32, Ordering},
 };
 use spin::RwLock;
-use syscall::{RtSigInfo, SigProcControl, Sigcontrol, EBUSY};
+use syscall::{SigProcControl, Sigcontrol, EBUSY};
 
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;
@@ -18,19 +19,18 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::FileHandle,
+    scheme::{CallerCtx, FileHandle, SchemeNamespace},
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 
 use super::{
     empty_cr3,
+    file::FileDescription,
     memory::{AddrSpaceWrapper, GrantFileRef},
-    process::{Process, ProcessId},
 };
 
 /// The status of a context - used for scheduling
-/// See `syscall::process::waitpid` and the `sync` module for examples of usage
 #[derive(Clone, Debug)]
 pub enum Status {
     Runnable,
@@ -45,7 +45,9 @@ pub enum Status {
     HardBlocked {
         reason: HardBlockedReason,
     },
-    Dead,
+    Dead {
+        excp: Option<syscall::Exception>,
+    },
 }
 
 impl Status {
@@ -59,78 +61,22 @@ impl Status {
 
 #[derive(Clone, Debug)]
 pub enum HardBlockedReason {
-    AwaitingMmap { file_ref: GrantFileRef },
+    /// "SIGSTOP", only procmgr is allowed to switch contexts this state
+    Stopped,
+    AwaitingMmap {
+        file_ref: GrantFileRef,
+    },
     // TODO: PageFaultOom?
     NotYetStarted,
     PtraceStop,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct WaitpidKey {
-    pub pid: Option<ProcessId>,
-    pub pgid: Option<ProcessId>,
-}
+const CONTEXT_NAME_CAPAC: usize = 32;
 
-impl Ord for WaitpidKey {
-    fn cmp(&self, other: &WaitpidKey) -> Ordering {
-        // If both have pid set, compare that
-        if let Some(s_pid) = self.pid {
-            if let Some(o_pid) = other.pid {
-                return s_pid.cmp(&o_pid);
-            }
-        }
-
-        // If both have pgid set, compare that
-        if let Some(s_pgid) = self.pgid {
-            if let Some(o_pgid) = other.pgid {
-                return s_pgid.cmp(&o_pgid);
-            }
-        }
-
-        // If either has pid set, it is greater
-        if self.pid.is_some() {
-            return Ordering::Greater;
-        }
-
-        if other.pid.is_some() {
-            return Ordering::Less;
-        }
-
-        // If either has pgid set, it is greater
-        if self.pgid.is_some() {
-            return Ordering::Greater;
-        }
-
-        if other.pgid.is_some() {
-            return Ordering::Less;
-        }
-
-        // If all pid and pgid are None, they are equal
-        Ordering::Equal
-    }
-}
-
-impl PartialOrd for WaitpidKey {
-    fn partial_cmp(&self, other: &WaitpidKey) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for WaitpidKey {
-    fn eq(&self, other: &WaitpidKey) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl Eq for WaitpidKey {}
-
-/// A context, which identifies either a process or a thread
+/// A context, which is typically mapped to a userspace thread
 #[derive(Debug)]
 pub struct Context {
-    /// The process ID of this context
-    pub pid: ProcessId,
-    /// Process state shared with other threads
-    pub process: Arc<RwLock<Process>>,
+    pub debug_id: u32,
     /// Signal handler
     pub sig: Option<SignalState>,
     /// Status of context
@@ -174,8 +120,7 @@ pub struct Context {
     /// mappings are universal and independent on address spaces or contexts.
     pub addr_space: Option<Arc<AddrSpaceWrapper>>,
     /// The name of the context
-    // TODO: fixed size ArrayString?
-    pub name: Cow<'static, str>,
+    pub name: ArrayString<CONTEXT_NAME_CAPAC>,
     /// The open files in the scheme
     pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
@@ -183,6 +128,15 @@ pub struct Context {
     pub userspace: bool,
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
+
+    // TODO: id can reappear after wraparound?
+    pub owner_proc_id: Option<NonZeroUsize>,
+
+    // TODO: Temporary replacement for existing kernel logic, replace with capabilities!
+    pub ens: SchemeNamespace,
+    pub euid: u32,
+    pub egid: u32,
+    pub pid: usize,
 }
 
 #[derive(Debug)]
@@ -198,15 +152,13 @@ pub struct SignalState {
     /// Offset within the control pages of respective word-aligned structs.
     pub threadctl_off: u16,
     pub procctl_off: u16,
-
-    pub rtqs: Vec<VecDeque<RtSigInfo>>,
 }
 
 impl Context {
-    pub fn new(pid: ProcessId, process: Arc<RwLock<Process>>) -> Result<Context> {
-        let this = Context {
-            pid,
-            process,
+    pub fn new(owner_proc_id: Option<NonZeroUsize>) -> Result<Context> {
+        static DEBUG_ID: AtomicU32 = AtomicU32::new(1);
+        let this = Self {
+            debug_id: DEBUG_ID.fetch_add(1, Ordering::Relaxed),
             sig: None,
             status: Status::HardBlocked {
                 reason: HardBlockedReason::NotYetStarted,
@@ -225,11 +177,17 @@ impl Context {
             kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
             kstack: None,
             addr_space: None,
-            name: Cow::Borrowed(""),
+            name: ArrayString::new(),
             files: Arc::new(RwLock::new(Vec::new())),
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
+            owner_proc_id,
+
+            ens: 0.into(),
+            euid: 0,
+            egid: 0,
+            pid: 0,
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
@@ -459,6 +417,13 @@ impl Context {
         };
 
         (for_thread, for_proc, sig)
+    }
+    pub fn caller_ctx(&self) -> CallerCtx {
+        CallerCtx {
+            uid: self.euid,
+            gid: self.egid,
+            pid: self.pid,
+        }
     }
 }
 

@@ -6,20 +6,18 @@ extern crate syscall;
 
 use core::mem::size_of;
 
-use syscall::{dirent::DirentHeader, CallFlags, RtSigInfo, RwFlags, EINVAL, SIGKILL};
+use syscall::{dirent::DirentHeader, CallFlags, RwFlags, EINVAL};
 
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
 
-pub use self::{
-    driver::*, fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region,
-};
+pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region};
 
 use self::{
     data::{Map, TimeSpec},
     error::{Error, Result, ENOSYS, EOVERFLOW},
-    flag::{EventFlags, MapFlags, WaitFlags},
+    flag::{EventFlags, MapFlags},
     number::*,
     usercopy::UserSlice,
 };
@@ -27,8 +25,8 @@ use self::{
 use crate::percpu::PercpuBlock;
 
 use crate::{
-    context::{memory::AddrSpace, process::ProcessId},
-    scheme::{memory::MemoryScheme, FileHandle, SchemeNamespace},
+    context::memory::AddrSpace,
+    scheme::{memory::MemoryScheme, FileHandle},
 };
 
 /// Debug
@@ -36,9 +34,6 @@ pub mod debug;
 
 #[cfg(feature = "syscall_debug")]
 use self::debug::{debug_end, debug_start};
-
-/// Driver syscalls
-pub mod driver;
 
 /// Filesystem syscalls
 pub mod fs;
@@ -195,51 +190,13 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
                 clock_gettime(b, UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?).map(|()| 0)
             }
             SYS_FUTEX => futex(b, c, d, e, f),
-            SYS_GETPID => getpid().map(ProcessId::into),
-            SYS_GETPGID => getpgid(ProcessId::from(b)).map(ProcessId::into),
-            SYS_GETPPID => getppid().map(ProcessId::into),
 
-            SYS_EXIT => exit(b),
-            SYS_KILL => kill(ProcessId::from(b), c, KillMode::Idempotent),
-            SYS_SIGENQUEUE => kill(
-                ProcessId::from(b),
-                c,
-                KillMode::Queued(unsafe {
-                    UserSlice::ro(d, size_of::<RtSigInfo>())?.read_exact()?
-                }),
-            ),
-            SYS_SIGDEQUEUE => {
-                sigdequeue(UserSlice::wo(b, size_of::<RtSigInfo>())?, c as u32).map(|()| 0)
-            }
-            SYS_WAITPID => waitpid(
-                ProcessId::from(b),
-                if c == 0 {
-                    None
-                } else {
-                    Some(UserSlice::wo(c, core::mem::size_of::<usize>())?)
-                },
-                WaitFlags::from_bits_truncate(d),
-            )
-            .map(ProcessId::into),
-            SYS_IOPL => iopl(b),
-            SYS_GETEGID => getegid(),
-            SYS_GETENS => getens(),
-            SYS_GETEUID => geteuid(),
-            SYS_GETGID => getgid(),
-            SYS_GETNS => getns(),
-            SYS_GETUID => getuid(),
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
             SYS_MKNS => mkns(UserSlice::ro(
                 b,
                 c.checked_mul(core::mem::size_of::<[usize; 2]>())
                     .ok_or(Error::new(EOVERFLOW))?,
             )?),
-            SYS_SETPGID => setpgid(ProcessId::from(b), ProcessId::from(c)).map(|()| 0),
-            SYS_SETREUID => setreuid(b as u32, c as u32).map(|()| 0),
-            SYS_SETRENS => setrens(SchemeNamespace::from(b), SchemeNamespace::from(c)).map(|()| 0),
-            SYS_SETREGID => setregid(b as u32, c as u32).map(|()| 0),
-            SYS_VIRTTOPHYS => virttophys(b),
-
             SYS_MREMAP => mremap(b, c, d, e, f),
 
             _ => return Err(Error::new(ENOSYS)),
@@ -260,7 +217,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
     percpu.inside_syscall.set(false);
 
     if percpu.switch_internals.being_sigkilled.get() {
-        exit(SIGKILL);
+        exit_this_context(None);
     }
 
     // errormux turns Result<usize> into -errno

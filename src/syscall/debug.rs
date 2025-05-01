@@ -156,7 +156,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_CLOCK_GETTIME => format!("clock_gettime({}, {:?})", b, unsafe {
             read_struct::<TimeSpec>(c)
         }),
-        SYS_EXIT => format!("exit({})", b),
         SYS_FUTEX => format!(
             "futex({:#X} [{:?}], {}, {}, {}, {})",
             b,
@@ -166,17 +165,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             e,
             f
         ),
-        SYS_GETEGID => format!("getegid()"),
-        SYS_GETENS => format!("getens()"),
-        SYS_GETEUID => format!("geteuid()"),
-        SYS_GETGID => format!("getgid()"),
-        SYS_GETNS => format!("getns()"),
-        SYS_GETPGID => format!("getpgid()"),
-        SYS_GETPID => format!("getpid()"),
-        SYS_GETPPID => format!("getppid()"),
-        SYS_GETUID => format!("getuid()"),
-        SYS_IOPL => format!("iopl({})", b),
-        SYS_KILL => format!("kill({}, {})", b, c),
         SYS_MKNS => format!(
             "mkns({:p} len: {})",
             // TODO: Print out all scheme names?
@@ -193,11 +181,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
             d
         ),
-        SYS_VIRTTOPHYS => format!("virttophys({:#X})", b),
-        SYS_SETREGID => format!("setregid({}, {})", b, c),
-        SYS_SETRENS => format!("setrens({}, {})", b, c),
-        SYS_SETREUID => format!("setreuid({}, {})", b, c),
-        SYS_WAITPID => format!("waitpid({}, {:#X}, {:?})", b, c, WaitFlags::from_bits(d)),
         SYS_YIELD => format!("yield()"),
         _ => format!(
             "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
@@ -225,7 +208,7 @@ impl SyscallDebugInfo {
 }
 #[cfg(feature = "syscall_debug")]
 pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
-    let do_debug = if false && crate::context::current().read().name.contains("acpid") {
+    let do_debug = if false && crate::context::current().read().name.contains("init") {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
         } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
@@ -241,12 +224,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         let context_lock = crate::context::current();
         {
             let context = context_lock.read();
-            print!(
-                "{} ({}/{:p}): ",
-                context.name,
-                context.pid.get(),
-                context_lock,
-            );
+            print!("{} (*{}*): ", context.name, context.debug_id,);
         }
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
@@ -282,12 +260,7 @@ pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
     let context_lock = crate::context::current();
     {
         let context = context_lock.read();
-        print!(
-            "{} ({}/{:p}): ",
-            context.name,
-            context.pid.get(),
-            context_lock,
-        );
+        print!("{} (*{}*): ", context.name, context.debug_id,);
     }
 
     // Do format_call outside print! so possible exception handlers cannot reentrantly

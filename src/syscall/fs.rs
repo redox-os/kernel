@@ -10,7 +10,6 @@ use crate::{
         self,
         file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions},
-        process,
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
@@ -66,8 +65,8 @@ fn is_legacy(path_buf: &String) -> bool {
 
 /// Open syscall
 pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
-    let (pid, uid, gid, scheme_ns) = match process::current()?.read() {
-        ref process => (process.pid.into(), process.euid, process.egid, process.ens),
+    let (pid, uid, gid, scheme_ns) = match context::current().read() {
+        ref cx => (cx.pid.into(), cx.euid, cx.egid, cx.ens),
     };
 
     // TODO: BorrowedHtBuf!
@@ -181,8 +180,8 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
 }
 /// rmdir syscall
 pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
-    let (scheme_ns, caller_ctx) = match process::current()?.read() {
-        ref process => (process.ens, process.caller_ctx()),
+    let (scheme_ns, caller_ctx) = match context::current().read() {
+        ref cx => (cx.ens, cx.caller_ctx()),
     };
 
     /*
@@ -205,8 +204,8 @@ pub fn rmdir(raw_path: UserSliceRo) -> Result<()> {
 
 /// Unlink syscall
 pub fn unlink(raw_path: UserSliceRo) -> Result<()> {
-    let (scheme_ns, caller_ctx) = match process::current()?.read() {
-        ref process => (process.ens, process.caller_ctx()),
+    let (scheme_ns, caller_ctx) = match context::current().read() {
+        ref cx => (cx.ens, cx.caller_ctx()),
     };
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -238,7 +237,7 @@ pub fn close(fd: FileHandle) -> Result<()> {
 }
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
-    let caller_ctx = process::current()?.read().caller_ctx();
+    let caller_ctx = context::current().read().caller_ctx();
     let file = context::current()
         .read()
         .get_file(fd)
@@ -454,15 +453,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
-    let (caller_ctx, scheme_ns) = match process::current()?.read() {
-        ref process => (
-            CallerCtx {
-                uid: process.euid,
-                gid: process.egid,
-                pid: process.pid.get(),
-            },
-            process.ens,
-        ),
+    let (caller_ctx, scheme_ns) = match context::current().read() {
+        ref cx => (cx.caller_ctx(), cx.ens),
     };
     let file = context::current()
         .read()

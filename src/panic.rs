@@ -24,14 +24,24 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
     unsafe {
         stack_trace();
     }
-    let context_lock = context::current();
+
+    let Some(context_lock) = context::try_current() else {
+        println!("CPU {}, CID <none>", cpu_id());
+
+        println!("HALT");
+        loop {
+            unsafe {
+                interrupt::halt();
+            }
+        }
+    };
 
     println!("CPU {}, CID {:p}", cpu_id(), context_lock);
 
     // This could deadlock, but at this point we are going to halt anyways
     {
         let context = context_lock.read();
-        println!("NAME: {}", context.name);
+        println!("NAME: {}, DEBUG ID: {}", context.name, context.debug_id);
 
         if let Some([a, b, c, d, e, f]) = context.current_syscall() {
             println!("SYSCALL: {}", syscall::debug::format_call(a, b, c, d, e, f));

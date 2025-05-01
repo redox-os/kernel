@@ -32,9 +32,9 @@ use self::acpi::AcpiScheme;
 use self::dtb::DtbScheme;
 
 use self::{
-    debug::DebugScheme, event::EventScheme, irq::IrqScheme, itimer::ITimerScheme,
-    memory::MemoryScheme, pipe::PipeScheme, proc::ProcScheme, root::RootScheme, serio::SerioScheme,
-    sys::SysScheme, time::TimeScheme, user::UserScheme,
+    debug::DebugScheme, event::EventScheme, irq::IrqScheme, memory::MemoryScheme, pipe::PipeScheme,
+    proc::ProcScheme, root::RootScheme, serio::SerioScheme, sys::SysScheme, time::TimeScheme,
+    user::UserScheme,
 };
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
@@ -51,9 +51,6 @@ pub mod event;
 
 /// `irq:` - allows userspace handling of IRQs
 pub mod irq;
-
-/// `itimer:` - support for getitimer and setitimer
-pub mod itimer;
 
 /// `memory:` - a scheme for accessing physical memory
 pub mod memory;
@@ -162,19 +159,7 @@ impl SchemeList {
         // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
         {
             use GlobalSchemes::*;
-            insert_globals(&[
-                Debug,
-                Event,
-                Memory,
-                Pipe,
-                Serio,
-                Irq,
-                Time,
-                ITimer,
-                Sys,
-                ProcFull,
-                ProcRestricted,
-            ]);
+            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, Sys, Proc]);
 
             #[cfg(feature = "acpi")]
             insert_globals(&[Acpi]);
@@ -198,8 +183,6 @@ impl SchemeList {
         //anonymous mmap's are implemented
         self.insert_global(ns, "memory", GlobalSchemes::Memory)
             .unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
-            .unwrap();
         self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
     }
 
@@ -215,8 +198,6 @@ impl SchemeList {
         })
         .unwrap();
         self.insert_global(ns, "event", GlobalSchemes::Event)
-            .unwrap();
-        self.insert_global(ns, "itimer", GlobalSchemes::ITimer)
             .unwrap();
         self.insert_global(ns, "memory", GlobalSchemes::Memory)
             .unwrap();
@@ -246,9 +227,7 @@ impl SchemeList {
         self.insert_global(ns, "debug", GlobalSchemes::Debug)
             .unwrap();
         self.insert_global(ns, "irq", GlobalSchemes::Irq).unwrap();
-        self.insert_global(ns, "proc", GlobalSchemes::ProcFull)
-            .unwrap();
-        self.insert_global(ns, "thisproc", GlobalSchemes::ProcRestricted)
+        self.insert_global(ns, "kernel.proc", GlobalSchemes::Proc)
             .unwrap();
         self.insert_global(ns, "serio", GlobalSchemes::Serio)
             .unwrap();
@@ -584,10 +563,8 @@ pub enum GlobalSchemes {
     Serio,
     Irq,
     Time,
-    ITimer,
     Sys,
-    ProcFull,
-    ProcRestricted,
+    Proc,
 
     #[cfg(feature = "acpi")]
     Acpi,
@@ -625,10 +602,8 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Serio => &SerioScheme,
             Self::Irq => &IrqScheme,
             Self::Time => &TimeScheme,
-            Self::ITimer => &ITimerScheme,
             Self::Sys => &SysScheme,
-            Self::ProcFull => &ProcScheme::<true>,
-            Self::ProcRestricted => &ProcScheme::<false>,
+            Self::Proc => &ProcScheme,
             #[cfg(feature = "acpi")]
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]

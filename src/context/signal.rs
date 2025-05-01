@@ -1,9 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use crate::{
-    context,
-    syscall::flag::{SigcontrolFlags, SIGKILL},
-};
+use crate::{context, syscall::flag::SigcontrolFlags};
 
 pub fn signal_handler() {
     let context_lock = context::current();
@@ -15,7 +12,7 @@ pub fn signal_handler() {
     if being_sigkilled {
         drop(context_guard);
         drop(context_lock);
-        crate::syscall::process::exit(SIGKILL << 8);
+        crate::syscall::process::exit_this_context(None);
     }
 
     /*let thumbs_down = ptrace::breakpoint_callback(
@@ -74,14 +71,33 @@ pub fn signal_handler() {
         Ordering::Release,
     );
 }
-pub fn excp_handler(_signal: usize) {
+pub fn excp_handler(excp: syscall::Exception) {
     let current = context::current();
-    let context = current.write();
 
-    let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+    let mut context = current.write();
+
+    let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+        // TODO: Let procmgr print this?
+        log::info!(
+            "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {current:p}",
+            crate::cpu_id(),
+            context.pid,
+            context.name
+        );
         drop(context);
-        crate::syscall::process::exit(SIGKILL << 8);
+        // TODO: Allow exceptions to be caught by tracer etc, without necessarily exiting the
+        // context (closing files, dropping AddrSpace, etc)
+        crate::syscall::process::exit_this_context(Some(excp));
     };
-
     // TODO
+    /*
+    let Some(regs) = context.regs_mut() else {
+        // TODO: unhandled exception in this case too?
+        return;
+    };
+    let old_ip = regs.instr_pointer();
+    let old_archdep_reg = regs.ar
+    let (tctl, pctl, sigst) = context.sigcontrol().expect("already checked");
+    tctl.saved_ip.set(excp.rsp);
+    tctl.saved_archdep_reg*/
 }
