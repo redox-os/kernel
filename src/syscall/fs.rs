@@ -139,7 +139,7 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
 
     let description = pipe.description.read();
 
-    let caller_ctx = process::current()?.read().caller_ctx();
+    let caller_ctx = context::current().read().caller_ctx();
 
     let new_description = {
         let scheme = scheme::schemes()
