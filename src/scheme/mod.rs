@@ -466,6 +466,9 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
         Ok(EventFlags::empty())
     }
+    fn flink(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
+        Err(Error::new(EBADF))
+    }
     fn frename(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
         Err(Error::new(EBADF))
     }

@@ -159,6 +159,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
                     .fevent(number, EventFlags::from_bits_truncate(c))?
                     .bits())
             }),
+            SYS_FLINK => flink(fd, UserSlice::ro(c, d)?).map(|()| 0),
             SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?).map(|()| 0),
             SYS_FUNMAP => funmap(b, c),
 

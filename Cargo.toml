@@ -1,6 +1,6 @@
 [package]
 name = "kernel"
-version = "0.4.1"
+version = "0.5.12"
 build = "build.rs"
 edition = "2021"
 

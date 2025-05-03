@@ -394,6 +394,40 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize) -> Result<usize> {
     }
 }
 
+pub fn flink(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
+    let (caller_ctx, scheme_ns) = match context::current().read() {
+        ref cx => (cx.caller_ctx(), cx.ens),
+    };
+    let file = context::current()
+        .read()
+        .get_file(fd)
+        .ok_or(Error::new(EBADF))?;
+
+    /*
+    let mut path_buf = BorrowedHtBuf::head()?;
+    let path = path_buf.use_for_string(raw_path)?;
+    */
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
+    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
+
+    let (scheme_id, scheme) = {
+        let schemes = scheme::schemes();
+        let (scheme_id, scheme) = schemes
+            .get_name(scheme_ns, scheme_name.as_ref())
+            .ok_or(Error::new(ENODEV))?;
+        (scheme_id, scheme.clone())
+    };
+
+    let description = file.description.read();
+
+    if scheme_id != description.scheme {
+        return Err(Error::new(EXDEV));
+    }
+
+    scheme.flink(description.number, reference.as_ref(), caller_ctx)
+}
+
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo) -> Result<()> {
     let (caller_ctx, scheme_ns) = match context::current().read() {
         ref cx => (cx.caller_ctx(), cx.ens),
