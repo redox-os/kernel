@@ -253,7 +253,7 @@ impl ProcScheme {
         &self,
         ty: OpenTy,
         operation_str: Option<&str>,
-        flags: usize,
+        _flags: usize,
     ) -> Result<(usize, InternalFlags)> {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
