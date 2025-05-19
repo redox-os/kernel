@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use log::{error, info};
+use log::{debug, error, info};
 
 use super::ic_for_chip;
 use crate::{
@@ -30,7 +30,8 @@ pub unsafe fn init(fdt: &Fdt) {
     };
     timer.init();
     if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
-        let irq = get_interrupt(fdt, &node, 0).unwrap();
+        let irq = get_interrupt(fdt, &node, 1).unwrap();
+        debug!("irq = {:?}", irq);
         if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
             //PHYS_NONSECURE_PPI only
             let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
@@ -101,6 +102,7 @@ impl GenericTimer {
 
 impl InterruptHandler for GenericTimer {
     fn irq_handler(&mut self, irq: u32) {
+
         self.clear_irq();
         {
             *time::OFFSET.lock() += self.clk_freq as u128;

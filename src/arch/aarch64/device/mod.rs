@@ -13,8 +13,17 @@ use crate::dtb::irqchip::IRQ_CHIP;
 use irqchip::ic_for_chip;
 
 pub static ROOT_IC_IDX: AtomicUsize = AtomicUsize::new(0);
+pub static ROOT_IC_IDX_IS_SET: AtomicUsize = AtomicUsize::new(0);
 
 unsafe fn init_root_ic(fdt: &Fdt) {
+
+    let is_set = ROOT_IC_IDX_IS_SET.load(Ordering::Relaxed);
+    if is_set != 0 {
+        let ic_idx = ROOT_IC_IDX.load(Ordering::Relaxed);
+        info!("Already selected {} as root ic", ic_idx);
+        return ;
+    }
+
     let root_irqc_phandle = fdt
         .root()
         .property("interrupt-parent")
@@ -24,6 +33,7 @@ unsafe fn init_root_ic(fdt: &Fdt) {
     let ic_idx = IRQ_CHIP
         .phandle_to_ic_idx(root_irqc_phandle as u32)
         .unwrap();
+    info!("select {} as root ic", ic_idx);
     ROOT_IC_IDX.store(ic_idx, Ordering::Relaxed);
 }
 
