@@ -1,11 +1,11 @@
 use super::InterruptController;
-use crate::dtb::{
+use crate::{arch::device::{ROOT_IC_IDX, ROOT_IC_IDX_IS_SET}, dtb::{
     get_mmio_address,
     irqchip::{InterruptHandler, IrqCell, IrqDesc},
-};
+}};
 use core::{
     arch::asm,
-    ptr::{read_volatile, write_volatile},
+    ptr::{read_volatile, write_volatile}, sync::atomic::Ordering,
 };
 use fdt::{node::FdtNode, Fdt};
 use log::{debug, info};
@@ -146,6 +146,11 @@ impl InterruptController for Bcm2836ArmInterruptController {
             *irq_idx = idx + cnt;
         }
 
+        //raspi 3b+ dts doesn't follow the rule to set root parent interrupt controller
+        //so we should set it manually.
+        ROOT_IC_IDX.store(ic_idx, Ordering::Relaxed);
+        ROOT_IC_IDX_IS_SET.store(1, Ordering::Relaxed);
+
         Ok(())
     }
 
@@ -162,6 +167,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_eoi(&mut self, _irq_num: u32) {}
 
     fn irq_enable(&mut self, irq_num: u32) {
+        debug!("bcm2836 enable {}", irq_num);
         match irq_num {
             LOCAL_IRQ_CNTPNSIRQ => unsafe {
                 let cpuid: usize;

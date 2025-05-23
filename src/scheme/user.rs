@@ -763,6 +763,7 @@ impl UserInner {
                 Opcode::Fcntl => SYS_FCNTL,
                 Opcode::Fevent => SYS_FEVENT,
                 Opcode::Sendfd => SYS_SENDFD,
+                Opcode::Flink => SYS_FLINK,
                 Opcode::Fpath => SYS_FPATH,
                 Opcode::Frename => SYS_FRENAME,
                 Opcode::Fstat => SYS_FSTAT,
@@ -1492,6 +1493,17 @@ impl KernelScheme for UserScheme {
         inner
             .call(Opcode::Fevent, [file, flags.bits()], &mut PageSpan::empty())
             .map(EventFlags::from_bits_truncate)
+    }
+
+    fn flink(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
+        inner.call(
+            Opcode::Flink,
+            [file, address.base(), address.len()],
+            address.span(),
+        )?;
+        Ok(())
     }
 
     fn frename(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
