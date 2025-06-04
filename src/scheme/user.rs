@@ -1751,13 +1751,14 @@ impl KernelScheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let mut address = inner.capture_user(payload)?;
+        let ctx = context::current().read().caller_ctx();
 
         let mut sqe = Sqe {
             opcode: Opcode::Call as u8,
             sqe_flags: SqeFlags::empty(),
             _rsvd: 0,
             tag: inner.next_id()?,
-            caller: 0, // TODO?
+            caller: ctx.pid as u64,
             args: [
                 id as u64,
                 address.base() as u64,
