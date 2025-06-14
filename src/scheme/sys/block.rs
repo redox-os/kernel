@@ -15,6 +15,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 rows.push((context.pid, context.name.clone(), context.status_reason));
             }
         }
+        rows.sort_by_key(|row| row.0);
 
         for row in rows.iter() {
             let id: usize = row.0.into();
