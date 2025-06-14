@@ -16,12 +16,11 @@ pub static ROOT_IC_IDX: AtomicUsize = AtomicUsize::new(0);
 pub static ROOT_IC_IDX_IS_SET: AtomicUsize = AtomicUsize::new(0);
 
 unsafe fn init_root_ic(fdt: &Fdt) {
-
     let is_set = ROOT_IC_IDX_IS_SET.load(Ordering::Relaxed);
     if is_set != 0 {
         let ic_idx = ROOT_IC_IDX.load(Ordering::Relaxed);
         info!("Already selected {} as root ic", ic_idx);
-        return ;
+        return;
     }
 
     let root_irqc_phandle = fdt

@@ -87,7 +87,10 @@ impl Bcm2835ArmInterruptController {
                 .ic
                 .irq_xlate(irq)
                 .unwrap();
-            info!("register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}", ic_idx, virq);
+            info!(
+                "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
+                ic_idx, virq
+            );
             ret_virq = Some(virq);
         }
         Ok((base as usize, size as usize, ret_virq))

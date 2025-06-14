@@ -1,11 +1,15 @@
 use super::InterruptController;
-use crate::{arch::device::{ROOT_IC_IDX, ROOT_IC_IDX_IS_SET}, dtb::{
-    get_mmio_address,
-    irqchip::{InterruptHandler, IrqCell, IrqDesc},
-}};
+use crate::{
+    arch::device::{ROOT_IC_IDX, ROOT_IC_IDX_IS_SET},
+    dtb::{
+        get_mmio_address,
+        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+    },
+};
 use core::{
     arch::asm,
-    ptr::{read_volatile, write_volatile}, sync::atomic::Ordering,
+    ptr::{read_volatile, write_volatile},
+    sync::atomic::Ordering,
 };
 use fdt::{node::FdtNode, Fdt};
 use log::{debug, info};
