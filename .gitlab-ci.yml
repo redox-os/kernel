@@ -32,5 +32,5 @@ fmt:
 unit_test:
   stage: test
   script:
-    - apt install -y qemu-system-x86
+    - apt install -y qemu-system-x86 fuse3
     - TARGET=x86_64-unknown-redox redoxer test
