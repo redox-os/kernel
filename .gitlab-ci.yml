@@ -4,7 +4,7 @@ variables:
   GIT_SUBMODULE_STRATEGY: recursive
 
 before_script:
-  - apt-get update && apt-get install -y nasm curl build-essential pkg-config libssl-dev
+  - apt-get update && apt-get install -y nasm  libfuse3-dev curl build-essential pkg-config libssl-dev
   - cargo install redoxer --locked
   - TARGET=${ARCH}-unknown-redox redoxer toolchain
 
