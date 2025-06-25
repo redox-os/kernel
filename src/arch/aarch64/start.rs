@@ -12,7 +12,9 @@ use fdt::Fdt;
 use log::info;
 
 use crate::{
-    allocator, device, dtb,
+    allocator,
+    arch::interrupt,
+    device, dtb,
     dtb::register_dev_memory_ranges,
     paging,
     startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
@@ -149,14 +151,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap_base + args.bootstrap_size
         );
 
-        // Setup interrupt handlers
-        core::arch::asm!(
-            "
-            ldr {tmp}, =exception_vector_base
-            msr vbar_el1, {tmp}
-            ",
-            tmp = out(reg) _,
-        );
+        interrupt::init();
 
         // Initialize RMM
         register_bootloader_areas(args.areas_base, args.areas_size);
