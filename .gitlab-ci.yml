@@ -1,5 +1,5 @@
 # TODO: Update redoxer instead
-image: rustlang/rust:slim-nightly
+image: rustlang/rust:nightly-slim
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
 
