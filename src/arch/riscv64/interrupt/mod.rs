@@ -53,6 +53,7 @@ pub fn pause() {
     }
 }
 
+#[inline(always)]
 pub unsafe fn init() {
     // Setup interrupt handlers
     asm!(
