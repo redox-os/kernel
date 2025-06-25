@@ -13,7 +13,7 @@ build:
   stage: build
   script:
       # TODO: Update redoxer instead
-    - TARGET=${ARCH}-unknown-redox redoxer toolchain
+    - rm -rf ~/.redoxer/toolchain && TARGET=${ARCH}-unknown-redox redoxer toolchain
     - rustc --version
     - mkdir -p target/${ARCH}
     - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
