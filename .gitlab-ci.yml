@@ -4,14 +4,17 @@ variables:
   GIT_SUBMODULE_STRATEGY: recursive
 
 stages:
-  - host
   - build
+  - host
   - test
   # TODO: benchmarks and profiling (maybe manually enabled for relevant MRs)?
 
 build:
   stage: build
   script:
+   - rustup show
+   - rustup update
+    - rustup show active-toolchain
     - mkdir -p target/${ARCH}
     - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
   parallel:
