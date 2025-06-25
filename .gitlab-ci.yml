@@ -12,8 +12,8 @@ stages:
 build:
   stage: build
   script:
-   - rustup show
-   - rustup update
+    - rustup show
+    - rustup update
     - rustup show active-toolchain
     - mkdir -p target/${ARCH}
     - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
