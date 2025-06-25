@@ -1,16 +1,15 @@
-# TODO: Update redoxer instead
 image: rustlang/rust:nightly-slim
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
 
 before_script:
-  - apt-get update && apt-get install -y nasm  libfuse3-dev curl build-essential pkg-config libssl-dev
+  - apt-get update && apt-get install -y nasm libfuse3-dev curl build-essential pkg-config libssl-dev
   - cargo install redoxer --locked
   - TARGET=${ARCH}-unknown-redox redoxer toolchain
 
 stages:
-  - build
   - host
+  - build
   - test
   # TODO: benchmarks and profiling (maybe manually enabled for relevant MRs)?
 
