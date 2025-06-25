@@ -12,9 +12,10 @@ use fdt::Fdt;
 use log::info;
 
 use crate::{
-    allocator, device, dtb,
-    dtb::register_dev_memory_ranges,
+    allocator,
     arch::interrupt,
+    device, dtb,
+    dtb::register_dev_memory_ranges,
     paging,
     startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
 };
