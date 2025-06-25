@@ -1,7 +1,12 @@
-image: "redoxos/redoxer:latest"
-
+# TODO: Update redoxer instead
+image: rustlang/rust:slim-nightly
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
+
+before_script:
+  - apt-get update && apt-get install -y nasm curl build-essential pkg-config libssl-dev
+  - cargo install redoxer --locked
+  - TARGET=${ARCH}-unknown-redox redoxer toolchain
 
 stages:
   - build
@@ -12,9 +17,6 @@ stages:
 build:
   stage: build
   script:
-      # TODO: Update redoxer instead
-    - rm -rf ~/.redoxer/${ARCH}-unknown-redox/toolchain 
-    - TARGET=${ARCH}-unknown-redox redoxer toolchain
     - rustc --version
     - mkdir -p target/${ARCH}
     - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
