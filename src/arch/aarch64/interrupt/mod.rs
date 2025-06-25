@@ -48,3 +48,15 @@ pub unsafe fn halt() {
 pub fn pause() {
     unsafe { asm!("nop") };
 }
+
+#[inline(always)]
+pub unsafe fn init() {
+    // Setup interrupt handlers
+    asm!(
+        "
+        ldr {tmp}, =exception_vector_base
+        msr vbar_el1, {tmp}
+        ",
+        tmp = out(reg) _,
+    );
+}
