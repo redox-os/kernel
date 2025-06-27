@@ -102,7 +102,6 @@ impl GenericTimer {
 
 impl InterruptHandler for GenericTimer {
     fn irq_handler(&mut self, irq: u32) {
-
         self.clear_irq();
         {
             *time::OFFSET.lock() += self.clk_freq as u128;

@@ -2,6 +2,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use core::fmt::Write;
 
 use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
 
@@ -10,6 +11,8 @@ pub fn resource() -> Result<Vec<u8>> {
         "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
         "PID", "EUID", "EGID", "ENS", "STAT", "CPU", "AFFINITY", "TIME", "MEM", "NAME"
     );
+
+    let mut rows = Vec::new();
     {
         let contexts = context::contexts();
         for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
@@ -86,8 +89,7 @@ pub fn resource() -> Result<Vec<u8>> {
                 format!("{} B", memory)
             };
 
-            string.push_str(&format!(
-                "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
+            rows.push((
                 context.pid,
                 context.euid,
                 context.egid,
@@ -100,6 +102,36 @@ pub fn resource() -> Result<Vec<u8>> {
                 context.name,
             ));
         }
+    }
+    rows.sort_by_key(|row| row.0);
+
+    for (
+        pid,
+        euid,
+        egid,
+        ens,
+        stat_string,
+        cpu_string,
+        affinity,
+        cpu_time_string,
+        memory_string,
+        name,
+    ) in rows
+    {
+        let _ = writeln!(
+            string,
+            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}",
+            pid,
+            euid,
+            egid,
+            ens,
+            stat_string,
+            cpu_string,
+            affinity,
+            cpu_time_string,
+            memory_string,
+            name,
+        );
     }
 
     Ok(string.into_bytes())

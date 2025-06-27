@@ -12,12 +12,13 @@ pub fn resource() -> Result<Vec<u8>> {
             for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
                 let context = context_ref.read();
                 rows.push((
-                    context.debug_id,
+                    context.pid,
                     context.name.clone(),
                     context.files.read().clone(),
                 ));
             }
         }
+        rows.sort_by_key(|row| row.0);
 
         for (id, name, fs) in rows.iter() {
             let _ = writeln!(string, "{}: {}", id, name);

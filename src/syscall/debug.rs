@@ -225,7 +225,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
         let context_lock = crate::context::current();
         {
             let context = context_lock.read();
-            print!("{} (*{}*): ", context.name, context.debug_id,);
+            print!("{} (*{}*): ", context.name, context.pid,);
         }
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
@@ -261,7 +261,7 @@ pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
     let context_lock = crate::context::current();
     {
         let context = context_lock.read();
-        print!("{} (*{}*): ", context.name, context.debug_id,);
+        print!("{} (*{}*): ", context.name, context.pid,);
     }
 
     // Do format_call outside print! so possible exception handlers cannot reentrantly
