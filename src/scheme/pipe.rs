@@ -151,6 +151,7 @@ impl KernelScheme for PipeScheme {
         id: usize,
         user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         _ctx: CallerCtx,
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);

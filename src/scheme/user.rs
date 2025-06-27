@@ -287,7 +287,7 @@ impl UserInner {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
         }
-
+        
         let current_context = context::current();
 
         {
@@ -1395,20 +1395,19 @@ impl KernelScheme for UserScheme {
         file: usize,
         path: super::StrOrBytes,
         flags: usize,
+        fcntl_flags: u32,
         ctx: CallerCtx,
     ) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
-        // FIXME: This is returning Ok(Regular(18446744073709551578, 0))
-        // Which breaks in `Error::demux(code)?`
         let result = inner.call_extended(
             ctx,
             None,
             Opcode::OpenAt,
-            [file, address.base(), address.len(), flags],
+            [file, address.base(), address.len(), flags, fcntl_flags as _],
             address.span(),
         );
-
+        
         address.release()?;
 
         match result? {

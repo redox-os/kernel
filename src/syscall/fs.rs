@@ -87,7 +87,6 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
             println!("deprecated: legacy path {:?} used by {}", path_buf, name);
         }
     }
-
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
@@ -114,17 +113,17 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
         }
     };
     //drop(path_buf);
-
     context::current()
         .read()
         .add_file(FileDescriptor {
-            description,
+            description: Arc::clone(&description),
             cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         })
         .ok_or(Error::new(EMFILE))
+    
 }
 
-pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
+pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize, fcntl_flags: u32) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
     if is_legacy(&path_buf) {
@@ -147,16 +146,17 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
             .ok_or(Error::new(EBADF))?
             .clone();
 
-        // FIXME: This is returning Err(Function not implemented)
         let res = scheme.kopenat(
             description.number,
             StrOrBytes::from_str(&path_buf),
             flags,
+            fcntl_flags,
             caller_ctx,
         );
 
         match res? {
             OpenResult::SchemeLocal(number, internal_flags) => {
+                println!("openat: {}: {} {:?}", path_buf, number, &description);
                 Arc::new(RwLock::new(FileDescription {
                     offset: 0,
                     internal_flags,
@@ -168,14 +168,13 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize) -> Result<Fil
             OpenResult::External(desc) => desc,
         }
     };
-    let new_file = FileDescriptor {
-        description: new_description,
-        cloexec: flags & O_CLOEXEC != 0,
-    };
 
     context::current()
         .read()
-        .add_file(new_file)
+        .add_file(FileDescriptor {
+            description: new_description,
+            cloexec: false,
+        })
         .ok_or(Error::new(EMFILE))
 }
 /// rmdir syscall

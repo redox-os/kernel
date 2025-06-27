@@ -401,6 +401,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         file: usize,
         path: StrOrBytes,
         flags: usize,
+        fcntl_flags: u32,
         _ctx: CallerCtx,
     ) -> Result<OpenResult> {
         Err(Error::new(EOPNOTSUPP))
