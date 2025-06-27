@@ -156,7 +156,6 @@ pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize, fcntl_flags: 
 
         match res? {
             OpenResult::SchemeLocal(number, internal_flags) => {
-                println!("openat: {}: {} {:?}", path_buf, number, &description);
                 Arc::new(RwLock::new(FileDescription {
                     offset: 0,
                     internal_flags,
