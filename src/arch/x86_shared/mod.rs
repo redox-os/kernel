@@ -20,6 +20,8 @@ pub mod ipi;
 /// Page table isolation
 pub mod pti;
 
+pub mod rmm;
+
 /// Initialization and start function
 pub mod start;
 

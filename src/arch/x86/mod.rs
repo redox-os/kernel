@@ -16,8 +16,6 @@ pub mod interrupt;
 /// Paging
 pub mod paging;
 
-pub mod rmm;
-
 pub use ::rmm::X86Arch as CurrentRmmArch;
 
 // Flags

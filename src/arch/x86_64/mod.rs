@@ -24,8 +24,6 @@ pub mod misc;
 /// Paging
 pub mod paging;
 
-pub mod rmm;
-
 pub use ::rmm::X8664Arch as CurrentRmmArch;
 
 // Flags
