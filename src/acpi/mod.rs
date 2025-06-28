@@ -102,7 +102,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
     let rsdp_opt = RSDP::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
 
     if let Some(rsdp) = rsdp_opt {
-        info!("RSDP: {:?}", rsdp);
+        info!("SDT address: {:#x}", rsdp.sdt_address());
         let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock());
 
         for &c in rxsdt.signature.iter() {
