@@ -3,11 +3,16 @@
 /// It must create the IDT with the correct entries, those entries are
 /// defined in other files inside of the `arch` module
 use core::slice;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use core::{
+    cell::SyncUnsafeCell,
+    sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+};
+
 use log::info;
 
 #[cfg(feature = "acpi")]
 use crate::acpi;
+
 #[cfg(feature = "graphical_debug")]
 use crate::devices::graphical_debug;
 use crate::{
@@ -19,9 +24,9 @@ use crate::{
 };
 
 /// Test of zero values in BSS.
-static mut BSS_TEST_ZERO: usize = 0;
+static BSS_TEST_ZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(0);
 /// Test of non-zero values in data.
-static mut DATA_TEST_NONZERO: usize = usize::max_value();
+static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::max_value());
 
 pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
 pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
@@ -67,8 +72,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // BSS should already be zero
         {
-            assert_eq!(BSS_TEST_ZERO, 0);
-            assert_eq!(DATA_TEST_NONZERO, usize::max_value());
+            assert_eq!(BSS_TEST_ZERO.get().read(), 0);
+            assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
         }
 
         KERNEL_BASE.store(args.kernel_base as usize, Ordering::SeqCst);
@@ -143,7 +148,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Initialize RMM
         register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
-
         register_memory_region(
             args.kernel_base as usize,
             args.kernel_size as usize,
@@ -169,7 +173,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap_size as usize,
             BootloaderMemoryKind::IdentityMap,
         );
+        #[cfg(target_arch = "x86")]
         crate::startup::memory::init(Some(0x100000), Some(0x40000000));
+        #[cfg(target_arch = "x86_64")]
+        crate::startup::memory::init(Some(0x100000), None);
 
         // Initialize paging
         paging::init();
@@ -183,6 +190,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Set up IDT
         idt::init_paging_bsp();
 
+        #[cfg(target_arch = "x86_64")]
+        crate::alternative::early_init(true);
+
         // Set up syscall instruction
         interrupt::syscall::init();
 
@@ -194,6 +204,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         // Setup kernel heap
         allocator::init();
 
+        #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
+        crate::profiling::init();
+
         // Set up double buffer for graphical debug now that heap is available
         #[cfg(feature = "graphical_debug")]
         graphical_debug::init_heap();
@@ -202,6 +215,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
         // Activate memory logging
         crate::log::init();
+
+        // Initialize miscellaneous processor features
+        #[cfg(target_arch = "x86_64")]
+        crate::misc::init(LogicalCpuId::BSP);
 
         // Initialize devices
         device::init();
@@ -236,7 +253,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
 #[repr(C, packed)]
 pub struct KernelArgsAp {
+    // TODO: u32?
     cpu_id: u64,
+
     page_table: u64,
     stack_start: u64,
     stack_end: u64,
@@ -251,8 +270,8 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         let _stack_start = args.stack_start as usize;
         let stack_end = args.stack_end as usize;
 
-        assert_eq!(BSS_TEST_ZERO, 0);
-        assert_eq!(DATA_TEST_NONZERO, usize::max_value());
+        assert_eq!(BSS_TEST_ZERO.get().read(), 0);
+        assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
 
         // Set up GDT before paging
         gdt::init();
@@ -267,11 +286,21 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         // Set up GDT with TLS
         gdt::init_paging(stack_end, cpu_id);
 
+        #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
+        crate::profiling::init();
+
         // Set up IDT for AP
         idt::init_paging_post_heap(cpu_id);
 
+        #[cfg(target_arch = "x86_64")]
+        crate::alternative::early_init(false);
+
         // Set up syscall instruction
         interrupt::syscall::init();
+
+        // Initialize miscellaneous processor features
+        #[cfg(target_arch = "x86_64")]
+        crate::misc::init(cpu_id);
 
         // Initialize devices (for AP)
         device::init_ap();

@@ -18,9 +18,6 @@ pub mod paging;
 
 pub mod rmm;
 
-/// Initialization and start function
-pub mod start;
-
 pub use ::rmm::X86Arch as CurrentRmmArch;
 
 // Flags
