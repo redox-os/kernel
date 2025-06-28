@@ -4,7 +4,7 @@
 
 use core::num::NonZeroUsize;
 
-use alloc::{borrow::Cow, collections::BTreeSet, sync::Arc};
+use alloc::{collections::BTreeSet, sync::Arc};
 
 use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use spinning_top::RwSpinlock;

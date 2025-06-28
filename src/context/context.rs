@@ -1,4 +1,4 @@
-use alloc::{borrow::Cow, sync::Arc, vec::Vec};
+use alloc::{sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of},
@@ -26,7 +26,6 @@ use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
 
 use super::{
     empty_cr3,
-    file::FileDescription,
     memory::{AddrSpaceWrapper, GrantFileRef},
 };
 
