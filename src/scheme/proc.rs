@@ -28,7 +28,6 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
@@ -253,7 +252,7 @@ impl ProcScheme {
         &self,
         ty: OpenTy,
         operation_str: Option<&str>,
-        flags: usize,
+        _flags: usize,
     ) -> Result<(usize, InternalFlags)> {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
@@ -535,7 +534,7 @@ impl KernelScheme for ProcScheme {
         id: usize,
         buf: UserSliceWo,
         offset: u64,
-        read_flags: u32,
+        _read_flags: u32,
         _stored_flags: u32,
     ) -> Result<usize> {
         // Don't hold a global lock during the context switch later on

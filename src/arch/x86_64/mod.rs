@@ -21,16 +21,6 @@ pub mod interrupt;
 /// Miscellaneous processor features
 pub mod misc;
 
-/// Paging
-pub mod paging;
-
-pub mod rmm;
-
-/// Initialization and start function
-pub mod start;
-
-pub use ::rmm::X8664Arch as CurrentRmmArch;
-
 // Flags
 pub mod flags {
     pub const SHIFT_SINGLESTEP: usize = 8;
