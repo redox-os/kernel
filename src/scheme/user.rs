@@ -750,7 +750,6 @@ impl UserInner {
             pid: sqe.caller as usize,
             a: match opc {
                 Opcode::Open => SYS_OPEN,
-                Opcode::OpenAt => SYS_OPENAT,
                 Opcode::Rmdir => SYS_RMDIR,
                 Opcode::Unlink => SYS_UNLINK,
                 Opcode::Close => SYS_CLOSE,
