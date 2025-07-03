@@ -6,7 +6,7 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use spin::RwLock;
-use syscall::{SigProcControl, Sigcontrol, EBUSY};
+use syscall::{SigProcControl, Sigcontrol};
 
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;
@@ -446,15 +446,17 @@ impl BorrowedHtBuf {
         })
     }
     pub fn tail() -> Result<Self> {
-        if let Some(mut guard) = context::current().try_write() {
-            let val = guard.syscall_tail.take().ok_or(Error::new(EAGAIN));
-            Ok(Self {
-                inner: Some(val?),
-                head_and_not_tail: false,
-            })
-        } else {
-            Err(Error::new(EBUSY))
-        }
+        Ok(Self {
+            inner: Some(
+                context::current()
+                    .write()
+                    .syscall_tail
+                    .take()
+                    .ok_or(Error::new(EAGAIN))?,
+            ),
+            head_and_not_tail: false,
+        })
+
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
         unsafe {
