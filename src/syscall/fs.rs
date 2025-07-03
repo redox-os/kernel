@@ -120,10 +120,14 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
             cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         })
         .ok_or(Error::new(EMFILE))
-    
 }
 
-pub fn openat(fh: FileHandle, raw_path: UserSliceRo, flags: usize, fcntl_flags: u32) -> Result<FileHandle> {
+pub fn openat(
+    fh: FileHandle,
+    raw_path: UserSliceRo,
+    flags: usize,
+    fcntl_flags: u32,
+) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
     if is_legacy(&path_buf) {

@@ -456,7 +456,6 @@ impl BorrowedHtBuf {
             ),
             head_and_not_tail: false,
         })
-
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
         unsafe {

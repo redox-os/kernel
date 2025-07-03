@@ -287,7 +287,7 @@ impl UserInner {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
         }
-        
+
         let current_context = context::current();
 
         {
@@ -1407,7 +1407,7 @@ impl KernelScheme for UserScheme {
             [file, address.base(), address.len(), flags, fcntl_flags as _],
             address.span(),
         );
-        
+
         address.release()?;
 
         match result? {
