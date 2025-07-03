@@ -28,7 +28,6 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
@@ -535,7 +534,7 @@ impl KernelScheme for ProcScheme {
         id: usize,
         buf: UserSliceWo,
         offset: u64,
-        read_flags: u32,
+        _read_flags: u32,
         _stored_flags: u32,
     ) -> Result<usize> {
         // Don't hold a global lock during the context switch later on

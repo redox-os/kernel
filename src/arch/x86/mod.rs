@@ -13,16 +13,6 @@ pub mod gdt;
 #[macro_use]
 pub mod interrupt;
 
-/// Paging
-pub mod paging;
-
-pub mod rmm;
-
-/// Initialization and start function
-pub mod start;
-
-pub use ::rmm::X86Arch as CurrentRmmArch;
-
 // Flags
 pub mod flags {
     pub const SHIFT_SINGLESTEP: usize = 8;

@@ -1,5 +1,8 @@
+//! <https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/software-developers-hpet-spec-1-0a.pdf>
+
 use super::pit;
 use crate::acpi::hpet::Hpet;
+use core::time::Duration;
 
 const LEG_RT_CNF: u64 = 2;
 const ENABLE_CNF: u64 = 1;
@@ -20,8 +23,11 @@ pub(crate) const T0_COMPARATOR_OFFSET: usize = 0x108;
 const PER_INT_CAP: u64 = 0x10;
 
 pub unsafe fn init(hpet: &mut Hpet) -> bool {
+    println!("HPET @ {:#x}", { hpet.base_address.address });
+    debug_caps(hpet);
+
     println!("HPET Before Init");
-    debug(hpet, true);
+    debug_config(hpet);
 
     // Disable HPET
     {
@@ -62,28 +68,40 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
     }
 
     println!("HPET After Init");
-    debug(hpet, false);
+    debug_config(hpet);
 
     true
 }
 
-pub unsafe fn debug(hpet: &mut Hpet, print_caps: bool) {
-    println!("HPET @ {:#x}", { hpet.base_address.address });
+unsafe fn debug_caps(hpet: &mut Hpet) {
+    let capability = hpet.read_u64(CAPABILITY_OFFSET);
+    println!("  caps: {:#x}", capability);
+    println!(
+        "    clock period: {:?}",
+        Duration::from_nanos((capability >> 32) / 1_000_000)
+    );
+    println!(
+        "    ID: {:#x} revision: {}",
+        (capability >> 16) as u16,
+        capability as u8
+    );
+    println!(
+        "    LEG_RT_CAP: {} COUNT_SIZE_CAP: {}",
+        capability & (1 << 15) == (1 << 15),
+        capability & (1 << 13) == (1 << 13)
+    );
+    // The NUM_TIM_CAP field contains the index of the last timer.
+    // Add 1 to get the amount of timers.
+    println!("    timers: {}", (capability >> 8) as u8 & 0x1F + 1);
 
-    if print_caps {
-        let capability = hpet.read_u64(CAPABILITY_OFFSET);
-        println!("  caps: {:#x}", capability);
-        println!("    clock period: {}", (capability >> 32) as u32);
-        println!("    ID: {:#x}", (capability >> 16) as u16);
-        println!("    LEG_RT_CAP: {}", capability & (1 << 15) == (1 << 15));
-        println!(
-            "    COUNT_SIZE_CAP: {}",
-            capability & (1 << 13) == (1 << 13)
-        );
-        println!("    timers: {}", (capability >> 8) as u8 & 0x1F);
-        println!("    revision: {}", capability as u8);
-    }
+    let t0_capabilities = hpet.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
+    println!(
+        "  T0 interrupt routing: {:#x}",
+        (t0_capabilities >> 32) as u32
+    );
+}
 
+unsafe fn debug_config(hpet: &mut Hpet) {
     let config_word = hpet.read_u64(GENERAL_CONFIG_OFFSET);
     println!("  config: {:#x}", config_word);
 
@@ -94,12 +112,7 @@ pub unsafe fn debug(hpet: &mut Hpet, print_caps: bool) {
     println!("  counter: {:#x}", counter);
 
     let t0_capabilities = hpet.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
-    println!("  T0 caps: {:#x}", t0_capabilities);
-    println!(
-        "    interrupt routing: {:#x}",
-        (t0_capabilities >> 32) as u32
-    );
-    println!("    flags: {:#x}", t0_capabilities as u16);
+    println!("  T0 flags: {:#x}", t0_capabilities as u32);
 
     let t0_comparator = hpet.read_u64(T0_COMPARATOR_OFFSET);
     println!("  T0 comparator: {:#x}", t0_comparator);
