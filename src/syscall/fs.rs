@@ -116,7 +116,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize) -> Result<FileHandle> {
     context::current()
         .read()
         .add_file(FileDescriptor {
-            description: Arc::clone(&description),
+            description,
             cloexec: flags & O_CLOEXEC == O_CLOEXEC,
         })
         .ok_or(Error::new(EMFILE))
