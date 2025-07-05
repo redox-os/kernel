@@ -563,8 +563,9 @@ impl core::fmt::Debug for Kstack {
 }
 
 // TODO: Move to syscall crate?.
-pub const UPPER_TABLE_FLAG: usize = (1 << (usize::BITS - 2));
+pub const UPPER_TABLE_FLAG: usize = 1 << (usize::BITS - 2);
 
+#[derive(Clone, Debug)]
 pub struct FdTbl {
     pub posix_fdtbl: Vec<Option<FileDescriptor>>,
     pub upper_fdtbl: Vec<Option<FileDescriptor>>,
