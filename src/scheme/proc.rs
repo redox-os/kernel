@@ -5,7 +5,7 @@ use crate::{
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
-        Context, Status,
+        Context, FdTbl, Status,
     },
     memory::{get_page_info, AddRefError, RefKind, PAGE_SIZE},
     ptrace,
@@ -108,11 +108,11 @@ enum ContextHandle {
     Sighandler,
     Start,
     NewFiletable {
-        filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
+        filetable: Arc<RwLock<FdTbl>>,
         data: Box<[u8]>,
     },
     Filetable {
-        filetable: Weak<RwLock<Vec<Option<FileDescriptor>>>>,
+        filetable: Weak<RwLock<FdTbl>>,
         data: Box<[u8]>,
     },
     AddrSpace {
@@ -129,7 +129,7 @@ enum ContextHandle {
     CurrentFiletable,
 
     AwaitingFiletableChange {
-        new_ft: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
+        new_ft: Arc<RwLock<FdTbl>>,
     },
 
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
