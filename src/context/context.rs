@@ -121,7 +121,7 @@ pub struct Context {
     /// The name of the context
     pub name: ArrayString<CONTEXT_NAME_CAPAC>,
     /// The open files in the scheme
-    pub files: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
+    pub files: Arc<RwLock<FdTbl>>,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
     pub userspace: bool,
@@ -177,7 +177,7 @@ impl Context {
             kstack: None,
             addr_space: None,
             name: ArrayString::new(),
-            files: Arc::new(RwLock::new(Vec::new())),
+            files: Arc::new(RwLock::new(FdTbl::new())),
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
@@ -279,25 +279,40 @@ impl Context {
     /// Get a file
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let files = self.files.read();
-        if i.get() < files.len() {
-            files[i.get()].clone()
+
+        let mut index = i.get();
+        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
+            &files.posix_fdtbl
         } else {
-            None
-        }
+            index &= !UPPER_TABLE_FLAG;
+            &files.upper_fdtbl
+        };
+
+        fdtbl.get(index).cloned().flatten()
     }
 
     /// Insert a file with a specific handle number. This is used by dup2
     /// Return the file descriptor number or None if the slot was not empty, or i was invalid
     pub fn insert_file(&self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
         let mut files = self.files.write();
-        if i.get() >= super::CONTEXT_MAX_FILES {
+
+        let mut index = i.get();
+        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
+            &mut files.posix_fdtbl
+        } else {
+            index &= !UPPER_TABLE_FLAG;
+            &mut files.upper_fdtbl
+        };
+        if index >= super::CONTEXT_MAX_FILES {
             return None;
         }
-        if i.get() >= files.len() {
-            files.resize_with(i.get() + 1, || None);
+
+        if index >= fdtbl.len() {
+            fdtbl.resize_with(index + 1, || None);
         }
-        if files[i.get()].is_none() {
-            files[i.get()] = Some(file);
+
+        if let Some(slot @ None) = fdtbl.get_mut(index) {
+            *slot = Some(file);
             Some(i)
         } else {
             None
@@ -308,11 +323,16 @@ impl Context {
     // TODO: adjust files vector to smaller size if possible
     pub fn remove_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let mut files = self.files.write();
-        if i.get() < files.len() {
-            files[i.get()].take()
+
+        let mut index = i.get();
+        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
+            &mut files.posix_fdtbl
         } else {
-            None
-        }
+            index &= !UPPER_TABLE_FLAG;
+            &mut files.upper_fdtbl
+        };
+
+        fdtbl.get_mut(index).and_then(|opt| opt.take())
     }
 
     pub fn is_current_context(&self) -> bool {
@@ -539,5 +559,22 @@ impl Drop for Kstack {
 impl core::fmt::Debug for Kstack {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "[kstack at {:?}]", self.base)
+    }
+}
+
+// TODO: Move to syscall crate?.
+pub const UPPER_TABLE_FLAG: usize = (1 << (usize::BITS - 2));
+
+pub struct FdTbl {
+    pub posix_fdtbl: Vec<Option<FileDescriptor>>,
+    pub upper_fdtbl: Vec<Option<FileDescriptor>>,
+}
+
+impl FdTbl {
+    pub fn new() -> Self {
+        Self {
+            posix_fdtbl: Vec::new(),
+            upper_fdtbl: Vec::new(),
+        }
     }
 }
