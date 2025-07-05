@@ -545,8 +545,7 @@ impl FdTbl {
         }
     }
 
-    pub fn get(&self, i: usize) -> Option<&Option<FileDescriptor>> {
-        let mut index = i.get();
+    pub fn get(&self, mut index: usize) -> Option<&Option<FileDescriptor>> {
         let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
             &self.posix_fdtbl
         } else {
@@ -557,8 +556,7 @@ impl FdTbl {
         fdtbl.get(index)
     }
 
-    pub fn get_mut(&self, i: usize) -> Option<&mut Option<FileDescriptor>> {
-        let mut index = i.get();
+    pub fn get_mut(&self, mut index: usize) -> Option<&mut Option<FileDescriptor>> {
         let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
             &self.posix_fdtbl
         } else {
