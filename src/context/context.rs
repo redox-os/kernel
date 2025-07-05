@@ -256,83 +256,27 @@ impl Context {
     /// Return the file descriptor number or None if no slot was found
     pub fn add_file_min(&self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
         let mut files = self.files.write();
-        for (i, file_option) in files.iter_mut().enumerate() {
-            if file_option.is_none() && i >= min {
-                *file_option = Some(file);
-                return Some(FileHandle::from(i));
-            }
-        }
-        let len = files.len();
-        if len < super::CONTEXT_MAX_FILES {
-            if len >= min {
-                files.push(Some(file));
-                Some(FileHandle::from(len))
-            } else {
-                drop(files);
-                self.insert_file(FileHandle::from(min), file)
-            }
-        } else {
-            None
-        }
+        files.add_file_min(file, min)
     }
 
     /// Get a file
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let files = self.files.read();
-
-        let mut index = i.get();
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &files.posix_fdtbl
-        } else {
-            index &= !UPPER_TABLE_FLAG;
-            &files.upper_fdtbl
-        };
-
-        fdtbl.get(index).cloned().flatten()
+        files.get_file(i)
     }
 
     /// Insert a file with a specific handle number. This is used by dup2
     /// Return the file descriptor number or None if the slot was not empty, or i was invalid
     pub fn insert_file(&self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
         let mut files = self.files.write();
-
-        let mut index = i.get();
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &mut files.posix_fdtbl
-        } else {
-            index &= !UPPER_TABLE_FLAG;
-            &mut files.upper_fdtbl
-        };
-        if index >= super::CONTEXT_MAX_FILES {
-            return None;
-        }
-
-        if index >= fdtbl.len() {
-            fdtbl.resize_with(index + 1, || None);
-        }
-
-        if let Some(slot @ None) = fdtbl.get_mut(index) {
-            *slot = Some(file);
-            Some(i)
-        } else {
-            None
-        }
+        files.insert_file(i, file)
     }
 
     /// Remove a file
     // TODO: adjust files vector to smaller size if possible
     pub fn remove_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let mut files = self.files.write();
-
-        let mut index = i.get();
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &mut files.posix_fdtbl
-        } else {
-            index &= !UPPER_TABLE_FLAG;
-            &mut files.upper_fdtbl
-        };
-
-        fdtbl.get_mut(index).and_then(|opt| opt.take())
+        files.remove_file(i)
     }
 
     pub fn is_current_context(&self) -> bool {
@@ -577,5 +521,87 @@ impl FdTbl {
             posix_fdtbl: Vec::new(),
             upper_fdtbl: Vec::new(),
         }
+    }
+
+    pub fn add_file_min(&mut self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
+        let fdtbl = &mut self.posix_fdtbl;
+        for (i, file_option) in fdtbl.iter_mut().enumerate() {
+            if file_option.is_none() && i >= min {
+                *file_option = Some(file);
+                return Some(FileHandle::from(i));
+            }
+        }
+        let len = fdtbl.len();
+        if len < super::CONTEXT_MAX_FILES {
+            if len >= min {
+                fdtbl.push(Some(file));
+                Some(FileHandle::from(len))
+            } else {
+                drop(fdtbl);
+                self.insert_file(FileHandle::from(min), file)
+            }
+        } else {
+            None
+        }
+    }
+
+    pub fn get(&self, i: FileHandle) -> Option<&Option<FileDescriptor>> {
+        let mut index = i.get();
+        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
+            &self.posix_fdtbl
+        } else {
+            index &= !UPPER_TABLE_FLAG;
+            &self.upper_fdtbl
+        };
+
+        fdtbl.get(index)
+    }
+
+    pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
+        let mut index = i.get();
+        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
+            &self.posix_fdtbl
+        } else {
+            index &= !UPPER_TABLE_FLAG;
+            &self.upper_fdtbl
+        };
+
+        fdtbl.get(index).cloned().flatten()
+    }
+
+    pub fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
+        let mut index = i.get();
+        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
+            &mut self.posix_fdtbl
+        } else {
+            index &= !UPPER_TABLE_FLAG;
+            &mut self.upper_fdtbl
+        };
+        if index >= super::CONTEXT_MAX_FILES {
+            return None;
+        }
+
+        if index >= fdtbl.len() {
+            fdtbl.resize_with(index + 1, || None);
+        }
+
+        if let Some(slot @ None) = fdtbl.get_mut(index) {
+            *slot = Some(file);
+            Some(i)
+        } else {
+            None
+        }
+    }
+
+    pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
+        let mut index = i.get();
+        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
+            &mut self.posix_fdtbl
+        } else {
+            index &= !UPPER_TABLE_FLAG;
+            &mut self.upper_fdtbl
+        };
+
+        fdtbl.get_mut(index).and_then(|opt| opt.take())
     }
 }
