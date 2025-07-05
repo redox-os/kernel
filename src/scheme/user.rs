@@ -1510,6 +1510,9 @@ impl KernelScheme for UserScheme {
             args: [id as u64, 0, 0, 0, 0, 0],
             caller: 0, // TODO?
         });
+
+        event::trigger(inner.root_id, inner.handle_id, EVENT_READ);
+
         Ok(())
     }
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {
