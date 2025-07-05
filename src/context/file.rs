@@ -78,7 +78,7 @@ impl FileDescription {
             .ok_or(Error::new(EBADF))?
             .clone();
 
-        scheme.on_close(self.number)
+        scheme.close(self.number)
     }
 }
 

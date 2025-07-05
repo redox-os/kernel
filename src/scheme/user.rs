@@ -1494,15 +1494,12 @@ impl KernelScheme for UserScheme {
         Ok(())
     }
 
-    fn close(&self, file: usize) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Close, [file], &mut PageSpan::empty())?;
-        Ok(())
-    }
-    fn on_close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if !inner.supports_on_close {
-            return self.close(id);
+            let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+            inner.call(Opcode::Close, [id], &mut PageSpan::empty())?;
+            return Ok(());
         }
 
         inner.todo.send(Sqe {
