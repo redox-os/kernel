@@ -509,7 +509,7 @@ impl core::fmt::Debug for Kstack {
 // TODO: Move to syscall crate?.
 pub const UPPER_TABLE_FLAG: usize = 1 << (usize::BITS - 2);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct FdTbl {
     pub posix_fdtbl: Vec<Option<FileDescriptor>>,
     pub upper_fdtbl: Vec<Option<FileDescriptor>>,
@@ -613,5 +613,19 @@ impl FdTbl {
         };
 
         fdtbl.get_mut(index).and_then(|opt| opt.take())
+    }
+}
+
+impl Drop for FdTbl {
+    fn drop(mut self) {
+        for file_opt in self
+            .posix_fdtbl
+            .iter_mut()
+            .chain(self.upper_fdtbl.iter_mut())
+        {
+            if let Some(file) = file_opt.take() {
+                let _ = file.close();
+            }
+        }
     }
 }
