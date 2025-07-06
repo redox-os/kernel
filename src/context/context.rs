@@ -550,6 +550,10 @@ impl FdTbl {
         let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
             &self.posix_fdtbl
         } else {
+            log::info!(
+                "Getting file from upper file descriptor table: {:?} at index {}",
+                index
+            );
             index &= !UPPER_TABLE_FLAG;
             &self.upper_fdtbl
         };
@@ -593,6 +597,10 @@ impl FdTbl {
         let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
             &mut self.posix_fdtbl
         } else {
+            log::info!(
+                "Inserting file into upper file descriptor table: {:?} at index {}",
+                index
+            );
             index &= !UPPER_TABLE_FLAG;
             &mut self.upper_fdtbl
         };
