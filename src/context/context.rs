@@ -617,7 +617,7 @@ impl FdTbl {
 }
 
 impl Drop for FdTbl {
-    fn drop(mut self) {
+    fn drop(&mut self) {
         for file_opt in self
             .posix_fdtbl
             .iter_mut()
