@@ -19,7 +19,7 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::{CallerCtx, FileHandle, SchemeNamespace},
+    scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
@@ -568,15 +568,23 @@ impl FdTbl {
     }
 
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
-        let mut index = i.get();
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &self.posix_fdtbl
-        } else {
-            index &= !UPPER_TABLE_FLAG;
-            &self.upper_fdtbl
-        };
+        self.get(i.get()).cloned().flatten()
+    }
 
-        fdtbl.get(index).cloned().flatten()
+    // TODO: Faster, cleaner mechanism to get descriptor
+    pub fn find_by_scheme(
+        &self,
+        scheme_id: SchemeId,
+        scheme_number: usize,
+    ) -> Result<FileDescriptor> {
+        self.iter()
+            .flatten()
+            .find(|&context_fd| {
+                let desc = context_fd.description.read();
+                desc.scheme == scheme_id && desc.number == scheme_number
+            })
+            .map(|fd| fd.clone())
+            .ok_or(Error::new(EBADF))
     }
 
     pub fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
@@ -614,15 +622,53 @@ impl FdTbl {
 
         fdtbl.get_mut(index).and_then(|opt| opt.take())
     }
+
+    pub fn find_free_block(&self, len: usize, flag: usize) -> FileHandle {
+        let fdtbl = if flag & UPPER_TABLE_FLAG == 0 {
+            &self.posix_fdtbl
+        } else {
+            &self.upper_fdtbl
+        };
+
+        let mut start = 0;
+        let mut count = 0;
+
+        for (i, file_opt) in fdtbl.iter().enumerate() {
+            if file_opt.is_none() {
+                if start.is_none() {
+                    start = i;
+                }
+                count += 1;
+                if count == len {
+                    break;
+                }
+            } else {
+                start = None;
+                count = 0;
+            }
+        }
+        if count != len {
+            self.resize_with(fdtbl.len() + (count - len), || None);
+        }
+        return FileHandle::from(start | UPPER_TABLE_FLAG);
+    }
+}
+
+impl FdTbl {
+    pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
+        self.posix_fdtbl.iter().chain(self.upper_fdtbl.iter())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
+        self.posix_fdtbl
+            .iter_mut()
+            .chain(self.upper_fdtbl.iter_mut())
+    }
 }
 
 impl Drop for FdTbl {
     fn drop(&mut self) {
-        for file_opt in self
-            .posix_fdtbl
-            .iter_mut()
-            .chain(self.upper_fdtbl.iter_mut())
-        {
+        for file_opt in self.iter_mut() {
             if let Some(file) = file_opt.take() {
                 let _ = file.close();
             }

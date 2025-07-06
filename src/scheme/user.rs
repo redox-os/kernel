@@ -1155,19 +1155,7 @@ impl UserInner {
         let (pid, desc) = {
             let context_lock = context::current();
             let context = context_lock.read();
-            // TODO: Faster, cleaner mechanism to get descriptor
-            let mut desc_res = Err(Error::new(EBADF));
-            for context_file in context.files.read().iter().flatten() {
-                let (context_scheme, context_number) = {
-                    let desc = context_file.description.read();
-                    (desc.scheme, desc.number)
-                };
-                if context_scheme == self.scheme_id && context_number == file {
-                    desc_res = Ok(context_file.clone());
-                    break;
-                }
-            }
-            let desc = desc_res?;
+            let desc = context.files.read().find_by_scheme(self.scheme_id, file)?;
             (context.pid, desc.description)
         };
 
