@@ -322,6 +322,7 @@ impl ProcScheme {
                     use core::fmt::Write;
 
                     let mut data = String::new();
+                    // Only the posix file table is targeted.
                     for index in filetable
                         .read()
                         .posix_fdtbl

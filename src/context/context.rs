@@ -6,6 +6,7 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use spin::RwLock;
+use syscall::EBADF;
 use syscall::{SigProcControl, Sigcontrol};
 
 #[cfg(feature = "sys_stat")]
@@ -623,11 +624,11 @@ impl FdTbl {
         fdtbl.get_mut(index).and_then(|opt| opt.take())
     }
 
-    pub fn find_free_block(&self, len: usize, flag: usize) -> FileHandle {
-        let fdtbl = if flag & UPPER_TABLE_FLAG == 0 {
-            &self.posix_fdtbl
+    pub fn find_free_block(&mut self, len: usize, flag: usize) -> FileHandle {
+        let (fdtbl, return_flag) = if flag & UPPER_TABLE_FLAG == 0 {
+            (&mut self.posix_fdtbl, 0)
         } else {
-            &self.upper_fdtbl
+            (&mut self.upper_fdtbl, UPPER_TABLE_FLAG)
         };
 
         let mut start = 0;
@@ -635,22 +636,25 @@ impl FdTbl {
 
         for (i, file_opt) in fdtbl.iter().enumerate() {
             if file_opt.is_none() {
-                if start.is_none() {
+                if count == 0 {
                     start = i;
                 }
                 count += 1;
+
                 if count == len {
                     break;
                 }
             } else {
-                start = None;
                 count = 0;
             }
         }
-        if count != len {
-            self.resize_with(fdtbl.len() + (count - len), || None);
+
+        if count < len {
+            let needed = len - count;
+            fdtbl.resize(fdtbl.len() + needed, None);
         }
-        return FileHandle::from(start | UPPER_TABLE_FLAG);
+
+        FileHandle::from(start | return_flag)
     }
 }
 
