@@ -524,6 +524,24 @@ impl FdTbl {
         }
     }
 
+    fn select_fdtbl(&self, index: usize) -> &Vec<Option<FileDescriptor>> {
+        if index & UPPER_TABLE_FLAG == 0 {
+            &self.posix_fdtbl
+        } else {
+            log::info!("Selecting upper file descriptor table at index {}", index,);
+            &self.upper_fdtbl
+        }
+    }
+
+    fn select_fdtbl_mut(&mut self, index: usize) -> &mut Vec<Option<FileDescriptor>> {
+        if index & UPPER_TABLE_FLAG == 0 {
+            &mut self.posix_fdtbl
+        } else {
+            log::info!("Selecting upper file descriptor table at index {}", index,);
+            &mut self.upper_fdtbl
+        }
+    }
+
     pub fn add_file_min(&mut self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
         let fdtbl = &mut self.posix_fdtbl;
         for (i, file_option) in fdtbl.iter_mut().enumerate() {
@@ -547,28 +565,15 @@ impl FdTbl {
     }
 
     pub fn get(&self, mut index: usize) -> Option<&Option<FileDescriptor>> {
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &self.posix_fdtbl
-        } else {
-            log::info!(
-                "Getting file from upper file descriptor table: {:?} at index {}",
-                self.upper_fdtbl,
-                index,
-            );
-            index &= !UPPER_TABLE_FLAG;
-            &self.upper_fdtbl
-        };
+        let fdtbl = self.select_fdtbl(index);
+        index &= !UPPER_TABLE_FLAG;
 
         fdtbl.get(index)
     }
 
     pub fn get_mut(&mut self, mut index: usize) -> Option<&mut Option<FileDescriptor>> {
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &mut self.posix_fdtbl
-        } else {
-            index &= !UPPER_TABLE_FLAG;
-            &mut self.upper_fdtbl
-        };
+        let fdtbl = self.select_fdtbl_mut(index);
+        index &= !UPPER_TABLE_FLAG;
 
         fdtbl.get_mut(index)
     }
@@ -595,17 +600,9 @@ impl FdTbl {
 
     pub fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
         let mut index = i.get();
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &mut self.posix_fdtbl
-        } else {
-            log::info!(
-                "Inserting file into upper file descriptor table: {:?} at index {}",
-                self.upper_fdtbl,
-                index,
-            );
-            index &= !UPPER_TABLE_FLAG;
-            &mut self.upper_fdtbl
-        };
+        let fdtbl = self.select_fdtbl_mut(index);
+        index &= !UPPER_TABLE_FLAG;
+
         if index >= super::CONTEXT_MAX_FILES {
             return None;
         }
@@ -624,22 +621,15 @@ impl FdTbl {
 
     pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
         let mut index = i.get();
-        let fdtbl = if index & UPPER_TABLE_FLAG == 0 {
-            &mut self.posix_fdtbl
-        } else {
-            index &= !UPPER_TABLE_FLAG;
-            &mut self.upper_fdtbl
-        };
+        let fdtbl = self.select_fdtbl_mut(index);
+        index &= !UPPER_TABLE_FLAG;
 
         fdtbl.get_mut(index).and_then(|opt| opt.take())
     }
 
     pub fn find_free_block(&mut self, len: usize, flag: usize) -> FileHandle {
-        let (fdtbl, return_flag) = if flag & UPPER_TABLE_FLAG == 0 {
-            (&mut self.posix_fdtbl, 0)
-        } else {
-            (&mut self.upper_fdtbl, UPPER_TABLE_FLAG)
-        };
+        let fdtbl = self.select_fdtbl_mut(flag);
+        let table_flag = flag & UPPER_TABLE_FLAG;
 
         let mut start = 0;
         let mut count = 0;
@@ -664,7 +654,7 @@ impl FdTbl {
             fdtbl.resize(fdtbl.len() + needed, None);
         }
 
-        FileHandle::from(start | return_flag)
+        FileHandle::from(start | table_flag)
     }
 }
 
