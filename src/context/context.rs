@@ -552,7 +552,8 @@ impl FdTbl {
         } else {
             log::info!(
                 "Getting file from upper file descriptor table: {:?} at index {}",
-                index
+                self.upper_fdtbl,
+                index,
             );
             index &= !UPPER_TABLE_FLAG;
             &self.upper_fdtbl
@@ -599,7 +600,8 @@ impl FdTbl {
         } else {
             log::info!(
                 "Inserting file into upper file descriptor table: {:?} at index {}",
-                index
+                self.upper_fdtbl,
+                index,
             );
             index &= !UPPER_TABLE_FLAG;
             &mut self.upper_fdtbl
