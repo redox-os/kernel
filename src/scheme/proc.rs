@@ -324,6 +324,7 @@ impl ProcScheme {
                     let mut data = String::new();
                     for index in filetable
                         .read()
+                        .posix_fdtbl
                         .iter()
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
