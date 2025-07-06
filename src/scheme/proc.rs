@@ -5,7 +5,7 @@ use crate::{
         context::{HardBlockedReason, SignalState},
         file::{FileDescriptor, InternalFlags},
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
-        Context, FdTbl, Status,
+        Context, Status,
     },
     memory::{get_page_info, AddRefError, RefKind, PAGE_SIZE},
     ptrace,
@@ -18,6 +18,8 @@ use crate::{
         EnvRegisters, FloatRegisters, IntRegisters,
     },
 };
+
+use crate::context::context::FdTbl;
 
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
