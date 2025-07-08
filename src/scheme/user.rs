@@ -1388,6 +1388,39 @@ impl KernelScheme for UserScheme {
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
         }
     }
+
+    fn kopenat(
+        &self,
+        file: usize,
+        path: super::StrOrBytes,
+        flags: usize,
+        fcntl_flags: u32,
+        ctx: CallerCtx,
+    ) -> Result<OpenResult> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
+        let result = inner.call_extended(
+            ctx,
+            None,
+            Opcode::OpenAt,
+            [file, address.base(), address.len(), flags, fcntl_flags as _],
+            address.span(),
+        );
+
+        address.release()?;
+
+        match result? {
+            Response::Regular(code, fl) => Ok({
+                let fd = Error::demux(code)?;
+                OpenResult::SchemeLocal(
+                    fd,
+                    InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                )
+            }),
+            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+        }
+    }
+
     fn rmdir(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
