@@ -514,6 +514,7 @@ pub const UPPER_TABLE_FLAG: usize = 1 << (usize::BITS - 2);
 pub struct FdTbl {
     pub posix_fdtbl: Vec<Option<FileDescriptor>>,
     pub upper_fdtbl: Vec<Option<FileDescriptor>>,
+    active_count: usize,
 }
 
 impl FdTbl {
@@ -521,61 +522,68 @@ impl FdTbl {
         Self {
             posix_fdtbl: Vec::new(),
             upper_fdtbl: Vec::new(),
+            active_count: 0,
         }
     }
 
-    fn select_fdtbl(&self, index: usize) -> &Vec<Option<FileDescriptor>> {
+    fn select_fdtbl(&self, index: usize) -> (&Vec<Option<FileDescriptor>>, usize) {
         if index & UPPER_TABLE_FLAG == 0 {
-            &self.posix_fdtbl
+            (&self.posix_fdtbl, index)
         } else {
             log::info!("Selecting upper file descriptor table at index {}", index,);
-            &self.upper_fdtbl
+            (&self.upper_fdtbl, index & !UPPER_TABLE_FLAG)
         }
     }
 
-    fn select_fdtbl_mut(&mut self, index: usize) -> &mut Vec<Option<FileDescriptor>> {
+    fn select_fdtbl_mut(&mut self, index: usize) -> (&mut Vec<Option<FileDescriptor>>, usize) {
         if index & UPPER_TABLE_FLAG == 0 {
-            &mut self.posix_fdtbl
+            (&mut self.posix_fdtbl, index)
         } else {
             log::info!("Selecting upper file descriptor table at index {}", index,);
-            &mut self.upper_fdtbl
+            (&mut self.upper_fdtbl, index & !UPPER_TABLE_FLAG)
         }
     }
 
     pub fn add_file_min(&mut self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
-        let fdtbl = &mut self.posix_fdtbl;
-        for (i, file_option) in fdtbl.iter_mut().enumerate() {
-            if file_option.is_none() && i >= min {
-                *file_option = Some(file);
-                return Some(FileHandle::from(i));
-            }
+        if self.active_count >= super::CONTEXT_MAX_FILES {
+            return None;
         }
-        let len = fdtbl.len();
-        if len < super::CONTEXT_MAX_FILES {
-            if len >= min {
-                fdtbl.push(Some(file));
-                Some(FileHandle::from(len))
-            } else {
-                drop(fdtbl);
-                self.insert_file(FileHandle::from(min), file)
-            }
+
+        // Find the first empty slot in the posix_fdtbl starting from `min`.
+        if let ((pos, slot)) = self
+            .posix_fdtbl
+            .iter_mut()
+            .enumerate()
+            .skip(min)
+            .find(|(_, slot)| slot.is_none())
+        {
+            *slot = Some(file);
+            self.active_count += 1;
+            return Some(FileHandle::from(pos));
+        };
+
+        let len = self.posix_fdtbl.len();
+
+        // If no empty slot was found, we need to allocate a new slot.
+        if len >= min {
+            self.posix_fdtbl.push(Some(file));
+            self.active_count += 1;
+            Some(FileHandle::from(len))
         } else {
-            None
+            self.insert_file(FileHandle::from(min), file)
         }
     }
 
     pub fn get(&self, mut index: usize) -> Option<&Option<FileDescriptor>> {
-        let fdtbl = self.select_fdtbl(index);
-        index &= !UPPER_TABLE_FLAG;
+        let (fdtbl, real_index) = self.select_fdtbl(index);
 
-        fdtbl.get(index)
+        fdtbl.get(real_index)
     }
 
     pub fn get_mut(&mut self, mut index: usize) -> Option<&mut Option<FileDescriptor>> {
-        let fdtbl = self.select_fdtbl_mut(index);
-        index &= !UPPER_TABLE_FLAG;
+        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
-        fdtbl.get_mut(index)
+        fdtbl.get_mut(real_index)
     }
 
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
@@ -583,6 +591,7 @@ impl FdTbl {
     }
 
     // TODO: Faster, cleaner mechanism to get descriptor
+    // Find a file descriptor by scheme id and number.
     pub fn find_by_scheme(
         &self,
         scheme_id: SchemeId,
@@ -599,20 +608,23 @@ impl FdTbl {
     }
 
     pub fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
+        if self.active_count >= super::CONTEXT_MAX_FILES {
+            return None;
+        }
         let mut index = i.get();
-        let fdtbl = self.select_fdtbl_mut(index);
-        index &= !UPPER_TABLE_FLAG;
+        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
-        if index >= super::CONTEXT_MAX_FILES {
+        if real_index >= super::CONTEXT_MAX_FILES {
             return None;
         }
 
-        if index >= fdtbl.len() {
-            fdtbl.resize_with(index + 1, || None);
+        if real_index >= fdtbl.len() {
+            fdtbl.resize_with(real_index + 1, || None);
         }
 
-        if let Some(slot @ None) = fdtbl.get_mut(index) {
+        if let Some(slot @ None) = fdtbl.get_mut(real_index) {
             *slot = Some(file);
+            self.active_count += 1;
             Some(i)
         } else {
             None
@@ -621,38 +633,36 @@ impl FdTbl {
 
     pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
         let mut index = i.get();
-        let fdtbl = self.select_fdtbl_mut(index);
-        index &= !UPPER_TABLE_FLAG;
+        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
-        fdtbl.get_mut(index).and_then(|opt| opt.take())
+        let removed_file_opt = fdtbl.get_mut(real_index).and_then(|opt| opt.take());
+        if removed_file_opt.is_some() {
+            self.active_count -= 1;
+        }
+
+        removed_file_opt
     }
 
     pub fn find_free_block(&mut self, len: usize, flag: usize) -> FileHandle {
-        let fdtbl = self.select_fdtbl_mut(flag);
+        let (fdtbl, _) = self.select_fdtbl_mut(flag);
         let table_flag = flag & UPPER_TABLE_FLAG;
 
-        let mut start = 0;
-        let mut count = 0;
+        // Search for a block of `len` consecutive None slots.
+        let found_pos = fdtbl
+            .windows(len)
+            .position(|window| window.iter().all(|opt| opt.is_none()));
 
-        for (i, file_opt) in fdtbl.iter().enumerate() {
-            if file_opt.is_none() {
-                if count == 0 {
-                    start = i;
-                }
-                count += 1;
-
-                if count == len {
-                    break;
-                }
-            } else {
-                count = 0;
-            }
+        if let Some(pos) = found_pos {
+            return FileHandle::from(pos | table_flag);
         }
 
-        if count < len {
-            let needed = len - count;
-            fdtbl.resize(fdtbl.len() + needed, None);
-        }
+        // If no block was found, we need to resize the table.
+        let nones_num = fdtbl.iter().rev().take_while(|opt| opt.is_none()).count();
+
+        let start = fdtbl.len() - nones_num;
+
+        let needed = len.saturating_sub(trailing_nones);
+        fdtbl.resize(fdtbl.len() + needed, None);
 
         FileHandle::from(start | table_flag)
     }
