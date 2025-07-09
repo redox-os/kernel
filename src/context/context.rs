@@ -550,7 +550,7 @@ impl FdTbl {
         }
 
         // Find the first empty slot in the posix_fdtbl starting from `min`.
-        if let ((pos, slot)) = self
+        if let Some((pos, slot)) = self
             .posix_fdtbl
             .iter_mut()
             .enumerate()
@@ -661,7 +661,7 @@ impl FdTbl {
 
         let start = fdtbl.len() - nones_num;
 
-        let needed = len.saturating_sub(trailing_nones);
+        let needed = len.saturating_sub(nones_num);
         fdtbl.resize(fdtbl.len() + needed, None);
 
         FileHandle::from(start | table_flag)
