@@ -1,4 +1,4 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of},
@@ -542,6 +542,21 @@ impl FdTbl {
         }
     }
 
+    fn validate_handles(&self, handles: &[FileHandle]) -> Result<()> {
+        let mut checked_handles = BTreeSet::new();
+        for i in handles {
+            let index = i.get();
+            if !checked_handles.insert(index) {
+                return Err(Error::new(EBADF)); // Duplicate handle
+            }
+            if !matches!(self.get(index), Some(Some(_))) {
+                return Err(Error::new(EBADF));
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn add_file_min(&mut self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
         let fdtbl = &mut self.posix_fdtbl;
         for (i, file_option) in fdtbl.iter_mut().enumerate() {
@@ -580,6 +595,18 @@ impl FdTbl {
 
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         self.get(i.get()).cloned().flatten()
+    }
+
+    pub fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+        // Validate that all handles are valid before proceeding to avoid partial results.
+        self.validate_handles(handles)?;
+
+        let files = handles
+            .iter()
+            .map(|&i| self.get_file(i).expect("File should exist"))
+            .collect();
+
+        Ok(files)
     }
 
     // TODO: Faster, cleaner mechanism to get descriptor
@@ -625,6 +652,18 @@ impl FdTbl {
         index &= !UPPER_TABLE_FLAG;
 
         fdtbl.get_mut(index).and_then(|opt| opt.take())
+    }
+
+    pub fn bulk_remove_files(&mut self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+        // Validate that all handles are valid before proceeding to avoid partial results.
+        self.validate_handles(handles)?;
+
+        let files = handles
+            .iter()
+            .map(|&i| self.remove_file(i).expect("File should exist"))
+            .collect();
+
+        Ok(files)
     }
 
     pub fn find_free_block(&mut self, len: usize, flag: usize) -> FileHandle {
