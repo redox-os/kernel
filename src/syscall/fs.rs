@@ -321,20 +321,23 @@ fn sendfd_inner(
         )
     };
 
-    ////  Inform the scheme whether there are still references to the file description to be sent,
-    ////  either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
-    ////  requested.
-    // TODO: sendfd flags.
-    // let flags_to_scheme = if Arc::strong_count(&desc_to_send) == 1 {
-    //     SendFdFlags::EXCLUSIVE
-    // } else {
-    //     if requested_flags.contains(SendFdFlags::EXCLUSIVE) {
-    //         return Err(Error::new(EBUSY));
-    //     }
-    //     SendFdFlags::empty()
-    // };
+    //  Inform the scheme whether there are still references to the file description to be sent,
+    //  either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
+    //  requested.
 
-    scheme.ksendfd(number, descs_to_send, requested_flags, arg)
+    let flags_to_scheme = if requested_flags.contains(SendFdFlags::EXCLUSIVE) {
+        for desc in &descs_to_send {
+            if Arc::strong_count(desc) > 1 {
+                return Err(Error::new(EBUSY));
+            }
+        }
+
+        SendFdFlags::EXCLUSIVE
+    } else {
+        SendFdFlags::empty()
+    };
+
+    scheme.ksendfd(number, descs_to_send, flags_to_scheme, arg)
 }
 
 /// File descriptor controls
