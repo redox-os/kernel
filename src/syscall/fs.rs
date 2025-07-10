@@ -281,13 +281,21 @@ pub fn call(
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
+    sendfd_inner(fd, Vec::from([fd]), flags_raw, arg)
+}
+
+fn sendfd_inner(
+    fd: FileHandle,
+    target_fds: Vec<FileHandle>,
+    flags_raw: usize,
+    arg: u64,
+) -> Result<usize> {
     let requested_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
 
-    let (scheme, number, desc_to_send) = {
+    // TODO: Ensure deadlocks can't happen
+    let (scheme, number, descs_to_send) = {
         let current_lock = context::current();
         let current = current_lock.read();
-
-        // TODO: Ensure deadlocks can't happen
 
         let (scheme, number) = match current
             .get_file(socket)
@@ -306,26 +314,27 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
             scheme,
             number,
             current
-                .remove_file(fd)
-                .ok_or(Error::new(EBADF))?
-                .description,
+                .bulk_remove_files(&target_fds)?
+                .iter()
+                .map(|f| f.description)
+                .collect(),
         )
     };
 
-    // Inform the scheme whether there are still references to the file description to be sent,
-    // either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
-    // requested.
+    ////  Inform the scheme whether there are still references to the file description to be sent,
+    ////  either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
+    ////  requested.
+    // TODO: sendfd flags.
+    // let flags_to_scheme = if Arc::strong_count(&desc_to_send) == 1 {
+    //     SendFdFlags::EXCLUSIVE
+    // } else {
+    //     if requested_flags.contains(SendFdFlags::EXCLUSIVE) {
+    //         return Err(Error::new(EBUSY));
+    //     }
+    //     SendFdFlags::empty()
+    // };
 
-    let flags_to_scheme = if Arc::strong_count(&desc_to_send) == 1 {
-        SendFdFlags::EXCLUSIVE
-    } else {
-        if requested_flags.contains(SendFdFlags::EXCLUSIVE) {
-            return Err(Error::new(EBUSY));
-        }
-        SendFdFlags::empty()
-    };
-
-    scheme.ksendfd(number, desc_to_send, flags_to_scheme, arg)
+    scheme.ksendfd(number, descs_to_send, flags_to_scheme, arg)
 }
 
 /// File descriptor controls
