@@ -1043,7 +1043,7 @@ impl UserInner {
         Ok(())
     }
     fn respond(&self, tag: u32, mut response: Response) -> Result<()> {
-        let to_close;
+        let to_close: Vec<Arc<RwLock<FileDescription>>>;
 
         let mut states = self.states.lock();
         match states.get_mut(tag as usize) {
@@ -1086,7 +1086,7 @@ impl UserInner {
                         .into_iter()
                         .flatten()
                         .filter_map(|f| Arc::try_unwrap(f).ok())
-                        .filter_map(|f| f.into_inner().ok())
+                        .map(RwLock::into_inner)
                         .collect();
 
                     if let Some(context) = context.upgrade() {
