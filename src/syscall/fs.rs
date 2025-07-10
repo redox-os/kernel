@@ -315,7 +315,7 @@ fn sendfd_inner(
             number,
             current
                 .bulk_remove_files(&target_fds)?
-                .iter()
+                .into_iter()
                 .map(|f| f.description)
                 .collect(),
         )
