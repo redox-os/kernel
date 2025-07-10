@@ -943,7 +943,7 @@ impl UserInner {
                     .ok_or(Error::new(EINVAL))?
                 {
                     State::Waiting { ref mut fds, .. } => {
-                        fds.take().ok_or(Error::new(ENOENT))?.remove(1)
+                        fds.take().ok_or(Error::new(ENOENT))?.remove(0)
                     }
                     _ => return Err(Error::new(ENOENT)),
                 };
