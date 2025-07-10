@@ -254,7 +254,7 @@ pub fn call(
 ) -> Result<usize> {
     match flags {
         f if f.contains(CallFlags::BULK_SENDFD) => call_bulk_sendfd(fd, payload, flags),
-        f if f.contains(CallFlags::BULK_RECVFD) => unimplemented!("BULK_RECVFD not implemented"),
+        f if f.contains(CallFlags::BULK_RECVFD) => call_bulk_recvfd(fd, payload, flags),
         _ => call_normal(fd, payload, flags, metadata),
     }
 }
@@ -294,7 +294,13 @@ fn call_normal(
 }
 
 fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
-    return Err(Error::new(ENOSYS));
+    log::warn!("call_bulk_sendfd is not implemented");
+    Error::new(ENOSYS)
+}
+
+fn call_bulk_recvfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
+    log::warn!("call_bulk_recvfd is not implemented");
+    Error::new(ENOSYS)
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
