@@ -294,8 +294,27 @@ fn call_normal(
 }
 
 fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
-    log::warn!("call_bulk_sendfd is not implemented");
-    Err(Error::new(ENOSYS))
+    log::info!("call_bulk_sendfd called");
+
+    let payload_chunks = payload.in_variable_chunks(8);
+    let fds = payload_chunks
+        .map(|chunk| {
+            if chunk.len() != 8 {
+                return Err(Error::new(EINVAL));
+            }
+            let fd = chunk.read_u64()?;
+            log::info!("call_bulk_sendfd: fd={}", fd);
+            Ok(FileHandle::from(fd))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    log::info!("call_bulk_sendfd: fds={:?}", fds);
+
+    let len = fds.len();
+
+    sendfd_inner(fd, fds, flags.bits(), 0)?;
+
+    Ok(len)
 }
 
 fn call_bulk_recvfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
@@ -313,6 +332,7 @@ fn sendfd_inner(
     flags_raw: usize,
     arg: u64,
 ) -> Result<usize> {
+    log::info!("sendfd_inner called");
     let requested_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
 
     // TODO: Ensure deadlocks can't happen
