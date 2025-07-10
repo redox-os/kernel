@@ -1082,9 +1082,12 @@ impl UserInner {
                         *code = Error::mux(Err(Error::new(EIO)));
                     }
 
-                    to_close = fd
-                        .and_then(|f| Arc::try_unwrap(f).ok())
-                        .map(RwLock::into_inner);
+                    to_close = fds
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| Arc::try_unwrap(f).ok())
+                        .filter_map(|f| f.into_inner().ok())
+                        .collect();
 
                     if let Some(context) = context.upgrade() {
                         context.write().unblock();
@@ -1101,7 +1104,7 @@ impl UserInner {
             None => return Err(Error::new(EBADFD)),
         }
 
-        if let Some(to_close) = to_close {
+        for to_close in to_close {
             let _ = to_close.try_close();
         }
         Ok(())
