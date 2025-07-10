@@ -429,7 +429,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn ksendfd(
         &self,
         id: usize,
-        desc: Arc<RwLock<FileDescription>>,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: SendFdFlags,
         arg: u64,
     ) -> Result<usize> {
