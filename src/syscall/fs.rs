@@ -281,11 +281,11 @@ pub fn call(
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
-    sendfd_inner(fd, Vec::from([fd]), flags_raw, arg)
+    sendfd_inner(socket, Vec::from([fd]), flags_raw, arg)
 }
 
 fn sendfd_inner(
-    fd: FileHandle,
+    socket: FileHandle,
     target_fds: Vec<FileHandle>,
     flags_raw: usize,
     arg: u64,
@@ -334,7 +334,7 @@ fn sendfd_inner(
     //     SendFdFlags::empty()
     // };
 
-    scheme.ksendfd(number, descs_to_send, flags_to_scheme, arg)
+    scheme.ksendfd(number, descs_to_send, requested_flags, arg)
 }
 
 /// File descriptor controls
