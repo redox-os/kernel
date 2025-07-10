@@ -295,12 +295,12 @@ fn call_normal(
 
 fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
     log::warn!("call_bulk_sendfd is not implemented");
-    Error::new(ENOSYS)
+    Err(Error::new(ENOSYS))
 }
 
 fn call_bulk_recvfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
     log::warn!("call_bulk_recvfd is not implemented");
-    Error::new(ENOSYS)
+    Err(Error::new(ENOSYS))
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
