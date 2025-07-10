@@ -266,6 +266,12 @@ impl Context {
         files.get_file(i)
     }
 
+    /// Bulk get files
+    pub fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+        let files = self.files.read();
+        files.bulk_get_files(handles)
+    }
+
     /// Insert a file with a specific handle number. This is used by dup2
     /// Return the file descriptor number or None if the slot was not empty, or i was invalid
     pub fn insert_file(&self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
@@ -278,6 +284,12 @@ impl Context {
     pub fn remove_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let mut files = self.files.write();
         files.remove_file(i)
+    }
+
+    /// Bulk remove files
+    pub fn bulk_remove_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+        let mut files = self.files.write();
+        files.bulk_remove_files(handles)
     }
 
     pub fn is_current_context(&self) -> bool {
