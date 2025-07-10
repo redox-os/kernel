@@ -300,8 +300,13 @@ fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> R
     let fds = payload_chunks
         .map(|chunk| {
             if chunk.len() != 8 {
+                println!(
+                    "call_bulk_sendfd: chunk length is {}, expected 8",
+                    chunk.len()
+                );
                 return Err(Error::new(EINVAL));
             }
+            println!("call_bulk_sendfd: chunk size is 8");
             let fd = chunk.read_u64()? as usize;
             log::info!("call_bulk_sendfd: fd={}", fd);
             Ok(FileHandle::from(fd))
