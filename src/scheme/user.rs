@@ -1056,7 +1056,7 @@ impl UserInner {
 
                 State::Waiting {
                     context,
-                    fd,
+                    fds,
                     canceling,
                     callee_responsible,
                 } => {
