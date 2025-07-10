@@ -252,6 +252,19 @@ pub fn call(
     flags: CallFlags,
     metadata: UserSliceRo,
 ) -> Result<usize> {
+    match flags {
+        f if f.contains(CallFlags::BULK_SENDFD) => call_bulk_sendfd(fd, payload, flags),
+        f if f.contains(CallFlags::BULK_RECVFD) => unimplemented!("BULK_RECVFD not implemented"),
+        _ => call_normal(fd, payload, flags, metadata),
+    }
+}
+
+fn call_normal(
+    fd: FileHandle,
+    payload: UserSliceRw,
+    flags: CallFlags,
+    metadata: UserSliceRo,
+) -> Result<usize> {
     let mut meta = [0_u64; 3];
 
     // TODO: bytemuck/plain
@@ -278,6 +291,10 @@ pub fn call(
         .clone();
 
     scheme.kcall(number, payload, flags, &meta[..copied / 8])
+}
+
+fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
+    return Err(Error::new(ENOSYS));
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
