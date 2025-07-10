@@ -302,7 +302,7 @@ fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> R
             if chunk.len() != 8 {
                 return Err(Error::new(EINVAL));
             }
-            let fd = chunk.read_u64()?;
+            let fd = chunk.read_u64()? as usize;
             log::info!("call_bulk_sendfd: fd={}", fd);
             Ok(FileHandle::from(fd))
         })
