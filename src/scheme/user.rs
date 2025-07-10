@@ -1043,7 +1043,7 @@ impl UserInner {
         Ok(())
     }
     fn respond(&self, tag: u32, mut response: Response) -> Result<()> {
-        let to_close: Vec<Arc<RwLock<FileDescription>>>;
+        let to_close: Vec<FileDescription>;
 
         let mut states = self.states.lock();
         match states.get_mut(tag as usize) {
