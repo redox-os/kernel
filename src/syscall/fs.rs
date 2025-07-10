@@ -317,7 +317,13 @@ fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> R
 
     let len = fds.len();
 
-    sendfd_inner(fd, fds, flags.bits(), 0)?;
+    let sendfd_flags = if flags.contains(CallFlags::BULK_SENDFD_EXCLUSIVE) {
+        SendFdFlags::EXCLUSIVE
+    } else {
+        SendFdFlags::empty()
+    };
+
+    sendfd_inner(fd, fds, sendfd_flags.bits(), 0)?;
 
     Ok(len)
 }
