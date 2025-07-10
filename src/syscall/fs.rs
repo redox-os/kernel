@@ -296,7 +296,7 @@ fn call_normal(
 fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
     log::info!("call_bulk_sendfd called");
 
-    let payload_chunks = payload.in_variable_chunks(8);
+    let payload_chunks = payload.in_exact_chunks(8);
     let fds = payload_chunks
         .map(|chunk| {
             if chunk.len() != 8 {
