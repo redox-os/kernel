@@ -65,7 +65,8 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: Weak<RwSpinlock<Context>>,
-        fd: Option<Arc<RwLock<FileDescription>>>,
+        // TODO: Remove Option<> and have Vec<> directly.
+        fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
@@ -255,13 +256,13 @@ impl UserInner {
     pub fn call_extended(
         &self,
         ctx: CallerCtx,
-        fd: Option<Arc<RwLock<FileDescription>>>,
+        fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
     ) -> Result<Response> {
         self.call_extended_inner(
-            fd,
+            fds,
             Sqe {
                 opcode: opcode as u8,
                 sqe_flags: SqeFlags::empty(),
@@ -280,7 +281,7 @@ impl UserInner {
 
     fn call_extended_inner(
         &self,
-        fd: Option<Arc<RwLock<FileDescription>>>,
+        fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
     ) -> Result<Response> {
@@ -295,7 +296,7 @@ impl UserInner {
             current_context.write().block("UserScheme::call");
             states[sqe.tag as usize] = State::Waiting {
                 context: Arc::downgrade(&current_context),
-                fd,
+                fds,
                 canceling: false,
 
                 // This is the part that the scheme handler will deallocate when responding. It
@@ -337,14 +338,14 @@ impl UserInner {
                         canceling: true,
                         mut callee_responsible,
                         context,
-                        fd,
+                        fds,
                     } => {
                         let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
                         *o = State::Waiting {
                             canceling: true,
                             callee_responsible,
                             context,
-                            fd,
+                            fds,
                         };
                         drop(states);
                         maybe_eintr?;
@@ -354,14 +355,14 @@ impl UserInner {
                     // spurious wakeup
                     State::Waiting {
                         canceling: false,
-                        fd,
+                        fds,
                         context,
                         mut callee_responsible,
                     } => {
                         let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
                         *o = State::Waiting {
                             canceling: true,
-                            fd,
+                            fds,
                             context,
                             callee_responsible,
                         };
@@ -929,6 +930,7 @@ impl UserInner {
                         .description,
                 ),
             )?,
+            // TODO: ObtainFd mechanism for bulk fd sending and manual file descriptor numbering.
             ParsedCqe::ObtainFd {
                 tag,
                 flags,
@@ -940,7 +942,7 @@ impl UserInner {
                     .get_mut(tag as usize)
                     .ok_or(Error::new(EINVAL))?
                 {
-                    State::Waiting { ref mut fd, .. } => fd.take().ok_or(Error::new(ENOENT))?,
+                    State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?[1],
                     _ => return Err(Error::new(ENOENT)),
                 };
 
@@ -1709,7 +1711,7 @@ impl KernelScheme for UserScheme {
     fn ksendfd(
         &self,
         number: usize,
-        desc: Arc<RwLock<FileDescription>>,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: SendFdFlags,
         arg: u64,
     ) -> Result<usize> {
@@ -1718,7 +1720,7 @@ impl KernelScheme for UserScheme {
         let ctx = context::current().read().caller_ctx();
         let res = inner.call_extended(
             ctx,
-            Some(desc),
+            Some(descs),
             Opcode::Sendfd,
             [number, flags.bits(), arg as usize],
             &mut PageSpan::empty(),
