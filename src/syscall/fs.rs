@@ -314,7 +314,7 @@ fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Resul
 
     let len = fds.len();
 
-    let sendfd_flags = if flags.contains(CallFlags::BULK_SENDFD_EXCLUSIVE) {
+    let sendfd_flags = if flags.contains(CallFlags::FD_EXCLUSIVE) {
         SendFdFlags::EXCLUSIVE
     } else {
         SendFdFlags::empty()
