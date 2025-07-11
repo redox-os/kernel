@@ -253,8 +253,8 @@ pub fn call(
     metadata: UserSliceRo,
 ) -> Result<usize> {
     match flags {
-        f if f.contains(CallFlags::BULK_SENDFD) => call_bulk_sendfd(fd, payload, flags),
-        f if f.contains(CallFlags::BULK_RECVFD) => call_bulk_recvfd(fd, payload, flags),
+        f if f.contains(CallFlags::WRITE | CallFlags::FD) => call_fdwrite(fd, payload, flags),
+        f if f.contains(CallFlags::READ | CallFlags::FD) => call_fdread(fd, payload, flags),
         _ => call_normal(fd, payload, flags, metadata),
     }
 }
@@ -293,27 +293,24 @@ fn call_normal(
     scheme.kcall(number, payload, flags, &meta[..copied / 8])
 }
 
-fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
-    log::info!("call_bulk_sendfd called");
+fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
+    log::info!("call_fdwrite called");
 
     let payload_chunks = payload.in_exact_chunks(8);
     let fds = payload_chunks
         .map(|chunk| {
             if chunk.len() != 8 {
-                println!(
-                    "call_bulk_sendfd: chunk length is {}, expected 8",
-                    chunk.len()
-                );
+                println!("call_fdwrite: chunk length is {}, expected 8", chunk.len());
                 return Err(Error::new(EINVAL));
             }
-            println!("call_bulk_sendfd: chunk size is 8");
+            println!("call_fdwrite: chunk size is 8");
             let fd = chunk.read_u64()? as usize;
-            log::info!("call_bulk_sendfd: fd={}", fd);
+            log::info!("call_fdwrite: fd={}", fd);
             Ok(FileHandle::from(fd))
         })
         .collect::<Result<Vec<_>>>()?;
 
-    log::info!("call_bulk_sendfd: fds={:?}", fds);
+    log::info!("call_fdwrite: fds={:?}", fds);
 
     let len = fds.len();
 
@@ -328,8 +325,8 @@ fn call_bulk_sendfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> R
     Ok(len)
 }
 
-fn call_bulk_recvfd(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
-    log::warn!("call_bulk_recvfd is not implemented");
+fn call_fdread(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
+    log::warn!("call_fdread is not implemented");
     Err(Error::new(ENOSYS))
 }
 
