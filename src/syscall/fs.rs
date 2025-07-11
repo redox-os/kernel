@@ -371,7 +371,7 @@ fn sendfd_inner(
         (
             scheme,
             number,
-            if flag.contains(SendFdFlags::CLONE) {
+            if flags.contains(SendFdFlags::CLONE) {
                 current.bulk_get_files(&target_fds)
             } else {
                 current.bulk_remove_files(&target_fds)
