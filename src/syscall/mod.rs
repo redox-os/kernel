@@ -178,6 +178,7 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
             ),
 
             SYS_OPEN => open(UserSlice::ro(b, c)?, d).map(FileHandle::into),
+            SYS_OPENAT => openat(fd, UserSlice::ro(c, d)?, e, f as _).map(FileHandle::into),
             SYS_RMDIR => rmdir(UserSlice::ro(b, c)?).map(|()| 0),
             SYS_UNLINK => unlink(UserSlice::ro(b, c)?).map(|()| 0),
             SYS_YIELD => sched_yield().map(|()| 0),
