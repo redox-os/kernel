@@ -837,6 +837,13 @@ impl UserInner {
                     })
                 }
 
+                Opcode::Call => {
+                    log::warn!(
+                        "UserScheme::call called with Opcode::Call, which is not supported by the kernel"
+                    );
+                    return Err(Error::new(EOPNOTSUPP));
+                }
+
                 _ => return Err(Error::new(EOPNOTSUPP)),
             },
             b: sqe.args[0] as usize,
@@ -1270,6 +1277,22 @@ impl UserInner {
 
         Ok(dst_base.start_address().data())
     }
+
+    // fn call(
+    //     &self,
+    //     id: usize,
+    //     payload: UserSliceRw,
+    //     _flags: CallFlags,
+    //     metadata: UserSliceRo,
+    // ) -> Result<usize> {
+    //     let mut meta = [0_u64; 3];
+
+    //     // TODO: bytemuck/plain
+    //     let copied = metadata.copy_common_bytes_to_slice(unsafe {
+    //         core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+    //     })?;
+    //     let meta_for_use = &meta[..copied / 8];
+    // }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     destroyed: bool,
