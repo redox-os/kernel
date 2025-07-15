@@ -1296,7 +1296,7 @@ impl UserInner {
 
         self.handle_obtainfd(
             payload,
-            meta_for_use[1] as usize,
+            meta_for_use[1] as usize - 1,
             FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
         )
     }
@@ -1310,7 +1310,7 @@ impl UserInner {
         let description = match self
             .states
             .lock()
-            .get_mut(tag as usize)
+            .get_mut(request_id as usize)
             .ok_or(Error::new(EINVAL))?
         {
             State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?.remove(0),
