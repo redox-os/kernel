@@ -1307,6 +1307,11 @@ impl UserInner {
         request_id: usize,
         flags: FobtainFdFlags,
     ) -> Result<usize> {
+        log::info!(
+            "handle_obtainfd: request_id: {}, flags: {:?}",
+            request_id,
+            flags
+        );
         let description = match self
             .states
             .lock()
