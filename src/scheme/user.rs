@@ -1339,9 +1339,9 @@ impl UserInner {
             handles.push(fd.get());
         }
         let mut payload_chunks = payload.in_exact_chunks(8);
-        for handle in handles {
+        for handle in &handles {
             log::info!("Obtained handle: {}", handle);
-            let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
+            let mut chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
             chunk.copy_from_slice(&handle.to_ne_bytes())?;
         }
 
