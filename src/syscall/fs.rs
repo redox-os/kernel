@@ -360,7 +360,7 @@ fn call_fdread(
 
     print_type_of(&scheme);
 
-    scheme.kfdread(fd.get() as usize, payload, flags)
+    scheme.kfdread(fd.get() as usize, payload, flags, metadata)
 }
 
 fn print_type_of<T>(_: &T) {
