@@ -330,4 +330,24 @@ impl KernelScheme for RootScheme {
 
         Ok(())
     }
+
+    fn kfdread(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: UserSliceRo,
+    ) -> Result<usize> {
+        let handle = {
+            let handles = self.handles.read();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        match handle {
+            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::List { .. } => Err(Error::new(EISDIR)),
+        }
+    }
 }
