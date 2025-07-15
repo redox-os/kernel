@@ -650,7 +650,7 @@ impl FdTbl {
         if self.active_count >= super::CONTEXT_MAX_FILES {
             return None;
         }
-        let mut index = i.get();
+        let index = i.get();
         let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
         if real_index >= super::CONTEXT_MAX_FILES {
@@ -671,7 +671,7 @@ impl FdTbl {
     }
 
     pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
-        let mut index = i.get();
+        let index = i.get();
         let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
         let removed_file_opt = fdtbl.get_mut(real_index).and_then(|opt| opt.take());

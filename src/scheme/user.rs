@@ -261,13 +261,20 @@ impl UserInner {
         args: impl Args,
         caller_responsible: &mut PageSpan,
     ) -> Result<Response> {
+        let next_id = self.next_id()?;
+        log::info!(
+            "UserScheme::call_extended: {:?} {:?} {:?}",
+            opcode,
+            next_id,
+            ctx
+        );
         self.call_extended_inner(
             fds,
             Sqe {
                 opcode: opcode as u8,
                 sqe_flags: SqeFlags::empty(),
                 _rsvd: 0,
-                tag: self.next_id()?,
+                tag: next_id,
                 caller: ctx.pid as u64,
                 args: {
                     let mut a = args.args();
