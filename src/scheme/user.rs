@@ -1833,11 +1833,12 @@ impl KernelScheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let ctx = context::current().read().caller_ctx();
+        let len = descs.len();
         let res = inner.call_extended(
             ctx,
             Some(descs),
             Opcode::Sendfd,
-            [number, flags.bits(), arg as usize],
+            [number, flags.bits(), arg as usize, descs.len()],
             &mut PageSpan::empty(),
         )?;
 
