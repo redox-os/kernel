@@ -145,11 +145,14 @@ impl ParsedCqe {
                     tag: (packet.id - 1) as u32,
                     fd: packet.d,
                 },
-                SKMSG_FOBTAINFD => Self::ObtainFd {
-                    tag: (packet.id - 1) as u32,
-                    flags: FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?,
-                    dst_fd_or_ptr: packet.c,
-                },
+                SKMSG_FOBTAINFD => {
+                    log::info!("OBTAIN_FD {} {} {}", packet.id, packet.d, packet.c);
+                    Self::ObtainFd {
+                        tag: (packet.id - 1) as u32,
+                        flags: FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?,
+                        dst_fd_or_ptr: packet.c,
+                    }
+                }
                 SKMSG_PROVIDE_MMAP => Self::ProvideMmap {
                     tag: (packet.id - 1) as u32,
                     offset: u64::from(packet.uid) | (u64::from(packet.gid) << 32),
@@ -943,6 +946,7 @@ impl UserInner {
                 flags,
                 dst_fd_or_ptr,
             } => {
+                log::info!("OBTAIN_FD {} {}", tag, flags.bits());
                 let description = match self
                     .states
                     .lock()
@@ -1315,7 +1319,7 @@ impl UserInner {
         let description = match self
             .states
             .lock()
-            .get_mut(request_id as usize)
+            .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
             State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?.remove(0),
