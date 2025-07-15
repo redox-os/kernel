@@ -185,12 +185,15 @@ impl ParsedCqe {
                     number: cqe.result as usize,
                     flags: EventFlags::from_bits(cqe.tag as usize).ok_or(Error::new(EINVAL))?,
                 },
-                CqeOpcode::ObtainFd => Self::ObtainFd {
-                    tag: cqe.tag,
-                    flags: FobtainFdFlags::from_bits(cqe.extra() as usize)
-                        .ok_or(Error::new(EINVAL))?,
-                    dst_fd_or_ptr: cqe.result as usize,
-                },
+                CqeOpcode::ObtainFd => {
+                    log::info!("OBTAIN_FD {} {} {}", cqe.tag, cqe.result, cqe.extra());
+                    Self::ObtainFd {
+                        tag: cqe.tag,
+                        flags: FobtainFdFlags::from_bits(cqe.extra() as usize)
+                            .ok_or(Error::new(EINVAL))?,
+                        dst_fd_or_ptr: cqe.result as usize,
+                    }
+                }
             },
         )
     }
