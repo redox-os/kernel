@@ -88,6 +88,37 @@ int_like!(SchemeId, usize);
 // Unique identifier for a file descriptor.
 int_like!(FileHandle, AtomicFileHandle, usize, AtomicUsize);
 
+#[allow(dead_code)]
+pub enum StrOrBytes<'a> {
+    Str(&'a str),
+    Bytes(&'a [u8]),
+}
+
+#[allow(dead_code)]
+impl<'a> StrOrBytes<'a> {
+    pub fn as_str(&self) -> Result<&str, core::str::Utf8Error> {
+        match self {
+            StrOrBytes::Str(path) => Ok(path),
+            StrOrBytes::Bytes(slice) => core::str::from_utf8(slice),
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            StrOrBytes::Str(path) => path.as_bytes(),
+            StrOrBytes::Bytes(slice) => slice,
+        }
+    }
+
+    pub fn from_str(path: &'a str) -> Self {
+        StrOrBytes::Str(path)
+    }
+
+    pub fn from_bytes(slice: &'a [u8]) -> Self {
+        StrOrBytes::Bytes(slice)
+    }
+}
+
 pub struct SchemeIter<'a> {
     inner: Option<indexmap::map::Iter<'a, Box<str>, SchemeId>>,
 }
@@ -365,6 +396,17 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(ENOENT))
     }
 
+    fn kopenat(
+        &self,
+        file: usize,
+        path: StrOrBytes,
+        flags: usize,
+        fcntl_flags: u32,
+        _ctx: CallerCtx,
+    ) -> Result<OpenResult> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+
     fn kfmap(
         &self,
         number: usize,
@@ -483,9 +525,6 @@ pub trait KernelScheme: Send + Sync + 'static {
     }
     fn close(&self, id: usize) -> Result<()> {
         Ok(())
-    }
-    fn on_close(&self, id: usize) -> Result<()> {
-        self.close(id)
     }
     fn kcall(
         &self,

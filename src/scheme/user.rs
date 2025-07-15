@@ -1445,6 +1445,39 @@ impl KernelScheme for UserScheme {
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
         }
     }
+
+    fn kopenat(
+        &self,
+        file: usize,
+        path: super::StrOrBytes,
+        flags: usize,
+        fcntl_flags: u32,
+        ctx: CallerCtx,
+    ) -> Result<OpenResult> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
+        let result = inner.call_extended(
+            ctx,
+            None,
+            Opcode::OpenAt,
+            [file, address.base(), address.len(), flags, fcntl_flags as _],
+            address.span(),
+        );
+
+        address.release()?;
+
+        match result? {
+            Response::Regular(code, fl) => Ok({
+                let fd = Error::demux(code)?;
+                OpenResult::SchemeLocal(
+                    fd,
+                    InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                )
+            }),
+            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+        }
+    }
+
     fn rmdir(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
@@ -1551,15 +1584,12 @@ impl KernelScheme for UserScheme {
         Ok(())
     }
 
-    fn close(&self, file: usize) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Close, [file], &mut PageSpan::empty())?;
-        Ok(())
-    }
-    fn on_close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if !inner.supports_on_close {
-            return self.close(id);
+            let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+            inner.call(Opcode::Close, [id], &mut PageSpan::empty())?;
+            return Ok(());
         }
 
         inner.todo.send(Sqe {
@@ -1570,6 +1600,9 @@ impl KernelScheme for UserScheme {
             args: [id as u64, 0, 0, 0, 0, 0],
             caller: 0, // TODO?
         });
+
+        event::trigger(inner.root_id, inner.handle_id, EVENT_READ);
+
         Ok(())
     }
     fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {

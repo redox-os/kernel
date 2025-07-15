@@ -15,8 +15,8 @@ use crate::{
     context::arch::setup_new_utable,
     cpu_set::LogicalCpuSet,
     memory::{
-        deallocate_frame, deallocate_p2frame, get_page_info, init_frame, the_zeroed_frame,
-        AddRefError, Enomem, Frame, PageInfo, RaiiFrame, RefCount, RefKind,
+        deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
+        PageInfo, RaiiFrame, RefCount, RefKind,
     },
     paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
     percpu::PercpuBlock,
@@ -2719,15 +2719,17 @@ impl GenericFlusher for NopFlusher {
 fn handle_free_action(base: Frame, phys_contiguous_count: Option<NonZeroUsize>) {
     if let Some(count) = phys_contiguous_count {
         for i in 0..count.get() {
-            let new_rc = get_page_info(base.next_by(i))
+            let frame = base.next_by(i);
+            let new_rc = get_page_info(frame)
                 .expect("phys_contiguous frames all need PageInfos")
                 .remove_ref();
 
-            assert_eq!(new_rc, None);
-        }
-        unsafe {
-            let order = count.get().next_power_of_two().trailing_zeros();
-            deallocate_p2frame(base, order);
+            if new_rc.is_none() {
+                // FIXME use a single deallocate_p2frame when possible
+                unsafe {
+                    deallocate_frame(frame);
+                }
+            }
         }
     } else {
         let Some(info) = get_page_info(base) else {
