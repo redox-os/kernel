@@ -330,7 +330,34 @@ fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Resul
 
 fn call_fdread(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
     log::warn!("call_fdread is not implemented");
+
+    let scheme = {
+        let current_lock = context::current();
+        let current = current_lock.read();
+
+        let (scheme, number) = match current
+            .get_file(socket)
+            .ok_or(Error::new(EBADF))?
+            .description
+            .read()
+        {
+            ref desc => desc.scheme,
+        };
+        let scheme = scheme::schemes()
+            .get(scheme)
+            .ok_or(Error::new(ENODEV))?
+            .clone();
+
+        scheme
+    };
+
+    print_type_of(&scheme);
+
     Err(Error::new(ENOSYS))
+}
+
+fn print_type_of<T>(_: &T) {
+    log::info!("Type of T: {}", core::any::type_name::<T>());
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
