@@ -601,13 +601,13 @@ impl FdTbl {
         }
     }
 
-    pub fn get(&self, mut index: usize) -> Option<&Option<FileDescriptor>> {
+    pub fn get(&self, index: usize) -> Option<&Option<FileDescriptor>> {
         let (fdtbl, real_index) = self.select_fdtbl(index);
 
         fdtbl.get(real_index)
     }
 
-    pub fn get_mut(&mut self, mut index: usize) -> Option<&mut Option<FileDescriptor>> {
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut Option<FileDescriptor>> {
         let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
         fdtbl.get_mut(real_index)
