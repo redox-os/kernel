@@ -1296,7 +1296,7 @@ impl UserInner {
 
         self.handle_obtainfd(
             payload,
-            meta_for_use[1] as usize - 1,
+            meta_for_use[1] as usize,
             FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
         )
     }
