@@ -254,7 +254,9 @@ pub fn call(
 ) -> Result<usize> {
     match flags {
         f if f.contains(CallFlags::WRITE | CallFlags::FD) => call_fdwrite(fd, payload, flags),
-        f if f.contains(CallFlags::READ | CallFlags::FD) => call_fdread(fd, payload, flags),
+        f if f.contains(CallFlags::READ | CallFlags::FD) => {
+            call_fdread(fd, payload, flags, metadata)
+        }
         _ => call_normal(fd, payload, flags, metadata),
     }
 }
@@ -328,7 +330,12 @@ fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Resul
     Ok(len)
 }
 
-fn call_fdread(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
+fn call_fdread(
+    fd: FileHandle,
+    payload: UserSliceRw,
+    flags: CallFlags,
+    metadata: UserSliceRo,
+) -> Result<usize> {
     log::warn!("call_fdread is not implemented");
 
     let scheme = {
@@ -353,7 +360,7 @@ fn call_fdread(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result
 
     print_type_of(&scheme);
 
-    Err(Error::new(ENOSYS))
+    scheme.kfdread(fd.get() as usize, payload, flags)
 }
 
 fn print_type_of<T>(_: &T) {
