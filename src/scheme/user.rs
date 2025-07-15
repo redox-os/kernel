@@ -1278,21 +1278,22 @@ impl UserInner {
         Ok(dst_base.start_address().data())
     }
 
-    // fn call(
-    //     &self,
-    //     id: usize,
-    //     payload: UserSliceRw,
-    //     _flags: CallFlags,
-    //     metadata: UserSliceRo,
-    // ) -> Result<usize> {
-    //     let mut meta = [0_u64; 3];
+    pub fn call_fdread(
+        &self,
+        payload: UserSliceRw,
+        _flags: CallFlags,
+        metadata: UserSliceRo,
+    ) -> Result<usize> {
+        log::info!("call_fdread");
+        Err(Error::new(ENOSYS))
+        // let mut meta = [0_u64; 3];
 
-    //     // TODO: bytemuck/plain
-    //     let copied = metadata.copy_common_bytes_to_slice(unsafe {
-    //         core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
-    //     })?;
-    //     let meta_for_use = &meta[..copied / 8];
-    // }
+        // // TODO: bytemuck/plain
+        // let copied = metadata.copy_common_bytes_to_slice(unsafe {
+        //     core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+        // })?;
+        // let meta_for_use = &meta[..copied / 8];
+    }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     destroyed: bool,
