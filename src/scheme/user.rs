@@ -1838,7 +1838,7 @@ impl KernelScheme for UserScheme {
             ctx,
             Some(descs),
             Opcode::Sendfd,
-            [number, flags.bits(), arg as usize, descs.len()],
+            [number, flags.bits(), arg as usize, len],
             &mut PageSpan::empty(),
         )?;
 
