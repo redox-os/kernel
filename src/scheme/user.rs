@@ -1285,14 +1285,40 @@ impl UserInner {
         metadata: UserSliceRo,
     ) -> Result<usize> {
         log::info!("call_fdread");
-        Err(Error::new(ENOSYS))
-        // let mut meta = [0_u64; 3];
+        let mut meta = [0_u64; 3];
 
-        // // TODO: bytemuck/plain
-        // let copied = metadata.copy_common_bytes_to_slice(unsafe {
-        //     core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
-        // })?;
-        // let meta_for_use = &meta[..copied / 8];
+        // TODO: bytemuck/plain
+        let copied = metadata.copy_common_bytes_to_slice(unsafe {
+            core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+        })?;
+        let meta_for_use = &meta[..copied / 8];
+        log::info!("meta_for_use: {:?}", meta_for_use);
+
+        self.handle_obtainfd(
+            payload,
+            meta_for_use[1] as usize,
+            FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
+        )
+    }
+
+    fn handle_obtainfd(
+        &self,
+        payload: UserSliceRw,
+        request_id: usize,
+        flags: FobtainFdFlags,
+    ) -> Result<usize> {
+        let description = match self
+            .states
+            .lock()
+            .get_mut(tag as usize)
+            .ok_or(Error::new(EINVAL))?
+        {
+            State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?.remove(0),
+            _ => return Err(Error::new(ENOENT)),
+        };
+
+        log::info!("Obtained fd: {:?}", description);
+        Err(Error::new(ENOSYS))
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
