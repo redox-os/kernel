@@ -496,6 +496,15 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
+    fn kfdread(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: UserSliceRo,
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
 }
 
 #[derive(Debug)]
