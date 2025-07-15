@@ -335,8 +335,8 @@ fn call_fdread(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result
         let current_lock = context::current();
         let current = current_lock.read();
 
-        let (scheme, number) = match current
-            .get_file(socket)
+        let scheme = match current
+            .get_file(fd)
             .ok_or(Error::new(EBADF))?
             .description
             .read()
