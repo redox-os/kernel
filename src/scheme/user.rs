@@ -266,8 +266,8 @@ impl UserInner {
             "UserScheme::call_extended: opcode: {:?}, next_id: {}, ctx: {}, {}, {}",
             opcode,
             next_id,
-            ctx.pid
-            ctx.uid
+            ctx.pid,
+            ctx.uid,
             ctx.gid
         );
         self.call_extended_inner(
