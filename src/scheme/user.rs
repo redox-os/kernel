@@ -145,14 +145,11 @@ impl ParsedCqe {
                     tag: (packet.id - 1) as u32,
                     fd: packet.d,
                 },
-                SKMSG_FOBTAINFD => {
-                    log::info!("OBTAIN_FD {} {} {}", packet.id, packet.d, packet.c);
-                    Self::ObtainFd {
-                        tag: (packet.id - 1) as u32,
-                        flags: FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?,
-                        dst_fd_or_ptr: packet.c,
-                    }
-                }
+                SKMSG_FOBTAINFD => Self::ObtainFd {
+                    tag: (packet.id - 1) as u32,
+                    flags: FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?,
+                    dst_fd_or_ptr: packet.c,
+                },
                 SKMSG_PROVIDE_MMAP => Self::ProvideMmap {
                     tag: (packet.id - 1) as u32,
                     offset: u64::from(packet.uid) | (u64::from(packet.gid) << 32),
@@ -185,15 +182,12 @@ impl ParsedCqe {
                     number: cqe.result as usize,
                     flags: EventFlags::from_bits(cqe.tag as usize).ok_or(Error::new(EINVAL))?,
                 },
-                CqeOpcode::ObtainFd => {
-                    log::info!("OBTAIN_FD {} {} {}", cqe.tag, cqe.result, cqe.extra());
-                    Self::ObtainFd {
-                        tag: cqe.tag,
-                        flags: FobtainFdFlags::from_bits(cqe.extra() as usize)
-                            .ok_or(Error::new(EINVAL))?,
-                        dst_fd_or_ptr: cqe.result as usize,
-                    }
-                }
+                CqeOpcode::ObtainFd => Self::ObtainFd {
+                    tag: cqe.tag,
+                    flags: FobtainFdFlags::from_bits(cqe.extra() as usize)
+                        .ok_or(Error::new(EINVAL))?,
+                    dst_fd_or_ptr: cqe.result as usize,
+                },
             },
         )
     }
@@ -949,7 +943,6 @@ impl UserInner {
                 flags,
                 dst_fd_or_ptr,
             } => {
-                log::info!("OBTAIN_FD {} {}", tag, flags.bits());
                 let description = match self
                     .states
                     .lock()
