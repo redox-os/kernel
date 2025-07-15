@@ -398,29 +398,29 @@ fn call_fdread(
 ) -> Result<usize> {
     log::warn!("call_fdread is not implemented");
 
-    let scheme = {
+    let (scheme, number) = {
         let current_lock = context::current();
         let current = current_lock.read();
 
-        let scheme = match current
+        let (scheme, number) = match current
             .get_file(fd)
             .ok_or(Error::new(EBADF))?
             .description
             .read()
         {
-            ref desc => desc.scheme,
+            ref desc => (desc.scheme, desc.number),
         };
         let scheme = scheme::schemes()
             .get(scheme)
             .ok_or(Error::new(ENODEV))?
             .clone();
 
-        scheme
+        (scheme, number)
     };
 
     print_type_of(&scheme);
 
-    scheme.kfdread(fd.get() as usize, payload, flags, metadata)
+    scheme.kfdread(number, payload, flags, metadata)
 }
 
 fn print_type_of<T>(_: &T) {
