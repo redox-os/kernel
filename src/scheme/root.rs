@@ -338,15 +338,24 @@ impl KernelScheme for RootScheme {
         flags: CallFlags,
         metadata: UserSliceRo,
     ) -> Result<usize> {
+        log::info!("kfread called on handle {}", id);
         let handle = {
             let handles = self.handles.read();
+            log::info!("kfread looking for handle {}", id);
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            log::info!("kfread found handle {}", id);
             handle.clone()
         };
 
         match handle {
-            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata),
-            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::Scheme(inner) => {
+                log::info!("kfread called on scheme handle {}", id);
+                inner.call_fdread(payload, flags, metadata)
+            }
+            Handle::File(_) => {
+                log::warn!("kfread called on a file handle, which is not supported");
+                Err(Error::new(EBADF))
+            }
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }
     }
