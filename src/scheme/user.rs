@@ -1313,18 +1313,39 @@ impl UserInner {
             request_id,
             flags
         );
-        let description = match self
+        let descriptions = match self
             .states
             .lock()
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
-            State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?.remove(0),
+            State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?,
             _ => return Err(Error::new(ENOENT)),
         };
 
-        log::info!("Obtained fd: {:?}", description);
-        Err(Error::new(ENOSYS))
+        let current_lock = context::current();
+        let current = current_lock.read();
+
+        let mut handles = Vec::new();
+        for description in descriptions {
+            log::info!("Obtained fd: {:?}", description);
+            let fd = context::current()
+                .read()
+                .add_file(FileDescriptor {
+                    description,
+                    cloexec: true,
+                })
+                .ok_or(Error::new(EMFILE))?;
+            handles.push(fd.get());
+        }
+        let mut payload_chunks = payload.in_exact_chunks(8);
+        for handle in handles {
+            log::info!("Obtained handle: {}", handle);
+            let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
+            chunk.copy_from_slice(&handle.to_ne_bytes())?;
+        }
+
+        Ok(handles.len())
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
