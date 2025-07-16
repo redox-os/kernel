@@ -1328,6 +1328,7 @@ impl UserInner {
                 cloexec: true,
             })
             .collect();
+        // TODO: MANUAL_FD.
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
