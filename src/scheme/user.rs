@@ -1324,21 +1324,18 @@ impl UserInner {
         };
 
         let current_lock = context::current();
-        let current = current_lock.read();
+        let current = current_lock.write();
 
         // TODO: The current logic is inefficient because it creates too many temporary vectors.
         // This should be improved.
         let files = descriptions
-            .into_Iter()
+            .into_iter()
             .map(|description| FileDescriptor {
                 description,
                 cloexec: true,
             })
             .collect();
-        let handles = current
-            .write()
-            .bulk_add_files(files)
-            .ok_or(Error::new(EMFILE))?;
+        let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
             log::info!("Obtained handle: {}", handle);
