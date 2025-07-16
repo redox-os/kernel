@@ -15,7 +15,7 @@ use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
-    CallFlags, FobtainFdFlags, MunmapFlags, SendFdFlags, F_SETFL, KSMSG_CANCEL,
+    CallFlags, FobtainFdFlags, MunmapFlags, SchemeSocketCall, SendFdFlags, F_SETFL, KSMSG_CANCEL,
     MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
 };
 
@@ -1295,11 +1295,18 @@ impl UserInner {
         let meta_for_use = &meta[..copied / 8];
         log::info!("meta_for_use: {:?}", meta_for_use);
 
-        self.handle_obtainfd(
-            payload,
-            meta_for_use[1] as usize,
-            FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
-        )
+        let Some(verb) = SchemeSocketCall::try_from(meta_for_use[0] as usize) else {
+            log::error!("Invalid verb for call_fdread: {}", meta_for_use[0]);
+            return Err(Error::new(EINVAL));
+        };
+
+        match verb {
+            SchemeSocketCall::ObtainFd => self.handle_obtainfd(
+                payload,
+                meta_for_use[1] as usize,
+                FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
+            ),
+        }
     }
 
     fn handle_obtainfd(
