@@ -616,11 +616,11 @@ impl FdTbl {
             return None;
         }
         let mut indices = self.find_free_slots(len);
-        indices.iter_mut().enumerate().map(|(i, handle)| {
+        indices.iter_mut().zip(files).map(|(handle, file)| {
             let min = handle.get();
             // This add_file_min woun't fail, as we checked the active_count above.
             *handle = self
-                .add_file_min(files[i], min)
+                .add_file_min(file, min)
                 .expect("add_file_min should not fail");
         });
 
