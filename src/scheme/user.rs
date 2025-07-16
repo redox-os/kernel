@@ -838,13 +838,6 @@ impl UserInner {
                     })
                 }
 
-                Opcode::Call => {
-                    log::warn!(
-                        "UserScheme::call called with Opcode::Call, which is not supported by the kernel"
-                    );
-                    return Err(Error::new(EOPNOTSUPP));
-                }
-
                 _ => return Err(Error::new(EOPNOTSUPP)),
             },
             b: sqe.args[0] as usize,
@@ -1285,7 +1278,6 @@ impl UserInner {
         _flags: CallFlags,
         metadata: UserSliceRo,
     ) -> Result<usize> {
-        log::info!("call_fdread");
         let mut meta = [0_u64; 3];
 
         // TODO: bytemuck/plain
@@ -1293,7 +1285,6 @@ impl UserInner {
             core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
         })?;
         let meta_for_use = &meta[..copied / 8];
-        log::info!("meta_for_use: {:?}", meta_for_use);
 
         let Some(verb) = SchemeSocketCall::try_from(meta_for_use[0] as usize) else {
             log::error!("Invalid verb for call_fdread: {}", meta_for_use[0]);
@@ -1315,11 +1306,6 @@ impl UserInner {
         request_id: usize,
         flags: FobtainFdFlags,
     ) -> Result<usize> {
-        log::info!(
-            "handle_obtainfd: request_id: {}, flags: {:?}",
-            request_id,
-            flags
-        );
         let descriptions = match self
             .states
             .lock()
@@ -1342,12 +1328,9 @@ impl UserInner {
                 cloexec: true,
             })
             .collect();
-        log::info!("Obtained {} files", files.len());
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
-        log::info!("Obtained {} handles", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
-            log::info!("Obtained handle: {}", handle.get());
             let mut chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
             chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
         }

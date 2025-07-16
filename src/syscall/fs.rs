@@ -356,8 +356,6 @@ fn call_normal(
 }
 
 fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
-    log::info!("call_fdwrite called");
-
     let payload_chunks = payload.in_exact_chunks(8);
     let fds = payload_chunks
         .map(|chunk| {
@@ -367,12 +365,9 @@ fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Resul
             }
             println!("call_fdwrite: chunk size is 8");
             let fd = chunk.read_u64()? as usize;
-            log::info!("call_fdwrite: fd={}", fd);
             Ok(FileHandle::from(fd))
         })
         .collect::<Result<Vec<_>>>()?;
-
-    log::info!("call_fdwrite: fds={:?}", fds);
 
     let len = fds.len();
 
@@ -418,13 +413,7 @@ fn call_fdread(
         (scheme, number)
     };
 
-    print_type_of(&scheme);
-
     scheme.kfdread(number, payload, flags, metadata)
-}
-
-fn print_type_of<T>(_: &T) {
-    log::info!("Type of T: {}", core::any::type_name::<T>());
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
@@ -442,8 +431,6 @@ fn sendfd_inner(
     flags: SendFdFlags,
     arg: u64,
 ) -> Result<usize> {
-    log::info!("sendfd_inner called");
-
     // TODO: Ensure deadlocks can't happen
     let (scheme, number, descs_to_send) = {
         let current_lock = context::current();
