@@ -1338,9 +1338,9 @@ impl UserInner {
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
-            log::info!("Obtained handle: {}", handle);
+            log::info!("Obtained handle: {}", handle.get());
             let mut chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
-            chunk.copy_from_slice(&handle.to_ne_bytes())?;
+            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
         }
 
         Ok(handles.len())
