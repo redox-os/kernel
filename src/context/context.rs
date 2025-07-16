@@ -727,7 +727,7 @@ impl FdTbl {
 
         for (i, slot) in self.posix_fdtbl.iter().enumerate() {
             if slot.is_none() {
-                free_slots.push(FileHandle::from(i));
+                free_slots[fount] = FileHandle::from(i);
                 found += 1;
                 if found == len {
                     break;
