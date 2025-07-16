@@ -260,6 +260,11 @@ impl Context {
         files.add_file_min(file, min)
     }
 
+    pub fn bulk_add_files(&self, files: Vec<FileDescriptor>) -> Option<Vec<FileHandle>> {
+        let mut files = self.files.write();
+        files.bulk_add_files(files, 0)
+    }
+
     /// Get a file
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
         let files = self.files.read();
@@ -601,6 +606,25 @@ impl FdTbl {
         }
     }
 
+    pub fn bulk_add_files(
+        &mut self,
+        files: Vec<FileDescriptor>,
+        min: usize,
+    ) -> Option<Vec<FileHandle>> {
+        let len = files.len();
+        if self.active_count + len > super::CONTEXT_MAX_FILES {
+            return None;
+        }
+        let mut indices = self.find_free_slots(len);
+        indices.iter_mut().enumerate().map(|(i, handle)| {
+            // This add_file_min woun't fail, as we checked the active_count above.
+            let min = handle.get();
+            handle = self.add_file_min(files[i], min);
+        });
+
+        Ok(indices)
+    }
+
     pub fn get(&self, index: usize) -> Option<&Option<FileDescriptor>> {
         let (fdtbl, real_index) = self.select_fdtbl(index);
 
@@ -692,6 +716,24 @@ impl FdTbl {
             .collect();
 
         Ok(files)
+    }
+
+    pub fn find_free_slots(&self, len: usize) -> Vec<FileHandle> {
+        let mut free_slots = Vec::new();
+        free_slots.resize(len, FileHandle::from(self.posix_fdtbl.len()));
+        let mut found = 0;
+
+        for (i, slot) in self.posix_fdtbl.iter().enumerate() {
+            if slot.is_none() {
+                free_slots.push(FileHandle::from(i));
+                found += 1;
+                if found == len {
+                    break;
+                }
+            }
+        }
+
+        free_slots
     }
 
     pub fn find_free_block(&mut self, len: usize, flag: usize) -> FileHandle {
