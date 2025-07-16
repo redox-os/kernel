@@ -1328,7 +1328,7 @@ impl UserInner {
 
         // TODO: The current logic is inefficient because it creates too many temporary vectors.
         // This should be improved.
-        let files = descriptions
+        let files: Vec<FileDescriptor> = descriptions
             .into_iter()
             .map(|description| FileDescriptor {
                 description,
