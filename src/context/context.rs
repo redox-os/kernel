@@ -260,9 +260,9 @@ impl Context {
         files.add_file_min(file, min)
     }
 
-    pub fn bulk_add_files(&self, files: Vec<FileDescriptor>) -> Option<Vec<FileHandle>> {
+    pub fn bulk_add_files(&self, files_to_add: Vec<FileDescriptor>) -> Option<Vec<FileHandle>> {
         let mut files = self.files.write();
-        files.bulk_add_files(files, 0)
+        files.bulk_add_files(files_to_add, 0)
     }
 
     /// Get a file
@@ -617,12 +617,14 @@ impl FdTbl {
         }
         let mut indices = self.find_free_slots(len);
         indices.iter_mut().enumerate().map(|(i, handle)| {
-            // This add_file_min woun't fail, as we checked the active_count above.
             let min = handle.get();
-            handle = self.add_file_min(files[i], min);
+            // This add_file_min woun't fail, as we checked the active_count above.
+            *handle = self
+                .add_file_min(files[i], min)
+                .expect("add_file_min should not fail");
         });
 
-        Ok(indices)
+        Some(indices)
     }
 
     pub fn get(&self, index: usize) -> Option<&Option<FileDescriptor>> {
