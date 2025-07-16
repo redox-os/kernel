@@ -1326,18 +1326,19 @@ impl UserInner {
         let current_lock = context::current();
         let current = current_lock.read();
 
-        let mut handles = Vec::new();
-        for description in descriptions {
-            log::info!("Obtained fd: {:?}", description);
-            let fd = context::current()
-                .read()
-                .add_file(FileDescriptor {
-                    description,
-                    cloexec: true,
-                })
-                .ok_or(Error::new(EMFILE))?;
-            handles.push(fd.get());
-        }
+        // TODO: The current logic is inefficient because it creates too many temporary vectors.
+        // This should be improved.
+        let files = descriptions
+            .into_Iter()
+            .map(|description| FileDescriptor {
+                description,
+                cloexec: true,
+            })
+            .collect();
+        let handles = current
+            .write()
+            .bulk_add_files(files)
+            .ok_or(Error::new(EMFILE))?;
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
             log::info!("Obtained handle: {}", handle);
