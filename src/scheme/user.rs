@@ -1335,7 +1335,9 @@ impl UserInner {
                 cloexec: true,
             })
             .collect();
+        log::info!("Obtained {} files", files.len());
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
+        log::info!("Obtained {} handles", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
             log::info!("Obtained handle: {}", handle.get());
