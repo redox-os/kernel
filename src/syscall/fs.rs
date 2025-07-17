@@ -438,7 +438,7 @@ fn sendfd_inner(
     target_fds: Vec<FileHandle>,
     flags: SendFdFlags,
     arg: u64,
-    metadata: &[u64],
+    metadata: UserSliceRo,
 ) -> Result<usize> {
     // TODO: Ensure deadlocks can't happen
     let (scheme, number, descs_to_send) = {

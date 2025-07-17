@@ -184,7 +184,7 @@ impl ParsedCqe {
                     tag: cqe.tag,
                     fd: cqe.result as usize,
                 },
-                CqeOpcode::ResponseWithMultipleFds => Self::ResponseWithMultipleFds {
+                CqeOpcode::RespondWithMultipleFds => Self::ResponseWithMultipleFds {
                     tag: cqe.tag,
                     num_fds: cqe.result as usize,
                 },
@@ -1234,7 +1234,7 @@ impl UserInner {
 
                 return Err(Error::new(EIO));
             }
-            Response::MultipleFds(_) => Err(Error::new(EIO)),
+            Response::MultipleFds(_) => return Err(Error::new(EIO)),
         };
 
         let file_ref = GrantFileRef {
@@ -1293,8 +1293,8 @@ impl UserInner {
     pub fn call_fdwrite(
         &self,
         descs: Vec<Arc<RwLock<FileDescription>>>,
-        flags: FobtainFdFlags,
-        arg: usize,
+        flags: SendFdFlags,
+        _arg: u64,
         metadata: UserSliceRo,
     ) -> Result<usize> {
         let mut meta = [0_u64; 3];
@@ -1305,7 +1305,7 @@ impl UserInner {
         })?;
         let meta_for_use = &meta[..copied / 8];
 
-        let Some(verb) = SchemeSocketCall::try_from(meta_for_use[0] as usize) else {
+        let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
             log::error!("Invalid verb for call_fdread: {}", meta_for_use[0]);
             return Err(Error::new(EINVAL));
         };
@@ -1323,7 +1323,7 @@ impl UserInner {
         &self,
         descs: Vec<Arc<RwLock<FileDescription>>>,
         request_id: usize,
-        _flags: FobtainFdFlags,
+        _flags: SendFdFlags,
     ) -> Result<usize> {
         let num_fds = descs.len();
         match self
@@ -1353,7 +1353,7 @@ impl UserInner {
         })?;
         let meta_for_use = &meta[..copied / 8];
 
-        let Some(verb) = SchemeSocketCall::try_from(meta_for_use[0] as usize) else {
+        let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
             log::error!("Invalid verb for call_fdread: {}", meta_for_use[0]);
             return Err(Error::new(EINVAL));
         };
