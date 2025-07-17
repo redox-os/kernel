@@ -1311,9 +1311,7 @@ impl UserInner {
         };
 
         match verb {
-            SchemeSocketCall::MoveFd => {
-                self.handle_movefd(descs, meta_for_use[1] as usize, FobtainFdFlags)
-            }
+            SchemeSocketCall::MoveFd => self.handle_movefd(descs, meta_for_use[1] as usize, flags),
             _ => {
                 log::error!("Unsupported verb for call_fdread: {:?}", verb);
                 Err(Error::new(EINVAL))
