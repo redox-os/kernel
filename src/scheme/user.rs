@@ -1990,10 +1990,18 @@ impl KernelScheme for UserScheme {
                 0,
             ],
         };
+
+        let mut meta = [0_u64; 3];
+
+        // TODO: bytemuck/plain
+        let copied = metadata.copy_common_bytes_to_slice(unsafe {
+            core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+        })?;
+        let meta_for_use = &meta[..copied / 8];
         {
             let dst = &mut sqe.args[3..];
-            let len = dst.len().min(metadata.len());
-            dst[..len].copy_from_slice(&metadata[..len]);
+            let len = dst.len().min(meta_for_use.len());
+            dst[..len].copy_from_slice(&meta_for_use[..len]);
         }
         let res = inner.call_extended_inner(Some(Vec::new()), sqe, &mut address.span())?;
 
