@@ -79,6 +79,8 @@ enum State {
 pub enum Response {
     Regular(usize, u8),
     Fd(Arc<RwLock<FileDescription>>),
+    // TODO: Should we unify these by removing the Fd variant and always using MultipleFds?
+    MultipleFds(Option<Vec<Arc<RwLock<FileDescription>>>>),
 }
 
 const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
@@ -99,6 +101,10 @@ enum ParsedCqe {
     ResponseWithFd {
         tag: u32,
         fd: usize,
+    },
+    ResponseWithMultipleFds {
+        tag: u32,
+        num_fds: usize,
     },
     ObtainFd {
         tag: u32,
@@ -178,6 +184,10 @@ impl ParsedCqe {
                     tag: cqe.tag,
                     fd: cqe.result as usize,
                 },
+                CqeOpcode::ResponseWithMultipleFds => Self::ResponseWithMultipleFds {
+                    tag: cqe.tag,
+                    num_fds: cqe.result as usize,
+                },
                 CqeOpcode::SendFevent => Self::TriggerFevent {
                     number: cqe.result as usize,
                     flags: EventFlags::from_bits(cqe.tag as usize).ok_or(Error::new(EINVAL))?,
@@ -250,6 +260,7 @@ impl UserInner {
         match self.call_extended(ctx, None, opcode, args, caller_responsible)? {
             Response::Regular(code, _) => Error::demux(code),
             Response::Fd(_) => Err(Error::new(EIO)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
 
@@ -931,6 +942,9 @@ impl UserInner {
                         .description,
                 ),
             )?,
+            ParsedCqe::ResponseWithMultipleFds { tag, num_fds } => {
+                self.respond(tag, Response::MultipleFds(None))?;
+            }
             // TODO: ObtainFd mechanism for bulk fd sending and manual file descriptor numbering.
             ParsedCqe::ObtainFd {
                 tag,
@@ -1059,7 +1073,7 @@ impl UserInner {
 
                 State::Waiting {
                     context,
-                    fds,
+                    mut fds,
                     canceling,
                     callee_responsible,
                 } => {
@@ -1083,6 +1097,9 @@ impl UserInner {
                         *code = Error::mux(Err(Error::new(EIO)));
                     }
 
+                    if let Response::MultipleFds(ref mut response_fds) = response {
+                        *response_fds = fds.take();
+                    }
                     to_close = fds
                         .into_iter()
                         .flatten()
@@ -1105,8 +1122,8 @@ impl UserInner {
             None => return Err(Error::new(EBADFD)),
         }
 
-        for to_close in to_close {
-            let _ = to_close.try_close();
+        for fd in to_close {
+            let _ = fd.try_close();
         }
         Ok(())
     }
@@ -1217,6 +1234,7 @@ impl UserInner {
 
                 return Err(Error::new(EIO));
             }
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         };
 
         let file_ref = GrantFileRef {
@@ -1272,6 +1290,28 @@ impl UserInner {
         Ok(dst_base.start_address().data())
     }
 
+    pub fn sendfd(
+        &self,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
+        flags: FobtainFdFlags,
+        arg: usize,
+    ) -> Result<usize> {
+        let descriptions = match self
+            .states
+            .lock()
+            .get_mut(request_id)
+            .ok_or(Error::new(EINVAL))?
+        {
+            State::Waiting { ref mut fds, .. } => fds,
+            _ => return Err(Error::new(ENOENT)),
+        };
+
+        let num_fds = descs.len();
+        *descriptions = Some(descs);
+
+        Ok(num_fds)
+    }
+
     pub fn call_fdread(
         &self,
         payload: UserSliceRw,
@@ -1316,6 +1356,15 @@ impl UserInner {
             _ => return Err(Error::new(ENOENT)),
         };
 
+        let num_fds = Self::bulk_add_fds(descriptions, payload)?;
+
+        Ok(num_fds)
+    }
+
+    fn bulk_add_fds(
+        descriptions: Vec<Arc<RwLock<FileDescription>>>,
+        payload: UserSliceRw,
+    ) -> Result<usize> {
         let current_lock = context::current();
         let current = current_lock.write();
 
@@ -1335,7 +1384,6 @@ impl UserInner {
             let mut chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
             chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
         }
-
         Ok(handles.len())
     }
 }
@@ -1449,6 +1497,7 @@ impl KernelScheme for UserScheme {
                 )
             }),
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
 
@@ -1481,6 +1530,7 @@ impl KernelScheme for UserScheme {
                 )
             }),
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
 
@@ -1633,6 +1683,7 @@ impl KernelScheme for UserScheme {
                 )
             }),
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
     fn kfpath(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
@@ -1812,6 +1863,7 @@ impl KernelScheme for UserScheme {
         match res {
             Response::Regular(_, _) => Ok(()),
             Response::Fd(_) => Err(Error::new(EIO)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
     fn ksendfd(
@@ -1836,6 +1888,7 @@ impl KernelScheme for UserScheme {
         match res {
             Response::Regular(res, _) => Error::demux(res),
             Response::Fd(_) => Err(Error::new(EIO)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
     fn kcall(
@@ -1875,7 +1928,55 @@ impl KernelScheme for UserScheme {
         match res {
             Response::Regular(res, _) => Error::demux(res),
             Response::Fd(_) => Err(Error::new(EIO)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
+    }
+    fn kfdread(
+        &self,
+        file: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: UserSliceRo,
+    ) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let mut address = inner.capture_user(payload)?;
+        let ctx = context::current().read().caller_ctx();
+
+        let mut sqe = Sqe {
+            opcode: Opcode::Call as u8,
+            sqe_flags: SqeFlags::empty(),
+            _rsvd: 0,
+            tag: inner.next_id()?,
+            caller: ctx.pid as u64,
+            args: [
+                id as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[3..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+        let res = inner.call_extended_inner(Some(Vec::new()), sqe, &mut address.span())?;
+
+        let descriptions_opt = match res {
+            Response::Regular(res, _) => return Err(Error::new(EIO)),
+            Response::Fd(_) => return Err(Error::new(EIO)),
+            Response::MultipleFds(fds) => fds,
+        };
+
+        let num_fds = if let Some(descriptions) = descriptions_opt {
+            UserInner::bulk_add_fds(descriptions, UserSlice::rw(address.base, address.len)?)?
+        } else {
+            0
+        };
+        Ok(num_fds)
     }
 }
 
