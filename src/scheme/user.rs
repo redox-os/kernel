@@ -1290,11 +1290,42 @@ impl UserInner {
         Ok(dst_base.start_address().data())
     }
 
-    pub fn sendfd(
+    pub fn call_fdwrite(
         &self,
         descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: FobtainFdFlags,
         arg: usize,
+        metadata: UserSliceRo,
+    ) -> Result<usize> {
+        let mut meta = [0_u64; 3];
+
+        // TODO: bytemuck/plain
+        let copied = metadata.copy_common_bytes_to_slice(unsafe {
+            core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+        })?;
+        let meta_for_use = &meta[..copied / 8];
+
+        let Some(verb) = SchemeSocketCall::try_from(meta_for_use[0] as usize) else {
+            log::error!("Invalid verb for call_fdread: {}", meta_for_use[0]);
+            return Err(Error::new(EINVAL));
+        };
+
+        match verb {
+            SchemeSocketCall::MoveFd => {
+                self.handle_movefd(descs, meta_for_use[1] as usize, FobtainFdFlags)
+            }
+            _ => {
+                log::error!("Unsupported verb for call_fdread: {:?}", verb);
+                Err(Error::new(EINVAL))
+            }
+        }
+    }
+
+    fn handle_movefd(
+        &self,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
+        request_id: usize,
+        _flags: FobtainFdFlags,
     ) -> Result<usize> {
         let descriptions = match self
             .states
@@ -1337,6 +1368,10 @@ impl UserInner {
                 meta_for_use[1] as usize,
                 FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
             ),
+            _ => {
+                log::error!("Unsupported verb for call_fdread: {:?}", verb);
+                Err(Error::new(EINVAL))
+            }
         }
     }
 
@@ -1381,7 +1416,7 @@ impl UserInner {
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
-            let mut chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
+            let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
             chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
         }
         Ok(handles.len())
@@ -1872,6 +1907,7 @@ impl KernelScheme for UserScheme {
         descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: SendFdFlags,
         arg: u64,
+        metadata: &[u64],
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
@@ -1933,7 +1969,7 @@ impl KernelScheme for UserScheme {
     }
     fn kfdread(
         &self,
-        file: usize,
+        id: usize,
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: UserSliceRo,
@@ -1971,6 +2007,7 @@ impl KernelScheme for UserScheme {
             Response::MultipleFds(fds) => fds,
         };
 
+        // TODO: Support choosing the posix fdtbl or upper fdtbl.
         let num_fds = if let Some(descriptions) = descriptions_opt {
             UserInner::bulk_add_fds(descriptions, UserSlice::rw(address.base, address.len)?)?
         } else {

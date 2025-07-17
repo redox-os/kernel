@@ -474,6 +474,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: SendFdFlags,
         arg: u64,
+        metadata: UserSliceRo,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }

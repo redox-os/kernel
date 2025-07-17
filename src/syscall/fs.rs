@@ -313,7 +313,9 @@ pub fn call(
     metadata: UserSliceRo,
 ) -> Result<usize> {
     match flags {
-        f if f.contains(CallFlags::WRITE | CallFlags::FD) => call_fdwrite(fd, payload, flags),
+        f if f.contains(CallFlags::WRITE | CallFlags::FD) => {
+            call_fdwrite(fd, payload, flags, metadata)
+        }
         f if f.contains(CallFlags::READ | CallFlags::FD) => {
             call_fdread(fd, payload, flags, metadata)
         }
@@ -355,7 +357,12 @@ fn call_normal(
     scheme.kcall(number, payload, flags, &meta[..copied / 8])
 }
 
-fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Result<usize> {
+fn call_fdwrite(
+    fd: FileHandle,
+    payload: UserSliceRw,
+    flags: CallFlags,
+    metadata: UserSliceRo,
+) -> Result<usize> {
     let payload_chunks = payload.in_exact_chunks(8);
     let fds = payload_chunks
         .map(|chunk| {
@@ -380,7 +387,7 @@ fn call_fdwrite(fd: FileHandle, payload: UserSliceRw, flags: CallFlags) -> Resul
         sendfd_flags |= SendFdFlags::EXCLUSIVE
     }
 
-    sendfd_inner(fd, fds, sendfd_flags, 0)?;
+    sendfd_inner(fd, fds, sendfd_flags, 0, metadata)?;
 
     Ok(len)
 }
@@ -422,6 +429,7 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
         Vec::from([fd]),
         SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?,
         arg,
+        UserSlice::ro(0, 0)?,
     )
 }
 
@@ -430,6 +438,7 @@ fn sendfd_inner(
     target_fds: Vec<FileHandle>,
     flags: SendFdFlags,
     arg: u64,
+    metadata: &[u64],
 ) -> Result<usize> {
     // TODO: Ensure deadlocks can't happen
     let (scheme, number, descs_to_send) = {
@@ -478,7 +487,7 @@ fn sendfd_inner(
         SendFdFlags::empty()
     };
 
-    scheme.ksendfd(number, descs_to_send, flags_to_scheme, arg)
+    scheme.ksendfd(number, descs_to_send, flags_to_scheme, arg, metadata)
 }
 
 /// File descriptor controls

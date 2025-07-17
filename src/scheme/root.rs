@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::ToString, sync::Arc};
+use alloc::{boxed::Box, string::ToString, sync::Arc, Vec};
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -7,7 +7,7 @@ use hashbrown::HashMap;
 use spin::RwLock;
 use syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    O_EXLOCK, O_FSYNC,
+    SendFdFlags, O_EXLOCK, O_FSYNC,
 };
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     scheme::{
         self,
         user::{UserInner, UserScheme},
-        SchemeId, SchemeNamespace,
+        FileDescription, SchemeId, SchemeNamespace,
     },
     syscall::{
         data::Stat,
@@ -337,6 +337,7 @@ impl KernelScheme for RootScheme {
         descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: SendFdFlags,
         arg: u64,
+        metadata: UserSliceRo,
     ) -> Result<usize> {
         log::info!("ksendfd called on handle {}", id);
         let handle = {
@@ -350,7 +351,7 @@ impl KernelScheme for RootScheme {
         match handle {
             Handle::Scheme(inner) => {
                 log::info!("ksendfd called on scheme handle {}", id);
-                inner.sendfd(descs, flags, arg)
+                inner.call_fdwrite(descs, flags, arg, metadata)
             }
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
