@@ -1325,18 +1325,16 @@ impl UserInner {
         request_id: usize,
         _flags: FobtainFdFlags,
     ) -> Result<usize> {
-        let descriptions = match self
+        let num_fds = descs.len();
+        match self
             .states
             .lock()
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
-            State::Waiting { ref mut fds, .. } => fds,
+            State::Waiting { ref mut fds, .. } => *fds = Some(descs),
             _ => return Err(Error::new(ENOENT)),
         };
-
-        let num_fds = descs.len();
-        *descriptions = Some(descs);
 
         Ok(num_fds)
     }
@@ -1905,7 +1903,7 @@ impl KernelScheme for UserScheme {
         descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: SendFdFlags,
         arg: u64,
-        metadata: &[u64],
+        metadata: UserSliceRo,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
