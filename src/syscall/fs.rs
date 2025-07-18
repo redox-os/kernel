@@ -372,6 +372,7 @@ fn call_fdwrite(
             }
             println!("call_fdwrite: chunk size is 8");
             let fd = chunk.read_u64()? as usize;
+            log::info!("call_fdwrite: fd is {}", fd);
             Ok(FileHandle::from(fd))
         })
         .collect::<Result<Vec<_>>>()?;

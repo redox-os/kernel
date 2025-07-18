@@ -1098,6 +1098,7 @@ impl UserInner {
                     }
 
                     if let Response::MultipleFds(ref mut response_fds) = response {
+                        log::info!("Response with multiple fds: replace with {:?}", fds);
                         *response_fds = fds.take();
                     }
                     to_close = fds
@@ -1297,12 +1298,7 @@ impl UserInner {
         _arg: u64,
         metadata: UserSliceRo,
     ) -> Result<usize> {
-        log::info!(
-            "call_fdwrite: descriptors: {:?}, flags: {:?}, metadata size: {}",
-            descs,
-            flags,
-            metadata.len()
-        );
+        log::info!("call_fdwrite: descriptors: {:?}, flags: {:?}", descs, flags,);
         let mut meta = [0_u64; 3];
 
         // TODO: bytemuck/plain
