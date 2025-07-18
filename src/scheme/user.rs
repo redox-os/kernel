@@ -1297,6 +1297,12 @@ impl UserInner {
         _arg: u64,
         metadata: UserSliceRo,
     ) -> Result<usize> {
+        log::info!(
+            "call_fdwrite: {} descriptors, flags: {:?}, metadata size: {}",
+            descs.len(),
+            flags,
+            metadata.len()
+        );
         let mut meta = [0_u64; 3];
 
         // TODO: bytemuck/plain
@@ -1981,6 +1987,13 @@ impl KernelScheme for UserScheme {
         flags: CallFlags,
         metadata: UserSliceRo,
     ) -> Result<usize> {
+        log::info!(
+            "kfdread: id: {}, payload size: {}, flags: {:?}, metadata size: {}",
+            id,
+            payload.len(),
+            flags,
+            metadata.len()
+        );
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if payload.len() % mem::size_of::<usize>() != 0 {
             return Err(Error::new(EINVAL));
