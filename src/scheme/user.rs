@@ -1306,14 +1306,14 @@ impl UserInner {
         let meta_for_use = &meta[..copied / 8];
 
         let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
-            log::error!("Invalid verb for call_fdread: {}", meta_for_use[0]);
+            log::error!("Invalid verb for call_fdwrite: {}", meta_for_use[0]);
             return Err(Error::new(EINVAL));
         };
 
         match verb {
             SchemeSocketCall::MoveFd => self.handle_movefd(descs, meta_for_use[1] as usize, flags),
             _ => {
-                log::error!("Unsupported verb for call_fdread: {:?}", verb);
+                log::error!("Unsupported verb for call_fdwrite: {:?}", verb);
                 Err(Error::new(EINVAL))
             }
         }
@@ -1325,6 +1325,11 @@ impl UserInner {
         request_id: usize,
         _flags: SendFdFlags,
     ) -> Result<usize> {
+        log::info!(
+            "handle_movefd: {} descriptors, request_id: {}",
+            descs.len(),
+            request_id
+        );
         let num_fds = descs.len();
         match self
             .states
@@ -1396,6 +1401,11 @@ impl UserInner {
         descriptions: Vec<Arc<RwLock<FileDescription>>>,
         payload: UserSliceRw,
     ) -> Result<usize> {
+        log::info!(
+            "bulk_add_fds: {} descriptions, payload size: {}",
+            descriptions.len(),
+            payload.len()
+        );
         let current_lock = context::current();
         let current = current_lock.write();
 
@@ -1410,6 +1420,7 @@ impl UserInner {
             .collect();
         // TODO: MANUAL_FD.
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
+        log::info!("bulk_add_fds: {} handles created", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
             let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
@@ -1971,45 +1982,32 @@ impl KernelScheme for UserScheme {
         metadata: UserSliceRo,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        if payload.len() % mem::size_of::<usize>() != 0 {
+            return Err(Error::new(EINVAL));
+        }
 
         let mut address = inner.capture_user(payload)?;
-        let ctx = context::current().read().caller_ctx();
-
-        let mut sqe = Sqe {
-            opcode: Opcode::Call as u8,
-            sqe_flags: SqeFlags::empty(),
-            _rsvd: 0,
-            tag: inner.next_id()?,
-            caller: ctx.pid as u64,
-            args: [
-                id as u64,
-                address.base() as u64,
-                address.len() as u64,
-                0,
-                0,
-                0,
-            ],
-        };
-
-        let mut meta = [0_u64; 3];
-
-        // TODO: bytemuck/plain
-        let copied = metadata.copy_common_bytes_to_slice(unsafe {
-            core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
-        })?;
-        let meta_for_use = &meta[..copied / 8];
-        {
-            let dst = &mut sqe.args[3..];
-            let len = dst.len().min(meta_for_use.len());
-            dst[..len].copy_from_slice(&meta_for_use[..len]);
+        let mut recvfd_flags = RecvFdFlags::empty();
+        if flags.contains(CallFlags::FD_UPPER) {
+            recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
-        let res = inner.call_extended_inner(Some(Vec::new()), sqe, &mut address.span())?;
+
+        let ctx = context::current().read().caller_ctx();
+        let len = payload.len() / mem::size_of::<usize>();
+        let res = inner.call_extended(
+            ctx,
+            None,
+            Opcode::RecvFd,
+            [id, recvfd_flags.bits(), len],
+            &mut PageSpan::empty(),
+        )?;
 
         let descriptions_opt = match res {
             Response::Regular(res, _) => return Err(Error::new(EIO)),
             Response::Fd(_) => return Err(Error::new(EIO)),
             Response::MultipleFds(fds) => fds,
         };
+        log::info!("Received {:?} fds", descriptions_opt);
 
         // TODO: Support choosing the posix fdtbl or upper fdtbl.
         let num_fds = if let Some(descriptions) = descriptions_opt {
