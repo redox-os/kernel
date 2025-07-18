@@ -1298,8 +1298,8 @@ impl UserInner {
         metadata: UserSliceRo,
     ) -> Result<usize> {
         log::info!(
-            "call_fdwrite: {} descriptors, flags: {:?}, metadata size: {}",
-            descs.len(),
+            "call_fdwrite: descriptors: {:?}, flags: {:?}, metadata size: {}",
+            descs,
             flags,
             metadata.len()
         );
@@ -1346,6 +1346,7 @@ impl UserInner {
             State::Waiting { ref mut fds, .. } => *fds = Some(descs),
             _ => return Err(Error::new(ENOENT)),
         };
+        log::info!("handle_movefd: {} descriptors added", num_fds);
 
         Ok(num_fds)
     }
@@ -2004,9 +2005,17 @@ impl KernelScheme for UserScheme {
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
+        log::info!("kfdread: recvfd_flags: {:?}", recvfd_flags);
 
         let ctx = context::current().read().caller_ctx();
-        let len = payload.len() / mem::size_of::<usize>();
+        let len = address.len / mem::size_of::<usize>();
+        log::info!(
+            "kfdread: calling with id: {}, recvfd_flags: {:?}, len: {}",
+            id,
+            recvfd_flags,
+            len
+        );
+        log::info("Calling Opcode::Recvfd");
         let res = inner.call_extended(
             ctx,
             None,
@@ -2014,6 +2023,7 @@ impl KernelScheme for UserScheme {
             [id, recvfd_flags.bits(), len],
             &mut PageSpan::empty(),
         )?;
+        log::info!("kfdread: call_extended returned: {:?}", res);
 
         let descriptions_opt = match res {
             Response::Regular(res, _) => return Err(Error::new(EIO)),
