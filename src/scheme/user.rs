@@ -15,8 +15,8 @@ use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
-    CallFlags, FobtainFdFlags, MunmapFlags, SchemeSocketCall, SendFdFlags, F_SETFL, KSMSG_CANCEL,
-    MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
+    CallFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall, SendFdFlags, F_SETFL,
+    KSMSG_CANCEL, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
 };
 
 use crate::{
