@@ -1997,7 +1997,7 @@ impl KernelScheme for UserScheme {
         let res = inner.call_extended(
             ctx,
             None,
-            Opcode::RecvFd,
+            Opcode::Recvfd,
             [id, recvfd_flags.bits(), len],
             &mut PageSpan::empty(),
         )?;
