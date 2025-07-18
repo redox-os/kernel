@@ -2015,7 +2015,7 @@ impl KernelScheme for UserScheme {
             recvfd_flags,
             len
         );
-        log::info("Calling Opcode::Recvfd");
+        log::info!("Calling Opcode::Recvfd");
         let res = inner.call_extended(
             ctx,
             None,
