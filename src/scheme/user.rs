@@ -174,7 +174,11 @@ impl ParsedCqe {
     }
     fn parse_cqe(cqe: &Cqe) -> Result<Self> {
         Ok(
-            match CqeOpcode::try_from_raw(cqe.flags & 0b11).ok_or(Error::new(EINVAL))? {
+            match CqeOpcode::try_from_raw(
+                cqe.flags, // & 0b11
+            )
+            .ok_or(Error::new(EINVAL))?
+            {
                 CqeOpcode::RespondRegular => Self::RegularResponse {
                     tag: cqe.tag,
                     code: cqe.result as usize,
