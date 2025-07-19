@@ -2000,7 +2000,7 @@ impl KernelScheme for UserScheme {
             return Err(Error::new(EINVAL));
         }
 
-        let mut address = inner.capture_user(payload)?;
+        // let mut address = inner.capture_user(payload)?;
         let mut recvfd_flags = RecvFdFlags::empty();
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
@@ -2008,7 +2008,8 @@ impl KernelScheme for UserScheme {
         log::info!("kfdread: recvfd_flags: {:?}", recvfd_flags);
 
         let ctx = context::current().read().caller_ctx();
-        let len = address.len / mem::size_of::<usize>();
+        // let len = address.len / mem::size_of::<usize>();
+        let len = payload.len() / mem::size_of::<usize>();
         log::info!(
             "kfdread: calling with id: {}, recvfd_flags: {:?}, len: {}",
             id,
@@ -2034,7 +2035,8 @@ impl KernelScheme for UserScheme {
 
         // TODO: Support choosing the posix fdtbl or upper fdtbl.
         let num_fds = if let Some(descriptions) = descriptions_opt {
-            UserInner::bulk_add_fds(descriptions, UserSlice::rw(address.base, address.len)?)?
+            // UserInner::bulk_add_fds(descriptions, UserSlice::rw(address.base, address.len)?)?
+            UserInner::bulk_add_fds(descriptions, payload)?
         } else {
             0
         };
