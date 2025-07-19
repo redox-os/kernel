@@ -2040,6 +2040,8 @@ impl KernelScheme for UserScheme {
         } else {
             0
         };
+
+        println!("kfdread: fdtbl: {:?}", context::current().read().files);
         Ok(num_fds)
     }
 }
