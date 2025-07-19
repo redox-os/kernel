@@ -666,6 +666,14 @@ impl FdTbl {
 
         FileHandle::from(start | table_flag)
     }
+
+    pub fn force_close_all(&mut self) {
+        for file_opt in self.iter_mut() {
+            if let Some(file) = file_opt.take() {
+                let _ = file.close();
+            }
+        }
+    }
 }
 
 impl FdTbl {
@@ -677,15 +685,5 @@ impl FdTbl {
         self.posix_fdtbl
             .iter_mut()
             .chain(self.upper_fdtbl.iter_mut())
-    }
-}
-
-impl Drop for FdTbl {
-    fn drop(&mut self) {
-        for file_opt in self.iter_mut() {
-            if let Some(file) = file_opt.take() {
-                let _ = file.close();
-            }
-        }
     }
 }
