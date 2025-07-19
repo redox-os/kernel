@@ -1128,6 +1128,7 @@ impl UserInner {
         }
 
         for fd in to_close {
+            log::debug!("Closing file descriptor: {:?}", fd);
             let _ = fd.try_close();
         }
         Ok(())
