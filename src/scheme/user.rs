@@ -2033,6 +2033,10 @@ impl KernelScheme for UserScheme {
         };
         log::info!("Received {:?} fds", descriptions_opt);
 
+        println!(
+            "kfdread: before fdtbl: {:?}",
+            context::current().read().files
+        );
         // TODO: Support choosing the posix fdtbl or upper fdtbl.
         let num_fds = if let Some(descriptions) = descriptions_opt {
             // UserInner::bulk_add_fds(descriptions, UserSlice::rw(address.base, address.len)?)?
@@ -2041,7 +2045,10 @@ impl KernelScheme for UserScheme {
             0
         };
 
-        println!("kfdread: fdtbl: {:?}", context::current().read().files);
+        println!(
+            "kfdread: after fdtbl: {:?}",
+            context::current().read().files
+        );
         Ok(num_fds)
     }
 }
