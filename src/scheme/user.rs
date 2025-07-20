@@ -1429,7 +1429,7 @@ impl UserInner {
         // TODO: MANUAL_FD.
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
         log::info!("bulk_add_fds: {} handles created", handles.len());
-        let mut payload_chunks = payload.in_exact_chunks(8);
+        let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
         for handle in &handles {
             let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
             chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
@@ -1458,7 +1458,7 @@ impl UserInner {
             .bulk_insert_upper_files(files)
             .ok_or(Error::new(EMFILE))?;
         log::info!("bulk_add_fds: {} handles created", handles.len());
-        let mut payload_chunks = payload.in_exact_chunks(8);
+        let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
         for handle in &handles {
             let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
             chunk.copy_from_slice(&handle.get().to_ne_bytes())?;

@@ -1,4 +1,5 @@
 //! Filesystem syscalls
+use core::mem::size_of;
 use core::num::NonZeroUsize;
 
 use alloc::{string::String, sync::Arc, vec::Vec};
@@ -363,7 +364,7 @@ fn call_fdwrite(
     flags: CallFlags,
     metadata: UserSliceRo,
 ) -> Result<usize> {
-    let payload_chunks = payload.in_exact_chunks(8);
+    let payload_chunks = payload.in_exact_chunks(size_of::<usize>);
     let fds = payload_chunks
         .map(|chunk| {
             if chunk.len() != 8 {
