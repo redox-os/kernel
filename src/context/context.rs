@@ -619,6 +619,8 @@ impl FdTbl {
             return None;
         }
 
+        let flag = min & UPPER_TABLE_FLAG;
+
         let (fdtbl, min) = self.select_fdtbl_mut(min);
 
         // Find the first empty slot in the posix_fdtbl starting from `min`.
@@ -630,7 +632,7 @@ impl FdTbl {
         {
             *slot = Some(file);
             self.active_count += 1;
-            return Some(FileHandle::from(pos));
+            return Some(FileHandle::from(pos | flag));
         };
 
         let len = fdtbl.len();
@@ -639,9 +641,9 @@ impl FdTbl {
         if len >= min {
             fdtbl.push(Some(file));
             self.active_count += 1;
-            Some(FileHandle::from(len))
+            Some(FileHandle::from(len | flag))
         } else {
-            self.insert_file(FileHandle::from(min), file)
+            self.insert_file(FileHandle::from(min | flag), file)
         }
     }
 
