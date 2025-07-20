@@ -1396,7 +1396,11 @@ impl UserInner {
             _ => return Err(Error::new(ENOENT)),
         };
 
-        let num_fds = Self::bulk_add_fds(descriptions, payload)?;
+        let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
+            Self::bulk_insert_fds(descriptions, payload)?
+        } else {
+            Self::bulk_add_fds(descriptions, payload)?
+        };
 
         Ok(num_fds)
     }
@@ -1424,6 +1428,35 @@ impl UserInner {
             .collect();
         // TODO: MANUAL_FD.
         let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
+        log::info!("bulk_add_fds: {} handles created", handles.len());
+        let mut payload_chunks = payload.in_exact_chunks(8);
+        for handle in &handles {
+            let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
+            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+        }
+        Ok(handles.len())
+    }
+
+    fn bulk_insert_fds(
+        descriptions: Vec<Arc<RwLock<FileDescription>>>,
+        payload: UserSliceRw,
+    ) -> Result<usize> {
+        let current_lock = context::current();
+        let current = current_lock.write();
+
+        // TODO: The current logic is inefficient because it creates too many temporary vectors.
+        // This should be improved.
+        let files: Vec<FileDescriptor> = descriptions
+            .into_iter()
+            .map(|description| FileDescriptor {
+                description,
+                cloexec: true,
+            })
+            .collect();
+        // TODO: MANUAL_FD.
+        let handles = current
+            .bulk_insert_upper_files(files)
+            .ok_or(Error::new(EMFILE))?;
         log::info!("bulk_add_fds: {} handles created", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(8);
         for handle in &handles {
@@ -2037,7 +2070,11 @@ impl KernelScheme for UserScheme {
         // TODO: Support choosing the posix fdtbl or upper fdtbl.
         let num_fds = if let Some(descriptions) = descriptions_opt {
             // UserInner::bulk_add_fds(descriptions, UserSlice::rw(address.base, address.len)?)?
-            UserInner::bulk_add_fds(descriptions, payload)?
+            if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
+                UserInner::bulk_insert_fds(descriptions, payload)?
+            } else {
+                UserInner::bulk_add_fds(descriptions, payload)?
+            }
         } else {
             0
         };
