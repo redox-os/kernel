@@ -23,7 +23,7 @@ use crate::{
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
 };
 
-use crate::syscall::error::{Error, Result, EAGAIN, ESRCH};
+use crate::syscall::error::{Error, Result, EAGAIN, EINVAL, ESRCH};
 
 use super::{
     empty_cr3,
@@ -263,18 +263,23 @@ impl Context {
     /// Bulk-add multiple files to the POSIX file table
     pub fn bulk_add_files(&self, files_to_add: Vec<FileDescriptor>) -> Option<Vec<FileHandle>> {
         let mut files = self.files.write();
-        let mut indices = self.find_free_slots(len);
+        let mut indices = files.find_free_slots(files_to_add.len());
         files.bulk_insert_files(files_to_add, indices)
     }
 
     /// Bulk-insert multiple files into to the upper file table contiguously
     pub fn bulk_insert_upper_files(
         &self,
-        files_to_add: Vec<FileDescriptor>,
+        files_to_insert: Vec<FileDescriptor>,
     ) -> Option<Vec<FileHandle>> {
         let mut files = self.files.write();
-        let mut indices = files.find_free_block(files_to_add.len());
-        files.bulk_insert_files(files_to_add, indices)
+        let len = files_to_insert.len();
+        let index = files.find_free_block(len).get();
+        let mut indices = Vec::new();
+        for i in 0..len {
+            indices.push(FileHandle::from(index + i));
+        }
+        files.bulk_insert_files(files_to_insert, indices)
     }
 
     /// Get a file
@@ -642,7 +647,7 @@ impl FdTbl {
         if self.active_count + len > super::CONTEXT_MAX_FILES {
             return None;
         }
-        self.validate_free_slots(&indices)?;
+        // self.validate_free_slots(&indices)?;
         for (handle, file) in indices.iter_mut().zip(files) {
             let min = handle.get();
             // This add_file_min woun't fail, as we checked the active_count above.
