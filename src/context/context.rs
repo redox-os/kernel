@@ -547,6 +547,7 @@ impl core::fmt::Debug for Kstack {
 }
 
 // TODO: Move to syscall crate?.
+pub const POSIX_TABLE_FLAG: usize = 0 << (usize::BITS - 2);
 pub const UPPER_TABLE_FLAG: usize = 1 << (usize::BITS - 2);
 
 #[derive(Clone, Debug, Default)]
@@ -618,9 +619,10 @@ impl FdTbl {
             return None;
         }
 
+        let (fdtbl, min) = self.select_fdtbl_mut(min);
+
         // Find the first empty slot in the posix_fdtbl starting from `min`.
-        if let Some((pos, slot)) = self
-            .posix_fdtbl
+        if let Some((pos, slot)) = fdtbl
             .iter_mut()
             .enumerate()
             .skip(min)
@@ -631,11 +633,11 @@ impl FdTbl {
             return Some(FileHandle::from(pos));
         };
 
-        let len = self.posix_fdtbl.len();
+        let len = fdtbl.len();
 
         // If no empty slot was found, we need to allocate a new slot.
         if len >= min {
-            self.posix_fdtbl.push(Some(file));
+            fdtbl.push(Some(file));
             self.active_count += 1;
             Some(FileHandle::from(len))
         } else {
@@ -657,7 +659,7 @@ impl FdTbl {
             let min = handle.get();
             // This add_file_min woun't fail, as we checked the active_count above.
             *handle = self
-                .add_file_min(file, 0)
+                .add_file_min(file, min)
                 .expect("add_file_min should not fail");
         }
 
