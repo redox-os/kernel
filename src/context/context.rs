@@ -275,6 +275,11 @@ impl Context {
         let mut files = self.files.write();
         let len = files_to_insert.len();
         let index = files.find_free_block(len).get();
+        log::info!(
+            "Bulk inserting {} files into upper file table at index {}",
+            len,
+            index
+        );
         let mut indices = Vec::new();
         for i in 0..len {
             indices.push(FileHandle::from(index + i));
