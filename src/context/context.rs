@@ -260,9 +260,21 @@ impl Context {
         files.add_file_min(file, min)
     }
 
+    /// Bulk-add multiple files to the POSIX file table
     pub fn bulk_add_files(&self, files_to_add: Vec<FileDescriptor>) -> Option<Vec<FileHandle>> {
         let mut files = self.files.write();
-        files.bulk_add_files(files_to_add, 0)
+        let mut indices = self.find_free_slots(len);
+        files.bulk_insert_files(files_to_add, indices)
+    }
+
+    /// Bulk-insert multiple files into to the upper file table contiguously
+    pub fn bulk_insert_upper_files(
+        &self,
+        files_to_add: Vec<FileDescriptor>,
+    ) -> Option<Vec<FileHandle>> {
+        let mut files = self.files.write();
+        let mut indices = files.find_free_block(files_to_add.len());
+        files.bulk_insert_files(files_to_add, indices)
     }
 
     /// Get a file
@@ -576,6 +588,21 @@ impl FdTbl {
         Ok(())
     }
 
+    fn validate_free_slots(&self, handles: &[FileHandle]) -> Result<()> {
+        let mut checked_slots = BTreeSet::new();
+        for i in handles {
+            let index = i.get();
+            if !checked_slots.insert(index) {
+                return Err(Error::new(EINVAL)); // Duplicate slots
+            }
+            if matches!(self.get(index), Some(Some(_))) {
+                return Err(Error::new(EINVAL));
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn add_file_min(&mut self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
         if self.active_count >= super::CONTEXT_MAX_FILES {
             return None;
@@ -606,21 +633,21 @@ impl FdTbl {
         }
     }
 
-    pub fn bulk_add_files(
+    fn bulk_insert_files(
         &mut self,
         files: Vec<FileDescriptor>,
-        min: usize,
+        mut indices: Vec<FileHandle>,
     ) -> Option<Vec<FileHandle>> {
         let len = files.len();
         if self.active_count + len > super::CONTEXT_MAX_FILES {
             return None;
         }
-        let mut indices = self.find_free_slots(len);
+        self.validate_free_slots(&indices)?;
         for (handle, file) in indices.iter_mut().zip(files) {
             let min = handle.get();
             // This add_file_min woun't fail, as we checked the active_count above.
             *handle = self
-                .add_file_min(file, min)
+                .add_file_min(file, 0)
                 .expect("add_file_min should not fail");
         }
 
@@ -643,7 +670,7 @@ impl FdTbl {
         self.get(i.get()).cloned().flatten()
     }
 
-    pub fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+    fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
         // Validate that all handles are valid before proceeding to avoid partial results.
         self.validate_handles(handles)?;
 
@@ -672,7 +699,7 @@ impl FdTbl {
             .ok_or(Error::new(EBADF))
     }
 
-    pub fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
+    fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
         if self.active_count >= super::CONTEXT_MAX_FILES {
             return None;
         }
@@ -696,7 +723,7 @@ impl FdTbl {
         }
     }
 
-    pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
+    fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
         let index = i.get();
         let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
@@ -708,7 +735,7 @@ impl FdTbl {
         removed_file_opt
     }
 
-    pub fn bulk_remove_files(&mut self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+    fn bulk_remove_files(&mut self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
         // Validate that all handles are valid before proceeding to avoid partial results.
         self.validate_handles(handles)?;
 
@@ -720,7 +747,7 @@ impl FdTbl {
         Ok(files)
     }
 
-    pub fn find_free_slots(&self, len: usize) -> Vec<FileHandle> {
+    fn find_free_slots(&self, len: usize) -> Vec<FileHandle> {
         let mut free_slots = Vec::new();
         free_slots.resize(len, FileHandle::from(self.posix_fdtbl.len()));
         let mut found = 0;
@@ -738,9 +765,8 @@ impl FdTbl {
         free_slots
     }
 
-    pub fn find_free_block(&mut self, len: usize, flag: usize) -> FileHandle {
-        let (fdtbl, _) = self.select_fdtbl_mut(flag);
-        let table_flag = flag & UPPER_TABLE_FLAG;
+    fn find_free_block(&mut self, len: usize) -> FileHandle {
+        let (fdtbl, _) = self.select_fdtbl_mut(UPPER_TABLE_FLAG);
 
         // Search for a block of `len` consecutive None slots.
         let found_pos = fdtbl
@@ -748,7 +774,7 @@ impl FdTbl {
             .position(|window| window.iter().all(|opt| opt.is_none()));
 
         if let Some(pos) = found_pos {
-            return FileHandle::from(pos | table_flag);
+            return FileHandle::from(pos | UPPER_TABLE_FLAG);
         }
 
         // If no block was found, we need to resize the table.
@@ -759,7 +785,7 @@ impl FdTbl {
         let needed = len.saturating_sub(nones_num);
         fdtbl.resize(fdtbl.len() + needed, None);
 
-        FileHandle::from(start | table_flag)
+        FileHandle::from(start | UPPER_TABLE_FLAG)
     }
 
     pub fn force_close_all(&mut self) {
