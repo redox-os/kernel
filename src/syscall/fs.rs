@@ -364,14 +364,17 @@ fn call_fdwrite(
     flags: CallFlags,
     metadata: UserSliceRo,
 ) -> Result<usize> {
-    let payload_chunks = payload.in_exact_chunks(size_of::<usize>);
+    let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
     let fds = payload_chunks
         .map(|chunk| {
-            if chunk.len() != 8 {
-                println!("call_fdwrite: chunk length is {}, expected 8", chunk.len());
+            if chunk.len() != size_of::<usize>() {
+                println!(
+                    "call_fdwrite: chunk length is {}, expected size_of::<usize>()",
+                    chunk.len()
+                );
                 return Err(Error::new(EINVAL));
             }
-            println!("call_fdwrite: chunk size is 8");
+            println!("call_fdwrite: chunk size is size_of::<usize>()");
             let fd = chunk.read_u64()? as usize;
             log::info!("call_fdwrite: fd is {}", fd);
             Ok(FileHandle::from(fd))
