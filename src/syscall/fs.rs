@@ -375,7 +375,7 @@ fn call_fdwrite(
                 return Err(Error::new(EINVAL));
             }
             println!("call_fdwrite: chunk size is size_of::<usize>()");
-            let fd = chunk.read_u64()? as usize;
+            let fd = chunk.read_usize()?;
             log::info!("call_fdwrite: fd is {}", fd);
             Ok(FileHandle::from(fd))
         })
