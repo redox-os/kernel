@@ -1427,7 +1427,9 @@ impl UserInner {
             })
             .collect();
         // TODO: MANUAL_FD.
-        let handles = current.bulk_add_files(files).ok_or(Error::new(EMFILE))?;
+        let handles = current
+            .bulk_add_files_posix(files)
+            .ok_or(Error::new(EMFILE))?;
         log::info!("bulk_add_fds: {} handles created", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
         for handle in &handles {
@@ -1455,7 +1457,7 @@ impl UserInner {
             .collect();
         // TODO: MANUAL_FD.
         let handles = current
-            .bulk_insert_upper_files(files)
+            .bulk_insert_files_upper(files)
             .ok_or(Error::new(EMFILE))?;
         log::info!("bulk_add_fds: {} handles created", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
