@@ -1098,7 +1098,6 @@ impl UserInner {
                     }
 
                     if let Response::MultipleFds(ref mut response_fds) = response {
-                        log::info!("Response with multiple fds: replace with {:?}", fds);
                         *response_fds = fds.take();
                     }
                     to_close = fds
@@ -1299,7 +1298,6 @@ impl UserInner {
         _arg: u64,
         metadata: UserSliceRo,
     ) -> Result<usize> {
-        log::info!("call_fdwrite: descriptors: {:?}, flags: {:?}", descs, flags,);
         let mut meta = [0_u64; 3];
 
         // TODO: bytemuck/plain
@@ -1328,11 +1326,6 @@ impl UserInner {
         request_id: usize,
         _flags: SendFdFlags,
     ) -> Result<usize> {
-        log::info!(
-            "handle_movefd: {} descriptors, request_id: {}",
-            descs.len(),
-            request_id
-        );
         let num_fds = descs.len();
         match self
             .states
@@ -1343,7 +1336,6 @@ impl UserInner {
             State::Waiting { ref mut fds, .. } => *fds = Some(descs),
             _ => return Err(Error::new(ENOENT)),
         };
-        log::info!("handle_movefd: {} descriptors added", num_fds);
 
         Ok(num_fds)
     }
@@ -1409,11 +1401,6 @@ impl UserInner {
         descriptions: Vec<Arc<RwLock<FileDescription>>>,
         payload: UserSliceRw,
     ) -> Result<usize> {
-        log::info!(
-            "bulk_add_fds: {} descriptions, payload size: {}",
-            descriptions.len(),
-            payload.len()
-        );
         let current_lock = context::current();
         let current = current_lock.write();
 
@@ -1430,7 +1417,6 @@ impl UserInner {
         let handles = current
             .bulk_add_files_posix(files)
             .ok_or(Error::new(EMFILE))?;
-        log::info!("bulk_add_fds: {} handles created", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
         for handle in &handles {
             let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
@@ -1459,7 +1445,6 @@ impl UserInner {
         let handles = current
             .bulk_insert_files_upper(files)
             .ok_or(Error::new(EMFILE))?;
-        log::info!("bulk_add_fds: {} handles created", handles.len());
         let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
         for handle in &handles {
             let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
@@ -2020,13 +2005,6 @@ impl KernelScheme for UserScheme {
         flags: CallFlags,
         metadata: UserSliceRo,
     ) -> Result<usize> {
-        log::info!(
-            "kfdread: id: {}, payload size: {}, flags: {:?}, metadata size: {}",
-            id,
-            payload.len(),
-            flags,
-            metadata.len()
-        );
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if payload.len() % mem::size_of::<usize>() != 0 {
             return Err(Error::new(EINVAL));
@@ -2037,18 +2015,10 @@ impl KernelScheme for UserScheme {
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
-        log::info!("kfdread: recvfd_flags: {:?}", recvfd_flags);
 
         let ctx = context::current().read().caller_ctx();
         // let len = address.len / mem::size_of::<usize>();
         let len = payload.len() / mem::size_of::<usize>();
-        log::info!(
-            "kfdread: calling with id: {}, recvfd_flags: {:?}, len: {}",
-            id,
-            recvfd_flags,
-            len
-        );
-        log::info!("Calling Opcode::Recvfd");
         let res = inner.call_extended(
             ctx,
             None,
@@ -2056,14 +2026,12 @@ impl KernelScheme for UserScheme {
             [id, recvfd_flags.bits(), len],
             &mut PageSpan::empty(),
         )?;
-        log::info!("kfdread: call_extended returned: {:?}", res);
 
         let descriptions_opt = match res {
             Response::Regular(res, _) => return Err(Error::new(EIO)),
             Response::Fd(_) => return Err(Error::new(EIO)),
             Response::MultipleFds(fds) => fds,
         };
-        log::info!("Received {:?} fds", descriptions_opt);
 
         println!(
             "kfdread: before fdtbl: {:?}",

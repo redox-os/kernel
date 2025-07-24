@@ -368,15 +368,9 @@ fn call_fdwrite(
     let fds = payload_chunks
         .map(|chunk| {
             if chunk.len() != size_of::<usize>() {
-                println!(
-                    "call_fdwrite: chunk length is {}, expected size_of::<usize>()",
-                    chunk.len()
-                );
                 return Err(Error::new(EINVAL));
             }
-            println!("call_fdwrite: chunk size is size_of::<usize>()");
             let fd = chunk.read_usize()?;
-            log::info!("call_fdwrite: fd is {}", fd);
             Ok(FileHandle::from(fd))
         })
         .collect::<Result<Vec<_>>>()?;
@@ -403,8 +397,6 @@ fn call_fdread(
     flags: CallFlags,
     metadata: UserSliceRo,
 ) -> Result<usize> {
-    log::warn!("call_fdread is not implemented");
-
     let (scheme, number) = {
         let current_lock = context::current();
         let current = current_lock.read();

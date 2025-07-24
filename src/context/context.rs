@@ -553,7 +553,6 @@ impl FdTbl {
         if index & UPPER_TABLE_FLAG == 0 {
             (&self.posix_fdtbl, index)
         } else {
-            log::info!("Selecting upper file descriptor table at index {}", index,);
             (&self.upper_fdtbl, index & !UPPER_TABLE_FLAG)
         }
     }
@@ -562,7 +561,6 @@ impl FdTbl {
         if index & UPPER_TABLE_FLAG == 0 {
             (&mut self.posix_fdtbl, index)
         } else {
-            log::info!("Selecting upper file descriptor table at index {}", index,);
             (&mut self.upper_fdtbl, index & !UPPER_TABLE_FLAG)
         }
     }
@@ -695,12 +693,6 @@ impl FdTbl {
         }
 
         let index = self.find_free_upper_block(count).get();
-        log::info!(
-            "Bulk inserting {} files into upper file table at index {}",
-            count,
-            index
-        );
-
         let mut handles = Vec::with_capacity(count);
         for (i, file) in files_to_insert.into_iter().enumerate() {
             let current_index = index + i;
