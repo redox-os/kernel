@@ -234,8 +234,8 @@ checksum = "64072665120942deff5fd5425d6c1811b854f4939e7f1c01ce755f64432bbea7"
 
 [[package]]
 name = "redox_syscall"
-version = "0.5.15"
-source = "git+https://gitlab.redox-os.org/Ibuki.O/syscall.git?branch=bulk-send-recvfd#fbce2bf39cc2c2065f99634ce875ab1b6ad6517c"
+version = "0.5.16"
+source = "git+https://gitlab.redox-os.org/Ibuki.O/syscall.git?branch=bulk-send-recvfd#04bb448b998baca586c73322d5165f5108b7f24e"
 dependencies = [
  "bitflags 2.9.0",
 ]
