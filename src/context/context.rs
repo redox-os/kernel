@@ -694,10 +694,10 @@ impl FdTbl {
             return None;
         }
 
-        let index = self.find_free_upper_block(len).get();
+        let index = self.find_free_upper_block(count).get();
         log::info!(
             "Bulk inserting {} files into upper file table at index {}",
-            len,
+            count,
             index
         );
 
