@@ -529,7 +529,7 @@ impl core::fmt::Debug for Kstack {
     }
 }
 
-// TODO: Move to syscall crate?.
+// TODO: Should we move these to syscall crate?.
 pub const POSIX_TABLE_FLAG: usize = 0 << (usize::BITS - 2);
 pub const UPPER_TABLE_FLAG: usize = 1 << (usize::BITS - 2);
 

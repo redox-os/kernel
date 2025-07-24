@@ -1123,7 +1123,6 @@ impl UserInner {
         }
 
         for fd in to_close {
-            log::debug!("Closing file descriptor: {:?}", fd);
             let _ = fd.try_close();
         }
         Ok(())
@@ -1307,16 +1306,12 @@ impl UserInner {
         let meta_for_use = &meta[..copied / 8];
 
         let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
-            log::error!("Invalid verb for call_fdwrite: {}", meta_for_use[0]);
             return Err(Error::new(EINVAL));
         };
 
         match verb {
             SchemeSocketCall::MoveFd => self.handle_movefd(descs, meta_for_use[1] as usize, flags),
-            _ => {
-                log::error!("Unsupported verb for call_fdwrite: {:?}", verb);
-                Err(Error::new(EINVAL))
-            }
+            _ => Err(Error::new(EINVAL)),
         }
     }
 
@@ -1355,7 +1350,6 @@ impl UserInner {
         let meta_for_use = &meta[..copied / 8];
 
         let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
-            log::error!("Invalid verb for call_fdread: {}", meta_for_use[0]);
             return Err(Error::new(EINVAL));
         };
 
@@ -1365,10 +1359,7 @@ impl UserInner {
                 meta_for_use[1] as usize,
                 FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
             ),
-            _ => {
-                log::error!("Unsupported verb for call_fdread: {:?}", verb);
-                Err(Error::new(EINVAL))
-            }
+            _ => Err(Error::new(EINVAL)),
         }
     }
 

@@ -339,20 +339,14 @@ impl KernelScheme for RootScheme {
         arg: u64,
         metadata: UserSliceRo,
     ) -> Result<usize> {
-        log::info!("ksendfd called on handle {}", id);
         let handle = {
             let handles = self.handles.read();
-            log::info!("ksendfd looking for handle {}", id);
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-            log::info!("ksendfd found handle {}", id);
             handle.clone()
         };
 
         match handle {
-            Handle::Scheme(inner) => {
-                log::info!("ksendfd called on scheme handle {}", id);
-                inner.call_fdwrite(descs, flags, arg, metadata)
-            }
+            Handle::Scheme(inner) => inner.call_fdwrite(descs, flags, arg, metadata),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }
@@ -365,20 +359,14 @@ impl KernelScheme for RootScheme {
         flags: CallFlags,
         metadata: UserSliceRo,
     ) -> Result<usize> {
-        log::info!("kfread called on handle {}", id);
         let handle = {
             let handles = self.handles.read();
-            log::info!("kfread looking for handle {}", id);
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-            log::info!("kfread found handle {}", id);
             handle.clone()
         };
 
         match handle {
-            Handle::Scheme(inner) => {
-                log::info!("kfread called on scheme handle {}", id);
-                inner.call_fdread(payload, flags, metadata)
-            }
+            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }
