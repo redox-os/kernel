@@ -1433,13 +1433,16 @@ impl UserInner {
         if files.is_empty() {
             return Ok(0);
         }
+        log::info!("bulk_insert_fds: {}", files.len());
         let mut requested_fds = vec![0usize; files.len()];
         let first_fd = payload
             .in_exact_chunks(size_of::<usize>())
             .next()
             .ok_or(Error::new(EINVAL))?
             .read_usize()?;
+        log::info!("first_fd: {}", first_fd);
         if first_fd == usize::MAX {
+            log::info!("bulk_insert_fds: auto");
             let handles = current
                 .bulk_insert_files_upper(files)
                 .ok_or(Error::new(EMFILE))?;
@@ -1449,6 +1452,7 @@ impl UserInner {
             }
             Ok(handles.len())
         } else {
+            log::info!("bulk_insert_fds: manual");
             let handles: Vec<FileHandle> = requested_fds
                 .iter()
                 .map(|&fd| FileHandle::from(fd))
