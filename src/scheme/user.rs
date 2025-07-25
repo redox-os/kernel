@@ -1464,11 +1464,12 @@ impl UserInner {
             Ok(handles.len())
         } else {
             log::info!("bulk_insert_fds: manual");
-            let handles: Result<Vec<FileHandle>, Error> = payload
+            let handles_res: Result<Vec<FileHandle>, Error> = payload
                 .usizes()
                 .map(|fd| Ok(FileHandle::from(fd?)))
                 .collect();
-            current.bulk_insert_files_upper_manual(files, &handles?)?;
+            let handles = handles_res?;
+            current.bulk_insert_files_upper_manual(files, &handles)?;
             Ok(handles.len())
         }
     }
