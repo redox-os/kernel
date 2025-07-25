@@ -1434,14 +1434,12 @@ impl UserInner {
             return Ok(0);
         }
         let mut requested_fds = vec![0usize; files.len()];
-        let requested_fds_bytes: &mut [u8] = unsafe {
-            core::slice::from_raw_parts_mut(
-                requested_fds.as_mut_ptr() as *mut u8,
-                requested_fds.len() * core::mem::size_of::<usize>(),
-            )
-        };
-        payload.copy_to_slice(requested_fds_bytes)?;
-        if requested_fds[0] == usize::MAX {
+        let first_fd = payload
+            .in_exact_chunks(size_of::<usize>())
+            .next()
+            .ok_or(Error::new(EINVAL))?
+            .read_usize()?;
+        if first_fd == usize::MAX {
             let handles = current
                 .bulk_insert_files_upper(files)
                 .ok_or(Error::new(EMFILE))?;
@@ -2024,7 +2022,6 @@ impl KernelScheme for UserScheme {
         }
 
         let ctx = context::current().read().caller_ctx();
-        // let len = address.len / mem::size_of::<usize>();
         let len = payload.len() / mem::size_of::<usize>();
         let res = inner.call_extended(
             ctx,
@@ -2042,7 +2039,6 @@ impl KernelScheme for UserScheme {
 
         // TODO: Support choosing the posix fdtbl or upper fdtbl.
         let num_fds = if let Some(descriptions) = descriptions_opt {
-            // UserInner::bulk_add_fds(descriptions, UserSlice::rw(address.base, address.len)?)?
             if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
                 UserInner::bulk_insert_fds(descriptions, payload)?
             } else {
