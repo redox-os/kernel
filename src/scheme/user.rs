@@ -1429,7 +1429,7 @@ impl UserInner {
         descriptions: Vec<Arc<RwLock<FileDescription>>>,
         payload: UserSliceRw,
     ) -> Result<usize> {
-        log::info!("bulk_insert_fds: {}", files.len());
+        log::info!("bulk_insert_fds: {}", descriptions.len());
         let current_lock = context::current();
         let current = current_lock.write();
 
