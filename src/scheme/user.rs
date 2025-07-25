@@ -1407,8 +1407,11 @@ impl UserInner {
         let handles = current
             .bulk_add_files_posix(files)
             .ok_or(Error::new(EMFILE))?;
-        let handle_numbers: Vec<usize> = handles.iter().map(|h| h.get()).collect();
-        payload.copy_from_slice(&handle_numbers)?;
+        let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+        for handle in &handles {
+            let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
+            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+        }
         Ok(handles.len())
     }
 
@@ -1432,7 +1435,13 @@ impl UserInner {
             return Ok(0);
         }
         let mut requested_fds = vec![0usize; files.len()];
-        payload.copy_to_slice(&mut requested_fds)?;
+        let requested_fds_bytes: &mut [u8] = unsafe {
+            core::slice::from_raw_parts_mut(
+                requested_fds.as_mut_ptr() as *mut u8,
+                requested_fds.len() * core::mem::size_of::<usize>(),
+            )
+        };
+        payload.copy_to_slice(&mut requested_fds_bytes)?;
         if requested_fds[0] == usize::MAX {
             let handles = current
                 .bulk_insert_files_upper(files)
@@ -1446,7 +1455,11 @@ impl UserInner {
                 .iter()
                 .map(|&fd| FileHandle::from(fd))
                 .collect();
-            current.bulk_insert_files_upper_manual(files, &handles)?;
+            let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+            for handle in &handles {
+                let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
+                chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+            }
 
             Ok(handles.len())
         }

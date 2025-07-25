@@ -23,7 +23,7 @@ use crate::{
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
 };
 
-use crate::syscall::error::{Error, Result, EAGAIN, EEXIST, EINVAL, ESRCH};
+use crate::syscall::error::{Error, Result, EAGAIN, EEXIST, EINVAL, EMFILE, ESRCH};
 
 use super::{
     empty_cr3,
@@ -273,6 +273,17 @@ impl Context {
         files_to_insert: Vec<FileDescriptor>,
     ) -> Option<Vec<FileHandle>> {
         self.files.write().bulk_insert_files_upper(files_to_insert)
+    }
+
+    /// Bulk-insert multiple files into to the upper file table manually
+    fn bulk_insert_files_upper_manual(
+        &mut self,
+        files_to_insert: Vec<FileDescriptor>,
+        handles: &[FileHandle],
+    ) -> Result<()> {
+        self.files
+            .write()
+            .bulk_insert_files_upper_manual(files_to_insert, handles)
     }
 
     /// Get a file
