@@ -583,8 +583,8 @@ impl FdTbl {
     fn validate_handles(&self, handles: &[FileHandle]) -> Result<()> {
         let mut checked_handles = BTreeSet::new();
         for i in handles {
-            let index = Self::strip_flags(i.get());
-            if index >= super::CONTEXT_MAX_FILES {
+            let index = i.get();
+            if Self::strip_flags(index) >= super::CONTEXT_MAX_FILES {
                 return Err(Error::new(EINVAL));
             }
             if !checked_handles.insert(index) {
@@ -601,8 +601,8 @@ impl FdTbl {
     fn validate_free_slots(&self, handles: &[FileHandle]) -> Result<()> {
         let mut checked_slots = BTreeSet::new();
         for i in handles {
-            let index = Self::strip_flags(i.get());
-            if index >= super::CONTEXT_MAX_FILES {
+            let index = i.get();
+            if Self::strip_flags(index) >= super::CONTEXT_MAX_FILES {
                 return Err(Error::new(EINVAL));
             }
             if !checked_slots.insert(index) {
