@@ -1404,7 +1404,6 @@ impl UserInner {
                 cloexec: true,
             })
             .collect();
-        // TODO: MANUAL_FD.
         let handles = current
             .bulk_add_files_posix(files)
             .ok_or(Error::new(EMFILE))?;
@@ -1432,7 +1431,6 @@ impl UserInner {
         if files.is_empty() {
             return Ok(0);
         }
-        // TODO: MANUAL_FD.
         let mut requested_fds = vec![0usize; files.len()];
         payload.copy_to_slice(&mut requested_fds)?;
         if requested_fds[0] == usize::MAX {
