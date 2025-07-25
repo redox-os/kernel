@@ -1455,9 +1455,7 @@ impl UserInner {
                 .iter()
                 .map(|&fd| FileHandle::from(fd))
                 .collect();
-            current
-                .bulk_insert_files_upper_manual(files, &handles)
-                .ok_or(Error::new(EMFILE))?;
+            current.bulk_insert_files_upper_manual(files, &handles)?;
             Ok(handles.len())
         }
     }
