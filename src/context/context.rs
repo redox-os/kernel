@@ -23,7 +23,7 @@ use crate::{
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
 };
 
-use crate::syscall::error::{Error, Result, EAGAIN, EINVAL, ESRCH};
+use crate::syscall::error::{Error, Result, EAGAIN, EEXIST, EINVAL, ESRCH};
 
 use super::{
     empty_cr3,
@@ -549,11 +549,15 @@ impl FdTbl {
         }
     }
 
+    fn strip_flags(index: usize) -> usize {
+        index & !UPPER_TABLE_FLAG
+    }
+
     fn select_fdtbl(&self, index: usize) -> (&Vec<Option<FileDescriptor>>, usize) {
         if index & UPPER_TABLE_FLAG == 0 {
             (&self.posix_fdtbl, index)
         } else {
-            (&self.upper_fdtbl, index & !UPPER_TABLE_FLAG)
+            (&self.upper_fdtbl, Self::strip_flags(index))
         }
     }
 
@@ -561,14 +565,17 @@ impl FdTbl {
         if index & UPPER_TABLE_FLAG == 0 {
             (&mut self.posix_fdtbl, index)
         } else {
-            (&mut self.upper_fdtbl, index & !UPPER_TABLE_FLAG)
+            (&mut self.upper_fdtbl, Self::strip_flags(index))
         }
     }
 
     fn validate_handles(&self, handles: &[FileHandle]) -> Result<()> {
         let mut checked_handles = BTreeSet::new();
         for i in handles {
-            let index = i.get();
+            let index = Self::strip_flags(i.get());
+            if index >= super::CONTEXT_MAX_FILES {
+                return Err(Error::new(EINVAL));
+            }
             if !checked_handles.insert(index) {
                 return Err(Error::new(EBADF)); // Duplicate handle
             }
@@ -583,12 +590,15 @@ impl FdTbl {
     fn validate_free_slots(&self, handles: &[FileHandle]) -> Result<()> {
         let mut checked_slots = BTreeSet::new();
         for i in handles {
-            let index = i.get();
+            let index = Self::strip_flags(i.get());
+            if index >= super::CONTEXT_MAX_FILES {
+                return Err(Error::new(EINVAL));
+            }
             if !checked_slots.insert(index) {
                 return Err(Error::new(EINVAL)); // Duplicate slots
             }
             if matches!(self.get(index), Some(Some(_))) {
-                return Err(Error::new(EINVAL));
+                return Err(Error::new(EEXIST));
             }
         }
 
@@ -702,6 +712,40 @@ impl FdTbl {
 
         self.active_count += count;
         Some(handles)
+    }
+
+    fn bulk_insert_files_upper_manual(
+        &mut self,
+        files_to_insert: Vec<FileDescriptor>,
+        handles: &[FileHandle],
+    ) -> Result<()> {
+        if handles.len() != files_to_insert.len() {
+            return Err(Error::new(EINVAL));
+        }
+        let count = files_to_insert.len();
+        if count == 0 {
+            return Ok(());
+        }
+        if self.active_count + count > super::CONTEXT_MAX_FILES {
+            return Err(Error::new(EMFILE));
+        }
+        self.validate_free_slots(handles)?;
+
+        let max_index = handles
+            .iter()
+            .map(|h| Self::strip_flags(h.get()))
+            .max()
+            .unwrap_or(0);
+        if self.upper_fdtbl.len() <= max_index {
+            self.upper_fdtbl.resize_with(max_index + 1, || None);
+        }
+        for (file, &handle) in files_to_insert.into_iter().zip(handles) {
+            let index = Self::strip_flags(handle.get());
+            self.upper_fdtbl[index] = Some(file);
+        }
+
+        self.active_count += count;
+        Ok(())
     }
 
     pub fn get(&self, index: usize) -> Option<&Option<FileDescriptor>> {

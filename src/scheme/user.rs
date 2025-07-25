@@ -1408,11 +1408,8 @@ impl UserInner {
         let handles = current
             .bulk_add_files_posix(files)
             .ok_or(Error::new(EMFILE))?;
-        let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
-        for handle in &handles {
-            let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
-            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
-        }
+        let handle_numbers: Vec<usize> = handles.iter().map(|h| h.get()).collect();
+        payload.copy_from_slice(&handle_numbers)?;
         Ok(handles.len())
     }
 
@@ -1432,16 +1429,29 @@ impl UserInner {
                 cloexec: true,
             })
             .collect();
-        // TODO: MANUAL_FD.
-        let handles = current
-            .bulk_insert_files_upper(files)
-            .ok_or(Error::new(EMFILE))?;
-        let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
-        for handle in &handles {
-            let chunk = payload_chunks.next().ok_or(Error::new(EINVAL))?;
-            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+        if files.is_empty() {
+            return Ok(0);
         }
-        Ok(handles.len())
+        // TODO: MANUAL_FD.
+        let mut requested_fds = vec![0usize; files.len()];
+        payload.copy_to_slice(&mut requested_fds)?;
+        if requested_fds[0] == usize::MAX {
+            let handles = current
+                .bulk_insert_files_upper(files)
+                .ok_or(Error::new(EMFILE))?;
+            let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+            let handle_numbers: Vec<usize> = handles.iter().map(|h| h.get()).collect();
+            payload.copy_from_slice(&handle_numbers)?;
+            Ok(handles.len())
+        } else {
+            let handles: Vec<FileHandle> = requested_fds
+                .iter()
+                .map(|&fd| FileHandle::from(fd))
+                .collect();
+            current.bulk_insert_files_upper_manual(files, &handles)?;
+
+            Ok(handles.len())
+        }
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
