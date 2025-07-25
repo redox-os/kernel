@@ -1341,6 +1341,11 @@ impl UserInner {
         _flags: CallFlags,
         metadata: UserSliceRo,
     ) -> Result<usize> {
+        log::debug!(
+            "call_fdread: payload: {} metadata: {}",
+            payload.len(),
+            metadata.len()
+        );
         let mut meta = [0_u64; 3];
 
         // TODO: bytemuck/plain
@@ -1379,6 +1384,12 @@ impl UserInner {
             _ => return Err(Error::new(ENOENT)),
         };
 
+        log::info!(
+            "handle_obtainfd: request_id: {}, flags: {:?}, descriptions: {}",
+            request_id,
+            flags,
+            descriptions.len()
+        );
         let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
             Self::bulk_insert_fds(descriptions, payload)?
         } else {
@@ -1418,6 +1429,7 @@ impl UserInner {
         descriptions: Vec<Arc<RwLock<FileDescription>>>,
         payload: UserSliceRw,
     ) -> Result<usize> {
+        log::info!("bulk_insert_fds: {}", files.len());
         let current_lock = context::current();
         let current = current_lock.write();
 
@@ -1433,7 +1445,6 @@ impl UserInner {
         if files.is_empty() {
             return Ok(0);
         }
-        log::info!("bulk_insert_fds: {}", files.len());
         let mut requested_fds = vec![0usize; files.len()];
         let first_fd = payload
             .in_exact_chunks(size_of::<usize>())
