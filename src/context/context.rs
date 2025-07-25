@@ -277,7 +277,7 @@ impl Context {
 
     /// Bulk-insert multiple files into to the upper file table manually
     pub fn bulk_insert_files_upper_manual(
-        &mut self,
+        &self,
         files_to_insert: Vec<FileDescriptor>,
         handles: &[FileHandle],
     ) -> Result<()> {
