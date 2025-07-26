@@ -65,7 +65,6 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: Weak<RwSpinlock<Context>>,
-        // TODO: Remove Option<> and have Vec<> directly.
         fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         callee_responsible: PageSpan,
         canceling: bool,
