@@ -585,7 +585,7 @@ impl FdTbl {
         for i in handles {
             let index = i.get();
             if Self::strip_flags(index) >= super::CONTEXT_MAX_FILES {
-                return Err(Error::new(EINVAL));
+                return Err(Error::new(EMFILE));
             }
             if !checked_handles.insert(index) {
                 return Err(Error::new(EBADF)); // Duplicate handle
@@ -603,7 +603,7 @@ impl FdTbl {
         for i in handles {
             let index = i.get();
             if Self::strip_flags(index) >= super::CONTEXT_MAX_FILES {
-                return Err(Error::new(EINVAL));
+                return Err(Error::new(EMFILE));
             }
             if !checked_slots.insert(index) {
                 return Err(Error::new(EINVAL)); // Duplicate slots
