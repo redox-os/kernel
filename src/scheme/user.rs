@@ -1429,31 +1429,29 @@ impl UserInner {
         descriptions: Vec<Arc<RwLock<FileDescription>>>,
         payload: UserSliceRw,
     ) -> Result<usize> {
-        log::info!("bulk_insert_fds: {}", descriptions.len());
-        let current_lock = context::current();
-        let current = current_lock.write();
-
-        // TODO: The current logic is inefficient because it creates too many temporary vectors.
-        // This should be improved.
-        let files: Vec<FileDescriptor> = descriptions
-            .into_iter()
-            .map(|description| FileDescriptor {
-                description,
-                cloexec: true,
-            })
-            .collect();
-        if files.is_empty() {
+        if descriptions.is_empty() {
             return Ok(0);
         }
+        let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
+            description,
+            cloexec: true,
+        });
         let first_fd = payload
             .in_exact_chunks(size_of::<usize>())
             .next()
             .ok_or(Error::new(EINVAL))?
             .read_usize()?;
 
+        // TODO: The current logic is inefficient because it creates too many temporary vectors.
+        // This should be improved.
+
+        let current_lock = context::current();
+        let current = current_lock.write();
+
         log::info!("first_fd: {}", first_fd);
         if first_fd == usize::MAX {
             log::info!("bulk_insert_fds: auto");
+            let fils = files_iter.collect::<Vec<_>>();
             let handles = current
                 .bulk_insert_files_upper(files)
                 .ok_or(Error::new(EMFILE))?;
@@ -1464,11 +1462,11 @@ impl UserInner {
             Ok(handles.len())
         } else {
             log::info!("bulk_insert_fds: manual");
-            let handles_res: Result<Vec<FileHandle>, Error> = payload
+            let handles: Vec<FileHandle> = payload
                 .usizes()
-                .map(|fd| Ok(FileHandle::from(fd?)))
-                .collect();
-            let handles = handles_res?;
+                .map(|res| res.map(FileHandle::from))
+                .collect::<Result<_, _>>()?;
+            let fils = files_iter.collect::<Vec<_>>();
             current.bulk_insert_files_upper_manual(files, &handles)?;
             Ok(handles.len())
         }
