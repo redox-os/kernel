@@ -1451,7 +1451,7 @@ impl UserInner {
         log::info!("first_fd: {}", first_fd);
         if first_fd == usize::MAX {
             log::info!("bulk_insert_fds: auto");
-            let fils = files_iter.collect::<Vec<_>>();
+            let files = files_iter.collect::<Vec<_>>();
             let handles = current
                 .bulk_insert_files_upper(files)
                 .ok_or(Error::new(EMFILE))?;
@@ -1466,7 +1466,7 @@ impl UserInner {
                 .usizes()
                 .map(|res| res.map(FileHandle::from))
                 .collect::<Result<_, _>>()?;
-            let fils = files_iter.collect::<Vec<_>>();
+            let files = files_iter.collect::<Vec<_>>();
             current.bulk_insert_files_upper_manual(files, &handles)?;
             Ok(handles.len())
         }
