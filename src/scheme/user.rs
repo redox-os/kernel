@@ -79,7 +79,6 @@ enum State {
 pub enum Response {
     Regular(usize, u8),
     Fd(Arc<RwLock<FileDescription>>),
-    // TODO: Should we unify these by removing the Fd variant and always using MultipleFds?
     MultipleFds(Option<Vec<Arc<RwLock<FileDescription>>>>),
 }
 
@@ -945,7 +944,6 @@ impl UserInner {
             ParsedCqe::ResponseWithMultipleFds { tag, num_fds } => {
                 self.respond(tag, Response::MultipleFds(None))?;
             }
-            // TODO: ObtainFd mechanism for bulk fd sending and manual file descriptor numbering.
             ParsedCqe::ObtainFd {
                 tag,
                 flags,
@@ -1384,12 +1382,6 @@ impl UserInner {
             _ => return Err(Error::new(ENOENT)),
         };
 
-        log::info!(
-            "handle_obtainfd: request_id: {}, flags: {:?}, descriptions: {}",
-            request_id,
-            flags,
-            descriptions.len()
-        );
         let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
             Self::bulk_insert_fds(descriptions, payload)?
         } else {
@@ -1406,8 +1398,6 @@ impl UserInner {
         let current_lock = context::current();
         let current = current_lock.write();
 
-        // TODO: The current logic is inefficient because it creates too many temporary vectors.
-        // This should be improved.
         let files: Vec<FileDescriptor> = descriptions
             .into_iter()
             .map(|description| FileDescriptor {
@@ -1442,15 +1432,10 @@ impl UserInner {
             .ok_or(Error::new(EINVAL))?
             .read_usize()?;
 
-        // TODO: The current logic is inefficient because it creates too many temporary vectors.
-        // This should be improved.
-
         let current_lock = context::current();
         let current = current_lock.write();
 
-        log::info!("first_fd: {}", first_fd);
         if first_fd == usize::MAX {
-            log::info!("bulk_insert_fds: auto");
             let files = files_iter.collect::<Vec<_>>();
             let handles = current
                 .bulk_insert_files_upper(files)
@@ -1461,7 +1446,6 @@ impl UserInner {
             }
             Ok(handles.len())
         } else {
-            log::info!("bulk_insert_fds: manual");
             let handles: Vec<FileHandle> = payload
                 .usizes()
                 .map(|res| res.map(FileHandle::from))
@@ -2051,7 +2035,6 @@ impl KernelScheme for UserScheme {
             Response::MultipleFds(fds) => fds,
         };
 
-        // TODO: Support choosing the posix fdtbl or upper fdtbl.
         let num_fds = if let Some(descriptions) = descriptions_opt {
             if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
                 UserInner::bulk_insert_fds(descriptions, payload)?

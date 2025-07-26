@@ -367,9 +367,6 @@ fn call_fdwrite(
     let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
     let fds = payload_chunks
         .map(|chunk| {
-            if chunk.len() != size_of::<usize>() {
-                return Err(Error::new(EINVAL));
-            }
             let fd = chunk.read_usize()?;
             Ok(FileHandle::from(fd))
         })
