@@ -471,9 +471,10 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn ksendfd(
         &self,
         id: usize,
-        desc: Arc<RwLock<FileDescription>>,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: SendFdFlags,
         arg: u64,
+        metadata: UserSliceRo,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
@@ -532,6 +533,15 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+    fn kfdread(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: UserSliceRo,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
