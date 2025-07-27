@@ -423,7 +423,7 @@ pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) ->
         Vec::from([fd]),
         SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?,
         arg,
-        UserSlice::ro(0, 0)?,
+        UserSlice::empty(),
     )
 }
 
