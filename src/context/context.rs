@@ -606,7 +606,6 @@ impl FdTbl {
                 return Err(Error::new(EINVAL)); // Duplicate slots
             }
             if matches!(self.get(index), Some(Some(_))) {
-                log::warn!("Slot {} is already occupied", index);
                 return Err(Error::new(EEXIST));
             }
         }
@@ -738,20 +737,13 @@ impl FdTbl {
         if self.active_count + count > super::CONTEXT_MAX_FILES {
             return Err(Error::new(EMFILE));
         }
-        log::info!("Validating {} handles for bulk insert", count);
         self.validate_free_slots(handles)?;
-        log::info!("Validated {} handles for bulk insert", count);
 
         let max_index = handles
             .iter()
             .map(|h| Self::strip_tags(h.get()))
             .max()
             .unwrap_or(0);
-        log::info!(
-            "Bulk inserting {} files into upper file table at index {}",
-            count,
-            max_index
-        );
         if self.upper_fdtbl.len() <= max_index {
             self.upper_fdtbl.resize_with(max_index + 1, || None);
         }
