@@ -7,6 +7,7 @@ use core::{
 };
 use spin::RwLock;
 use syscall::EBADF;
+use syscall::UPPER_FDTBL_TAG;
 use syscall::{SigProcControl, Sigcontrol};
 
 #[cfg(feature = "sys_stat")]
@@ -540,10 +541,6 @@ impl core::fmt::Debug for Kstack {
     }
 }
 
-// TODO: Should we move these to syscall crate?.
-pub const POSIX_TABLE_FLAG: usize = 0 << (usize::BITS - 2);
-pub const UPPER_TABLE_FLAG: usize = 1 << (usize::BITS - 2);
-
 #[derive(Clone, Debug, Default)]
 pub struct FdTbl {
     pub posix_fdtbl: Vec<Option<FileDescriptor>>,
@@ -560,23 +557,23 @@ impl FdTbl {
         }
     }
 
-    fn strip_flags(index: usize) -> usize {
-        index & !UPPER_TABLE_FLAG
+    fn strip_tags(index: usize) -> usize {
+        index & !UPPER_FDTBL_TAG
     }
 
     fn select_fdtbl(&self, index: usize) -> (&Vec<Option<FileDescriptor>>, usize) {
-        if index & UPPER_TABLE_FLAG == 0 {
+        if index & UPPER_FDTBL_TAG == 0 {
             (&self.posix_fdtbl, index)
         } else {
-            (&self.upper_fdtbl, Self::strip_flags(index))
+            (&self.upper_fdtbl, Self::strip_tags(index))
         }
     }
 
     fn select_fdtbl_mut(&mut self, index: usize) -> (&mut Vec<Option<FileDescriptor>>, usize) {
-        if index & UPPER_TABLE_FLAG == 0 {
+        if index & UPPER_FDTBL_TAG == 0 {
             (&mut self.posix_fdtbl, index)
         } else {
-            (&mut self.upper_fdtbl, Self::strip_flags(index))
+            (&mut self.upper_fdtbl, Self::strip_tags(index))
         }
     }
 
@@ -584,7 +581,7 @@ impl FdTbl {
         let mut checked_handles = BTreeSet::new();
         for i in handles {
             let index = i.get();
-            if Self::strip_flags(index) >= super::CONTEXT_MAX_FILES {
+            if Self::strip_tags(index) >= super::CONTEXT_MAX_FILES {
                 return Err(Error::new(EMFILE));
             }
             if !checked_handles.insert(index) {
@@ -602,7 +599,7 @@ impl FdTbl {
         let mut checked_slots = BTreeSet::new();
         for i in handles {
             let index = i.get();
-            if Self::strip_flags(index) >= super::CONTEXT_MAX_FILES {
+            if Self::strip_tags(index) >= super::CONTEXT_MAX_FILES {
                 return Err(Error::new(EMFILE));
             }
             if !checked_slots.insert(index) {
@@ -622,7 +619,7 @@ impl FdTbl {
             return None;
         }
 
-        let flag = min & UPPER_TABLE_FLAG;
+        let tag = min & UPPER_FDTBL_TAG;
 
         let (fdtbl, min) = self.select_fdtbl_mut(min);
 
@@ -635,7 +632,7 @@ impl FdTbl {
         {
             *slot = Some(file);
             self.active_count += 1;
-            return Some(FileHandle::from(pos | flag));
+            return Some(FileHandle::from(pos | tag));
         };
 
         let len = fdtbl.len();
@@ -644,9 +641,9 @@ impl FdTbl {
         if len >= min {
             fdtbl.push(Some(file));
             self.active_count += 1;
-            Some(FileHandle::from(len | flag))
+            Some(FileHandle::from(len | tag))
         } else {
-            self.insert_file(FileHandle::from(min | flag), file)
+            self.insert_file(FileHandle::from(min | tag), file)
         }
     }
 
@@ -714,12 +711,12 @@ impl FdTbl {
             return None;
         }
 
-        let index = self.find_free_upper_block(count).get();
+        let index = Self::strip_tags(self.find_free_upper_block(count).get());
         let mut handles = Vec::with_capacity(count);
         for (i, file) in files_to_insert.into_iter().enumerate() {
             let current_index = index + i;
             self.upper_fdtbl[current_index] = Some(file);
-            handles.push(FileHandle::from(current_index | UPPER_TABLE_FLAG));
+            handles.push(FileHandle::from(current_index | UPPER_FDTBL_TAG));
         }
 
         self.active_count += count;
@@ -747,7 +744,7 @@ impl FdTbl {
 
         let max_index = handles
             .iter()
-            .map(|h| Self::strip_flags(h.get()))
+            .map(|h| Self::strip_tags(h.get()))
             .max()
             .unwrap_or(0);
         log::info!(
@@ -759,7 +756,7 @@ impl FdTbl {
             self.upper_fdtbl.resize_with(max_index + 1, || None);
         }
         for (file, &handle) in files_to_insert.into_iter().zip(handles) {
-            let index = Self::strip_flags(handle.get());
+            let index = Self::strip_tags(handle.get());
             self.upper_fdtbl[index] = Some(file);
         }
 
@@ -857,31 +854,31 @@ impl FdTbl {
     }
 
     fn find_free_upper_block(&mut self, len: usize) -> FileHandle {
-        // Search for a block of `len` consecutive None slots.
-        let found_pos = self
-            .upper_fdtbl
-            .windows(len)
-            .position(|window| window.iter().all(|opt| opt.is_none()));
+        let mut start = 0;
+        let mut count = 0;
 
-        if let Some(pos) = found_pos {
-            return FileHandle::from(pos);
+        for (i, file_opt) in self.upper_fdtbl.iter().enumerate() {
+            if file_opt.is_none() {
+                if count == 0 {
+                    start = i;
+                }
+                count += 1;
+                if count == len {
+                    break;
+                }
+            } else {
+                count = 0;
+            }
         }
 
-        // If no block was found, we need to resize the table.
-        let nones_num = self
-            .upper_fdtbl
-            .iter()
-            .rev()
-            .take_while(|opt| opt.is_none())
-            .count();
+        if count < len {
+            start = self.upper_fdtbl.len();
+            let needed = len - count;
+            self.upper_fdtbl
+                .resize(self.upper_fdtbl.len() + needed, None);
+        }
 
-        let start = self.upper_fdtbl.len() - nones_num;
-
-        let needed = len.saturating_sub(nones_num);
-        self.upper_fdtbl
-            .resize(self.upper_fdtbl.len() + needed, None);
-
-        FileHandle::from(start)
+        FileHandle::from(start | UPPER_FDTBL_TAG)
     }
 
     pub fn force_close_all(&mut self) {
@@ -890,6 +887,7 @@ impl FdTbl {
                 let _ = file.close();
             }
         }
+        self.active_count = 0;
     }
 }
 
