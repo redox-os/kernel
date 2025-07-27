@@ -1394,6 +1394,13 @@ impl UserInner {
         descriptions: Vec<Arc<RwLock<FileDescription>>>,
         payload: UserSliceRw,
     ) -> Result<usize> {
+        let cnt = descriptions.len();
+        if payload.len() != cnt * size_of::<usize>() {
+            return Err(Error::new(EINVAL));
+        }
+        if descriptions.is_empty() {
+            return Ok(0);
+        }
         let current_lock = context::current();
         let current = current_lock.write();
 
@@ -1418,6 +1425,10 @@ impl UserInner {
         descriptions: Vec<Arc<RwLock<FileDescription>>>,
         payload: UserSliceRw,
     ) -> Result<usize> {
+        let cnt = descriptions.len();
+        if payload.len() != cnt * size_of::<usize>() {
+            return Err(Error::new(EINVAL));
+        }
         if descriptions.is_empty() {
             return Ok(0);
         }
