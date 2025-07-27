@@ -1447,7 +1447,7 @@ impl UserInner {
         } else {
             let handles: Vec<FileHandle> = payload
                 .usizes()
-                .map(|res| res.map(FileHandle::from))
+                .map(|res| res.map(|i| FileHandle::from(i | syscall::UPPER_FDTBL_TAG)))
                 .collect::<Result<_, _>>()?;
             let files = files_iter.collect::<Vec<_>>();
             current.bulk_insert_files_upper_manual(files, &handles)?;
