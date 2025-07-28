@@ -716,7 +716,11 @@ impl FdTbl {
 
         log::info!("before upper_fdtbl: {:?}", self.upper_fdtbl);
         let index = Self::strip_tags(self.find_free_upper_block(count).get());
-        log::info!("after upper_fdtbl: {:?} and index", self.upper_fdtbl, index);
+        log::info!(
+            "after upper_fdtbl: {:?} and index {}",
+            self.upper_fdtbl,
+            index
+        );
         let mut handles = Vec::with_capacity(count);
         for (i, file) in files_to_insert.into_iter().enumerate() {
             let current_index = index + i;
