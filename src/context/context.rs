@@ -702,10 +702,6 @@ impl FdTbl {
         &mut self,
         files_to_insert: Vec<FileDescriptor>,
     ) -> Option<Vec<FileHandle>> {
-        log::info!(
-            "Bulk inserting {} files into upper file table",
-            files_to_insert.len()
-        );
         let count = files_to_insert.len();
         if count == 0 {
             return Some(Vec::new());
@@ -714,13 +710,7 @@ impl FdTbl {
             return None;
         }
 
-        log::info!("before upper_fdtbl: {:?}", self.upper_fdtbl);
         let index = Self::strip_tags(self.find_free_upper_block(count).get());
-        log::info!(
-            "after upper_fdtbl: {:?} and index {}",
-            self.upper_fdtbl,
-            index
-        );
         let mut handles = Vec::with_capacity(count);
         for (i, file) in files_to_insert.into_iter().enumerate() {
             let current_index = index + i;
@@ -856,7 +846,6 @@ impl FdTbl {
     }
 
     fn find_free_upper_block(&mut self, len: usize) -> FileHandle {
-        log::info!("Finding free upper block of length {}", len);
         let mut start = 0;
         let mut count = 0;
 
