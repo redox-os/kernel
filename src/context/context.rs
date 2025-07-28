@@ -874,7 +874,7 @@ impl FdTbl {
             start = self.upper_fdtbl.len();
             let needed = len - count;
             self.upper_fdtbl
-                .resize(self.upper_fdtbl.len() + needed + 1, None);
+                .resize(self.upper_fdtbl.len() + needed, None);
         }
 
         FileHandle::from(start | UPPER_FDTBL_TAG)
