@@ -2040,7 +2040,12 @@ impl KernelScheme for UserScheme {
         )?;
 
         let descriptions_opt = match res {
-            Response::Regular(res, _) => return Err(Error::new(EIO)),
+            Response::Regular(res, _) => {
+                return match Error::demux(res) {
+                    Ok(_) => Err(Error::new(EIO)),
+                    Err(e) => Err(e),
+                }
+            }
             Response::Fd(_) => return Err(Error::new(EIO)),
             Response::MultipleFds(fds) => fds,
         };
