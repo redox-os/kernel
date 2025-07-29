@@ -468,16 +468,6 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EBADF))
     }
 
-    fn ksendfd(
-        &self,
-        id: usize,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
-        flags: SendFdFlags,
-        arg: u64,
-        metadata: UserSliceRo,
-    ) -> Result<usize> {
-        Err(Error::new(EOPNOTSUPP))
-    }
     fn getdents(
         &self,
         id: usize,
@@ -536,12 +526,22 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
+    fn kfdwrite(
+        &self,
+        id: usize,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
+        flags: CallFlags,
+        args: u64,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
     fn kfdread(
         &self,
         id: usize,
         payload: UserSliceRw,
         flags: CallFlags,
-        metadata: UserSliceRo,
+        metadata: &[u64],
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }

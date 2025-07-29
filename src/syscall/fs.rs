@@ -313,6 +313,13 @@ pub fn call(
     flags: CallFlags,
     metadata: UserSliceRo,
 ) -> Result<usize> {
+    let mut meta = [0_u64; 3];
+
+    // TODO: bytemuck/plain
+    let copied = metadata.copy_common_bytes_to_slice(unsafe {
+        core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+    })?;
+
     match flags {
         f if f.contains(CallFlags::WRITE | CallFlags::FD) => {
             call_fdwrite(fd, payload, flags, metadata)
@@ -328,15 +335,8 @@ fn call_normal(
     fd: FileHandle,
     payload: UserSliceRw,
     flags: CallFlags,
-    metadata: UserSliceRo,
+    metadata: &[u64],
 ) -> Result<usize> {
-    let mut meta = [0_u64; 3];
-
-    // TODO: bytemuck/plain
-    let copied = metadata.copy_common_bytes_to_slice(unsafe {
-        core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
-    })?;
-
     let file = (match (
         context::current().read(),
         flags.contains(CallFlags::CONSUME),
@@ -362,7 +362,7 @@ fn call_fdwrite(
     fd: FileHandle,
     payload: UserSliceRw,
     flags: CallFlags,
-    metadata: UserSliceRo,
+    metadata: &[u64],
 ) -> Result<usize> {
     let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
     let fds = payload_chunks
@@ -374,25 +374,73 @@ fn call_fdwrite(
 
     let len = fds.len();
 
-    let mut sendfd_flags = SendFdFlags::empty();
-
-    if flags.contains(CallFlags::FD_CLONE) {
-        sendfd_flags |= SendFdFlags::CLONE;
-    }
-    if flags.contains(CallFlags::FD_EXCLUSIVE) {
-        sendfd_flags |= SendFdFlags::EXCLUSIVE
-    }
-
-    sendfd_inner(fd, fds, sendfd_flags, 0, metadata)?;
+    fdwrite_inner(fd, fds, flags, 0, metadata)?;
 
     Ok(len)
+}
+
+fn fdwrite_inner(
+    socket: FileHandle,
+    target_fds: Vec<FileHandle>,
+    flags: CallFlags,
+    arg: u64,
+    metadata: &[u64],
+) -> Result<usize> {
+    // TODO: Ensure deadlocks can't happen
+    let (scheme, number, descs_to_send) = {
+        let current_lock = context::current();
+        let current = current_lock.read();
+
+        let (scheme, number) = match current
+            .get_file(socket)
+            .ok_or(Error::new(EBADF))?
+            .description
+            .read()
+        {
+            ref desc => (desc.scheme, desc.number),
+        };
+        let scheme = scheme::schemes()
+            .get(scheme)
+            .ok_or(Error::new(ENODEV))?
+            .clone();
+
+        (
+            scheme,
+            number,
+            if flags.contains(CallFlags::FD_CLONE) {
+                current.bulk_get_files(&target_fds)
+            } else {
+                current.bulk_remove_files(&target_fds)
+            }?
+            .into_iter()
+            .map(|f| f.description)
+            .collect(),
+        )
+    };
+
+    //  Inform the scheme whether there are still references to the file description to be sent,
+    //  either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
+    //  requested.
+    let flags_to_scheme = if flags.contains(CallFlags::FD_EXCLUSIVE) {
+        for desc in &descs_to_send {
+            if Arc::strong_count(desc) > 1 {
+                return Err(Error::new(EBUSY));
+            }
+        }
+
+        CallFlags::FD_EXCLUSIVE
+    } else {
+        CallFlags::empty()
+    };
+
+    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, arg, metadata)
 }
 
 fn call_fdread(
     fd: FileHandle,
     payload: UserSliceRw,
     flags: CallFlags,
-    metadata: UserSliceRo,
+    metadata: &[u64],
 ) -> Result<usize> {
     let (scheme, number) = {
         let current_lock = context::current();
@@ -418,70 +466,15 @@ fn call_fdread(
 }
 
 pub fn sendfd(socket: FileHandle, fd: FileHandle, flags_raw: usize, arg: u64) -> Result<usize> {
-    sendfd_inner(
-        socket,
-        Vec::from([fd]),
-        SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?,
-        arg,
-        UserSliceRo::empty(),
-    )
-}
-
-fn sendfd_inner(
-    socket: FileHandle,
-    target_fds: Vec<FileHandle>,
-    flags: SendFdFlags,
-    arg: u64,
-    metadata: UserSliceRo,
-) -> Result<usize> {
-    // TODO: Ensure deadlocks can't happen
-    let (scheme, number, descs_to_send) = {
-        let current_lock = context::current();
-        let current = current_lock.read();
-
-        let (scheme, number) = match current
-            .get_file(socket)
-            .ok_or(Error::new(EBADF))?
-            .description
-            .read()
-        {
-            ref desc => (desc.scheme, desc.number),
-        };
-        let scheme = scheme::schemes()
-            .get(scheme)
-            .ok_or(Error::new(ENODEV))?
-            .clone();
-
-        (
-            scheme,
-            number,
-            if flags.contains(SendFdFlags::CLONE) {
-                current.bulk_get_files(&target_fds)
-            } else {
-                current.bulk_remove_files(&target_fds)
-            }?
-            .into_iter()
-            .map(|f| f.description)
-            .collect(),
-        )
-    };
-
-    //  Inform the scheme whether there are still references to the file description to be sent,
-    //  either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
-    //  requested.
-    let flags_to_scheme = if flags.contains(SendFdFlags::EXCLUSIVE) {
-        for desc in &descs_to_send {
-            if Arc::strong_count(desc) > 1 {
-                return Err(Error::new(EBUSY));
-            }
-        }
-
-        SendFdFlags::EXCLUSIVE
-    } else {
-        SendFdFlags::empty()
-    };
-
-    scheme.ksendfd(number, descs_to_send, flags_to_scheme, arg, metadata)
+    let sendfd_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
+    let mut call_flags = CallFlags::FD | CallFlags::WRITE;
+    if sendfd_flags.contains(SendFdFlags::CLONE) {
+        call_flags |= CallFlags::FD_CLONE;
+    }
+    if sendfd_flags.contains(SendFdFlags::EXCLUSIVE) {
+        call_flags |= CallFlags::FD_EXCLUSIVE;
+    }
+    fdwrite_inner(socket, Vec::from([fd]), call_flags, arg, &[])
 }
 
 /// File descriptor controls

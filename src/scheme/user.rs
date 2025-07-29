@@ -15,8 +15,9 @@ use spin::{Mutex, RwLock};
 use spinning_top::RwSpinlock;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
-    CallFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall, SendFdFlags, F_SETFL,
-    KSMSG_CANCEL, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD, SKMSG_PROVIDE_MMAP,
+    CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
+    SendFdFlags, F_SETFL, KSMSG_CANCEL, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD,
+    SKMSG_PROVIDE_MMAP,
 };
 
 use crate::{
@@ -1290,24 +1291,31 @@ impl UserInner {
     pub fn call_fdwrite(
         &self,
         descs: Vec<Arc<RwLock<FileDescription>>>,
-        flags: SendFdFlags,
+        flags: CallFlags,
         _arg: u64,
-        metadata: UserSliceRo,
+        metadata: &[u64],
     ) -> Result<usize> {
-        let mut meta = [0_u64; 3];
-
-        // TODO: bytemuck/plain
-        let copied = metadata.copy_common_bytes_to_slice(unsafe {
-            core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
-        })?;
-        let meta_for_use = &meta[..copied / 8];
-
+        if metadata.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
         let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
             return Err(Error::new(EINVAL));
         };
 
         match verb {
-            SchemeSocketCall::MoveFd => self.handle_movefd(descs, meta_for_use[1] as usize, flags),
+            SchemeSocketCall::MoveFd => {
+                if metadata.len() != 2 {
+                    return Err(Error::new(EINVAL));
+                }
+                let mut movefd_flags = FmoveFdFlags::empty();
+                if flags.contains(CallFlags::FD_EXCLUSIVE) {
+                    movefd_flags |= FmoveFdFlags::EXCLUSIVE;
+                }
+                if flags.contains(CallFlags::FD_CLONE) {
+                    movefd_flags |= FmoveFdFlags::CLONE;
+                }
+                self.handle_movefd(descs, metadata[1] as usize, movefd_flags)
+            }
             _ => Err(Error::new(EINVAL)),
         }
     }
@@ -1316,7 +1324,7 @@ impl UserInner {
         &self,
         descs: Vec<Arc<RwLock<FileDescription>>>,
         request_id: usize,
-        _flags: SendFdFlags,
+        flags: MoveFdFlags,
     ) -> Result<usize> {
         let num_fds = descs.len();
         match self
@@ -1335,32 +1343,36 @@ impl UserInner {
     pub fn call_fdread(
         &self,
         payload: UserSliceRw,
-        _flags: CallFlags,
-        metadata: UserSliceRo,
+        flags: CallFlags,
+        metadata: &[u64],
     ) -> Result<usize> {
+        if metadata.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
         log::debug!(
             "call_fdread: payload: {} metadata: {}",
             payload.len(),
             metadata.len()
         );
-        let mut meta = [0_u64; 3];
 
-        // TODO: bytemuck/plain
-        let copied = metadata.copy_common_bytes_to_slice(unsafe {
-            core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
-        })?;
-        let meta_for_use = &meta[..copied / 8];
-
-        let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
+        let Some(verb) = SchemeSocketCall::try_from_raw(metadata[0] as usize) else {
             return Err(Error::new(EINVAL));
         };
 
         match verb {
-            SchemeSocketCall::ObtainFd => self.handle_obtainfd(
-                payload,
-                meta_for_use[1] as usize,
-                FobtainFdFlags::from_bits(meta_for_use[2] as usize).ok_or(Error::new(EINVAL))?,
-            ),
+            SchemeSocketCall::ObtainFd => {
+                if metadata.len() != 2 {
+                    return Err(Error::new(EINVAL));
+                }
+                let mut obtainfd_flags = FobtainFdFlags::empty();
+                if flags.contains(CallFlags::FD_UPPER) {
+                    obtainfd_flags |= FobtainFdFlags::UPPER_TBL;
+                }
+                if flags.contains(CallFlags::FD_EXCLUSIVE) {
+                    obtainfd_flags |= FobtainFdFlags::EXCLUSIVE;
+                }
+                self.handle_obtainfd(payload, metadata[1] as usize, obtainfd_flags)
+            }
             _ => Err(Error::new(EINVAL)),
         }
     }
@@ -1945,32 +1957,6 @@ impl KernelScheme for UserScheme {
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
-    fn ksendfd(
-        &self,
-        number: usize,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
-        flags: SendFdFlags,
-        arg: u64,
-        metadata: UserSliceRo,
-    ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-
-        let ctx = context::current().read().caller_ctx();
-        let len = descs.len();
-        let res = inner.call_extended(
-            ctx,
-            Some(descs),
-            Opcode::Sendfd,
-            [number, flags.bits(), arg as usize, len],
-            &mut PageSpan::empty(),
-        )?;
-
-        match res {
-            Response::Regular(res, _) => Error::demux(res),
-            Response::Fd(_) => Err(Error::new(EIO)),
-            Response::MultipleFds(_) => Err(Error::new(EIO)),
-        }
-    }
     fn kcall(
         &self,
         id: usize,
@@ -2004,6 +1990,37 @@ impl KernelScheme for UserScheme {
             dst[..len].copy_from_slice(&metadata[..len]);
         }
         let res = inner.call_extended_inner(None, sqe, &mut address.span())?;
+
+        match res {
+            Response::Regular(res, _) => Error::demux(res),
+            Response::Fd(_) => Err(Error::new(EIO)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
+        }
+    }
+    fn kfdwrite(
+        &self,
+        number: usize,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
+        flags: CallFlags,
+        arg: u64,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let mut sendfd_flags = SendFdFlags::empty();
+        if flags.contains(CallFlags::FD_EXCLUSIVE) {
+            sendfd_flags |= SendFdFlags::EXCLUSIVE;
+        }
+
+        let ctx = context::current().read().caller_ctx();
+        let len = descs.len();
+        let res = inner.call_extended(
+            ctx,
+            Some(descs),
+            Opcode::Sendfd,
+            [number, sendfd_flags.bits(), arg as usize, len],
+            &mut PageSpan::empty(),
+        )?;
 
         match res {
             Response::Regular(res, _) => Error::demux(res),

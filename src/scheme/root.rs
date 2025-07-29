@@ -331,13 +331,13 @@ impl KernelScheme for RootScheme {
         Ok(())
     }
 
-    fn ksendfd(
+    fn kfdwrite(
         &self,
         id: usize,
         descs: Vec<Arc<RwLock<FileDescription>>>,
-        flags: SendFdFlags,
+        flags: CallFlags,
         arg: u64,
-        metadata: UserSliceRo,
+        metadata: &[u64],
     ) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
@@ -357,7 +357,7 @@ impl KernelScheme for RootScheme {
         id: usize,
         payload: UserSliceRw,
         flags: CallFlags,
-        metadata: UserSliceRo,
+        metadata: &[u64],
     ) -> Result<usize> {
         let handle = {
             let handles = self.handles.read();
