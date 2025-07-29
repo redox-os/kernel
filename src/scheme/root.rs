@@ -7,7 +7,7 @@ use hashbrown::HashMap;
 use spin::RwLock;
 use syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    SendFdFlags, O_EXLOCK, O_FSYNC,
+    O_EXLOCK, O_FSYNC,
 };
 
 use crate::{

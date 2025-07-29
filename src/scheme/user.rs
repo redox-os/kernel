@@ -1324,7 +1324,7 @@ impl UserInner {
         &self,
         descs: Vec<Arc<RwLock<FileDescription>>>,
         request_id: usize,
-        flags: FmoveFdFlags,
+        _flags: FmoveFdFlags,
     ) -> Result<usize> {
         let num_fds = descs.len();
         match self
@@ -1426,7 +1426,7 @@ impl UserInner {
         let handles = current
             .bulk_add_files_posix(files)
             .ok_or(Error::new(EMFILE))?;
-        let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
         for (handle, chunk) in handles.iter().zip(payload_chunks) {
             chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
         }
@@ -1462,7 +1462,7 @@ impl UserInner {
             let handles = current
                 .bulk_insert_files_upper(files)
                 .ok_or(Error::new(EMFILE))?;
-            let mut payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+            let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
             for (handle, chunk) in handles.iter().zip(payload_chunks) {
                 chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
             }

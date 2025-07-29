@@ -3,7 +3,7 @@ use crate::{
     context::{
         self,
         context::{HardBlockedReason, SignalState},
-        file::{FileDescriptor, InternalFlags},
+        file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
         Context, Status,
     },

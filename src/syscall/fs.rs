@@ -355,7 +355,7 @@ fn call_normal(
         .ok_or(Error::new(EBADFD))?
         .clone();
 
-    scheme.kcall(number, payload, flags)
+    scheme.kcall(number, payload, flags, metadata)
 }
 
 fn call_fdwrite(
