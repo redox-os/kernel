@@ -2003,7 +2003,7 @@ impl KernelScheme for UserScheme {
         descs: Vec<Arc<RwLock<FileDescription>>>,
         flags: CallFlags,
         arg: u64,
-        metadata: &[u64],
+        _metadata: &[u64],
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
@@ -2033,14 +2033,13 @@ impl KernelScheme for UserScheme {
         id: usize,
         payload: UserSliceRw,
         flags: CallFlags,
-        metadata: UserSliceRo,
+        _metadata: &[u64],
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if payload.len() % mem::size_of::<usize>() != 0 {
             return Err(Error::new(EINVAL));
         }
 
-        // let mut address = inner.capture_user(payload)?;
         let mut recvfd_flags = RecvFdFlags::empty();
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
