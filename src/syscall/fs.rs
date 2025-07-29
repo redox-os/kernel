@@ -322,12 +322,12 @@ pub fn call(
 
     match flags {
         f if f.contains(CallFlags::WRITE | CallFlags::FD) => {
-            call_fdwrite(fd, payload, flags, metadata)
+            call_fdwrite(fd, payload, flags, &meta[..copied / 8])
         }
         f if f.contains(CallFlags::READ | CallFlags::FD) => {
-            call_fdread(fd, payload, flags, metadata)
+            call_fdread(fd, payload, flags, &meta[..copied / 8])
         }
-        _ => call_normal(fd, payload, flags, metadata),
+        _ => call_normal(fd, payload, flags, &meta[..copied / 8]),
     }
 }
 
@@ -355,7 +355,7 @@ fn call_normal(
         .ok_or(Error::new(EBADFD))?
         .clone();
 
-    scheme.kcall(number, payload, flags, &meta[..copied / 8])
+    scheme.kcall(number, payload, flags)
 }
 
 fn call_fdwrite(

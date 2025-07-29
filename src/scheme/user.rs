@@ -1298,7 +1298,7 @@ impl UserInner {
         if metadata.is_empty() {
             return Err(Error::new(EINVAL));
         }
-        let Some(verb) = SchemeSocketCall::try_from_raw(meta_for_use[0] as usize) else {
+        let Some(verb) = SchemeSocketCall::try_from_raw(metadata[0] as usize) else {
             return Err(Error::new(EINVAL));
         };
 
@@ -1324,7 +1324,7 @@ impl UserInner {
         &self,
         descs: Vec<Arc<RwLock<FileDescription>>>,
         request_id: usize,
-        flags: MoveFdFlags,
+        flags: FmoveFdFlags,
     ) -> Result<usize> {
         let num_fds = descs.len();
         match self
