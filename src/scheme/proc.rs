@@ -3,7 +3,7 @@ use crate::{
     context::{
         self,
         context::{HardBlockedReason, SignalState},
-        file::{FileDescriptor, InternalFlags},
+        file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
         Context, Status,
     },
@@ -18,6 +18,8 @@ use crate::{
         EnvRegisters, FloatRegisters, IntRegisters,
     },
 };
+
+use crate::context::context::FdTbl;
 
 use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
@@ -108,11 +110,11 @@ enum ContextHandle {
     Sighandler,
     Start,
     NewFiletable {
-        filetable: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
+        filetable: Arc<RwLock<FdTbl>>,
         data: Box<[u8]>,
     },
     Filetable {
-        filetable: Weak<RwLock<Vec<Option<FileDescriptor>>>>,
+        filetable: Weak<RwLock<FdTbl>>,
         data: Box<[u8]>,
     },
     AddrSpace {
@@ -129,7 +131,7 @@ enum ContextHandle {
     CurrentFiletable,
 
     AwaitingFiletableChange {
-        new_ft: Arc<RwLock<Vec<Option<FileDescriptor>>>>,
+        new_ft: Arc<RwLock<FdTbl>>,
     },
 
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
@@ -320,8 +322,10 @@ impl ProcScheme {
                     use core::fmt::Write;
 
                     let mut data = String::new();
+                    // Only the posix file table is targeted.
                     for index in filetable
                         .read()
+                        .posix_fdtbl
                         .iter()
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))

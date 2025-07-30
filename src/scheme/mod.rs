@@ -13,7 +13,7 @@ use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::{CallFlags, EventFlags, MunmapFlags, SendFdFlags};
+use syscall::{CallFlags, EventFlags, MunmapFlags};
 
 use crate::{
     context::{
@@ -468,15 +468,6 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EBADF))
     }
 
-    fn ksendfd(
-        &self,
-        id: usize,
-        desc: Arc<RwLock<FileDescription>>,
-        flags: SendFdFlags,
-        arg: u64,
-    ) -> Result<usize> {
-        Err(Error::new(EOPNOTSUPP))
-    }
     fn getdents(
         &self,
         id: usize,
@@ -527,6 +518,25 @@ pub trait KernelScheme: Send + Sync + 'static {
         Ok(())
     }
     fn kcall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+    fn kfdwrite(
+        &self,
+        id: usize,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
+        flags: CallFlags,
+        args: u64,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+    fn kfdread(
         &self,
         id: usize,
         payload: UserSliceRw,

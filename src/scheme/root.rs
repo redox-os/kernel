@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, string::ToString, sync::Arc};
+use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -15,13 +15,13 @@ use crate::{
     scheme::{
         self,
         user::{UserInner, UserScheme},
-        SchemeId, SchemeNamespace,
+        FileDescription, SchemeId, SchemeNamespace,
     },
     syscall::{
         data::Stat,
         error::*,
-        flag::{EventFlags, MODE_DIR, MODE_FILE, O_CREAT},
-        usercopy::{UserSliceRo, UserSliceWo},
+        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT},
+        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -329,5 +329,46 @@ impl KernelScheme for RootScheme {
         })?;
 
         Ok(())
+    }
+
+    fn kfdwrite(
+        &self,
+        id: usize,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
+        flags: CallFlags,
+        arg: u64,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        let handle = {
+            let handles = self.handles.read();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        match handle {
+            Handle::Scheme(inner) => inner.call_fdwrite(descs, flags, arg, metadata),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::List { .. } => Err(Error::new(EISDIR)),
+        }
+    }
+
+    fn kfdread(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        let handle = {
+            let handles = self.handles.read();
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        match handle {
+            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata),
+            Handle::File(_) => Err(Error::new(EBADF)),
+            Handle::List { .. } => Err(Error::new(EISDIR)),
+        }
     }
 }
