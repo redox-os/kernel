@@ -14,6 +14,7 @@ use crate::{
     syscall::EventFlags,
 };
 
+use crate::context::context::FdTbl;
 use crate::{
     context,
     paging::{Page, VirtualAddress, PAGE_SIZE},
@@ -24,14 +25,14 @@ use crate::{
 use super::usercopy::UserSliceWo;
 
 pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
-    let close_files;
+    let mut close_files;
     let addrspace_opt;
 
     let context_lock = context::current();
     {
         let mut context = context_lock.write();
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
-            .map_or_else(|_| Vec::new(), RwLock::into_inner);
+            .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
         addrspace_opt = context
             .set_addr_space(None)
             .and_then(|a| Arc::try_unwrap(a).ok());
@@ -40,11 +41,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
     }
 
     // Files must be closed while context is valid so that messages can be passed
-    for file_opt in close_files.into_iter() {
-        if let Some(file) = file_opt {
-            let _ = file.close();
-        }
-    }
+    close_files.force_close_all();
     drop(addrspace_opt);
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
