@@ -34,8 +34,8 @@
 // TODO: address ocurrances and then deny
 #![warn(clippy::integer_arithmetic)]
 // Avoid panicking in the kernel without information about the panic. Use expect
-// TODO: address ocurrances and then deny
-#![warn(clippy::result_unwrap_used)]
+// Enabled: This critical security lint prevents unexpected panics in kernel space
+#![deny(clippy::result_unwrap_used)]
 // This is usually a serious issue - a missing import of a define where it is interpreted
 // as a catch-all variable in a match, for example
 #![deny(unreachable_patterns)]
@@ -232,10 +232,21 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    //TODO: workaround for bug where an AP on MeteorLake has cpu_id 0
+    // TODO: workaround for bug where an AP on MeteorLake has cpu_id 0
+    // Enhanced debugging to help identify APIC ID mismatch issues on modern CPUs
+    if !cfg!(feature = "multi_core") {
+        info!("AP {}: Multi-core disabled, halting AP", cpu_id);
+    } else if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
+        warn!("AP {}: Unexpected BSP CPU ID on AP - potential APIC ID mismatch (Alder Lake+)", cpu_id);
+        // Log additional debug info for troubleshooting
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            let apic_id = unsafe { crate::arch::device::local_apic::LOCAL_APIC.read().id() };
+            warn!("AP with logical CPU ID {} has APIC ID {}", cpu_id, apic_id);
+        }
+    }
+    
     if !cfg!(feature = "multi_core") || cpu_id == crate::cpu_set::LogicalCpuId::BSP {
-        info!("AP {}: Disabled", cpu_id);
-
         loop {
             unsafe {
                 interrupt::disable();

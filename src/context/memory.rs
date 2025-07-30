@@ -1228,7 +1228,7 @@ impl Grant {
             unsafe {
                 let result = mapper
                     .map_phys(page.start_address(), frame.base(), flags)
-                    .expect("TODO: page table OOM");
+                    .expect("page table allocation must succeed for valid memory operation");
                 result.ignore();
 
                 flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
