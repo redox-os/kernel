@@ -6,7 +6,6 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use spin::RwLock;
-use syscall::EBADF;
 use syscall::UPPER_FDTBL_TAG;
 use syscall::{SigProcControl, Sigcontrol};
 
@@ -24,7 +23,7 @@ use crate::{
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
 };
 
-use crate::syscall::error::{Error, Result, EAGAIN, EEXIST, EINVAL, EMFILE, ESRCH};
+use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};
 
 use super::{
     empty_cr3,
