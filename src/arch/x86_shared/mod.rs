@@ -33,6 +33,9 @@ pub mod stop;
 
 pub mod time;
 
+/// CPU topology detection for modern hybrid architectures
+pub mod topology;
+
 #[cfg(target_arch = "x86")]
 pub use ::rmm::X86Arch as CurrentRmmArch;
 
