@@ -151,6 +151,16 @@ pub struct MadtGicd {
     _reserved2: [u8; 3],
 }
 
+/// Represents the GIC Redistributor (GICR) entry in the MADT.
+/// ACPI Specification, Table 5-23. Type 0xD.
+#[derive(Clone, Copy, Debug)]
+#[repr(C, packed)]
+pub struct MadtGicr {
+    _reserved: u16,
+    pub discovery_range_base_address: u64,
+    pub discovery_range_length: u32,
+}
+
 /// MADT Entries
 #[derive(Debug)]
 pub enum MadtEntry {
@@ -164,6 +174,8 @@ pub enum MadtEntry {
     InvalidGicc(usize),
     Gicd(&'static MadtGicd),
     InvalidGicd(usize),
+    Gicr(&'static MadtGicr),
+    InvalidGicr(usize),
     Unknown(u8),
 }
 
@@ -226,6 +238,15 @@ impl Iterator for MadtIter {
                             })
                         } else {
                             MadtEntry::InvalidGicd(entry_len)
+                        }
+                    }
+                    0xD => {
+                        if entry_len == mem::size_of::<MadtGicr>() + 2 {
+                            MadtEntry::Gicr(unsafe {
+                                &*((self.sdt.data_address() + self.i + 2) as *const MadtGicr)
+                            })
+                        } else {
+                            MadtEntry::InvalidGicr(entry_len)
                         }
                     }
                     _ => MadtEntry::Unknown(entry_type),
