@@ -106,14 +106,14 @@ impl ToString for LogicalCpuSet {
         let words = raw.get(..(cpu_count / usize::BITS) as usize).unwrap_or(&[]);
         for (i, word) in words.iter().enumerate() {
             if i != 0 {
-                write!(ret, "_").unwrap();
+                write!(ret, "_").expect("writing to String never fails");
             }
             let word = if i == words.len() - 1 {
                 *word & ((1_usize << (cpu_count % usize::BITS)) - 1)
             } else {
                 *word
             };
-            write!(ret, "{word:x}").unwrap();
+            write!(ret, "{word:x}").expect("writing to String never fails");
         }
         ret
     }

@@ -23,6 +23,15 @@ pub(super) fn init(madt: Madt) {
         println!("    XAPIC {}: {:>08X}", me, local_apic.address);
     }
 
+    // Validate APIC ID consistency with detected topology
+    let current_apic_id = local_apic.id();
+    if !crate::cpu_topology::validate_acpi_apic_id(current_apic_id) {
+        log::warn!(
+            "BSP APIC ID {} from MADT doesn't match detected topology",
+            current_apic_id
+        );
+    }
+
     if cfg!(feature = "multi_core") {
         // Map trampoline
         let trampoline_frame = Frame::containing(PhysicalAddress::new(TRAMPOLINE));
@@ -57,6 +66,15 @@ pub(super) fn init(madt: Madt) {
                         println!("        This is my local APIC");
                     } else {
                         if ap_local_apic.flags & 1 == 1 {
+                            // Validate APIC ID against detected topology
+                            if !crate::cpu_topology::validate_acpi_apic_id(ap_local_apic.id.into())
+                            {
+                                log::warn!(
+                                    "AP APIC ID {} from MADT not found in detected topology - may cause issues on hybrid CPUs",
+                                    ap_local_apic.id
+                                );
+                            }
+
                             // Increase CPU ID
                             CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 
