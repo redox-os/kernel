@@ -22,7 +22,7 @@ pub(super) fn init(madt: Madt) {
     } else {
         println!("    XAPIC {}: {:>08X}", me, local_apic.address);
     }
-    
+
     // Validate APIC ID consistency with detected topology
     let current_apic_id = local_apic.id();
     if !crate::cpu_topology::validate_acpi_apic_id(current_apic_id) {
@@ -67,13 +67,14 @@ pub(super) fn init(madt: Madt) {
                     } else {
                         if ap_local_apic.flags & 1 == 1 {
                             // Validate APIC ID against detected topology
-                            if !crate::cpu_topology::validate_acpi_apic_id(ap_local_apic.id.into()) {
+                            if !crate::cpu_topology::validate_acpi_apic_id(ap_local_apic.id.into())
+                            {
                                 log::warn!(
                                     "AP APIC ID {} from MADT not found in detected topology - may cause issues on hybrid CPUs",
                                     ap_local_apic.id
                                 );
                             }
-                            
+
                             // Increase CPU ID
                             CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 

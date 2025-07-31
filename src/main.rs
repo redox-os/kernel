@@ -248,26 +248,40 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
         // Get current APIC ID for detailed diagnosis
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         let current_apic_id = unsafe { crate::arch::device::local_apic::LOCAL_APIC.read().id() };
-        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]  
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
         let current_apic_id = 0;
-        
-        warn!("AP {}: Unexpected BSP CPU ID on AP - APIC ID mismatch detected", cpu_id);
+
+        warn!(
+            "AP {}: Unexpected BSP CPU ID on AP - APIC ID mismatch detected",
+            cpu_id
+        );
         warn!("  Current APIC ID: {}", current_apic_id);
-        
+
         // Try to find correct logical CPU ID from topology
-        if let Some(correct_logical_id) = crate::cpu_topology::get_logical_cpu_for_apic_id(current_apic_id) {
-            warn!("  Topology suggests logical CPU ID should be: {}", correct_logical_id);
-            info!("  Hybrid architecture: {}", crate::cpu_topology::is_hybrid_architecture());
-            
+        if let Some(correct_logical_id) =
+            crate::cpu_topology::get_logical_cpu_for_apic_id(current_apic_id)
+        {
+            warn!(
+                "  Topology suggests logical CPU ID should be: {}",
+                correct_logical_id
+            );
+            info!(
+                "  Hybrid architecture: {}",
+                crate::cpu_topology::is_hybrid_architecture()
+            );
+
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             if let Some(core_type) = crate::cpu_topology::get_core_type(correct_logical_id) {
                 info!("  Core type: {}", core_type);
             }
         } else {
-            warn!("  APIC ID {} not found in detected topology - possible firmware issue", current_apic_id);
+            warn!(
+                "  APIC ID {} not found in detected topology - possible firmware issue",
+                current_apic_id
+            );
         }
     }
-    
+
     if !cfg!(feature = "multi_core") || cpu_id == crate::cpu_set::LogicalCpuId::BSP {
         loop {
             unsafe {
