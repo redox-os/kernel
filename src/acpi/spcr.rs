@@ -6,6 +6,7 @@ use crate::{
         serial::{SerialKind, COM1},
         uart_pl011,
     },
+    log::LOG,
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };
 
@@ -62,6 +63,7 @@ impl Spcr {
             return;
         }
 
+        let serial_was_empty = !COM1.lock().is_some();
         if spcr.header.revision >= 2 {
             match spcr.interface_type {
                 3 => {
@@ -104,6 +106,18 @@ impl Spcr {
             }
         } else {
             log::warn!("SPCR unsupported revision {}", spcr.header.revision);
+        }
+        if serial_was_empty && let Some(ref mut serial_port) = *COM1.lock() {
+            // backfill logs since the heap is loaded
+            if let Some(ref mut early_log) = *LOG.lock() {
+                let (s1, s2) = early_log.read();
+                if !s1.is_empty() {
+                    serial_port.write(s1);
+                }
+                if !s2.is_empty() {
+                    serial_port.write(s2);
+                }
+            }
         }
     }
 
