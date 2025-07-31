@@ -58,10 +58,10 @@ pub fn total_frames() -> usize {
 }
 
 /// Allocate a range of frames with specified power-of-2 order
-/// 
+///
 /// # Arguments
 /// * `order` - Power of 2 order determining the number of contiguous frames (2^order)
-/// 
+///
 /// # Returns
 /// * `Some(Frame)` - First frame of the allocated range
 /// * `None` - If allocation fails due to insufficient memory
@@ -70,9 +70,9 @@ pub fn allocate_p2frame(order: u32) -> Option<Frame> {
 }
 
 /// Allocate a single frame
-/// 
+///
 /// This is a convenience function equivalent to `allocate_p2frame(0)`.
-/// 
+///
 /// # Returns
 /// * `Some(Frame)` - The allocated frame
 /// * `None` - If no frames are available
@@ -991,19 +991,19 @@ pub trait ArchIntCtx {
 }
 
 /// Handle page faults by attempting to resolve them through memory grants
-/// 
+///
 /// This is a critical security function that validates memory accesses and
 /// provides demand paging for mapped but unallocated memory regions.
-/// 
+///
 /// # Arguments
 /// * `stack` - Architecture-specific interrupt context for potential error recovery
 /// * `code` - Page fault flags indicating the type of fault (read/write, user/kernel, etc.)
 /// * `faulting_address` - Virtual address that caused the page fault
-/// 
+///
 /// # Returns
 /// * `Ok(())` - Page fault was successfully resolved
 /// * `Err(Segv)` - Invalid memory access that should trigger a segmentation fault
-/// 
+///
 /// # Security Notes
 /// This function performs critical security checks to prevent unauthorized memory access.
 /// It validates permissions and ensures proper isolation between processes.

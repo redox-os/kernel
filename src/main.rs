@@ -93,6 +93,9 @@ mod cpu_set;
 #[cfg(feature = "sys_stat")]
 mod cpu_stats;
 
+/// CPU topology management for multi-core support
+mod cpu_topology;
+
 /// Context management
 mod context;
 
@@ -191,6 +194,12 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
 
+    // Initialize CPU topology detection for multi-core support
+    if let Err(e) = cpu_topology::init_cpu_topology() {
+        log::warn!("CPU topology detection failed: {}", e);
+        log::warn!("Multi-core support may be limited on hybrid CPUs");
+    }
+
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
@@ -232,20 +241,47 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    // TODO: workaround for bug where an AP on MeteorLake has cpu_id 0
-    // Enhanced debugging to help identify APIC ID mismatch issues on modern CPUs
+    // Enhanced multi-core support with topology-aware APIC ID handling
     if !cfg!(feature = "multi_core") {
         info!("AP {}: Multi-core disabled, halting AP", cpu_id);
     } else if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
-        warn!("AP {}: Unexpected BSP CPU ID on AP - potential APIC ID mismatch (Alder Lake+)", cpu_id);
-        // Log additional debug info for troubleshooting
+        // Get current APIC ID for detailed diagnosis
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        let current_apic_id = unsafe { crate::arch::device::local_apic::LOCAL_APIC.read().id() };
+        #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+        let current_apic_id = 0;
+
+        warn!(
+            "AP {}: Unexpected BSP CPU ID on AP - APIC ID mismatch detected",
+            cpu_id
+        );
+        warn!("  Current APIC ID: {}", current_apic_id);
+
+        // Try to find correct logical CPU ID from topology
+        if let Some(correct_logical_id) =
+            crate::cpu_topology::get_logical_cpu_for_apic_id(current_apic_id)
         {
-            let apic_id = unsafe { crate::arch::device::local_apic::LOCAL_APIC.read().id() };
-            warn!("AP with logical CPU ID {} has APIC ID {}", cpu_id, apic_id);
+            warn!(
+                "  Topology suggests logical CPU ID should be: {}",
+                correct_logical_id
+            );
+            info!(
+                "  Hybrid architecture: {}",
+                crate::cpu_topology::is_hybrid_architecture()
+            );
+
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            if let Some(core_type) = crate::cpu_topology::get_core_type(correct_logical_id) {
+                info!("  Core type: {}", core_type);
+            }
+        } else {
+            warn!(
+                "  APIC ID {} not found in detected topology - possible firmware issue",
+                current_apic_id
+            );
         }
     }
-    
+
     if !cfg!(feature = "multi_core") || cpu_id == crate::cpu_set::LogicalCpuId::BSP {
         loop {
             unsafe {

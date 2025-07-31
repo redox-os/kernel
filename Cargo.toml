@@ -49,8 +49,11 @@ sbi-rt = "0.0.3"
 [features]
 default = [
   "acpi",
-  #TODO: issues with Alder Lake and newer CPUs: "multi_core",
-  # This may be because of mismatch between cpu id and apic id
+  # TODO: Re-enable after comprehensive testing of hybrid CPU topology fixes
+  # Previous issues with Alder Lake+ CPUs due to APIC ID vs CPU ID mismatch
+  # should now be better handled with extended topology detection (CPUID 1F/0B)
+  # and proper P-core/E-core identification. Enable cautiously for testing.
+  #"multi_core",
   "graphical_debug",
   "serial_debug",
   "self_modifying",
