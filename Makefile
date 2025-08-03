@@ -17,12 +17,14 @@ GNU_TARGET=$(ARCH)-unknown-redox
 all: $(BUILD)/kernel $(BUILD)/kernel.sym
 
 LD_SCRIPT=$(SOURCE)/linkers/$(ARCH).ld
+LOCKFILE=$(SOURCE)/Cargo.lock
+MANIFEST=$(SOURCE)/Cargo.toml
 TARGET_SPEC=$(RUST_TARGET_PATH)/$(ARCH)-unknown-kernel.json
 
-$(BUILD)/kernel.all: $(LD_SCRIPT) $(TARGET_SPEC) $(shell find $(SOURCE) -name "*.rs" -type f)
+$(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell find $(SOURCE) -name "*.rs" -type f)
 	cargo rustc \
 		--bin kernel \
-		--manifest-path "$(SOURCE)/Cargo.toml" \
+		--manifest-path "$(MANIFEST)" \
 		--target "$(TARGET_SPEC)" \
 		--release \
 		-Z build-std=core,alloc \
