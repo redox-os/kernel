@@ -11,6 +11,9 @@ endif
 ifeq ($(ARCH),riscv64gc)
 	override ARCH:=riscv64
 endif
+ifeq ($(ARCH),arm64)
+	override ARCH:=aarch64
+endif
 GNU_TARGET=$(ARCH)-unknown-redox
 
 

@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use fdt::Fdt;
 
 pub mod cpu;
+#[cfg(feature = "general_timer")]
 pub mod generic_timer;
 pub mod irqchip;
 pub mod rtc;
@@ -10,6 +11,7 @@ pub mod serial;
 pub mod uart_pl011;
 
 use crate::dtb::irqchip::IRQ_CHIP;
+#[cfg(feature = "general_timer")]
 use irqchip::ic_for_chip;
 
 pub static ROOT_IC_IDX: AtomicUsize = AtomicUsize::new(0);
@@ -40,8 +42,11 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
     info!("IRQCHIP INIT");
     crate::dtb::irqchip::init(&fdt);
     init_root_ic(&fdt);
-    info!("GIT INIT");
-    generic_timer::init(fdt);
+    #[cfg(feature = "general_timer")]
+    {
+        info!("GIT INIT");
+        generic_timer::init(fdt);
+    }
     info!("SERIAL INIT");
     serial::init(fdt);
     info!("RTC INIT");
