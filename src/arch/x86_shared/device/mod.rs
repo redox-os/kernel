@@ -1,5 +1,5 @@
-use core::cell::Cell;
 use crate::memory::KernelMapper;
+use core::cell::Cell;
 
 pub mod cpu;
 #[cfg(feature = "acpi")]

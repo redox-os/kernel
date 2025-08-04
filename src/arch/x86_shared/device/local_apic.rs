@@ -96,7 +96,8 @@ impl LocalApic {
 
         PercpuBlock::current()
             .misc_arch_info
-            .apic_id_opt.set(Some(self.id()));
+            .apic_id_opt
+            .set(Some(self.id()));
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
