@@ -309,7 +309,9 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
 
 #[allow(dead_code)]
 pub unsafe fn init(active_table: &mut KernelMapper) {
-    let bsp_apic_id = ApicId::new(u32::from(cpuid().get_feature_info().unwrap().initial_local_apic_id())); // TODO: remove unwraps
+    let bsp_apic_id = ApicId::new(u32::from(
+        cpuid().get_feature_info().unwrap().initial_local_apic_id(),
+    )); // TODO: remove unwraps
 
     // search the madt for all IOAPICs.
     #[cfg(feature = "acpi")]

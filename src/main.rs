@@ -21,6 +21,8 @@
 #![allow(clippy::too_many_arguments)]
 // There is no harm in this being done
 #![allow(clippy::useless_format)]
+// There is no harm in this being done
+#![feature(let_chains)]
 // TODO: address ocurrances and then deny
 #![warn(clippy::not_unsafe_ptr_arg_deref)]
 // TODO: address ocurrances and then deny
