@@ -25,8 +25,8 @@ pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
 
 #[cfg(not(feature = "multi_core"))]
 #[inline(always)]
-pub fn ipi_single(_kind: IpiKind, _target: crate::cpu_set::LogicalCpuId) {}
+pub fn ipi_single(_kind: IpiKind, _target: crate::percpu::PercpuBlock) {}
 
 #[cfg(feature = "multi_core")]
 #[inline(always)]
-pub fn ipi_single(_kind: IpiKind, _target: crate::cpu_set::LogicalCpuId) {}
+pub fn ipi_single(_kind: IpiKind, _target: crate::percpu::PercpuBlock) {}

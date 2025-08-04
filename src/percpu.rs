@@ -106,7 +106,7 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
             }
         }
 
-        crate::ipi::ipi_single(crate::ipi::IpiKind::Tlb, target);
+        crate::ipi::ipi_single(crate::ipi::IpiKind::Tlb, &percpublock);
     } else {
         for id in 0..crate::cpu_count() {
             // TODO: Optimize: use global counter and percpu ack counters, send IPI using

@@ -7,9 +7,23 @@ use x86::msr::*;
 use crate::{
     ipi::IpiKind,
     paging::{PageFlags, PhysicalAddress},
+    percpu::PercpuBlock,
 };
 
 use crate::{arch::cpuid::cpuid, memory::KernelMapper};
+
+#[derive(Clone, Copy, Debug)]
+pub struct ApicId(u32);
+
+impl ApicId {
+    pub fn new(inner: u32) -> Self {
+        Self(inner)
+    }
+
+    pub fn get(&self) -> u32 {
+        self.0
+    }
+}
 
 static LOCAL_APIC: SyncUnsafeCell<LocalApic> = SyncUnsafeCell::new(LocalApic {
     address: 0,
@@ -79,6 +93,10 @@ impl LocalApic {
         }
         self.setup_error_int();
         //self.setup_timer();
+
+        PercpuBlock::current()
+            .misc_arch_info
+            .apic_id_opt.set(Some(self.id()));
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
@@ -89,12 +107,12 @@ impl LocalApic {
         write_volatile((self.address + reg as usize) as *mut u32, value);
     }
 
-    pub fn id(&self) -> u32 {
-        if self.x2 {
+    pub fn id(&self) -> ApicId {
+        ApicId::new(if self.x2 {
             unsafe { rdmsr(IA32_X2APIC_APICID) as u32 }
         } else {
             unsafe { self.read(0x20) }
-        }
+        })
     }
 
     pub fn version(&self) -> u32 {
@@ -133,18 +151,13 @@ impl LocalApic {
         }
     }
 
-    pub fn ipi(&mut self, apic_id: u32, kind: IpiKind) {
-        let mut icr = 0x40 | kind as u64;
-        if self.x2 {
-            icr |= u64::from(apic_id) << 32;
-        } else {
-            icr |= u64::from(apic_id) << 56;
-        }
-        self.set_icr(icr);
-    }
-    pub fn ipi_nmi(&mut self, apic_id: u32) {
+    pub fn ipi(&mut self, apic_id: ApicId, kind: IpiKind) {
         let shift = if self.x2 { 32 } else { 56 };
-        self.set_icr((u64::from(apic_id) << shift) | (1 << 14) | (0b100 << 8));
+        self.set_icr((u64::from(apic_id.get()) << shift) | (1 << 6) | kind as u64);
+    }
+    pub fn ipi_nmi(&mut self, apic_id: ApicId) {
+        let shift = if self.x2 { 32 } else { 56 };
+        self.set_icr((u64::from(apic_id.get()) << shift) | (1 << 14) | (0b100 << 8));
     }
 
     pub unsafe fn eoi(&mut self) {

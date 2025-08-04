@@ -15,12 +15,12 @@ static TRAMPOLINE_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/trampo
 
 pub(super) fn init(madt: Madt) {
     let local_apic = unsafe { the_local_apic() };
-    let me = local_apic.id() as u8;
+    let me = local_apic.id();
 
     if local_apic.x2 {
-        println!("    X2APIC {}", me);
+        println!("    X2APIC {}", me.get());
     } else {
-        println!("    XAPIC {}: {:>08X}", me, local_apic.address);
+        println!("    XAPIC {}: {:>08X}", me.get(), local_apic.address);
     }
 
     if cfg!(feature = "multi_core") {
@@ -53,7 +53,7 @@ pub(super) fn init(madt: Madt) {
             println!("      {:x?}", madt_entry);
             match madt_entry {
                 MadtEntry::LocalApic(ap_local_apic) => {
-                    if ap_local_apic.id == me {
+                    if u32::from(ap_local_apic.id) == me.get() {
                         println!("        This is my local APIC");
                     } else {
                         if ap_local_apic.flags & 1 == 1 {
@@ -98,9 +98,9 @@ pub(super) fn init(madt: Madt) {
                             {
                                 let mut icr = 0x4500;
                                 if local_apic.x2 {
-                                    icr |= (ap_local_apic.id as u64) << 32;
+                                    icr |= u64::from(ap_local_apic.id) << 32;
                                 } else {
-                                    icr |= (ap_local_apic.id as u64) << 56;
+                                    icr |= u64::from(ap_local_apic.id) << 56;
                                 }
                                 print!(" IPI...");
                                 local_apic.set_icr(icr);
@@ -113,9 +113,9 @@ pub(super) fn init(madt: Madt) {
                                 let mut icr = 0x4600 | ap_segment as u64;
 
                                 if local_apic.x2 {
-                                    icr |= (ap_local_apic.id as u64) << 32;
+                                    icr |= u64::from(ap_local_apic.id) << 32;
                                 } else {
-                                    icr |= (ap_local_apic.id as u64) << 56;
+                                    icr |= u64::from(ap_local_apic.id) << 56;
                                 }
 
                                 print!(" SIPI...");

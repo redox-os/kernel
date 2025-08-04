@@ -12,7 +12,7 @@ use crate::{
     paging::{entry::EntryFlags, Page, PageFlags, PhysicalAddress},
 };
 
-use super::pic;
+use super::{local_apic::ApicId, pic};
 use crate::arch::cpuid::cpuid;
 #[cfg(target_arch = "x86_64")]
 use {crate::memory::RmmA, rmm::Arch};
@@ -112,6 +112,7 @@ impl IoApic {
         guard.write_ioredtbl(idx, reg);
     }
 }
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
 pub enum ApicTriggerMode {
@@ -145,7 +146,7 @@ pub enum DeliveryMode {
 
 #[derive(Clone, Copy, Debug)]
 pub struct MapInfo {
-    pub dest: u8,
+    pub dest: ApicId,
     pub mask: bool,
     pub trigger_mode: ApicTriggerMode,
     pub polarity: ApicPolarity,
@@ -161,7 +162,7 @@ impl MapInfo {
 
         // TODO: Check for reserved fields.
 
-        (u64::from(self.dest) << 56)
+        (u64::from(self.dest.get()) << 56)
             | (u64::from(self.mask) << 16)
             | ((self.trigger_mode as u64) << 15)
             | ((self.polarity as u64) << 13)
@@ -308,7 +309,7 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
 
 #[allow(dead_code)]
 pub unsafe fn init(active_table: &mut KernelMapper) {
-    let bsp_apic_id = cpuid().get_feature_info().unwrap().initial_local_apic_id(); // TODO: remove unwraps
+    let bsp_apic_id = ApicId::new(u32::from(cpuid().get_feature_info().unwrap().initial_local_apic_id())); // TODO: remove unwraps
 
     // search the madt for all IOAPICs.
     #[cfg(feature = "acpi")]

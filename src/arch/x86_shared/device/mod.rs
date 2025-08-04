@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use crate::memory::KernelMapper;
 
 pub mod cpu;
@@ -75,6 +76,7 @@ pub unsafe fn init_ap() {
 
 #[derive(Default)]
 pub struct ArchPercpuMisc {
+    pub apic_id_opt: Cell<Option<local_apic::ApicId>>,
     #[cfg(feature = "x86_kvm_pv")]
     pub tsc_info: tsc::TscPercpu,
 }
