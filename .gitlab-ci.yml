@@ -22,7 +22,7 @@ fmt:
   stage: host
   script:
       - rustup component add rustfmt
-      - cargo fmt -- --check
+      - rustfmt --check
 
 unit_test:
   stage: test
