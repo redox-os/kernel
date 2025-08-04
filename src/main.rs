@@ -21,12 +21,6 @@
 #![allow(clippy::too_many_arguments)]
 // There is no harm in this being done
 #![allow(clippy::useless_format)]
-// TODO: Rust 2024 edition deprecating this
-#![allow(unsafe_op_in_unsafe_fn)]
-// TODO: Rust 2024 edition erroring this
-#![warn(unsafe_attr_outside_unsafe)]
-// TODO: Rust 2024 edition erroring this
-#![warn(missing_unsafe_on_extern)]
 // TODO: address ocurrances and then deny
 #![warn(clippy::not_unsafe_ptr_arg_deref)]
 // TODO: address ocurrances and then deny
