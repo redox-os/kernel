@@ -153,7 +153,7 @@ impl LocalApic {
 
     pub fn ipi(&mut self, apic_id: ApicId, kind: IpiKind) {
         let shift = if self.x2 { 32 } else { 56 };
-        self.set_icr((u64::from(apic_id.get()) << shift) | (1 << 6) | kind as u64);
+        self.set_icr((u64::from(apic_id.get()) << shift) | 0x40 | kind as u64);
     }
     pub fn ipi_nmi(&mut self, apic_id: ApicId) {
         let shift = if self.x2 { 32 } else { 56 };
