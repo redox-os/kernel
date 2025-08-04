@@ -6,8 +6,7 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use spin::RwLock;
-use syscall::UPPER_FDTBL_TAG;
-use syscall::{SigProcControl, Sigcontrol};
+use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;

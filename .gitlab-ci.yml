@@ -21,8 +21,8 @@ build:
 fmt:
   stage: host
   script:
-      - rustup component add rustfmt-preview
-      - cargo fmt -- --check
+      - rustup component add rustfmt
+      - rustfmt --check
 
 unit_test:
   stage: test
