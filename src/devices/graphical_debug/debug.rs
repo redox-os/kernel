@@ -38,8 +38,7 @@ impl DebugDisplay {
             self.scroll(d_y * 16);
 
             unsafe {
-                self.display
-                    .sync(0, 0, self.display.width, self.display.height);
+                self.display.sync_screen();
             }
 
             self.y = new_y;
@@ -65,7 +64,12 @@ impl DebugDisplay {
     /// Draw a character
     fn char(&mut self, x: usize, y: usize, character: char, color: u32) {
         if x + 8 <= self.display.width && y + 16 <= self.display.height {
-            let mut dst = unsafe { self.display.data_mut().add(y * self.display.stride + x) };
+            let phys_y = (self.display.offset_y + y) % self.display.height;
+            let mut dst = unsafe {
+                self.display
+                    .data_mut()
+                    .add(phys_y * self.display.stride + x)
+            };
 
             let font_i = 16 * (character as usize);
             if font_i + 16 <= FONT.len() {
@@ -78,7 +82,13 @@ impl DebugDisplay {
                             }
                         }
                     }
-                    dst = unsafe { dst.add(self.display.stride) };
+
+                    let next_phys_y = (phys_y + row + 1) % self.display.height;
+                    dst = unsafe {
+                        self.display
+                            .data_mut()
+                            .add(next_phys_y * self.display.stride + x)
+                    };
                 }
             }
         }
@@ -86,12 +96,17 @@ impl DebugDisplay {
 
     /// Scroll the screen
     fn scroll(&mut self, lines: usize) {
-        let offset = cmp::min(self.display.height, lines) * self.display.stride;
-        let size = (self.display.stride * self.display.height) - offset;
-        unsafe {
-            let ptr = self.display.data_mut();
-            ptr::copy(ptr.add(offset), ptr, size);
-            ptr::write_bytes(ptr.add(size), 0, offset);
+        let lines = cmp::min(self.h * 16, lines); // clamp
+        self.display.offset_y = (self.display.offset_y + lines) % self.display.height;
+
+        // clear the new lines
+        let start_y = (self.display.offset_y + self.h * 16 - lines) % self.display.height;
+        for row in 0..lines {
+            let y = (start_y + row) % self.display.height;
+            unsafe {
+                let ptr = self.display.data_mut().add(y * self.display.stride);
+                ptr::write_bytes(ptr, 0, self.display.stride);
+            }
         }
     }
 }
