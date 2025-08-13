@@ -56,6 +56,7 @@ default = [
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",
+  #TODO: got EL1 trap on HVF darwin qemu accel: "generic_timer",
   #"syscall_debug"
 ]
 
@@ -70,6 +71,7 @@ profiling = []
 #TODO: remove when threading issues are fixed
 pti = []
 qemu_debug = []
+generic_timer = []
 serial_debug = []
 system76_ec_debug = []
 slab = ["slab_allocator"]
