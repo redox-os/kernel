@@ -78,29 +78,59 @@ pub unsafe fn esr_el1() -> u32 {
     ret
 }
 
-pub unsafe fn cntfreq_el0() -> u32 {
+pub unsafe fn vhe_present() -> bool {
+    let mut mmfr1: u64;
+    asm!("mrs {}, id_aa64mmfr1_el1", out(reg) mmfr1);
+
+    // The VHE (Virtualization Host Extensions) field is in bits [7:4].
+    let vhe_field = (mmfr1 >> 4) & 0b1111;
+
+    vhe_field != 0
+}
+
+pub unsafe fn cntfrq_el0() -> u32 {
     let ret: usize;
     asm!("mrs {}, cntfrq_el0", out(reg) ret);
     ret as u32
 }
 
-pub unsafe fn tmr_ctrl() -> u32 {
+pub unsafe fn ptmr_ctrl() -> u32 {
+    let ret: usize;
+    asm!("mrs {}, cntp_ctl_el0", out(reg) ret);
+    ret as u32
+}
+
+pub unsafe fn ptmr_ctrl_write(val: u32) {
+    asm!("msr cntp_ctl_el0, {}", in(reg) val as usize);
+}
+
+pub unsafe fn ptmr_tval() -> u32 {
+    let ret: usize;
+    asm!("mrs {0}, cntp_tval_el0", out(reg) ret);
+    ret as u32
+}
+
+pub unsafe fn ptmr_tval_write(val: u32) {
+    asm!("msr cntp_tval_el0, {}", in(reg) val as usize);
+}
+
+pub unsafe fn vtmr_ctrl() -> u32 {
     let ret: usize;
     asm!("mrs {}, cntv_ctl_el0", out(reg) ret);
     ret as u32
 }
 
-pub unsafe fn tmr_ctrl_write(val: u32) {
+pub unsafe fn vtmr_ctrl_write(val: u32) {
     asm!("msr cntv_ctl_el0, {}", in(reg) val as usize);
 }
 
-pub unsafe fn tmr_tval() -> u32 {
+pub unsafe fn vtmr_tval() -> u32 {
     let ret: usize;
     asm!("mrs {0}, cntv_tval_el0", out(reg) ret);
     ret as u32
 }
 
-pub unsafe fn tmr_tval_write(val: u32) {
+pub unsafe fn vtmr_tval_write(val: u32) {
     asm!("msr cntv_tval_el0, {}", in(reg) val as usize);
 }
 
