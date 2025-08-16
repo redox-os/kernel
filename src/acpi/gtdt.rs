@@ -49,10 +49,7 @@ impl Gtdt {
 
         let gsiv = gtdt.non_secure_el1_timer_gsiv;
         log::info!("generic_timer gsiv = {}", gsiv);
-        let mut timer = GenericTimer {
-            clk_freq: 0,
-            reload_count: 0,
-        };
+        let mut timer = GenericTimer::new();
         timer.init();
         register_irq(gsiv, Box::new(timer));
         unsafe { IRQ_CHIP.irq_enable(gsiv as u32) };
