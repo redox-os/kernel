@@ -140,7 +140,7 @@ impl KernelScheme for RootScheme {
                 scheme,
                 number,
                 offset: 0,
-                flags: (O_CREAT | O_RDONLY) as u32,
+                flags: (O_CREAT | O_RDWR) as u32,
                 internal_flags: InternalFlags::empty(),
             },
         ))))
