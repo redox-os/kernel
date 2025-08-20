@@ -20,7 +20,7 @@ use crate::{
     syscall::{
         data::Stat,
         error::*,
-        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT},
+        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT, O_RDONLY},
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
@@ -128,9 +128,9 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn kdup(&self, id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
+    fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
         log::info!("kdup called with id {}", old_id);
-        let scheme = match self.handles.read().get(&id).ok_or(Error::new(EBADF))? {
+        let scheme = match self.handles.read().get(&old_id).ok_or(Error::new(EBADF))? {
             Handle::Scheme(inner) => inner.scheme_id,
             _ => return Err(Error::new(EBADF)),
         };
@@ -140,7 +140,7 @@ impl KernelScheme for RootScheme {
                 scheme,
                 number,
                 offset: 0,
-                flags: O_CREAT,
+                flags: (O_CREAT | O_RDONLY) as u32,
                 internal_flags: InternalFlags::empty(),
             },
         ))))
