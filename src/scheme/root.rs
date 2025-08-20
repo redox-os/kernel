@@ -20,7 +20,7 @@ use crate::{
     syscall::{
         data::Stat,
         error::*,
-        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT, O_RDONLY},
+        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT, O_RDWR},
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
