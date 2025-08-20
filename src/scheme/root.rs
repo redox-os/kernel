@@ -128,6 +128,24 @@ impl KernelScheme for RootScheme {
         }
     }
 
+    fn kdup(&self, id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
+        log::info!("kdup called with id {}", old_id);
+        let scheme = match self.handles.read().get(&id).ok_or(Error::new(EBADF))? {
+            Handle::Scheme(inner) => inner.scheme_id,
+            _ => return Err(Error::new(EBADF)),
+        };
+        let number = buf.read_usize()?;
+        Ok(OpenResult::External(Arc::new(RwLock::new(
+            FileDescription {
+                scheme,
+                number,
+                offset: 0,
+                flags: O_CREAT,
+                internal_flags: InternalFlags::empty(),
+            },
+        ))))
+    }
+
     fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
         let path = path.trim_matches('/');
 
