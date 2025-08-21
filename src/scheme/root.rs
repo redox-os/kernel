@@ -65,6 +65,7 @@ impl KernelScheme for RootScheme {
             if path.contains('/') {
                 return Err(Error::new(EINVAL));
             }
+            log::Info!("Creating scheme: {}", path);
 
             let context = Arc::downgrade(&context::current());
 
@@ -246,6 +247,7 @@ impl KernelScheme for RootScheme {
             .ok_or(Error::new(EBADF))?;
         match handle {
             Handle::Scheme(inner) => {
+                log::info!("Closing scheme: {}", inner.name);
                 scheme::schemes_mut().remove(inner.scheme_id);
             }
             _ => (),
