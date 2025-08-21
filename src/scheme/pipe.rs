@@ -25,9 +25,14 @@ use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult, StrOrBytes};
 // therefore only *one* pipe scheme.
 static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
+enum Handle {
+    Pipe(Arc<Pipe>),
+    OpenCapability,
+}
+
 // TODO: SLOB?
 // Using BTreeMap as hashbrown doesn't have a const constructor.
-static PIPES: RwLock<BTreeMap<usize, Arc<Pipe>>> = RwLock::new(BTreeMap::new());
+static PIPES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
 
 const MAX_QUEUE_SIZE: usize = 65536;
 
@@ -44,14 +49,14 @@ pub fn pipe() -> Result<(usize, usize)> {
 
     PIPES.write().insert(
         id,
-        Arc::new(Pipe {
+        Handle::Pipe(Arc::new(Pipe {
             queue: Mutex::new(VecDeque::new()),
             read_condition: WaitCondition::new(),
             write_condition: WaitCondition::new(),
             writer_is_alive: AtomicBool::new(true),
             reader_is_alive: AtomicBool::new(true),
             has_run_dup: AtomicBool::new(false),
-        }),
+        })),
     );
 
     Ok((id, id | WRITE_NOT_READ_BIT))
@@ -59,10 +64,23 @@ pub fn pipe() -> Result<(usize, usize)> {
 
 pub struct PipeScheme;
 
+impl PipeScheme {
+    fn get_pipe(key: usize) -> Result<Arc<Pipe>> {
+        PIPES
+            .read()
+            .get(&key)
+            .and_then(|handle| match handle {
+                Handle::Pipe(pipe) => Some(Arc::clone(pipe)),
+                _ => None,
+            })
+            .ok_or(Error::new(EBADF))
+    }
+}
+
 impl KernelScheme for PipeScheme {
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
         let (is_writer_not_reader, key) = from_raw_id(id);
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+        let pipe = Self::get_pipe(key)?;
 
         let mut ready = EventFlags::empty();
 
@@ -86,7 +104,7 @@ impl KernelScheme for PipeScheme {
     fn close(&self, id: usize) -> Result<()> {
         let (is_write_not_read, key) = from_raw_id(id);
 
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+        let pipe = Self::get_pipe(key)?;
         let scheme_id = GlobalSchemes::Pipe.scheme_id();
 
         let can_remove = if is_write_not_read {
@@ -125,7 +143,7 @@ impl KernelScheme for PipeScheme {
             return Err(Error::new(EINVAL));
         }
 
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+        let pipe = Self::get_pipe(key)?;
 
         if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
             return Err(Error::new(EBADF));
@@ -156,12 +174,18 @@ impl KernelScheme for PipeScheme {
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);
 
+        let pipe = match PIPES.read().get(&key).ok_or(Error::new(EBADF))? {
+            Handle::Pipe(pipe) => Arc::clone(pipe),
+            Handle::OpenCapability => {
+                let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+                return self.kopen(path, 0, _ctx);
+            }
+        };
+
         let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if buf == "write" {
             return Err(Error::new(EINVAL));
         }
-
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
 
         if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
             return Err(Error::new(EBADF));
@@ -185,7 +209,7 @@ impl KernelScheme for PipeScheme {
         if is_write_not_read {
             return Err(Error::new(EBADF));
         }
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+        let pipe = Self::get_pipe(key)?;
 
         loop {
             let mut vec = pipe.queue.lock();
@@ -241,7 +265,7 @@ impl KernelScheme for PipeScheme {
         if !is_write_not_read {
             return Err(Error::new(EBADF));
         }
-        let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
+        let pipe = Self::get_pipe(key)?;
 
         loop {
             let mut vec = pipe.queue.lock();
