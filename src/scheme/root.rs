@@ -65,7 +65,6 @@ impl KernelScheme for RootScheme {
             if path.contains('/') {
                 return Err(Error::new(EINVAL));
             }
-            log::info!("Creating scheme: {}", path);
 
             let context = Arc::downgrade(&context::current());
 

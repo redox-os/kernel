@@ -319,9 +319,6 @@ impl SchemeList {
         scheme_fn: impl FnOnce(SchemeId) -> (KernelSchemes, T),
     ) -> Result<(SchemeId, T)> {
         if let Some(names) = self.names.get(&ns) {
-            for name in names.keys() {
-                log::info!("Current namespace scneme: {}", name);
-            }
             if names.contains_key(name) {
                 return Err(Error::new(EEXIST));
             }
