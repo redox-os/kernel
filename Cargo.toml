@@ -25,7 +25,7 @@ arrayvec = { version = "0.7.4", default-features = false }
 slab = { version = "0.4", default-features = false }
 # TODO: Remove
 indexmap = { version = "2.5.0", default-features = false }
-strum_macros = "0.27"
+strum = { version = "0.27", features = ["derive"] }
 
 [dependencies.goblin]
 version = "0.2.1"
