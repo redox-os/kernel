@@ -418,7 +418,7 @@ impl KernelScheme for RootScheme {
             Handle::ReadGlobalSchemesCapability => {
                 let descriptions = Vec::from([Arc::new(RwLock::new(FileDescription {
                     scheme: GlobalSchemes::Pipe.scheme_id(),
-                    number: (*GlobalSchemes::Pipe).open_capability(),
+                    number: (*GlobalSchemes::Pipe).open_capability()?,
                     offset: 0,
                     flags: (O_CREAT | O_RDWR) as u32,
                     internal_flags: InternalFlags::empty(),
