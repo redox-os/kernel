@@ -565,7 +565,7 @@ pub enum KernelSchemes {
     Global(GlobalSchemes),
 }
 #[repr(u8)]
-#[derive(Clone, Copy, strum::IntoStaticStr, strum::EnumIter)]
+#[derive(Clone, Copy, strum::AsRefStr, strum::EnumIter)]
 #[strum(serialize_all = "snake_case")]
 pub enum GlobalSchemes {
     Debug = 1,
