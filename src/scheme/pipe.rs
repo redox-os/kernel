@@ -78,7 +78,7 @@ impl PipeScheme {
 }
 
 impl KernelScheme for PipeScheme {
-    fn open_capability() -> Result<usize> {
+    fn open_capability(&self) -> Result<usize> {
         let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
         PIPES.write().insert(id, Handle::OpenCapability);
         Ok(id)
