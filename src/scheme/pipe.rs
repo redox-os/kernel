@@ -75,6 +75,12 @@ impl PipeScheme {
             })
             .ok_or(Error::new(EBADF))
     }
+
+    pub fn open_capability() -> Result<usize> {
+        let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        PIPES.write().insert(id, Handle::OpenCapability);
+        Ok(id)
+    }
 }
 
 impl KernelScheme for PipeScheme {

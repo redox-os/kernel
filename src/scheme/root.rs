@@ -15,7 +15,7 @@ use crate::{
     scheme::{
         self,
         user::{UserInner, UserScheme},
-        FileDescription, SchemeId, SchemeNamespace,
+        FileDescription, FileDescriptor, GlobalSchemes, SchemeId, SchemeNamespace,
     },
     syscall::{
         data::Stat,
@@ -32,6 +32,7 @@ enum Handle {
     Scheme(Arc<UserInner>),
     File(Arc<Box<[u8]>>),
     List { ens: SchemeNamespace },
+    ReadGlobalSchemesCapability,
 }
 
 pub struct RootScheme {
@@ -64,6 +65,18 @@ impl KernelScheme for RootScheme {
 
             if path.contains('/') {
                 return Err(Error::new(EINVAL));
+            }
+
+            if path == "read_global_schemes_capability" {
+                static LOCK: AtomicBool = AtomicBool::new(false);
+                if LOCK.swap(true, Ordering::Relaxed) {
+                    return Err(Error::new(EEXIST));
+                }
+                let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                self.handles
+                    .write()
+                    .insert(id, Handle::ReadGlobalSchemesCapability);
+                return Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()));
             }
 
             let context = Arc::downgrade(&context::current());
@@ -184,6 +197,7 @@ impl KernelScheme for RootScheme {
             Handle::Scheme(_) => Err(Error::new(EBADF)),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Ok(0),
+            Handle::ReadGlobalSchemesCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -198,6 +212,7 @@ impl KernelScheme for RootScheme {
             Handle::Scheme(inner) => inner.fevent(flags),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EBADF)),
+            Handle::ReadGlobalSchemesCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -219,6 +234,7 @@ impl KernelScheme for RootScheme {
                 bytes_copied += buf.copy_common_bytes_from_slice(&inner)?;
             }
             Handle::List { .. } => (),
+            Handle::ReadGlobalSchemesCapability => (),
         }
 
         Ok(bytes_copied)
@@ -235,6 +251,7 @@ impl KernelScheme for RootScheme {
             Handle::Scheme(inner) => inner.fsync(),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EBADF)),
+            Handle::ReadGlobalSchemesCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -271,6 +288,10 @@ impl KernelScheme for RootScheme {
             Handle::Scheme(inner) => inner.read(buf, flags),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
+            Handle::ReadGlobalSchemesCapability => {
+                buf.copy_from_slice(GlobalSchemes::Pipe.as_ref().as_bytes())?;
+                Ok(GlobalSchemes::Pipe.as_ref().as_bytes().len())
+            }
         }
     }
     fn getdents(
@@ -322,6 +343,7 @@ impl KernelScheme for RootScheme {
             Handle::Scheme(inner) => inner.write(buf),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
+            Handle::ReadGlobalSchemesCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -345,6 +367,7 @@ impl KernelScheme for RootScheme {
                 st_mode: MODE_DIR,
                 ..Default::default()
             },
+            Handle::ReadGlobalSchemesCapability => Err(Error::new(EBADF)),
         })?;
 
         Ok(())
@@ -368,6 +391,7 @@ impl KernelScheme for RootScheme {
             Handle::Scheme(inner) => inner.call_fdwrite(descs, flags, arg, metadata),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
+            Handle::ReadGlobalSchemesCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -388,6 +412,40 @@ impl KernelScheme for RootScheme {
             Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
+            Handle::ReadGlobalSchemesCapability => {
+                let descriptions = Vec::from([Arc::new(RwLock::new(FileDescription {
+                    scheme: GlobalSchemes::Pipe.scheme_id(),
+                    number: (*GlobalSchemes::Pipe).open_capability(),
+                    offset: 0,
+                    flags: (O_CREAT | O_RDWR) as u32,
+                    internal_flags: InternalFlags::empty(),
+                }))]);
+                let cnt = descriptions.len();
+                if payload.len() != cnt * size_of::<usize>() {
+                    return Err(Error::new(EINVAL));
+                }
+                if descriptions.is_empty() {
+                    return Ok(0);
+                }
+                let current_lock = context::current();
+                let current = current_lock.write();
+
+                let files: Vec<FileDescriptor> = descriptions
+                    .into_iter()
+                    .map(|description| FileDescriptor {
+                        description,
+                        cloexec: true,
+                    })
+                    .collect();
+                let handles = current
+                    .bulk_add_files_posix(files)
+                    .ok_or(Error::new(EMFILE))?;
+                let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+                for (handle, chunk) in handles.iter().zip(payload_chunks) {
+                    chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
+                }
+                Ok(handles.len())
+            }
         }
     }
 }
