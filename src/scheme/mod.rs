@@ -13,7 +13,6 @@ use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use strum::IntoEnumIterator;
 use syscall::{CallFlags, EventFlags, MunmapFlags};
 
 use crate::{
