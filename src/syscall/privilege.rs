@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use core::convert::AsRef;
+use strum::IntoEnumIterator;
 
 use crate::{context, scheme, syscall::error::*};
 
