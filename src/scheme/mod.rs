@@ -392,6 +392,10 @@ pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
 
 #[allow(unused_variables)]
 pub trait KernelScheme: Send + Sync + 'static {
+    fn open_capability() -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+
     fn kopen(&self, path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         Err(Error::new(ENOENT))
     }

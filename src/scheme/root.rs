@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::{
     str,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
 use spin::RwLock;
@@ -11,11 +11,14 @@ use syscall::{
 };
 
 use crate::{
-    context::{self, file::InternalFlags},
+    context::{
+        self,
+        file::{FileDescriptor, InternalFlags},
+    },
     scheme::{
         self,
         user::{UserInner, UserScheme},
-        FileDescription, FileDescriptor, GlobalSchemes, SchemeId, SchemeNamespace,
+        FileDescription, GlobalSchemes, SchemeId, SchemeNamespace,
     },
     syscall::{
         data::Stat,
@@ -367,7 +370,7 @@ impl KernelScheme for RootScheme {
                 st_mode: MODE_DIR,
                 ..Default::default()
             },
-            Handle::ReadGlobalSchemesCapability => Err(Error::new(EBADF)),
+            Handle::ReadGlobalSchemesCapability => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())

@@ -75,15 +75,14 @@ impl PipeScheme {
             })
             .ok_or(Error::new(EBADF))
     }
+}
 
-    pub fn open_capability() -> Result<usize> {
+impl KernelScheme for PipeScheme {
+    fn open_capability() -> Result<usize> {
         let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
         PIPES.write().insert(id, Handle::OpenCapability);
         Ok(id)
     }
-}
-
-impl KernelScheme for PipeScheme {
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
         let (is_writer_not_reader, key) = from_raw_id(id);
         let pipe = Self::get_pipe(key)?;
