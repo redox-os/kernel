@@ -8,6 +8,9 @@ use super::{
 };
 
 pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
+    for global_scheme in scheme::GlobalSchemes::iter() {
+        log::info!("global scheme: {}", global_scheme.into());
+    }
     let (uid, from) = match context::current().read() {
         ref cx => (cx.euid, cx.ens),
     };

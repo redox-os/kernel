@@ -576,12 +576,15 @@ pub enum GlobalSchemes {
     Irq,
     Time,
     Sys,
+    #[strum(serialize = "kernel.proc")]
     Proc,
 
     #[cfg(feature = "acpi")]
+    #[strum(serialize = "kernel.acpi")]
     Acpi,
 
     #[cfg(dtb)]
+    #[strum(serialize = "kernel.dtb")]
     Dtb,
 }
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
