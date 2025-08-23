@@ -8,11 +8,15 @@ use syscall::data::GlobalSchemes;
 
 use crate::{
     context::{
+        file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{AddrSpace, Grant, PageSpan},
         ContextRef,
     },
     event,
-    syscall::EventFlags,
+    syscall::{
+        flag::{O_CREAT, O_RDWR},
+        EventFlags,
+    },
 };
 
 use crate::{
@@ -146,7 +150,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             })
         }));
 
-        let kernel_scheme_info_page = addr_space
+        let kernel_schemes_info_page = addr_space
             .acquire_write()
             .mmap(
                 &addr_space,
@@ -157,26 +161,25 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
                 MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ,
                 &mut Vec::new(),
                 |page, flags, mapper, flusher| {
-                    let shared = true;
-                    Ok(Grant::from_data(
+                    let shared = false;
+                    Ok(Grant::zeroed(
                         PageSpan::new(page, KERNEL_SCHEMES_INFO_PAGE_COUNT),
                         flags,
                         mapper,
                         flusher,
                         shared,
-                        &kernel_schemes,
                     )?)
                 },
             )
             .expect("Failed to allocate kernel scheme info page");
         let metadata_slice = unsafe {
             core::slice::from_raw_parts_mut(
-                kernel_schemes_info_path.start_address().as_mut_ptr::<u8>(),
-                KERNEL_METADATA_PAGE_COUNT * PAGE_SIZE,
+                kernel_schemes_info_page.start_address().as_mut_ptr::<u8>(),
+                KERNEL_SCHEMES_INFO_PAGE_COUNT * PAGE_SIZE,
             )
         };
         assert_eq!(
-            kernel_scheme_page.start_address().data(),
+            kernel_schemes_info_page.start_address().data(),
             KERNEL_SCHEMES_BASE
         );
 
