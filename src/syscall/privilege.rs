@@ -1,7 +1,4 @@
 use alloc::vec::Vec;
-use core::convert::AsRef;
-use strum::IntoEnumIterator;
-use syscall::data::GlobalSchemes;
 
 use crate::{context, scheme, syscall::error::*};
 
@@ -11,9 +8,6 @@ use super::{
 };
 
 pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
-    for global_scheme in GlobalSchemes::iter() {
-        log::info!("global scheme: {}", global_scheme.as_ref());
-    }
     let (uid, from) = match context::current().read() {
         ref cx => (cx.euid, cx.ens),
     };
