@@ -5,7 +5,6 @@
 use crate::{
     event,
     percpu::PercpuBlock,
-    scheme::GlobalSchemes,
     sync::WaitCondition,
     syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
 };
@@ -13,6 +12,7 @@ use crate::{
 use alloc::{collections::VecDeque, sync::Arc};
 use core::cmp;
 use spin::Mutex;
+use syscall::data::GlobalSchemes;
 
 //  ____                _
 // / ___|  ___  ___ ___(_) ___  _ __  ___

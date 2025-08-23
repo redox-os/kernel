@@ -13,7 +13,10 @@ use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::{CallFlags, EventFlags, MunmapFlags};
+use syscall::{
+    data::{GlobalSchemes, MAX_GLOBAL_SCHEMS},
+    CallFlags, EventFlags, MunmapFlags,
+};
 
 use crate::{
     context::{
@@ -568,34 +571,6 @@ pub enum KernelSchemes {
     User(UserScheme),
     Global(GlobalSchemes),
 }
-#[repr(u8)]
-#[derive(Clone, Copy, strum::AsRefStr, strum::EnumIter)]
-#[strum(serialize_all = "snake_case")]
-pub enum GlobalSchemes {
-    Debug = 1,
-    Event,
-    Memory,
-    Pipe,
-    Serio,
-    Irq,
-    Time,
-    Sys,
-    #[strum(serialize = "kernel.proc")]
-    Proc,
-
-    #[cfg(feature = "acpi")]
-    #[strum(serialize = "kernel.acpi")]
-    Acpi,
-
-    #[cfg(dtb)]
-    #[strum(serialize = "kernel.dtb")]
-    Dtb,
-}
-pub const MAX_GLOBAL_SCHEMES: usize = 16;
-
-const _: () = {
-    assert!(1 + core::mem::variant_count::<GlobalSchemes>() < MAX_GLOBAL_SCHEMES);
-};
 
 impl core::ops::Deref for KernelSchemes {
     type Target = dyn KernelScheme;
@@ -609,6 +584,11 @@ impl core::ops::Deref for KernelSchemes {
         }
     }
 }
+
+pub const MAX_GLOBAL_SCHEMES: usize = 16;
+const _: () = {
+    assert!(1 + core::mem::variant_count::<GlobalSchemes>() < MAX_GLOBAL_SCHEMES);
+};
 impl core::ops::Deref for GlobalSchemes {
     type Target = dyn KernelScheme;
 

@@ -3,6 +3,7 @@ use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
 use spin::RwLock;
+use syscall::data::GlobalSchemes;
 
 use crate::{
     context::{
@@ -10,7 +11,6 @@ use crate::{
         ContextRef,
     },
     event,
-    scheme::GlobalSchemes,
     syscall::EventFlags,
 };
 

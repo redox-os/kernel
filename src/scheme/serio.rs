@@ -6,6 +6,7 @@ use core::{
 };
 
 use spin::RwLock;
+use syscall::data::GlobalSchemes;
 
 use crate::{
     event,

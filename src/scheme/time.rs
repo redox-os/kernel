@@ -4,6 +4,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use spin::RwLock;
+use syscall::data::GlobalSchemes;
 
 use crate::{
     context::{file::InternalFlags, timeout},
@@ -16,7 +17,7 @@ use crate::{
     time,
 };
 
-use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.

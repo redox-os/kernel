@@ -6,6 +6,7 @@ use core::{
 use hashbrown::HashMap;
 use spin::RwLock;
 use syscall::{
+    data::GlobalSchemes,
     dirent::{DirEntry, DirentBuf, DirentKind},
     O_EXLOCK, O_FSYNC,
 };
@@ -18,7 +19,7 @@ use crate::{
     scheme::{
         self,
         user::{UserInner, UserScheme},
-        FileDescription, GlobalSchemes, SchemeId, SchemeNamespace,
+        FileDescription, SchemeId, SchemeNamespace,
     },
     syscall::{
         data::Stat,

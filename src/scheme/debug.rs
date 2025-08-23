@@ -1,5 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
+use syscall::data::GlobalSchemes;
 
 use crate::{
     arch::debug::Writer,

@@ -21,7 +21,7 @@ use crate::{
 
 use crate::context::context::FdTbl;
 
-use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
+use super::{CallerCtx, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
@@ -38,6 +38,7 @@ use core::{
 };
 use spin::RwLock;
 use spinning_top::RwSpinlock;
+use syscall::data::GlobalSchemes;
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
