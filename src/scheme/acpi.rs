@@ -30,7 +30,7 @@ use crate::syscall::{
     usercopy::UserSliceWo,
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;

@@ -5,6 +5,7 @@
 use crate::{
     event,
     percpu::PercpuBlock,
+    scheme::SchemeExt,
     sync::WaitCondition,
     syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
 };

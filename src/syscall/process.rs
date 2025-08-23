@@ -18,6 +18,7 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
+    scheme::SchemeExt,
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };

@@ -17,7 +17,7 @@ use crate::{
     time,
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 // Using BTreeMap as hashbrown doesn't have a const constructor.
