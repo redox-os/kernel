@@ -586,10 +586,11 @@ pub const MAX_GLOBAL_SCHEMES: usize = 16;
 const _: () = {
     assert!(1 + core::mem::variant_count::<GlobalSchemes>() < MAX_GLOBAL_SCHEMES);
 };
-impl core::ops::Deref for GlobalSchemes {
-    type Target = dyn KernelScheme;
-
-    fn deref(&self) -> &Self::Target {
+pub trait AsKernelScheme {
+    fn as_kernel_scheme(&self) -> &dyn KernelScheme;
+}
+impl AsKernelScheme for GlobalSchemes {
+    fn as_kernel_scheme(&self) -> &dyn KernelScheme {
         match self {
             Self::Debug => &DebugScheme,
             Self::Event => &EventScheme,
@@ -607,8 +608,32 @@ impl core::ops::Deref for GlobalSchemes {
         }
     }
 }
-impl GlobalSchemes {
-    pub fn scheme_id(self) -> SchemeId {
+// impl core::ops::Deref for GlobalSchemes {
+//     type Target = dyn KernelScheme;
+//
+//     fn deref(&self) -> &Self::Target {
+//         match self {
+//             Self::Debug => &DebugScheme,
+//             Self::Event => &EventScheme,
+//             Self::Memory => &MemoryScheme,
+//             Self::Pipe => &PipeScheme,
+//             Self::Serio => &SerioScheme,
+//             Self::Irq => &IrqScheme,
+//             Self::Time => &TimeScheme,
+//             Self::Sys => &SysScheme,
+//             Self::Proc => &ProcScheme,
+//             #[cfg(feature = "acpi")]
+//             Self::Acpi => &AcpiScheme,
+//             #[cfg(dtb)]
+//             Self::Dtb => &DtbScheme,
+//         }
+//     }
+// }
+trait GetSchemeId {
+    fn scheme_id(self) -> SchemeId;
+}
+impl GetSchemeId for GlobalSchemes {
+    fn scheme_id(self) -> SchemeId {
         SchemeId::new(self as usize)
     }
 }
