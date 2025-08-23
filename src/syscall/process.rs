@@ -3,6 +3,7 @@ use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
 use spin::RwLock;
+use strum::IntoEnumIterator;
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -111,6 +112,83 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
                 },
             )
             .expect("Failed to allocate bootstrap pages");
+
+        const KERNEL_SCHEMES_BASE: usize = 0x8000_0000_0000;
+        const KERNEL_SCHEMES_INFO_PAGE_COUNT: usize = 1;
+
+        let kernel_schemes_infos = Vec::from_iter(GlobalSchemes::iter().map(|s| {
+            (syscall::data::KernelSchemeInfo {
+                scheme_id: s.scheme_id().get() as u8,
+                fd: if matches!(s, GlobalSchemes::Pipe) {
+                    context::current()
+                        .write()
+                        .add_file_min(
+                            FileDescriptor {
+                                description: Arc::new(RwLock::new(FileDescription {
+                                    scheme: s.scheme_id(),
+                                    number: s
+                                        .as_scheme()
+                                        .open_capability()
+                                        .expect("failed to create_open_capability"),
+                                    offset: 0,
+                                    flags: (O_CREAT | O_RDWR) as u32,
+                                    internal_flags: InternalFlags::empty(),
+                                })),
+                                cloexec: false,
+                            },
+                            syscall::flag::UPPER_FDTBL_TAG + s.scheme_id(),
+                        )
+                        .expect("failed to create pipe scheme")
+                        .get()
+                } else {
+                    usize::MAX
+                },
+            })
+        }));
+
+        let kernel_scheme_info_page = addr_space
+            .acquire_write()
+            .mmap(
+                &addr_space,
+                Some(Page::containing_address(VirtualAddress::new(
+                    KERNEL_SCHEMES_BASE,
+                ))),
+                NonZeroUsize::new(KERNEL_SCHEMES_INFO_PAGE_COUNT).unwrap(),
+                MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ,
+                &mut Vec::new(),
+                |page, flags, mapper, flusher| {
+                    let shared = true;
+                    Ok(Grant::from_data(
+                        PageSpan::new(page, KERNEL_SCHEMES_INFO_PAGE_COUNT),
+                        flags,
+                        mapper,
+                        flusher,
+                        shared,
+                        &kernel_schemes,
+                    )?)
+                },
+            )
+            .expect("Failed to allocate kernel scheme info page");
+        let metadata_slice = unsafe {
+            core::slice::from_raw_parts_mut(
+                kernel_schemes_info_path.start_address().as_mut_ptr::<u8>(),
+                KERNEL_METADATA_PAGE_COUNT * PAGE_SIZE,
+            )
+        };
+        assert_eq!(
+            kernel_scheme_page.start_address().data(),
+            KERNEL_SCHEMES_BASE
+        );
+
+        unsafe {
+            *(metadata_slice.as_mut_ptr() as *mut usize) = kernel_schemes_infos.len();
+
+            let info_bytes = core::slice::from_raw_parts(
+                kernel_schemes_infos.as_ptr() as *const u8,
+                kernel_schemes_infos.len() * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+            );
+            metadata_slice[mem::size_of::<usize>()..].copy_from_slice(info_bytes);
+        }
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };

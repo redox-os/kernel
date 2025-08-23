@@ -242,7 +242,7 @@ checksum = "64072665120942deff5fd5425d6c1811b854f4939e7f1c01ce755f64432bbea7"
 [[package]]
 name = "redox_syscall"
 version = "0.5.17"
-source = "git+https://gitlab.redox-os.org/Ibuki.O/syscall.git?branch=global-schemes#607087bfd2919f20982d2505f8bbda85533648e5"
+source = "git+https://gitlab.redox-os.org/Ibuki.O/syscall.git?branch=global-schemes#24d3a423657908ef6bffde6359aa491ad7a3769c"
 dependencies = [
  "bitflags 2.9.1",
  "strum",
