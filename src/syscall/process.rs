@@ -120,35 +120,36 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
         const KERNEL_SCHEMES_BASE: usize = 0x8000_0000_0000;
         const KERNEL_SCHEMES_INFO_PAGE_COUNT: usize = 1;
 
-        let kernel_schemes_infos = Vec::from_iter(GlobalSchemes::iter().map(|s| {
-            (syscall::data::KernelSchemeInfo {
-                scheme_id: s.scheme_id().get() as u8,
-                fd: if matches!(s, GlobalSchemes::Pipe) {
-                    context::current()
-                        .write()
-                        .add_file_min(
-                            FileDescriptor {
-                                description: Arc::new(RwLock::new(FileDescription {
-                                    scheme: s.scheme_id(),
-                                    number: s
-                                        .as_scheme()
-                                        .open_capability()
-                                        .expect("failed to create_open_capability"),
-                                    offset: 0,
-                                    flags: (O_CREAT | O_RDWR) as u32,
-                                    internal_flags: InternalFlags::empty(),
-                                })),
-                                cloexec: false,
-                            },
-                            syscall::flag::UPPER_FDTBL_TAG + s.scheme_id(),
-                        )
-                        .expect("failed to create pipe scheme")
-                        .get()
-                } else {
-                    usize::MAX
-                },
-            })
-        }));
+        let kernel_schemes_infos =
+            Vec::from_iter(
+                GlobalSchemes::iter().map(|s| syscall::data::KernelSchemeInfo {
+                    scheme_id: s.scheme_id().get() as u8,
+                    fd: if matches!(s, GlobalSchemes::Pipe) {
+                        context::current()
+                            .write()
+                            .add_file_min(
+                                FileDescriptor {
+                                    description: Arc::new(RwLock::new(FileDescription {
+                                        scheme: s.scheme_id(),
+                                        number: s
+                                            .as_scheme()
+                                            .open_capability()
+                                            .expect("failed to create_open_capability"),
+                                        offset: 0,
+                                        flags: (O_CREAT | O_RDWR) as u32,
+                                        internal_flags: InternalFlags::empty(),
+                                    })),
+                                    cloexec: false,
+                                },
+                                syscall::flag::UPPER_FDTBL_TAG + s.scheme_id().get(),
+                            )
+                            .expect("failed to create pipe scheme")
+                            .get()
+                    } else {
+                        usize::MAX
+                    },
+                }),
+            );
 
         let kernel_schemes_info_page = addr_space
             .acquire_write()
@@ -174,7 +175,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             .expect("Failed to allocate kernel scheme info page");
         let metadata_slice = unsafe {
             core::slice::from_raw_parts_mut(
-                kernel_schemes_info_page.start_address().as_mut_ptr::<u8>(),
+                kernel_schemes_info_page.start_address().data() as *mut u8,
                 KERNEL_SCHEMES_INFO_PAGE_COUNT * PAGE_SIZE,
             )
         };
