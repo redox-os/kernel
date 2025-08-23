@@ -152,49 +152,49 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             };
         }
 
-        let kernel_schemes_info_page = addr_space
-            .acquire_write()
-            .mmap(
-                &addr_space,
-                Some(Page::containing_address(VirtualAddress::new(
-                    KERNEL_SCHEMES_BASE,
-                ))),
-                NonZeroUsize::new(KERNEL_SCHEMES_INFO_PAGE_COUNT).unwrap(),
-                MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ,
-                &mut Vec::new(),
-                |page, flags, mapper, flusher| {
-                    let shared = false;
-                    Ok(Grant::zeroed(
-                        PageSpan::new(page, KERNEL_SCHEMES_INFO_PAGE_COUNT),
-                        flags,
-                        mapper,
-                        flusher,
-                        shared,
-                    )?)
-                },
-            )
-            .expect("Failed to allocate kernel scheme info page");
-        let metadata_slice = unsafe {
-            core::slice::from_raw_parts_mut(
-                kernel_schemes_info_page.start_address().data() as *mut u8,
-                KERNEL_SCHEMES_INFO_PAGE_COUNT * PAGE_SIZE,
-            )
-        };
-        assert_eq!(
-            kernel_schemes_info_page.start_address().data(),
-            KERNEL_SCHEMES_BASE
-        );
+        // let kernel_schemes_info_page = addr_space
+        //     .acquire_write()
+        //     .mmap(
+        //         &addr_space,
+        //         Some(Page::containing_address(VirtualAddress::new(
+        //             KERNEL_SCHEMES_BASE,
+        //         ))),
+        //         NonZeroUsize::new(KERNEL_SCHEMES_INFO_PAGE_COUNT).unwrap(),
+        //         MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ,
+        //         &mut Vec::new(),
+        //         |page, flags, mapper, flusher| {
+        //             let shared = false;
+        //             Ok(Grant::zeroed(
+        //                 PageSpan::new(page, KERNEL_SCHEMES_INFO_PAGE_COUNT),
+        //                 flags,
+        //                 mapper,
+        //                 flusher,
+        //                 shared,
+        //             )?)
+        //         },
+        //     )
+        //     .expect("Failed to allocate kernel scheme info page");
+        // let metadata_slice = unsafe {
+        //     core::slice::from_raw_parts_mut(
+        //         kernel_schemes_info_page.start_address().data() as *mut u8,
+        //         KERNEL_SCHEMES_INFO_PAGE_COUNT * PAGE_SIZE,
+        //     )
+        // };
+        // assert_eq!(
+        //     kernel_schemes_info_page.start_address().data(),
+        //     KERNEL_SCHEMES_BASE
+        // );
 
-        unsafe {
-            *(metadata_slice.as_mut_ptr() as *mut usize) = KERNEL_SCHEMES_COUNT;
+        // unsafe {
+        //     *(metadata_slice.as_mut_ptr() as *mut usize) = KERNEL_SCHEMES_COUNT;
 
-            let header_size = mem::size_of::<usize>();
-            let info_bytes = core::slice::from_raw_parts(
-                kernel_schemes_infos.as_ptr() as *const u8,
-                KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
-            );
-            metadata_slice[header_size..header_size + info_bytes.len()].copy_from_slice(info_bytes);
-        }
+        //     let header_size = mem::size_of::<usize>();
+        //     let info_bytes = core::slice::from_raw_parts(
+        //         kernel_schemes_infos.as_ptr() as *const u8,
+        //         KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+        //     );
+        //     metadata_slice[header_size..header_size + info_bytes.len()].copy_from_slice(info_bytes);
+        // }
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
