@@ -1,7 +1,7 @@
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::{
     str,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
 use spin::RwLock;
@@ -25,7 +25,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, KernelScheme, KernelSchemes, OpenResult, SchemeExt};
+use super::{CallerCtx, KernelScheme, KernelSchemes, OpenResult};
 
 #[derive(Clone)]
 enum Handle {
