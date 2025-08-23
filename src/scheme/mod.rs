@@ -13,10 +13,7 @@ use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
 use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use syscall::{
-    data::{GlobalSchemes, MAX_GLOBAL_SCHEMS},
-    CallFlags, EventFlags, MunmapFlags,
-};
+use syscall::{data::GlobalSchemes, CallFlags, EventFlags, MunmapFlags};
 
 use crate::{
     context::{
