@@ -23,7 +23,7 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::SchemeExt,
+    scheme::{SchemeExt, MAX_GLOBAL_SCHEMES},
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
@@ -119,37 +119,38 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
 
         const KERNEL_SCHEMES_BASE: usize = 0x8000_0000_0000;
         const KERNEL_SCHEMES_INFO_PAGE_COUNT: usize = 1;
+        const KERNEL_SCHEMES_COUNT: usize = core::mem::variant_count::<GlobalSchemes>();
 
-        let kernel_schemes_infos =
-            Vec::from_iter(
-                GlobalSchemes::iter().map(|s| syscall::data::KernelSchemeInfo {
-                    scheme_id: s.scheme_id().get() as u8,
-                    fd: if matches!(s, GlobalSchemes::Pipe) {
-                        context::current()
-                            .write()
-                            .add_file_min(
-                                FileDescriptor {
-                                    description: Arc::new(RwLock::new(FileDescription {
-                                        scheme: s.scheme_id(),
-                                        number: s
-                                            .as_scheme()
-                                            .open_capability()
-                                            .expect("failed to create_open_capability"),
-                                        offset: 0,
-                                        flags: (O_CREAT | O_RDWR) as u32,
-                                        internal_flags: InternalFlags::empty(),
-                                    })),
-                                    cloexec: false,
-                                },
-                                syscall::flag::UPPER_FDTBL_TAG + s.scheme_id().get(),
-                            )
-                            .expect("failed to create pipe scheme")
-                            .get()
-                    } else {
-                        usize::MAX
-                    },
-                }),
-            );
+        let mut kernel_schemes_infos =
+            [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
+        for (i, scheme) in GlobalSchemes::iter().enumerate() {
+            kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
+                scheme_id: scheme.scheme_id().get() as u8,
+                fd: {
+                    let cap_fd = match scheme.as_scheme().open_capability() {
+                        Ok(fd) => fd,
+                        Err(_) => usize::MAX,
+                    };
+                    context::current()
+                        .write()
+                        .add_file_min(
+                            FileDescriptor {
+                                description: Arc::new(RwLock::new(FileDescription {
+                                    scheme: scheme.scheme_id(),
+                                    number: cap_fd,
+                                    offset: 0,
+                                    flags: (O_CREAT | O_RDWR) as u32,
+                                    internal_flags: InternalFlags::empty(),
+                                })),
+                                cloexec: false,
+                            },
+                            syscall::flag::UPPER_FDTBL_TAG + scheme.scheme_id().get(),
+                        )
+                        .expect("failed to create pipe scheme")
+                        .get()
+                },
+            };
+        }
 
         let kernel_schemes_info_page = addr_space
             .acquire_write()
@@ -185,13 +186,14 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
         );
 
         unsafe {
-            *(metadata_slice.as_mut_ptr() as *mut usize) = kernel_schemes_infos.len();
+            *(metadata_slice.as_mut_ptr() as *mut usize) = KERNEL_SCHEMES_COUNT;
 
+            let header_size = mem::size_of::<usize>();
             let info_bytes = core::slice::from_raw_parts(
                 kernel_schemes_infos.as_ptr() as *const u8,
-                kernel_schemes_infos.len() * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+                KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
             );
-            metadata_slice[mem::size_of::<usize>()..].copy_from_slice(info_bytes);
+            metadata_slice[header_size..header_size + info_bytes.len()].copy_from_slice(info_bytes);
         }
     }
 
