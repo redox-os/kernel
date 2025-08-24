@@ -152,28 +152,28 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             };
         }
 
-        // let kernel_schemes_info_page = addr_space
-        //     .acquire_write()
-        //     .mmap(
-        //         &addr_space,
-        //         Some(Page::containing_address(VirtualAddress::new(
-        //             KERNEL_SCHEMES_BASE,
-        //         ))),
-        //         NonZeroUsize::new(KERNEL_SCHEMES_INFO_PAGE_COUNT).unwrap(),
-        //         MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ,
-        //         &mut Vec::new(),
-        //         |page, flags, mapper, flusher| {
-        //             let shared = false;
-        //             Ok(Grant::zeroed(
-        //                 PageSpan::new(page, KERNEL_SCHEMES_INFO_PAGE_COUNT),
-        //                 flags,
-        //                 mapper,
-        //                 flusher,
-        //                 shared,
-        //             )?)
-        //         },
-        //     )
-        //     .expect("Failed to allocate kernel scheme info page");
+        let kernel_schemes_info_page = addr_space
+            .acquire_write()
+            .mmap(
+                &addr_space,
+                Some(Page::containing_address(VirtualAddress::new(
+                    KERNEL_SCHEMES_BASE,
+                ))),
+                NonZeroUsize::new(KERNEL_SCHEMES_INFO_PAGE_COUNT).unwrap(),
+                MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ,
+                &mut Vec::new(),
+                |page, flags, mapper, flusher| {
+                    let shared = false;
+                    Ok(Grant::zeroed(
+                        PageSpan::new(page, KERNEL_SCHEMES_INFO_PAGE_COUNT),
+                        flags,
+                        mapper,
+                        flusher,
+                        shared,
+                    )?)
+                },
+            )
+            .expect("Failed to allocate kernel scheme info page");
         // let metadata_slice = unsafe {
         //     core::slice::from_raw_parts_mut(
         //         kernel_schemes_info_page.start_address().data() as *mut u8,
