@@ -152,7 +152,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             };
         }
 
-        let kernel_schemes_info_page = addr_space
+        let _kernel_schemes_info_page = addr_space
             .acquire_write()
             .mmap(
                 &addr_space,
@@ -174,27 +174,25 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
                 },
             )
             .expect("Failed to allocate kernel scheme info page");
-        // let metadata_slice = unsafe {
-        //     core::slice::from_raw_parts_mut(
-        //         kernel_schemes_info_page.start_address().data() as *mut u8,
-        //         KERNEL_SCHEMES_INFO_PAGE_COUNT * PAGE_SIZE,
-        //     )
-        // };
-        // assert_eq!(
-        //     kernel_schemes_info_page.start_address().data(),
-        //     KERNEL_SCHEMES_BASE
-        // );
 
-        // unsafe {
-        //     *(metadata_slice.as_mut_ptr() as *mut usize) = KERNEL_SCHEMES_COUNT;
-
-        //     let header_size = mem::size_of::<usize>();
-        //     let info_bytes = core::slice::from_raw_parts(
-        //         kernel_schemes_infos.as_ptr() as *const u8,
-        //         KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
-        //     );
-        //     metadata_slice[header_size..header_size + info_bytes.len()].copy_from_slice(info_bytes);
-        // }
+        const HEADER_SIZE: usize = mem::size_of::<usize>();
+        UserSliceWo::new(KERNEL_SCHEMES_BASE, HEADER_SIZE)
+            .expect("failed to create kernel schemes header user slice")
+            .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
+            .expect("failed to copy kernel schemes count");
+        let info_bytes = unsafe {
+            core::slice::from_raw_parts(
+                kernel_schemes_infos.as_ptr() as *const u8,
+                KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+            )
+        };
+        UserSliceWo::new(
+            KERNEL_SCHEMES_BASE + HEADER_SIZE,
+            KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+        )
+        .expect("failed to create kernel schemes info user slice")
+        .copy_common_bytes_from_slice(info_bytes)
+        .expect("failed to copy kernel schemes info");
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
