@@ -176,10 +176,13 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             .expect("Failed to allocate kernel scheme info page");
 
         const HEADER_SIZE: usize = mem::size_of::<usize>();
-        UserSliceWo::new(kernel_schemes_info_page.start_address().data(), HEADER_SIZE)
-            .expect("failed to create kernel schemes header user slice")
-            .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
-            .expect("failed to copy kernel schemes count");
+        UserSliceWo::new(
+            kernel_schemes_info_page.start_address().data(),
+            KERNEL_SCHEMES_INFO_PAGE_COUNT * PAGE_SIZE,
+        )
+        .expect("failed to create kernel schemes header user slice")
+        .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
+        .expect("failed to copy kernel schemes count");
         let info_bytes = unsafe {
             core::slice::from_raw_parts(
                 kernel_schemes_infos.as_ptr() as *const u8,
