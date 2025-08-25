@@ -152,7 +152,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             };
         }
 
-        let _kernel_schemes_info_page = addr_space
+        let kernel_schemes_info_page = addr_space
             .acquire_write()
             .mmap(
                 &addr_space,
@@ -176,7 +176,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             .expect("Failed to allocate kernel scheme info page");
 
         const HEADER_SIZE: usize = mem::size_of::<usize>();
-        UserSliceWo::new(KERNEL_SCHEMES_BASE, HEADER_SIZE)
+        UserSliceWo::new(kernel_schemes_info_page.start_address().data(), HEADER_SIZE)
             .expect("failed to create kernel schemes header user slice")
             .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
             .expect("failed to copy kernel schemes count");
@@ -187,7 +187,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             )
         };
         UserSliceWo::new(
-            KERNEL_SCHEMES_BASE + HEADER_SIZE,
+            kernel_schemes_info_page.start_address().data() + HEADER_SIZE,
             KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
         )
         .expect("failed to create kernel schemes info user slice")
