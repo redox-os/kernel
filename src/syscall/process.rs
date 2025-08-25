@@ -195,13 +195,15 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
         .copy_common_bytes_from_slice(info_bytes)
         .expect("failed to copy kernel schemes info");
 
-        addr_space.mprotect(
-            PageSpan::new(
-                Page::containing_address(VirtualAddress::new(KERNEL_SCHEMES_BASE)),
-                KERNEL_SCHEMES_INFO_PAGE_COUNT,
-            ),
-            MapFlags::PROT_READ,
-        )?;
+        addr_space
+            .mprotect(
+                PageSpan::new(
+                    Page::containing_address(VirtualAddress::new(KERNEL_SCHEMES_BASE)),
+                    KERNEL_SCHEMES_INFO_PAGE_COUNT,
+                ),
+                MapFlags::PROT_READ,
+            )
+            .expect("failed to mprotect kernel schemes info page");
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
