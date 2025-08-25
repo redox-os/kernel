@@ -189,8 +189,6 @@ impl KernelScheme for PipeScheme {
                 return self.kopen(path, 0, _ctx);
             };
 
-        let pipe = Arc::clone(pipe_arc);
-
         let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if buf == "write" {
             return Err(Error::new(EINVAL));
