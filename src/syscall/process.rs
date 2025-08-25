@@ -23,7 +23,7 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{SchemeExt, MAX_GLOBAL_SCHEMES},
+    scheme::SchemeExt,
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
@@ -161,7 +161,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
                     KERNEL_SCHEMES_BASE,
                 ))),
                 NonZeroUsize::new(KERNEL_SCHEMES_INFO_PAGE_COUNT).unwrap(),
-                MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ,
+                MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
                 &mut Vec::new(),
                 |page, flags, mapper, flusher| {
                     let shared = false;
