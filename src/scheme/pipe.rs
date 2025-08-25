@@ -180,14 +180,15 @@ impl KernelScheme for PipeScheme {
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);
 
-        let handle = PIPES.read().get(&key).ok_or(Error::new(EBADF))?;
+        let pipe =
+            if let Handle::Pipe(pipe_arc) = PIPES.read().get(&key).ok_or(Error::new(EBADF))? {
+                Arc::clone(pipe_arc)
+            } else {
+                let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+                log::info!("PipeScheme::kopenat: call kopen for path {path}");
+                return self.kopen(path, 0, _ctx);
+            };
 
-        let Handle::Pipe(pipe_arc) = handle else {
-            drop(handle);
-            let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-            log::info!("PipeScheme::kopenat: call kopen for path {path}");
-            return self.kopen(path, 0, _ctx);
-        };
         let pipe = Arc::clone(pipe_arc);
 
         let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
