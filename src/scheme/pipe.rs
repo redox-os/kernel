@@ -180,28 +180,34 @@ impl KernelScheme for PipeScheme {
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);
 
-        let pipe =
-            if let Handle::Pipe(pipe_arc) = PIPES.read().get(&key).ok_or(Error::new(EBADF))? {
-                Arc::clone(pipe_arc)
+        {
+            let guard = PIPES.read();
+            if let Some(Handle::OpenCapability) = guard.get(&key) {
+            } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key) {
+                let pipe = Arc::clone(pipe_arc);
+                drop(guard);
+
+                let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+                if buf == "write" {
+                    return Err(Error::new(EINVAL));
+                }
+
+                if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
+                    return Err(Error::new(EBADF));
+                }
+
+                return Ok(OpenResult::SchemeLocal(
+                    key | WRITE_NOT_READ_BIT,
+                    InternalFlags::empty(),
+                ));
             } else {
-                let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-                log::info!("PipeScheme::kopenat: call kopen for path {path}");
-                return self.kopen(path, 0, _ctx);
-            };
-
-        let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        if buf == "write" {
-            return Err(Error::new(EINVAL));
+                return Err(Error::new(EBADF));
+            }
         }
 
-        if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
-            return Err(Error::new(EBADF));
-        }
-
-        Ok(OpenResult::SchemeLocal(
-            key | WRITE_NOT_READ_BIT,
-            InternalFlags::empty(),
-        ))
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        log::info!("PipeScheme::kopenat: call kopen for path {path}");
+        return self.kopen(path, 0, _ctx);
     }
 
     fn kread(
