@@ -246,7 +246,6 @@ impl KernelScheme for RootScheme {
             .ok_or(Error::new(EBADF))?;
         match handle {
             Handle::Scheme(inner) => {
-                log::info!("Closing scheme: {}", inner.name);
                 scheme::schemes_mut().remove(inner.scheme_id);
             }
             _ => (),
