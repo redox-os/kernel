@@ -581,24 +581,21 @@ impl core::ops::Deref for KernelSchemes {
     }
 }
 
-pub const ALL_KERNEL_SCHEMES: &'static [GlobalSchemes] = {
-    use syscall::data::GlobalSchemes;
-    &[
-        Debug,
-        Event,
-        Memory,
-        Pipe,
-        Serio,
-        Irq,
-        Time,
-        Sys,
-        Proc,
-        #[cfg(feature = "acpi")]
-        Acpi,
-        #[cfg(dtb)]
-        Dtb,
-    ]
-};
+pub const ALL_KERNEL_SCHEMES: &'static [GlobalSchemes] = &[
+    GlobalSchemes::Debug,
+    GlobalSchemes::Event,
+    GlobalSchemes::Memory,
+    GlobalSchemes::Pipe,
+    GlobalSchemes::Serio,
+    GlobalSchemes::Irq,
+    GlobalSchemes::Time,
+    GlobalSchemes::Sys,
+    GlobalSchemes::Proc,
+    #[cfg(feature = "acpi")]
+    GlobalSchemes::Acpi,
+    #[cfg(dtb)]
+    GlobalSchemes::Dtb,
+];
 
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
 pub const KERNEL_SCHEMES_COUNT: usize = ALL_KERNEL_SCHEMES.len();
