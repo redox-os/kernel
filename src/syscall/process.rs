@@ -3,7 +3,6 @@ use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
 use spin::RwLock;
-use strum::IntoEnumIterator;
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -123,7 +122,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
 
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
-        for (i, scheme) in GlobalSchemes::iter().enumerate() {
+        for (i, scheme) in GlobalSchemes::ALL.iter().enumerate() {
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {
