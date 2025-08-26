@@ -117,8 +117,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             )
             .expect("Failed to allocate bootstrap pages");
 
-        const KERNEL_SCHEMES_BASE: usize =
-            crate::USER_END_OFFSET - syscall::BOOTSTRAP_STACK_SIZE - PAGE_SIZE;
+        const KERNEL_SCHEMES_BASE: usize = crate::USER_END_OFFSET - 4 * PAGE_SIZE;
         const KERNEL_SCHEMES_INFO_PAGE_COUNT: usize = 1;
         const KERNEL_SCHEMES_COUNT: usize = core::mem::variant_count::<GlobalSchemes>();
 
