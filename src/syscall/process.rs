@@ -22,7 +22,7 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::SchemeExt,
+    scheme::{SchemeExt, KERNEL_SCHEMES_COUNT},
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
@@ -75,6 +75,15 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
     AddrSpace::current()?.mprotect(span, flags)
 }
 
+const KERNEL_METADATA_BASE: usize = crate::USER_END_OFFSET - syscall::KERNEL_METADATA_SIZE;
+const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_SIZE + {
+    if syscall::KERNEL_METADATA_SIZE % PAGE_SIZE == 0 {
+        0
+    } else {
+        1
+    }
+};
+
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
     assert_ne!(bootstrap.page_count, 0);
 
@@ -116,10 +125,6 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             )
             .expect("Failed to allocate bootstrap pages");
 
-        const KERNEL_SCHEMES_BASE: usize = crate::USER_END_OFFSET - 4 * PAGE_SIZE;
-        const KERNEL_SCHEMES_INFO_PAGE_COUNT: usize = 1;
-        const KERNEL_SCHEMES_COUNT: usize = core::mem::variant_count::<GlobalSchemes>();
-
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
         for (i, scheme) in GlobalSchemes::ALL.iter().enumerate() {
@@ -156,15 +161,15 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             .mmap(
                 &addr_space,
                 Some(Page::containing_address(VirtualAddress::new(
-                    KERNEL_SCHEMES_BASE,
+                    KERNEL_METADATA_BASE,
                 ))),
-                NonZeroUsize::new(KERNEL_SCHEMES_INFO_PAGE_COUNT).unwrap(),
+                NonZeroUsize::new(KERNEL_METADATA_PAGE_COUNT).unwrap(),
                 MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
                 &mut Vec::new(),
                 |page, flags, mapper, flusher| {
                     let shared = false;
                     Ok(Grant::zeroed(
-                        PageSpan::new(page, KERNEL_SCHEMES_INFO_PAGE_COUNT),
+                        PageSpan::new(page, KERNEL_METADATA_PAGE_COUNT),
                         flags,
                         mapper,
                         flusher,
@@ -193,15 +198,12 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
         .copy_common_bytes_from_slice(info_bytes)
         .expect("failed to copy kernel schemes info");
 
-        addr_space
-            .mprotect(
-                PageSpan::new(
-                    Page::containing_address(VirtualAddress::new(KERNEL_SCHEMES_BASE)),
-                    KERNEL_SCHEMES_INFO_PAGE_COUNT,
-                ),
-                MapFlags::PROT_READ,
-            )
-            .expect("failed to mprotect kernel schemes info page");
+        mprotect(
+            KERNEL_METADATA_BASE,
+            KERNEL_METADATA_PAGE_COUNT * PAGE_SIZE,
+            MapFlags::PROT_READ,
+        )
+        .expect("failed to mprotect kernel schemes info page");
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };

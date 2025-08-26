@@ -583,9 +583,11 @@ impl core::ops::Deref for KernelSchemes {
 }
 
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
+pub const KERNEL_SCHEMES_COUNT: usize = core::mem::variant_count::<GlobalSchemes>();
 const _: () = {
-    assert!(1 + core::mem::variant_count::<GlobalSchemes>() < MAX_GLOBAL_SCHEMES);
+    assert!(1 + KERNEL_SCHEMES_COUNT < MAX_GLOBAL_SCHEMES);
 };
+
 pub trait SchemeExt {
     fn as_scheme(&self) -> &dyn KernelScheme;
     fn scheme_id(self) -> SchemeId;
