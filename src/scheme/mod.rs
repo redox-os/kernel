@@ -568,22 +568,6 @@ pub enum KernelSchemes {
     User(UserScheme),
     Global(GlobalSchemes),
 }
-pub const ALL_KERNEL_SCHEMES: &'static [Self] = &[
-    Self::Debug,
-    Self::Event,
-    Self::Memory,
-    Self::Pipe,
-    Self::Serio,
-    Self::Irq,
-    Self::Time,
-    Self::Sys,
-    Self::Proc,
-    #[cfg(feature = "acpi")]
-    Self::Acpi,
-    #[cfg(dtb)]
-    Self::Dtb,
-];
-
 impl core::ops::Deref for KernelSchemes {
     type Target = dyn KernelScheme;
 
@@ -596,6 +580,25 @@ impl core::ops::Deref for KernelSchemes {
         }
     }
 }
+
+pub const ALL_KERNEL_SCHEMES: &'static [GlobalSchemes] = {
+    use GlobalSchemes;
+    &[
+        Debug,
+        Event,
+        Memory,
+        Pipe,
+        Serio,
+        Irq,
+        Time,
+        Sys,
+        Proc,
+        #[cfg(feature = "acpi")]
+        Acpi,
+        #[cfg(dtb)]
+        Dtb,
+    ]
+};
 
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
 pub const KERNEL_SCHEMES_COUNT: usize = ALL_KERNEL_SCHEMES.len();
@@ -623,6 +626,7 @@ impl SchemeExt for GlobalSchemes {
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
+            _ => panic!("Unknown global scheme"),
         }
     }
     fn scheme_id(self) -> SchemeId {
