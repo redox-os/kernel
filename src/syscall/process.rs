@@ -22,7 +22,7 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{SchemeExt, KERNEL_SCHEMES_COUNT},
+    scheme::{SchemeExt, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT},
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
@@ -127,7 +127,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
 
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
-        for (i, scheme) in GlobalSchemes::ALL.iter().enumerate() {
+        for (i, scheme) in ALL_KERNEL_SCHEMES.iter().enumerate() {
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {

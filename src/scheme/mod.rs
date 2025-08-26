@@ -568,6 +568,21 @@ pub enum KernelSchemes {
     User(UserScheme),
     Global(GlobalSchemes),
 }
+pub const ALL_KERNEL_SCHEMES: &'static [Self] = &[
+    Self::Debug,
+    Self::Event,
+    Self::Memory,
+    Self::Pipe,
+    Self::Serio,
+    Self::Irq,
+    Self::Time,
+    Self::Sys,
+    Self::Proc,
+    #[cfg(feature = "acpi")]
+    Self::Acpi,
+    #[cfg(dtb)]
+    Self::Dtb,
+];
 
 impl core::ops::Deref for KernelSchemes {
     type Target = dyn KernelScheme;
@@ -583,7 +598,7 @@ impl core::ops::Deref for KernelSchemes {
 }
 
 pub const MAX_GLOBAL_SCHEMES: usize = 16;
-pub const KERNEL_SCHEMES_COUNT: usize = core::mem::variant_count::<GlobalSchemes>();
+pub const KERNEL_SCHEMES_COUNT: usize = ALL_KERNEL_SCHEMES.len();
 const _: () = {
     assert!(1 + KERNEL_SCHEMES_COUNT < MAX_GLOBAL_SCHEMES);
 };
