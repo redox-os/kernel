@@ -582,7 +582,7 @@ impl core::ops::Deref for KernelSchemes {
 }
 
 pub const ALL_KERNEL_SCHEMES: &'static [GlobalSchemes] = {
-    use GlobalSchemes;
+    use syscall::data::GlobalSchemes;
     &[
         Debug,
         Event,
