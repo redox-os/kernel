@@ -20,7 +20,7 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
-    syscall::usercopy::{UserSliceRo, UserSliceWo},
+    syscall::usercopy::UserSliceRw,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};

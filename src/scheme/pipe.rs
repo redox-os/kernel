@@ -342,7 +342,7 @@ impl KernelScheme for PipeScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        mut descs: Vec<Arc<RwLock<FileDescription>>>,
         _flags: CallFlags,
         _args: u64,
         _metadata: &[u64],
@@ -366,7 +366,7 @@ impl KernelScheme for PipeScheme {
 
             let before_len = vec.len();
 
-            for desc in descs {
+            for desc in descs.iter().cloned() {
                 if vec.len() < crate::context::CONTEXT_MAX_FILES {
                     vec.push_back(desc);
                 } else {
@@ -375,6 +375,7 @@ impl KernelScheme for PipeScheme {
             }
 
             let fds_written = vec.len() - before_len;
+            descs.drain(..fds_written);
 
             if fds_written > 0 {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
