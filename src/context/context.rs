@@ -21,13 +21,15 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
+    syscall::{UesrSliceRo, UesrSliceRw},
 };
 
-use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, EMFILE, ESRCH};
+use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};
 
 use super::{
     empty_cr3,
     memory::{AddrSpaceWrapper, GrantFileRef},
+    FileDescription,
 };
 
 /// The status of a context - used for scheduling
@@ -884,7 +886,19 @@ impl FdTbl {
     }
 }
 
-fn bulk_add_fds(
+impl FdTbl {
+    pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
+        self.posix_fdtbl.iter().chain(self.upper_fdtbl.iter())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
+        self.posix_fdtbl
+            .iter_mut()
+            .chain(self.upper_fdtbl.iter_mut())
+    }
+}
+
+pub fn bulk_add_fds(
     descriptions: Vec<Arc<RwLock<FileDescription>>>,
     payload: UserSliceRw,
 ) -> Result<usize> {
@@ -915,7 +929,7 @@ fn bulk_add_fds(
     Ok(handles.len())
 }
 
-fn bulk_insert_fds(
+pub fn bulk_insert_fds(
     descriptions: Vec<Arc<RwLock<FileDescription>>>,
     payload: UserSliceRw,
 ) -> Result<usize> {
@@ -957,17 +971,5 @@ fn bulk_insert_fds(
         let files = files_iter.collect::<Vec<_>>();
         current.bulk_insert_files_upper_manual(files, &handles)?;
         Ok(handles.len())
-    }
-}
-
-impl FdTbl {
-    pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
-        self.posix_fdtbl.iter().chain(self.upper_fdtbl.iter())
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
-        self.posix_fdtbl
-            .iter_mut()
-            .chain(self.upper_fdtbl.iter_mut())
     }
 }
