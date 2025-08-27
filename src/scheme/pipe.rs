@@ -9,7 +9,7 @@ use syscall::data::GlobalSchemes;
 use spin::{Mutex, RwLock};
 
 use crate::{
-    context::file::InternalFlags,
+    context::file::{bulk_add_fds, bulk_insert_fds, FileDescription, InternalFlags},
     event,
     sync::WaitCondition,
     syscall::{
@@ -57,6 +57,7 @@ pub fn pipe() -> Result<(usize, usize)> {
             writer_is_alive: AtomicBool::new(true),
             reader_is_alive: AtomicBool::new(true),
             has_run_dup: AtomicBool::new(false),
+            fd_queue: Mutex::new(VecDeque::new()),
         })),
     );
 
@@ -333,6 +334,102 @@ impl KernelScheme for PipeScheme {
 
         Ok(())
     }
+    fn kfdwrite(
+        &self,
+        id: usize,
+        descs: Vec<Arc<RwLock<FileDescription>>>,
+        _flags: CallFlags,
+        _args: u64,
+        _metadata: &[u64],
+    ) -> Result<usize> {
+        let (is_write_not_read, key) = from_raw_id(id);
+
+        if !is_write_not_read {
+            return Err(Error::new(EBADF));
+        }
+        let pipe = Self::get_pipe(key)?;
+
+        loop {
+            let mut vec = pipe.fd_queue.lock();
+
+            if !pipe.reader_is_alive.load(Ordering::Relaxed) {
+                return Err(Error::new(EPIPE));
+            }
+            if descs.is_empty() {
+                return Ok(0);
+            }
+
+            let before_len = vec.len();
+
+            for desc in descs {
+                if vec.len() < crate::context::CONTEXT_MAX_FILES {
+                    vec.push_back(desc);
+                } else {
+                    break;
+                }
+            }
+
+            if vec.len() - before_len > 0 {
+                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
+                pipe.read_condition.notify();
+
+                return Ok(bytes_written);
+            }
+            if !pipe.write_condition.wait(vec, "PipeWrite::write") {
+                return Err(Error::new(EINTR));
+            }
+        }
+    }
+    fn kfdread(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+    ) -> Result<usize> {
+        let (is_write_not_read, key) = from_raw_id(id);
+
+        if is_write_not_read {
+            return Err(Error::new(EBADF));
+        }
+        let pipe = Self::get_pipe(key)?;
+
+        if user_buf.is_empty() {
+            return Ok(0);
+        }
+
+        loop {
+            let mut vec = pipe.fd_queue.lock();
+
+            let fds_read = if payload.len() > vec.len() {
+                0
+            } else {
+                payload.len()
+            };
+
+            if fds_read > 0 {
+                if flags.contain(CallFlags::FD_UPPER) {
+                    bulk_insert_fds(vec.drain(..fds_read).collect(), payload);
+                } else {
+                    bulk_add_fds(vec.drain(..fds_read).collect(), payload);
+                }
+
+                event::trigger(
+                    GlobalSchemes::Pipe.scheme_id(),
+                    key | WRITE_NOT_READ_BIT,
+                    EVENT_WRITE,
+                );
+                pipe.write_condition.notify();
+
+                return Ok(bytes_read);
+            }
+            if !pipe.writer_is_alive.load(Ordering::SeqCst) {
+                return Ok(0);
+            } else if !pipe.read_condition.wait(vec, "PipeRead::read") {
+                return Err(Error::new(EINTR));
+            }
+        }
+    }
 }
 
 pub struct Pipe {
@@ -342,4 +439,5 @@ pub struct Pipe {
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
+    fd_queue: Mutex<VecDeque<Arc<RwLock<FileDescription>>>>,
 }
