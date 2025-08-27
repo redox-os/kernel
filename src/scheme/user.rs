@@ -23,8 +23,8 @@ use syscall::{
 use crate::{
     context::{
         self,
-        context::HardBlockedReason,
-        file::{bulk_add_fds, bulk_insert_fds, FileDescription, FileDescriptor, InternalFlags},
+        context::{bulk_add_fds, bulk_insert_fds, HardBlockedReason},
+        file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,

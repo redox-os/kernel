@@ -3,6 +3,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use alloc::{
     collections::{BTreeMap, VecDeque},
     sync::Arc,
+    vec::Vec,
 };
 use syscall::data::GlobalSchemes;
 use syscall::CallFlags;
@@ -10,7 +11,10 @@ use syscall::CallFlags;
 use spin::{Mutex, RwLock};
 
 use crate::{
-    context::file::{bulk_add_fds, bulk_insert_fds, FileDescription, InternalFlags},
+    context::{
+        context::{bulk_add_fds, bulk_insert_fds},
+        file::{FileDescription, InternalFlags},
+    },
     event,
     sync::WaitCondition,
     syscall::{
@@ -370,11 +374,13 @@ impl KernelScheme for PipeScheme {
                 }
             }
 
-            if vec.len() - before_len > 0 {
+            let fds_written = vec.len() - before_len;
+
+            if fds_written > 0 {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify();
 
-                return Ok(bytes_written);
+                return Ok(fds_written);
             }
             if !pipe.write_condition.wait(vec, "PipeWrite::write") {
                 return Err(Error::new(EINTR));
@@ -395,7 +401,7 @@ impl KernelScheme for PipeScheme {
         }
         let pipe = Self::get_pipe(key)?;
 
-        if user_buf.is_empty() {
+        if payload.is_empty() {
             return Ok(0);
         }
 
@@ -409,7 +415,7 @@ impl KernelScheme for PipeScheme {
             };
 
             if fds_read > 0 {
-                if flags.contain(CallFlags::FD_UPPER) {
+                if flags.contains(CallFlags::FD_UPPER) {
                     bulk_insert_fds(vec.drain(..fds_read).collect(), payload);
                 } else {
                     bulk_add_fds(vec.drain(..fds_read).collect(), payload);
@@ -422,7 +428,7 @@ impl KernelScheme for PipeScheme {
                 );
                 pipe.write_condition.notify();
 
-                return Ok(bytes_read);
+                return Ok(fds_read);
             }
             if !pipe.writer_is_alive.load(Ordering::SeqCst) {
                 return Ok(0);

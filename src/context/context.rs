@@ -10,7 +10,6 @@ use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 #[cfg(feature = "sys_stat")]
 use crate::cpu_stats;
-use crate::syscall::usercopy::{UserSliceRo, UserSliceWo};
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
     common::aligned_box::AlignedBox,
@@ -21,15 +20,15 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
-    syscall::{UesrSliceRo, UesrSliceRw},
+    syscall::usercopy::{UserSliceRo, UserSliceWo},
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};
 
 use super::{
     empty_cr3,
+    file::FileDescription,
     memory::{AddrSpaceWrapper, GrantFileRef},
-    FileDescription,
 };
 
 /// The status of a context - used for scheduling
