@@ -417,9 +417,9 @@ impl KernelScheme for PipeScheme {
 
             if fds_read > 0 {
                 if flags.contains(CallFlags::FD_UPPER) {
-                    bulk_insert_fds(vec.drain(..fds_read).collect(), payload);
+                    bulk_insert_fds(vec.drain(..fds_read).collect(), payload)?;
                 } else {
-                    bulk_add_fds(vec.drain(..fds_read).collect(), payload);
+                    bulk_add_fds(vec.drain(..fds_read).collect(), payload)?;
                 }
 
                 event::trigger(
