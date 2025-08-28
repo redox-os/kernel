@@ -49,9 +49,10 @@ sbi-rt = "0.0.3"
 [features]
 default = [
   "acpi",
+  "debugger",
   #TODO: issues with Alder Lake and newer CPUs:
   #This may be because of mismatch between cpu id and apic id
-  "multi_core",
+  #"multi_core",
   "graphical_debug",
   "serial_debug",
   "self_modifying",
