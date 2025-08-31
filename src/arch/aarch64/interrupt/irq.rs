@@ -1,4 +1,4 @@
-use crate::{arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP};
+use crate::{arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP, scheme::irq::irq_trigger};
 use core::sync::atomic::Ordering;
 
 #[cfg(feature = "sys_stat")]
@@ -37,11 +37,7 @@ pub unsafe fn trigger(irq: u32) {
     #[cfg(feature = "sys_stat")]
     PercpuBlock::current().stats.add_irq(irq);
 
-    extern "C" {
-        fn irq_trigger(irq: u32);
-    }
-
-    irq_trigger(irq);
+    irq_trigger(irq.try_into().unwrap());
     IRQ_CHIP.irq_eoi(irq);
 }
 

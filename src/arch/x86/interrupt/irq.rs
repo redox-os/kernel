@@ -13,6 +13,7 @@ use crate::{
     ipi::{ipi, IpiKind, IpiTarget},
     scheme::{
         debug::{debug_input, debug_notify},
+        irq::irq_trigger,
         serio::serio_input,
     },
     time,
@@ -67,11 +68,6 @@ fn irq_method() -> IrqMethod {
         1 => IrqMethod::Apic,
         _ => unreachable!(),
     }
-}
-
-extern "C" {
-    // triggers irq scheme
-    fn irq_trigger(irq: u8);
 }
 
 /// Notify the IRQ scheme that an IRQ has been registered. This should mask the IRQ until the

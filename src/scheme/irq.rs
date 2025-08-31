@@ -54,8 +54,7 @@ const INO_BSP: u64 = 0x8001_0000_0000_0000;
 const INO_PHANDLE: u64 = 0x8003_0000_0000_0000;
 
 /// Add to the input queue
-#[no_mangle]
-pub extern "C" fn irq_trigger(irq: u8) {
+pub fn irq_trigger(irq: u8) {
     COUNTS.lock()[irq as usize] += 1;
 
     for (fd, _) in HANDLES
