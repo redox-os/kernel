@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 
 #[cfg(feature = "sys_stat")]
 use crate::percpu::PercpuBlock;
+use crate::scheme::irq::irq_trigger;
 use crate::{
     context::{self, timeout},
     device::{
@@ -65,11 +66,6 @@ fn irq_method() -> IrqMethod {
         1 => IrqMethod::Apic,
         _ => unreachable!(),
     }
-}
-
-extern "C" {
-    // triggers irq scheme
-    fn irq_trigger(irq: u8);
 }
 
 /// Notify the IRQ scheme that an IRQ has been registered. This should mask the IRQ until the
