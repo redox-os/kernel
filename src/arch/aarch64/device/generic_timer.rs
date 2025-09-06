@@ -60,7 +60,10 @@ impl GenericTimer {
     }
     pub fn init(&mut self) {
         self.use_virtual_timer = unsafe { !control_regs::vhe_present() };
-        debug!("generic_timer use_virtual_timer = {:?}", self.use_virtual_timer);
+        debug!(
+            "generic_timer use_virtual_timer = {:?}",
+            self.use_virtual_timer
+        );
         let clk_freq = unsafe { control_regs::cntfrq_el0() };
         self.clk_freq = clk_freq;
         self.reload_count = clk_freq / 100;

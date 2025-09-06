@@ -4,7 +4,6 @@ use alloc::vec::Vec;
 
 #[cfg(feature = "sys_stat")]
 use crate::percpu::PercpuBlock;
-use crate::scheme::irq::irq_trigger;
 use crate::{
     context::{self, timeout},
     device::{
@@ -15,6 +14,7 @@ use crate::{
     ipi::{ipi, IpiKind, IpiTarget},
     scheme::{
         debug::{debug_input, debug_notify},
+        irq::irq_trigger,
         serio::serio_input,
     },
     time,
