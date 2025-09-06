@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 //! ELF executables
 
 use alloc::string::String;
@@ -14,7 +12,7 @@ pub use goblin::elf32::{header, program_header, section_header, sym};
     target_arch = "riscv64",
     target_arch = "x86_64"
 ))]
-pub use goblin::elf64::{header, program_header, section_header, sym};
+pub use goblin::elf64::{header, section_header, sym};
 
 /// An ELF executable
 pub struct Elf<'a> {
@@ -95,30 +93,6 @@ impl<'a> Iterator for ElfSections<'a> {
                     + self.header.e_shoff as usize
                     + self.i * self.header.e_shentsize as usize)
                     as *const section_header::SectionHeader)
-            };
-            self.i += 1;
-            Some(item)
-        } else {
-            None
-        }
-    }
-}
-
-pub struct ElfSegments<'a> {
-    data: &'a [u8],
-    header: &'a header::Header,
-    i: usize,
-}
-
-impl<'a> Iterator for ElfSegments<'a> {
-    type Item = &'a program_header::ProgramHeader;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.i < self.header.e_phnum as usize {
-            let item = unsafe {
-                &*((self.data.as_ptr() as usize
-                    + self.header.e_phoff as usize
-                    + self.i * self.header.e_phentsize as usize)
-                    as *const program_header::ProgramHeader)
             };
             self.i += 1;
             Some(item)
