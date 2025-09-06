@@ -13,6 +13,7 @@ use crate::{
 pub(super) fn init(madt: Madt) {
     let mut gicd_opt = None;
     let mut giccs = Vec::new();
+    let mut gicrs = Vec::new();
     for madt_entry in madt.iter() {
         println!("      {:#x?}", madt_entry);
         match madt_entry {
@@ -25,6 +26,9 @@ pub(super) fn init(madt: Madt) {
                 } else {
                     gicd_opt = Some(gicd);
                 }
+            }
+            MadtEntry::Gicr(gicd) => {
+                gicrs.push(gicd);
             }
             _ => {}
         }
@@ -67,15 +71,47 @@ pub(super) fn init(madt: Madt) {
             }
         }
         3 => {
-            for gicc in giccs {
+            for _gicc in giccs {
                 let mut gic_cpu_if = GicV3CpuIf;
                 unsafe { gic_cpu_if.init() };
-                log::info!("{:#x?}", gic_cpu_if);
+                log::info!("GIC CPU: {:#x?}", gic_cpu_if);
+                let mut gicrs_addrs: Vec<(usize, usize)> = Vec::new();
+                for discovery_range in gicrs {
+                    let range_phys_base =
+                        PhysicalAddress::new(discovery_range.discovery_range_base_address as usize);
+                    let range_len = discovery_range.discovery_range_length as usize;
+
+                    // Map the entire discovery range
+                    let range_virt_base = unsafe { map_device_memory(range_phys_base, range_len) };
+
+                    const GICR_STRIDE: usize = 0x20000; // 128KB (2 * 64KB pages)
+                    for offset in (0..range_len).step_by(GICR_STRIDE) {
+                        let current_gicr_base_virt = range_virt_base.add(offset);
+
+                        // Read GICR_TYPER to identify the processor and the 'Last' flag
+                        let typer_addr = current_gicr_base_virt.add(8);
+                        let typer_val =
+                            unsafe { core::ptr::read_volatile((typer_addr.data()) as *const u32) };
+                        let is_last = (typer_val & (1 << 4)) != 0;
+
+                        // Push the (base_address, size) tuple into the vector
+                        gicrs_addrs.push((current_gicr_base_virt.data(), GICR_STRIDE));
+
+                        log::info!(
+                            "Discovered GICR at base {:#x} with size {:#x}",
+                            current_gicr_base_virt.data(),
+                            GICR_STRIDE
+                        );
+
+                        if is_last {
+                            break; // Last redistributor in this range
+                        }
+                    }
+                }
                 let gic = GicV3 {
                     gic_dist_if,
                     gic_cpu_if,
-                    //TODO: get GICRs
-                    gicrs: Vec::new(),
+                    gicrs: gicrs_addrs,
                     irq_range: (0, 0),
                 };
                 let chip = IrqChipItem {
