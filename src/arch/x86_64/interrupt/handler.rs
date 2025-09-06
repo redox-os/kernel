@@ -364,10 +364,7 @@ macro_rules! interrupt_stack {
         #[naked]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                #[allow(unused_unsafe)]
-                unsafe {
-                    $code
-                }
+                $code
             }
             core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
@@ -460,10 +457,7 @@ macro_rules! interrupt_error {
         #[naked]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptStack, $error_code: usize) {
-                #[allow(unused_unsafe)]
-                unsafe {
-                    $code
-                }
+                $code
             }
 
             core::arch::naked_asm!(concat!(

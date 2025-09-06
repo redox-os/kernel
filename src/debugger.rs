@@ -212,8 +212,6 @@ pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
 // Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
-    use core::sync::atomic::Ordering;
-
     use alloc::sync::Arc;
     use hashbrown::HashSet;
 
