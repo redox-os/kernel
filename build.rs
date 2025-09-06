@@ -23,6 +23,11 @@ fn parse_kconfig(arch: &str) -> Option<()> {
         .as_table()
         .unwrap();
 
+    let features_list = altfeatures.keys().map(|feat| format!(", {feat:?}")).collect::<String>();
+    println!("cargo::rustc-check-cfg=cfg(cpu_feature_always, values(\"\"{features_list}))");
+    println!("cargo::rustc-check-cfg=cfg(cpu_feature_auto, values(\"\"{features_list}))");
+    println!("cargo::rustc-check-cfg=cfg(cpu_feature_never, values(\"\"{features_list}))");
+
     let self_modifying = env::var("CARGO_FEATURE_SELF_MODIFYING").is_ok();
 
     for (name, value) in altfeatures {
