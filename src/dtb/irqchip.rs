@@ -69,21 +69,29 @@ impl IrqChipList {
     fn init_inner1(&mut self, fdt: &Fdt) {
         for node in fdt.all_nodes() {
             if node.property("interrupt-controller").is_some() {
-                let compatible = node.property("compatible").unwrap().as_str().unwrap();
-                let phandle = node.property("phandle").unwrap().as_usize().unwrap() as u32;
-                let intr_cells = node.interrupt_cells().unwrap();
+                let mut item = if let Some(compatible) = node.compatible() {
+                    let compatible = compatible.first();
+                    let phandle = if let Some(phandle) = node.property("phandle") {
+                        phandle.as_usize().unwrap() as u32
+                    } else {
+                        continue;
+                    };
+                    let intr_cells = node.interrupt_cells().unwrap();
 
-                debug!(
-                    "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
-                    node.name, compatible, intr_cells, phandle
-                );
-                let mut item = IrqChipItem {
-                    phandle,
-                    parents: Vec::new(),
-                    children: Vec::new(),
-                    ic: new_irqchip(compatible).unwrap(),
+                    debug!(
+                        "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
+                        node.name, compatible, intr_cells, phandle
+                    );
+                    let mut item = IrqChipItem {
+                        phandle,
+                        parents: Vec::new(),
+                        children: Vec::new(),
+                        ic: new_irqchip(compatible).unwrap(),
+                    };
+                    item
+                } else {
+                    continue;
                 };
-
                 fn interrupt_address(
                     iter: &mut impl Iterator<Item = u32>,
                     interrupt_cells: usize,
