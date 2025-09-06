@@ -69,9 +69,17 @@ impl IrqChipList {
     fn init_inner1(&mut self, fdt: &Fdt) {
         for node in fdt.all_nodes() {
             if node.property("interrupt-controller").is_some() {
-                let compatible = node.property("compatible").unwrap().as_str().unwrap();
-                let phandle = node.property("phandle").unwrap().as_usize().unwrap() as u32;
-                let intr_cells = node.interrupt_cells().unwrap();
+                let Some(compatible) = node.compatible() else {
+                    continue;
+                };
+                let compatible = compatible.first();
+                let Some(phandle) = node.property("phandle") else {
+                    continue;
+                };
+                let phandle = phandle.as_usize().unwrap() as u32;
+                let Some(intr_cells) = node.interrupt_cells() else {
+                    continue;
+                };
 
                 debug!(
                     "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
