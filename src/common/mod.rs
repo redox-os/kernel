@@ -1,7 +1,6 @@
 pub mod aligned_box;
 #[macro_use]
 pub mod int_like;
-pub mod unique;
 
 /// Debug macro, lifted from the std
 #[macro_export]

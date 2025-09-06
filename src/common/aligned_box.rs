@@ -1,13 +1,15 @@
 use core::alloc::{GlobalAlloc, Layout};
 
-use crate::{common::unique::Unique, memory::Enomem};
+use crate::memory::Enomem;
 
 // Necessary because GlobalAlloc::dealloc requires the layout to be the same, and therefore Box
 // cannot be used for increased alignment directly.
-// TODO: move to common?
 pub struct AlignedBox<T: ?Sized, const ALIGN: usize> {
-    inner: Unique<T>,
+    inner: *mut T,
 }
+unsafe impl<T: Send + ?Sized, const ALIGN: usize> Send for AlignedBox<T, ALIGN> {}
+unsafe impl<T: Sync + ?Sized, const ALIGN: usize> Sync for AlignedBox<T, ALIGN> {}
+
 pub unsafe trait ValidForZero {}
 unsafe impl<const N: usize> ValidForZero for [u8; N] {}
 unsafe impl ValidForZero for u8 {}
@@ -43,9 +45,7 @@ impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
             if ptr.is_null() {
                 return Err(Enomem);
             }
-            Self {
-                inner: Unique::new_unchecked(ptr.cast()),
-            }
+            Self { inner: ptr.cast() }
         })
     }
 }
@@ -64,7 +64,7 @@ impl<T, const ALIGN: usize> AlignedBox<[T], ALIGN> {
                 return Err(Enomem);
             }
             Self {
-                inner: Unique::new_unchecked(core::ptr::slice_from_raw_parts_mut(ptr.cast(), len)),
+                inner: core::ptr::slice_from_raw_parts_mut(ptr.cast(), len),
             }
         })
     }
@@ -75,7 +75,7 @@ impl<T: ?Sized, const ALIGN: usize> core::fmt::Debug for AlignedBox<T, ALIGN> {
         write!(
             f,
             "[aligned box at {:p}, size {} alignment {}]",
-            self.inner.as_ptr(),
+            self.inner,
             self.layout().size(),
             self.layout().align()
         )
@@ -85,8 +85,8 @@ impl<T: ?Sized, const ALIGN: usize> Drop for AlignedBox<T, ALIGN> {
     fn drop(&mut self) {
         unsafe {
             let layout = self.layout();
-            core::ptr::drop_in_place(self.inner.as_ptr());
-            crate::ALLOCATOR.dealloc(self.inner.as_ptr().cast(), layout);
+            core::ptr::drop_in_place(self.inner);
+            crate::ALLOCATOR.dealloc(self.inner.cast(), layout);
         }
     }
 }
@@ -94,12 +94,12 @@ impl<T: ?Sized, const ALIGN: usize> core::ops::Deref for AlignedBox<T, ALIGN> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.inner.as_ptr() }
+        unsafe { &*self.inner }
     }
 }
 impl<T: ?Sized, const ALIGN: usize> core::ops::DerefMut for AlignedBox<T, ALIGN> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.inner.as_ptr() }
+        unsafe { &mut *self.inner }
     }
 }
 impl<T: Clone + ValidForZero, const ALIGN: usize> Clone for AlignedBox<T, ALIGN> {
