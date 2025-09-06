@@ -67,7 +67,6 @@ pub enum HardBlockedReason {
     },
     // TODO: PageFaultOom?
     NotYetStarted,
-    PtraceStop,
 }
 
 const CONTEXT_NAME_CAPAC: usize = 32;
