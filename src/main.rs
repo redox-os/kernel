@@ -278,7 +278,7 @@ macro_rules! linker_offsets(
                 // TODO: UnsafeCell?
                 static $name: u8;
             }
-            unsafe { &$name as *const u8 as usize }
+            (&raw const $name) as usize
         }
         )*
     }
