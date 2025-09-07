@@ -48,7 +48,8 @@ fn parse_kconfig(arch: &str) -> Option<()> {
 }
 
 fn main() {
-    println!("cargo:rustc-env=TARGET={}", env::var("TARGET").unwrap());
+    println!("cargo::rustc-env=TARGET={}", env::var("TARGET").unwrap());
+    println!("cargo::rustc-check-cfg=cfg(dtb)");
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let cfg = Cfg::of(env::var("TARGET").unwrap().as_str()).unwrap();
@@ -56,10 +57,10 @@ fn main() {
 
     match arch_str {
         "aarch64" => {
-            println!("cargo:rustc-cfg=dtb");
+            println!("cargo::rustc-cfg=dtb");
         }
         "x86" => {
-            println!("cargo:rerun-if-changed=src/asm/x86/trampoline.asm");
+            println!("cargo::rerun-if-changed=src/asm/x86/trampoline.asm");
 
             let status = Command::new("nasm")
                 .arg("-f")
@@ -74,7 +75,7 @@ fn main() {
             }
         }
         "x86_64" => {
-            println!("cargo:rerun-if-changed=src/asm/x86_64/trampoline.asm");
+            println!("cargo::rerun-if-changed=src/asm/x86_64/trampoline.asm");
 
             let status = Command::new("nasm")
                 .arg("-f")
@@ -89,7 +90,7 @@ fn main() {
             }
         }
         "riscv64" => {
-            println!("cargo:rustc-cfg=dtb");
+            println!("cargo::rustc-cfg=dtb");
         }
         _ => (),
     }
