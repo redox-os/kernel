@@ -18,14 +18,13 @@ pub enum IpiTarget {
     Other = 3,
 }
 
-#[cfg(not(feature = "multi_core"))]
-#[inline(always)]
-pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
-
-#[cfg(feature = "multi_core")]
 #[inline(always)]
 pub fn ipi(kind: IpiKind, target: IpiTarget) {
     use crate::device::local_apic::the_local_apic;
+
+    if cfg!(not(feature = "multi_core")) {
+        return;
+    }
 
     #[cfg(feature = "profiling")]
     if matches!(kind, IpiKind::Profile) {
@@ -38,10 +37,13 @@ pub fn ipi(kind: IpiKind, target: IpiTarget) {
     unsafe { the_local_apic().set_icr(icr) };
 }
 
-#[cfg(feature = "multi_core")]
 #[inline(always)]
 pub fn ipi_single(kind: IpiKind, target: &crate::percpu::PercpuBlock) {
     use crate::device::local_apic::the_local_apic;
+
+    if cfg!(not(feature = "multi_core")) {
+        return;
+    }
 
     if let Some(apic_id) = target.misc_arch_info.apic_id_opt.get() {
         unsafe {
@@ -49,7 +51,3 @@ pub fn ipi_single(kind: IpiKind, target: &crate::percpu::PercpuBlock) {
         }
     }
 }
-
-#[cfg(not(feature = "multi_core"))]
-#[inline(always)]
-pub fn ipi_single(_kind: IpiKind, _target: &crate::percpu::PercpuBlock) {}

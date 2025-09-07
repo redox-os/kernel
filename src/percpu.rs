@@ -77,11 +77,11 @@ pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
 
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
 
-#[cfg(not(feature = "multi_core"))]
-pub fn shootdown_tlb_ipi(_target: Option<LogicalCpuId>) {}
-
-#[cfg(feature = "multi_core")]
 pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
+    if cfg!(not(feature = "multi_core")) {
+        return;
+    }
+
     if let Some(target) = target {
         let my_percpublock = PercpuBlock::current();
         assert_ne!(target, my_percpublock.cpu_id);
