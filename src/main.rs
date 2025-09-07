@@ -51,6 +51,7 @@
 #![feature(array_chunks)]
 #![feature(if_let_guard)]
 #![feature(iterator_try_collect)]
+#![feature(new_zeroed_alloc)]
 #[macro_use]
 extern crate alloc;
 
