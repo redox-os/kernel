@@ -1,8 +1,7 @@
 use crate::{arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP, scheme::irq::irq_trigger};
 use core::sync::atomic::Ordering;
 
-#[cfg(feature = "sys_stat")]
-use crate::percpu::PercpuBlock;
+// use crate::percpu::PercpuBlock;
 
 unsafe fn irq_ack() -> (u32, Option<usize>) {
     let ic = &mut IRQ_CHIP.irq_chip_list.chips[ROOT_IC_IDX.load(Ordering::Relaxed)].ic;
@@ -34,8 +33,8 @@ exception_stack!(irq_at_el1, |_stack| {
 
 //TODO
 pub unsafe fn trigger(irq: u32) {
-    #[cfg(feature = "sys_stat")]
-    PercpuBlock::current().stats.add_irq(irq);
+    // FIXME add_irq accepts a u8 as irq number
+    // PercpuBlock::current().stats.add_irq(irq);
 
     irq_trigger(irq.try_into().unwrap());
     IRQ_CHIP.irq_eoi(irq);

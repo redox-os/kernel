@@ -2,8 +2,6 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::vec::Vec;
 
-#[cfg(feature = "sys_stat")]
-use crate::percpu::PercpuBlock;
 use crate::{
     context::{self, timeout},
     device::{
@@ -12,6 +10,7 @@ use crate::{
     },
     interrupt, interrupt_stack,
     ipi::{ipi, IpiKind, IpiTarget},
+    percpu::PercpuBlock,
     scheme::{
         debug::{debug_input, debug_notify},
         irq::irq_trigger,
@@ -97,7 +96,6 @@ pub unsafe fn acknowledge(irq: usize) {
 
 /// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
 pub unsafe fn eoi(irq: u8) {
-    #[cfg(feature = "sys_stat")]
     PercpuBlock::current().stats.add_irq(irq);
 
     match irq_method() {

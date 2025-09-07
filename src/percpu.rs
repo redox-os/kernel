@@ -10,14 +10,12 @@ use syscall::PtraceFlags;
 use crate::{
     context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    cpu_stats::CpuStats,
     ptrace::Session,
 };
 
 #[cfg(feature = "sys_stat")]
-use {
-    crate::cpu_stats::{CpuStats, CpuStatsData},
-    alloc::vec::Vec,
-};
+use {crate::cpu_stats::CpuStatsData, alloc::vec::Vec};
 
 #[cfg(feature = "syscall_debug")]
 use crate::syscall::debug::SyscallDebugInfo;
@@ -48,7 +46,6 @@ pub struct PercpuBlock {
 
     pub misc_arch_info: crate::device::ArchPercpuMisc,
 
-    #[cfg(feature = "sys_stat")]
     pub stats: CpuStats,
 }
 
@@ -187,7 +184,6 @@ impl PercpuBlock {
 
             misc_arch_info: Default::default(),
 
-            #[cfg(feature = "sys_stat")]
             stats: CpuStats::default(),
         }
     }

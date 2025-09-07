@@ -81,7 +81,7 @@ fn get_contexts_stats() -> (u64, u64) {
     for status in statuses {
         if matches!(status, Status::Runnable) {
             running += 1;
-        } else if !matches!(status, Status::Dead) {
+        } else if !matches!(status, Status::Dead { .. }) {
             blocked += 1;
         }
     }

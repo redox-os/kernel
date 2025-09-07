@@ -88,7 +88,6 @@ mod dtb;
 mod cpu_set;
 
 /// Stats for the CPUs
-#[cfg(feature = "sys_stat")]
 mod cpu_stats;
 
 /// Context management
