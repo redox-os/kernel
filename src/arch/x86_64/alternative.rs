@@ -125,11 +125,7 @@ pub unsafe fn early_init(bsp: bool) {
         return;
     }
 
-    #[cfg(feature = "self_modifying")]
     overwrite(&relocs, enable);
-
-    #[cfg(not(feature = "self_modifying"))]
-    let _ = relocs;
 
     if cfg!(not(feature = "self_modifying")) {
         assert!(
@@ -143,8 +139,11 @@ pub unsafe fn early_init(bsp: bool) {
     FEATURES.call_once(|| enable);
 }
 
-#[cfg(feature = "self_modifying")]
 unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
+    if cfg!(not(feature = "self_modifying")) {
+        return;
+    }
+
     log::info!("self-modifying features: {:?}", enable);
 
     let mut mapper = KernelMapper::lock();
