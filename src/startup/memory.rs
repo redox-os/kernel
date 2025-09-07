@@ -276,11 +276,13 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
     let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut bump_allocator)
         .expect("failed to create Mapper");
 
-    #[cfg(target_arch = "i686")]
+    #[cfg(target_arch = "x86")]
     {
         // Pre-allocate all kernel PD entries so that when the page table is copied,
         // these entries are synced between processes
         for i in 512..1024 {
+            use rmm::{FrameAllocator, PageEntry};
+
             let phys = mapper
                 .allocator_mut()
                 .allocate_one()

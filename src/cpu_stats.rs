@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use alloc::string::String;
 #[cfg(feature = "sys_stat")]
@@ -6,12 +6,13 @@ use alloc::vec::Vec;
 
 use crate::cpu_set::LogicalCpuId;
 
+// Note: Using AtomicUsize rather than AtomicU64 as 32bit x86 doesn't support the latter
 /// The number of times (overall) where a CPU switched from one context to another.
-static CONTEXT_SWITCH_COUNT: AtomicU64 = AtomicU64::new(0);
+static CONTEXT_SWITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Number of times each Interrupt happened.
-static IRQ_COUNT: [AtomicU64; 256] = [const { AtomicU64::new(0) }; 256];
+static IRQ_COUNT: [AtomicUsize; 256] = [const { AtomicUsize::new(0) }; 256];
 /// Number of contexts that were created.
-static CONTEXTS_COUNT: AtomicU64 = AtomicU64::new(0);
+static CONTEXTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Current state of a CPU
 #[repr(u8)]
