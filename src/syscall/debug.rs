@@ -191,7 +191,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-#[cfg(feature = "syscall_debug")]
 pub struct SyscallDebugInfo {
     this_switch_time: u128,
     accumulated_time: u128,
@@ -207,8 +206,13 @@ impl SyscallDebugInfo {
         self.this_switch_time = crate::time::monotonic();
     }
 }
-#[cfg(feature = "syscall_debug")]
+
+#[cfg_attr(feature = "syscall_debug", inline)]
 pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
+    if cfg!(not(feature = "syscall_debug")) {
+        return;
+    }
+
     let do_debug = if false && crate::context::current().read().name.contains("init") {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
@@ -246,8 +250,13 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
             do_debug,
         });
 }
-#[cfg(feature = "syscall_debug")]
+
+#[cfg_attr(feature = "syscall_debug", inline)]
 pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
+    if cfg!(not(feature = "syscall_debug")) {
+        return;
+    }
+
     let debug_info = crate::percpu::PercpuBlock::current()
         .syscall_debug_info
         .take();

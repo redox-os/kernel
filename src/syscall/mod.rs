@@ -16,6 +16,7 @@ pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy:
 
 use self::{
     data::{Map, TimeSpec},
+    debug::{debug_end, debug_start},
     error::{Error, Result, ENOSYS, EOVERFLOW},
     flag::{EventFlags, MapFlags},
     number::*,
@@ -31,9 +32,6 @@ use crate::{
 
 /// Debug
 pub mod debug;
-
-#[cfg(feature = "syscall_debug")]
-use self::debug::{debug_end, debug_start};
 
 /// Filesystem syscalls
 pub mod fs;
@@ -206,12 +204,10 @@ pub fn syscall(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> us
 
     PercpuBlock::current().inside_syscall.set(true);
 
-    #[cfg(feature = "syscall_debug")]
     debug_start([a, b, c, d, e, f]);
 
     let result = inner(a, b, c, d, e, f);
 
-    #[cfg(feature = "syscall_debug")]
     debug_end([a, b, c, d, e, f], result);
 
     let percpu = PercpuBlock::current();
