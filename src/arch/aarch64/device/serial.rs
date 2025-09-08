@@ -101,8 +101,8 @@ pub unsafe fn init_early(dtb: &Fdt) {
         };
         match serial_opt {
             Some(serial) => {
-                info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
                 *COM1.lock() = Some(serial);
+                info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
             }
             None => {
                 log::warn!(

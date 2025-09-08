@@ -16,18 +16,35 @@ use crate::{
     },
 };
 
-pub struct SerialPort {
-    inner: &'static mut uart_16550::SerialPort<Mmio<u8>>,
+pub enum SerialPort {
+    Ns16550u8(&'static mut uart_16550::SerialPort<Mmio<u8>>),
+    Ns16550u32(&'static mut uart_16550::SerialPort<Mmio<u32>>),
 }
+
 impl SerialPort {
-    pub fn write(&mut self, buf: &[u8]) {
-        self.inner.write(buf)
-    }
     pub fn receive(&mut self) {
-        while let Some(c) = self.inner.receive() {
-            debug_input(c);
+        //TODO: make PL011 receive work the same way as NS16550
+        match self {
+            Self::Ns16550u8(inner) => {
+                while let Some(c) = inner.receive() {
+                    debug_input(c);
+                }
+                debug_notify();
+            }
+            Self::Ns16550u32(inner) => {
+                while let Some(c) = inner.receive() {
+                    debug_input(c);
+                }
+                debug_notify();
+            }
         }
-        debug_notify();
+    }
+
+    pub fn write(&mut self, buf: &[u8]) {
+        match self {
+            Self::Ns16550u8(inner) => inner.write(buf),
+            Self::Ns16550u32(inner) => inner.write(buf),
+        }
     }
 }
 
@@ -55,20 +72,28 @@ pub unsafe fn init_early(dtb: &Fdt) {
 
     if let Some((phys, size, skip_init, _cts, compatible)) = diag_uart_range(dtb) {
         let virt = crate::PHYS_OFFSET + phys;
-        let serial_opt = if compatible.contains("ns16550a") || compatible.contains("snps,dw-apb-uart") {
+        let serial_opt = 
+        if compatible.contains("ns16550a") {
             //TODO: get actual register size from device tree
             let serial_port = uart_16550::SerialPort::<Mmio<u8>>::new(virt);
             if !skip_init {
                 serial_port.init();
             }
-            Some(SerialPort { inner: serial_port })
+            Some(SerialPort::Ns16550u8(serial_port))
+        } else if compatible.contains("snps,dw-apb-uart") {
+            //TODO: get actual register size from device tree
+            let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
+            if !skip_init {
+                serial_port.init();
+            }
+            Some(SerialPort::Ns16550u32(serial_port))
         } else {
             None
         };
         match serial_opt {
             Some(serial) => {
-                info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
                 *COM1.lock() = Some(serial);
+                info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
             }
             None => {
                 log::warn!(
