@@ -53,26 +53,37 @@ pub unsafe fn init_early(dtb: &Fdt) {
         return;
     }
 
-    if let Some((phys, _, _, _, compatible)) = diag_uart_range(dtb) {
+    if let Some((phys, size, skip_init, _cts, compatible)) = diag_uart_range(dtb) {
         let virt = crate::PHYS_OFFSET + phys;
-        let port = if compatible == "ns16550a" {
+        let serial_opt = if compatible.contains("ns16550a") || compatible.contains("snps,dw-apb-uart") {
+            //TODO: get actual register size from device tree
             let serial_port = uart_16550::SerialPort::<Mmio<u8>>::new(virt);
-            serial_port.init();
+            if !skip_init {
+                serial_port.init();
+            }
             Some(SerialPort { inner: serial_port })
         } else {
             None
         };
-        match port {
-            Some(port) => {
-                *COM1.lock() = Some(port);
+        match serial_opt {
+            Some(serial) => {
+                info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
+                *COM1.lock() = Some(serial);
             }
-            None => {}
+            None => {
+                log::warn!(
+                    "UART {:?} at {:#X} size {:#X}: no driver found",
+                    compatible,
+                    virt,
+                    size
+                );
+            }
         }
     }
 }
 
 pub unsafe fn init(fdt: &Fdt) -> Option<()> {
-    if let Some(node) = fdt.find_compatible(&["ns16550a"]) {
+    if let Some(node) = fdt.find_compatible(&["ns16550a", "snps,dw-apb-uart"]) {
         let intr = get_interrupt(fdt, &node, 0).unwrap();
         let interrupt_parent = interrupt_parent(fdt, &node)?;
         let phandle = interrupt_parent.property("phandle")?.as_usize()? as u32;
