@@ -69,6 +69,9 @@ use crate::consts::*;
 /// Shared data structures
 mod common;
 
+#[macro_use]
+mod macros;
+
 /// Architecture-dependent stuff
 #[macro_use]
 #[allow(dead_code)] // TODO
