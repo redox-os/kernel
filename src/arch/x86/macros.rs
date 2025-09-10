@@ -44,9 +44,3 @@ macro_rules! default_irqs(
         ], $submac);
     }
 );
-
-macro_rules! define_default_irqs(
-    () => {
-        default_irqs!((), allocatable_irq);
-    }
-);

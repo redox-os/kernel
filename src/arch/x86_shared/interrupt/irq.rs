@@ -342,7 +342,7 @@ pub unsafe fn allocatable_irq_generic(number: u8) {
 }
 
 #[cfg(target_arch = "x86")]
-define_default_irqs!();
+default_irqs!((), allocatable_irq);
 
 #[cfg(target_arch = "x86_64")]
 interrupt_error!(generic_irq, |_stack, code| {
