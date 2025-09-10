@@ -1,5 +1,6 @@
 //! Interrupt instructions
 
+pub mod exception;
 pub mod ipi;
 pub mod trace;
 

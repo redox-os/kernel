@@ -356,14 +356,12 @@ macro_rules! interrupt {
 
 #[macro_export]
 macro_rules! interrupt_error {
-    ($name:ident, |$stack:ident| $code:block) => {
+    ($name:ident, |$stack:ident, $error_code:ident| $code:block) => {
         #[naked]
         pub unsafe extern "C" fn $name() { unsafe {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86::interrupt::handler::InterruptErrorStack) {
-                #[allow(unused_unsafe)]
-                unsafe {
-                    $code
-                }
+                let $error_code: usize = $stack.code;
+                $code
             }
 
             core::arch::naked_asm!(concat!(

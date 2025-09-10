@@ -11,7 +11,6 @@ pub mod device;
 pub mod idt;
 
 /// Interrupt instructions
-#[macro_use]
 pub mod interrupt;
 
 /// Inter-processor interrupts

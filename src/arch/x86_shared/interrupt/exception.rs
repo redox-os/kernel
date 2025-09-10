@@ -22,6 +22,9 @@ interrupt_stack!(debug, @paranoid, |stack| {
     // Disable singlestep before there is a breakpoint, since the breakpoint
     // handler might end up setting it again but unless it does we want the
     // default to be false.
+    #[cfg(target_arch = "x86")]
+    let had_singlestep = stack.iret.eflags & (1 << 8) == 1 << 8;
+    #[cfg(target_arch = "x86_64")]
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
@@ -55,7 +58,7 @@ interrupt_stack!(non_maskable, @paranoid, |stack| {
 });
 
 interrupt_stack!(breakpoint, |stack| {
-    // The processor lets RIP point to the instruction *after* int3, so
+    // The processor lets EIP/RIP point to the instruction *after* int3, so
     // unhandled breakpoint interrupt don't go in an infinite loop. But we
     // throw SIGTRAP anyway, so that's not a problem.
     //
@@ -66,7 +69,14 @@ interrupt_stack!(breakpoint, |stack| {
     //
     // Let's just follow Linux convention and let RIP be RIP-1, point to the
     // int3 instruction. After all, it's the sanest thing to do.
-    stack.iret.rip -= 1;
+    #[cfg(target_arch = "x86")]
+    {
+        stack.iret.eip -= 1;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        stack.iret.rip -= 1;
+    }
 
     if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
         println!("Breakpoint trap");
@@ -200,6 +210,19 @@ interrupt_error!(page, |stack, code| {
         arch_flags.contains(PageFaultError::ID),
     );
 
+    #[cfg(target_arch = "x86")]
+    if crate::memory::page_fault_handler(&mut stack.inner, generic_flags, cr2).is_err() {
+        println!("Page fault: {:>08X} {:#?}", cr2.data(), arch_flags);
+        stack.dump();
+        unsafe { stack_trace() };
+        excp_handler(Exception {
+            kind: 14,
+            code,
+            address: cr2.data(),
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
     if crate::memory::page_fault_handler(stack, generic_flags, cr2).is_err() {
         println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
