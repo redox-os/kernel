@@ -55,15 +55,12 @@ pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
     let byte_index = index / 32;
     let bit = index % 32;
 
-    {
-        &IDTS
-            .read()
-            .as_ref()
-            .unwrap()
-            .get(&cpu_id)
-            .unwrap()
-            .reservations[usize::from(byte_index)]
-    }
+    IDTS.read()
+        .as_ref()
+        .unwrap()
+        .get(&cpu_id)
+        .unwrap()
+        .reservations[usize::from(byte_index)]
     .load(Ordering::Acquire)
         & (1 << bit)
         != 0
@@ -74,15 +71,12 @@ pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
     let byte_index = index / 32;
     let bit = index % 32;
 
-    {
-        &IDTS
-            .read()
-            .as_ref()
-            .unwrap()
-            .get(&cpu_id)
-            .unwrap()
-            .reservations[usize::from(byte_index)]
-    }
+    IDTS.read()
+        .as_ref()
+        .unwrap()
+        .get(&cpu_id)
+        .unwrap()
+        .reservations[usize::from(byte_index)]
     .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
 }
 

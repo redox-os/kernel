@@ -363,9 +363,9 @@ macro_rules! interrupt_stack {
     ($name:ident, $save1:ident!, $save2:ident!, $rstor2:ident!, $rstor1:ident!, is_paranoid: $is_paranoid:expr_2021, |$stack:ident| $code:block) => {
         #[naked]
         pub unsafe extern "C" fn $name() { unsafe {
-            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) { unsafe {
+            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
                 $code
-            }}
+            }
             core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
                 "cld;",
@@ -456,9 +456,9 @@ macro_rules! interrupt_error {
     ($name:ident, |$stack:ident, $error_code:ident| $code:block) => {
         #[naked]
         pub unsafe extern "C" fn $name() { unsafe {
-            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptStack, $error_code: usize) { unsafe {
+            unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptStack, $error_code: usize) {
                 $code
-            }}
+            }
 
             core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.

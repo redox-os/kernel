@@ -174,7 +174,7 @@ interrupt_stack!(pit_stack, |_stack| {
         *time::OFFSET.lock() += pit::RATE;
     }
 
-    eoi(0);
+    unsafe { eoi(0) };
 
     // Wake up other CPUs
     ipi(IpiKind::Pit, IpiTarget::Other);
@@ -309,7 +309,7 @@ interrupt_error!(generic_irq, |_stack, code| {
     // (containing lots of useless NOPs).
     irq_trigger((code as i32).wrapping_add(128) as u8);
 
-    lapic_eoi();
+    unsafe { lapic_eoi() };
 });
 
 core::arch::global_asm!("
