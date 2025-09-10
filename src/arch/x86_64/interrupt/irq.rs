@@ -188,16 +188,16 @@ interrupt_stack!(pit_stack, |_stack| {
 
 interrupt!(keyboard, || {
     let data: u8;
-    core::arch::asm!("in al, 0x60", out("al") data);
+    unsafe { core::arch::asm!("in al, 0x60", out("al") data) };
 
-    eoi(1);
+    unsafe { eoi(1) };
 
     serio_input(0, data);
 });
 
 interrupt!(cascade, || {
     // No need to do any operations on cascade
-    eoi(2);
+    unsafe { eoi(2) };
 });
 
 interrupt!(com2, || {
@@ -205,7 +205,7 @@ interrupt!(com2, || {
         debug_input(c);
     }
     debug_notify();
-    eoi(3);
+    unsafe { eoi(3) };
 });
 
 interrupt!(com1, || {
@@ -213,81 +213,101 @@ interrupt!(com1, || {
         debug_input(c);
     }
     debug_notify();
-    eoi(4);
+    unsafe { eoi(4) };
 });
 
 interrupt!(lpt2, || {
-    trigger(5);
-    eoi(5);
+    unsafe {
+        trigger(5);
+        eoi(5);
+    }
 });
 
 interrupt!(floppy, || {
-    trigger(6);
-    eoi(6);
+    unsafe {
+        trigger(6);
+        eoi(6);
+    }
 });
 
 interrupt!(lpt1, || {
-    if irq_method() == IrqMethod::Pic && pic::master().isr() & (1 << 7) == 0 {
-        // the IRQ was spurious, ignore it but increment a counter.
-        SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
-        return;
+    unsafe {
+        if irq_method() == IrqMethod::Pic && pic::master().isr() & (1 << 7) == 0 {
+            // the IRQ was spurious, ignore it but increment a counter.
+            SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        trigger(7);
+        eoi(7);
     }
-    trigger(7);
-    eoi(7);
 });
 
 interrupt!(rtc, || {
-    trigger(8);
-    eoi(8);
+    unsafe {
+        trigger(8);
+        eoi(8);
+    }
 });
 
 interrupt!(pci1, || {
-    trigger(9);
-    eoi(9);
+    unsafe {
+        trigger(9);
+        eoi(9);
+    }
 });
 
 interrupt!(pci2, || {
-    trigger(10);
-    eoi(10);
+    unsafe {
+        trigger(10);
+        eoi(10)
+    };
 });
 
 interrupt!(pci3, || {
-    trigger(11);
-    eoi(11);
+    unsafe {
+        trigger(11);
+        eoi(11)
+    };
 });
 
 interrupt!(mouse, || {
     let data: u8;
-    core::arch::asm!("in al, 0x60", out("al") data);
+    unsafe { core::arch::asm!("in al, 0x60", out("al") data) };
 
-    eoi(12);
+    unsafe { eoi(12) };
 
     serio_input(1, data);
 });
 
 interrupt!(fpu, || {
-    trigger(13);
-    eoi(13);
+    unsafe {
+        trigger(13);
+        eoi(13);
+    }
 });
 
 interrupt!(ata1, || {
-    trigger(14);
-    eoi(14);
+    unsafe {
+        trigger(14);
+        eoi(14);
+    }
 });
 
 interrupt!(ata2, || {
-    if irq_method() == IrqMethod::Pic && pic::slave().isr() & (1 << 7) == 0 {
-        SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
-        pic::master().ack();
-        return;
+    unsafe {
+        if irq_method() == IrqMethod::Pic && pic::slave().isr() & (1 << 7) == 0 {
+            SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
+            pic::master().ack();
+            return;
+        }
+        trigger(15);
+        eoi(15);
     }
-    trigger(15);
-    eoi(15);
 });
 
 interrupt!(lapic_timer, || {
     println!("Local apic timer interrupt");
-    lapic_eoi();
+    unsafe { lapic_eoi() };
 });
 #[cfg(feature = "profiling")]
 interrupt!(aux_timer, || {
@@ -296,11 +316,10 @@ interrupt!(aux_timer, || {
 });
 
 interrupt!(lapic_error, || {
-    log::error!(
-        "Local apic internal error: ESR={:#0x}",
+    log::error!("Local apic internal error: ESR={:#0x}", unsafe {
         local_apic::the_local_apic().esr()
-    );
-    lapic_eoi();
+    });
+    unsafe { lapic_eoi() };
 });
 
 interrupt_error!(generic_irq, |_stack, code| {

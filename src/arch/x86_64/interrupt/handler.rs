@@ -416,9 +416,9 @@ macro_rules! interrupt {
     ($name:ident, || $code:block) => {
         #[naked]
         pub unsafe extern "C" fn $name() { unsafe {
-            unsafe extern "C" fn inner() { unsafe {
+            unsafe extern "C" fn inner() {
                 $code
-            }}
+            }
 
             core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
