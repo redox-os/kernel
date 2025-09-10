@@ -225,10 +225,6 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
 pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
     use crate::memory::{get_page_info, the_zeroed_frame, RefCount};
 
-    unsafe {
-        x86::bits64::rflags::stac();
-    }
-
     println!("DEBUGGER START");
     println!();
 
@@ -303,6 +299,9 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
 
             let mut rsp = regs.iret.rsp;
             println!("stack: {:>016x}", rsp);
+            unsafe {
+                x86::bits64::rflags::stac();
+            }
             //Maximum 64 qwords
             for _ in 0..64 {
                 if context.addr_space.as_ref().map_or(false, |space| {
@@ -325,6 +324,9 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
                     println!("    {:>016x}: GUARD PAGE", rsp);
                     break;
                 }
+            }
+            unsafe {
+                x86::bits64::rflags::clac();
             }
         }
 
@@ -360,11 +362,6 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
         "({} kernel-owned references were not counted)",
         temporarily_taken_htbufs
     );
-
-    println!("DEBUGGER END");
-    unsafe {
-        x86::bits64::rflags::clac();
-    }
 }
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use {crate::memory::Frame, hashbrown::HashMap};
