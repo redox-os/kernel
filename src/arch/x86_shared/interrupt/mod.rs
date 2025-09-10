@@ -2,6 +2,7 @@
 
 pub mod exception;
 pub mod ipi;
+pub mod irq;
 pub mod trace;
 
 pub use super::idt::{available_irqs_iter, is_reserved, set_reserved};

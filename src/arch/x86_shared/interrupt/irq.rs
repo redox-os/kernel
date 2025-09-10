@@ -3,8 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use alloc::vec::Vec;
 
 use crate::{
-    context,
-    context::timeout,
+    context::{self, timeout},
     device::{
         ioapic, local_apic, pic, pit,
         serial::{COM1, COM2},
@@ -175,7 +174,7 @@ interrupt_stack!(pit_stack, |_stack| {
         *time::OFFSET.lock() += pit::RATE;
     }
 
-    eoi(0);
+    unsafe { eoi(0) };
 
     // Wake up other CPUs
     ipi(IpiKind::Pit, IpiTarget::Other);
@@ -189,16 +188,16 @@ interrupt_stack!(pit_stack, |_stack| {
 
 interrupt!(keyboard, || {
     let data: u8;
-    core::arch::asm!("in al, 0x60", out("al") data);
+    unsafe { core::arch::asm!("in al, 0x60", out("al") data) };
 
-    eoi(1);
+    unsafe { eoi(1) };
 
     serio_input(0, data);
 });
 
 interrupt!(cascade, || {
     // No need to do any operations on cascade
-    eoi(2);
+    unsafe { eoi(2) };
 });
 
 interrupt!(com2, || {
@@ -206,7 +205,7 @@ interrupt!(com2, || {
         debug_input(c);
     }
     debug_notify();
-    eoi(3);
+    unsafe { eoi(3) };
 });
 
 interrupt!(com1, || {
@@ -214,101 +213,127 @@ interrupt!(com1, || {
         debug_input(c);
     }
     debug_notify();
-    eoi(4);
+    unsafe { eoi(4) };
 });
 
 interrupt!(lpt2, || {
-    trigger(5);
-    eoi(5);
+    unsafe {
+        trigger(5);
+        eoi(5);
+    }
 });
 
 interrupt!(floppy, || {
-    trigger(6);
-    eoi(6);
+    unsafe {
+        trigger(6);
+        eoi(6);
+    }
 });
 
 interrupt!(lpt1, || {
-    if irq_method() == IrqMethod::Pic && pic::master().isr() & (1 << 7) == 0 {
-        // the IRQ was spurious, ignore it but increment a counter.
-        SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
-        return;
+    unsafe {
+        if irq_method() == IrqMethod::Pic && pic::master().isr() & (1 << 7) == 0 {
+            // the IRQ was spurious, ignore it but increment a counter.
+            SPURIOUS_COUNT_IRQ7.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        trigger(7);
+        eoi(7);
     }
-    trigger(7);
-    eoi(7);
 });
 
 interrupt!(rtc, || {
-    trigger(8);
-    eoi(8);
+    unsafe {
+        trigger(8);
+        eoi(8);
+    }
 });
 
 interrupt!(pci1, || {
-    trigger(9);
-    eoi(9);
+    unsafe {
+        trigger(9);
+        eoi(9);
+    }
 });
 
 interrupt!(pci2, || {
-    trigger(10);
-    eoi(10);
+    unsafe {
+        trigger(10);
+        eoi(10);
+    }
 });
 
 interrupt!(pci3, || {
-    trigger(11);
-    eoi(11);
+    unsafe {
+        trigger(11);
+        eoi(11);
+    }
 });
 
 interrupt!(mouse, || {
     let data: u8;
-    core::arch::asm!("in al, 0x60", out("al") data);
+    unsafe { core::arch::asm!("in al, 0x60", out("al") data) };
 
-    eoi(12);
+    unsafe { eoi(12) };
 
     serio_input(1, data);
 });
 
 interrupt!(fpu, || {
-    trigger(13);
-    eoi(13);
+    unsafe {
+        trigger(13);
+        eoi(13);
+    }
 });
 
 interrupt!(ata1, || {
-    trigger(14);
-    eoi(14);
+    unsafe {
+        trigger(14);
+        eoi(14);
+    }
 });
 
 interrupt!(ata2, || {
-    if irq_method() == IrqMethod::Pic && pic::slave().isr() & (1 << 7) == 0 {
-        SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
-        pic::master().ack();
-        return;
+    unsafe {
+        if irq_method() == IrqMethod::Pic && pic::slave().isr() & (1 << 7) == 0 {
+            SPURIOUS_COUNT_IRQ15.fetch_add(1, Ordering::Relaxed);
+            pic::master().ack();
+            return;
+        }
+        trigger(15);
+        eoi(15);
     }
-    trigger(15);
-    eoi(15);
 });
 
 interrupt!(lapic_timer, || {
     println!("Local apic timer interrupt");
+    unsafe { lapic_eoi() };
+});
+#[cfg(feature = "profiling")]
+interrupt!(aux_timer, || {
     lapic_eoi();
+    crate::ipi::ipi(IpiKind::Profile, IpiTarget::Other);
 });
 
 interrupt!(lapic_error, || {
-    println!(
-        "Local apic internal error: ESR={:#0x}",
+    log::error!("Local apic internal error: ESR={:#0x}", unsafe {
         local_apic::the_local_apic().esr()
-    );
-    lapic_eoi();
+    });
+    unsafe { lapic_eoi() };
 });
 
 // XXX: This would look way prettier using const generics.
 
+#[cfg(target_arch = "x86")]
 macro_rules! allocatable_irq(
     ( $idt:expr_2021, $number:literal, $name:ident ) => {
         interrupt!($name, || {
-            allocatable_irq_generic($number);
+            unsafe { allocatable_irq_generic($number) };
         });
     }
 );
 
+#[cfg(target_arch = "x86")]
 pub unsafe fn allocatable_irq_generic(number: u8) {
     unsafe {
         irq_trigger(number - 32);
@@ -316,4 +341,37 @@ pub unsafe fn allocatable_irq_generic(number: u8) {
     }
 }
 
+#[cfg(target_arch = "x86")]
 define_default_irqs!();
+
+#[cfg(target_arch = "x86_64")]
+interrupt_error!(generic_irq, |_stack, code| {
+    // The reason why 128 is subtracted and added from the code, is that PUSH imm8 sign-extends the
+    // value, and the longer PUSH imm32 would make the generic_interrupts table twice as large
+    // (containing lots of useless NOPs).
+    irq_trigger((code as i32).wrapping_add(128) as u8);
+
+    unsafe { lapic_eoi() };
+});
+
+#[cfg(target_arch = "x86_64")]
+core::arch::global_asm!("
+    .globl __generic_interrupts_start
+    .globl __generic_interrupts_end
+    .p2align 3
+__generic_interrupts_start:
+    n = 0
+    .rept 224
+    push (n - 128)
+    jmp {}
+    .p2align 3
+    n = n + 1
+    .endr
+__generic_interrupts_end:
+", sym generic_irq);
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    pub fn __generic_interrupts_start();
+    pub fn __generic_interrupts_end();
+}
