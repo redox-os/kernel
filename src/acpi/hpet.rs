@@ -63,16 +63,17 @@ impl Hpet {
 #[cfg(target_arch = "x86")]
 impl Hpet {
     pub unsafe fn map(&self) {
-        use crate::{
-            memory::{Frame, KernelMapper},
-            paging::{entry::EntryFlags, Page, VirtualAddress},
-        };
-        use rmm::PageFlags;
+        unsafe {
+            use crate::{
+                memory::{Frame, KernelMapper},
+                paging::{entry::EntryFlags, Page, VirtualAddress},
+            };
+            use rmm::PageFlags;
 
-        let frame = Frame::containing(PhysicalAddress::new(self.base_address.address as usize));
-        let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
+            let frame = Frame::containing(PhysicalAddress::new(self.base_address.address as usize));
+            let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
 
-        KernelMapper::lock()
+            KernelMapper::lock()
             .get_mut()
             .expect(
                 "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
@@ -86,36 +87,45 @@ impl Hpet {
             )
             .expect("failed to map memory for GenericAddressStructure")
             .flush();
+        }
     }
 
     pub unsafe fn read_u64(&self, offset: usize) -> u64 {
-        read_volatile((crate::HPET_OFFSET + offset) as *const u64)
+        unsafe { read_volatile((crate::HPET_OFFSET + offset) as *const u64) }
     }
 
     pub unsafe fn write_u64(&mut self, offset: usize, value: u64) {
-        write_volatile((crate::HPET_OFFSET + offset) as *mut u64, value);
+        unsafe {
+            write_volatile((crate::HPET_OFFSET + offset) as *mut u64, value);
+        }
     }
 }
 
 #[cfg(not(target_arch = "x86"))]
 impl Hpet {
     pub unsafe fn map(&self) {
-        map_device_memory(
-            PhysicalAddress::new(self.base_address.address as usize),
-            PAGE_SIZE,
-        );
+        unsafe {
+            map_device_memory(
+                PhysicalAddress::new(self.base_address.address as usize),
+                PAGE_SIZE,
+            );
+        }
     }
 
     pub unsafe fn read_u64(&self, offset: usize) -> u64 {
-        read_volatile(
-            (self.base_address.address as usize + offset + crate::PHYS_OFFSET) as *const u64,
-        )
+        unsafe {
+            read_volatile(
+                (self.base_address.address as usize + offset + crate::PHYS_OFFSET) as *const u64,
+            )
+        }
     }
 
     pub unsafe fn write_u64(&mut self, offset: usize, value: u64) {
-        write_volatile(
-            (self.base_address.address as usize + offset + crate::PHYS_OFFSET) as *mut u64,
-            value,
-        );
+        unsafe {
+            write_volatile(
+                (self.base_address.address as usize + offset + crate::PHYS_OFFSET) as *mut u64,
+                value,
+            );
+        }
     }
 }

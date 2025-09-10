@@ -955,7 +955,7 @@ impl UserInner {
                     .get_mut(tag as usize)
                     .ok_or(Error::new(EINVAL))?
                 {
-                    State::Waiting { ref mut fds, .. } => {
+                    &mut State::Waiting { ref mut fds, .. } => {
                         fds.take().ok_or(Error::new(ENOENT))?.remove(0)
                     }
                     _ => return Err(Error::new(ENOENT)),
@@ -1105,11 +1105,14 @@ impl UserInner {
                         .map(RwLock::into_inner)
                         .collect();
 
-                    if let Some(context) = context.upgrade() {
-                        context.write().unblock();
-                        *o = State::Responded(response);
-                    } else {
-                        states.remove(tag as usize);
+                    match context.upgrade() {
+                        Some(context) => {
+                            context.write().unblock();
+                            *o = State::Responded(response);
+                        }
+                        _ => {
+                            states.remove(tag as usize);
+                        }
                     }
 
                     let unpin = true;
@@ -1333,7 +1336,7 @@ impl UserInner {
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
-            State::Waiting { ref mut fds, .. } => *fds = Some(descs),
+            &mut State::Waiting { ref mut fds, .. } => *fds = Some(descs),
             _ => return Err(Error::new(ENOENT)),
         };
 
@@ -1389,7 +1392,7 @@ impl UserInner {
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
-            State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?,
+            &mut State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?,
             _ => return Err(Error::new(ENOENT)),
         };
 

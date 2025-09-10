@@ -28,17 +28,19 @@ mod spcr;
 mod xsdt;
 
 unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::paging::PageMapper) {
-    let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
-    let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
+    unsafe {
+        let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
+        let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
 
-    for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
-        let (_, flush) = mapper
-            .map_linearly(
-                base.add(page_idx * crate::memory::PAGE_SIZE),
-                PageFlags::new(),
-            )
-            .expect("failed to linearly map SDT");
-        flush.flush();
+        for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
+            let (_, flush) = mapper
+                .map_linearly(
+                    base.add(page_idx * crate::memory::PAGE_SIZE),
+                    PageFlags::new(),
+                )
+                .expect("failed to linearly map SDT");
+            flush.flush();
+        }
     }
 }
 
@@ -93,83 +95,85 @@ pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
 pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
-    {
-        let mut sdt_ptrs = SDT_POINTERS.write();
-        *sdt_ptrs = Some(HashMap::new());
-    }
-
-    // Search for RSDP
-    let rsdp_opt = RSDP::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
-
-    if let Some(rsdp) = rsdp_opt {
-        info!("SDT address: {:#x}", rsdp.sdt_address());
-        let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock());
-
-        for &c in rxsdt.signature.iter() {
-            print!("{}", c as char);
+    unsafe {
+        {
+            let mut sdt_ptrs = SDT_POINTERS.write();
+            *sdt_ptrs = Some(HashMap::new());
         }
-        println!(":");
 
-        let rxsdt = if let Some(rsdt) = Rsdt::new(rxsdt) {
-            let mut initialized = false;
+        // Search for RSDP
+        let rsdp_opt = RSDP::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
 
-            let rsdt = RXSDT_ENUM.call_once(|| {
-                initialized = true;
+        if let Some(rsdp) = rsdp_opt {
+            info!("SDT address: {:#x}", rsdp.sdt_address());
+            let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock());
 
-                RxsdtEnum::Rsdt(rsdt)
-            });
+            for &c in rxsdt.signature.iter() {
+                print!("{}", c as char);
+            }
+            println!(":");
 
-            if !initialized {
-                log::error!("RXSDT_ENUM already initialized");
+            let rxsdt = if let Some(rsdt) = Rsdt::new(rxsdt) {
+                let mut initialized = false;
+
+                let rsdt = RXSDT_ENUM.call_once(|| {
+                    initialized = true;
+
+                    RxsdtEnum::Rsdt(rsdt)
+                });
+
+                if !initialized {
+                    log::error!("RXSDT_ENUM already initialized");
+                }
+
+                rsdt
+            } else if let Some(xsdt) = Xsdt::new(rxsdt) {
+                let mut initialized = false;
+
+                let xsdt = RXSDT_ENUM.call_once(|| {
+                    initialized = true;
+
+                    RxsdtEnum::Xsdt(xsdt)
+                });
+                if !initialized {
+                    log::error!("RXSDT_ENUM already initialized");
+                }
+
+                xsdt
+            } else {
+                println!("UNKNOWN RSDT OR XSDT SIGNATURE");
+                return;
+            };
+
+            // TODO: Don't touch ACPI tables in kernel?
+
+            for sdt in rxsdt.iter() {
+                get_sdt(sdt, &mut KernelMapper::lock());
             }
 
-            rsdt
-        } else if let Some(xsdt) = Xsdt::new(rxsdt) {
-            let mut initialized = false;
+            for sdt_address in rxsdt.iter() {
+                let sdt = &*((sdt_address + crate::PHYS_OFFSET) as *const Sdt);
 
-            let xsdt = RXSDT_ENUM.call_once(|| {
-                initialized = true;
-
-                RxsdtEnum::Xsdt(xsdt)
-            });
-            if !initialized {
-                log::error!("RXSDT_ENUM already initialized");
+                let signature = get_sdt_signature(sdt);
+                if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
+                    ptrs.insert(signature, sdt);
+                }
             }
 
-            xsdt
+            //TODO: support this on any arch
+            #[cfg(target_arch = "aarch64")]
+            spcr::Spcr::init();
+            // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
+            // to initialize enumerated processors to userspace?
+            Madt::init();
+            // TODO: Let userspace setup HPET, and then provide an interface to specify which timer to
+            // use?
+            Hpet::init();
+            #[cfg(target_arch = "aarch64")]
+            gtdt::Gtdt::init();
         } else {
-            println!("UNKNOWN RSDT OR XSDT SIGNATURE");
-            return;
-        };
-
-        // TODO: Don't touch ACPI tables in kernel?
-
-        for sdt in rxsdt.iter() {
-            get_sdt(sdt, &mut KernelMapper::lock());
+            println!("NO RSDP FOUND");
         }
-
-        for sdt_address in rxsdt.iter() {
-            let sdt = &*((sdt_address + crate::PHYS_OFFSET) as *const Sdt);
-
-            let signature = get_sdt_signature(sdt);
-            if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {
-                ptrs.insert(signature, sdt);
-            }
-        }
-
-        //TODO: support this on any arch
-        #[cfg(target_arch = "aarch64")]
-        spcr::Spcr::init();
-        // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
-        // to initialize enumerated processors to userspace?
-        Madt::init();
-        // TODO: Let userspace setup HPET, and then provide an interface to specify which timer to
-        // use?
-        Hpet::init();
-        #[cfg(target_arch = "aarch64")]
-        gtdt::Gtdt::init();
-    } else {
-        println!("NO RSDP FOUND");
     }
 }
 

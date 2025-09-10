@@ -89,24 +89,30 @@ impl Bcm2836ArmInterruptController {
     }
 
     unsafe fn init(&mut self) {
-        debug!("IRQ BCM2836 INIT");
-        //init local timer freq
-        self.write(LOCAL_CONTROL, 0x0);
-        self.write(LOCAL_PRESCALER, 0x8000_0000);
+        unsafe {
+            debug!("IRQ BCM2836 INIT");
+            //init local timer freq
+            self.write(LOCAL_CONTROL, 0x0);
+            self.write(LOCAL_PRESCALER, 0x8000_0000);
 
-        //routing all irq to core
-        self.write(LOCAL_GPU_ROUTING, self.active_cpu);
-        debug!("routing all irq to core {}", self.active_cpu);
-        debug!("IRQ BCM2836 END");
+            //routing all irq to core
+            self.write(LOCAL_GPU_ROUTING, self.active_cpu);
+            debug!("routing all irq to core {}", self.active_cpu);
+            debug!("IRQ BCM2836 END");
+        }
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
-        let val = read_volatile((self.address + reg as usize) as *const u32);
-        val
+        unsafe {
+            let val = read_volatile((self.address + reg as usize) as *const u32);
+            val
+        }
     }
 
     unsafe fn write(&mut self, reg: u32, value: u32) {
-        write_volatile((self.address + reg as usize) as *mut u32, value);
+        unsafe {
+            write_volatile((self.address + reg as usize) as *mut u32, value);
+        }
     }
 }
 

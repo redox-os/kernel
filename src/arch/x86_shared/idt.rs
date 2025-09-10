@@ -92,23 +92,25 @@ pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + '
 
 #[cfg(target_arch = "x86")]
 macro_rules! use_irq(
-    ( $idt: expr, $number:literal, $func:ident ) => {{
+    ( $idt: expr_2021, $number:literal, $func:ident ) => {{
         $idt[$number].set_func($func);
     }}
 );
 
 #[cfg(target_arch = "x86")]
 macro_rules! use_default_irqs(
-    ($idt:expr) => {{
+    ($idt:expr_2021) => {{
         use crate::interrupt::irq::*;
         default_irqs!($idt, use_irq);
     }}
 );
 
 pub unsafe fn init() {
-    let idt = &mut *INIT_IDT.get();
-    set_exceptions(idt);
-    dtables::lidt(&DescriptorTablePointer::new(&idt));
+    unsafe {
+        let idt = &mut *INIT_IDT.get();
+        set_exceptions(idt);
+        dtables::lidt(&DescriptorTablePointer::new(&idt));
+    }
 }
 
 fn set_exceptions(idt: &mut [IdtEntry]) {
@@ -155,143 +157,150 @@ const fn new_idt_reservations() -> [AtomicU32; 8] {
 
 /// Initialize the IDT for a processor
 pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
-    let mut idts_guard = IDTS.write();
-    let idts_btree = idts_guard.get_or_insert_with(HashMap::new);
+    unsafe {
+        let mut idts_guard = IDTS.write();
+        let idts_btree = idts_guard.get_or_insert_with(HashMap::new);
 
-    if cpu_id == LogicalCpuId::BSP {
-        idts_btree.insert(cpu_id, &mut *INIT_BSP_IDT.get());
-    } else {
-        let idt = idts_btree
-            .entry(cpu_id)
-            .or_insert_with(|| Box::leak(Box::new(Idt::new())));
-        init_generic(cpu_id, idt);
+        if cpu_id == LogicalCpuId::BSP {
+            idts_btree.insert(cpu_id, &mut *INIT_BSP_IDT.get());
+        } else {
+            let idt = idts_btree
+                .entry(cpu_id)
+                .or_insert_with(|| Box::leak(Box::new(Idt::new())));
+            init_generic(cpu_id, idt);
+        }
     }
 }
 
 /// Initializes a fully functional IDT for use before it be moved into the map. This is ONLY called
 /// on the BSP, since the kernel heap is ready for the APs.
 pub unsafe fn init_paging_bsp() {
-    init_generic(LogicalCpuId::BSP, &mut *INIT_BSP_IDT.get());
+    unsafe {
+        init_generic(LogicalCpuId::BSP, &mut *INIT_BSP_IDT.get());
+    }
 }
 
 /// Initializes an IDT for any type of processor.
 pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
-    let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
+    unsafe {
+        let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
 
-    let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
-        limit: (current_idt.len() * mem::size_of::<IdtEntry>() - 1) as u16,
-        base: current_idt.as_ptr() as *const X86IdtEntry,
-    };
+        let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
+            limit: (current_idt.len() * mem::size_of::<IdtEntry>() - 1) as u16,
+            base: current_idt.as_ptr() as *const X86IdtEntry,
+        };
 
-    let backup_ist = {
-        // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
-        // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
-        // considered the most fatal, especially Double Faults which are caused by errors __when
-        // accessing the system IDT__. If that goes wrong, then kernel memory may be partially
-        // corrupt, and we want a separate stack.
-        //
-        // Note that each CPU has its own "backup interrupt stack".
-        let index = 1_u8;
+        let backup_ist = {
+            // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
+            // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
+            // considered the most fatal, especially Double Faults which are caused by errors __when
+            // accessing the system IDT__. If that goes wrong, then kernel memory may be partially
+            // corrupt, and we want a separate stack.
+            //
+            // Note that each CPU has its own "backup interrupt stack".
+            let index = 1_u8;
 
-        // Put them in the 1st entry of the IST.
-        #[cfg(target_arch = "x86_64")] // TODO: x86
-        {
-            use crate::paging::PAGE_SIZE;
-            // Allocate 64 KiB of stack space for the backup stack.
-            const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
-            let frames = crate::memory::allocate_p2frame(4)
-                .expect("failed to allocate pages for backup interrupt stack");
+            // Put them in the 1st entry of the IST.
+            #[cfg(target_arch = "x86_64")] // TODO: x86
+            {
+                use crate::paging::PAGE_SIZE;
+                // Allocate 64 KiB of stack space for the backup stack.
+                const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
+                let frames = crate::memory::allocate_p2frame(4)
+                    .expect("failed to allocate pages for backup interrupt stack");
 
-            use crate::paging::{RmmA, RmmArch};
+                use crate::paging::{RmmA, RmmArch};
 
-            // Physical pages are mapped linearly. So is the linearly mapped virtual memory.
-            let base_address = RmmA::phys_to_virt(frames.base());
+                // Physical pages are mapped linearly. So is the linearly mapped virtual memory.
+                let base_address = RmmA::phys_to_virt(frames.base());
 
-            // Stack always grows downwards.
-            let address = base_address.data() + BACKUP_STACK_SIZE;
+                // Stack always grows downwards.
+                let address = base_address.data() + BACKUP_STACK_SIZE;
 
-            (*crate::gdt::pcr()).tss.ist[usize::from(index - 1)] = address as u64;
+                (*crate::gdt::pcr()).tss.ist[usize::from(index - 1)] = address as u64;
+            }
+
+            index
+        };
+
+        set_exceptions(current_idt);
+        current_idt[2].set_ist(backup_ist);
+        current_idt[8].set_ist(backup_ist);
+        current_idt[18].set_ist(backup_ist);
+
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(
+            __generic_interrupts_end as usize - __generic_interrupts_start as usize,
+            224 * 8
+        );
+
+        #[cfg(target_arch = "x86_64")]
+        for i in 0..224 {
+            current_idt[i + 32]
+                .set_func(mem::transmute(__generic_interrupts_start as usize + i * 8));
         }
 
-        index
-    };
+        // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
+        *current_reservations[0].get_mut() |= 0x0000_0000_FFFF_FFFF;
 
-    set_exceptions(current_idt);
-    current_idt[2].set_ist(backup_ist);
-    current_idt[8].set_ist(backup_ist);
-    current_idt[18].set_ist(backup_ist);
+        if cpu_id == LogicalCpuId::BSP {
+            // Set up IRQs
+            current_idt[32].set_func(irq::pit_stack);
+            current_idt[33].set_func(irq::keyboard);
+            current_idt[34].set_func(irq::cascade);
+            current_idt[35].set_func(irq::com2);
+            current_idt[36].set_func(irq::com1);
+            current_idt[37].set_func(irq::lpt2);
+            current_idt[38].set_func(irq::floppy);
+            current_idt[39].set_func(irq::lpt1);
+            current_idt[40].set_func(irq::rtc);
+            current_idt[41].set_func(irq::pci1);
+            current_idt[42].set_func(irq::pci2);
+            current_idt[43].set_func(irq::pci3);
+            current_idt[44].set_func(irq::mouse);
+            current_idt[45].set_func(irq::fpu);
+            current_idt[46].set_func(irq::ata1);
+            current_idt[47].set_func(irq::ata2);
+            current_idt[48].set_func(irq::lapic_timer);
+            current_idt[49].set_func(irq::lapic_error);
 
-    #[cfg(target_arch = "x86_64")]
-    assert_eq!(
-        __generic_interrupts_end as usize - __generic_interrupts_start as usize,
-        224 * 8
-    );
+            // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
+            *current_reservations[1].get_mut() |= 0x0003_FFFF;
+        } else {
+            // TODO: use_default_irqs! but also the legacy IRQs that are only needed on one CPU
+            current_idt[49].set_func(irq::lapic_error);
 
-    #[cfg(target_arch = "x86_64")]
-    for i in 0..224 {
-        current_idt[i + 32].set_func(mem::transmute(__generic_interrupts_start as usize + i * 8));
+            // reserve bit 49
+            *current_reservations[1].get_mut() |= 1 << 17;
+        }
+
+        #[cfg(target_arch = "x86")]
+        use_default_irqs!(current_idt);
+
+        // Set IPI handlers
+        current_idt[IpiKind::Wakeup as usize].set_func(ipi::wakeup);
+        current_idt[IpiKind::Switch as usize].set_func(ipi::switch);
+        current_idt[IpiKind::Tlb as usize].set_func(ipi::tlb);
+        current_idt[IpiKind::Pit as usize].set_func(ipi::pit);
+        idt.set_reserved_mut(IpiKind::Wakeup as u8, true);
+        idt.set_reserved_mut(IpiKind::Switch as u8, true);
+        idt.set_reserved_mut(IpiKind::Tlb as u8, true);
+        idt.set_reserved_mut(IpiKind::Pit as u8, true);
+
+        #[cfg(target_arch = "x86")]
+        {
+            let current_idt = &mut idt.entries;
+            // Set syscall function
+            current_idt[0x80].set_func(syscall::syscall);
+            current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
+            idt.set_reserved_mut(0x80, true);
+        }
+
+        #[cfg(feature = "profiling")]
+        crate::profiling::maybe_setup_timer(idt, cpu_id);
+
+        dtables::lidt(&idtr);
     }
-
-    // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
-    *current_reservations[0].get_mut() |= 0x0000_0000_FFFF_FFFF;
-
-    if cpu_id == LogicalCpuId::BSP {
-        // Set up IRQs
-        current_idt[32].set_func(irq::pit_stack);
-        current_idt[33].set_func(irq::keyboard);
-        current_idt[34].set_func(irq::cascade);
-        current_idt[35].set_func(irq::com2);
-        current_idt[36].set_func(irq::com1);
-        current_idt[37].set_func(irq::lpt2);
-        current_idt[38].set_func(irq::floppy);
-        current_idt[39].set_func(irq::lpt1);
-        current_idt[40].set_func(irq::rtc);
-        current_idt[41].set_func(irq::pci1);
-        current_idt[42].set_func(irq::pci2);
-        current_idt[43].set_func(irq::pci3);
-        current_idt[44].set_func(irq::mouse);
-        current_idt[45].set_func(irq::fpu);
-        current_idt[46].set_func(irq::ata1);
-        current_idt[47].set_func(irq::ata2);
-        current_idt[48].set_func(irq::lapic_timer);
-        current_idt[49].set_func(irq::lapic_error);
-
-        // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
-        *current_reservations[1].get_mut() |= 0x0003_FFFF;
-    } else {
-        // TODO: use_default_irqs! but also the legacy IRQs that are only needed on one CPU
-        current_idt[49].set_func(irq::lapic_error);
-
-        // reserve bit 49
-        *current_reservations[1].get_mut() |= 1 << 17;
-    }
-
-    #[cfg(target_arch = "x86")]
-    use_default_irqs!(current_idt);
-
-    // Set IPI handlers
-    current_idt[IpiKind::Wakeup as usize].set_func(ipi::wakeup);
-    current_idt[IpiKind::Switch as usize].set_func(ipi::switch);
-    current_idt[IpiKind::Tlb as usize].set_func(ipi::tlb);
-    current_idt[IpiKind::Pit as usize].set_func(ipi::pit);
-    idt.set_reserved_mut(IpiKind::Wakeup as u8, true);
-    idt.set_reserved_mut(IpiKind::Switch as u8, true);
-    idt.set_reserved_mut(IpiKind::Tlb as u8, true);
-    idt.set_reserved_mut(IpiKind::Pit as u8, true);
-
-    #[cfg(target_arch = "x86")]
-    {
-        let current_idt = &mut idt.entries;
-        // Set syscall function
-        current_idt[0x80].set_func(syscall::syscall);
-        current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
-        idt.set_reserved_mut(0x80, true);
-    }
-
-    #[cfg(feature = "profiling")]
-    crate::profiling::maybe_setup_timer(idt, cpu_id);
-
-    dtables::lidt(&idtr);
 }
 
 bitflags! {

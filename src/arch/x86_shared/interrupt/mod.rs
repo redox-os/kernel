@@ -8,7 +8,9 @@ pub use super::idt::{available_irqs_iter, is_reserved, set_reserved};
 /// Clear interrupts
 #[inline(always)]
 pub unsafe fn disable() {
-    core::arch::asm!("cli", options(nomem, nostack));
+    unsafe {
+        core::arch::asm!("cli", options(nomem, nostack));
+    }
 }
 
 /// Set interrupts and halt
@@ -16,7 +18,9 @@ pub unsafe fn disable() {
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
-    core::arch::asm!("sti; hlt", options(nomem, nostack));
+    unsafe {
+        core::arch::asm!("sti; hlt", options(nomem, nostack));
+    }
 }
 
 /// Set interrupts and nop
@@ -24,13 +28,17 @@ pub unsafe fn enable_and_halt() {
 /// Simply enabling interrupts does not gurantee that they will trigger, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_nop() {
-    core::arch::asm!("sti; nop", options(nomem, nostack));
+    unsafe {
+        core::arch::asm!("sti; nop", options(nomem, nostack));
+    }
 }
 
 /// Halt instruction
 #[inline(always)]
 pub unsafe fn halt() {
-    core::arch::asm!("hlt", options(nomem, nostack));
+    unsafe {
+        core::arch::asm!("hlt", options(nomem, nostack));
+    }
 }
 
 /// Pause instruction

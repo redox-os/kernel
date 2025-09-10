@@ -4,24 +4,27 @@ use crate::{context, scheme::acpi, time};
 use crate::syscall::io::{Io, Pio};
 
 pub unsafe fn kreset() -> ! {
-    log::info!("kreset");
+    unsafe {
+        log::info!("kreset");
 
-    // 8042 reset
-    {
-        println!("Reset with 8042");
-        let mut port = Pio::<u8>::new(0x64);
-        while port.readf(2) {}
-        port.write(0xFE);
+        // 8042 reset
+        {
+            println!("Reset with 8042");
+            let mut port = Pio::<u8>::new(0x64);
+            while port.readf(2) {}
+            port.write(0xFE);
+        }
+
+        emergency_reset();
     }
-
-    emergency_reset();
 }
 
 #[cfg(target_arch = "x86")]
 pub unsafe fn emergency_reset() -> ! {
-    // Use triple fault to guarantee reset
-    core::arch::asm!(
-        "
+    unsafe {
+        // Use triple fault to guarantee reset
+        core::arch::asm!(
+            "
         cli
         sidt [esp+16]
         // set IDT limit to zero
@@ -29,15 +32,17 @@ pub unsafe fn emergency_reset() -> ! {
         lidt [esp+16]
         int $3
     ",
-        options(noreturn)
-    );
+            options(noreturn)
+        );
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn emergency_reset() -> ! {
-    // Use triple fault to guarantee reset
-    core::arch::asm!(
-        "
+    unsafe {
+        // Use triple fault to guarantee reset
+        core::arch::asm!(
+            "
         cli
         sidt [rsp+16]
         // set IDT limit to zero
@@ -45,8 +50,9 @@ pub unsafe fn emergency_reset() -> ! {
         lidt [rsp+16]
         int $3
     ",
-        options(noreturn)
-    );
+            options(noreturn)
+        );
+    }
 }
 
 #[cfg(feature = "acpi")]
@@ -81,29 +87,31 @@ fn userspace_acpi_shutdown() {
 }
 
 pub unsafe fn kstop() -> ! {
-    log::info!("Running kstop()");
+    unsafe {
+        log::info!("Running kstop()");
 
-    #[cfg(feature = "acpi")]
-    userspace_acpi_shutdown();
+        #[cfg(feature = "acpi")]
+        userspace_acpi_shutdown();
 
-    // Magic shutdown code for bochs and qemu (older versions).
-    for c in "Shutdown".bytes() {
-        let port = 0x8900;
-        println!("Shutdown with outb(0x{:X}, '{}')", port, c as char);
-        Pio::<u8>::new(port).write(c);
-    }
+        // Magic shutdown code for bochs and qemu (older versions).
+        for c in "Shutdown".bytes() {
+            let port = 0x8900;
+            println!("Shutdown with outb(0x{:X}, '{}')", port, c as char);
+            Pio::<u8>::new(port).write(c);
+        }
 
-    // Magic shutdown using qemu default ACPI method
-    {
-        let port = 0x604;
-        let data = 0x2000;
-        println!("Shutdown with outb(0x{:X}, 0x{:X})", port, data);
-        Pio::<u16>::new(port).write(data);
-    }
+        // Magic shutdown using qemu default ACPI method
+        {
+            let port = 0x604;
+            let data = 0x2000;
+            println!("Shutdown with outb(0x{:X}, 0x{:X})", port, data);
+            Pio::<u16>::new(port).write(data);
+        }
 
-    // Magic code for VMWare. Also a hard lock.
-    println!("Shutdown with cli hlt");
-    loop {
-        core::arch::asm!("cli; hlt");
+        // Magic code for VMWare. Also a hard lock.
+        println!("Shutdown with cli hlt");
+        loop {
+            core::arch::asm!("cli; hlt");
+        }
     }
 }

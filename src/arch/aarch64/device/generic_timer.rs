@@ -24,22 +24,24 @@ bitflags! {
 }
 
 pub unsafe fn init(fdt: &Fdt) {
-    let mut timer = GenericTimer::new();
-    timer.init();
-    if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
-        let irq = get_interrupt(fdt, &node, 1).unwrap();
-        debug!("irq = {:?}", irq);
-        if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
-            //PHYS_NONSECURE_PPI only
-            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-                .ic
-                .irq_xlate(irq)
-                .unwrap();
-            info!("generic_timer virq = {}", virq);
-            register_irq(virq as u32, Box::new(timer));
-            IRQ_CHIP.irq_enable(virq as u32);
-        } else {
-            error!("Failed to find irq parent for generic timer");
+    unsafe {
+        let mut timer = GenericTimer::new();
+        timer.init();
+        if let Some(node) = fdt.find_compatible(&["arm,armv7-timer"]) {
+            let irq = get_interrupt(fdt, &node, 1).unwrap();
+            debug!("irq = {:?}", irq);
+            if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
+                //PHYS_NONSECURE_PPI only
+                let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                    .ic
+                    .irq_xlate(irq)
+                    .unwrap();
+                info!("generic_timer virq = {}", virq);
+                register_irq(virq as u32, Box::new(timer));
+                IRQ_CHIP.irq_enable(virq as u32);
+            } else {
+                error!("Failed to find irq parent for generic timer");
+            }
         }
     }
 }

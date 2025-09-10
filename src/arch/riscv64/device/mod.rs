@@ -69,14 +69,16 @@ unsafe fn init_intc(cpu: &FdtNode) {
 }
 
 pub unsafe fn init() {
-    let data = DTB_BINARY.get().unwrap();
-    let fdt = Fdt::new(data).unwrap();
+    unsafe {
+        let data = DTB_BINARY.get().unwrap();
+        let fdt = Fdt::new(data).unwrap();
 
-    crate::dtb::irqchip::init(&fdt);
+        crate::dtb::irqchip::init(&fdt);
 
-    let cpu = fdt.find_node(format!("/cpus/cpu@{}", 0).as_str()).unwrap();
-    init_intc(&cpu);
-    init_time(&fdt);
+        let cpu = fdt.find_node(format!("/cpus/cpu@{}", 0).as_str()).unwrap();
+        init_intc(&cpu);
+        init_time(&fdt);
+    }
 }
 
 fn init_time(fdt: &Fdt) {
@@ -90,11 +92,13 @@ fn init_time(fdt: &Fdt) {
 }
 
 pub unsafe fn init_noncore() {
-    let data = DTB_BINARY.get().unwrap();
-    let fdt = Fdt::new(data).unwrap();
+    unsafe {
+        let data = DTB_BINARY.get().unwrap();
+        let fdt = Fdt::new(data).unwrap();
 
-    init_clint(&fdt);
-    serial::init(&fdt);
+        init_clint(&fdt);
+        serial::init(&fdt);
+    }
 }
 
 #[derive(Default)]

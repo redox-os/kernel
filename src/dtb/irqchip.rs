@@ -228,14 +228,17 @@ impl IrqChipList {
                 debug_assert!(queue[0..queue_idx].contains(&connection.parent));
                 if let Some(parent_interrupt) = connection.parent_interrupt {
                     let parent = &self.chips[connection.parent];
-                    if let Ok(virq) = parent.ic.irq_xlate(parent_interrupt) {
-                        // assert is unused
-                        irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
-                    } else {
-                        error!(
-                            "Cannot connect irq chip {} to parent irq {} : {:?}",
-                            cur_chip.phandle, parent.phandle, parent_interrupt
-                        );
+                    match parent.ic.irq_xlate(parent_interrupt) {
+                        Ok(virq) => {
+                            // assert is unused
+                            irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
+                        }
+                        _ => {
+                            error!(
+                                "Cannot connect irq chip {} to parent irq {} : {:?}",
+                                cur_chip.phandle, parent.phandle, parent_interrupt
+                            );
+                        }
                     }
                 }
             }
@@ -295,12 +298,17 @@ impl IrqChipCore {
     pub fn trigger_virq(&mut self, virq: u32) {
         if virq < 1024 {
             let desc = &mut self.irq_desc[virq as usize];
-            if let Some(handler) = &mut desc.handler {
-                handler.irq_handler(virq);
-            } else if let Some(ic_idx) = desc.basic.child_ic_idx {
-                self.irq_chip_list.chips[ic_idx].ic.irq_handler(virq);
-            } else {
-                irq_trigger(virq as u8);
+            match &mut desc.handler {
+                Some(handler) => {
+                    handler.irq_handler(virq);
+                }
+                _ => {
+                    if let Some(ic_idx) = desc.basic.child_ic_idx {
+                        self.irq_chip_list.chips[ic_idx].ic.irq_handler(virq);
+                    } else {
+                        irq_trigger(virq as u8);
+                    }
+                }
             }
         }
     }
@@ -336,7 +344,9 @@ impl IrqChipCore {
 }
 
 pub unsafe fn acknowledge(irq: usize) {
-    IRQ_CHIP.irq_eoi(irq as u32);
+    unsafe {
+        IRQ_CHIP.irq_eoi(irq as u32);
+    }
 }
 
 const INIT_HANDLER: Option<Box<dyn InterruptHandler>> = None;

@@ -16,11 +16,13 @@ pub mod system76_ec;
 pub mod tsc;
 
 pub unsafe fn init() {
-    pic::init();
-    local_apic::init(&mut KernelMapper::lock());
+    unsafe {
+        pic::init();
+        local_apic::init(&mut KernelMapper::lock());
 
-    // Run here for the side-effect of printing if KVM was used to avoid interleaved logs.
-    tsc::get_kvm_support();
+        // Run here for the side-effect of printing if KVM was used to avoid interleaved logs.
+        tsc::get_kvm_support();
+    }
 }
 pub unsafe fn init_after_acpi() {
     // this will disable the IOAPIC if needed.
@@ -29,16 +31,19 @@ pub unsafe fn init_after_acpi() {
 
 #[cfg(feature = "acpi")]
 unsafe fn init_hpet() -> bool {
-    use crate::acpi::ACPI_TABLE;
-    if let Some(ref mut hpet) = *ACPI_TABLE.hpet.write() {
-        if cfg!(target_arch = "x86") {
-            //TODO: fix HPET on i686
-            log::warn!("HPET found but implemented on i686");
-            return false;
+    unsafe {
+        use crate::acpi::ACPI_TABLE;
+        match *ACPI_TABLE.hpet.write() {
+            Some(ref mut hpet) => {
+                if cfg!(target_arch = "x86") {
+                    //TODO: fix HPET on i686
+                    log::warn!("HPET found but implemented on i686");
+                    return false;
+                }
+                hpet::init(hpet)
+            }
+            _ => false,
         }
-        hpet::init(hpet)
-    } else {
-        false
     }
 }
 
@@ -48,30 +53,34 @@ unsafe fn init_hpet() -> bool {
 }
 
 pub unsafe fn init_noncore() {
-    log::info!("Initializing system timer");
+    unsafe {
+        log::info!("Initializing system timer");
 
-    #[cfg(feature = "x86_kvm_pv")]
-    if tsc::init() {
-        log::info!("TSC used as system clock source");
+        #[cfg(feature = "x86_kvm_pv")]
+        if tsc::init() {
+            log::info!("TSC used as system clock source");
+        }
+
+        if init_hpet() {
+            log::info!("HPET used as system timer");
+        } else {
+            pit::init();
+            log::info!("PIT used as system timer");
+        }
+
+        log::info!("Initializing serial");
+        serial::init();
+        log::info!("Finished initializing devices");
     }
-
-    if init_hpet() {
-        log::info!("HPET used as system timer");
-    } else {
-        pit::init();
-        log::info!("PIT used as system timer");
-    }
-
-    log::info!("Initializing serial");
-    serial::init();
-    log::info!("Finished initializing devices");
 }
 
 pub unsafe fn init_ap() {
-    local_apic::init_ap();
+    unsafe {
+        local_apic::init_ap();
 
-    #[cfg(feature = "x86_kvm_pv")]
-    tsc::init();
+        #[cfg(feature = "x86_kvm_pv")]
+        tsc::init();
+    }
 }
 
 #[derive(Default)]

@@ -227,56 +227,59 @@ pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
 
 // SAFETY: EMPTY_CR3 must be initialized.
 pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
-    debug_assert!(EMPTY_CR3.poll().is_some());
-    *EMPTY_CR3.get_unchecked()
+    unsafe {
+        debug_assert!(EMPTY_CR3.poll().is_some());
+        *EMPTY_CR3.get_unchecked()
+    }
 }
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    // Update contexts' timestamps
-    let switch_time = crate::time::monotonic();
-    prev.cpu_time += switch_time.saturating_sub(prev.switch_time);
-    next.switch_time = switch_time;
+    unsafe {
+        // Update contexts' timestamps
+        let switch_time = crate::time::monotonic();
+        prev.cpu_time += switch_time.saturating_sub(prev.switch_time);
+        next.switch_time = switch_time;
 
-    let pcr = crate::gdt::pcr();
+        let pcr = crate::gdt::pcr();
 
-    if let Some(ref stack) = next.kstack {
-        crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
-    }
-    crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
+        if let Some(ref stack) = next.kstack {
+            crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
+        }
+        crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
-    core::arch::asm!(
-        alternative2!(
-            feature1: "xsaveopt",
-            then1: ["
+        core::arch::asm!(
+            alternative2!(
+                feature1: "xsaveopt",
+                then1: ["
                 mov eax, 0xffffffff
                 mov edx, eax
                 xsaveopt64 [{prev_fx}]
                 xrstor64 [{next_fx}]
             "],
-            feature2: "xsave",
-            then2: ["
+                feature2: "xsave",
+                then2: ["
                 mov eax, 0xffffffff
                 mov edx, eax
                 xsave64 [{prev_fx}]
                 xrstor64 [{next_fx}]
             "],
-            default: ["
+                default: ["
                 fxsave64 [{prev_fx}]
                 fxrstor64 [{next_fx}]
             "]
-        ),
-        prev_fx = in(reg) prev.kfx.as_mut_ptr(),
-        next_fx = in(reg) next.kfx.as_ptr(),
-        out("eax") _,
-        out("edx") _,
-    );
+            ),
+            prev_fx = in(reg) prev.kfx.as_mut_ptr(),
+            next_fx = in(reg) next.kfx.as_ptr(),
+            out("eax") _,
+            out("edx") _,
+        );
 
-    {
-        core::arch::asm!(
-            alternative!(
-                feature: "fsgsbase",
-                then: ["
+        {
+            core::arch::asm!(
+                alternative!(
+                    feature: "fsgsbase",
+                    then: ["
                     mov rax, [{next}+{fsbase_off}]
                     mov rcx, [{next}+{gsbase_off}]
 
@@ -290,10 +293,10 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
                     mov [{prev}+{fsbase_off}], rdx
                     mov [{prev}+{gsbase_off}], rax
                 "],
-                // TODO: Most applications will set FSBASE, but won't touch GSBASE. Maybe avoid
-                // wrmsr or even the swapgs+rdgsbase+wrgsbase+swapgs sequence if they are already
-                // equal?
-                default: ["
+                    // TODO: Most applications will set FSBASE, but won't touch GSBASE. Maybe avoid
+                    // wrmsr or even the swapgs+rdgsbase+wrgsbase+swapgs sequence if they are already
+                    // equal?
+                    default: ["
                     mov ecx, {MSR_FSBASE}
                     mov rdx, [{next}+{fsbase_off}]
                     mov eax, edx
@@ -308,35 +311,37 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
                     // {prev}
                 "]
-            ),
-            out("rax") _,
-            out("rdx") _,
-            out("ecx") _, prev = in(reg) addr_of_mut!(prev.arch), next = in(reg) addr_of!(next.arch),
-            MSR_FSBASE = const msr::IA32_FS_BASE,
-            MSR_KERNEL_GSBASE = const msr::IA32_KERNEL_GSBASE,
-            gsbase_off = const offset_of!(Context, gsbase),
-            fsbase_off = const offset_of!(Context, fsbase),
-        );
+                ),
+                out("rax") _,
+                out("rdx") _,
+                out("ecx") _, prev = in(reg) addr_of_mut!(prev.arch), next = in(reg) addr_of!(next.arch),
+                MSR_FSBASE = const msr::IA32_FS_BASE,
+                MSR_KERNEL_GSBASE = const msr::IA32_KERNEL_GSBASE,
+                gsbase_off = const offset_of!(Context, gsbase),
+                fsbase_off = const offset_of!(Context, fsbase),
+            );
+        }
+
+        (*pcr).percpu.new_addrsp_tmp.set(next.addr_space.clone());
+
+        switch_to_inner(&mut prev.arch, &mut next.arch)
     }
-
-    (*pcr).percpu.new_addrsp_tmp.set(next.addr_space.clone());
-
-    switch_to_inner(&mut prev.arch, &mut next.arch)
 }
 
 // Check disassembly!
 #[naked]
 unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
-    use Context as Cx;
+    unsafe {
+        use Context as Cx;
 
-    core::arch::naked_asm!(
-        // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
-        //
-        // - the current parameters are passed in the registers `rdi`, `rsi`,
-        // - we can modify scratch registers, e.g. rax
-        // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
-        //   store them here in the first place.
-        concat!("
+        core::arch::naked_asm!(
+            // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
+            //
+            // - the current parameters are passed in the registers `rdi`, `rsi`,
+            // - we can modify scratch registers, e.g. rax
+            // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
+            //   store them here in the first place.
+            concat!("
         // Save old registers, and load new ones
         mov [rdi + {off_rbx}], rbx
         mov rbx, [rsi + {off_rbx}]
@@ -378,18 +383,19 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
 
         "),
 
-        off_rflags = const(offset_of!(Cx, rflags)),
+            off_rflags = const(offset_of!(Cx, rflags)),
 
-        off_rbx = const(offset_of!(Cx, rbx)),
-        off_r12 = const(offset_of!(Cx, r12)),
-        off_r13 = const(offset_of!(Cx, r13)),
-        off_r14 = const(offset_of!(Cx, r14)),
-        off_r15 = const(offset_of!(Cx, r15)),
-        off_rbp = const(offset_of!(Cx, rbp)),
-        off_rsp = const(offset_of!(Cx, rsp)),
+            off_rbx = const(offset_of!(Cx, rbx)),
+            off_r12 = const(offset_of!(Cx, r12)),
+            off_r13 = const(offset_of!(Cx, r13)),
+            off_r14 = const(offset_of!(Cx, r14)),
+            off_r15 = const(offset_of!(Cx, r15)),
+            off_rbp = const(offset_of!(Cx, rbp)),
+            off_rsp = const(offset_of!(Cx, rsp)),
 
-        switch_hook = sym crate::context::switch_finish_hook,
-    );
+            switch_hook = sym crate::context::switch_finish_hook,
+        );
+    }
 }
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).

@@ -108,19 +108,21 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
         }
     }
     pub unsafe fn read_exact<T>(self) -> Result<T> {
-        let mut t: T = core::mem::zeroed();
-        let slice = unsafe {
-            core::slice::from_raw_parts_mut(
-                (&mut t as *mut T).cast::<u8>(),
-                core::mem::size_of::<T>(),
-            )
-        };
+        unsafe {
+            let mut t: T = core::mem::zeroed();
+            let slice = unsafe {
+                core::slice::from_raw_parts_mut(
+                    (&mut t as *mut T).cast::<u8>(),
+                    core::mem::size_of::<T>(),
+                )
+            };
 
-        self.limit(core::mem::size_of::<T>())
-            .ok_or(Error::new(EINVAL))?
-            .copy_to_slice(slice)?;
+            self.limit(core::mem::size_of::<T>())
+                .ok_or(Error::new(EINVAL))?
+                .copy_to_slice(slice)?;
 
-        Ok(t)
+            Ok(t)
+        }
     }
     pub fn copy_common_bytes_to_slice(self, slice: &mut [u8]) -> Result<usize> {
         let min = core::cmp::min(self.len(), slice.len());

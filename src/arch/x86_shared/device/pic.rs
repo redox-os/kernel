@@ -10,48 +10,52 @@ static SLAVE: SyncUnsafeCell<Pic> = SyncUnsafeCell::new(Pic::new(0xA0));
 
 // SAFETY: must be main thread
 pub unsafe fn master<'a>() -> &'a mut Pic {
-    &mut *MASTER.get()
+    unsafe { &mut *MASTER.get() }
 }
 // SAFETY: must be main thread
 pub unsafe fn slave<'a>() -> &'a mut Pic {
-    &mut *SLAVE.get()
+    unsafe { &mut *SLAVE.get() }
 }
 
 pub unsafe fn init() {
-    let master = master();
-    let slave = slave();
+    unsafe {
+        let master = master();
+        let slave = slave();
 
-    // Start initialization
-    master.cmd.write(0x11);
-    slave.cmd.write(0x11);
+        // Start initialization
+        master.cmd.write(0x11);
+        slave.cmd.write(0x11);
 
-    // Set offsets
-    master.data.write(0x20);
-    slave.data.write(0x28);
+        // Set offsets
+        master.data.write(0x20);
+        slave.data.write(0x28);
 
-    // Set up cascade
-    master.data.write(4);
-    slave.data.write(2);
+        // Set up cascade
+        master.data.write(4);
+        slave.data.write(2);
 
-    // Set up interrupt mode (1 is 8086/88 mode, 2 is auto EOI)
-    master.data.write(1);
-    slave.data.write(1);
+        // Set up interrupt mode (1 is 8086/88 mode, 2 is auto EOI)
+        master.data.write(1);
+        slave.data.write(1);
 
-    // Unmask interrupts
-    master.data.write(0);
-    slave.data.write(0);
+        // Unmask interrupts
+        master.data.write(0);
+        slave.data.write(0);
 
-    // Ack remaining interrupts
-    master.ack();
-    slave.ack();
+        // Ack remaining interrupts
+        master.ack();
+        slave.ack();
 
-    // probably already set to PIC, but double-check
-    irq::set_irq_method(irq::IrqMethod::Pic);
+        // probably already set to PIC, but double-check
+        irq::set_irq_method(irq::IrqMethod::Pic);
+    }
 }
 
 pub unsafe fn disable() {
-    master().data.write(0xFF);
-    slave().data.write(0xFF);
+    unsafe {
+        master().data.write(0xFF);
+        slave().data.write(0xFF);
+    }
 }
 
 pub struct Pic {

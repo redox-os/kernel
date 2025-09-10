@@ -247,15 +247,18 @@ impl SchemeList {
                 return Err(Error::new(ENODEV));
             };
 
-            if let Some(ref mut names) = self.names.get_mut(&to) {
-                if names
-                    .insert(name.to_string().into_boxed_str(), id)
-                    .is_some()
-                {
-                    return Err(Error::new(EEXIST));
+            match self.names.get_mut(&to) {
+                Some(ref mut names) => {
+                    if names
+                        .insert(name.to_string().into_boxed_str(), id)
+                        .is_some()
+                    {
+                        return Err(Error::new(EEXIST));
+                    }
                 }
-            } else {
-                panic!("scheme namespace not found");
+                _ => {
+                    panic!("scheme namespace not found");
+                }
             }
         }
 
@@ -344,13 +347,16 @@ impl SchemeList {
         let (new_scheme, t) = scheme_fn(id);
 
         assert!(self.map.insert(id, new_scheme).is_none());
-        if let Some(ref mut names) = self.names.get_mut(&ns) {
-            assert!(names
-                .insert(name.to_string().into_boxed_str(), id)
-                .is_none());
-        } else {
-            // Nonexistent namespace, posssibly null namespace
-            return Err(Error::new(ENODEV));
+        match self.names.get_mut(&ns) {
+            Some(ref mut names) => {
+                assert!(names
+                    .insert(name.to_string().into_boxed_str(), id)
+                    .is_none());
+            }
+            _ => {
+                // Nonexistent namespace, posssibly null namespace
+                return Err(Error::new(ENODEV));
+            }
         }
         Ok((id, t))
     }

@@ -209,57 +209,62 @@ pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
 
 // SAFETY: EMPTY_CR3 must be initialized.
 pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
-    debug_assert!(EMPTY_CR3.poll().is_some());
-    *EMPTY_CR3.get_unchecked()
+    unsafe {
+        debug_assert!(EMPTY_CR3.poll().is_some());
+        *EMPTY_CR3.get_unchecked()
+    }
 }
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    if let Some(ref stack) = next.kstack {
-        crate::gdt::set_tss_stack(stack.initial_top() as usize);
-    }
-    crate::gdt::set_userspace_io_allowed(next.arch.userspace_io_allowed);
+    unsafe {
+        if let Some(ref stack) = next.kstack {
+            crate::gdt::set_tss_stack(stack.initial_top() as usize);
+        }
+        crate::gdt::set_userspace_io_allowed(next.arch.userspace_io_allowed);
 
-    core::arch::asm!("
+        core::arch::asm!("
         fxsave [{prev_fx}]
         fxrstor [{next_fx}]
         ", prev_fx = in(reg) prev.kfx.as_mut_ptr(),
-        next_fx = in(reg) next.kfx.as_ptr(),
-    );
+            next_fx = in(reg) next.kfx.as_ptr(),
+        );
 
-    {
-        let gdt = &mut (&mut *pcr()).gdt;
+        {
+            let gdt = &mut (&mut *pcr()).gdt;
 
-        prev.arch.fsbase = gdt[GDT_USER_FS].offset() as usize;
-        gdt[GDT_USER_FS].set_offset(next.arch.fsbase as u32);
-        prev.arch.gsbase = gdt[GDT_USER_GS].offset() as usize;
-        gdt[GDT_USER_GS].set_offset(next.arch.gsbase as u32);
+            prev.arch.fsbase = gdt[GDT_USER_FS].offset() as usize;
+            gdt[GDT_USER_FS].set_offset(next.arch.fsbase as u32);
+            prev.arch.gsbase = gdt[GDT_USER_GS].offset() as usize;
+            gdt[GDT_USER_GS].set_offset(next.arch.gsbase as u32);
+        }
+        PercpuBlock::current()
+            .new_addrsp_tmp
+            .set(next.addr_space.clone());
+
+        core::arch::asm!(
+            "call {inner}",
+            inner = sym switch_to_inner,
+            in("ecx") &mut prev.arch,
+            in("edx") &mut next.arch,
+        );
     }
-    PercpuBlock::current()
-        .new_addrsp_tmp
-        .set(next.addr_space.clone());
-
-    core::arch::asm!(
-        "call {inner}",
-        inner = sym switch_to_inner,
-        in("ecx") &mut prev.arch,
-        in("edx") &mut next.arch,
-    );
 }
 
 // Check disassembly!
 #[naked]
 unsafe extern "cdecl" fn switch_to_inner() {
-    use Context as Cx;
+    unsafe {
+        use Context as Cx;
 
-    core::arch::naked_asm!(
-        // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
-        //
-        // - the current parameters are passed in the registers `edi`, `esi`,
-        // - we can modify scratch registers, e.g. rax
-        // - we cannot change callee-preserved registers arbitrarily, e.g. ebx, which is why we
-        //   store them here in the first place.
-        concat!("
+        core::arch::naked_asm!(
+            // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
+            //
+            // - the current parameters are passed in the registers `edi`, `esi`,
+            // - we can modify scratch registers, e.g. rax
+            // - we cannot change callee-preserved registers arbitrarily, e.g. ebx, which is why we
+            //   store them here in the first place.
+            concat!("
         // ecx is prev, edx is next
 
         // Save old registers, and load new ones
@@ -297,16 +302,17 @@ unsafe extern "cdecl" fn switch_to_inner() {
 
         "),
 
-        off_eflags = const(offset_of!(Cx, eflags)),
+            off_eflags = const(offset_of!(Cx, eflags)),
 
-        off_ebx = const(offset_of!(Cx, ebx)),
-        off_edi = const(offset_of!(Cx, edi)),
-        off_esi = const(offset_of!(Cx, esi)),
-        off_ebp = const(offset_of!(Cx, ebp)),
-        off_esp = const(offset_of!(Cx, esp)),
+            off_ebx = const(offset_of!(Cx, ebx)),
+            off_edi = const(offset_of!(Cx, edi)),
+            off_esi = const(offset_of!(Cx, esi)),
+            off_ebp = const(offset_of!(Cx, ebp)),
+            off_esp = const(offset_of!(Cx, esp)),
 
-        switch_hook = sym crate::context::switch_finish_hook,
-    );
+            switch_hook = sym crate::context::switch_finish_hook,
+        );
+    }
 }
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86)

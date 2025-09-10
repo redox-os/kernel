@@ -149,39 +149,45 @@ pub struct GicV3CpuIf;
 
 impl GicV3CpuIf {
     pub unsafe fn init(&mut self) {
-        // Enable system register access
-        {
-            let value = 1_usize;
-            asm!("msr icc_sre_el1, {}", in(reg) value);
-        }
-        // Set control register
-        {
-            let value = 0_usize;
-            asm!("msr icc_ctlr_el1, {}", in(reg) value);
-        }
-        // Enable non-secure group 1
-        {
-            let value = 1_usize;
-            asm!("msr icc_igrpen1_el1, {}", in(reg) value);
-        }
-        // Set CPU0's Interrupt Priority Mask
-        {
-            let value = 0xFF_usize;
-            asm!("msr icc_pmr_el1, {}", in(reg) value);
+        unsafe {
+            // Enable system register access
+            {
+                let value = 1_usize;
+                asm!("msr icc_sre_el1, {}", in(reg) value);
+            }
+            // Set control register
+            {
+                let value = 0_usize;
+                asm!("msr icc_ctlr_el1, {}", in(reg) value);
+            }
+            // Enable non-secure group 1
+            {
+                let value = 1_usize;
+                asm!("msr icc_igrpen1_el1, {}", in(reg) value);
+            }
+            // Set CPU0's Interrupt Priority Mask
+            {
+                let value = 0xFF_usize;
+                asm!("msr icc_pmr_el1, {}", in(reg) value);
+            }
         }
     }
 
     unsafe fn irq_ack(&mut self) -> u32 {
-        let mut irq: usize;
-        asm!("mrs {}, icc_iar1_el1", out(reg) irq);
-        irq &= 0x1ff;
-        if irq == 1023 {
-            panic!("irq_ack: got ID 1023!!!");
+        unsafe {
+            let mut irq: usize;
+            asm!("mrs {}, icc_iar1_el1", out(reg) irq);
+            irq &= 0x1ff;
+            if irq == 1023 {
+                panic!("irq_ack: got ID 1023!!!");
+            }
+            irq as u32
         }
-        irq as u32
     }
 
     unsafe fn irq_eoi(&mut self, irq: u32) {
-        asm!("msr icc_eoir1_el1, {}", in(reg) irq as usize);
+        unsafe {
+            asm!("msr icc_eoir1_el1, {}", in(reg) irq as usize);
+        }
     }
 }

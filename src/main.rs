@@ -274,7 +274,7 @@ macro_rules! linker_offsets(
         $(
         #[inline]
         pub fn $name() -> usize {
-            extern "C" {
+            unsafe extern "C" {
                 // TODO: UnsafeCell?
                 static $name: u8;
             }

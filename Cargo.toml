@@ -2,7 +2,7 @@
 name = "kernel"
 version = "0.5.12"
 build = "build.rs"
-edition = "2021"
+edition = "2024"
 
 [build-dependencies]
 cc = "1.0"

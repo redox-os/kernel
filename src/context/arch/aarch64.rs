@@ -200,92 +200,101 @@ pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
 
 // SAFETY: EMPTY_CR3 must be initialized.
 pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
-    debug_assert!(EMPTY_CR3.poll().is_some());
-    *EMPTY_CR3.get_unchecked()
+    unsafe {
+        debug_assert!(EMPTY_CR3.poll().is_some());
+        *EMPTY_CR3.get_unchecked()
+    }
 }
 
 #[target_feature(enable = "neon")]
 unsafe extern "C" fn fp_save(float_regs: &mut FloatRegisters) {
-    core::arch::asm!(
-    "stp q0, q1, [{3}, {0} + 16 * 0]",
-    "stp q2, q3, [{3}, {0} + 16 * 2]",
-    "stp q4, q5, [{3}, {0} + 16 * 4]",
-    "stp q6, q7, [{3}, {0} + 16 * 6]",
-    "stp q8, q9, [{3}, {0} + 16 * 8]",
-    "stp q10, q11, [{3}, {0} + 16 * 10]",
-    "stp q12, q13, [{3}, {0} + 16 * 12]",
-    "stp q14, q15, [{3}, {0} + 16 * 14]",
-    "stp q16, q17, [{3}, {0} + 16 * 16]",
-    "stp q18, q19, [{3}, {0} + 16 * 18]",
-    "stp q20, q21, [{3}, {0} + 16 * 20]",
-    "stp q22, q23, [{3}, {0} + 16 * 22]",
-    "stp q24, q25, [{3}, {0} + 16 * 24]",
-    "stp q26, q27, [{3}, {0} + 16 * 26]",
-    "stp q28, q29, [{3}, {0} + 16 * 28]",
-    "stp q30, q31, [{3}, {0} + 16 * 30]",
-    "mrs x9, fpcr",
-    "add {3}, {3}, {1}",
-    "str x9, [{3}]",
-    "mrs x9, fpsr",
-    "str x9, [{3}, {2} - {1}]",
-    const mem::offset_of!(FloatRegisters, fp_simd_regs),
-    const mem::offset_of!(FloatRegisters, fpcr),
-    const mem::offset_of!(FloatRegisters, fpsr),
-    inout(reg) float_regs => _,
-    );
+    unsafe {
+        core::arch::asm!(
+        "stp q0, q1, [{3}, {0} + 16 * 0]",
+        "stp q2, q3, [{3}, {0} + 16 * 2]",
+        "stp q4, q5, [{3}, {0} + 16 * 4]",
+        "stp q6, q7, [{3}, {0} + 16 * 6]",
+        "stp q8, q9, [{3}, {0} + 16 * 8]",
+        "stp q10, q11, [{3}, {0} + 16 * 10]",
+        "stp q12, q13, [{3}, {0} + 16 * 12]",
+        "stp q14, q15, [{3}, {0} + 16 * 14]",
+        "stp q16, q17, [{3}, {0} + 16 * 16]",
+        "stp q18, q19, [{3}, {0} + 16 * 18]",
+        "stp q20, q21, [{3}, {0} + 16 * 20]",
+        "stp q22, q23, [{3}, {0} + 16 * 22]",
+        "stp q24, q25, [{3}, {0} + 16 * 24]",
+        "stp q26, q27, [{3}, {0} + 16 * 26]",
+        "stp q28, q29, [{3}, {0} + 16 * 28]",
+        "stp q30, q31, [{3}, {0} + 16 * 30]",
+        "mrs x9, fpcr",
+        "add {3}, {3}, {1}",
+        "str x9, [{3}]",
+        "mrs x9, fpsr",
+        "str x9, [{3}, {2} - {1}]",
+        const mem::offset_of!(FloatRegisters, fp_simd_regs),
+        const mem::offset_of!(FloatRegisters, fpcr),
+        const mem::offset_of!(FloatRegisters, fpsr),
+        inout(reg) float_regs => _,
+        );
+    }
 }
 
 #[target_feature(enable = "neon")]
 unsafe extern "C" fn fp_load(float_regs: &mut FloatRegisters) {
-    core::arch::asm!(
-    "ldp q0, q1, [{3}, {0} + 16 * 0]",
-    "ldp q2, q3, [{3}, {0} + 16 * 2]",
-    "ldp q4, q5, [{3}, {0} + 16 * 4]",
-    "ldp q6, q7, [{3}, {0} + 16 * 6]",
-    "ldp q8, q9, [{3}, {0} + 16 * 8]",
-    "ldp q10, q11, [{3}, {0} + 16 * 10]",
-    "ldp q12, q13, [{3}, {0} + 16 * 12]",
-    "ldp q14, q15, [{3}, {0} + 16 * 14]",
-    "ldp q16, q17, [{3}, {0} + 16 * 16]",
-    "ldp q18, q19, [{3}, {0} + 16 * 18]",
-    "ldp q20, q21, [{3}, {0} + 16 * 20]",
-    "ldp q22, q23, [{3}, {0} + 16 * 22]",
-    "ldp q24, q25, [{3}, {0} + 16 * 24]",
-    "ldp q26, q27, [{3}, {0} + 16 * 26]",
-    "ldp q28, q29, [{3}, {0} + 16 * 28]",
-    "ldp q30, q31, [{3}, {0} + 16 * 30]",
-    "add {3}, {3}, {1}",
-    "ldr x9, [{3}]",
-    "msr fpcr, x9",
-    "ldr x9, [{3}, {2} - {1}]",
-    "msr fpsr, x9",
-    const mem::offset_of!(FloatRegisters, fp_simd_regs),
-    const mem::offset_of!(FloatRegisters, fpcr),
-    const mem::offset_of!(FloatRegisters, fpsr),
-    inout(reg) float_regs => _,
-    );
+    unsafe {
+        core::arch::asm!(
+        "ldp q0, q1, [{3}, {0} + 16 * 0]",
+        "ldp q2, q3, [{3}, {0} + 16 * 2]",
+        "ldp q4, q5, [{3}, {0} + 16 * 4]",
+        "ldp q6, q7, [{3}, {0} + 16 * 6]",
+        "ldp q8, q9, [{3}, {0} + 16 * 8]",
+        "ldp q10, q11, [{3}, {0} + 16 * 10]",
+        "ldp q12, q13, [{3}, {0} + 16 * 12]",
+        "ldp q14, q15, [{3}, {0} + 16 * 14]",
+        "ldp q16, q17, [{3}, {0} + 16 * 16]",
+        "ldp q18, q19, [{3}, {0} + 16 * 18]",
+        "ldp q20, q21, [{3}, {0} + 16 * 20]",
+        "ldp q22, q23, [{3}, {0} + 16 * 22]",
+        "ldp q24, q25, [{3}, {0} + 16 * 24]",
+        "ldp q26, q27, [{3}, {0} + 16 * 26]",
+        "ldp q28, q29, [{3}, {0} + 16 * 28]",
+        "ldp q30, q31, [{3}, {0} + 16 * 30]",
+        "add {3}, {3}, {1}",
+        "ldr x9, [{3}]",
+        "msr fpcr, x9",
+        "ldr x9, [{3}, {2} - {1}]",
+        "msr fpsr, x9",
+        const mem::offset_of!(FloatRegisters, fp_simd_regs),
+        const mem::offset_of!(FloatRegisters, fpcr),
+        const mem::offset_of!(FloatRegisters, fpsr),
+        inout(reg) float_regs => _,
+        );
+    }
 }
 
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    fp_save(&mut *(prev.kfx.as_mut_ptr() as *mut FloatRegisters));
+    unsafe {
+        fp_save(&mut *(prev.kfx.as_mut_ptr() as *mut FloatRegisters));
 
-    prev.arch.fx_loadable = true;
+        prev.arch.fx_loadable = true;
 
-    if next.arch.fx_loadable {
-        fp_load(&mut *(next.kfx.as_mut_ptr() as *mut FloatRegisters));
+        if next.arch.fx_loadable {
+            fp_load(&mut *(next.kfx.as_mut_ptr() as *mut FloatRegisters));
+        }
+
+        PercpuBlock::current()
+            .new_addrsp_tmp
+            .set(next.addr_space.clone());
+
+        switch_to_inner(&mut prev.arch, &mut next.arch)
     }
-
-    PercpuBlock::current()
-        .new_addrsp_tmp
-        .set(next.addr_space.clone());
-
-    switch_to_inner(&mut prev.arch, &mut next.arch)
 }
 
 #[naked]
 unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
-    core::arch::naked_asm!(
-        "
+    unsafe {
+        core::arch::naked_asm!(
+            "
         str x19, [x0, #{off_x19}]
         ldr x19, [x1, #{off_x19}]
 
@@ -359,28 +368,29 @@ unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
 
         b {switch_hook}
         ",
-        off_x19 = const(offset_of!(Context, x19)),
-        off_x20 = const(offset_of!(Context, x20)),
-        off_x21 = const(offset_of!(Context, x21)),
-        off_x22 = const(offset_of!(Context, x22)),
-        off_x23 = const(offset_of!(Context, x23)),
-        off_x24 = const(offset_of!(Context, x24)),
-        off_x25 = const(offset_of!(Context, x25)),
-        off_x26 = const(offset_of!(Context, x26)),
-        off_x27 = const(offset_of!(Context, x27)),
-        off_x28 = const(offset_of!(Context, x28)),
-        off_x29 = const(offset_of!(Context, fp)),
-        off_x30 = const(offset_of!(Context, lr)),
-        off_elr_el1 = const(offset_of!(Context, elr_el1)),
-        off_sp_el0 = const(offset_of!(Context, sp_el0)),
-        off_tpidr_el0 = const(offset_of!(Context, tpidr_el0)),
-        off_tpidrro_el0 = const(offset_of!(Context, tpidrro_el0)),
-        off_spsr_el1 = const(offset_of!(Context, spsr_el1)),
-        off_esr_el1 = const(offset_of!(Context, esr_el1)),
-        off_sp = const(offset_of!(Context, sp)),
+            off_x19 = const(offset_of!(Context, x19)),
+            off_x20 = const(offset_of!(Context, x20)),
+            off_x21 = const(offset_of!(Context, x21)),
+            off_x22 = const(offset_of!(Context, x22)),
+            off_x23 = const(offset_of!(Context, x23)),
+            off_x24 = const(offset_of!(Context, x24)),
+            off_x25 = const(offset_of!(Context, x25)),
+            off_x26 = const(offset_of!(Context, x26)),
+            off_x27 = const(offset_of!(Context, x27)),
+            off_x28 = const(offset_of!(Context, x28)),
+            off_x29 = const(offset_of!(Context, fp)),
+            off_x30 = const(offset_of!(Context, lr)),
+            off_elr_el1 = const(offset_of!(Context, elr_el1)),
+            off_sp_el0 = const(offset_of!(Context, sp_el0)),
+            off_tpidr_el0 = const(offset_of!(Context, tpidr_el0)),
+            off_tpidrro_el0 = const(offset_of!(Context, tpidrro_el0)),
+            off_spsr_el1 = const(offset_of!(Context, spsr_el1)),
+            off_esr_el1 = const(offset_of!(Context, esr_el1)),
+            off_sp = const(offset_of!(Context, sp)),
 
-        switch_hook = sym crate::context::switch_finish_hook,
-    );
+            switch_hook = sym crate::context::switch_finish_hook,
+        );
+    }
 }
 
 /// Allocates a new empty utable

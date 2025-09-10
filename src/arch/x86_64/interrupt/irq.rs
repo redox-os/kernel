@@ -70,85 +70,101 @@ fn irq_method() -> IrqMethod {
 /// Notify the IRQ scheme that an IRQ has been registered. This should mask the IRQ until the
 /// scheme user unmasks it ("acknowledges" it).
 unsafe fn trigger(irq: u8) {
-    match irq_method() {
-        IrqMethod::Pic => {
-            if irq < 16 {
-                pic_mask(irq)
+    unsafe {
+        match irq_method() {
+            IrqMethod::Pic => {
+                if irq < 16 {
+                    pic_mask(irq)
+                }
             }
+            IrqMethod::Apic => ioapic_mask(irq),
         }
-        IrqMethod::Apic => ioapic_mask(irq),
+        irq_trigger(irq);
     }
-    irq_trigger(irq);
 }
 
 /// Unmask the IRQ. This is called from the IRQ scheme, which does this when a user process has
 /// processed the IRQ.
 pub unsafe fn acknowledge(irq: usize) {
-    match irq_method() {
-        IrqMethod::Pic => {
-            if irq < 16 {
-                pic_unmask(irq)
+    unsafe {
+        match irq_method() {
+            IrqMethod::Pic => {
+                if irq < 16 {
+                    pic_unmask(irq)
+                }
             }
+            IrqMethod::Apic => ioapic_unmask(irq),
         }
-        IrqMethod::Apic => ioapic_unmask(irq),
     }
 }
 
 /// Sends an end-of-interrupt, so that the interrupt controller can go on to the next one.
 pub unsafe fn eoi(irq: u8) {
-    PercpuBlock::current().stats.add_irq(irq);
+    unsafe {
+        PercpuBlock::current().stats.add_irq(irq);
 
-    match irq_method() {
-        IrqMethod::Pic => {
-            if irq < 16 {
-                pic_eoi(irq)
+        match irq_method() {
+            IrqMethod::Pic => {
+                if irq < 16 {
+                    pic_eoi(irq)
+                }
             }
+            IrqMethod::Apic => lapic_eoi(),
         }
-        IrqMethod::Apic => lapic_eoi(),
     }
 }
 
 unsafe fn pic_mask(irq: u8) {
-    debug_assert!(irq < 16);
+    unsafe {
+        debug_assert!(irq < 16);
 
-    if irq >= 8 {
-        pic::slave().mask_set(irq - 8);
-    } else {
-        pic::master().mask_set(irq);
+        if irq >= 8 {
+            pic::slave().mask_set(irq - 8);
+        } else {
+            pic::master().mask_set(irq);
+        }
     }
 }
 
 unsafe fn ioapic_mask(irq: u8) {
-    ioapic::mask(irq);
+    unsafe {
+        ioapic::mask(irq);
+    }
 }
 
 unsafe fn pic_eoi(irq: u8) {
-    debug_assert!(irq < 16);
+    unsafe {
+        debug_assert!(irq < 16);
 
-    if irq >= 8 {
-        pic::master().ack();
-        pic::slave().ack();
-    } else {
-        pic::master().ack();
+        if irq >= 8 {
+            pic::master().ack();
+            pic::slave().ack();
+        } else {
+            pic::master().ack();
+        }
     }
 }
 
 unsafe fn lapic_eoi() {
-    local_apic::the_local_apic().eoi()
+    unsafe { local_apic::the_local_apic().eoi() }
 }
 
 unsafe fn pic_unmask(irq: usize) {
-    debug_assert!(irq < 16);
+    unsafe {
+        debug_assert!(irq < 16);
 
-    if irq >= 8 {
-        pic::slave().mask_clear(irq as u8 - 8);
-    } else {
-        pic::master().mask_clear(irq as u8);
+        if irq >= 8 {
+            pic::slave().mask_clear(irq as u8 - 8);
+        } else {
+            pic::master().mask_clear(irq as u8);
+        }
     }
 }
 
 unsafe fn ioapic_unmask(irq: usize) {
-    ioapic::unmask(irq as u8);
+    unsafe {
+        ioapic::unmask(irq as u8);
+    }
 }
 
 interrupt_stack!(pit_stack, |_stack| {
@@ -311,7 +327,7 @@ __generic_interrupts_start:
 __generic_interrupts_end:
 ", sym generic_irq);
 
-extern "C" {
+unsafe extern "C" {
     pub fn __generic_interrupts_start();
     pub fn __generic_interrupts_end();
 }

@@ -52,189 +52,191 @@ pub struct KernelArgs {
 }
 
 /// The entry to Rust, all things must be initialized
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
-    let bootstrap = {
-        let args = args_ptr.read();
+    unsafe {
+        let bootstrap = {
+            let args = args_ptr.read();
 
-        // BSS should already be zero
-        {
-            assert_eq!(BSS_TEST_ZERO, 0);
-            assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
-        }
+            // BSS should already be zero
+            {
+                assert_eq!(BSS_TEST_ZERO, 0);
+                assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
+            }
 
-        KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
-        KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
+            KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
+            KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
-        // Convert env to slice
-        let env = slice::from_raw_parts(
-            (crate::PHYS_OFFSET + args.env_base) as *const u8,
-            args.env_size,
-        );
+            // Convert env to slice
+            let env = slice::from_raw_parts(
+                (crate::PHYS_OFFSET + args.env_base) as *const u8,
+                args.env_size,
+            );
 
-        // Set up graphical debug
-        #[cfg(feature = "graphical_debug")]
-        graphical_debug::init(env);
+            // Set up graphical debug
+            #[cfg(feature = "graphical_debug")]
+            graphical_debug::init(env);
 
-        // Get hardware descriptor data
-        //TODO: use env {DTB,RSDT}_{BASE,SIZE}?
-        let hwdesc_data = if args.hwdesc_base != 0 {
-            Some(unsafe {
-                slice::from_raw_parts(
-                    (crate::PHYS_OFFSET + args.hwdesc_base) as *const u8,
-                    args.hwdesc_size,
-                )
-            })
-        } else {
-            None
-        };
-
-        let dtb_res = hwdesc_data
-            .ok_or(fdt::FdtError::BadPtr)
-            .and_then(|data| Fdt::new(data));
-
-        let rsdp_opt = hwdesc_data.and_then(|data| {
-            if data.starts_with(b"RSD PTR ") {
-                Some(data.as_ptr())
+            // Get hardware descriptor data
+            //TODO: use env {DTB,RSDT}_{BASE,SIZE}?
+            let hwdesc_data = if args.hwdesc_base != 0 {
+                Some(unsafe {
+                    slice::from_raw_parts(
+                        (crate::PHYS_OFFSET + args.hwdesc_base) as *const u8,
+                        args.hwdesc_size,
+                    )
+                })
             } else {
                 None
+            };
+
+            let dtb_res = hwdesc_data
+                .ok_or(fdt::FdtError::BadPtr)
+                .and_then(|data| Fdt::new(data));
+
+            let rsdp_opt = hwdesc_data.and_then(|data| {
+                if data.starts_with(b"RSD PTR ") {
+                    Some(data.as_ptr())
+                } else {
+                    None
+                }
+            });
+
+            // Try to find serial port prior to logging
+            if let Ok(dtb) = &dtb_res {
+                device::serial::init_early(dtb);
             }
-        });
 
-        // Try to find serial port prior to logging
-        if let Ok(dtb) = &dtb_res {
-            device::serial::init_early(dtb);
-        }
+            // Initialize logger
+            crate::log::init_logger(|r| {
+                use core::fmt::Write;
+                let _ = write!(
+                    crate::debug::Writer::new(),
+                    "{}:{} -- {}\n",
+                    r.target(),
+                    r.level(),
+                    r.args()
+                );
+            });
+            log::set_max_level(::log::LevelFilter::Debug);
 
-        // Initialize logger
-        crate::log::init_logger(|r| {
-            use core::fmt::Write;
-            let _ = write!(
-                crate::debug::Writer::new(),
-                "{}:{} -- {}\n",
-                r.target(),
-                r.level(),
-                r.args()
+            info!("Redox OS starting...");
+            info!(
+                "Kernel: {:X}:{:X}",
+                { args.kernel_base },
+                args.kernel_base + args.kernel_size
             );
-        });
-        log::set_max_level(::log::LevelFilter::Debug);
+            info!(
+                "Stack: {:X}:{:X}",
+                { args.stack_base },
+                args.stack_base + args.stack_size
+            );
+            info!(
+                "Env: {:X}:{:X}",
+                { args.env_base },
+                args.env_base + args.env_size
+            );
+            info!(
+                "HWDESC: {:X}:{:X}",
+                { args.hwdesc_base },
+                args.hwdesc_base + args.hwdesc_size
+            );
+            info!(
+                "Areas: {:X}:{:X}",
+                { args.areas_base },
+                args.areas_base + args.areas_size
+            );
+            info!(
+                "Bootstrap: {:X}:{:X}",
+                { args.bootstrap_base },
+                args.bootstrap_base + args.bootstrap_size
+            );
 
-        info!("Redox OS starting...");
-        info!(
-            "Kernel: {:X}:{:X}",
-            { args.kernel_base },
-            args.kernel_base + args.kernel_size
-        );
-        info!(
-            "Stack: {:X}:{:X}",
-            { args.stack_base },
-            args.stack_base + args.stack_size
-        );
-        info!(
-            "Env: {:X}:{:X}",
-            { args.env_base },
-            args.env_base + args.env_size
-        );
-        info!(
-            "HWDESC: {:X}:{:X}",
-            { args.hwdesc_base },
-            args.hwdesc_base + args.hwdesc_size
-        );
-        info!(
-            "Areas: {:X}:{:X}",
-            { args.areas_base },
-            args.areas_base + args.areas_size
-        );
-        info!(
-            "Bootstrap: {:X}:{:X}",
-            { args.bootstrap_base },
-            args.bootstrap_base + args.bootstrap_size
-        );
+            interrupt::init();
 
-        interrupt::init();
-
-        // Initialize RMM
-        register_bootloader_areas(args.areas_base, args.areas_size);
-        if let Ok(dtb) = &dtb_res {
-            register_dev_memory_ranges(dtb);
-        }
-
-        register_memory_region(
-            args.kernel_base,
-            args.kernel_size,
-            BootloaderMemoryKind::Kernel,
-        );
-        register_memory_region(
-            args.stack_base,
-            args.stack_size,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        register_memory_region(
-            args.env_base,
-            args.env_size,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        register_memory_region(
-            args.hwdesc_base,
-            args.hwdesc_size,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        register_memory_region(
-            args.bootstrap_base,
-            args.bootstrap_size,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        crate::startup::memory::init(None, None);
-
-        // Initialize paging
-        paging::init();
-
-        crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
-
-        // Reset AP variables
-        CPU_COUNT.store(1, Ordering::SeqCst);
-        AP_READY.store(false, Ordering::SeqCst);
-        BSP_READY.store(false, Ordering::SeqCst);
-
-        // Setup kernel heap
-        allocator::init();
-
-        // Set up double buffer for graphical debug now that heap is available
-        #[cfg(feature = "graphical_debug")]
-        graphical_debug::init_heap();
-
-        // Activate memory logging
-        crate::log::init();
-
-        // Initialize devices
-        match dtb_res {
-            Ok(dtb) => {
-                dtb::init(hwdesc_data.map(|slice| (slice.as_ptr() as usize, slice.len())));
-                device::init_devicetree(&dtb);
+            // Initialize RMM
+            register_bootloader_areas(args.areas_base, args.areas_size);
+            if let Ok(dtb) = &dtb_res {
+                register_dev_memory_ranges(dtb);
             }
-            Err(err) => {
-                dtb::init(None);
-                log::warn!("failed to parse DTB: {}", err);
 
-                #[cfg(feature = "acpi")]
-                {
-                    crate::acpi::init(rsdp_opt);
+            register_memory_region(
+                args.kernel_base,
+                args.kernel_size,
+                BootloaderMemoryKind::Kernel,
+            );
+            register_memory_region(
+                args.stack_base,
+                args.stack_size,
+                BootloaderMemoryKind::IdentityMap,
+            );
+            register_memory_region(
+                args.env_base,
+                args.env_size,
+                BootloaderMemoryKind::IdentityMap,
+            );
+            register_memory_region(
+                args.hwdesc_base,
+                args.hwdesc_size,
+                BootloaderMemoryKind::IdentityMap,
+            );
+            register_memory_region(
+                args.bootstrap_base,
+                args.bootstrap_size,
+                BootloaderMemoryKind::IdentityMap,
+            );
+            crate::startup::memory::init(None, None);
+
+            // Initialize paging
+            paging::init();
+
+            crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
+
+            // Reset AP variables
+            CPU_COUNT.store(1, Ordering::SeqCst);
+            AP_READY.store(false, Ordering::SeqCst);
+            BSP_READY.store(false, Ordering::SeqCst);
+
+            // Setup kernel heap
+            allocator::init();
+
+            // Set up double buffer for graphical debug now that heap is available
+            #[cfg(feature = "graphical_debug")]
+            graphical_debug::init_heap();
+
+            // Activate memory logging
+            crate::log::init();
+
+            // Initialize devices
+            match dtb_res {
+                Ok(dtb) => {
+                    dtb::init(hwdesc_data.map(|slice| (slice.as_ptr() as usize, slice.len())));
+                    device::init_devicetree(&dtb);
+                }
+                Err(err) => {
+                    dtb::init(None);
+                    log::warn!("failed to parse DTB: {}", err);
+
+                    #[cfg(feature = "acpi")]
+                    {
+                        crate::acpi::init(rsdp_opt);
+                    }
                 }
             }
-        }
 
-        BSP_READY.store(true, Ordering::SeqCst);
+            BSP_READY.store(true, Ordering::SeqCst);
 
-        crate::Bootstrap {
-            base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
-                args.bootstrap_base,
-            )),
-            page_count: args.bootstrap_size / crate::memory::PAGE_SIZE,
-            env,
-        }
-    };
+            crate::Bootstrap {
+                base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
+                    args.bootstrap_base,
+                )),
+                page_count: args.bootstrap_size / crate::memory::PAGE_SIZE,
+                env,
+            }
+        };
 
-    crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
+        crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
+    }
 }
 
 #[repr(C, packed)]

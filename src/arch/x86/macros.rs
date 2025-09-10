@@ -11,13 +11,13 @@ macro_rules! print {
 #[macro_export]
 macro_rules! println {
     () => (print!("\n"));
-    ($fmt:expr) => (print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
+    ($fmt:expr_2021) => (print!(concat!($fmt, "\n")));
+    ($fmt:expr_2021, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
 }
 
 #[macro_export]
 macro_rules! irqs(
-    ( [ $( ($idt:expr, $number:literal, $name:ident) ,)* ], $submac:ident ) => {
+    ( [ $( ($idt:expr_2021, $number:literal, $name:ident) ,)* ], $submac:ident ) => {
         $(
             $submac!($idt, $number, $name);
         )*
@@ -28,7 +28,7 @@ macro_rules! irqs(
 // allocatable_irq_NUM.
 #[macro_export]
 macro_rules! default_irqs(
-    ($idt:expr, $submac:ident) => {
+    ($idt:expr_2021, $submac:ident) => {
         irqs!([
             // interrupt vectors below 32 are exceptions
             // vectors 32..=47 are used for standard 8259 pic irqs.

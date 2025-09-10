@@ -86,129 +86,142 @@ global_asm!(concat!(
 );
 
 unsafe fn exception_handler_inner(regs: &mut InterruptStack) {
-    let scause: usize;
-    let sstatus: usize;
-    core::arch::asm!(
-        "csrr t0, scause",
-        "csrr t1, sstatus",
-        lateout("t0") scause,
-        lateout("t1") sstatus,
-        options(nostack)
-    );
+    unsafe {
+        let scause: usize;
+        let sstatus: usize;
+        core::arch::asm!(
+            "csrr t0, scause",
+            "csrr t1, sstatus",
+            lateout("t0") scause,
+            lateout("t1") sstatus,
+            options(nostack)
+        );
 
-    //log::info!("Exception handler incoming: sepc={:x} scause={:x} sstatus={:x}", regs.iret.sepc, scause, sstatus);
+        //log::info!("Exception handler incoming: sepc={:x} scause={:x} sstatus={:x}", regs.iret.sepc, scause, sstatus);
 
-    let user_mode = sstatus & (1 << 8) == 0;
+        let user_mode = sstatus & (1 << 8) == 0;
 
-    if (scause as isize) < 0 {
-        handle_interrupt(scause & 0xF);
-    } else if page_fault(scause, regs, user_mode) {
-    } else if user_mode {
-        handle_user_exception(scause, regs);
-    } else {
-        handle_system_exception(scause, regs);
+        if (scause as isize) < 0 {
+            handle_interrupt(scause & 0xF);
+        } else if page_fault(scause, regs, user_mode) {
+        } else if user_mode {
+            handle_user_exception(scause, regs);
+        } else {
+            handle_system_exception(scause, regs);
+        }
+        //log::info!("Exception handler outgoing");
     }
-    //log::info!("Exception handler outgoing");
 }
 
 unsafe fn handle_system_exception(scause: usize, regs: &InterruptStack) {
-    let stval: usize;
-    let tp: usize;
-    core::arch::asm!(
-        "csrr t0, stval",
-        "mv t1, tp",
-        lateout("t0") stval,
-        lateout("t1") tp,
-        options(nostack)
-    );
+    unsafe {
+        let stval: usize;
+        let tp: usize;
+        core::arch::asm!(
+            "csrr t0, stval",
+            "mv t1, tp",
+            lateout("t0") stval,
+            lateout("t1") tp,
+            options(nostack)
+        );
 
-    error!(
-        "S-mode exception! scause={:#016x}, stval={:#016x}",
-        scause, stval
-    );
-    regs.dump();
+        error!(
+            "S-mode exception! scause={:#016x}, stval={:#016x}",
+            scause, stval
+        );
+        regs.dump();
 
-    if tp == 0 {
-        // Early failure - before misc::init and potentially before RMM init
-        // Do not attempt to trace stack because it would probably trap again
+        if tp == 0 {
+            // Early failure - before misc::init and potentially before RMM init
+            // Do not attempt to trace stack because it would probably trap again
+            loop {}
+        }
+
+        stack_trace();
         loop {}
     }
-
-    stack_trace();
-    loop {}
 }
 
 unsafe fn handle_interrupt(interrupt: usize) {
-    // FIXME retrieve from percpu area
-    // For now all the interrupts go to boot hart so this suffices...
-    let hart: usize = BOOT_HART_ID.load(Ordering::Relaxed);
-    irqchip::hlic::interrupt(hart, interrupt);
+    unsafe {
+        // FIXME retrieve from percpu area
+        // For now all the interrupts go to boot hart so this suffices...
+        let hart: usize = BOOT_HART_ID.load(Ordering::Relaxed);
+        irqchip::hlic::interrupt(hart, interrupt);
+    }
 }
 
 unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
-    if scause == USERMODE_ECALL {
-        let r = &mut regs.registers;
-        regs.iret.sepc += 4; // skip ecall
-        let ret = syscall::syscall(r.x17, r.x10, r.x11, r.x12, r.x13, r.x14);
-        r.x10 = ret;
-        return;
-    }
-
-    if scause == BREAKPOINT {
-        if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_some() {
+    unsafe {
+        if scause == USERMODE_ECALL {
+            let r = &mut regs.registers;
+            regs.iret.sepc += 4; // skip ecall
+            let ret = syscall::syscall(r.x17, r.x10, r.x11, r.x12, r.x13, r.x14);
+            r.x10 = ret;
             return;
         }
-    }
 
-    let stval: usize;
-    core::arch::asm!(
-    "csrr t0, stval",
-    lateout("t0") stval,
-    options(nostack)
-    );
+        if scause == BREAKPOINT {
+            if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_some() {
+                return;
+            }
+        }
 
-    info!(
-        "U-mode exception! scause={:#016x}, stval={:#016x}",
-        scause, stval
-    );
-    regs.dump();
-
-    // TODO
-    /*
-    let signal = match scause {
-        0 | 4 | 6 | 18 | 19 => SIGBUS, // misaligned / machine check
-        2 | 8 | 9 => SIGILL,           // Illegal instruction / breakpoint / ecall
-        BREAKPOINT => SIGTRAP,
-        _ => SIGSEGV,
-    };
-    */
-    excp_handler(Exception { kind: scause });
-}
-
-unsafe fn page_fault(scause: usize, regs: &mut InterruptStack, user_mode: bool) -> bool {
-    if scause != INSTRUCTION_PAGE_FAULT && scause != LOAD_PAGE_FAULT && scause != STORE_PAGE_FAULT {
-        return false;
-    }
-
-    let stval: usize;
-    core::arch::asm!(
+        let stval: usize;
+        core::arch::asm!(
         "csrr t0, stval",
         lateout("t0") stval,
         options(nostack)
-    );
+        );
 
-    let address = VirtualAddress::new(stval);
-    let mut generic_flags = GenericPfFlags::empty();
+        info!(
+            "U-mode exception! scause={:#016x}, stval={:#016x}",
+            scause, stval
+        );
+        regs.dump();
 
-    generic_flags.set(GenericPfFlags::INVOLVED_WRITE, scause == STORE_PAGE_FAULT);
-    generic_flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, user_mode);
-    generic_flags.set(
-        GenericPfFlags::INSTR_NOT_DATA,
-        scause == INSTRUCTION_PAGE_FAULT,
-    );
-    // FIXME can these conditions be distinguished? Should they be?
-    generic_flags.set(GenericPfFlags::INVL, false);
-    generic_flags.set(GenericPfFlags::PRESENT, false);
+        // TODO
+        /*
+        let signal = match scause {
+            0 | 4 | 6 | 18 | 19 => SIGBUS, // misaligned / machine check
+            2 | 8 | 9 => SIGILL,           // Illegal instruction / breakpoint / ecall
+            BREAKPOINT => SIGTRAP,
+            _ => SIGSEGV,
+        };
+        */
+        excp_handler(Exception { kind: scause });
+    }
+}
 
-    crate::memory::page_fault_handler(regs, generic_flags, address).is_ok()
+unsafe fn page_fault(scause: usize, regs: &mut InterruptStack, user_mode: bool) -> bool {
+    unsafe {
+        if scause != INSTRUCTION_PAGE_FAULT
+            && scause != LOAD_PAGE_FAULT
+            && scause != STORE_PAGE_FAULT
+        {
+            return false;
+        }
+
+        let stval: usize;
+        core::arch::asm!(
+            "csrr t0, stval",
+            lateout("t0") stval,
+            options(nostack)
+        );
+
+        let address = VirtualAddress::new(stval);
+        let mut generic_flags = GenericPfFlags::empty();
+
+        generic_flags.set(GenericPfFlags::INVOLVED_WRITE, scause == STORE_PAGE_FAULT);
+        generic_flags.set(GenericPfFlags::USER_NOT_SUPERVISOR, user_mode);
+        generic_flags.set(
+            GenericPfFlags::INSTR_NOT_DATA,
+            scause == INSTRUCTION_PAGE_FAULT,
+        );
+        // FIXME can these conditions be distinguished? Should they be?
+        generic_flags.set(GenericPfFlags::INVL, false);
+        generic_flags.set(GenericPfFlags::PRESENT, false);
+
+        crate::memory::page_fault_handler(regs, generic_flags, address).is_ok()
+    }
 }

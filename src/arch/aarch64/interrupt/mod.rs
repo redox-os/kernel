@@ -15,7 +15,9 @@ pub use self::handler::InterruptStack;
 /// Clear interrupts
 #[inline(always)]
 pub unsafe fn disable() {
-    asm!("msr daifset, #2");
+    unsafe {
+        asm!("msr daifset, #2");
+    }
 }
 
 /// Set interrupts and halt
@@ -23,8 +25,10 @@ pub unsafe fn disable() {
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
-    asm!("msr daifclr, #2");
-    asm!("wfi");
+    unsafe {
+        asm!("msr daifclr, #2");
+        asm!("wfi");
+    }
 }
 
 /// Set interrupts and nop
@@ -32,14 +36,18 @@ pub unsafe fn enable_and_halt() {
 /// Simply enabling interrupts does not gurantee that they will trigger, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_nop() {
-    asm!("msr daifclr, #2");
-    asm!("nop");
+    unsafe {
+        asm!("msr daifclr, #2");
+        asm!("nop");
+    }
 }
 
 /// Halt instruction
 #[inline(always)]
 pub unsafe fn halt() {
-    asm!("wfi");
+    unsafe {
+        asm!("wfi");
+    }
 }
 
 /// Pause instruction
@@ -51,12 +59,14 @@ pub fn pause() {
 
 #[inline(always)]
 pub unsafe fn init() {
-    // Setup interrupt handlers
-    asm!(
-        "
+    unsafe {
+        // Setup interrupt handlers
+        asm!(
+            "
         ldr {tmp}, =exception_vector_base
         msr vbar_el1, {tmp}
         ",
-        tmp = out(reg) _,
-    );
+            tmp = out(reg) _,
+        );
+    }
 }

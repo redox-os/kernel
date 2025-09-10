@@ -121,39 +121,41 @@ pub fn get_kvm_support() -> &'static Option<KvmSupport> {
 }
 
 pub unsafe fn init() -> bool {
-    let cpuid = crate::cpuid::cpuid();
-    if !cpuid.get_feature_info().map_or(false, |f| f.has_tsc()) {
-        return false;
-    }
+    unsafe {
+        let cpuid = crate::cpuid::cpuid();
+        if !cpuid.get_feature_info().map_or(false, |f| f.has_tsc()) {
+            return false;
+        }
 
-    let kvm_support = get_kvm_support();
+        let kvm_support = get_kvm_support();
 
-    if let Some(kvm_support) = kvm_support
-        && kvm_support
-            .supp_feats
-            .contains(KvmFeatureBits::CLOCKSOURCE2 | KvmFeatureBits::CLOCKSOURCE_STABLE)
-    {
-        let frame = allocate_frame().expect("failed to allocate timer page");
-        x86::msr::wrmsr(MSR_KVM_SYSTEM_TIME_NEW, (frame.base().data() as u64) | 1);
-        let ptr =
-            crate::paging::RmmA::phys_to_virt(frame.base()).data() as *const PvclockVcpuTimeInfo;
-        PercpuBlock::current()
-            .misc_arch_info
-            .tsc_info
-            .vcpu_page
-            .set(ptr);
+        if let Some(kvm_support) = kvm_support
+            && kvm_support
+                .supp_feats
+                .contains(KvmFeatureBits::CLOCKSOURCE2 | KvmFeatureBits::CLOCKSOURCE_STABLE)
+        {
+            let frame = allocate_frame().expect("failed to allocate timer page");
+            x86::msr::wrmsr(MSR_KVM_SYSTEM_TIME_NEW, (frame.base().data() as u64) | 1);
+            let ptr = crate::paging::RmmA::phys_to_virt(frame.base()).data()
+                as *const PvclockVcpuTimeInfo;
+            PercpuBlock::current()
+                .misc_arch_info
+                .tsc_info
+                .vcpu_page
+                .set(ptr);
 
-        /*let tsc_ghz = loop {
-            let val1 = ptr.read_volatile();
-            let val2 = ptr.read_volatile();
-            if val1.version & 1 == 1 || val2.version & 1 == 1 || val1.version != val2.version {
-                continue;
-            }
-            let val1
-            break tsc_hz / 1_000_000_000;
-        };*/
-        true
-    } else {
-        false
+            /*let tsc_ghz = loop {
+                let val1 = ptr.read_volatile();
+                let val2 = ptr.read_volatile();
+                if val1.version & 1 == 1 || val2.version & 1 == 1 || val1.version != val2.version {
+                    continue;
+                }
+                let val1
+                break tsc_hz / 1_000_000_000;
+            };*/
+            true
+        } else {
+            false
+        }
     }
 }

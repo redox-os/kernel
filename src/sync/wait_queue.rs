@@ -31,15 +31,20 @@ impl<T> WaitQueue<T> {
         loop {
             let mut inner = self.inner.lock();
 
-            if let Some(t) = inner.pop_front() {
-                return Ok(t);
-            } else if block {
-                if !self.condition.wait(inner, reason) {
-                    return Err(Error::new(EINTR));
+            match inner.pop_front() {
+                Some(t) => {
+                    return Ok(t);
                 }
-                continue;
-            } else {
-                return Err(Error::new(EAGAIN));
+                _ => {
+                    if block {
+                        if !self.condition.wait(inner, reason) {
+                            return Err(Error::new(EINTR));
+                        }
+                        continue;
+                    } else {
+                        return Err(Error::new(EAGAIN));
+                    }
+                }
             }
         }
     }

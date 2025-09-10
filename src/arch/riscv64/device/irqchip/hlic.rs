@@ -25,31 +25,39 @@ fn acknowledge(interrupt: usize) {
 }
 
 pub unsafe fn interrupt(hart: usize, interrupt: usize) {
-    assert!(
-        hart < CPU_INTERRUPT_HANDLERS.len(),
-        "Unexpected hart in interrupt routine"
-    );
-    acknowledge(interrupt);
-    let ic_idx = CPU_INTERRUPT_HANDLERS[hart].unwrap_or_else(|| {
-        panic!(
-            "No hlic connected to hart {} yet interrupt {} occurred",
-            hart, interrupt
-        )
-    });
-    let virq = IRQ_CHIP
-        .irq_to_virq(ic_idx, interrupt as u32)
-        .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
-    if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
-        handler.irq_handler(virq as u32);
-    } else if let Some(ic_idx) = IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
-        IRQ_CHIP.irq_chip_list.chips[ic_idx]
-            .ic
-            .irq_handler(virq as u32);
-    } else {
-        panic!(
-            "Unconnected interrupt {} occurred on hlic connected to hart {}",
-            interrupt, hart
+    unsafe {
+        assert!(
+            hart < CPU_INTERRUPT_HANDLERS.len(),
+            "Unexpected hart in interrupt routine"
         );
+        acknowledge(interrupt);
+        let ic_idx = CPU_INTERRUPT_HANDLERS[hart].unwrap_or_else(|| {
+            panic!(
+                "No hlic connected to hart {} yet interrupt {} occurred",
+                hart, interrupt
+            )
+        });
+        let virq = IRQ_CHIP
+            .irq_to_virq(ic_idx, interrupt as u32)
+            .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
+        match &mut IRQ_CHIP.irq_desc[virq].handler {
+            Some(handler) => {
+                handler.irq_handler(virq as u32);
+            }
+            _ => match IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
+                Some(ic_idx) => {
+                    IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                        .ic
+                        .irq_handler(virq as u32);
+                }
+                _ => {
+                    panic!(
+                        "Unconnected interrupt {} occurred on hlic connected to hart {}",
+                        interrupt, hart
+                    );
+                }
+            },
+        }
     }
 }
 

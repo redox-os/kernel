@@ -320,7 +320,7 @@ impl Context {
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
-        if let (Some(ref old), Some(ref new)) = (&self.addr_space, &addr_space)
+        if let (&Some(ref old), &Some(ref new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
         {
             return addr_space;
@@ -346,17 +346,18 @@ impl Context {
                 addr_space.clone(),
             );
 
-            if let Some(ref new) = addr_space {
-                let new_addrsp = new.acquire_read();
-                new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
+            match addr_space {
+                Some(ref new) => {
+                    let new_addrsp = new.acquire_read();
+                    new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
 
-                unsafe {
-                    new_addrsp.table.utable.make_current();
+                    unsafe {
+                        new_addrsp.table.utable.make_current();
+                    }
                 }
-            } else {
-                unsafe {
+                _ => unsafe {
                     crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
-                }
+                },
             }
         } else {
             assert!(!self.running);

@@ -238,188 +238,196 @@ pub fn src_overrides() -> &'static [Override] {
 
 #[cfg(feature = "acpi")]
 pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static MadtIoApic) {
-    // map the I/O APIC registers
+    unsafe {
+        // map the I/O APIC registers
 
-    let frame = Frame::containing(PhysicalAddress::new(madt_ioapic.address as usize));
-    #[cfg(target_arch = "x86")]
-    let page = Page::containing_address(rmm::VirtualAddress::new(crate::IOAPIC_OFFSET));
-    #[cfg(target_arch = "x86_64")]
-    let page = Page::containing_address(RmmA::phys_to_virt(frame.base()));
+        let frame = Frame::containing(PhysicalAddress::new(madt_ioapic.address as usize));
+        #[cfg(target_arch = "x86")]
+        let page = Page::containing_address(rmm::VirtualAddress::new(crate::IOAPIC_OFFSET));
+        #[cfg(target_arch = "x86_64")]
+        let page = Page::containing_address(RmmA::phys_to_virt(frame.base()));
 
-    assert!(mapper.translate(page.start_address()).is_none());
+        assert!(mapper.translate(page.start_address()).is_none());
 
-    mapper
-        .get_mut()
-        .expect("expected KernelMapper not to be locked re-entrant while mapping I/O APIC memory")
-        .map_phys(
-            page.start_address(),
-            frame.base(),
-            PageFlags::new()
-                .write(true)
-                .custom_flag(EntryFlags::NO_CACHE.bits(), true),
-        )
-        .expect("failed to map I/O APIC")
-        .flush();
+        mapper
+            .get_mut()
+            .expect(
+                "expected KernelMapper not to be locked re-entrant while mapping I/O APIC memory",
+            )
+            .map_phys(
+                page.start_address(),
+                frame.base(),
+                PageFlags::new()
+                    .write(true)
+                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+            )
+            .expect("failed to map I/O APIC")
+            .flush();
 
-    let ioapic_registers = page.start_address().data() as *const u32;
-    let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
+        let ioapic_registers = page.start_address().data() as *const u32;
+        let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
 
-    assert_eq!(
-        ioapic.regs.lock().id(),
-        madt_ioapic.id,
-        "mismatched ACPI MADT I/O APIC ID, and the ID reported by the I/O APIC"
-    );
+        assert_eq!(
+            ioapic.regs.lock().id(),
+            madt_ioapic.id,
+            "mismatched ACPI MADT I/O APIC ID, and the ID reported by the I/O APIC"
+        );
 
-    (*IOAPICS.get()).get_or_insert_with(Vec::new).push(ioapic);
+        (*IOAPICS.get()).get_or_insert_with(Vec::new).push(ioapic);
+    }
 }
 #[cfg(feature = "acpi")]
 pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
-    let flags = src_override.flags;
+    unsafe {
+        let flags = src_override.flags;
 
-    let polarity_raw = (flags & 0x0003) as u8;
-    let trigger_mode_raw = ((flags & 0x000C) >> 2) as u8;
+        let polarity_raw = (flags & 0x0003) as u8;
+        let trigger_mode_raw = ((flags & 0x000C) >> 2) as u8;
 
-    let polarity = match polarity_raw {
-        0b00 => Polarity::ConformsToSpecs,
-        0b01 => Polarity::ActiveHigh,
-        0b10 => return, // reserved
-        0b11 => Polarity::ActiveLow,
+        let polarity = match polarity_raw {
+            0b00 => Polarity::ConformsToSpecs,
+            0b01 => Polarity::ActiveHigh,
+            0b10 => return, // reserved
+            0b11 => Polarity::ActiveLow,
 
-        _ => unreachable!(),
-    };
+            _ => unreachable!(),
+        };
 
-    let trigger_mode = match trigger_mode_raw {
-        0b00 => TriggerMode::ConformsToSpecs,
-        0b01 => TriggerMode::Edge,
-        0b10 => return, // reserved
-        0b11 => TriggerMode::Level,
-        _ => unreachable!(),
-    };
+        let trigger_mode = match trigger_mode_raw {
+            0b00 => TriggerMode::ConformsToSpecs,
+            0b01 => TriggerMode::Edge,
+            0b10 => return, // reserved
+            0b11 => TriggerMode::Level,
+            _ => unreachable!(),
+        };
 
-    let over = Override {
-        bus_irq: src_override.irq_source,
-        gsi: src_override.gsi_base,
-        polarity,
-        trigger_mode,
-    };
-    (*SRC_OVERRIDES.get())
-        .get_or_insert_with(Vec::new)
-        .push(over);
+        let over = Override {
+            bus_irq: src_override.irq_source,
+            gsi: src_override.gsi_base,
+            polarity,
+            trigger_mode,
+        };
+        (*SRC_OVERRIDES.get())
+            .get_or_insert_with(Vec::new)
+            .push(over);
+    }
 }
 
 #[allow(dead_code)]
 pub unsafe fn init(active_table: &mut KernelMapper) {
-    let bsp_apic_id = ApicId::new(u32::from(
-        cpuid().get_feature_info().unwrap().initial_local_apic_id(),
-    )); // TODO: remove unwraps
+    unsafe {
+        let bsp_apic_id = ApicId::new(u32::from(
+            cpuid().get_feature_info().unwrap().initial_local_apic_id(),
+        )); // TODO: remove unwraps
 
-    // search the madt for all IOAPICs.
-    #[cfg(feature = "acpi")]
-    {
-        let madt: &'static Madt = match madt::madt() {
-            Some(m) => m,
-            // TODO: Parse MP tables too.
-            None => return,
-        };
-        if madt.flags & madt::FLAG_PCAT != 0 {
-            pic::disable();
-        }
+        // search the madt for all IOAPICs.
+        #[cfg(feature = "acpi")]
+        {
+            let madt: &'static Madt = match madt::madt() {
+                Some(m) => m,
+                // TODO: Parse MP tables too.
+                None => return,
+            };
+            if madt.flags & madt::FLAG_PCAT != 0 {
+                pic::disable();
+            }
 
-        // find all I/O APICs (usually one).
+            // find all I/O APICs (usually one).
 
-        for entry in madt.iter() {
-            match entry {
-                MadtEntry::IoApic(ioapic) => handle_ioapic(active_table, ioapic),
-                MadtEntry::IntSrcOverride(src_override) => handle_src_override(src_override),
-                _ => (),
+            for entry in madt.iter() {
+                match entry {
+                    MadtEntry::IoApic(ioapic) => handle_ioapic(active_table, ioapic),
+                    MadtEntry::IntSrcOverride(src_override) => handle_src_override(src_override),
+                    _ => (),
+                }
             }
         }
-    }
-    println!(
-        "I/O APICs: {:?}, overrides: {:?}",
-        ioapics(),
-        src_overrides()
-    );
+        println!(
+            "I/O APICs: {:?}, overrides: {:?}",
+            ioapics(),
+            src_overrides()
+        );
 
-    // map the legacy PC-compatible IRQs (0-15) to 32-47, just like we did with 8259 PIC (if it
-    // wouldn't have been disabled due to this I/O APIC)
-    for legacy_irq in 0..=15 {
-        let (gsi, trigger_mode, polarity) = match get_override(legacy_irq) {
-            Some(over) => (over.gsi, over.trigger_mode, over.polarity),
-            None => {
-                if src_overrides()
-                    .iter()
-                    .any(|over| over.gsi == u32::from(legacy_irq) && over.bus_irq != legacy_irq)
-                    && !src_overrides()
+        // map the legacy PC-compatible IRQs (0-15) to 32-47, just like we did with 8259 PIC (if it
+        // wouldn't have been disabled due to this I/O APIC)
+        for legacy_irq in 0..=15 {
+            let (gsi, trigger_mode, polarity) = match get_override(legacy_irq) {
+                Some(over) => (over.gsi, over.trigger_mode, over.polarity),
+                None => {
+                    if src_overrides()
                         .iter()
-                        .any(|over| over.bus_irq == legacy_irq)
-                {
-                    // there's an IRQ conflict, making this legacy IRQ inaccessible.
+                        .any(|over| over.gsi == u32::from(legacy_irq) && over.bus_irq != legacy_irq)
+                        && !src_overrides()
+                            .iter()
+                            .any(|over| over.bus_irq == legacy_irq)
+                    {
+                        // there's an IRQ conflict, making this legacy IRQ inaccessible.
+                        continue;
+                    }
+                    (
+                        legacy_irq.into(),
+                        TriggerMode::ConformsToSpecs,
+                        Polarity::ConformsToSpecs,
+                    )
+                }
+            };
+            let apic = match find_ioapic(gsi) {
+                Some(ioapic) => ioapic,
+                None => {
+                    println!("Unable to find a suitable APIC for legacy IRQ {} (GSI {}). It will not be mapped.", legacy_irq, gsi);
                     continue;
                 }
-                (
-                    legacy_irq.into(),
-                    TriggerMode::ConformsToSpecs,
-                    Polarity::ConformsToSpecs,
-                )
-            }
-        };
-        let apic = match find_ioapic(gsi) {
-            Some(ioapic) => ioapic,
-            None => {
-                println!("Unable to find a suitable APIC for legacy IRQ {} (GSI {}). It will not be mapped.", legacy_irq, gsi);
-                continue;
-            }
-        };
-        let redir_tbl_index = (gsi - apic.gsi_start) as u8;
+            };
+            let redir_tbl_index = (gsi - apic.gsi_start) as u8;
 
-        let map_info = MapInfo {
-            // only send to the BSP
-            dest: bsp_apic_id,
-            dest_mode: DestinationMode::Physical,
-            delivery_mode: DeliveryMode::Fixed,
-            mask: false,
-            polarity: match polarity {
-                Polarity::ActiveHigh => ApicPolarity::ActiveHigh,
-                Polarity::ActiveLow => ApicPolarity::ActiveLow,
-                Polarity::ConformsToSpecs => ApicPolarity::ActiveHigh,
-            },
-            trigger_mode: match trigger_mode {
-                TriggerMode::Edge => ApicTriggerMode::Edge,
-                TriggerMode::Level => ApicTriggerMode::Level,
-                TriggerMode::ConformsToSpecs => ApicTriggerMode::Edge,
-            },
-            vector: 32 + legacy_irq,
-        };
-        apic.map(redir_tbl_index, map_info);
-    }
-    println!(
-        "I/O APICs: {:?}, overrides: {:?}",
-        ioapics(),
-        src_overrides()
-    );
-    irq::set_irq_method(irq::IrqMethod::Apic);
-
-    // tell the firmware that we're using APIC rather than the default 8259 PIC.
-
-    // FIXME: With ACPI moved to userspace, we should instead allow userspace to check whether the
-    // IOAPIC has been initialized, and then subsequently let some ACPI driver call the AML from
-    // userspace.
-
-    /*#[cfg(feature = "acpi")]
-    {
-        let method = {
-            let namespace_guard = crate::acpi::ACPI_TABLE.namespace.read();
-            if let Some(value) = namespace_guard.as_ref().unwrap().get("\\_PIC") {
-                value.get_as_method().ok()
-            } else {
-                None
-            }
-        };
-        if let Some(m) = method {
-            m.execute("\\_PIC".into(), vec!(crate::acpi::aml::AmlValue::Integer(1)));
+            let map_info = MapInfo {
+                // only send to the BSP
+                dest: bsp_apic_id,
+                dest_mode: DestinationMode::Physical,
+                delivery_mode: DeliveryMode::Fixed,
+                mask: false,
+                polarity: match polarity {
+                    Polarity::ActiveHigh => ApicPolarity::ActiveHigh,
+                    Polarity::ActiveLow => ApicPolarity::ActiveLow,
+                    Polarity::ConformsToSpecs => ApicPolarity::ActiveHigh,
+                },
+                trigger_mode: match trigger_mode {
+                    TriggerMode::Edge => ApicTriggerMode::Edge,
+                    TriggerMode::Level => ApicTriggerMode::Level,
+                    TriggerMode::ConformsToSpecs => ApicTriggerMode::Edge,
+                },
+                vector: 32 + legacy_irq,
+            };
+            apic.map(redir_tbl_index, map_info);
         }
-    }*/
+        println!(
+            "I/O APICs: {:?}, overrides: {:?}",
+            ioapics(),
+            src_overrides()
+        );
+        irq::set_irq_method(irq::IrqMethod::Apic);
+
+        // tell the firmware that we're using APIC rather than the default 8259 PIC.
+
+        // FIXME: With ACPI moved to userspace, we should instead allow userspace to check whether the
+        // IOAPIC has been initialized, and then subsequently let some ACPI driver call the AML from
+        // userspace.
+
+        /*#[cfg(feature = "acpi")]
+        {
+            let method = {
+                let namespace_guard = crate::acpi::ACPI_TABLE.namespace.read();
+                if let Some(value) = namespace_guard.as_ref().unwrap().get("\\_PIC") {
+                    value.get_as_method().ok()
+                } else {
+                    None
+                }
+            };
+            if let Some(m) = method {
+                m.execute("\\_PIC".into(), vec!(crate::acpi::aml::AmlValue::Integer(1)));
+            }
+        }*/
+    }
 }
 fn get_override(irq: u8) -> Option<&'static Override> {
     src_overrides().iter().find(|over| over.bus_irq == irq)

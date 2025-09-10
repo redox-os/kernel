@@ -2206,15 +2206,13 @@ impl GrantInfo {
         flags
     }
     pub fn file_ref(&self) -> Option<&GrantFileRef> {
-        if let Provider::FmapBorrowed { ref file_ref, .. }
-        | Provider::Allocated {
-            cow_file_ref: Some(ref file_ref),
-            ..
-        } = self.provider
-        {
-            Some(file_ref)
-        } else {
-            None
+        match self.provider {
+            Provider::FmapBorrowed { ref file_ref, .. }
+            | Provider::Allocated {
+                cow_file_ref: Some(ref file_ref),
+                ..
+            } => Some(file_ref),
+            _ => None,
         }
     }
 }
@@ -2513,94 +2511,99 @@ fn correct_inner<'l>(
             let mut guard = foreign_address_space.acquire_upgradeable_read();
             let src_page = src_base.next_by(pages_from_grant_start);
 
-            if let Some(_) = guard.grants.contains(src_page) {
-                let src_frame = if let Some((phys, _)) =
-                    guard.table.utable.translate(src_page.start_address())
-                {
-                    Frame::containing(phys)
-                } else {
-                    // Grant was valid (TODO check), but we need to correct the underlying page.
-                    // TODO: Access mode
+            match guard.grants.contains(src_page) {
+                Some(_) => {
+                    let src_frame = match guard.table.utable.translate(src_page.start_address()) {
+                        Some((phys, _)) => Frame::containing(phys),
+                        _ => {
+                            // Grant was valid (TODO check), but we need to correct the underlying page.
+                            // TODO: Access mode
 
-                    // TODO: Reasonable maximum?
-                    let new_recursion_level = recursion_level
-                        .checked_add(1)
-                        .filter(|new_lvl| *new_lvl < 16)
-                        .ok_or(PfError::RecursionLimitExceeded)?;
+                            // TODO: Reasonable maximum?
+                            let new_recursion_level = recursion_level
+                                .checked_add(1)
+                                .filter(|new_lvl| *new_lvl < 16)
+                                .ok_or(PfError::RecursionLimitExceeded)?;
 
-                    drop(guard);
-                    drop(flusher);
-                    drop(addr_space_guard);
+                            drop(guard);
+                            drop(flusher);
+                            drop(addr_space_guard);
 
-                    // FIXME: Can this result in invalid address space state?
-                    let ext_addrspace = &foreign_address_space;
-                    let (frame, _, _) = {
-                        let g = ext_addrspace.acquire_write();
-                        correct_inner(
-                            ext_addrspace,
-                            g,
-                            src_page,
-                            AccessMode::Read,
-                            new_recursion_level,
-                        )?
+                            // FIXME: Can this result in invalid address space state?
+                            let ext_addrspace = &foreign_address_space;
+                            let (frame, _, _) = {
+                                let g = ext_addrspace.acquire_write();
+                                correct_inner(
+                                    ext_addrspace,
+                                    g,
+                                    src_page,
+                                    AccessMode::Read,
+                                    new_recursion_level,
+                                )?
+                            };
+
+                            addr_space_guard = addr_space_lock.acquire_write();
+                            addr_space = &mut *addr_space_guard;
+                            flusher = Flusher::with_cpu_set(
+                                &mut addr_space.used_by,
+                                &addr_space_lock.tlb_ack,
+                            );
+                            guard = foreign_address_space.acquire_upgradeable_read();
+
+                            frame
+                        }
                     };
 
-                    addr_space_guard = addr_space_lock.acquire_write();
-                    addr_space = &mut *addr_space_guard;
-                    flusher =
-                        Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
-                    guard = foreign_address_space.acquire_upgradeable_read();
+                    let info =
+                        get_page_info(src_frame).expect("all allocated frames need a PageInfo");
 
-                    frame
-                };
+                    match info.add_ref(RefKind::Shared) {
+                        Ok(()) => src_frame,
+                        Err(AddRefError::CowToShared) => {
+                            let CowResult {
+                                new_frame,
+                                old_frame,
+                            } = cow(src_frame, info, RefKind::Shared)?;
 
-                let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
+                            if let Some(old_frame) = old_frame {
+                                flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                                flusher.flush();
+                            }
 
-                match info.add_ref(RefKind::Shared) {
-                    Ok(()) => src_frame,
-                    Err(AddRefError::CowToShared) => {
-                        let CowResult {
-                            new_frame,
-                            old_frame,
-                        } = cow(src_frame, info, RefKind::Shared)?;
+                            let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
-                        if let Some(old_frame) = old_frame {
-                            flusher.queue(old_frame, None, TlbShootdownActions::FREE);
-                            flusher.flush();
+                            // TODO: flusher
+                            unsafe {
+                                guard
+                                    .table
+                                    .utable
+                                    .remap_with_full(src_page.start_address(), |_, f| {
+                                        (new_frame.base(), f)
+                                    });
+                            }
+
+                            new_frame
                         }
-
-                        let mut guard = RwLockUpgradableGuard::upgrade(guard);
-
-                        // TODO: flusher
-                        unsafe {
-                            guard
-                                .table
-                                .utable
-                                .remap_with_full(src_page.start_address(), |_, f| {
-                                    (new_frame.base(), f)
-                                });
-                        }
-
-                        new_frame
+                        Err(AddRefError::SharedToCow) => unreachable!(),
+                        Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                     }
-                    Err(AddRefError::SharedToCow) => unreachable!(),
-                    Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                 }
-            } else {
-                // Grant did not exist, but we did own a Provider::External mapping, and cannot
-                // simply let the current context fail. TODO: But all borrowed memory shouldn't
-                // really be lazy though? TODO: Should a grant be created?
+                _ => {
+                    // Grant did not exist, but we did own a Provider::External mapping, and cannot
+                    // simply let the current context fail. TODO: But all borrowed memory shouldn't
+                    // really be lazy though? TODO: Should a grant be created?
 
-                let mut guard = RwLockUpgradableGuard::upgrade(guard);
+                    let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
-                // TODO: Should this be called?
-                log::warn!("Mapped zero page since grant didn't exist");
-                map_zeroed(
-                    &mut guard.table.utable,
-                    src_page,
-                    grant_flags,
-                    access == AccessMode::Write,
-                )?
+                    // TODO: Should this be called?
+                    log::warn!("Mapped zero page since grant didn't exist");
+                    map_zeroed(
+                        &mut guard.table.utable,
+                        src_page,
+                        grant_flags,
+                        access == AccessMode::Write,
+                    )?
+                }
             }
         }
         // TODO: NonfatalInternalError if !MAP_LAZY and this page fault occurs.

@@ -1,7 +1,7 @@
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn do_exception_unhandled() {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn do_exception_synchronous() {}
 
 #[allow(dead_code)]

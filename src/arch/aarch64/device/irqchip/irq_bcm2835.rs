@@ -72,47 +72,55 @@ impl Bcm2835ArmInterruptController {
         }
     }
     unsafe fn parse_inner(fdt: &Fdt, node: &FdtNode) -> Result<(usize, usize, Option<usize>)> {
-        //assert address_cells == 0x1, size_cells == 0x1
-        let mem = node.reg().unwrap().nth(0).unwrap();
-        let base = get_mmio_address(fdt, node, &mem).unwrap();
-        let size = mem.size.unwrap() as u32;
-        let mut ret_virq = None;
+        unsafe {
+            //assert address_cells == 0x1, size_cells == 0x1
+            let mem = node.reg().unwrap().nth(0).unwrap();
+            let base = get_mmio_address(fdt, node, &mem).unwrap();
+            let size = mem.size.unwrap() as u32;
+            let mut ret_virq = None;
 
-        if let Some(interrupt_parent) = node.property("interrupt-parent") {
-            let phandle = interrupt_parent.as_usize().unwrap() as u32;
-            let irq = get_interrupt(fdt, node, 0).unwrap();
-            let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
-            //PHYS_NONSECURE_PPI only
-            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-                .ic
-                .irq_xlate(irq)
-                .unwrap();
-            info!(
-                "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
-                ic_idx, virq
-            );
-            ret_virq = Some(virq);
+            if let Some(interrupt_parent) = node.property("interrupt-parent") {
+                let phandle = interrupt_parent.as_usize().unwrap() as u32;
+                let irq = get_interrupt(fdt, node, 0).unwrap();
+                let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
+                //PHYS_NONSECURE_PPI only
+                let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                    .ic
+                    .irq_xlate(irq)
+                    .unwrap();
+                info!(
+                    "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
+                    ic_idx, virq
+                );
+                ret_virq = Some(virq);
+            }
+            Ok((base as usize, size as usize, ret_virq))
         }
-        Ok((base as usize, size as usize, ret_virq))
     }
 
     unsafe fn init(&mut self) {
-        debug!("IRQ BCM2835 INIT");
-        //disable all interrupt
-        self.write(DISABLE_0, 0xffff_ffff);
-        self.write(DISABLE_1, 0xffff_ffff);
-        self.write(DISABLE_2, 0xffff_ffff);
+        unsafe {
+            debug!("IRQ BCM2835 INIT");
+            //disable all interrupt
+            self.write(DISABLE_0, 0xffff_ffff);
+            self.write(DISABLE_1, 0xffff_ffff);
+            self.write(DISABLE_2, 0xffff_ffff);
 
-        debug!("IRQ BCM2835 END");
+            debug!("IRQ BCM2835 END");
+        }
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
-        let val = read_volatile((self.address + reg as usize) as *const u32);
-        val
+        unsafe {
+            let val = read_volatile((self.address + reg as usize) as *const u32);
+            val
+        }
     }
 
     unsafe fn write(&mut self, reg: u32, value: u32) {
-        write_volatile((self.address + reg as usize) as *mut u32, value);
+        unsafe {
+            write_volatile((self.address + reg as usize) as *mut u32, value);
+        }
     }
 }
 

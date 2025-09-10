@@ -135,9 +135,11 @@ pub struct ProcessorControlRegion {
 pub struct TssWrapper(pub TaskStateSegment);
 
 pub unsafe fn pcr() -> *mut ProcessorControlRegion {
-    let mut ret: *mut ProcessorControlRegion;
-    core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(core::mem::offset_of!(ProcessorControlRegion, self_ref)));
-    ret
+    unsafe {
+        let mut ret: *mut ProcessorControlRegion;
+        core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(core::mem::offset_of!(ProcessorControlRegion, self_ref)));
+        ret
+    }
 }
 
 #[cfg(feature = "pti")]
@@ -151,84 +153,93 @@ pub unsafe fn set_tss_stack(stack: usize) {
 
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(stack: usize) {
-    addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
-    addr_of_mut!((*pcr()).tss.0.esp0).write(stack as u32);
+    unsafe {
+        addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+        addr_of_mut!((*pcr()).tss.0.esp0).write(stack as u32);
+    }
 }
 pub unsafe fn set_userspace_io_allowed(allowed: bool) {
-    addr_of_mut!((*pcr()).tss.0.iobp_offset).write(if allowed {
-        mem::size_of::<TaskStateSegment>() as u16
-    } else {
-        0xFFFF
-    });
+    unsafe {
+        addr_of_mut!((*pcr()).tss.0.iobp_offset).write(if allowed {
+            mem::size_of::<TaskStateSegment>() as u16
+        } else {
+            0xFFFF
+        });
+    }
 }
 
 /// Initialize a minimal GDT without configuring percpu.
 pub unsafe fn init() {
-    // Load the initial GDT, before the kernel remaps itself.
-    dtables::lgdt(&DescriptorTablePointer {
-        limit: (INIT_GDT.len() * mem::size_of::<GdtEntry>() - 1) as u16,
-        base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
-    });
+    unsafe {
+        // Load the initial GDT, before the kernel remaps itself.
+        dtables::lgdt(&DescriptorTablePointer {
+            limit: (INIT_GDT.len() * mem::size_of::<GdtEntry>() - 1) as u16,
+            base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
+        });
 
-    // Load the segment descriptors
-    segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
-    segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-    segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+        // Load the segment descriptors
+        segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+        segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+        segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+        segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+        segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+        segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    }
 }
 
 /// Initialize GDT and configure percpu.
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
-    let alloc_order = mem::size_of::<ProcessorControlRegion>()
-        .div_ceil(PAGE_SIZE)
-        .next_power_of_two()
-        .trailing_zeros();
-    let pcr_frame =
-        crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR frame");
-    let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion);
+    unsafe {
+        let alloc_order = mem::size_of::<ProcessorControlRegion>()
+            .div_ceil(PAGE_SIZE)
+            .next_power_of_two()
+            .trailing_zeros();
+        let pcr_frame =
+            crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR frame");
+        let pcr =
+            &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion);
 
-    pcr.self_ref = pcr as *const _ as usize;
-    pcr.gdt = BASE_GDT;
-    pcr.gdt[GDT_KERNEL_PERCPU].set_offset(pcr as *const _ as u32);
+        pcr.self_ref = pcr as *const _ as usize;
+        pcr.gdt = BASE_GDT;
+        pcr.gdt[GDT_KERNEL_PERCPU].set_offset(pcr as *const _ as u32);
 
-    let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
-        limit: (pcr.gdt.len() * mem::size_of::<GdtEntry>() - 1) as u16,
-        base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
-    };
+        let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
+            limit: (pcr.gdt.len() * mem::size_of::<GdtEntry>() - 1) as u16,
+            base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
+        };
 
-    {
-        pcr._all_ones = 0xFF;
-        pcr.tss.0.iobp_offset = 0xFFFF;
-        let tss = &pcr.tss.0 as *const _ as usize as u32;
+        {
+            pcr._all_ones = 0xFF;
+            pcr.tss.0.iobp_offset = 0xFFFF;
+            let tss = &pcr.tss.0 as *const _ as usize as u32;
 
-        pcr.gdt[GDT_TSS].set_offset(tss);
-        pcr.gdt[GDT_TSS]
-            .set_limit(mem::size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE as u32);
+            pcr.gdt[GDT_TSS].set_offset(tss);
+            pcr.gdt[GDT_TSS]
+                .set_limit(mem::size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE as u32);
+        }
+
+        // Load the new GDT, which is correctly located in thread local storage.
+        dtables::lgdt(&gdtr);
+
+        // Reload the segment descriptors
+        segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+        segmentation::load_ds(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
+        segmentation::load_es(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
+        segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+
+        // TODO: Use FS for kernel percpu on i686?
+        segmentation::load_fs(SegmentSelector::new(GDT_USER_FS as u16, Ring::Ring0));
+        segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_PERCPU as u16, Ring::Ring0));
+
+        // Set the stack pointer to use when coming back from userspace.
+        set_tss_stack(stack_offset);
+
+        // Load the task register
+        task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+
+        pcr.percpu = crate::percpu::PercpuBlock::init(cpu_id);
+        crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
     }
-
-    // Load the new GDT, which is correctly located in thread local storage.
-    dtables::lgdt(&gdtr);
-
-    // Reload the segment descriptors
-    segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
-    segmentation::load_ds(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
-    segmentation::load_es(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
-    segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-
-    // TODO: Use FS for kernel percpu on i686?
-    segmentation::load_fs(SegmentSelector::new(GDT_USER_FS as u16, Ring::Ring0));
-    segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_PERCPU as u16, Ring::Ring0));
-
-    // Set the stack pointer to use when coming back from userspace.
-    set_tss_stack(stack_offset);
-
-    // Load the task register
-    task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
-
-    pcr.percpu = crate::percpu::PercpuBlock::init(cpu_id);
-    crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
 }
 
 #[derive(Copy, Clone, Debug)]

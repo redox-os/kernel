@@ -230,29 +230,31 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
 }
 
 pub unsafe fn deallocate_frame(frame: Frame) {
-    deallocate_p2frame(frame, 0)
+    unsafe { deallocate_p2frame(frame, 0) }
 }
 
 // Helper function for quickly mapping device memory
 pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAddress {
-    let mut mapper_lock = KernelMapper::lock();
-    let mapper = mapper_lock
-        .get_mut()
-        .expect("KernelMapper mapper locked re-entrant in map_device_memory");
-    let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
-    let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
-    for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
-        let (_, flush) = mapper
-            .map_linearly(
-                base.add(page_idx * crate::memory::PAGE_SIZE),
-                PageFlags::new()
-                    .write(true)
-                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
-            )
-            .expect("failed to linearly map SDT");
-        flush.flush();
+    unsafe {
+        let mut mapper_lock = KernelMapper::lock();
+        let mapper = mapper_lock
+            .get_mut()
+            .expect("KernelMapper mapper locked re-entrant in map_device_memory");
+        let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
+        let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
+        for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
+            let (_, flush) = mapper
+                .map_linearly(
+                    base.add(page_idx * crate::memory::PAGE_SIZE),
+                    PageFlags::new()
+                        .write(true)
+                        .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+                )
+                .expect("failed to linearly map SDT");
+            flush.flush();
+        }
+        RmmA::phys_to_virt(addr)
     }
-    RmmA::phys_to_virt(addr)
 }
 
 const ORDER_COUNT: u32 = 11;
@@ -1063,8 +1065,10 @@ impl FrameAllocator for TheFrameAllocator {
         allocate_p2frame(order).map(|f| f.base())
     }
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
-        let order = count.data().next_power_of_two().trailing_zeros();
-        deallocate_p2frame(Frame::containing(address), order)
+        unsafe {
+            let order = count.data().next_power_of_two().trailing_zeros();
+            deallocate_p2frame(Frame::containing(address), order)
+        }
     }
     unsafe fn usage(&self) -> FrameUsage {
         FrameUsage::new(

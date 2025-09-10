@@ -164,35 +164,37 @@ impl IrqScheme {
         phandle: usize,
         path_str: &str,
     ) -> Result<(Handle, InternalFlags)> {
-        let addr: Vec<u32> = path_str
-            .split(',')
-            .map(|x| u32::from_str(x).or(Err(Error::new(ENOENT))))
-            .try_collect()?;
-        let ic_idx = IRQ_CHIP
-            .phandle_to_ic_idx(phandle as u32)
-            .ok_or(Error::new(ENOENT))?;
-        Ok({
-            if flags & O_CREAT == 0 && flags & O_STAT == 0 {
-                return Err(Error::new(EINVAL));
-            }
-            let irq_number = IRQ_CHIP
-                .irq_xlate(ic_idx, addr.as_slice())
-                .or(Err(Error::new(ENOENT)))?;
-            log::debug!("open_phandle_irq  virq={}", irq_number);
-            if flags & O_STAT == 0 {
-                if is_reserved(LogicalCpuId::new(0), irq_number as u8) {
-                    return Err(Error::new(EEXIST));
+        unsafe {
+            let addr: Vec<u32> = path_str
+                .split(',')
+                .map(|x| u32::from_str(x).or(Err(Error::new(ENOENT))))
+                .try_collect()?;
+            let ic_idx = IRQ_CHIP
+                .phandle_to_ic_idx(phandle as u32)
+                .ok_or(Error::new(ENOENT))?;
+            Ok({
+                if flags & O_CREAT == 0 && flags & O_STAT == 0 {
+                    return Err(Error::new(EINVAL));
                 }
-                set_reserved(LogicalCpuId::new(0), irq_number as u8, true);
-            }
-            (
-                Handle::Irq {
-                    ack: AtomicUsize::new(0),
-                    irq: irq_number as u8,
-                },
-                InternalFlags::empty(),
-            )
-        })
+                let irq_number = IRQ_CHIP
+                    .irq_xlate(ic_idx, addr.as_slice())
+                    .or(Err(Error::new(ENOENT)))?;
+                log::debug!("open_phandle_irq  virq={}", irq_number);
+                if flags & O_STAT == 0 {
+                    if is_reserved(LogicalCpuId::new(0), irq_number as u8) {
+                        return Err(Error::new(EEXIST));
+                    }
+                    set_reserved(LogicalCpuId::new(0), irq_number as u8, true);
+                }
+                (
+                    Handle::Irq {
+                        ack: AtomicUsize::new(0),
+                        irq: irq_number as u8,
+                    },
+                    InternalFlags::empty(),
+                )
+            })
+        }
     }
 }
 

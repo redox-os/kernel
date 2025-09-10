@@ -142,12 +142,14 @@ const _: () = {
 };
 
 pub unsafe fn pcr() -> *mut ProcessorControlRegion {
-    // Primitive benchmarking of RDFSBASE and RDGSBASE in userspace, appears to indicate that
-    // obtaining FSBASE/GSBASE using mov gs:[gs_self_ref] is faster than using the (probably
-    // microcoded) instructions.
-    let mut ret: *mut ProcessorControlRegion;
-    core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(core::mem::offset_of!(ProcessorControlRegion, self_ref)));
-    ret
+    unsafe {
+        // Primitive benchmarking of RDFSBASE and RDGSBASE in userspace, appears to indicate that
+        // obtaining FSBASE/GSBASE using mov gs:[gs_self_ref] is faster than using the (probably
+        // microcoded) instructions.
+        let mut ret: *mut ProcessorControlRegion;
+        core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(core::mem::offset_of!(ProcessorControlRegion, self_ref)));
+        ret
+    }
 }
 
 #[cfg(feature = "pti")]
@@ -160,109 +162,122 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
 
 #[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
-    // TODO: If this increases performance, read gs:[offset] directly
-    core::ptr::addr_of_mut!((*pcr).tss.rsp[0]).write_unaligned(stack as u64);
+    unsafe {
+        // TODO: If this increases performance, read gs:[offset] directly
+        core::ptr::addr_of_mut!((*pcr).tss.rsp[0]).write_unaligned(stack as u64);
+    }
 }
 
 pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed: bool) {
-    let offset = if allowed {
-        u16::try_from(size_of::<TaskStateSegment>()).unwrap()
-    } else {
-        0xFFFF
-    };
-    core::ptr::addr_of_mut!((*pcr).tss.iomap_base).write(offset);
+    unsafe {
+        let offset = if allowed {
+            u16::try_from(size_of::<TaskStateSegment>()).unwrap()
+        } else {
+            0xFFFF
+        };
+        core::ptr::addr_of_mut!((*pcr).tss.iomap_base).write(offset);
+    }
 }
 
 // Initialize startup GDT
 #[cold]
 pub unsafe fn init() {
-    // Before the kernel can remap itself, it needs to switch to a GDT it controls. Start with a
-    // minimal kernel-only GDT.
-    dtables::lgdt(&DescriptorTablePointer {
-        limit: (INIT_GDT.len() * size_of::<GdtEntry>() - 1) as u16,
-        base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
-    });
+    unsafe {
+        // Before the kernel can remap itself, it needs to switch to a GDT it controls. Start with a
+        // minimal kernel-only GDT.
+        dtables::lgdt(&DescriptorTablePointer {
+            limit: (INIT_GDT.len() * size_of::<GdtEntry>() - 1) as u16,
+            base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
+        });
 
-    load_segments();
+        load_segments();
+    }
 }
 #[cold]
 unsafe fn load_segments() {
-    segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
-    segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+    unsafe {
+        segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+        segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
-    segmentation::load_ds(SegmentSelector::from_raw(0));
-    segmentation::load_es(SegmentSelector::from_raw(0));
-    segmentation::load_fs(SegmentSelector::from_raw(0));
+        segmentation::load_ds(SegmentSelector::from_raw(0));
+        segmentation::load_es(SegmentSelector::from_raw(0));
+        segmentation::load_fs(SegmentSelector::from_raw(0));
 
-    // What happens when GS is loaded with a NULL selector, is undefined on Intel CPUs. However,
-    // GSBASE is set later, and percpu is not used until gdt::init_paging().
-    segmentation::load_gs(SegmentSelector::from_raw(0));
+        // What happens when GS is loaded with a NULL selector, is undefined on Intel CPUs. However,
+        // GSBASE is set later, and percpu is not used until gdt::init_paging().
+        segmentation::load_gs(SegmentSelector::from_raw(0));
+    }
 }
 
 /// Initialize GDT and PCR.
 #[cold]
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
-    let alloc_order = size_of::<ProcessorControlRegion>()
-        .div_ceil(PAGE_SIZE)
-        .next_power_of_two()
-        .trailing_zeros();
-    let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
-    let pcr = &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion);
+    unsafe {
+        let alloc_order = size_of::<ProcessorControlRegion>()
+            .div_ceil(PAGE_SIZE)
+            .next_power_of_two()
+            .trailing_zeros();
+        let pcr_frame =
+            crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
+        let pcr =
+            &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion);
 
-    pcr.self_ref = pcr as *mut ProcessorControlRegion as usize;
+        pcr.self_ref = pcr as *mut ProcessorControlRegion as usize;
 
-    // Setup the GDT.
-    pcr.gdt = BASE_GDT;
+        // Setup the GDT.
+        pcr.gdt = BASE_GDT;
 
-    let limit = (pcr.gdt.len() * size_of::<GdtEntry>() - 1)
-        .try_into()
-        .expect("main GDT way too large");
-    let base = pcr.gdt.as_ptr() as *const SegmentDescriptor;
+        let limit = (pcr.gdt.len() * size_of::<GdtEntry>() - 1)
+            .try_into()
+            .expect("main GDT way too large");
+        let base = pcr.gdt.as_ptr() as *const SegmentDescriptor;
 
-    let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer { limit, base };
+        let gdtr: DescriptorTablePointer<SegmentDescriptor> =
+            DescriptorTablePointer { limit, base };
 
-    {
-        pcr.tss.iomap_base = 0xFFFF;
-        pcr._all_ones = 0xFF;
+        {
+            pcr.tss.iomap_base = 0xFFFF;
+            pcr._all_ones = 0xFF;
 
-        let tss = &mut pcr.tss as *mut TaskStateSegment as usize as u64;
-        let tss_lo = (tss & 0xFFFF_FFFF) as u32;
-        let tss_hi = (tss >> 32) as u32;
+            let tss = &mut pcr.tss as *mut TaskStateSegment as usize as u64;
+            let tss_lo = (tss & 0xFFFF_FFFF) as u32;
+            let tss_hi = (tss >> 32) as u32;
 
-        pcr.gdt[GDT_TSS].set_offset(tss_lo);
-        pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
+            pcr.gdt[GDT_TSS].set_offset(tss_lo);
+            pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
 
-        (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
-            .cast::<u32>()
-            .write(tss_hi);
+            (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
+                .cast::<u32>()
+                .write(tss_hi);
+        }
+
+        // Load the new GDT, which is correctly located in thread local storage.
+        dtables::lgdt(&gdtr);
+
+        // Load segments again, possibly resetting FSBASE and GSBASE.
+        load_segments();
+
+        // Ensure that GSBASE always points to the PCR in kernel space.
+        x86::msr::wrmsr(x86::msr::IA32_GS_BASE, pcr as *mut _ as usize as u64);
+
+        // While GSBASE points to the PCR in kernel space, userspace is free to set it to other values.
+        // Zero-initialize userspace's GSBASE. The reason the GSBASE register writes are reversed, is
+        // because entering usermode will entail executing the SWAPGS instruction.
+        x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
+
+        // Set the userspace FSBASE to zero.
+        x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
+
+        // Set the stack pointer to use when coming back from userspace.
+        set_tss_stack(pcr, stack_offset);
+
+        // Load the task register
+        task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+
+        pcr.percpu = PercpuBlock::init(cpu_id);
+
+        crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
     }
-
-    // Load the new GDT, which is correctly located in thread local storage.
-    dtables::lgdt(&gdtr);
-
-    // Load segments again, possibly resetting FSBASE and GSBASE.
-    load_segments();
-
-    // Ensure that GSBASE always points to the PCR in kernel space.
-    x86::msr::wrmsr(x86::msr::IA32_GS_BASE, pcr as *mut _ as usize as u64);
-
-    // While GSBASE points to the PCR in kernel space, userspace is free to set it to other values.
-    // Zero-initialize userspace's GSBASE. The reason the GSBASE register writes are reversed, is
-    // because entering usermode will entail executing the SWAPGS instruction.
-    x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
-
-    // Set the userspace FSBASE to zero.
-    x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
-
-    // Set the stack pointer to use when coming back from userspace.
-    set_tss_stack(pcr, stack_offset);
-
-    // Load the task register
-    task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
-
-    pcr.percpu = PercpuBlock::init(cpu_id);
-
-    crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
 }
 #[derive(Copy, Clone, Debug)]
 #[repr(C, packed)]

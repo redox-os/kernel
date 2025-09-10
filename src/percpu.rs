@@ -11,7 +11,8 @@ use crate::{
     context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::CpuStats,
-    ptrace::Session,syscall::debug::SyscallDebugInfo
+    ptrace::Session,
+    syscall::debug::SyscallDebugInfo,
 };
 
 #[cfg(feature = "sys_stat")]
@@ -119,45 +120,50 @@ impl PercpuBlock {
             crate::paging::RmmA::invalidate_all();
         }
 
-        if let Some(ref addrsp) = &*self.current_addrsp.borrow() {
+        if let &Some(ref addrsp) = &*self.current_addrsp.borrow() {
             addrsp.tlb_ack.fetch_add(1, Ordering::Release);
         }
     }
 }
 pub unsafe fn switch_arch_hook() {
-    let percpu = PercpuBlock::current();
+    unsafe {
+        let percpu = PercpuBlock::current();
 
-    let cur_addrsp = percpu.current_addrsp.borrow();
-    let next_addrsp = percpu.new_addrsp_tmp.take();
+        let cur_addrsp = percpu.current_addrsp.borrow();
+        let next_addrsp = percpu.new_addrsp_tmp.take();
 
-    let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
-        (Some(ref p), Some(ref n)) => Arc::ptr_eq(p, n),
-        (Some(_), None) | (None, Some(_)) => false,
-        (None, None) => true,
-    };
-    if retain_pgtbl {
-        // If we are not switching to a different address space, we can simply return early.
-    }
-    if let Some(ref prev_addrsp) = &*cur_addrsp {
-        prev_addrsp
-            .acquire_read()
-            .used_by
-            .atomic_clear(percpu.cpu_id);
-    }
+        let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
+            (&Some(ref p), &Some(ref n)) => Arc::ptr_eq(p, n),
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => true,
+        };
+        if retain_pgtbl {
+            // If we are not switching to a different address space, we can simply return early.
+        }
+        if let &Some(ref prev_addrsp) = &*cur_addrsp {
+            prev_addrsp
+                .acquire_read()
+                .used_by
+                .atomic_clear(percpu.cpu_id);
+        }
 
-    drop(cur_addrsp);
+        drop(cur_addrsp);
 
-    // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
-    // space.
-    *percpu.current_addrsp.borrow_mut() = next_addrsp;
+        // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
+        // space.
+        *percpu.current_addrsp.borrow_mut() = next_addrsp;
 
-    if let Some(next_addrsp) = &*percpu.current_addrsp.borrow() {
-        let next = next_addrsp.acquire_read();
+        match &*percpu.current_addrsp.borrow() {
+            Some(next_addrsp) => {
+                let next = next_addrsp.acquire_read();
 
-        next.used_by.atomic_set(percpu.cpu_id);
-        next.table.utable.make_current();
-    } else {
-        crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+                next.used_by.atomic_set(percpu.cpu_id);
+                next.table.utable.make_current();
+            }
+            _ => {
+                crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+            }
+        }
     }
 }
 impl PercpuBlock {

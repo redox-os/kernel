@@ -28,18 +28,20 @@ impl PercpuBlock {
 
 #[cold]
 pub unsafe fn init(cpu_id: LogicalCpuId) {
-    let frame = crate::memory::allocate_frame().expect("failed to allocate percpu memory");
-    let virt = RmmA::phys_to_virt(frame.base()).data() as *mut ArchPercpu;
+    unsafe {
+        let frame = crate::memory::allocate_frame().expect("failed to allocate percpu memory");
+        let virt = RmmA::phys_to_virt(frame.base()).data() as *mut ArchPercpu;
 
-    virt.write(ArchPercpu {
-        tmp: 0,
-        s_sp: 0,
-        percpu: PercpuBlock::init(cpu_id),
-    });
+        virt.write(ArchPercpu {
+            tmp: 0,
+            s_sp: 0,
+            percpu: PercpuBlock::init(cpu_id),
+        });
 
-    asm!(
-        "mv tp, {}",
-        "csrw sscratch, tp",
-        in(reg) virt as usize
-    );
+        asm!(
+            "mv tp, {}",
+            "csrw sscratch, tp",
+            in(reg) virt as usize
+        );
+    }
 }

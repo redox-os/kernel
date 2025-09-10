@@ -8,7 +8,7 @@ macro_rules! dbg {
     () => {
         $crate::println!("[{}:{}]", file!(), line!());
     };
-    ($val:expr) => {
+    ($val:expr_2021) => {
         // Use of `match` here is intentional because it affects the lifetimes
         // of temporaries - https://stackoverflow.com/a/48732525/1063961
         match $val {
@@ -20,8 +20,8 @@ macro_rules! dbg {
         }
     };
     // Trailing comma with single argument is ignored
-    ($val:expr,) => { $crate::dbg!($val) };
-    ($($val:expr),+ $(,)?) => {
+    ($val:expr_2021,) => { $crate::dbg!($val) };
+    ($($val:expr_2021),+ $(,)?) => {
         ($($crate::dbg!($val)),+,)
     };
 }

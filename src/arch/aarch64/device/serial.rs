@@ -76,63 +76,67 @@ impl InterruptHandler for Com1Irq {
 }
 
 pub unsafe fn init_early(dtb: &Fdt) {
-    if COM1.lock().is_some() {
-        // Hardcoded UART
-        return;
-    }
+    unsafe {
+        if COM1.lock().is_some() {
+            // Hardcoded UART
+            return;
+        }
 
-    if let Some((phys, size, skip_init, cts, compatible)) = diag_uart_range(dtb) {
-        let virt = crate::PHYS_OFFSET + phys;
-        let serial_opt = if compatible.contains("arm,pl011") {
-            let mut serial_port = uart_pl011::SerialPort::new(virt, cts);
-            if !skip_init {
-                serial_port.init(false);
-            }
-            Some(SerialKind::Pl011(serial_port))
-        } else if compatible.contains("ns16550a") || compatible.contains("snps,dw-apb-uart") {
-            //TODO: get actual register size from device tree
-            let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
-            if !skip_init {
-                serial_port.init();
-            }
-            Some(SerialKind::Ns16550u32(serial_port))
-        } else {
-            None
-        };
-        match serial_opt {
-            Some(serial) => {
-                *COM1.lock() = Some(serial);
-                info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
-            }
-            None => {
-                log::warn!(
-                    "UART {:?} at {:#X} size {:#X}: no driver found",
-                    compatible,
-                    virt,
-                    size
-                );
+        if let Some((phys, size, skip_init, cts, compatible)) = diag_uart_range(dtb) {
+            let virt = crate::PHYS_OFFSET + phys;
+            let serial_opt = if compatible.contains("arm,pl011") {
+                let mut serial_port = uart_pl011::SerialPort::new(virt, cts);
+                if !skip_init {
+                    serial_port.init(false);
+                }
+                Some(SerialKind::Pl011(serial_port))
+            } else if compatible.contains("ns16550a") || compatible.contains("snps,dw-apb-uart") {
+                //TODO: get actual register size from device tree
+                let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
+                if !skip_init {
+                    serial_port.init();
+                }
+                Some(SerialKind::Ns16550u32(serial_port))
+            } else {
+                None
+            };
+            match serial_opt {
+                Some(serial) => {
+                    *COM1.lock() = Some(serial);
+                    info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
+                }
+                None => {
+                    log::warn!(
+                        "UART {:?} at {:#X} size {:#X}: no driver found",
+                        compatible,
+                        virt,
+                        size
+                    );
+                }
             }
         }
     }
 }
 
 pub unsafe fn init(fdt: &Fdt) {
-    //TODO: find actual serial device, not just any PL011
-    if let Some(node) = fdt.find_compatible(&["arm,pl011"]) {
-        let irq = get_interrupt(fdt, &node, 0).unwrap();
-        if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
-            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-                .ic
-                .irq_xlate(irq)
-                .unwrap();
-            info!("serial_port virq = {}", virq);
-            register_irq(virq as u32, Box::new(Com1Irq {}));
-            IRQ_CHIP.irq_enable(virq as u32);
-        } else {
-            error!("serial port irq parent not found");
+    unsafe {
+        //TODO: find actual serial device, not just any PL011
+        if let Some(node) = fdt.find_compatible(&["arm,pl011"]) {
+            let irq = get_interrupt(fdt, &node, 0).unwrap();
+            if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
+                let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                    .ic
+                    .irq_xlate(irq)
+                    .unwrap();
+                info!("serial_port virq = {}", virq);
+                register_irq(virq as u32, Box::new(Com1Irq {}));
+                IRQ_CHIP.irq_enable(virq as u32);
+            } else {
+                error!("serial port irq parent not found");
+            }
         }
-    }
-    if let Some(ref mut serial_port) = *COM1.lock() {
-        serial_port.enable_irq();
+        if let Some(ref mut serial_port) = *COM1.lock() {
+            serial_port.enable_irq();
+        }
     }
 }

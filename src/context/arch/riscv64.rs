@@ -134,23 +134,28 @@ pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
 
 // SAFETY: EMPTY_CR3 must be initialized.
 pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
-    debug_assert!(EMPTY_CR3.poll().is_some());
-    *EMPTY_CR3.get_unchecked()
+    unsafe {
+        debug_assert!(EMPTY_CR3.poll().is_some());
+        *EMPTY_CR3.get_unchecked()
+    }
 }
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    // FIXME floating point
-    PercpuBlock::current()
-        .new_addrsp_tmp
-        .set(next.addr_space.clone());
+    unsafe {
+        // FIXME floating point
+        PercpuBlock::current()
+            .new_addrsp_tmp
+            .set(next.addr_space.clone());
 
-    switch_to_inner(&mut prev.arch, &mut next.arch);
+        switch_to_inner(&mut prev.arch, &mut next.arch);
+    }
 }
 
 #[naked]
 unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
-    core::arch::naked_asm!(r#"
+    unsafe {
+        core::arch::naked_asm!(r#"
         sd s1, {off_s1}(a0)
         ld s1, {off_s1}(a1)
 
@@ -203,24 +208,25 @@ unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
 
         j {switch_hook}
         "#,
-    off_s1 = const(offset_of!(Context, s1)),
-    off_s2 = const(offset_of!(Context, s2)),
-    off_s3 = const(offset_of!(Context, s3)),
-    off_s4 = const(offset_of!(Context, s4)),
-    off_s5 = const(offset_of!(Context, s5)),
-    off_s6 = const(offset_of!(Context, s6)),
-    off_s7 = const(offset_of!(Context, s7)),
-    off_s8 = const(offset_of!(Context, s8)),
-    off_s9 = const(offset_of!(Context, s9)),
-    off_s10 = const(offset_of!(Context, s10)),
-    off_s11 = const(offset_of!(Context, s11)),
-    off_sp = const(offset_of!(Context, sp)),
-    off_ra = const(offset_of!(Context, ra)),
-    off_fp = const(offset_of!(Context, fp)),
-    off_sstatus = const(offset_of!(Context, sstatus)),
+        off_s1 = const(offset_of!(Context, s1)),
+        off_s2 = const(offset_of!(Context, s2)),
+        off_s3 = const(offset_of!(Context, s3)),
+        off_s4 = const(offset_of!(Context, s4)),
+        off_s5 = const(offset_of!(Context, s5)),
+        off_s6 = const(offset_of!(Context, s6)),
+        off_s7 = const(offset_of!(Context, s7)),
+        off_s8 = const(offset_of!(Context, s8)),
+        off_s9 = const(offset_of!(Context, s9)),
+        off_s10 = const(offset_of!(Context, s10)),
+        off_s11 = const(offset_of!(Context, s11)),
+        off_sp = const(offset_of!(Context, sp)),
+        off_ra = const(offset_of!(Context, ra)),
+        off_fp = const(offset_of!(Context, fp)),
+        off_sstatus = const(offset_of!(Context, sstatus)),
 
-    switch_hook = sym crate::context::switch_finish_hook,
-    );
+        switch_hook = sym crate::context::switch_finish_hook,
+        );
+    }
 }
 
 /// Allocates a new empty utable

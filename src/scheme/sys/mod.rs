@@ -190,7 +190,7 @@ impl KernelScheme for SysScheme {
             Handle::TopLevel | Handle::Resource { data: None, .. } => {
                 return Err(Error::new(EISDIR))
             }
-            Handle::Resource {
+            &Handle::Resource {
                 data: Some(ref data),
                 ..
             } => {

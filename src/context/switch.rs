@@ -107,14 +107,19 @@ pub fn tick() {
 /// # Safety
 /// This function involves unsafe operations such as resetting state and releasing locks.
 pub unsafe extern "C" fn switch_finish_hook() {
-    if let Some(switch_result) = PercpuBlock::current().switch_internals.switch_result.take() {
-        drop(switch_result);
-    } else {
-        // TODO: unreachable_unchecked()?
-        crate::arch::stop::emergency_reset();
+    unsafe {
+        match PercpuBlock::current().switch_internals.switch_result.take() {
+            Some(switch_result) => {
+                drop(switch_result);
+            }
+            _ => {
+                // TODO: unreachable_unchecked()?
+                crate::arch::stop::emergency_reset();
+            }
+        }
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+        crate::percpu::switch_arch_hook();
     }
-    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-    crate::percpu::switch_arch_hook();
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,91 +220,97 @@ pub fn switch() -> SwitchResult {
     };
 
     // Switch process states, TSS stack pointer, and store new context ID
-    if let Some((mut prev_context_guard, mut next_context_guard)) = switch_context_opt {
-        // Update context states and prepare for the switch.
-        let prev_context = &mut *prev_context_guard;
-        let next_context = &mut *next_context_guard;
+    match switch_context_opt {
+        Some((mut prev_context_guard, mut next_context_guard)) => {
+            // Update context states and prepare for the switch.
+            let prev_context = &mut *prev_context_guard;
+            let next_context = &mut *next_context_guard;
 
-        // Set the previous context as "not running"
-        prev_context.running = false;
+            // Set the previous context as "not running"
+            prev_context.running = false;
 
-        // Set the next context as "running"
-        next_context.running = true;
-        // Set the CPU ID for the next context
-        next_context.cpu_id = Some(cpu_id);
+            // Set the next context as "running"
+            next_context.running = true;
+            // Set the CPU ID for the next context
+            next_context.cpu_id = Some(cpu_id);
 
-        let percpu = PercpuBlock::current();
-        unsafe {
-            percpu.switch_internals.set_current_context(Arc::clone(
-                ArcRwSpinlockWriteGuard::rwlock(&next_context_guard),
-            ));
+            let percpu = PercpuBlock::current();
+            unsafe {
+                percpu.switch_internals.set_current_context(Arc::clone(
+                    ArcRwSpinlockWriteGuard::rwlock(&next_context_guard),
+                ));
+            }
+
+            // FIXME set the switch result in arch::switch_to instead
+            let prev_context = unsafe {
+                mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard)
+            };
+            let next_context = unsafe {
+                mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard)
+            };
+
+            percpu
+                .switch_internals
+                .switch_result
+                .set(Some(SwitchResultInner {
+                    _prev_guard: prev_context_guard,
+                    _next_guard: next_context_guard,
+                }));
+
+            /*let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
+                .get(&next_context.pid)
+                .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
+            {
+                (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
+            } else {
+                (None, PtraceFlags::empty())
+            };*/
+            let ptrace_flags = PtraceFlags::empty();
+
+            //*percpu.ptrace_session.borrow_mut() = ptrace_session;
+            percpu.ptrace_flags.set(ptrace_flags);
+            prev_context.inside_syscall =
+                percpu.inside_syscall.replace(next_context.inside_syscall);
+
+            #[cfg(feature = "syscall_debug")]
+            {
+                prev_context.syscall_debug_info = percpu
+                    .syscall_debug_info
+                    .replace(next_context.syscall_debug_info);
+                prev_context.syscall_debug_info.on_switch_from();
+                next_context.syscall_debug_info.on_switch_to();
+            }
+
+            percpu
+                .switch_internals
+                .being_sigkilled
+                .set(next_context.being_sigkilled);
+
+            unsafe {
+                arch::switch_to(prev_context, next_context);
+            }
+
+            // NOTE: After switch_to is called, the return address can even be different from the
+            // current return address, meaning that we cannot use local variables here, and that we
+            // need to use the `switch_finish_hook` to be able to release the locks. Newly created
+            // contexts will return directly to the function pointer passed to context::spawn, and not
+            // reach this code until the next context switch back.
+            if next_context.userspace {
+                percpu.stats.set_state(cpu_stats::CpuState::User);
+            } else {
+                percpu.stats.set_state(cpu_stats::CpuState::Kernel);
+            }
+
+            SwitchResult::Switched
         }
+        _ => {
+            // No target was found, unset global lock and return
+            arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
-        // FIXME set the switch result in arch::switch_to instead
-        let prev_context =
-            unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *prev_context_guard) };
-        let next_context =
-            unsafe { mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard) };
+            percpu.stats.set_state(cpu_stats::CpuState::Idle);
 
-        percpu
-            .switch_internals
-            .switch_result
-            .set(Some(SwitchResultInner {
-                _prev_guard: prev_context_guard,
-                _next_guard: next_context_guard,
-            }));
-
-        /*let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
-            .get(&next_context.pid)
-            .map(|s| (Arc::downgrade(s), s.data.lock().breakpoint))
-        {
-            (Some(session), bp.map_or(PtraceFlags::empty(), |f| f.flags))
-        } else {
-            (None, PtraceFlags::empty())
-        };*/
-        let ptrace_flags = PtraceFlags::empty();
-
-        //*percpu.ptrace_session.borrow_mut() = ptrace_session;
-        percpu.ptrace_flags.set(ptrace_flags);
-        prev_context.inside_syscall = percpu.inside_syscall.replace(next_context.inside_syscall);
-
-        #[cfg(feature = "syscall_debug")]
-        {
-            prev_context.syscall_debug_info = percpu
-                .syscall_debug_info
-                .replace(next_context.syscall_debug_info);
-            prev_context.syscall_debug_info.on_switch_from();
-            next_context.syscall_debug_info.on_switch_to();
+            SwitchResult::AllContextsIdle
         }
-
-        percpu
-            .switch_internals
-            .being_sigkilled
-            .set(next_context.being_sigkilled);
-
-        unsafe {
-            arch::switch_to(prev_context, next_context);
-        }
-
-        // NOTE: After switch_to is called, the return address can even be different from the
-        // current return address, meaning that we cannot use local variables here, and that we
-        // need to use the `switch_finish_hook` to be able to release the locks. Newly created
-        // contexts will return directly to the function pointer passed to context::spawn, and not
-        // reach this code until the next context switch back.
-        if next_context.userspace {
-            percpu.stats.set_state(cpu_stats::CpuState::User);
-        } else {
-            percpu.stats.set_state(cpu_stats::CpuState::Kernel);
-        }
-
-        SwitchResult::Switched
-    } else {
-        // No target was found, unset global lock and return
-        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-
-        percpu.stats.set_state(cpu_stats::CpuState::Idle);
-
-        SwitchResult::AllContextsIdle
     }
 }
 

@@ -30,7 +30,7 @@ struct Pl031rtc {
 
 impl Pl031rtc {
     unsafe fn read(&self, reg: usize) -> u32 {
-        read_volatile((crate::PHYS_OFFSET + self.phys + reg) as *const u32)
+        unsafe { read_volatile((crate::PHYS_OFFSET + self.phys + reg) as *const u32) }
     }
 
     pub fn time(&mut self) -> u64 {

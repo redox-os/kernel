@@ -259,12 +259,11 @@ impl ProcScheme {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
             OpenTy::Ctxt(context) => {
-                if let Some((kind, positioned)) =
-                    self.openat_context(operation_name, Arc::clone(&context))?
-                {
-                    (Handle { context, kind }, positioned)
-                } else {
-                    return Err(Error::new(EINVAL));
+                match self.openat_context(operation_name, Arc::clone(&context))? {
+                    Some((kind, positioned)) => (Handle { context, kind }, positioned),
+                    _ => {
+                        return Err(Error::new(EINVAL));
+                    }
                 }
             }
             OpenTy::Auth => {
@@ -1006,7 +1005,7 @@ impl ContextHandle {
                 verify_scheme(hopefully_this_scheme)?;
 
                 let mut handles = HANDLES.write();
-                let Handle {
+                let &Handle {
                     kind: ContextHandle::AddrSpace { ref addrspace },
                     ..
                 } = handles.get(&number).ok_or(Error::new(EBADF))?
@@ -1201,7 +1200,7 @@ impl ContextHandle {
 
                 buf.copy_common_bytes_from_slice(src_buf)
             }
-            ContextHandle::AddrSpace { ref addrspace } => {
+            &ContextHandle::AddrSpace { ref addrspace } => {
                 let Ok(offset) = usize::try_from(offset) else {
                     return Ok(0);
                 };
@@ -1239,7 +1238,7 @@ impl ContextHandle {
             }
 
             ContextHandle::Filetable { data, .. } => read_from(buf, &data, offset),
-            ContextHandle::MmapMinAddr(ref addrspace) => {
+            &ContextHandle::MmapMinAddr(ref addrspace) => {
                 buf.write_usize(addrspace.acquire_read().mmap_min)?;
                 Ok(mem::size_of::<usize>())
             }

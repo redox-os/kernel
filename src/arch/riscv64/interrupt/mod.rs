@@ -12,13 +12,13 @@ pub use handler::InterruptStack;
 /// Clear interrupts
 #[inline(always)]
 pub unsafe fn disable() {
-    asm!("csrci sstatus, 1 << 1")
+    unsafe { asm!("csrci sstatus, 1 << 1") }
 }
 
 /// Set interrupts
 #[inline(always)]
 pub unsafe fn enable() {
-    asm!("csrsi sstatus, 1 << 1")
+    unsafe { asm!("csrsi sstatus, 1 << 1") }
 }
 
 /// Set interrupts and halt
@@ -26,7 +26,7 @@ pub unsafe fn enable() {
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
-    asm!("csrsi sstatus, 1 << 1", "wfi")
+    unsafe { asm!("csrsi sstatus, 1 << 1", "wfi") }
 }
 
 /// Set interrupts and nop
@@ -34,13 +34,13 @@ pub unsafe fn enable_and_halt() {
 /// Simply enabling interrupts does not gurantee that they will trigger, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_nop() {
-    asm!("csrsi sstatus, 1 << 1", "nop")
+    unsafe { asm!("csrsi sstatus, 1 << 1", "nop") }
 }
 
 /// Halt instruction
 #[inline(always)]
 pub unsafe fn halt() {
-    asm!("wfi", options(nomem, nostack))
+    unsafe { asm!("wfi", options(nomem, nostack)) }
 }
 
 /// Pause instruction
@@ -55,9 +55,11 @@ pub fn pause() {
 
 #[inline(always)]
 pub unsafe fn init() {
-    // Setup interrupt handlers
-    asm!(
-        "la t0, exception_handler", // WARL=0 - direct mode combined handler
-        "csrw stvec, t0"
-    );
+    unsafe {
+        // Setup interrupt handlers
+        asm!(
+            "la t0, exception_handler", // WARL=0 - direct mode combined handler
+            "csrw stvec, t0"
+        );
+    }
 }

@@ -38,212 +38,216 @@ pub struct AltReloc {
 
 #[cold]
 pub unsafe fn early_init(bsp: bool) {
-    let relocs_offset = crate::kernel_executable_offsets::__altrelocs_start();
-    let relocs_size = crate::kernel_executable_offsets::__altrelocs_end() - relocs_offset;
+    unsafe {
+        let relocs_offset = crate::kernel_executable_offsets::__altrelocs_start();
+        let relocs_size = crate::kernel_executable_offsets::__altrelocs_end() - relocs_offset;
 
-    assert_eq!(relocs_size % size_of::<AltReloc>(), 0);
-    let relocs = core::slice::from_raw_parts(
-        relocs_offset as *const AltReloc,
-        relocs_size / size_of::<AltReloc>(),
-    );
-
-    let mut enable = KcpuFeatures::empty();
-
-    if cfg!(not(cpu_feature_never = "smap")) && has_ext_feat(|feat| feat.has_smap()) {
-        // SMAP (Supervisor-Mode Access Prevention) forbids the kernel from accessing any
-        // userspace-accessible pages, with the necessary exception of when RFLAGS.AC = 1. This
-        // limits user-memory accesses to the UserSlice wrapper, so that no data outside of
-        // usercopy functions can be accidentally accessed by the kernel.
-        x86::controlregs::cr4_write(x86::controlregs::cr4() | Cr4::CR4_ENABLE_SMAP);
-        // Clear CLAC in (the probably unlikely) case the bootloader set it earlier.
-        x86::bits64::rflags::clac();
-
-        enable |= KcpuFeatures::SMAP;
-    } else {
-        assert!(cfg!(not(cpu_feature_always = "smap")));
-    }
-
-    if cfg!(not(cpu_feature_never = "fsgsbase"))
-        && let Some(f) = cpuid().get_extended_feature_info()
-        && f.has_fsgsbase()
-    {
-        x86::controlregs::cr4_write(
-            x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE,
+        assert_eq!(relocs_size % size_of::<AltReloc>(), 0);
+        let relocs = core::slice::from_raw_parts(
+            relocs_offset as *const AltReloc,
+            relocs_size / size_of::<AltReloc>(),
         );
 
-        enable |= KcpuFeatures::FSGSBASE;
-    } else {
-        assert!(cfg!(not(cpu_feature_always = "fsgsbase")));
+        let mut enable = KcpuFeatures::empty();
+
+        if cfg!(not(cpu_feature_never = "smap")) && has_ext_feat(|feat| feat.has_smap()) {
+            // SMAP (Supervisor-Mode Access Prevention) forbids the kernel from accessing any
+            // userspace-accessible pages, with the necessary exception of when RFLAGS.AC = 1. This
+            // limits user-memory accesses to the UserSlice wrapper, so that no data outside of
+            // usercopy functions can be accidentally accessed by the kernel.
+            x86::controlregs::cr4_write(x86::controlregs::cr4() | Cr4::CR4_ENABLE_SMAP);
+            // Clear CLAC in (the probably unlikely) case the bootloader set it earlier.
+            x86::bits64::rflags::clac();
+
+            enable |= KcpuFeatures::SMAP;
+        } else {
+            assert!(cfg!(not(cpu_feature_always = "smap")));
+        }
+
+        if cfg!(not(cpu_feature_never = "fsgsbase"))
+            && let Some(f) = cpuid().get_extended_feature_info()
+            && f.has_fsgsbase()
+        {
+            x86::controlregs::cr4_write(
+                x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_FSGSBASE,
+            );
+
+            enable |= KcpuFeatures::FSGSBASE;
+        } else {
+            assert!(cfg!(not(cpu_feature_always = "fsgsbase")));
+        }
+
+        #[cfg(not(cpu_feature_never = "xsave"))]
+        if feature_info().has_xsave() {
+            use raw_cpuid::{ExtendedRegisterStateLocation, ExtendedRegisterType};
+
+            x86::controlregs::cr4_write(
+                x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_OS_XSAVE,
+            );
+
+            let mut xcr0 = Xcr0::XCR0_FPU_MMX_STATE | Xcr0::XCR0_SSE_STATE;
+            x86::controlregs::xcr0_write(xcr0);
+            let ext_state_info = cpuid()
+                .get_extended_state_info()
+                .expect("must be present if XSAVE is supported");
+
+            enable |= KcpuFeatures::XSAVE;
+            enable.set(KcpuFeatures::XSAVEOPT, ext_state_info.has_xsaveopt());
+
+            let info = xsave::XsaveInfo {
+                ymm_upper_offset: feature_info().has_avx().then(|| {
+                    xcr0 |= Xcr0::XCR0_AVX_STATE;
+                    x86::controlregs::xcr0_write(xcr0);
+
+                    let state = ext_state_info
+                        .iter()
+                        .find(|state| {
+                            state.register() == ExtendedRegisterType::Avx
+                                && state.location() == ExtendedRegisterStateLocation::Xcr0
+                        })
+                        .expect("CPUID said AVX was supported but there's no state info");
+
+                    if state.size() as usize != 16 * core::mem::size_of::<u128>() {
+                        log::warn!("Unusual AVX state size {}", state.size());
+                    }
+
+                    state.offset()
+                }),
+                xsave_size: ext_state_info.xsave_area_size_enabled_features(),
+            };
+            log::debug!("XSAVE: {:?}", info);
+
+            xsave::XSAVE_INFO.call_once(|| info);
+        } else {
+            assert!(cfg!(not(cpu_feature_always = "xsave")));
+        }
+
+        if !bsp {
+            return;
+        }
+
+        overwrite(&relocs, enable);
+
+        if cfg!(not(feature = "self_modifying")) {
+            assert!(
+                cfg!(not(cpu_feature_auto = "smap"))
+                    && cfg!(not(cpu_feature_auto = "fsgsbase"))
+                    && cfg!(not(cpu_feature_auto = "xsave"))
+                    && cfg!(not(cpu_feature_auto = "xsaveopt"))
+            );
+        }
+
+        FEATURES.call_once(|| enable);
     }
-
-    #[cfg(not(cpu_feature_never = "xsave"))]
-    if feature_info().has_xsave() {
-        use raw_cpuid::{ExtendedRegisterStateLocation, ExtendedRegisterType};
-
-        x86::controlregs::cr4_write(
-            x86::controlregs::cr4() | x86::controlregs::Cr4::CR4_ENABLE_OS_XSAVE,
-        );
-
-        let mut xcr0 = Xcr0::XCR0_FPU_MMX_STATE | Xcr0::XCR0_SSE_STATE;
-        x86::controlregs::xcr0_write(xcr0);
-        let ext_state_info = cpuid()
-            .get_extended_state_info()
-            .expect("must be present if XSAVE is supported");
-
-        enable |= KcpuFeatures::XSAVE;
-        enable.set(KcpuFeatures::XSAVEOPT, ext_state_info.has_xsaveopt());
-
-        let info = xsave::XsaveInfo {
-            ymm_upper_offset: feature_info().has_avx().then(|| {
-                xcr0 |= Xcr0::XCR0_AVX_STATE;
-                x86::controlregs::xcr0_write(xcr0);
-
-                let state = ext_state_info
-                    .iter()
-                    .find(|state| {
-                        state.register() == ExtendedRegisterType::Avx
-                            && state.location() == ExtendedRegisterStateLocation::Xcr0
-                    })
-                    .expect("CPUID said AVX was supported but there's no state info");
-
-                if state.size() as usize != 16 * core::mem::size_of::<u128>() {
-                    log::warn!("Unusual AVX state size {}", state.size());
-                }
-
-                state.offset()
-            }),
-            xsave_size: ext_state_info.xsave_area_size_enabled_features(),
-        };
-        log::debug!("XSAVE: {:?}", info);
-
-        xsave::XSAVE_INFO.call_once(|| info);
-    } else {
-        assert!(cfg!(not(cpu_feature_always = "xsave")));
-    }
-
-    if !bsp {
-        return;
-    }
-
-    overwrite(&relocs, enable);
-
-    if cfg!(not(feature = "self_modifying")) {
-        assert!(
-            cfg!(not(cpu_feature_auto = "smap"))
-                && cfg!(not(cpu_feature_auto = "fsgsbase"))
-                && cfg!(not(cpu_feature_auto = "xsave"))
-                && cfg!(not(cpu_feature_auto = "xsaveopt"))
-        );
-    }
-
-    FEATURES.call_once(|| enable);
 }
 
 unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
-    if cfg!(not(feature = "self_modifying")) {
-        return;
-    }
-
-    log::info!("self-modifying features: {:?}", enable);
-
-    let mut mapper = KernelMapper::lock();
-    for reloc in relocs.iter().copied() {
-        let name = core::str::from_utf8(core::slice::from_raw_parts(
-            reloc.name_start,
-            reloc.name_len,
-        ))
-        .expect("invalid feature name");
-        let altcode = core::slice::from_raw_parts(reloc.altcode_start, reloc.altcode_len);
-
-        let dst_pages = PageSpan::between(
-            Page::containing_address(VirtualAddress::new(reloc.code_start as usize)),
-            Page::containing_address(VirtualAddress::new(
-                (reloc.code_start as usize + reloc.padded_len).next_multiple_of(PAGE_SIZE),
-            )),
-        );
-        for page in dst_pages.pages() {
-            mapper
-                .get_mut()
-                .unwrap()
-                .remap(
-                    page.start_address(),
-                    PageFlags::new().write(true).execute(true).global(true),
-                )
-                .unwrap()
-                .flush();
+    unsafe {
+        if cfg!(not(feature = "self_modifying")) {
+            return;
         }
 
-        let code = core::slice::from_raw_parts_mut(reloc.code_start, reloc.padded_len);
+        log::info!("self-modifying features: {:?}", enable);
 
-        log::trace!(
-            "feature {} current {:x?} altcode {:x?}",
-            name,
-            code,
-            altcode
-        );
+        let mut mapper = KernelMapper::lock();
+        for reloc in relocs.iter().copied() {
+            let name = core::str::from_utf8(core::slice::from_raw_parts(
+                reloc.name_start,
+                reloc.name_len,
+            ))
+            .expect("invalid feature name");
+            let altcode = core::slice::from_raw_parts(reloc.altcode_start, reloc.altcode_len);
 
-        let feature_is_enabled = match name {
-            "smap" => enable.contains(KcpuFeatures::SMAP),
-            "fsgsbase" => enable.contains(KcpuFeatures::FSGSBASE),
-            "xsave" => enable.contains(KcpuFeatures::XSAVE),
-            "xsaveopt" => enable.contains(KcpuFeatures::XSAVEOPT),
-            //_ => panic!("unknown altcode relocation: {}", name),
-            _ => true,
-        };
-
-        // XXX: The `.nops` directive only works for constant lengths, and the variable `.skip -X`
-        // only outputs the (slower) single-byte 0x90 NOP.
-
-        // This table is from the "Software Optimization Guide for AMD Family 19h Processors" (November
-        // 2020).
-        const NOPS_TABLE: [&[u8]; 11] = [
-            &[0x90],
-            &[0x66, 0x90],
-            &[0x0f, 0x1f, 0x00],
-            &[0x0f, 0x1f, 0x40, 0x00],
-            &[0x0f, 0x1f, 0x44, 0x00, 0x00],
-            &[0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00],
-            &[0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00],
-            &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-            &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-            &[0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
-            &[
-                0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
-            ],
-        ];
-
-        if feature_is_enabled {
-            log::trace!("feature {} origcode {:x?}", name, code);
-            let (dst, dst_nops) = code.split_at_mut(altcode.len());
-            dst.copy_from_slice(altcode);
-
-            for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
-                chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
-            }
-            log::trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
-        } else {
-            log::trace!("feature !{} origcode {:x?}", name, code);
-            let (_, padded) = code.split_at_mut(reloc.origcode_len);
-
-            // Not strictly necessary, but reduces the number of instructions using longer nop
-            // instructions.
-            for chunk in padded.chunks_mut(NOPS_TABLE.len()) {
-                chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
+            let dst_pages = PageSpan::between(
+                Page::containing_address(VirtualAddress::new(reloc.code_start as usize)),
+                Page::containing_address(VirtualAddress::new(
+                    (reloc.code_start as usize + reloc.padded_len).next_multiple_of(PAGE_SIZE),
+                )),
+            );
+            for page in dst_pages.pages() {
+                mapper
+                    .get_mut()
+                    .unwrap()
+                    .remap(
+                        page.start_address(),
+                        PageFlags::new().write(true).execute(true).global(true),
+                    )
+                    .unwrap()
+                    .flush();
             }
 
-            log::trace!("feature !{} new {:x?}", name, code);
-        }
+            let code = core::slice::from_raw_parts_mut(reloc.code_start, reloc.padded_len);
 
-        for page in dst_pages.pages() {
-            mapper
-                .get_mut()
-                .unwrap()
-                .remap(
-                    page.start_address(),
-                    PageFlags::new().write(false).execute(true).global(true),
-                )
-                .unwrap()
-                .flush();
+            log::trace!(
+                "feature {} current {:x?} altcode {:x?}",
+                name,
+                code,
+                altcode
+            );
+
+            let feature_is_enabled = match name {
+                "smap" => enable.contains(KcpuFeatures::SMAP),
+                "fsgsbase" => enable.contains(KcpuFeatures::FSGSBASE),
+                "xsave" => enable.contains(KcpuFeatures::XSAVE),
+                "xsaveopt" => enable.contains(KcpuFeatures::XSAVEOPT),
+                //_ => panic!("unknown altcode relocation: {}", name),
+                _ => true,
+            };
+
+            // XXX: The `.nops` directive only works for constant lengths, and the variable `.skip -X`
+            // only outputs the (slower) single-byte 0x90 NOP.
+
+            // This table is from the "Software Optimization Guide for AMD Family 19h Processors" (November
+            // 2020).
+            const NOPS_TABLE: [&[u8]; 11] = [
+                &[0x90],
+                &[0x66, 0x90],
+                &[0x0f, 0x1f, 0x00],
+                &[0x0f, 0x1f, 0x40, 0x00],
+                &[0x0f, 0x1f, 0x44, 0x00, 0x00],
+                &[0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00],
+                &[0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00],
+                &[0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+                &[0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+                &[0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00],
+                &[
+                    0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+                ],
+            ];
+
+            if feature_is_enabled {
+                log::trace!("feature {} origcode {:x?}", name, code);
+                let (dst, dst_nops) = code.split_at_mut(altcode.len());
+                dst.copy_from_slice(altcode);
+
+                for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
+                    chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
+                }
+                log::trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
+            } else {
+                log::trace!("feature !{} origcode {:x?}", name, code);
+                let (_, padded) = code.split_at_mut(reloc.origcode_len);
+
+                // Not strictly necessary, but reduces the number of instructions using longer nop
+                // instructions.
+                for chunk in padded.chunks_mut(NOPS_TABLE.len()) {
+                    chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
+                }
+
+                log::trace!("feature !{} new {:x?}", name, code);
+            }
+
+            for page in dst_pages.pages() {
+                mapper
+                    .get_mut()
+                    .unwrap()
+                    .remap(
+                        page.start_address(),
+                        PageFlags::new().write(false).execute(true).global(true),
+                    )
+                    .unwrap()
+                    .flush();
+            }
         }
     }
 }
