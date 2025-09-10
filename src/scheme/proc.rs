@@ -1253,8 +1253,12 @@ impl ContextHandle {
                 let status = {
                     let context = context.read();
                     match context.status {
+                        Status::Runnable | Status::Dead { excp: None }
+                            if context.being_sigkilled =>
+                        {
+                            ContextStatus::ForceKilled
+                        }
                         Status::Dead { excp: None } => ContextStatus::Dead,
-                        Status::Runnable if context.being_sigkilled => ContextStatus::ForceKilled,
                         Status::Dead { excp: Some(excp) } => {
                             let (status, payload) =
                                 buf.split_at(size_of::<usize>()).ok_or(Error::new(EINVAL))?;
