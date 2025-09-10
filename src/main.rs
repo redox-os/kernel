@@ -122,8 +122,7 @@ mod percpu;
 mod ptrace;
 
 /// Performance profiling of the kernel
-#[cfg(feature = "profiling")]
-pub mod profiling;
+mod profiling;
 
 /// Schemes, filesystem handlers
 mod scheme;
@@ -191,7 +190,6 @@ fn kmain(bootstrap: Bootstrap) -> ! {
 
     BOOTSTRAP.call_once(|| bootstrap);
 
-    #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
     let owner = None; // kmain not owned by any fd
@@ -238,7 +236,6 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
 
     info!("AP {}", cpu_id);
 
-    #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
     run_userspace(&mut token);

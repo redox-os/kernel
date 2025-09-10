@@ -1,18 +1,23 @@
+#[cfg(feature = "profiling")]
+use core::sync::atomic::AtomicU32;
 use core::{
     cell::UnsafeCell,
     mem::size_of,
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
 
 use alloc::boxed::Box;
 
 use crate::{
     cpu_set::LogicalCpuId,
-    idt::Idt,
-    interrupt,
-    interrupt::{irq::aux_timer, InterruptStack},
     percpu::PercpuBlock,
     syscall::{error::*, usercopy::UserSliceWo},
+};
+#[cfg(feature = "profiling")]
+use crate::{
+    idt::Idt,
+    interrupt,
+    interrupt::{self, irq::aux_timer, InterruptStack},
 };
 
 const N: usize = 16 * 1024 * 1024;
@@ -25,7 +30,9 @@ pub struct RingBuffer {
     head: AtomicUsize,
     tail: AtomicUsize,
     buf: &'static [UnsafeCell<usize>; N],
+    #[cfg_attr(not(feature = "profiling"), expect(dead_code))]
     pub(crate) nmi_kcount: AtomicUsize,
+    #[cfg_attr(not(feature = "profiling"), expect(dead_code))]
     pub(crate) nmi_ucount: AtomicUsize,
 }
 
@@ -62,6 +69,7 @@ impl RingBuffer {
             [&self.buf[head..tail], &[]]
         }
     }
+    #[cfg_attr(not(feature = "profiling"), expect(dead_code))]
     pub unsafe fn extend(&self, mut slice: &[usize]) -> usize {
         let mut n = 0;
         for mut sender_slice in unsafe { self.sender_owned() } {
@@ -101,6 +109,10 @@ pub const PROFILE_TOGGLEABLE: bool = true;
 pub static IS_PROFILING: AtomicBool = AtomicBool::new(false);
 
 pub fn serio_command(index: usize, data: u8) {
+    if cfg!(not(feature = "profiling")) {
+        return;
+    }
+
     if PROFILE_TOGGLEABLE {
         if index == 0 && data == 30 {
             // "a" key in QEMU
@@ -114,6 +126,7 @@ pub fn serio_command(index: usize, data: u8) {
     }
 }
 
+#[cfg_attr(not(feature = "profiling"), expect(dead_code))]
 pub fn drain_buffer(cpu_num: LogicalCpuId, buf: UserSliceWo) -> Result<usize> {
     unsafe {
         let Some(src) = BUFS
@@ -145,6 +158,7 @@ pub fn drain_buffer(cpu_num: LogicalCpuId, buf: UserSliceWo) -> Result<usize> {
     }
 }
 
+#[cfg(feature = "profiling")]
 pub unsafe fn nmi_handler(stack: &InterruptStack) {
     let Some(profiling) = crate::percpu::PercpuBlock::current().profiling else {
         return;
@@ -196,7 +210,12 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
 
     let _ = unsafe { profiling.extend(&buf[..len]) };
 }
+
 pub unsafe fn init() {
+    if cfg!(not(feature = "profiling")) {
+        return;
+    }
+
     let percpu = PercpuBlock::current();
 
     if percpu.cpu_id == PROFILER_CPU {
@@ -211,16 +230,19 @@ pub unsafe fn init() {
     );
     unsafe {
         (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>)
-            .write(Some(profiling))
-    };
+            .write(Some(profiling));
+    }
 }
 
+#[cfg(feature = "profiling")]
 static ACK: AtomicU32 = AtomicU32::new(0);
 
 pub fn ready_for_profiling() {
+    #[cfg(feature = "profiling")]
     ACK.fetch_add(1, Ordering::Relaxed);
 }
 
+#[cfg(feature = "profiling")]
 pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
     if cpu_id != PROFILER_CPU {
         return;
@@ -248,6 +270,7 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
     }
 }
 
+#[cfg(feature = "profiling")]
 pub fn maybe_setup_timer(idt: &mut Idt, cpu_id: LogicalCpuId) {
     if cpu_id != PROFILER_CPU {
         return;
