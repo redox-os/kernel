@@ -193,7 +193,9 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
         .unwrap();
     let mut intr = interrupts
         .value
-        .array_chunks::<4>()
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|f| BE::read_u32(f))
         .skip(parent_interrupt_cells * idx);
     match parent_interrupt_cells {
