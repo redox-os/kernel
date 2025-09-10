@@ -259,15 +259,15 @@ interrupt!(pci1, || {
 interrupt!(pci2, || {
     unsafe {
         trigger(10);
-        eoi(10)
-    };
+        eoi(10);
+    }
 });
 
 interrupt!(pci3, || {
     unsafe {
         trigger(11);
-        eoi(11)
-    };
+        eoi(11);
+    }
 });
 
 interrupt!(mouse, || {
