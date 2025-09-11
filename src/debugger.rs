@@ -1,9 +1,10 @@
 use crate::{
     context::Context,
+    memory::Frame,
     paging::{RmmA, RmmArch, TableKind, PAGE_SIZE},
 };
 use alloc::sync::Arc;
-use hashbrown::HashSet;
+use hashbrown::{HashMap, HashSet};
 use spinning_top::RwSpinlock;
 
 //TODO: combine arches into one function (aarch64 one is newest)
@@ -48,7 +49,7 @@ pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
                     TableKind::User,
                     space.acquire_read().table.utable.table().phys(),
                 );
-                check_consistency(&mut *space.acquire_write(), new_as, &mut tree);
+                check_page_table_consistency(&mut *space.acquire_write(), new_as, &mut tree);
             }
 
             if let Some([a, b, c, d, e, f]) = context.current_syscall() {
@@ -108,68 +109,7 @@ pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
     }
 }
 
-#[cfg(target_arch = "x86")]
-pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
-    let old_table = unsafe { RmmA::table(TableKind::User) };
-
-    for context_lock in crate::context::contexts().iter() {
-        if target_id.map_or(false, |target_id| Arc::as_ptr(&context_lock.0) != target_id) {
-            continue;
-        }
-        let context = context_lock.0.read();
-        println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
-
-        // Switch to context page table to ensure syscall debug and stack dump will work
-        if let Some(ref space) = context.addr_space {
-            unsafe {
-                RmmA::set_table(
-                    TableKind::User,
-                    space.acquire_read().table.utable.table().phys(),
-                );
-                //TODO check_consistency(&mut space.write());
-            }
-        }
-
-        println!("status: {:?}", context.status);
-        if !context.status_reason.is_empty() {
-            println!("reason: {}", context.status_reason);
-        }
-        if let Some([a, b, c, d, e, f]) = context.current_syscall() {
-            println!(
-                "syscall: {}",
-                crate::syscall::debug::format_call(a, b, c, d, e, f)
-            );
-        }
-        if let Some(ref addr_space) = context.addr_space {
-            let addr_space = addr_space.acquire_read();
-            if !addr_space.grants.is_empty() {
-                println!("grants:");
-                for (base, grant) in addr_space.grants.iter() {
-                    println!(
-                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {:?}",
-                        base.start_address().data(),
-                        base.next_by(grant.page_count()).start_address().data() + 0xFFF,
-                        grant.page_count() * crate::memory::PAGE_SIZE,
-                        grant.provider,
-                    );
-                }
-            }
-        }
-        if let Some(regs) = context.regs() {
-            println!("regs:");
-            regs.dump();
-
-            dump_stack(&*context, regs.iret.esp);
-        }
-
-        // Switch to original page table
-        unsafe { RmmA::set_table(TableKind::User, old_table) };
-
-        println!();
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
     use crate::memory::{get_page_info, the_zeroed_frame, RefCount};
 
@@ -208,7 +148,8 @@ pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
                     TableKind::User,
                     space.acquire_read().table.utable.table().phys(),
                 );
-                check_consistency(&mut space.acquire_write(), was_new, &mut tree);
+                #[cfg(target_arch = "x86_64")]
+                check_page_table_consistency(&mut space.acquire_write(), was_new, &mut tree);
             }
         }
 
@@ -228,6 +169,17 @@ pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
                 println!("grants:");
                 for (base, info) in addr_space.grants.iter() {
                     let size = info.page_count() * PAGE_SIZE;
+
+                    #[cfg(target_arch = "x86")]
+                    println!(
+                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {:?}",
+                        base.start_address().data(),
+                        base.next_by(info.page_count()).start_address().data() + 0xFFF,
+                        size,
+                        info.provider,
+                    );
+
+                    #[cfg(target_arch = "x86_64")]
                     println!(
                         "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
                         base.start_address().data(),
@@ -242,12 +194,18 @@ pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
             println!("regs:");
             regs.dump();
 
-            unsafe {
-                x86::bits64::rflags::stac();
-            }
-            dump_stack(&*context, regs.iret.rsp);
-            unsafe {
-                x86::bits64::rflags::clac();
+            #[cfg(target_arch = "x86")]
+            dump_stack(&*context, regs.iret.esp);
+
+            #[cfg(target_arch = "x86_64")]
+            {
+                unsafe {
+                    x86::bits64::rflags::stac();
+                }
+                dump_stack(&*context, regs.iret.rsp);
+                unsafe {
+                    x86::bits64::rflags::clac();
+                }
             }
         }
 
@@ -256,9 +214,10 @@ pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
 
         println!();
     }
+    #[cfg(target_arch = "x86_64")]
     crate::scheme::proc::foreach_addrsp(|addrsp| {
         let was_new = spaces.insert(addrsp.acquire_read().table.utable.table().phys().data());
-        unsafe { check_consistency(&mut *addrsp.acquire_write(), was_new, &mut tree) };
+        unsafe { check_page_table_consistency(&mut *addrsp.acquire_write(), was_new, &mut tree) };
     });
     for (frame, (count, p)) in tree {
         let Some(info) = get_page_info(frame) else {
@@ -284,8 +243,6 @@ pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
         temporarily_taken_htbufs
     );
 }
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use {crate::memory::Frame, hashbrown::HashMap};
 
 fn dump_stack(context: &Context, mut sp: usize) {
     let width = size_of::<usize>();
@@ -318,7 +275,7 @@ fn dump_stack(context: &Context, mut sp: usize) {
 }
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-pub unsafe fn check_consistency(
+unsafe fn check_page_table_consistency(
     addr_space: &mut crate::context::memory::AddrSpace,
     new_as: bool,
     tree: &mut HashMap<Frame, (usize, bool)>,
