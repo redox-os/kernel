@@ -8,19 +8,24 @@ use spinning_top::RwSpinlock;
 
 //TODO: combine arches into one function (aarch64 one is newest)
 
-// Super unsafe due to page table switching and raw pointers!
-#[cfg(target_arch = "aarch64")]
+/// Super unsafe due to page table switching and raw pointers!
 pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
-    use crate::memory::{get_page_info, RefCount};
-
     println!("DEBUGGER START");
     println!();
 
+    unsafe { debugger_arch(target_id) };
+
+    println!("DEBUGGER END");
+}
+
+#[cfg(target_arch = "aarch64")]
+pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
+    use crate::memory::{get_page_info, RefCount};
+
     let mut tree = HashMap::new();
+    let mut spaces = HashSet::new();
 
     let old_table = unsafe { RmmA::table(TableKind::User) };
-
-    let mut spaces = HashSet::new();
 
     for context_lock in crate::context::contexts().iter() {
         if target_id.map_or(false, |target_id| Arc::as_ptr(&context_lock.0) != target_id) {
@@ -73,31 +78,7 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
                 println!("regs:");
                 regs.dump();
 
-                let mut sp = regs.iret.sp_el0;
-                println!("stack: {:>016x}", sp);
-                //Maximum 64 usizes
-                for _ in 0..64 {
-                    if context.addr_space.as_ref().map_or(false, |space| {
-                        space
-                            .acquire_read()
-                            .table
-                            .utable
-                            .translate(crate::paging::VirtualAddress::new(sp))
-                            .is_some()
-                    }) {
-                        let value = unsafe { *(sp as *const usize) };
-                        println!("    {:>016x}: {:>016x}", sp, value);
-                        if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
-                            sp = next_sp;
-                        } else {
-                            println!("    {:>016x}: OVERFLOW", sp);
-                            break;
-                        }
-                    } else {
-                        println!("    {:>016x}: GUARD PAGE", sp);
-                        break;
-                    }
-                }
+                dump_stack(&*context, regs.iret.sp_el0);
             }
 
             // Switch to original page table
@@ -125,16 +106,10 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
             );
         }
     }
-
-    println!("DEBUGGER END");
 }
 
-// Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86")]
-pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
-    println!("DEBUGGER START");
-    println!();
-
+pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
     let old_table = unsafe { RmmA::table(TableKind::User) };
 
     for context_lock in crate::context::contexts().iter() {
@@ -184,31 +159,7 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
             println!("regs:");
             regs.dump();
 
-            let mut sp = regs.iret.esp;
-            println!("stack: {:>08x}", sp);
-            //Maximum 64 dwords
-            for _ in 0..64 {
-                if context.addr_space.as_ref().map_or(false, |space| {
-                    space
-                        .acquire_read()
-                        .table
-                        .utable
-                        .translate(crate::paging::VirtualAddress::new(sp))
-                        .is_some()
-                }) {
-                    let value = unsafe { *(sp as *const usize) };
-                    println!("    {:>08x}: {:>08x}", sp, value);
-                    if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
-                        sp = next_sp;
-                    } else {
-                        println!("    {:>08x}: OVERFLOW", sp);
-                        break;
-                    }
-                } else {
-                    println!("    {:>08x}: GUARD PAGE", sp);
-                    break;
-                }
-            }
+            dump_stack(&*context, regs.iret.esp);
         }
 
         // Switch to original page table
@@ -216,17 +167,11 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
 
         println!();
     }
-
-    println!("DEBUGGER END");
 }
 
-// Super unsafe due to page table switching and raw pointers!
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
+pub unsafe fn debugger_arch(target_id: Option<*const RwSpinlock<Context>>) {
     use crate::memory::{get_page_info, the_zeroed_frame, RefCount};
-
-    println!("DEBUGGER START");
-    println!();
 
     let mut tree = HashMap::new();
     let mut spaces = HashSet::new();
@@ -297,34 +242,10 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
             println!("regs:");
             regs.dump();
 
-            let mut rsp = regs.iret.rsp;
-            println!("stack: {:>016x}", rsp);
             unsafe {
                 x86::bits64::rflags::stac();
             }
-            //Maximum 64 qwords
-            for _ in 0..64 {
-                if context.addr_space.as_ref().map_or(false, |space| {
-                    space
-                        .acquire_read()
-                        .table
-                        .utable
-                        .translate(crate::paging::VirtualAddress::new(rsp))
-                        .is_some()
-                }) {
-                    let value = unsafe { *(rsp as *const usize) };
-                    println!("    {:>016x}: {:>016x}", rsp, value);
-                    if let Some(next_rsp) = rsp.checked_add(core::mem::size_of::<usize>()) {
-                        rsp = next_rsp;
-                    } else {
-                        println!("    {:>016x}: OVERFLOW", rsp);
-                        break;
-                    }
-                } else {
-                    println!("    {:>016x}: GUARD PAGE", rsp);
-                    break;
-                }
-            }
+            dump_stack(&*context, regs.iret.rsp);
             unsafe {
                 x86::bits64::rflags::clac();
             }
@@ -365,6 +286,36 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
 }
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use {crate::memory::Frame, hashbrown::HashMap};
+
+fn dump_stack(context: &Context, mut sp: usize) {
+    let width = size_of::<usize>();
+
+    println!("stack: {:>0width$x}", sp, width = width);
+
+    //Maximum 64 usizes
+    for _ in 0..64 {
+        if context.addr_space.as_ref().map_or(false, |space| {
+            space
+                .acquire_read()
+                .table
+                .utable
+                .translate(crate::paging::VirtualAddress::new(sp))
+                .is_some()
+        }) {
+            let value = unsafe { *(sp as *const usize) };
+            println!("    {:>0width$x}: {:>0width$x}", sp, value, width = width);
+            if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
+                sp = next_sp;
+            } else {
+                println!("    {:>0width$x}: OVERFLOW", sp, width = width);
+                break;
+            }
+        } else {
+            println!("    {:>0width$x}: GUARD PAGE", sp, width = width);
+            break;
+        }
+    }
+}
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub unsafe fn check_consistency(
