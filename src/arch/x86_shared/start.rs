@@ -13,12 +13,12 @@ use log::info;
 #[cfg(feature = "acpi")]
 use crate::acpi;
 
-#[cfg(feature = "graphical_debug")]
-use crate::devices::graphical_debug;
 use crate::{
     allocator,
     cpu_set::LogicalCpuId,
-    device, gdt, idt, interrupt,
+    device,
+    devices::graphical_debug,
+    gdt, idt, interrupt,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
     startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
 };
@@ -91,7 +91,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             device::serial::init();
 
             // Set up graphical debug
-            #[cfg(feature = "graphical_debug")]
             graphical_debug::init(env);
 
             #[cfg(feature = "system76_ec_debug")]
@@ -209,7 +208,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             crate::profiling::init();
 
             // Set up double buffer for graphical debug now that heap is available
-            #[cfg(feature = "graphical_debug")]
             graphical_debug::init_heap();
 
             idt::init_paging_post_heap(LogicalCpuId::BSP);

@@ -5,16 +5,15 @@
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
-#[cfg(feature = "graphical_debug")]
-use crate::devices::graphical_debug;
-
 use fdt::Fdt;
 use log::info;
 
 use crate::{
     allocator,
     arch::interrupt,
-    device, dtb,
+    device,
+    devices::graphical_debug,
+    dtb,
     dtb::register_dev_memory_ranges,
     paging,
     startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
@@ -74,7 +73,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             );
 
             // Set up graphical debug
-            #[cfg(feature = "graphical_debug")]
             graphical_debug::init(env);
 
             // Get hardware descriptor data
@@ -201,7 +199,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             allocator::init();
 
             // Set up double buffer for graphical debug now that heap is available
-            #[cfg(feature = "graphical_debug")]
             graphical_debug::init_heap();
 
             // Activate memory logging

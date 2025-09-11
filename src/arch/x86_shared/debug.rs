@@ -5,11 +5,14 @@ use spin::MutexGuard;
 
 #[cfg(any(feature = "lpss_debug", feature = "serial_debug"))]
 use crate::devices::uart_16550::SerialPort;
-use crate::log::{Log, LOG};
 #[cfg(feature = "lpss_debug")]
 use crate::syscall::io::Mmio;
 #[cfg(any(feature = "qemu_debug", feature = "serial_debug"))]
 use crate::syscall::io::Pio;
+use crate::{
+    devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY},
+    log::{Log, LOG},
+};
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
 
@@ -19,15 +22,12 @@ use super::device::serial::COM1;
 use super::device::serial::LPSS;
 #[cfg(feature = "system76_ec_debug")]
 use super::device::system76_ec::{System76Ec, SYSTEM76_EC};
-#[cfg(feature = "graphical_debug")]
-use crate::devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY};
 
 #[cfg(feature = "qemu_debug")]
 pub static QEMU: Mutex<Pio<u8>> = Mutex::new(Pio::<u8>::new(0x402));
 
 pub struct Writer<'a> {
     log: MutexGuard<'a, Option<Log>>,
-    #[cfg(feature = "graphical_debug")]
     display: MutexGuard<'a, Option<DebugDisplay>>,
     #[cfg(feature = "lpss_debug")]
     lpss: MutexGuard<'a, Option<&'static mut SerialPort<Mmio<u32>>>>,
@@ -43,7 +43,6 @@ impl<'a> Writer<'a> {
     pub fn new() -> Writer<'a> {
         Writer {
             log: LOG.lock(),
-            #[cfg(feature = "graphical_debug")]
             display: DEBUG_DISPLAY.lock(),
             #[cfg(feature = "lpss_debug")]
             lpss: LPSS.lock(),
@@ -63,11 +62,8 @@ impl<'a> Writer<'a> {
             }
         }
 
-        #[cfg(feature = "graphical_debug")]
-        {
-            if let Some(ref mut display) = *self.display {
-                display.write(buf);
-            }
+        if let Some(ref mut display) = *self.display {
+            display.write(buf);
         }
 
         #[cfg(feature = "lpss_debug")]

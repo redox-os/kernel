@@ -15,12 +15,10 @@ use crate::{
 use crate::{
     arch::{device::serial::init_early, interrupt, paging},
     device,
+    devices::graphical_debug,
+    dtb::register_dev_memory_ranges,
     startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
 };
-
-#[cfg(feature = "graphical_debug")]
-use crate::devices::graphical_debug;
-use crate::dtb::register_dev_memory_ranges;
 
 /// Test of zero values in BSS.
 static mut BSS_TEST_ZERO: usize = 0;
@@ -101,7 +99,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 .map(|(base, size)| unsafe { slice::from_raw_parts(base as *const u8, size) })
                 .and_then(|data| Fdt::new(data).ok());
 
-            #[cfg(feature = "graphical_debug")]
             graphical_debug::init(env);
 
             #[cfg(feature = "serial_debug")]

@@ -161,7 +161,6 @@ impl KernelScheme for DebugScheme {
         }
 
         if handle.num == SpecialFds::DisableGraphicalDebug as usize {
-            #[cfg(feature = "graphical_debug")]
             graphical_debug::fini();
 
             return Ok(0);
