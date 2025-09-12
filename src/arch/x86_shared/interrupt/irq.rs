@@ -11,11 +11,7 @@ use crate::{
     interrupt, interrupt_stack,
     ipi::{ipi, IpiKind, IpiTarget},
     percpu::PercpuBlock,
-    scheme::{
-        debug::{debug_input, debug_notify},
-        irq::irq_trigger,
-        serio::serio_input,
-    },
+    scheme::{irq::irq_trigger, serio::serio_input},
     time,
 };
 
@@ -201,18 +197,16 @@ interrupt!(cascade, || {
 });
 
 interrupt!(com2, || {
-    while let Some(c) = COM2.lock().receive() {
-        debug_input(c);
-    }
-    debug_notify();
+    if let Some(serial) = &mut *COM2.lock() {
+        serial.receive()
+    };
     unsafe { eoi(3) };
 });
 
 interrupt!(com1, || {
-    while let Some(c) = COM1.lock().receive() {
-        debug_input(c);
-    }
-    debug_notify();
+    if let Some(serial) = &mut *COM1.lock() {
+        serial.receive()
+    };
     unsafe { eoi(4) };
 });
 
