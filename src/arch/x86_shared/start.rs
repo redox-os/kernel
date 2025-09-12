@@ -87,7 +87,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             );
 
             // Set up serial debug
-            #[cfg(feature = "serial_debug")]
             device::serial::init();
 
             // Set up graphical debug

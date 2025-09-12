@@ -13,6 +13,11 @@ pub static COM2: Mutex<Option<SerialKind>> = Mutex::new(None);
 pub static LPSS: Mutex<Option<SerialKind>> = Mutex::new(None);
 
 pub unsafe fn init() {
+    if cfg!(not(feature = "serial_debug")) {
+        // FIXME remove serial_debug feature once ACPI SPCR is respected on UEFI boots.
+        return;
+    }
+
     let mut com1 = SerialPort::<Pio<u8>>::new(0x3F8);
     com1.init();
     *COM1.lock() = Some(SerialKind::Ns16550Pio(com1));
@@ -20,6 +25,7 @@ pub unsafe fn init() {
     com2.init();
     *COM2.lock() = Some(SerialKind::Ns16550Pio(com2));
 
+    // FIXME remove explicit LPSS handling once ACPI SPCR is supported
     #[cfg(feature = "lpss_debug")]
     {
         // TODO: Make this configurable

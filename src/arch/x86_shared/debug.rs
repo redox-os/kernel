@@ -3,7 +3,6 @@ use core::fmt;
 use spin::Mutex;
 use spin::MutexGuard;
 
-#[cfg(feature = "serial_debug")]
 use crate::devices::serial::SerialKind;
 #[cfg(feature = "lpss_debug")]
 use crate::devices::uart_16550::SerialPort;
@@ -18,7 +17,6 @@ use crate::{
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
 
-#[cfg(feature = "serial_debug")]
 use super::device::serial::COM1;
 #[cfg(feature = "lpss_debug")]
 use super::device::serial::LPSS;
@@ -35,7 +33,6 @@ pub struct Writer<'a> {
     lpss: MutexGuard<'a, Option<SerialKind>>,
     #[cfg(feature = "qemu_debug")]
     qemu: MutexGuard<'a, Pio<u8>>,
-    #[cfg(feature = "serial_debug")]
     serial: MutexGuard<'a, Option<SerialKind>>,
     #[cfg(feature = "system76_ec_debug")]
     system76_ec: MutexGuard<'a, Option<System76Ec>>,
@@ -50,7 +47,6 @@ impl<'a> Writer<'a> {
             lpss: LPSS.lock(),
             #[cfg(feature = "qemu_debug")]
             qemu: QEMU.lock(),
-            #[cfg(feature = "serial_debug")]
             serial: COM1.lock(),
             #[cfg(feature = "system76_ec_debug")]
             system76_ec: SYSTEM76_EC.lock(),
@@ -82,7 +78,6 @@ impl<'a> Writer<'a> {
             }
         }
 
-        #[cfg(feature = "serial_debug")]
         if let Some(serial) = &mut *self.serial {
             serial.write(buf)
         }

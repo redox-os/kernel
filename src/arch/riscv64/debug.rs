@@ -1,18 +1,17 @@
 use core::fmt;
 use spin::MutexGuard;
 
-#[cfg(feature = "serial_debug")]
-use super::device::serial::COM1;
-#[cfg(feature = "serial_debug")]
-use crate::devices::serial::SerialKind;
 use crate::{
-    devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY},
+    device::serial::COM1,
+    devices::{
+        graphical_debug::{DebugDisplay, DEBUG_DISPLAY},
+        serial::SerialKind,
+    },
     log::{Log, LOG},
 };
 
 pub struct Writer<'a> {
     log: MutexGuard<'a, Option<Log>>,
-    #[cfg(feature = "serial_debug")]
     serial: MutexGuard<'a, Option<SerialKind>>,
     display: MutexGuard<'a, Option<DebugDisplay>>,
 }
@@ -22,7 +21,6 @@ impl<'a> Writer<'a> {
         Writer {
             log: LOG.lock(),
             display: DEBUG_DISPLAY.lock(),
-            #[cfg(feature = "serial_debug")]
             serial: COM1.lock(),
         }
     }
@@ -38,11 +36,8 @@ impl<'a> Writer<'a> {
             let _ = display.write(buf);
         }
 
-        #[cfg(feature = "serial_debug")]
-        {
-            if let Some(ref mut serial) = *self.serial {
-                serial.write(buf);
-            }
+        if let Some(ref mut serial) = *self.serial {
+            serial.write(buf);
         }
     }
 }

@@ -101,7 +101,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             graphical_debug::init(env);
 
-            #[cfg(feature = "serial_debug")]
             if let Some(dtb) = &dtb {
                 init_early(dtb);
             }
