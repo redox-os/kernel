@@ -3,8 +3,7 @@ use spin::Mutex;
 
 use crate::{
     arch::device::irqchip::ic_for_chip,
-    device::uart_pl011,
-    devices::uart_16550,
+    devices::{uart_16550, uart_pl011},
     dtb::{
         diag_uart_range, get_interrupt,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},

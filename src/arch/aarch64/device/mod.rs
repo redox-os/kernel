@@ -7,7 +7,6 @@ pub mod generic_timer;
 pub mod irqchip;
 pub mod rtc;
 pub mod serial;
-pub mod uart_pl011;
 
 use crate::dtb::irqchip::IRQ_CHIP;
 use irqchip::ic_for_chip;

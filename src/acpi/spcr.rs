@@ -2,10 +2,8 @@ use core::mem;
 
 use super::{find_sdt, sdt::Sdt, GenericAddressStructure};
 use crate::{
-    device::{
-        serial::{SerialKind, COM1},
-        uart_pl011,
-    },
+    device::serial::{SerialKind, COM1},
+    devices::uart_pl011,
     log::LOG,
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };

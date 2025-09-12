@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use core::ptr;
 
 use crate::scheme::debug::{debug_input, debug_notify};
