@@ -23,10 +23,10 @@ pub static QEMU: Mutex<Pio<u8>> = Mutex::new(Pio::<u8>::new(0x402));
 
 pub struct Writer<'a> {
     #[cfg(feature = "lpss_debug")]
-    lpss: MutexGuard<'a, Option<SerialKind>>,
+    lpss: MutexGuard<'a, SerialKind>,
     #[cfg(feature = "qemu_debug")]
     qemu: MutexGuard<'a, Pio<u8>>,
-    serial: MutexGuard<'a, Option<SerialKind>>,
+    serial: MutexGuard<'a, SerialKind>,
     #[cfg(feature = "system76_ec_debug")]
     system76_ec: MutexGuard<'a, Option<System76Ec>>,
 }
@@ -46,11 +46,7 @@ impl<'a> Writer<'a> {
 
     pub fn write(&mut self, buf: &[u8]) {
         #[cfg(feature = "lpss_debug")]
-        {
-            if let Some(ref mut lpss) = *self.lpss {
-                lpss.write(buf);
-            }
-        }
+        self.lpss.write(buf);
 
         #[cfg(feature = "qemu_debug")]
         {
@@ -59,9 +55,7 @@ impl<'a> Writer<'a> {
             }
         }
 
-        if let Some(serial) = &mut *self.serial {
-            serial.write(buf)
-        }
+        self.serial.write(buf);
 
         #[cfg(feature = "system76_ec_debug")]
         {

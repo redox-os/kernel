@@ -13,15 +13,13 @@ use crate::{
     scheme::irq::irq_trigger,
 };
 
-pub static COM1: Mutex<Option<SerialKind>> = Mutex::new(None);
+pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 
 pub struct Com1Irq {}
 
 impl InterruptHandler for Com1Irq {
     fn irq_handler(&mut self, irq: u32) {
-        if let Some(ref mut serial_port) = *COM1.lock() {
-            serial_port.receive();
-        };
+        COM1.lock().receive();
         unsafe {
             irq_trigger(irq as u8);
             IRQ_CHIP.irq_eoi(irq);
@@ -31,7 +29,7 @@ impl InterruptHandler for Com1Irq {
 
 pub unsafe fn init_early(dtb: &Fdt) {
     unsafe {
-        if COM1.lock().is_some() {
+        if !matches!(*COM1.lock(), SerialKind::NotPresent) {
             // Hardcoded UART
             return;
         }
@@ -57,7 +55,7 @@ pub unsafe fn init_early(dtb: &Fdt) {
             };
             match serial_opt {
                 Some(serial) => {
-                    *COM1.lock() = Some(serial);
+                    *COM1.lock() = serial;
                     info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
                 }
                 None => {
@@ -89,9 +87,7 @@ pub unsafe fn init(fdt: &Fdt) -> Option<()> {
             register_irq(virq as u32, Box::new(Com1Irq {}));
             IRQ_CHIP.irq_enable(virq as u32);
         }
-        if let Some(ref mut _serial_port) = *COM1.lock() {
-            // serial_port.enable_irq(); // FIXME receive int is enabled by default in 16550. Disable by default?
-        }
+        // COM1.lock().enable_irq(); // FIXME receive int is enabled by default in 16550. Disable by default?
         Some(())
     }
 }

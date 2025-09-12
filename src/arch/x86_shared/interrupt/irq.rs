@@ -197,16 +197,12 @@ interrupt!(cascade, || {
 });
 
 interrupt!(com2, || {
-    if let Some(serial) = &mut *COM2.lock() {
-        serial.receive()
-    };
+    COM2.lock().receive();
     unsafe { eoi(3) };
 });
 
 interrupt!(com1, || {
-    if let Some(serial) = &mut *COM1.lock() {
-        serial.receive()
-    };
+    COM1.lock().receive();
     unsafe { eoi(4) };
 });
 

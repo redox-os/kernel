@@ -61,7 +61,7 @@ impl Spcr {
             return;
         }
 
-        let serial_was_empty = !COM1.lock().is_some();
+        let serial_was_empty = !matches!(*COM1.lock(), SerialKind::NotPresent);
         if spcr.header.revision >= 2 {
             match spcr.interface_type {
                 3 => {
@@ -78,7 +78,7 @@ impl Spcr {
                             )
                         };
                         let serial_port = uart_pl011::SerialPort::new(virt.data(), false);
-                        *COM1.lock() = Some(SerialKind::Pl011(serial_port))
+                        *COM1.lock() = SerialKind::Pl011(serial_port)
                     } else {
                         log::warn!(
                             "SPCR unsuppoted address for PL011 {:#x?}",
@@ -105,7 +105,8 @@ impl Spcr {
         } else {
             log::warn!("SPCR unsupported revision {}", spcr.header.revision);
         }
-        if serial_was_empty && let Some(ref mut serial_port) = *COM1.lock() {
+        let mut serial_port = COM1.lock();
+        if serial_was_empty && !matches!(*serial_port, SerialKind::NotPresent) {
             // backfill logs since the heap is loaded
             if let Some(ref mut early_log) = *LOG.lock() {
                 let (s1, s2) = early_log.read();

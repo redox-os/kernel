@@ -9,6 +9,7 @@ use crate::{
 
 #[allow(dead_code)]
 pub enum SerialKind {
+    NotPresent,
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Ns16550Pio(uart_16550::SerialPort<Pio<u8>>),
     Ns16550u8(&'static mut uart_16550::SerialPort<Mmio<u8>>),
@@ -21,6 +22,7 @@ impl SerialKind {
     pub fn enable_irq(&mut self) {
         //TODO: implement for NS16550
         match self {
+            Self::NotPresent => {}
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             Self::Ns16550Pio(_) => {}
             Self::Ns16550u8(_) => {}
@@ -32,6 +34,7 @@ impl SerialKind {
     pub fn receive(&mut self) {
         //TODO: make PL011 receive work the same way as NS16550
         match self {
+            Self::NotPresent => {}
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             Self::Ns16550Pio(inner) => {
                 while let Some(c) = inner.receive() {
@@ -57,6 +60,7 @@ impl SerialKind {
 
     pub fn write(&mut self, buf: &[u8]) {
         match self {
+            Self::NotPresent => {}
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
             Self::Ns16550Pio(inner) => inner.write(buf),
             Self::Ns16550u8(inner) => inner.write(buf),

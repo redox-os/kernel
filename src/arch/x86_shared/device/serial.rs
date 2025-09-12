@@ -6,11 +6,11 @@ use crate::{
 };
 use spin::Mutex;
 
-pub static COM1: Mutex<Option<SerialKind>> = Mutex::new(None);
-pub static COM2: Mutex<Option<SerialKind>> = Mutex::new(None);
+pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
+pub static COM2: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 
 #[cfg(feature = "lpss_debug")]
-pub static LPSS: Mutex<Option<SerialKind>> = Mutex::new(None);
+pub static LPSS: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 
 pub unsafe fn init() {
     if cfg!(not(feature = "serial_debug")) {
@@ -20,10 +20,10 @@ pub unsafe fn init() {
 
     let mut com1 = SerialPort::<Pio<u8>>::new(0x3F8);
     com1.init();
-    *COM1.lock() = Some(SerialKind::Ns16550Pio(com1));
+    *COM1.lock() = SerialKind::Ns16550Pio(com1);
     let mut com2 = SerialPort::<Pio<u8>>::new(0x2F8);
     com2.init();
-    *COM2.lock() = Some(SerialKind::Ns16550Pio(com2));
+    *COM2.lock() = SerialKind::Ns16550Pio(com2);
 
     // FIXME remove explicit LPSS handling once ACPI SPCR is supported
     #[cfg(feature = "lpss_debug")]
@@ -56,6 +56,6 @@ pub unsafe fn init() {
         let lpss = unsafe { SerialPort::<Mmio<u32>>::new(crate::PHYS_OFFSET + 0xFE032000) };
         lpss.init();
 
-        *LPSS.lock() = Some(SerialKind::Ns16550u32(lpss));
+        *LPSS.lock() = SerialKind::Ns16550u32(lpss);
     }
 }

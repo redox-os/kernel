@@ -3,7 +3,7 @@ use spin::MutexGuard;
 use crate::{device::serial::COM1, devices::serial::SerialKind};
 
 pub struct Writer<'a> {
-    serial: MutexGuard<'a, Option<SerialKind>>,
+    serial: MutexGuard<'a, SerialKind>,
 }
 
 impl<'a> Writer<'a> {
@@ -14,8 +14,6 @@ impl<'a> Writer<'a> {
     }
 
     pub fn write(&mut self, buf: &[u8]) {
-        if let Some(ref mut serial) = *self.serial {
-            serial.write(buf);
-        }
+        self.serial.write(buf);
     }
 }
