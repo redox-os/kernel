@@ -97,14 +97,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             // Initialize logger
             crate::log::init_logger(|r| {
-                use core::fmt::Write;
-                let _ = writeln!(
-                    super::debug::Writer::new(),
-                    "{}:{} -- {}",
-                    r.target(),
-                    r.level(),
-                    r.args()
-                );
+                println!("{}:{} -- {}", r.target(), r.level(), r.args());
             });
 
             info!("Redox OS starting...");

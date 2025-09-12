@@ -107,14 +107,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             // Initialize logger
             crate::log::init_logger(|r| {
-                use core::fmt::Write;
-                let _ = write!(
-                    crate::debug::Writer::new(),
-                    "{}:{} -- {}\n",
-                    r.target(),
-                    r.level(),
-                    r.args()
-                );
+                println!("{}:{} -- {}", r.target(), r.level(), r.args());
             });
             log::set_max_level(::log::LevelFilter::Debug);
 
