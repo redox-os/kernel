@@ -68,8 +68,6 @@ pub unsafe fn init_noncore() {
             log::info!("PIT used as system timer");
         }
 
-        log::info!("Initializing serial");
-        serial::init();
         log::info!("Finished initializing devices");
     }
 }
