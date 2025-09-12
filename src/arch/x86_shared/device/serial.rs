@@ -6,19 +6,19 @@ use crate::{
 };
 use spin::Mutex;
 
-pub static COM1: Mutex<Option<SerialKind>> = Mutex::new(Some(SerialKind::Ns16550Pio(
-    SerialPort::<Pio<u8>>::new(0x3F8),
-)));
-pub static COM2: Mutex<Option<SerialKind>> = Mutex::new(Some(SerialKind::Ns16550Pio(
-    SerialPort::<Pio<u8>>::new(0x2F8),
-)));
+pub static COM1: Mutex<Option<SerialKind>> = Mutex::new(None);
+pub static COM2: Mutex<Option<SerialKind>> = Mutex::new(None);
 
 #[cfg(feature = "lpss_debug")]
 pub static LPSS: Mutex<Option<SerialKind>> = Mutex::new(None);
 
 pub unsafe fn init() {
-    SerialPort::<Pio<u8>>::new(0x3F8).init();
-    SerialPort::<Pio<u8>>::new(0x2F8).init();
+    let mut com1 = SerialPort::<Pio<u8>>::new(0x3F8);
+    com1.init();
+    *COM1.lock() = Some(SerialKind::Ns16550Pio(com1));
+    let mut com2 = SerialPort::<Pio<u8>>::new(0x2F8);
+    com2.init();
+    *COM2.lock() = Some(SerialKind::Ns16550Pio(com2));
 
     #[cfg(feature = "lpss_debug")]
     {
