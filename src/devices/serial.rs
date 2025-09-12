@@ -17,6 +17,7 @@ pub enum SerialKind {
 }
 
 impl SerialKind {
+    #[cfg(target_arch = "aarch64")]
     pub fn enable_irq(&mut self) {
         //TODO: implement for NS16550
         match self {
