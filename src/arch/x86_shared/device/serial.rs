@@ -21,23 +21,28 @@ pub unsafe fn init() {
         let address = crate::PHYS_OFFSET + 0xFE032000;
 
         {
+            use rmm::PageFlags;
+
             use crate::{
-                memory::{Frame, PhysicalAddress},
-                paging::{entry::EntryFlags, ActivePageTable, Page, VirtualAddress},
+                memory::{KernelMapper, PhysicalAddress},
+                paging::VirtualAddress,
             };
 
-            let mut active_table = ActivePageTable::new();
-            let page = Page::containing_address(VirtualAddress::new(address));
-            let frame = Frame::containing(PhysicalAddress::new(address - crate::PHYS_OFFSET));
-            let result = active_table.map_to(
-                page,
-                frame,
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
-            );
-            result.flush(&mut active_table);
+            let mut mapper = KernelMapper::lock();
+            let virt = VirtualAddress::new(address);
+            let phys = PhysicalAddress::new(address - crate::PHYS_OFFSET);
+            let flags = PageFlags::new().write(true).execute(false);
+            unsafe {
+                mapper
+                    .get_mut()
+                    .unwrap()
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame")
+                    .flush();
+            }
         }
 
-        let lpss = SerialPort::<Mmio<u32>>::new(crate::PHYS_OFFSET + 0xFE032000);
+        let lpss = unsafe { SerialPort::<Mmio<u32>>::new(crate::PHYS_OFFSET + 0xFE032000) };
         lpss.init();
 
         *LPSS.lock() = Some(lpss);
