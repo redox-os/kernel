@@ -1,4 +1,3 @@
-use core::fmt;
 #[cfg(feature = "qemu_debug")]
 use spin::Mutex;
 use spin::MutexGuard;
@@ -10,10 +9,6 @@ use crate::devices::uart_16550::SerialPort;
 use crate::syscall::io::Mmio;
 #[cfg(feature = "qemu_debug")]
 use crate::syscall::io::Pio;
-use crate::{
-    devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY},
-    log::{Log, LOG},
-};
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
 
@@ -27,8 +22,6 @@ use super::device::system76_ec::{System76Ec, SYSTEM76_EC};
 pub static QEMU: Mutex<Pio<u8>> = Mutex::new(Pio::<u8>::new(0x402));
 
 pub struct Writer<'a> {
-    log: MutexGuard<'a, Option<Log>>,
-    display: MutexGuard<'a, Option<DebugDisplay>>,
     #[cfg(feature = "lpss_debug")]
     lpss: MutexGuard<'a, Option<SerialKind>>,
     #[cfg(feature = "qemu_debug")]
@@ -41,8 +34,6 @@ pub struct Writer<'a> {
 impl<'a> Writer<'a> {
     pub fn new() -> Writer<'a> {
         Writer {
-            log: LOG.lock(),
-            display: DEBUG_DISPLAY.lock(),
             #[cfg(feature = "lpss_debug")]
             lpss: LPSS.lock(),
             #[cfg(feature = "qemu_debug")]
@@ -53,17 +44,7 @@ impl<'a> Writer<'a> {
         }
     }
 
-    pub fn write(&mut self, buf: &[u8], preserve: bool) {
-        if preserve {
-            if let Some(ref mut log) = *self.log {
-                log.write(buf);
-            }
-        }
-
-        if let Some(ref mut display) = *self.display {
-            display.write(buf);
-        }
-
+    pub fn write(&mut self, buf: &[u8]) {
         #[cfg(feature = "lpss_debug")]
         {
             if let Some(ref mut lpss) = *self.lpss {
@@ -88,12 +69,5 @@ impl<'a> Writer<'a> {
                 system76_ec.print_slice(buf);
             }
         }
-    }
-}
-
-impl<'a> fmt::Write for Writer<'a> {
-    fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
-        self.write(s.as_bytes(), true);
-        Ok(())
     }
 }

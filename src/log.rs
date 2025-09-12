@@ -1,5 +1,8 @@
 use alloc::collections::VecDeque;
-use spin::{Mutex, Once};
+use core::fmt;
+use spin::{Mutex, MutexGuard, Once};
+
+use crate::devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY};
 
 pub static LOG: Mutex<Option<Log>> = Mutex::new(None);
 
@@ -66,3 +69,40 @@ pub fn init_logger(log_func: fn(&log::Record)) {
 }
 
 static LOGGER: Once<RedoxLogger> = Once::new();
+
+pub struct Writer<'a> {
+    log: MutexGuard<'a, Option<Log>>,
+    display: MutexGuard<'a, Option<DebugDisplay>>,
+    arch: crate::arch::debug::Writer<'a>,
+}
+
+impl<'a> Writer<'a> {
+    pub fn new() -> Writer<'a> {
+        Writer {
+            log: LOG.lock(),
+            display: DEBUG_DISPLAY.lock(),
+            arch: crate::arch::debug::Writer::new(),
+        }
+    }
+
+    pub fn write(&mut self, buf: &[u8], preserve: bool) {
+        if preserve {
+            if let Some(ref mut log) = *self.log {
+                log.write(buf);
+            }
+        }
+
+        if let Some(display) = &mut *self.display {
+            display.write(buf);
+        }
+
+        self.arch.write(buf);
+    }
+}
+
+impl<'a> fmt::Write for Writer<'a> {
+    fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
+        self.write(s.as_bytes(), true);
+        Ok(())
+    }
+}

@@ -3,7 +3,7 @@
 macro_rules! print {
     ($($arg:tt)*) => ({
         use core::fmt::Write;
-        let _ = write!($crate::arch::debug::Writer::new(), $($arg)*);
+        let _ = write!($crate::log::Writer::new(), $($arg)*);
     });
 }
 
@@ -12,6 +12,6 @@ macro_rules! print {
 macro_rules! println {
     ($($arg:tt)*) => ({
         use core::fmt::Write;
-        let _ = writeln!($crate::arch::debug::Writer::new(), $($arg)*);
+        let _ = writeln!($crate::log::Writer::new(), $($arg)*);
     });
 }

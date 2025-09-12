@@ -2,9 +2,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use spin::RwLock;
 
 use crate::{
-    arch::debug::Writer,
     devices::graphical_debug,
     event,
+    log::Writer,
     scheme::*,
     sync::WaitQueue,
     syscall::{
