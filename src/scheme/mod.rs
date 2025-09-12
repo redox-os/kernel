@@ -181,9 +181,8 @@ impl SchemeList {
 
         //TODO: Only memory: is in the null namespace right now. It should be removed when
         //anonymous mmap's are implemented
-        self.insert_global(ns, "memory", GlobalSchemes::Memory)
-            .unwrap();
-        self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
+        self.insert_global(ns, "memory", GlobalSchemes::Memory);
+        self.insert_global(ns, "pipe", GlobalSchemes::Pipe);
     }
 
     /// Initialize a new namespace
@@ -197,13 +196,11 @@ impl SchemeList {
             KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))
         })
         .unwrap();
-        self.insert_global(ns, "event", GlobalSchemes::Event)
-            .unwrap();
-        self.insert_global(ns, "memory", GlobalSchemes::Memory)
-            .unwrap();
-        self.insert_global(ns, "pipe", GlobalSchemes::Pipe).unwrap();
-        self.insert_global(ns, "sys", GlobalSchemes::Sys).unwrap();
-        self.insert_global(ns, "time", GlobalSchemes::Time).unwrap();
+        self.insert_global(ns, "event", GlobalSchemes::Event);
+        self.insert_global(ns, "memory", GlobalSchemes::Memory);
+        self.insert_global(ns, "pipe", GlobalSchemes::Pipe);
+        self.insert_global(ns, "sys", GlobalSchemes::Sys);
+        self.insert_global(ns, "time", GlobalSchemes::Time);
 
         ns
     }
@@ -215,22 +212,13 @@ impl SchemeList {
 
         // These schemes should only be available on the root
         #[cfg(dtb)]
-        {
-            self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb)
-                .unwrap();
-        }
+        self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb);
         #[cfg(feature = "acpi")]
-        {
-            self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi)
-                .unwrap();
-        }
-        self.insert_global(ns, "debug", GlobalSchemes::Debug)
-            .unwrap();
-        self.insert_global(ns, "irq", GlobalSchemes::Irq).unwrap();
-        self.insert_global(ns, "kernel.proc", GlobalSchemes::Proc)
-            .unwrap();
-        self.insert_global(ns, "serio", GlobalSchemes::Serio)
-            .unwrap();
+        self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi);
+        self.insert_global(ns, "debug", GlobalSchemes::Debug);
+        self.insert_global(ns, "irq", GlobalSchemes::Irq);
+        self.insert_global(ns, "kernel.proc", GlobalSchemes::Proc);
+        self.insert_global(ns, "serio", GlobalSchemes::Serio);
     }
 
     pub fn make_ns(
@@ -285,23 +273,17 @@ impl SchemeList {
         None
     }
 
-    pub fn insert_global(
-        &mut self,
-        ns: SchemeNamespace,
-        name: &str,
-        global: GlobalSchemes,
-    ) -> Result<()> {
+    fn insert_global(&mut self, ns: SchemeNamespace, name: &str, global: GlobalSchemes) {
         let prev = self
             .names
             .get_mut(&ns)
-            .ok_or(Error::new(ENODEV))?
+            .ok_or(Error::new(ENODEV))
+            .unwrap()
             .insert(name.into(), global.scheme_id());
 
         if prev.is_some() {
-            return Err(Error::new(EEXIST));
+            panic!("global already exists");
         }
-
-        Ok(())
     }
 
     /// Create a new scheme.
