@@ -7,7 +7,9 @@ use crate::{
 };
 
 #[cfg(feature = "serial_debug")]
-use super::device::serial::{SerialKind, COM1};
+use super::device::serial::COM1;
+#[cfg(feature = "serial_debug")]
+use crate::devices::serial::SerialKind;
 
 pub struct Writer<'a> {
     log: MutexGuard<'a, Option<Log>>,

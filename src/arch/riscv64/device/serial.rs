@@ -5,50 +5,15 @@ use spin::Mutex;
 use syscall::Mmio;
 
 use crate::{
-    devices::uart_16550,
+    devices::{serial::SerialKind, uart_16550},
     dtb::{
         diag_uart_range, get_interrupt, interrupt_parent,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
-    scheme::{
-        debug::{debug_input, debug_notify},
-        irq::irq_trigger,
-    },
+    scheme::irq::irq_trigger,
 };
 
-pub enum SerialPort {
-    Ns16550u8(&'static mut uart_16550::SerialPort<Mmio<u8>>),
-    Ns16550u32(&'static mut uart_16550::SerialPort<Mmio<u32>>),
-}
-
-impl SerialPort {
-    pub fn receive(&mut self) {
-        //TODO: make PL011 receive work the same way as NS16550
-        match self {
-            Self::Ns16550u8(inner) => {
-                while let Some(c) = inner.receive() {
-                    debug_input(c);
-                }
-                debug_notify();
-            }
-            Self::Ns16550u32(inner) => {
-                while let Some(c) = inner.receive() {
-                    debug_input(c);
-                }
-                debug_notify();
-            }
-        }
-    }
-
-    pub fn write(&mut self, buf: &[u8]) {
-        match self {
-            Self::Ns16550u8(inner) => inner.write(buf),
-            Self::Ns16550u32(inner) => inner.write(buf),
-        }
-    }
-}
-
-pub static COM1: Mutex<Option<SerialPort>> = Mutex::new(None);
+pub static COM1: Mutex<Option<SerialKind>> = Mutex::new(None);
 
 pub struct Com1Irq {}
 
@@ -79,14 +44,14 @@ pub unsafe fn init_early(dtb: &Fdt) {
                 if !skip_init {
                     serial_port.init();
                 }
-                Some(SerialPort::Ns16550u8(serial_port))
+                Some(SerialKind::Ns16550u8(serial_port))
             } else if compatible.contains("snps,dw-apb-uart") {
                 //TODO: get actual register size from device tree
                 let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
                 if !skip_init {
                     serial_port.init();
                 }
-                Some(SerialPort::Ns16550u32(serial_port))
+                Some(SerialKind::Ns16550u32(serial_port))
             } else {
                 None
             };

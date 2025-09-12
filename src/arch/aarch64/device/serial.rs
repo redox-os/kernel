@@ -3,61 +3,16 @@ use spin::Mutex;
 
 use crate::{
     arch::device::irqchip::ic_for_chip,
-    devices::{uart_16550, uart_pl011},
+    devices::{serial::SerialKind, uart_16550, uart_pl011},
     dtb::{
         diag_uart_range, get_interrupt,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
     interrupt::irq::trigger,
-    scheme::debug::{debug_input, debug_notify},
 };
 use fdt::Fdt;
 use log::{error, info};
 use syscall::Mmio;
-
-pub enum SerialKind {
-    Ns16550u8(&'static mut uart_16550::SerialPort<Mmio<u8>>),
-    Ns16550u32(&'static mut uart_16550::SerialPort<Mmio<u32>>),
-    Pl011(uart_pl011::SerialPort),
-}
-
-impl SerialKind {
-    pub fn enable_irq(&mut self) {
-        //TODO: implement for NS16550
-        match self {
-            Self::Ns16550u8(_) => {}
-            Self::Ns16550u32(_) => {}
-            Self::Pl011(inner) => inner.enable_irq(),
-        }
-    }
-
-    pub fn receive(&mut self) {
-        //TODO: make PL011 receive work the same way as NS16550
-        match self {
-            Self::Ns16550u8(inner) => {
-                while let Some(c) = inner.receive() {
-                    debug_input(c);
-                }
-                debug_notify();
-            }
-            Self::Ns16550u32(inner) => {
-                while let Some(c) = inner.receive() {
-                    debug_input(c);
-                }
-                debug_notify();
-            }
-            Self::Pl011(inner) => inner.receive(),
-        }
-    }
-
-    pub fn write(&mut self, buf: &[u8]) {
-        match self {
-            Self::Ns16550u8(inner) => inner.write(buf),
-            Self::Ns16550u32(inner) => inner.write(buf),
-            Self::Pl011(inner) => inner.write(buf),
-        }
-    }
-}
 
 pub static COM1: Mutex<Option<SerialKind>> = Mutex::new(None);
 
