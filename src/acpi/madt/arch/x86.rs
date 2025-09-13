@@ -1,8 +1,10 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::{
+    hint,
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 use crate::{
     device::local_apic::the_local_apic,
-    interrupt,
     memory::{allocate_p2frame, Frame, KernelMapper},
     paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
     start::{kstart_ap, AP_READY, CPU_COUNT},
@@ -127,11 +129,11 @@ pub(super) fn init(madt: Madt) {
                             while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) }
                                 == 0
                             {
-                                interrupt::pause();
+                                hint::spin_loop();
                             }
                             print!(" Trampoline...");
                             while !AP_READY.load(Ordering::SeqCst) {
-                                interrupt::pause();
+                                hint::spin_loop();
                             }
                             println!(" Ready");
 

@@ -3,7 +3,7 @@
 ///! handling process states and synchronization.
 use core::{
     cell::{Cell, RefCell},
-    mem,
+    hint, mem,
     ops::Bound,
     sync::atomic::Ordering,
 };
@@ -15,7 +15,7 @@ use syscall::PtraceFlags;
 use crate::{
     context::{arch, contexts, Context},
     cpu_set::LogicalCpuId,
-    cpu_stats, interrupt,
+    cpu_stats,
     percpu::PercpuBlock,
     ptrace, time,
 };
@@ -153,7 +153,7 @@ pub fn switch() -> SwitchResult {
         .compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed)
         .is_err()
     {
-        interrupt::pause();
+        hint::spin_loop();
         percpu.maybe_handle_tlb_shootdown();
     }
 

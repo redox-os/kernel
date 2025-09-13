@@ -1,10 +1,10 @@
-/// This function is where the kernel sets up IRQ handlers
-/// It is increcibly unsafe, and should be minimal in nature
-/// It must create the IDT with the correct entries, those entries are
-/// defined in other files inside of the `arch` module
-use core::slice;
+//! This function is where the kernel sets up IRQ handlers
+//! It is increcibly unsafe, and should be minimal in nature
+//! It must create the IDT with the correct entries, those entries are
+//! defined in other files inside of the `arch` module
 use core::{
     cell::SyncUnsafeCell,
+    hint, slice,
     sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 
@@ -294,7 +294,7 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
         };
 
         while !BSP_READY.load(Ordering::SeqCst) {
-            interrupt::pause();
+            hint::spin_loop();
         }
 
         crate::kmain_ap(cpu_id);

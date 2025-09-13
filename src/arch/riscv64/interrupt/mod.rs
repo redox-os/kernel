@@ -43,16 +43,6 @@ pub unsafe fn halt() {
     unsafe { asm!("wfi", options(nomem, nostack)) }
 }
 
-/// Pause instruction
-/// Safe because it is similar to a NOP, and has no memory effects
-#[inline(always)]
-pub fn pause() {
-    unsafe {
-        // It's a hint instruction, safe to execute without Zihintpause extension
-        asm!("pause", options(nomem, nostack));
-    }
-}
-
 #[inline(always)]
 pub unsafe fn init() {
     unsafe {

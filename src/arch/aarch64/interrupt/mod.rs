@@ -50,13 +50,6 @@ pub unsafe fn halt() {
     }
 }
 
-/// Pause instruction
-/// Safe because it is similar to a NOP, and has no memory effects
-#[inline(always)]
-pub fn pause() {
-    unsafe { asm!("nop") };
-}
-
 #[inline(always)]
 pub unsafe fn init() {
     unsafe {

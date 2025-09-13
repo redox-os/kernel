@@ -42,12 +42,3 @@ pub unsafe fn halt() {
         core::arch::asm!("hlt", options(nomem, nostack));
     }
 }
-
-/// Pause instruction
-/// Safe because it is similar to a NOP, and has no memory effects
-#[inline(always)]
-pub fn pause() {
-    unsafe {
-        core::arch::asm!("pause", options(nomem, nostack));
-    }
-}
