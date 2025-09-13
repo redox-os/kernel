@@ -7,11 +7,12 @@ use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
     EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::vec::Vec;
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::RwLock;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -64,8 +65,8 @@ use Kind::*;
 /// System information scheme
 pub struct SysScheme;
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 const FILES: &[(&'static str, Kind)] = &[
     ("block", Rd(block::resource)),

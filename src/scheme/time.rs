@@ -1,8 +1,8 @@
-use alloc::collections::BTreeMap;
 use core::{
     mem, str,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::RwLock;
 
 use crate::{
@@ -19,8 +19,8 @@ use crate::{
 use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, usize>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, usize>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 pub struct TimeScheme;
 

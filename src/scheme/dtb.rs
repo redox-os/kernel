@@ -1,6 +1,7 @@
 use core::sync::atomic::{self, AtomicUsize};
 
-use alloc::{boxed::Box, collections::BTreeMap};
+use alloc::boxed::Box;
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Once, RwLock};
 
 use super::{CallerCtx, KernelScheme, OpenResult};
@@ -27,7 +28,8 @@ struct Handle {
     stat: bool,
 }
 
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
 static DATA: Once<Box<[u8]>> = Once::new();
 

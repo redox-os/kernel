@@ -4,8 +4,9 @@ use core::{
     sync::atomic::{self, AtomicUsize},
 };
 
-use alloc::{boxed::Box, collections::BTreeMap};
+use alloc::boxed::Box;
 
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once, RwLock};
 use syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
@@ -45,8 +46,8 @@ enum HandleKind {
     ShutdownPipe,
 }
 
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
 
 static DATA: Once<Box<[u8]>> = Once::new();

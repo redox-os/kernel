@@ -8,7 +8,7 @@
 
 // TODO: Move handling of the global namespace to userspace.
 
-use alloc::{boxed::Box, collections::BTreeMap, string::ToString, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;

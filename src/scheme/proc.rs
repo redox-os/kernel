@@ -25,7 +25,6 @@ use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
-    collections::{btree_map::Entry, BTreeMap},
     string::String,
     sync::{Arc, Weak},
     vec::Vec,
@@ -35,6 +34,10 @@ use core::{
     num::NonZeroUsize,
     slice, str,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+};
+use hashbrown::{
+    hash_map::{DefaultHashBuilder, Entry},
+    HashMap,
 };
 use spin::RwLock;
 use spinning_top::RwSpinlock;
@@ -149,8 +152,8 @@ struct Handle {
 pub struct ProcScheme;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 #[cfg(feature = "debugger")]
 #[allow(dead_code)]

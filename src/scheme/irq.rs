@@ -7,8 +7,9 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once, RwLock};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
@@ -33,8 +34,8 @@ use crate::{
 ///
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the
 /// O_CREAT flag.

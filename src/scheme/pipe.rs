@@ -1,10 +1,8 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use alloc::{
-    collections::{BTreeMap, VecDeque},
-    sync::Arc,
-};
+use alloc::{collections::VecDeque, sync::Arc};
 
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, RwLock};
 
 use crate::{
@@ -26,8 +24,8 @@ use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult, StrOrBytes};
 static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 // TODO: SLOB?
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static PIPES: RwLock<BTreeMap<usize, Arc<Pipe>>> = RwLock::new(BTreeMap::new());
+static PIPES: RwLock<HashMap<usize, Arc<Pipe>>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 const MAX_QUEUE_SIZE: usize = 65536;
 

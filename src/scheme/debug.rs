@@ -23,8 +23,8 @@ struct Handle {
     num: usize,
 }
 
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 /// Add to the input queue
 pub fn debug_input(data: u8) {

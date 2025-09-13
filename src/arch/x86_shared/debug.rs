@@ -12,8 +12,7 @@ use crate::syscall::io::Pio;
 #[cfg(feature = "qemu_debug")]
 use syscall::io::Io;
 
-use super::device::serial::COM1;
-use super::device::serial::LPSS;
+use super::device::serial::{COM1, LPSS};
 #[cfg(feature = "system76_ec_debug")]
 use super::device::system76_ec::{System76Ec, SYSTEM76_EC};
 
