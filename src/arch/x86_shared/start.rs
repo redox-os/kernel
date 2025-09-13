@@ -90,9 +90,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             // Set up graphical debug
             graphical_debug::init(env);
 
-            #[cfg(feature = "system76_ec_debug")]
-            device::system76_ec::init();
-
             info!("Redox OS starting...");
             info!(
                 "Kernel: {:X}:{:X}",

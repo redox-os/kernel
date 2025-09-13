@@ -10,6 +10,9 @@ pub static COM2: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 pub static LPSS: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 
 pub unsafe fn init() {
+    #[cfg(feature = "system76_ec_debug")]
+    super::system76_ec::init();
+
     if cfg!(not(feature = "serial_debug")) {
         // FIXME remove serial_debug feature once ACPI SPCR is respected on UEFI boots.
         return;
