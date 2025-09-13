@@ -117,7 +117,6 @@ mod externs;
 
 /// Logging
 mod log;
-use ::log::info;
 use alloc::sync::Arc;
 use spinning_top::RwSpinlock;
 

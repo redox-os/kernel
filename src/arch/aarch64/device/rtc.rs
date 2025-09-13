@@ -12,15 +12,15 @@ pub unsafe fn init(fdt: &fdt::Fdt) {
         {
             Some(phys) => {
                 let mut rtc = Pl031rtc { phys };
-                log::info!("PL031 RTC at {:#x}", rtc.phys);
+                info!("PL031 RTC at {:#x}", rtc.phys);
                 *time::START.lock() = (rtc.time() as u128) * time::NANOS_PER_SEC;
             }
             None => {
-                log::warn!("No PL031 RTC registers");
+                warn!("No PL031 RTC registers");
             }
         }
     } else {
-        log::warn!("No PL031 RTC found");
+        warn!("No PL031 RTC found");
     }
 }
 

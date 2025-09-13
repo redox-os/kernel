@@ -5,5 +5,5 @@ pub(super) fn init(madt: Madt) {
         println!("      {:#x?}", madt_entry);
     }
 
-    log::warn!("MADT not yet handled on this platform");
+    warn!("MADT not yet handled on this platform");
 }

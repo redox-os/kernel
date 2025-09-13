@@ -154,7 +154,7 @@ impl KernelScheme for DebugScheme {
                 b'1' => true,
                 _ => return Err(Error::new(EINVAL)),
             };
-            log::info!("Wrote {is_profiling} to IS_PROFILING");
+            info!("Wrote {is_profiling} to IS_PROFILING");
             crate::profiling::IS_PROFILING.store(is_profiling, Ordering::Relaxed);
 
             return Ok(1);

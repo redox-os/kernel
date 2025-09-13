@@ -6,8 +6,6 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use hashbrown::HashMap;
 use spin::{Once, RwLock};
 
-use log::info;
-
 use crate::{
     memory::KernelMapper,
     paging::{PageFlags, PhysicalAddress, RmmA, RmmArch},
@@ -123,7 +121,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
                 });
 
                 if !initialized {
-                    log::error!("RXSDT_ENUM already initialized");
+                    error!("RXSDT_ENUM already initialized");
                 }
 
                 rsdt
@@ -136,7 +134,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
                     RxsdtEnum::Xsdt(xsdt)
                 });
                 if !initialized {
-                    log::error!("RXSDT_ENUM already initialized");
+                    error!("RXSDT_ENUM already initialized");
                 }
 
                 xsdt

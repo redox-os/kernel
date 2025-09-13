@@ -7,7 +7,6 @@ use crate::{
 };
 use core::{mem, num::NonZero, sync::atomic::Ordering};
 use fdt::Fdt;
-use log::{error, info};
 use syscall::{Error, Io, Mmio, EINVAL};
 
 #[repr(packed(4))]

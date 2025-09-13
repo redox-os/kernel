@@ -47,7 +47,7 @@ impl Hpet {
                 unsafe { s.map() };
                 Some(s)
             } else {
-                log::warn!(
+                warn!(
                     "HPET has unsupported address space {}",
                     s.base_address.address_space
                 );

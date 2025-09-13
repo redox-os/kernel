@@ -197,7 +197,7 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
 
         ty => {
             if !pf_inner(stack, ty as u8, "sync_exc_el0") {
-                log::error!(
+                error!(
                     "FATAL: Not an SVC induced synchronous exception (ty={:b})",
                     ty
                 );

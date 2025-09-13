@@ -1,6 +1,5 @@
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
-use log::{debug, error, info};
 
 use super::InterruptController;
 use crate::dtb::{

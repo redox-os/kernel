@@ -1,5 +1,4 @@
 use alloc::boxed::Box;
-use log::{debug, error, info};
 
 use super::ic_for_chip;
 use crate::{

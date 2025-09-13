@@ -12,7 +12,6 @@ use core::{
     sync::atomic::Ordering,
 };
 use fdt::{node::FdtNode, Fdt};
-use log::{debug, info};
 use syscall::{
     error::{Error, EINVAL},
     Result,

@@ -3,7 +3,6 @@ use crate::{arch::device::irqchip::new_irqchip, cpu_set::LogicalCpuId, scheme::i
 use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, BE};
 use fdt::{node::NodeProperty, Fdt};
-use log::{debug, error};
 use syscall::{Error, Result, EINVAL};
 
 pub trait InterruptHandler {

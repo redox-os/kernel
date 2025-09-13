@@ -86,7 +86,7 @@ pub fn monotonic_absolute() -> Option<u128> {
             let prev = inf.prev.replace(time);
             if prev > time {
                 // TODO
-                log::error!("TSC wraparound ({prev} > {time})");
+                error!("TSC wraparound ({prev} > {time})");
                 return None;
             }
             assert!(prev <= time);
@@ -111,7 +111,7 @@ pub fn get_kvm_support() -> &'static Option<KvmSupport> {
 
         let supp_feats = KvmFeatureBits::from_bits_retain(res.eax);
 
-        log::info!("Detected KVM paravirtualization support, features {supp_feats:?}");
+        info!("Detected KVM paravirtualization support, features {supp_feats:?}");
 
         Some(KvmSupport {
             max_leaf,

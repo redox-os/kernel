@@ -102,11 +102,11 @@ pub fn serio_command(index: usize, data: u8) {
     if PROFILE_TOGGLEABLE {
         if index == 0 && data == 30 {
             // "a" key in QEMU
-            log::info!("Enabling profiling");
+            info!("Enabling profiling");
             IS_PROFILING.store(true, Ordering::SeqCst);
         } else if index == 0 && data == 48 {
             // "b" key
-            log::info!("Disabling profiling");
+            info!("Disabling profiling");
             IS_PROFILING.store(false, Ordering::SeqCst);
         }
     }

@@ -21,7 +21,7 @@ pub(super) fn init(madt: Madt) {
             }
             MadtEntry::Gicd(gicd) => {
                 if gicd_opt.is_some() {
-                    log::warn!("Only one GICD should be present on a system, ignoring this one");
+                    warn!("Only one GICD should be present on a system, ignoring this one");
                 } else {
                     gicd_opt = Some(gicd);
                 }
@@ -30,7 +30,7 @@ pub(super) fn init(madt: Madt) {
         }
     }
     let Some(gicd) = gicd_opt else {
-        log::warn!("No GICD found");
+        warn!("No GICD found");
         return;
     };
     let mut gic_dist_if = GicDistIf::default();
@@ -39,7 +39,7 @@ pub(super) fn init(madt: Madt) {
         let virt = map_device_memory(phys, PAGE_SIZE);
         gic_dist_if.init(virt.data());
     };
-    log::info!("{:#x?}", gic_dist_if);
+    info!("{:#x?}", gic_dist_if);
     match gicd.gic_version {
         1 | 2 => {
             for gicc in giccs {
@@ -49,7 +49,7 @@ pub(super) fn init(madt: Madt) {
                     let virt = map_device_memory(phys, PAGE_SIZE);
                     gic_cpu_if.init(virt.data())
                 };
-                log::info!("{:#x?}", gic_cpu_if);
+                info!("{:#x?}", gic_cpu_if);
                 let gic = GenericInterruptController {
                     gic_dist_if,
                     gic_cpu_if,
@@ -70,7 +70,7 @@ pub(super) fn init(madt: Madt) {
             for gicc in giccs {
                 let mut gic_cpu_if = GicV3CpuIf;
                 unsafe { gic_cpu_if.init() };
-                log::info!("{:#x?}", gic_cpu_if);
+                info!("{:#x?}", gic_cpu_if);
                 let gic = GicV3 {
                     gic_dist_if,
                     gic_cpu_if,
@@ -90,7 +90,7 @@ pub(super) fn init(madt: Madt) {
             }
         }
         _ => {
-            log::warn!("unsupported GIC version {}", gicd.gic_version);
+            warn!("unsupported GIC version {}", gicd.gic_version);
         }
     }
     unsafe { IRQ_CHIP.init(None) };

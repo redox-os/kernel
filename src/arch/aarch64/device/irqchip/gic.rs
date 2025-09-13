@@ -5,7 +5,6 @@ use crate::dtb::{
 };
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
-use log::info;
 use syscall::{
     error::{Error, EINVAL},
     Result,

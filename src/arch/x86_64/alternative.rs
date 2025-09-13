@@ -108,14 +108,14 @@ pub unsafe fn early_init(bsp: bool) {
                         .expect("CPUID said AVX was supported but there's no state info");
 
                     if state.size() as usize != 16 * core::mem::size_of::<u128>() {
-                        log::warn!("Unusual AVX state size {}", state.size());
+                        warn!("Unusual AVX state size {}", state.size());
                     }
 
                     state.offset()
                 }),
                 xsave_size: ext_state_info.xsave_area_size_enabled_features(),
             };
-            log::debug!("XSAVE: {:?}", info);
+            debug!("XSAVE: {:?}", info);
 
             xsave::XSAVE_INFO.call_once(|| info);
         } else {
@@ -147,7 +147,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             return;
         }
 
-        log::info!("self-modifying features: {:?}", enable);
+        info!("self-modifying features: {:?}", enable);
 
         let mut mapper = KernelMapper::lock();
         for reloc in relocs.iter().copied() {
@@ -178,7 +178,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
 
             let code = core::slice::from_raw_parts_mut(reloc.code_start, reloc.padded_len);
 
-            log::trace!(
+            trace!(
                 "feature {} current {:x?} altcode {:x?}",
                 name,
                 code,
@@ -216,16 +216,16 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             ];
 
             if feature_is_enabled {
-                log::trace!("feature {} origcode {:x?}", name, code);
+                trace!("feature {} origcode {:x?}", name, code);
                 let (dst, dst_nops) = code.split_at_mut(altcode.len());
                 dst.copy_from_slice(altcode);
 
                 for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
                     chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
                 }
-                log::trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
+                trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
             } else {
-                log::trace!("feature !{} origcode {:x?}", name, code);
+                trace!("feature !{} origcode {:x?}", name, code);
                 let (_, padded) = code.split_at_mut(reloc.origcode_len);
 
                 // Not strictly necessary, but reduces the number of instructions using longer nop
@@ -234,7 +234,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
                     chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
                 }
 
-                log::trace!("feature !{} new {:x?}", name, code);
+                trace!("feature !{} new {:x?}", name, code);
             }
 
             for page in dst_pages.pages() {

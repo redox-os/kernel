@@ -11,7 +11,6 @@ use crate::{
     interrupt::irq::trigger,
 };
 use fdt::Fdt;
-use log::{error, info};
 use syscall::Mmio;
 
 pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
@@ -58,11 +57,9 @@ pub unsafe fn init_early(dtb: &Fdt) {
                     info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
                 }
                 None => {
-                    log::warn!(
+                    warn!(
                         "UART {:?} at {:#X} size {:#X}: no driver found",
-                        compatible,
-                        virt,
-                        size
+                        compatible, virt, size
                     );
                 }
             }

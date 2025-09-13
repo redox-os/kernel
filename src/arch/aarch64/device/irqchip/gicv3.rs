@@ -88,7 +88,7 @@ impl InterruptController for GicV3 {
         if let Some(fdt) = fdt_opt {
             self.parse(fdt)?;
         }
-        log::info!("{:X?}", self);
+        info!("{:X?}", self);
 
         unsafe {
             self.gic_cpu_if.init();
@@ -109,7 +109,7 @@ impl InterruptController for GicV3 {
             i += 1;
         }
 
-        log::info!("gic irq_range = ({}, {})", idx, idx + cnt);
+        info!("gic irq_range = ({}, {})", idx, idx + cnt);
         self.irq_range = (idx, idx + cnt);
         *irq_idx = idx + cnt;
         Ok(())

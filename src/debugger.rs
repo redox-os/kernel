@@ -243,7 +243,7 @@ unsafe fn check_page_table_consistency(
                     {
                         Some(g) => g,
                         None => {
-                            log::error!(
+                            error!(
                                 "ADDRESS {:p} LACKING GRANT BUT MAPPED TO {:#0x} FLAGS {:?}!",
                                 address.data() as *const u8,
                                 physaddr.data(),
@@ -257,7 +257,7 @@ unsafe fn check_page_table_consistency(
                     if grant.flags().write(false).data() & !EXCLUDE
                         != flags.write(false).data() & !EXCLUDE
                     {
-                        log::error!(
+                        error!(
                             "FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}",
                             grant.flags(),
                             flags,
@@ -302,7 +302,7 @@ unsafe fn check_page_table_consistency(
             let _entry = match addr_space.table.utable.translate(page.start_address()) {
                 Some(e) => e,
                 None => {
-                    log::error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", span, page.start_address().data() as *const u8);
+                    error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", span, page.start_address().data() as *const u8);
                     continue;
                 }
             };

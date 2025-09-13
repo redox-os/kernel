@@ -5,7 +5,7 @@ use crate::syscall::io::{Io, Pio};
 
 pub unsafe fn kreset() -> ! {
     unsafe {
-        log::info!("kreset");
+        info!("kreset");
 
         // 8042 reset
         {
@@ -57,15 +57,15 @@ pub unsafe fn emergency_reset() -> ! {
 
 #[cfg(feature = "acpi")]
 fn userspace_acpi_shutdown() {
-    log::info!("Notifying any potential ACPI driver");
+    info!("Notifying any potential ACPI driver");
     // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
     // shutdown).
     if !acpi::register_kstop() {
         // There was no context to switch to.
-        log::info!("No ACPI driver was alive to handle shutdown.");
+        info!("No ACPI driver was alive to handle shutdown.");
         return;
     }
-    log::info!("Waiting one second for ACPI driver to run the shutdown sequence.");
+    info!("Waiting one second for ACPI driver to run the shutdown sequence.");
     let initial = time::monotonic();
 
     // Since this driver is a userspace process, and we do not use any magic like directly
@@ -80,7 +80,7 @@ fn userspace_acpi_shutdown() {
 
         let current = time::monotonic();
         if current - initial > time::NANOS_PER_SEC {
-            log::info!("Timeout reached, thus falling back to other shutdown methods.");
+            info!("Timeout reached, thus falling back to other shutdown methods.");
             return;
         }
     }
@@ -88,7 +88,7 @@ fn userspace_acpi_shutdown() {
 
 pub unsafe fn kstop() -> ! {
     unsafe {
-        log::info!("Running kstop()");
+        info!("Running kstop()");
 
         #[cfg(feature = "acpi")]
         userspace_acpi_shutdown();

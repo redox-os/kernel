@@ -128,10 +128,9 @@ impl MemoryScheme {
         }
 
         if size % PAGE_SIZE != 0 {
-            log::warn!(
+            warn!(
                 "physmap size {} is not multiple of PAGE_SIZE {}",
-                size,
-                PAGE_SIZE
+                size, PAGE_SIZE
             );
             return Err(Error::new(EINVAL));
         }

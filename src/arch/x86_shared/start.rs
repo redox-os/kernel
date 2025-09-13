@@ -8,8 +8,6 @@ use core::{
     sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 
-use log::info;
-
 #[cfg(feature = "acpi")]
 use crate::acpi;
 
@@ -94,11 +92,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             #[cfg(feature = "system76_ec_debug")]
             device::system76_ec::init();
-
-            // Initialize logger
-            crate::log::init_logger(|r| {
-                println!("{}:{} -- {}", r.target(), r.level(), r.args());
-            });
 
             info!("Redox OS starting...");
             info!(

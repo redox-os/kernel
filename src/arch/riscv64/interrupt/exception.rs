@@ -1,6 +1,5 @@
 use ::syscall::Exception;
 use core::{arch::global_asm, sync::atomic::Ordering};
-use log::{error, info};
 use rmm::VirtualAddress;
 
 use crate::{
@@ -97,7 +96,7 @@ unsafe fn exception_handler_inner(regs: &mut InterruptStack) {
             options(nostack)
         );
 
-        //log::info!("Exception handler incoming: sepc={:x} scause={:x} sstatus={:x}", regs.iret.sepc, scause, sstatus);
+        //info!("Exception handler incoming: sepc={:x} scause={:x} sstatus={:x}", regs.iret.sepc, scause, sstatus);
 
         let user_mode = sstatus & (1 << 8) == 0;
 
@@ -109,7 +108,7 @@ unsafe fn exception_handler_inner(regs: &mut InterruptStack) {
         } else {
             handle_system_exception(scause, regs);
         }
-        //log::info!("Exception handler outgoing");
+        //info!("Exception handler outgoing");
     }
 }
 

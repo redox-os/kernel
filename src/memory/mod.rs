@@ -88,7 +88,7 @@ pub fn allocate_p2frame_complex(
         .as_free()
         .expect("freelist frames must not be marked used!");
     let next_free = info.next();
-    //log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
+    //info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
 
     debug_assert_eq!(
         next_free.order(),
@@ -111,13 +111,13 @@ pub fn allocate_p2frame_complex(
     freelist.for_orders[frame_order as usize] = next_free.frame();
 
     // TODO: Is this LIFO cache optimal?
-    //log::info!("MIN{min_order}FRAMEORD{frame_order}");
+    //info!("MIN{min_order}FRAMEORD{frame_order}");
     for order in (min_order..frame_order).rev() {
-        //log::info!("SPLIT ORDER {order}");
+        //info!("SPLIT ORDER {order}");
         let order_page_count = 1 << order;
 
         let hi = frame.next_by(order_page_count);
-        //log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
+        //info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
         debug_assert_eq!(freelist.for_orders[order as usize], None);
 
@@ -185,7 +185,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             !(sib_info.next().order() > merge_order),
             "sibling page has unaligned order or contains current page"
         );
-        //log::info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
+        //info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
 
         if let Some(sib_prev) = sib_info.prev().frame() {
             get_free_alloc_page_info(sib_prev).set_next(sib_info.next());
@@ -216,7 +216,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     debug_assert!(new_head.is_aligned_to_order(largest_order));
 
     if let Some(old_head) = freelist.for_orders[largest_order as usize].replace(new_head) {
-        //log::info!("HEAD {:p} FREED {:p} BARRIER {:p}", get_page_info(old_head).unwrap(), get_page_info(frame).unwrap(), unsafe { ALLOCATOR_DATA.abs_off as *const u8 });
+        //info!("HEAD {:p} FREED {:p} BARRIER {:p}", get_page_info(old_head).unwrap(), get_page_info(frame).unwrap(), unsafe { ALLOCATOR_DATA.abs_off as *const u8 });
         let old_head_info = get_free_alloc_page_info(old_head);
         let new_head_info = get_free_alloc_page_info(new_head);
 
@@ -225,7 +225,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         old_head_info.set_prev(P2Frame::new(Some(new_head), largest_order));
     }
 
-    //log::info!("FREED {frame:?}+2^{order}");
+    //info!("FREED {frame:?}+2^{order}");
     freelist.used_frames -= 1 << order;
 }
 
@@ -625,7 +625,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             if frame.base() >= allocator.abs_offset() {
                 break 'sections;
             }
-            //log::info!("MARKING {frame:?} AS USED");
+            //info!("MARKING {frame:?} AS USED");
             page_info
                 .refcount
                 .store(RC_USED_NOT_FREE, Ordering::Relaxed);
@@ -687,13 +687,13 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 frames[0].next.store(order as usize, Ordering::Relaxed);
                 // The first section page is not aligned to the next order size.
 
-                //log::info!("ORDER {order}: FIRST {base:?}");
+                //info!("ORDER {order}: FIRST {base:?}");
                 append_page(base, &frames[0], order);
 
                 base = base.next_by(pages_for_current_order);
                 frames = &frames[pages_for_current_order..];
             } else {
-                //log::info!("ORDER {order}: FIRST SKIP");
+                //info!("ORDER {order}: FIRST SKIP");
             }
 
             if !frames.is_empty()
@@ -707,12 +707,12 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
                 frames[off].next.store(order as usize, Ordering::Relaxed);
 
-                //log::info!("ORDER {order}: LAST {final_page:?}");
+                //info!("ORDER {order}: LAST {final_page:?}");
                 append_page(final_page, &frames[off], order);
 
                 frames = &frames[..off];
             } else {
-                //log::info!("ORDER {order}: LAST SKIP");
+                //info!("ORDER {order}: LAST SKIP");
             }
 
             if frames.is_empty() {
@@ -730,7 +730,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             }
         }
 
-        //log::info!("SECTION from {:?}, {} pages, array at {:p}", section.base, section.frames.len(), section.frames);
+        //info!("SECTION from {:?}, {} pages, array at {:p}", section.base, section.frames.len(), section.frames);
     }
     for (order, tuple_opt) in last_pages.iter().enumerate() {
         let Some((frame, info)) = tuple_opt else {
@@ -745,7 +745,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
     FREELIST.lock().for_orders = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
     //debug_freelist();
-    log::info!("Initial freelist consistent");
+    info!("Initial freelist consistent");
 }
 
 #[cold]

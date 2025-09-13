@@ -648,10 +648,9 @@ pub fn funmap(virtual_address: usize, length: usize) -> Result<usize> {
 
     let length_aligned = length.next_multiple_of(PAGE_SIZE);
     if length != length_aligned {
-        log::warn!(
+        warn!(
             "funmap passed length {:#x} instead of {:#x}",
-            length,
-            length_aligned
+            length, length_aligned
         );
     }
 

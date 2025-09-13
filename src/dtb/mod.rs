@@ -12,7 +12,6 @@ use fdt::{
     standard_nodes::MemoryRegion,
     Fdt,
 };
-use log::debug;
 use spin::once::Once;
 
 pub static DTB_BINARY: Once<Vec<u8>> = Once::new();
@@ -105,15 +104,15 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
     }
 
     let Some(soc_node) = dt.find_node("/soc") else {
-        log::warn!("failed to find /soc in devicetree");
+        warn!("failed to find /soc in devicetree");
         return;
     };
     let Some(reg) = soc_node.ranges() else {
-        log::warn!("devicetree /soc has no ranges");
+        warn!("devicetree /soc has no ranges");
         return;
     };
     for chunk in reg {
-        log::debug!(
+        debug!(
             "dev mem 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
             chunk.child_bus_address_hi,
             chunk.child_bus_address,

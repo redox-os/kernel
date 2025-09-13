@@ -78,10 +78,10 @@ impl KernelScheme for RootScheme {
                 let new_close = flags & O_EXLOCK == O_EXLOCK;
 
                 if !v2 {
-                    //log::warn!("Context {} opened a v1 scheme", context::current().read().name);
+                    //warn!("Context {} opened a v1 scheme", context::current().read().name);
                 }
                 if !new_close {
-                    /*log::warn!(
+                    /*warn!(
                         "Context {} opened a non-async-close scheme",
                         context::current().read().name
                     );*/

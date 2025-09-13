@@ -306,7 +306,7 @@ interrupt!(aux_timer, || {
 });
 
 interrupt!(lapic_error, || {
-    log::error!("Local apic internal error: ESR={:#0x}", unsafe {
+    error!("Local apic internal error: ESR={:#0x}", unsafe {
         local_apic::the_local_apic().esr()
     });
     unsafe { lapic_eoi() };

@@ -146,7 +146,7 @@ fn align_down(x: usize) -> usize {
 
 pub fn register_memory_region(base: usize, size: usize, kind: BootloaderMemoryKind) {
     if kind != Null && size != 0 {
-        log::debug!("Registering {:?} memory {:X} size {:X}", kind, base, size);
+        debug!("Registering {:?} memory {:X} size {:X}", kind, base, size);
         unsafe { (*MEMORY_MAP.get()).register(base, size, kind) }
     }
 }
@@ -171,12 +171,9 @@ unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: Mem
     unsafe {
         for reservation in (*MEMORY_MAP.get()).non_free() {
             if area.end > reservation.start && area.end <= reservation.end {
-                log::info!(
+                info!(
                     "Memory {:X}:{:X} overlaps with reservation {:X}:{:X}",
-                    area.start,
-                    area.end,
-                    reservation.start,
-                    reservation.end
+                    area.start, area.end, reservation.start, reservation.end
                 );
                 area.end = reservation.start;
             }
@@ -185,12 +182,9 @@ unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: Mem
             }
 
             if area.start >= reservation.start && area.start < reservation.end {
-                log::info!(
+                info!(
                     "Memory {:X}:{:X} overlaps with reservation {:X}:{:X}",
-                    area.start,
-                    area.end,
-                    reservation.start,
-                    reservation.end
+                    area.start, area.end, reservation.start, reservation.end
                 );
                 area.start = reservation.end;
             }
@@ -199,12 +193,9 @@ unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: Mem
             }
 
             if area.start <= reservation.start && area.end > reservation.start {
-                log::info!(
+                info!(
                     "Memory {:X}:{:X} contains reservation {:X}:{:X}",
-                    area.start,
-                    area.end,
-                    reservation.start,
-                    reservation.end
+                    area.start, area.end, reservation.start, reservation.end
                 );
                 debug_assert!(area.start < reservation.start && reservation.end < area.end,
                     "Should've contained reservation entirely: memory block {:X}:{:X} reservation {:X}:{:X}",
@@ -251,14 +242,9 @@ unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: Mem
                 kind: BootloaderMemoryKind::Free,
             };
             if let Some(union) = area.combine(&other) {
-                log::debug!(
+                debug!(
                     "{:X}:{:X} overlaps with area {:X}:{:X}, combining into {:X}:{:X}",
-                    area.start,
-                    area.end,
-                    other.start,
-                    other.end,
-                    union.start,
-                    union.end
+                    area.start, area.end, other.start, other.end, union.start, union.end
                 );
                 area = union;
                 *area_i -= 1; // delete the original memory chunk
@@ -379,11 +365,11 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             }
         }
 
-        log::debug!("Table: {:X}", mapper.table().phys().data());
+        debug!("Table: {:X}", mapper.table().phys().data());
         for i in 0..A::PAGE_ENTRIES {
             if let Some(entry) = mapper.table().entry(i) {
                 if entry.present() {
-                    log::debug!("{}: {:X}", i, entry.data());
+                    debug!("{}: {:X}", i, entry.data());
                 }
             }
         }
@@ -406,7 +392,7 @@ pub unsafe fn init(low_limit: Option<usize>, high_limit: Option<usize>) {
 
         // Copy initial memory map, and page align it
         for area in (*MEMORY_MAP.get()).free() {
-            log::debug!("{:X}:{:X}", area.start, area.end);
+            debug!("{:X}:{:X}", area.start, area.end);
 
             if let Some(area) = area.intersect(&physmem_limit) {
                 add_memory(areas, &mut area_i, area);
@@ -423,12 +409,12 @@ pub unsafe fn init(low_limit: Option<usize>, high_limit: Option<usize>) {
         let mut size = 0;
         for area in areas.iter() {
             if area.size > 0 {
-                log::debug!("{:X?}", area);
+                debug!("{:X?}", area);
                 size += area.size;
             }
         }
 
-        log::info!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
+        info!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
 
         // Create a basic allocator for the first pages
         let mut bump_allocator = BumpAllocator::<CurrentRmmArch>::new(areas, 0);
@@ -437,7 +423,7 @@ pub unsafe fn init(low_limit: Option<usize>, high_limit: Option<usize>) {
 
         // Create the physical memory map
         let offset = bump_allocator.offset();
-        log::info!(
+        info!(
             "Permanently used: {} KB",
             (offset + (KILOBYTE - 1)) / KILOBYTE
         );

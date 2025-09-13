@@ -37,7 +37,7 @@ unsafe fn init_hpet() -> bool {
             Some(ref mut hpet) => {
                 if cfg!(target_arch = "x86") {
                     //TODO: fix HPET on i686
-                    log::warn!("HPET found but implemented on i686");
+                    warn!("HPET found but implemented on i686");
                     return false;
                 }
                 hpet::init(hpet)
@@ -54,21 +54,21 @@ unsafe fn init_hpet() -> bool {
 
 pub unsafe fn init_noncore() {
     unsafe {
-        log::info!("Initializing system timer");
+        info!("Initializing system timer");
 
         #[cfg(feature = "x86_kvm_pv")]
         if tsc::init() {
-            log::info!("TSC used as system clock source");
+            info!("TSC used as system clock source");
         }
 
         if init_hpet() {
-            log::info!("HPET used as system timer");
+            info!("HPET used as system timer");
         } else {
             pit::init();
-            log::info!("PIT used as system timer");
+            info!("PIT used as system timer");
         }
 
-        log::info!("Finished initializing devices");
+        info!("Finished initializing devices");
     }
 }
 

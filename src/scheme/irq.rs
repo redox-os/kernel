@@ -105,7 +105,7 @@ impl IrqScheme {
                     })
                     .collect::<Vec<_>>(),
                 None => {
-                    log::warn!("no MADT found, defaulting to 1 CPU");
+                    warn!("no MADT found, defaulting to 1 CPU");
                     vec![0]
                 }
             }
@@ -180,7 +180,7 @@ impl IrqScheme {
                 let irq_number = IRQ_CHIP
                     .irq_xlate(ic_idx, addr.as_slice())
                     .or(Err(Error::new(ENOENT)))?;
-                log::debug!("open_phandle_irq  virq={}", irq_number);
+                debug!("open_phandle_irq  virq={}", irq_number);
                 if flags & O_STAT == 0 {
                     if is_reserved(LogicalCpuId::new(0), irq_number as u8) {
                         return Err(Error::new(EEXIST));

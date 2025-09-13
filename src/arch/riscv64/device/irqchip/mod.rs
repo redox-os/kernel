@@ -17,7 +17,7 @@ pub fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> {
     } else if ic_str.contains("riscv,plic0") || ic_str.contains("sifive,plic-1.0.0") {
         Some(Box::new(plic::Plic::new()))
     } else {
-        log::warn!("no driver for interrupt controller {:?}", ic_str);
+        warn!("no driver for interrupt controller {:?}", ic_str);
         None
     }
 }

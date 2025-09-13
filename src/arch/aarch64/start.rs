@@ -6,7 +6,6 @@ use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 use fdt::Fdt;
-use log::info;
 
 use crate::{
     allocator,
@@ -105,12 +104,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 device::serial::init_early(dtb);
             }
 
-            // Initialize logger
-            crate::log::init_logger(|r| {
-                println!("{}:{} -- {}", r.target(), r.level(), r.args());
-            });
-            log::set_max_level(::log::LevelFilter::Debug);
-
             info!("Redox OS starting...");
             info!(
                 "Kernel: {:X}:{:X}",
@@ -205,7 +198,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 }
                 Err(err) => {
                     dtb::init(None);
-                    log::warn!("failed to parse DTB: {}", err);
+                    warn!("failed to parse DTB: {}", err);
 
                     #[cfg(feature = "acpi")]
                     {

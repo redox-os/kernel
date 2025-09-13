@@ -70,7 +70,7 @@ pub fn register_kstop() -> bool {
     }
 
     if waiters_awoken == 0 {
-        log::error!("No userspace ACPI handler was notified when trying to shutdown. This is bad.");
+        error!("No userspace ACPI handler was notified when trying to shutdown. This is bad.");
         // Let the kernel shutdown without ACPI.
         return false;
     }
@@ -94,7 +94,7 @@ impl AcpiScheme {
                 Some(RxsdtEnum::Rsdt(rsdt)) => rsdt.as_slice(),
                 Some(RxsdtEnum::Xsdt(xsdt)) => xsdt.as_slice(),
                 None => {
-                    log::warn!("expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?");
+                    warn!("expected RXSDT_ENUM to be initialized before AcpiScheme, is ACPI available?");
                     &[]
                 }
             };
@@ -103,7 +103,7 @@ impl AcpiScheme {
         });
 
         if !data_init {
-            log::error!("AcpiScheme::init called multiple times");
+            error!("AcpiScheme::init called multiple times");
         }
     }
 }

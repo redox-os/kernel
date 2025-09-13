@@ -263,13 +263,13 @@ impl AddrSpaceWrapper {
                 .grants
                 .remove(grant_span.base)
                 .expect("grant cannot magically disappear while we hold the lock!");
-            //log::info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
+            //info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
             let intersection = grant_span.intersection(requested_span);
 
             let (before, mut grant, after) = grant
                 .extract(intersection)
                 .expect("failed to extract grant");
-            //log::info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
+            //info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
 
             if let Some(before) = before {
                 guard.grants.insert(before);
@@ -295,7 +295,7 @@ impl AddrSpaceWrapper {
             // think), execute-only memory is also supported.
 
             grant.remap(mapper, &mut flusher, new_flags);
-            //log::info!("Mprotect grant became {:#?}", grant);
+            //info!("Mprotect grant became {:#?}", grant);
             guard.grants.insert(grant);
         }
         Ok(())
@@ -1175,7 +1175,7 @@ impl Grant {
 
         for i in 0..span.count {
             if let Some(info) = get_page_info(phys.next_by(i)) {
-                log::warn!("Driver tried to physmap the allocator-frame {phys:?} (info {info:?})!");
+                warn!("Driver tried to physmap the allocator-frame {phys:?} (info {info:?})!");
                 return Err(Error::new(EPERM));
             }
         }
@@ -1211,7 +1211,7 @@ impl Grant {
         flusher: &mut Flusher,
     ) -> Result<Grant, Enomem> {
         if !span.count.is_power_of_two() {
-            log::warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
+            warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
         }
 
         let alloc_order = span.count.next_power_of_two().trailing_zeros();
@@ -1503,23 +1503,17 @@ impl Grant {
             let prev_span = prev_span.replace(grant_span);
 
             if prev_span.is_none() && src_grant_base > src_base {
-                log::warn!(
+                warn!(
                     "Grant too far away, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}",
-                    prev_span,
-                    src_base,
-                    src_grant_base,
-                    src_grant
+                    prev_span, src_base, src_grant_base, src_grant
                 );
                 return Err(Error::new(EINVAL));
             } else if let Some(prev) = prev_span
                 && prev.end() != src_grant_base
             {
-                log::warn!(
+                warn!(
                     "Hole between grants, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}",
-                    prev_span,
-                    src_base,
-                    src_grant_base,
-                    src_grant
+                    prev_span, src_base, src_grant_base, src_grant
                 );
                 return Err(Error::new(EINVAL));
             }
@@ -1538,12 +1532,12 @@ impl Grant {
         }
 
         let Some(last_span) = prev_span else {
-            log::warn!("Called Grant::borrow, but no grants were there!");
+            warn!("Called Grant::borrow, but no grants were there!");
             return Err(Error::new(EINVAL));
         };
 
         if last_span.end() < src_span.end() {
-            log::warn!("Requested end page too far away from last grant");
+            warn!("Requested end page too far away from last grant");
             return Err(Error::new(EINVAL));
         }
         if eager {
@@ -1828,7 +1822,7 @@ impl Grant {
                     continue;
                 };
                 flush.ignore();
-                //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing(mapper.translate(page.start_address()).unwrap().0));
+                //info!("Remapped page {:?} (frame {:?})", page, Frame::containing(mapper.translate(page.start_address()).unwrap().0));
                 flusher.queue(
                     Frame::containing(phys),
                     None,
@@ -2380,7 +2374,7 @@ pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
 
 pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Result<(), PfError> {
     let Ok(addr_space_lock) = AddrSpace::current() else {
-        log::debug!("User page fault without address space being set.");
+        debug!("User page fault without address space being set.");
         return Err(PfError::Segv);
     };
 
@@ -2402,7 +2396,7 @@ fn correct_inner<'l>(
     let mut flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
-        log::debug!("Lacks grant");
+        debug!("Lacks grant");
         return Err(PfError::Segv);
     };
 
@@ -2414,11 +2408,11 @@ fn correct_inner<'l>(
         AccessMode::Read => (),
 
         AccessMode::Write if !grant_flags.has_write() => {
-            log::debug!("Write, but grant was not PROT_WRITE.");
+            debug!("Write, but grant was not PROT_WRITE.");
             return Err(PfError::Segv);
         }
         AccessMode::InstrFetch if !grant_flags.has_execute() => {
-            log::debug!("Instuction fetch, but grant was not PROT_EXEC.");
+            debug!("Instuction fetch, but grant was not PROT_EXEC.");
             return Err(PfError::Segv);
         }
 
@@ -2596,7 +2590,7 @@ fn correct_inner<'l>(
                     let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
                     // TODO: Should this be called?
-                    log::warn!("Mapped zero page since grant didn't exist");
+                    warn!("Mapped zero page since grant didn't exist");
                     map_zeroed(
                         &mut guard.table.utable,
                         src_page,
@@ -2649,7 +2643,7 @@ fn correct_inner<'l>(
             addr_space = &mut *addr_space_guard;
             flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
 
-            log::info!("Got frame {:?} from external fmap", frame);
+            info!("Got frame {:?} from external fmap", frame);
 
             frame
         }

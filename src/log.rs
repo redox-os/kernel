@@ -1,6 +1,6 @@
 use alloc::collections::VecDeque;
 use core::fmt;
-use spin::{Mutex, MutexGuard, Once};
+use spin::{Mutex, MutexGuard};
 
 use crate::devices::graphical_debug::{DebugDisplay, DEBUG_DISPLAY};
 
@@ -36,39 +36,6 @@ impl Log {
         }
     }
 }
-
-struct RedoxLogger {
-    log_func: fn(&log::Record),
-}
-
-impl ::log::Log for RedoxLogger {
-    fn enabled(&self, _: &log::Metadata<'_>) -> bool {
-        false
-    }
-    fn log(&self, record: &log::Record<'_>) {
-        (self.log_func)(record)
-    }
-    fn flush(&self) {}
-}
-
-pub fn init_logger(log_func: fn(&log::Record)) {
-    let mut called = false;
-    let logger = LOGGER.call_once(|| {
-        ::log::set_max_level(::log::LevelFilter::Info);
-        called = true;
-
-        RedoxLogger { log_func }
-    });
-    if !called {
-        log::error!("Tried to reinitialize the logger, which is not possible. Ignoring.")
-    }
-    match ::log::set_logger(logger) {
-        Ok(_) => log::info!("Logger initialized."),
-        Err(e) => println!("Logger setup failed! error: {}", e),
-    }
-}
-
-static LOGGER: Once<RedoxLogger> = Once::new();
 
 pub struct Writer<'a> {
     log: MutexGuard<'a, Option<Log>>,

@@ -49,7 +49,7 @@ impl DtbScheme {
         });
 
         if !data_init {
-            log::error!("DtbScheme::new called multiple times");
+            error!("DtbScheme::new called multiple times");
         }
     }
 }

@@ -85,7 +85,7 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
                 .load(Ordering::Acquire)
                 .as_ref()
         }) else {
-            log::warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
+            warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };
         while percpublock

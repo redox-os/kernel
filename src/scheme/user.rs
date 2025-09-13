@@ -127,7 +127,7 @@ impl ParsedCqe {
                     flags: EventFlags::from_bits_truncate(packet.c),
                 },
                 _ => {
-                    log::warn!(
+                    warn!(
                         "Unknown scheme -> kernel message {} from {}",
                         packet.a,
                         context::current().read().name
@@ -908,7 +908,7 @@ impl UserInner {
         required_page_count: usize,
         flags: MapFlags,
     ) -> Result<()> {
-        log::info!("REQUEST FMAP");
+        info!("REQUEST FMAP");
 
         let tag = self.next_id()?;
         {
@@ -1008,12 +1008,9 @@ impl UserInner {
                 base_addr,
                 page_count,
             } => {
-                log::info!(
+                info!(
                     "PROVIDE_MAP {:x} {:x} {:?} {:x}",
-                    tag,
-                    offset,
-                    base_addr,
-                    page_count
+                    tag, offset, base_addr, page_count
                 );
 
                 if offset % PAGE_SIZE as u64 != 0 {
@@ -1259,7 +1256,7 @@ impl UserInner {
         let base_page_opt = match response {
             Response::Regular(code, _) => (!mapping_is_lazy).then_some(Error::demux(code)?),
             Response::Fd(_) => {
-                log::debug!("Scheme incorrectly returned an fd for fmap.");
+                debug!("Scheme incorrectly returned an fd for fmap.");
 
                 return Err(Error::new(EIO));
             }
@@ -1382,7 +1379,7 @@ impl UserInner {
         if metadata.is_empty() {
             return Err(Error::new(EINVAL));
         }
-        log::debug!(
+        debug!(
             "call_fdread: payload: {} metadata: {}",
             payload.len(),
             metadata.len()

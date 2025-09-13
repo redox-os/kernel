@@ -1,6 +1,5 @@
 use alloc::boxed::Box;
 use fdt::Fdt;
-use log::info;
 use spin::Mutex;
 use syscall::Mmio;
 
@@ -59,11 +58,9 @@ pub unsafe fn init_early(dtb: &Fdt) {
                     info!("UART {:?} at {:#X} size {:#X}", compatible, virt, size);
                 }
                 None => {
-                    log::warn!(
+                    warn!(
                         "UART {:?} at {:#X} size {:#X}: no driver found",
-                        compatible,
-                        virt,
-                        size
+                        compatible, virt, size
                     );
                 }
             }
