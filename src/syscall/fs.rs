@@ -28,11 +28,14 @@ pub fn file_op_generic_ext<T>(
     fd: FileHandle,
     op: impl FnOnce(&dyn KernelScheme, Arc<RwLock<FileDescription>>, FileDescription) -> Result<T>,
 ) -> Result<T> {
-    let file = context::current()
-        .read()
-        .get_file(fd)
-        .ok_or(Error::new(EBADF))?;
-    let desc = *file.description.read();
+    let (file, desc) = {
+        let file = context::current()
+            .read()
+            .get_file(fd)
+            .ok_or(Error::new(EBADF))?;
+        let desc = *file.description.read();
+        (file, desc)
+    };
 
     let scheme = scheme::schemes()
         .get(desc.scheme)
@@ -239,11 +242,14 @@ pub fn close(fd: FileHandle) -> Result<()> {
 }
 
 fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescriptor> {
-    let caller_ctx = context::current().read().caller_ctx();
-    let file = context::current()
-        .read()
-        .get_file(fd)
-        .ok_or(Error::new(EBADF))?;
+    let (caller_ctx, file) = {
+        let context_lock = context::current();
+        let context = context_lock.read();
+        (
+            context.caller_ctx(),
+            context.get_file(fd).ok_or(Error::new(EBADF))?,
+        )
+    };
 
     if user_buf.is_empty() {
         Ok(FileDescriptor {
@@ -251,7 +257,7 @@ fn duplicate_file(fd: FileHandle, user_buf: UserSliceRo) -> Result<FileDescripto
             cloexec: false,
         })
     } else {
-        let description = file.description.read();
+        let description = { *file.description.read() };
 
         let new_description = {
             let scheme = scheme::schemes()

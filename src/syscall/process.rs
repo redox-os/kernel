@@ -56,7 +56,9 @@ pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
             EventFlags::EVENT_READ,
         );
     }
-    let _ = context::contexts_mut().remove(&ContextRef(context_lock));
+    {
+        let _ = context::contexts_mut().remove(&ContextRef(context_lock));
+    }
     context::switch();
     unreachable!();
 }

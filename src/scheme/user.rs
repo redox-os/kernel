@@ -242,8 +242,10 @@ impl UserInner {
     }
 
     fn next_id(&self) -> Result<u32> {
-        let mut states = self.states.lock();
-        let idx = states.insert(State::Placeholder);
+        let idx = {
+            let mut states = self.states.lock();
+            states.insert(State::Placeholder)
+        };
 
         // TODO: implement blocking?
         u32::try_from(idx).map_err(|_| Error::new(EAGAIN))
@@ -255,7 +257,7 @@ impl UserInner {
         args: impl Args,
         caller_responsible: &mut PageSpan,
     ) -> Result<usize> {
-        let ctx = context::current().read().caller_ctx();
+        let ctx = { context::current().read().caller_ctx() };
         match self.call_extended(ctx, None, opcode, args, caller_responsible)? {
             Response::Regular(code, _) => Error::demux(code),
             Response::Fd(_) => Err(Error::new(EIO)),
@@ -300,109 +302,118 @@ impl UserInner {
             return Err(Error::new(ENODEV));
         }
 
-        let current_context = context::current();
-
         {
-            let mut states = self.states.lock();
-            current_context.write().block("UserScheme::call");
-            states[sqe.tag as usize] = State::Waiting {
-                context: Arc::downgrade(&current_context),
-                fds,
-                canceling: false,
-
-                // This is the part that the scheme handler will deallocate when responding. It
-                // starts as empty, so the caller can unmap it (optimal for TLB), but is populated
-                // the caller is interrupted by SIGKILL.
-                callee_responsible: PageSpan::empty(),
+            let current_context = context::current();
+            {
+                current_context.write().block("UserScheme::call")
             };
-            self.todo.send(sqe);
+            {
+                let mut states = self.states.lock();
+                states[sqe.tag as usize] = State::Waiting {
+                    context: Arc::downgrade(&current_context),
+                    fds,
+                    canceling: false,
+
+                    // This is the part that the scheme handler will deallocate when responding. It
+                    // starts as empty, so the caller can unmap it (optimal for TLB), but is populated
+                    // the caller is interrupted by SIGKILL.
+                    callee_responsible: PageSpan::empty(),
+                };
+            }
         }
+        self.todo.send(sqe);
 
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         loop {
             context::switch();
 
-            let mut states = self.states.lock();
+            {
+                let mut eintr_if_sigkill = |callee_responsible: &mut PageSpan| {
+                    // If SIGKILL was found without waiting for scheme, EINTR directly. In that
+                    // case, data loss doesn't matter.
+                    if context::current().read().being_sigkilled {
+                        // Callee must deallocate memory, rather than the caller. This is less optimal
+                        // for TLB, but we don't really have any other choice. The scheme must be able
+                        // to access the borrowed memory until it has responded to the request.
+                        *callee_responsible =
+                            core::mem::replace(caller_responsible, PageSpan::empty());
 
-            let mut eintr_if_sigkill = |callee_responsible: &mut PageSpan| {
-                // If SIGKILL was found without waiting for scheme, EINTR directly. In that
-                // case, data loss doesn't matter.
-                if context::current().read().being_sigkilled {
-                    // Callee must deallocate memory, rather than the caller. This is less optimal
-                    // for TLB, but we don't really have any other choice. The scheme must be able
-                    // to access the borrowed memory until it has responded to the request.
-                    *callee_responsible = core::mem::replace(caller_responsible, PageSpan::empty());
-
-                    Err(Error::new(EINTR))
-                } else {
-                    Ok(())
-                }
-            };
-
-            match states.get_mut(sqe.tag as usize) {
-                // invalid state
-                None => return Err(Error::new(EBADFD)),
-                Some(o) => match mem::replace(o, State::Placeholder) {
-                    // signal wakeup while awaiting cancelation
-                    State::Waiting {
-                        canceling: true,
-                        mut callee_responsible,
-                        context,
-                        fds,
-                    } => {
-                        let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
-                        *o = State::Waiting {
-                            canceling: true,
-                            callee_responsible,
-                            context,
-                            fds,
-                        };
-                        drop(states);
-                        maybe_eintr?;
-
-                        context::current().write().block("UserInner::call");
+                        Err(Error::new(EINTR))
+                    } else {
+                        Ok(())
                     }
-                    // spurious wakeup
-                    State::Waiting {
-                        canceling: false,
-                        fds,
-                        context,
-                        mut callee_responsible,
-                    } => {
-                        let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
-                        *o = State::Waiting {
-                            canceling: true,
-                            fds,
-                            context,
-                            callee_responsible,
-                        };
+                };
 
-                        drop(states);
-                        maybe_eintr?;
-
-                        // TODO: Is this too dangerous when the states lock is held?
-                        self.todo.send(Sqe {
-                            opcode: Opcode::Cancel as u8,
-                            sqe_flags: SqeFlags::ONEWAY,
-                            tag: sqe.tag,
-                            ..Default::default()
-                        });
-                        event::trigger(self.root_id, self.handle_id, EVENT_READ);
-                        context::current().write().block("UserInner::call");
-                    }
-
+                let mut states = self.states.lock();
+                match states.get_mut(sqe.tag as usize) {
                     // invalid state
-                    old_state @ (State::Placeholder | State::Fmap(_)) => {
-                        *o = old_state;
-                        return Err(Error::new(EBADFD));
-                    }
+                    None => return Err(Error::new(EBADFD)),
+                    Some(o) => match mem::replace(o, State::Placeholder) {
+                        // signal wakeup while awaiting cancelation
+                        State::Waiting {
+                            canceling: true,
+                            mut callee_responsible,
+                            context,
+                            fds,
+                        } => {
+                            let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
+                            *o = State::Waiting {
+                                canceling: true,
+                                callee_responsible,
+                                context,
+                                fds,
+                            };
+                            drop(states);
+                            maybe_eintr?;
 
-                    State::Responded(response) => {
-                        states.remove(sqe.tag as usize);
-                        return Ok(response);
-                    }
-                },
+                            {
+                                context::current().write().block("UserInner::call")
+                            };
+                        }
+                        // spurious wakeup
+                        State::Waiting {
+                            canceling: false,
+                            fds,
+                            context,
+                            mut callee_responsible,
+                        } => {
+                            let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
+                            *o = State::Waiting {
+                                canceling: true,
+                                fds,
+                                context,
+                                callee_responsible,
+                            };
+
+                            drop(states);
+                            maybe_eintr?;
+
+                            // TODO: Is this too dangerous when the states lock is held?
+                            self.todo.send(Sqe {
+                                opcode: Opcode::Cancel as u8,
+                                sqe_flags: SqeFlags::ONEWAY,
+                                tag: sqe.tag,
+                                ..Default::default()
+                            });
+                            event::trigger(self.root_id, self.handle_id, EVENT_READ);
+                            {
+                                context::current().write().block("UserInner::call")
+                            };
+                        }
+
+                        // invalid state
+                        old_state @ (State::Placeholder | State::Fmap(_)) => {
+                            *o = old_state;
+                            return Err(Error::new(EBADFD));
+                        }
+
+                        State::Responded(response) => {
+                            states.remove(sqe.tag as usize);
+                            return Ok(response);
+                        }
+                    },
+                }
             }
         }
     }
@@ -417,13 +428,15 @@ impl UserInner {
         UserInner::capture_inner(&self.context, buf)
     }
     pub fn copy_and_capture_tail(&self, buf: &[u8]) -> Result<CaptureGuard<false, false>> {
-        let dst_addr_space = Arc::clone(
-            self.context
-                .upgrade()
-                .ok_or(Error::new(ENODEV))?
-                .read()
-                .addr_space()?,
-        );
+        let dst_addr_space = {
+            Arc::clone(
+                self.context
+                    .upgrade()
+                    .ok_or(Error::new(ENODEV))?
+                    .read()
+                    .addr_space()?,
+            )
+        };
 
         let mut tail = BorrowedHtBuf::tail()?;
         let tail_frame = tail.frame();
@@ -433,16 +446,18 @@ impl UserInner {
         tail.buf_mut()[..buf.len()].copy_from_slice(buf);
 
         let is_pinned = true;
-        let dst_page = dst_addr_space.acquire_write().mmap_anywhere(
-            &dst_addr_space,
-            ONE,
-            PROT_READ,
-            |dst_page, flags, mapper, flusher| {
-                Ok(Grant::allocated_shared_one_page(
-                    tail_frame, dst_page, flags, mapper, flusher, is_pinned,
-                )?)
-            },
-        )?;
+        let dst_page = {
+            dst_addr_space.acquire_write().mmap_anywhere(
+                &dst_addr_space,
+                ONE,
+                PROT_READ,
+                |dst_page, flags, mapper, flusher| {
+                    Ok(Grant::allocated_shared_one_page(
+                        tail_frame, dst_page, flags, mapper, flusher, is_pinned,
+                    )?)
+                },
+            )?
+        };
 
         let base = dst_page.start_address().data();
         let len = buf.len();
@@ -507,13 +522,15 @@ impl UserInner {
         }
 
         let cur_space_lock = AddrSpace::current()?;
-        let dst_space_lock = Arc::clone(
-            context_weak
-                .upgrade()
-                .ok_or(Error::new(ESRCH))?
-                .read()
-                .addr_space()?,
-        );
+        let dst_space_lock = {
+            Arc::clone(
+                context_weak
+                    .upgrade()
+                    .ok_or(Error::new(ESRCH))?
+                    .read()
+                    .addr_space()?,
+            )
+        };
 
         if Arc::ptr_eq(&dst_space_lock, &cur_space_lock) {
             // Same address space, no need to remap anything!
@@ -894,8 +911,10 @@ impl UserInner {
         log::info!("REQUEST FMAP");
 
         let tag = self.next_id()?;
-        let mut states = self.states.lock();
-        states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
+        {
+            let mut states = self.states.lock();
+            states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
+        }
 
         /*self.todo.send(Packet {
             id: packet_id,
@@ -920,7 +939,7 @@ impl UserInner {
                 0,
                 uid_gid_hack_merge(current_uid_gid()),
             ],
-            caller: context::current().read().pid as u64,
+            caller: { context::current().read().pid as u64 },
         });
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
@@ -933,13 +952,13 @@ impl UserInner {
             }
             ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
                 tag,
-                Response::Fd(
+                Response::Fd({
                     context::current()
                         .read()
                         .remove_file(FileHandle::from(fd))
                         .ok_or(Error::new(EINVAL))?
-                        .description,
-                ),
+                        .description
+                }),
             )?,
             ParsedCqe::ResponseWithMultipleFds { tag, num_fds } => {
                 self.respond(tag, Response::MultipleFds(None))?;
@@ -949,16 +968,18 @@ impl UserInner {
                 flags,
                 dst_fd_or_ptr,
             } => {
-                let description = match self
-                    .states
-                    .lock()
-                    .get_mut(tag as usize)
-                    .ok_or(Error::new(EINVAL))?
-                {
-                    &mut State::Waiting { ref mut fds, .. } => {
-                        fds.take().ok_or(Error::new(ENOENT))?.remove(0)
+                let description = {
+                    match self
+                        .states
+                        .lock()
+                        .get_mut(tag as usize)
+                        .ok_or(Error::new(EINVAL))?
+                    {
+                        &mut State::Waiting { ref mut fds, .. } => {
+                            fds.take().ok_or(Error::new(ENOENT))?.remove(0)
+                        }
+                        _ => return Err(Error::new(ENOENT)),
                     }
-                    _ => return Err(Error::new(ENOENT)),
                 };
 
                 // FIXME: Description can leak if there is no additional file table space.
@@ -1009,7 +1030,6 @@ impl UserInner {
 
                 let context = {
                     let mut states = self.states.lock();
-
                     match states.get_mut(tag as usize) {
                         Some(o) => match mem::replace(o, State::Placeholder) {
                             // invalid state
@@ -1039,14 +1059,16 @@ impl UserInner {
                     .translate(base_addr)
                     .ok_or(Error::new(EFAULT))?;
 
-                let mut context = context.write();
-                match context.status {
-                    Status::HardBlocked {
-                        reason: HardBlockedReason::AwaitingMmap { .. },
-                    } => context.status = Status::Runnable,
-                    _ => (),
+                {
+                    let mut context = context.write();
+                    match context.status {
+                        Status::HardBlocked {
+                            reason: HardBlockedReason::AwaitingMmap { .. },
+                        } => context.status = Status::Runnable,
+                        _ => (),
+                    }
+                    context.fmap_ret = Some(Frame::containing(frame));
                 }
-                context.fmap_ret = Some(Frame::containing(frame));
             }
             ParsedCqe::TriggerFevent { number, flags } => {
                 event::trigger(self.scheme_id, number, flags)
@@ -1058,69 +1080,73 @@ impl UserInner {
     fn respond(&self, tag: u32, mut response: Response) -> Result<()> {
         let to_close: Vec<FileDescription>;
 
-        let mut states = self.states.lock();
-        match states.get_mut(tag as usize) {
-            Some(o) => match mem::replace(o, State::Placeholder) {
+        {
+            let mut states = self.states.lock();
+            match states.get_mut(tag as usize) {
+                Some(o) => match mem::replace(o, State::Placeholder) {
+                    // invalid state
+                    State::Placeholder => return Err(Error::new(EBADFD)),
+                    // invalid scheme to kernel call
+                    old_state @ (State::Responded(_) | State::Fmap(_)) => {
+                        *o = old_state;
+                        return Err(Error::new(EINVAL));
+                    }
+
+                    State::Waiting {
+                        context,
+                        mut fds,
+                        canceling,
+                        callee_responsible,
+                    } => {
+                        // Convert ECANCELED to EINTR if a request was being canceled (currently always
+                        // due to signals).
+                        if let Response::Regular(ref mut code, _) = response
+                            && canceling
+                            && *code == Error::mux(Err(Error::new(ECANCELED)))
+                        {
+                            *code = Error::mux(Err(Error::new(EINTR)));
+                        }
+
+                        // TODO: Require ECANCELED?
+                        if let Response::Regular(ref mut code, _) = response
+                            && !canceling
+                            && *code == Error::mux(Err(Error::new(EINTR)))
+                        {
+                            // EINTR is valid after cancelation has been requested, but not otherwise.
+                            // This is because the userspace signal trampoline will be invoked after a
+                            // syscall returns EINTR.
+                            *code = Error::mux(Err(Error::new(EIO)));
+                        }
+
+                        if let Response::MultipleFds(ref mut response_fds) = response {
+                            *response_fds = fds.take();
+                        }
+                        to_close = fds
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|f| Arc::try_unwrap(f).ok())
+                            .map(RwLock::into_inner)
+                            .collect();
+
+                        match context.upgrade() {
+                            Some(context) => {
+                                {
+                                    context.write().unblock()
+                                };
+                                *o = State::Responded(response);
+                            }
+                            _ => {
+                                states.remove(tag as usize);
+                            }
+                        }
+
+                        let unpin = true;
+                        AddrSpace::current()?.munmap(callee_responsible, unpin)?;
+                    }
+                },
                 // invalid state
-                State::Placeholder => return Err(Error::new(EBADFD)),
-                // invalid scheme to kernel call
-                old_state @ (State::Responded(_) | State::Fmap(_)) => {
-                    *o = old_state;
-                    return Err(Error::new(EINVAL));
-                }
-
-                State::Waiting {
-                    context,
-                    mut fds,
-                    canceling,
-                    callee_responsible,
-                } => {
-                    // Convert ECANCELED to EINTR if a request was being canceled (currently always
-                    // due to signals).
-                    if let Response::Regular(ref mut code, _) = response
-                        && canceling
-                        && *code == Error::mux(Err(Error::new(ECANCELED)))
-                    {
-                        *code = Error::mux(Err(Error::new(EINTR)));
-                    }
-
-                    // TODO: Require ECANCELED?
-                    if let Response::Regular(ref mut code, _) = response
-                        && !canceling
-                        && *code == Error::mux(Err(Error::new(EINTR)))
-                    {
-                        // EINTR is valid after cancelation has been requested, but not otherwise.
-                        // This is because the userspace signal trampoline will be invoked after a
-                        // syscall returns EINTR.
-                        *code = Error::mux(Err(Error::new(EIO)));
-                    }
-
-                    if let Response::MultipleFds(ref mut response_fds) = response {
-                        *response_fds = fds.take();
-                    }
-                    to_close = fds
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|f| Arc::try_unwrap(f).ok())
-                        .map(RwLock::into_inner)
-                        .collect();
-
-                    match context.upgrade() {
-                        Some(context) => {
-                            context.write().unblock();
-                            *o = State::Responded(response);
-                        }
-                        _ => {
-                            states.remove(tag as usize);
-                        }
-                    }
-
-                    let unpin = true;
-                    AddrSpace::current()?.munmap(callee_responsible, unpin)?;
-                }
-            },
-            // invalid state
-            None => return Err(Error::new(EBADFD)),
+                None => return Err(Error::new(EBADFD)),
+            }
         }
 
         for fd in to_close {
@@ -1167,13 +1193,15 @@ impl UserInner {
             return Err(Error::new(EINVAL));
         }
 
-        let src_address_space = Arc::clone(
-            self.context
-                .upgrade()
-                .ok_or(Error::new(ENODEV))?
-                .read()
-                .addr_space()?,
-        );
+        let src_address_space = {
+            Arc::clone(
+                self.context
+                    .upgrade()
+                    .ok_or(Error::new(ENODEV))?
+                    .read()
+                    .addr_space()?,
+            )
+        };
         if Arc::ptr_eq(&src_address_space, &dst_addr_space) {
             return Err(Error::new(EBUSY));
         }
@@ -1265,24 +1293,26 @@ impl UserInner {
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
-        let dst_base = dst_addr_space.acquire_write().mmap(
-            &dst_addr_space,
-            dst_base,
-            page_count_nz,
-            map.flags,
-            &mut notify_files,
-            |dst_base, flags, mapper, flusher| {
-                Grant::borrow_fmap(
-                    PageSpan::new(dst_base, page_count),
-                    flags,
-                    file_ref,
-                    src,
-                    &dst_addr_space,
-                    mapper,
-                    flusher,
-                )
-            },
-        )?;
+        let dst_base = {
+            dst_addr_space.acquire_write().mmap(
+                &dst_addr_space,
+                dst_base,
+                page_count_nz,
+                map.flags,
+                &mut notify_files,
+                |dst_base, flags, mapper, flusher| {
+                    Grant::borrow_fmap(
+                        PageSpan::new(dst_base, page_count),
+                        flags,
+                        file_ref,
+                        src,
+                        &dst_addr_space,
+                        mapper,
+                        flusher,
+                    )
+                },
+            )?
+        };
 
         for map in notify_files {
             let _ = map.unmap();
@@ -1671,10 +1701,12 @@ impl KernelScheme for UserScheme {
     }
 
     fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<()> {
-        match context::current().read() {
-            ref cx => {
-                if cx.euid != 0 && (uid != cx.euid || gid != cx.egid) {
-                    return Err(Error::new(EPERM));
+        {
+            match context::current().read() {
+                ref cx => {
+                    if cx.euid != 0 && (uid != cx.euid || gid != cx.egid) {
+                        return Err(Error::new(EPERM));
+                    }
                 }
             }
         }
@@ -1945,7 +1977,7 @@ impl KernelScheme for UserScheme {
     fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        let ctx = context::current().read().caller_ctx();
+        let ctx = { context::current().read().caller_ctx() };
         let res = inner.call_extended(
             ctx,
             None,
@@ -1970,7 +2002,7 @@ impl KernelScheme for UserScheme {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let mut address = inner.capture_user(payload)?;
-        let ctx = context::current().read().caller_ctx();
+        let ctx = { context::current().read().caller_ctx() };
 
         let mut sqe = Sqe {
             opcode: Opcode::Call as u8,
@@ -2015,7 +2047,7 @@ impl KernelScheme for UserScheme {
             sendfd_flags |= SendFdFlags::EXCLUSIVE;
         }
 
-        let ctx = context::current().read().caller_ctx();
+        let ctx = { context::current().read().caller_ctx() };
         let len = descs.len();
         let res = inner.call_extended(
             ctx,
@@ -2048,7 +2080,7 @@ impl KernelScheme for UserScheme {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
 
-        let ctx = context::current().read().caller_ctx();
+        let ctx = { context::current().read().caller_ctx() };
         let len = payload.len() / mem::size_of::<usize>();
         let res = inner.call_extended(
             ctx,

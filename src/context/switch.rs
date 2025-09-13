@@ -51,11 +51,6 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
         return UpdateResult::Skip;
     }
 
-    //TODO: HACK TO WORKAROUND HANGS BY PINNING TO ONE CPU
-    if !context.cpu_id.map_or(true, |x| x == cpu_id) {
-        return UpdateResult::Skip;
-    }
-
     // If context is soft-blocked and has a wake-up time, check if it should wake up.
     if context.status.is_soft_blocked() {
         if let Some(wake) = context.wake {
@@ -204,17 +199,19 @@ pub fn switch() -> SwitchResult {
                 continue;
             }
 
-            // Lock next context
-            let mut next_context_guard = next_context_lock.write_arc();
-
-            // Check if the context is runnable and can be switched to.
-            if let UpdateResult::CanSwitch =
-                unsafe { update_runnable(&mut *next_context_guard, cpu_id) }
             {
-                // Store locks for previous and next context and break out from loop
-                // for the switch
-                switch_context_opt = Some((prev_context_guard, next_context_guard));
-                break;
+                // Lock next context
+                let mut next_context_guard = next_context_lock.write_arc();
+
+                // Check if the context is runnable and can be switched to.
+                if let UpdateResult::CanSwitch =
+                    unsafe { update_runnable(&mut *next_context_guard, cpu_id) }
+                {
+                    // Store locks for previous and next context and break out from loop
+                    // for the switch
+                    switch_context_opt = Some((prev_context_guard, next_context_guard));
+                    break;
+                }
             }
         }
     };

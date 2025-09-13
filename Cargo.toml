@@ -52,7 +52,7 @@ default = [
   #"debugger",
   #TODO: issues with Alder Lake and newer CPUs:
   #This may be because of mismatch between cpu id and apic id
-  #"multi_core",
+  "multi_core",
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",

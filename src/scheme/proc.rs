@@ -76,7 +76,7 @@ fn try_stop_context<T>(
     while running {
         context::switch();
 
-        running = context_ref.read().running;
+        running = { context_ref.read().running };
     }
 
     let mut context = context_ref.write();
