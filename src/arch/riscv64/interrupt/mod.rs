@@ -26,7 +26,7 @@ pub unsafe fn enable() {
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
-    unsafe { asm!("csrsi sstatus, 1 << 1", "wfi") }
+    unsafe { asm!("wfi", "csrsi sstatus, 1 << 1", "nop") }
 }
 
 /// Set interrupts and nop

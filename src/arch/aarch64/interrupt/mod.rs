@@ -26,7 +26,7 @@ pub unsafe fn disable() {
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
     unsafe {
-        asm!("msr daifclr, #2", "wfi");
+        asm!("wfi", "msr daifclr, #2", "nop");
     }
 }
 
