@@ -14,6 +14,7 @@ use crate::{
     arch::{device::serial::init_early, interrupt, paging},
     device,
     devices::graphical_debug,
+    interrupt::exception_handler,
     startup::KernelArgs,
 };
 
@@ -60,6 +61,9 @@ global_asm!("
         auipc   sp, %pcrel_hi({stack}+{stack_size}-16)
         addi    sp, sp, %pcrel_lo(.Lpcrel_hi0)
 
+        la t0, {exception_handler} // WARL=0 - direct mode combined handler
+        csrw stvec, t0
+
         li ra, 0
         j {start}
 
@@ -68,6 +72,7 @@ global_asm!("
     ",
     bss_test_zero = sym BSS_TEST_ZERO,
     data_test_nonzero = sym DATA_TEST_NONZERO,
+    exception_handler = sym exception_handler,
     stack = sym STACK,
     stack_size = const size_of_val(&STACK),
     start = sym start,
@@ -101,8 +106,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             if let Some(dtb) = &dtb {
                 device::dump_fdt(&dtb);
             }
-
-            interrupt::init();
 
             // Initialize RMM
             crate::startup::memory::init(&args, None, None);
