@@ -65,6 +65,10 @@ pub unsafe fn stack_trace() {
     unsafe {
         let mapper = KernelMapper::lock();
 
+        let kernel_ptr = crate::KERNEL_OFFSET as *const u8;
+        let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
+        let obj = ElfFile::<NativeEndian>::parse(kernel_slice).unwrap();
+
         let mut frame = StackTrace::start();
 
         //Maximum 64 frames
@@ -85,7 +89,27 @@ pub unsafe fn stack_trace() {
                         break;
                     } else {
                         println!("  FP {:>016x}: PC {:>016x}", frame_.fp, pc);
-                        symbol_trace(pc);
+
+                        for sym in obj.symbols() {
+                            if sym.elf_symbol().st_type() != STT_FUNC {
+                                continue;
+                            }
+                            if !(pc >= sym.address() as usize
+                                && pc < (sym.address() + sym.size()) as usize)
+                            {
+                                continue;
+                            }
+
+                            println!(
+                                "    {:>016X}+{:>04X}",
+                                sym.address(),
+                                pc - sym.address() as usize
+                            );
+
+                            if let Ok(sym_name) = sym.name() {
+                                println!("    {:#}", demangle(sym_name));
+                            }
+                        }
                         frame = frame_.next();
                     }
                 } else {
@@ -94,36 +118,6 @@ pub unsafe fn stack_trace() {
                 }
             } else {
                 break;
-            }
-        }
-    }
-}
-///
-/// Get a symbol
-//TODO: Do not create Elf object for every symbol lookup
-#[inline(never)]
-pub unsafe fn symbol_trace(addr: usize) {
-    unsafe {
-        let kernel_ptr = crate::KERNEL_OFFSET as *const u8;
-        let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
-
-        let obj = ElfFile::<NativeEndian>::parse(kernel_slice).unwrap();
-        for sym in obj.symbols() {
-            if sym.elf_symbol().st_type() != STT_FUNC {
-                continue;
-            }
-            if !(addr >= sym.address() as usize && addr < (sym.address() + sym.size()) as usize) {
-                continue;
-            }
-
-            println!(
-                "    {:>016X}+{:>04X}",
-                sym.address(),
-                addr - sym.address() as usize
-            );
-
-            if let Ok(sym_name) = sym.name() {
-                println!("    {:#}", demangle(sym_name));
             }
         }
     }
