@@ -73,52 +73,49 @@ pub unsafe fn stack_trace() {
 
         //Maximum 64 frames
         for _ in 0..64 {
-            if let Some(frame_) = frame {
-                let fp_virt = VirtualAddress::new(frame_.fp);
-                let pc_virt = VirtualAddress::new(frame_.pc_ptr as usize);
-                if fp_virt.data() >= USER_END_OFFSET
-                    && pc_virt.data() >= USER_END_OFFSET
-                    && (fp_virt.data() as *const usize).is_aligned()
-                    && (pc_virt.data() as *const usize).is_aligned()
-                    && mapper.translate(fp_virt).is_some()
-                    && mapper.translate(pc_virt).is_some()
-                {
-                    let pc = *frame_.pc_ptr;
-                    if pc == 0 {
-                        println!(" {:>016x}: EMPTY RETURN", frame_.fp);
-                        break;
-                    } else {
-                        println!("  FP {:>016x}: PC {:>016x}", frame_.fp, pc);
-
-                        for sym in obj.symbols() {
-                            if sym.elf_symbol().st_type() != STT_FUNC {
-                                continue;
-                            }
-                            if !(pc >= sym.address() as usize
-                                && pc < (sym.address() + sym.size()) as usize)
-                            {
-                                continue;
-                            }
-
-                            println!(
-                                "    {:>016X}+{:>04X}",
-                                sym.address(),
-                                pc - sym.address() as usize
-                            );
-
-                            if let Ok(sym_name) = sym.name() {
-                                println!("    {:#}", demangle(sym_name));
-                            }
-                        }
-                        frame = frame_.next();
-                    }
-                } else {
-                    println!("  {:>016x}: GUARD PAGE", frame_.fp);
-                    break;
-                }
-            } else {
+            let Some(frame_) = frame else {
+                break;
+            };
+            let fp_virt = VirtualAddress::new(frame_.fp);
+            let pc_virt = VirtualAddress::new(frame_.pc_ptr as usize);
+            if !(fp_virt.data() >= USER_END_OFFSET
+                && pc_virt.data() >= USER_END_OFFSET
+                && (fp_virt.data() as *const usize).is_aligned()
+                && (pc_virt.data() as *const usize).is_aligned()
+                && mapper.translate(fp_virt).is_some()
+                && mapper.translate(pc_virt).is_some())
+            {
+                println!("  {:>016x}: GUARD PAGE", frame_.fp);
                 break;
             }
+
+            let pc = *frame_.pc_ptr;
+            if pc == 0 {
+                println!(" {:>016x}: EMPTY RETURN", frame_.fp);
+                break;
+            }
+
+            println!("  FP {:>016x}: PC {:>016x}", frame_.fp, pc);
+
+            for sym in obj.symbols() {
+                if sym.elf_symbol().st_type() != STT_FUNC {
+                    continue;
+                }
+                if !(pc >= sym.address() as usize && pc < (sym.address() + sym.size()) as usize) {
+                    continue;
+                }
+
+                println!(
+                    "    {:>016X}+{:>04X}",
+                    sym.address(),
+                    pc - sym.address() as usize
+                );
+
+                if let Ok(sym_name) = sym.name() {
+                    println!("    {:#}", demangle(sym_name));
+                }
+            }
+            frame = frame_.next();
         }
     }
 }
