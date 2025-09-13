@@ -1,15 +1,18 @@
 //! Intrinsics for panic handling
 
-use core::{panic::PanicInfo, slice, str, sync::atomic::Ordering};
-use goblin::elf::sym;
+use core::{panic::PanicInfo, slice, sync::atomic::Ordering};
+
+#[cfg(target_pointer_width = "32")]
+use object::read::elf::ElfFile32 as ElfFile;
+#[cfg(target_pointer_width = "64")]
+use object::read::elf::ElfFile64 as ElfFile;
+use object::{elf::STT_FUNC, NativeEndian, Object, ObjectSymbol};
 use rmm::VirtualAddress;
 use rustc_demangle::demangle;
 
 use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
-    context, cpu_id,
-    elf::Elf,
-    interrupt,
+    context, cpu_id, interrupt,
     memory::KernelMapper,
     start::KERNEL_SIZE,
     syscall,
@@ -104,47 +107,23 @@ pub unsafe fn symbol_trace(addr: usize) {
         let kernel_ptr = crate::KERNEL_OFFSET as *const u8;
         let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
 
-        if let Ok(elf) = Elf::from(kernel_slice) {
-            let mut strtab_opt = None;
-            for section in elf.sections() {
-                if section.sh_type == ::goblin::elf::section_header::SHT_STRTAB {
-                    strtab_opt = Some(section);
-                    break;
-                }
+        let obj = ElfFile::<NativeEndian>::parse(kernel_slice).unwrap();
+        for sym in obj.symbols() {
+            if sym.elf_symbol().st_type() != STT_FUNC {
+                continue;
+            }
+            if !(addr >= sym.address() as usize && addr < (sym.address() + sym.size()) as usize) {
+                continue;
             }
 
-            if let Some(symbols) = elf.symbols() {
-                for sym in symbols {
-                    if sym::st_type(sym.st_info) == sym::STT_FUNC
-                        && addr >= sym.st_value as usize
-                        && addr < (sym.st_value + sym.st_size) as usize
-                    {
-                        println!(
-                            "    {:>016X}+{:>04X}",
-                            sym.st_value,
-                            addr - sym.st_value as usize
-                        );
+            println!(
+                "    {:>016X}+{:>04X}",
+                sym.address(),
+                addr - sym.address() as usize
+            );
 
-                        if let Some(strtab) = strtab_opt {
-                            let start = strtab.sh_offset as usize + sym.st_name as usize;
-                            let mut end = start;
-                            while end < elf.data.len() {
-                                let b = elf.data[end];
-                                end += 1;
-                                if b == 0 {
-                                    break;
-                                }
-                            }
-
-                            if end > start {
-                                let sym_slice = &elf.data[start..end - 1];
-                                if let Ok(sym_name) = str::from_utf8(sym_slice) {
-                                    println!("    {:#}", demangle(sym_name));
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Ok(sym_name) = sym.name() {
+                println!("    {:#}", demangle(sym_name));
             }
         }
     }

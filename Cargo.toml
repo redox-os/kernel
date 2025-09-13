@@ -25,10 +25,10 @@ slab = { version = "0.4", default-features = false }
 # TODO: Remove
 indexmap = { version = "2.5.0", default-features = false }
 
-[dependencies.goblin]
-version = "0.2.1"
+[dependencies.object]
+version = "0.37.1"
 default-features = false
-features = ["elf32", "elf64"]
+features = ["read_core", "elf"]
 
 [dependencies.rustc-demangle]
 version = "0.1.16"

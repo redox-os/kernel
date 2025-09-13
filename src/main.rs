@@ -105,9 +105,6 @@ mod debugger;
 /// Architecture-independent devices
 mod devices;
 
-/// ELF file parsing
-mod elf;
-
 /// Event handling
 mod event;
 
