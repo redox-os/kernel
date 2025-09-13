@@ -1,9 +1,10 @@
 //! This function is where the kernel sets up IRQ handlers
-//! It is increcibly unsafe, and should be minimal in nature
+//! It is incredibly unsafe, and should be minimal in nature
 //! It must create the IDT with the correct entries, those entries are
 //! defined in other files inside of the `arch` module
 use core::{
     arch::global_asm,
+    cell::SyncUnsafeCell,
     slice,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -22,6 +23,12 @@ static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
+#[repr(C, align(16))]
+struct StackAlign<T>(T);
+
+static STACK: SyncUnsafeCell<StackAlign<[u8; 128 * 1024]>> =
+    SyncUnsafeCell::new(StackAlign([0; 128 * 1024]));
+
 global_asm!("
     .globl kstart
     kstart:
@@ -33,6 +40,11 @@ global_asm!("
         ldr x9, [x9, :lo12:{data_test_nonzero}]
         cbz x9, .Lkstart_crash
 
+        adrp x1, {stack}
+        add x1, x1, :lo12:{stack}
+        mov x2, {stack_size}-16
+        add sp, x1, x2
+
         mov lr, 0
         b {start}
 
@@ -42,6 +54,8 @@ global_asm!("
     ",
     bss_test_zero = sym BSS_TEST_ZERO,
     data_test_nonzero = sym DATA_TEST_NONZERO,
+    stack = sym STACK,
+    stack_size = const size_of_val(&STACK),
     start = sym start,
 );
 

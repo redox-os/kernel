@@ -1,5 +1,6 @@
 use core::{
     arch::{asm, global_asm},
+    cell::SyncUnsafeCell,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -36,6 +37,12 @@ fn get_boot_hart_id(env: &[u8]) -> Option<usize> {
     None
 }
 
+#[repr(C, align(16))]
+struct StackAlign<T>(T);
+
+static STACK: SyncUnsafeCell<StackAlign<[u8; 128 * 1024]>> =
+    SyncUnsafeCell::new(StackAlign([0; 128 * 1024]));
+
 global_asm!("
     .globl kstart
     kstart:
@@ -49,6 +56,10 @@ global_asm!("
         ld t0, {data_test_nonzero}
         beqz t0, .Lkstart_crash
 
+    .Lpcrel_hi0:
+        auipc   sp, %pcrel_hi({stack}+{stack_size}-16)
+        addi    sp, sp, %pcrel_lo(.Lpcrel_hi0)
+
         li ra, 0
         j {start}
 
@@ -57,17 +68,14 @@ global_asm!("
     ",
     bss_test_zero = sym BSS_TEST_ZERO,
     data_test_nonzero = sym DATA_TEST_NONZERO,
+    stack = sym STACK,
+    stack_size = const size_of_val(&STACK),
     start = sym start,
 );
 
 /// The entry to Rust, all things must be initialized
 unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
     unsafe {
-        asm!(
-            "sd x0, -16(fp)", // and stop frame walker here
-            "sd x0, -8(fp)",
-        );
-
         let bootstrap = {
             let args = args_ptr.read();
 

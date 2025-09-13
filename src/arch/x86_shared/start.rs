@@ -1,5 +1,5 @@
 //! This function is where the kernel sets up IRQ handlers
-//! It is increcibly unsafe, and should be minimal in nature
+//! It is incredibly unsafe, and should be minimal in nature
 //! It must create the IDT with the correct entries, those entries are
 //! defined in other files inside of the `arch` module
 use core::{
@@ -30,6 +30,12 @@ static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::MAX
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
+#[repr(C, align(16))]
+struct StackAlign<T>(T);
+
+static STACK: SyncUnsafeCell<StackAlign<[u8; 128 * 1024]>> =
+    SyncUnsafeCell::new(StackAlign([0; 128 * 1024]));
+
 #[cfg(target_arch = "x86")]
 global_asm!("
     .globl kstart
@@ -40,6 +46,11 @@ global_asm!("
         cmp dword ptr [{data_test_nonzero}], 0
         je .Lkstart_crash
 
+        mov eax, [esp + 4]
+        lea esp, [{stack}+{stack_size}-16]
+        mov [esp + 4], eax
+        mov [esp + 8], esp
+
         jmp {start}
 
     .Lkstart_crash:
@@ -48,6 +59,8 @@ global_asm!("
     ",
     bss_test_zero = sym BSS_TEST_ZERO,
     data_test_nonzero = sym DATA_TEST_NONZERO,
+    stack = sym STACK,
+    stack_size = const size_of_val(&STACK),
     start = sym start,
 );
 
@@ -61,6 +74,14 @@ global_asm!("
         cmp qword ptr [rip + {data_test_nonzero}], 0
         je .Lkstart_crash
 
+        // Note: The System V ABI requires the stack to be aligned to 16 bytes
+        // before the call instruction. As we jump rather than call it has to
+        // be offset by 8 bytes. Additionally reserve a bit more space at the
+        // end of the stack to ensure that the start function returns to
+        // address 0.
+        lea rsp, [rip + {stack}+{stack_size}-24]
+        mov rsi, rsp
+
         jmp {start}
 
     .Lkstart_crash:
@@ -69,11 +90,13 @@ global_asm!("
     ",
     bss_test_zero = sym BSS_TEST_ZERO,
     data_test_nonzero = sym DATA_TEST_NONZERO,
+    stack = sym STACK,
+    stack_size = const size_of_val(&STACK),
     start = sym start,
 );
 
 /// The entry to Rust, all things must be initialized
-unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
     unsafe {
         let bootstrap = {
             let args = args_ptr.read();
@@ -88,7 +111,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.print();
 
             // Set up GDT
-            gdt::init_bsp(args.stack_base as usize + args.stack_size as usize);
+            gdt::init_bsp(stack_end);
 
             // Set up IDT
             idt::init_bsp();
