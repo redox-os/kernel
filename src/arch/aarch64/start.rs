@@ -45,6 +45,10 @@ global_asm!("
         mov x2, {stack_size}-16
         add sp, x1, x2
 
+        // Setup interrupt handlers
+        ldr x9, =exception_vector_base
+        msr vbar_el1, x9
+
         mov lr, 0
         b {start}
 
@@ -92,8 +96,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             info!("Redox OS starting...");
             args.print();
-
-            interrupt::init();
 
             // Initialize RMM
             crate::startup::memory::init(&args, None, None);
