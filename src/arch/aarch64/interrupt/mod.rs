@@ -26,8 +26,7 @@ pub unsafe fn disable() {
 #[inline(always)]
 pub unsafe fn enable_and_halt() {
     unsafe {
-        asm!("msr daifclr, #2");
-        asm!("wfi");
+        asm!("msr daifclr, #2", "nop");
     }
 }
 
@@ -37,8 +36,7 @@ pub unsafe fn enable_and_halt() {
 #[inline(always)]
 pub unsafe fn enable_and_nop() {
     unsafe {
-        asm!("msr daifclr, #2");
-        asm!("nop");
+        asm!("msr daifclr, #2", "nop");
     }
 }
 
