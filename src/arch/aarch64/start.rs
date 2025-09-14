@@ -3,6 +3,7 @@
 //! It must create the IDT with the correct entries, those entries are
 //! defined in other files inside of the `arch` module
 use core::{
+    arch::global_asm,
     slice,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -21,18 +22,34 @@ static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
+global_asm!("
+    .globl kstart
+    kstart:
+        // BSS should already be zero
+        adrp x9, {bss_test_zero}
+        ldr x9, [x9, :lo12:{bss_test_zero}]
+        cbnz x9, .Lkstart_crash
+        adrp x9, {data_test_nonzero}
+        ldr x9, [x9, :lo12:{data_test_nonzero}]
+        cbz x9, .Lkstart_crash
+
+        mov lr, 0
+        b {start}
+
+    .Lkstart_crash:
+        mov x9, 0
+        br x9
+    ",
+    bss_test_zero = sym BSS_TEST_ZERO,
+    data_test_nonzero = sym DATA_TEST_NONZERO,
+    start = sym start,
+);
+
 /// The entry to Rust, all things must be initialized
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
+unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
     unsafe {
         let bootstrap = {
             let args = args_ptr.read();
-
-            // BSS should already be zero
-            {
-                assert_eq!(BSS_TEST_ZERO, 0);
-                assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
-            }
 
             // Set up graphical debug
             graphical_debug::init(args.env());

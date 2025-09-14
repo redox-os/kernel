@@ -3,6 +3,7 @@
 //! It must create the IDT with the correct entries, those entries are
 //! defined in other files inside of the `arch` module
 use core::{
+    arch::global_asm,
     cell::SyncUnsafeCell,
     hint,
     sync::atomic::{AtomicBool, Ordering},
@@ -29,18 +30,53 @@ static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::max
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_arch = "x86")]
+global_asm!("
+    .globl kstart
+    kstart:
+        // BSS should already be zero
+        cmp dword ptr [{bss_test_zero}], 0
+        jne .Lkstart_crash
+        cmp dword ptr [{data_test_nonzero}], 0
+        je .Lkstart_crash
+
+        jmp {start}
+
+    .Lkstart_crash:
+        mov eax, 0
+        jmp eax
+    ",
+    bss_test_zero = sym BSS_TEST_ZERO,
+    data_test_nonzero = sym DATA_TEST_NONZERO,
+    start = sym start,
+);
+
+#[cfg(target_arch = "x86_64")]
+global_asm!("
+    .globl kstart
+    kstart:
+        // BSS should already be zero
+        cmp qword ptr [rip + {bss_test_zero}], 0
+        jne .Lkstart_crash
+        cmp qword ptr [rip + {data_test_nonzero}], 0
+        je .Lkstart_crash
+
+        jmp {start}
+
+    .Lkstart_crash:
+        mov rax, 0
+        jmp rax
+    ",
+    bss_test_zero = sym BSS_TEST_ZERO,
+    data_test_nonzero = sym DATA_TEST_NONZERO,
+    start = sym start,
+);
+
 /// The entry to Rust, all things must be initialized
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
+unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
     unsafe {
         let bootstrap = {
             let args = args_ptr.read();
-
-            // BSS should already be zero
-            {
-                assert_eq!(BSS_TEST_ZERO.get().read(), 0);
-                assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
-            }
 
             // Set up serial debug
             device::serial::init();
@@ -123,8 +159,6 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
     unsafe {
         let cpu_id = {
             let args = &*args_ptr;
-            assert_eq!(BSS_TEST_ZERO.get().read(), 0);
-            assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
 
             // Set up GDT
             gdt::install_pcr(args.pcr_ptr);
