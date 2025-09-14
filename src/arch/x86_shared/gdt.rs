@@ -1,6 +1,14 @@
 //! Global descriptor table
 
-use core::{convert::TryInto, mem::size_of};
+#[cfg(target_arch = "x86")]
+use x86::bits32::task::TaskStateSegment;
+#[cfg(target_arch = "x86_64")]
+use x86::bits64::task::TaskStateSegment;
+use x86::{
+    dtables::{self, DescriptorTablePointer},
+    segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector},
+    task, Ring,
+};
 
 use crate::{
     cpu_set::LogicalCpuId,
@@ -8,20 +16,24 @@ use crate::{
     percpu::PercpuBlock,
 };
 
-use x86::{
-    bits64::task::TaskStateSegment,
-    dtables::{self, DescriptorTablePointer},
-    segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector},
-    task, Ring,
-};
-
 pub const GDT_NULL: usize = 0;
 pub const GDT_KERNEL_CODE: usize = 1;
 pub const GDT_KERNEL_DATA: usize = 2;
+#[cfg(target_arch = "x86")]
+pub const GDT_KERNEL_PERCPU: usize = 3;
+#[cfg(target_arch = "x86_64")]
 pub const GDT_USER_CODE32_UNUSED: usize = 3;
 pub const GDT_USER_DATA: usize = 4;
 pub const GDT_USER_CODE: usize = 5;
+#[cfg(target_arch = "x86")]
+pub const GDT_USER_FS: usize = 6;
+#[cfg(target_arch = "x86")]
+pub const GDT_USER_GS: usize = 7;
+#[cfg(target_arch = "x86")]
+pub const GDT_TSS: usize = 8;
+#[cfg(target_arch = "x86_64")]
 pub const GDT_TSS: usize = 6;
+#[cfg(target_arch = "x86_64")]
 pub const GDT_TSS_HIGH: usize = 7;
 
 pub const GDT_A_PRESENT: u8 = 1 << 7;
@@ -44,44 +56,68 @@ pub const GDT_F_LONG_MODE: u8 = 1 << 5;
 
 const IOBITMAP_SIZE: u32 = 65536 / 8;
 
+#[cfg(target_arch = "x86")]
+const SEGMENT_LIMIT: u32 = 0xFFFFF;
+#[cfg(target_arch = "x86_64")]
+const SEGMENT_LIMIT: u32 = 0;
+
+#[cfg(target_arch = "x86")]
+const SEGMENT_FLAGS: u8 = GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE;
+#[cfg(target_arch = "x86_64")]
+const SEGMENT_FLAGS: u8 = GDT_F_LONG_MODE;
+
 static INIT_GDT: [GdtEntry; 3] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
     GdtEntry::new(
         0,
-        0,
+        SEGMENT_LIMIT,
         GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
-        GDT_F_LONG_MODE,
+        SEGMENT_FLAGS,
     ),
     // Kernel data
     GdtEntry::new(
         0,
-        0,
+        SEGMENT_LIMIT,
         GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
-        GDT_F_LONG_MODE,
+        SEGMENT_FLAGS,
     ),
 ];
 
+#[cfg(target_arch = "x86")]
+const SEGMENT_COUNT: usize = 9;
+#[cfg(target_arch = "x86_64")]
+const SEGMENT_COUNT: usize = 8;
+
 // Later copied into the actual GDT with various fields set.
-const BASE_GDT: [GdtEntry; 8] = [
+const BASE_GDT: [GdtEntry; SEGMENT_COUNT] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
     GdtEntry::new(
         0,
-        0,
+        SEGMENT_LIMIT,
         GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
-        GDT_F_LONG_MODE,
+        SEGMENT_FLAGS,
     ),
     // Kernel data
     GdtEntry::new(
         0,
-        0,
+        SEGMENT_LIMIT,
         GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
-        GDT_F_LONG_MODE,
+        SEGMENT_FLAGS,
+    ),
+    // Kernel TLS
+    #[cfg(target_arch = "x86")]
+    GdtEntry::new(
+        0,
+        SEGMENT_LIMIT,
+        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        SEGMENT_FLAGS,
     ),
     // Dummy 32-bit user code - apparently necessary for SYSRET. We restrict it to ring 0 anyway.
+    #[cfg(target_arch = "x86_64")]
     GdtEntry::new(
         0,
         0,
@@ -91,23 +127,41 @@ const BASE_GDT: [GdtEntry; 8] = [
     // User data
     GdtEntry::new(
         0,
-        0,
+        SEGMENT_LIMIT,
         GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
-        GDT_F_LONG_MODE,
+        SEGMENT_FLAGS,
     ),
-    // User (64-bit) code
+    // User code
     GdtEntry::new(
         0,
-        0,
+        SEGMENT_LIMIT,
         GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
-        GDT_F_LONG_MODE,
+        SEGMENT_FLAGS,
+    ),
+    // User FS (for TLS)
+    #[cfg(target_arch = "x86")]
+    GdtEntry::new(
+        0,
+        SEGMENT_LIMIT,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        SEGMENT_FLAGS,
+    ),
+    // User GS (for TLS)
+    #[cfg(target_arch = "x86")]
+    GdtEntry::new(
+        0,
+        SEGMENT_LIMIT,
+        GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        SEGMENT_FLAGS,
     ),
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
     // TSS must be 16 bytes long, twice the normal size
+    #[cfg(target_arch = "x86_64")]
     GdtEntry::new(0, 0, 0, 0),
 ];
 
+#[cfg(target_arch = "x86_64")]
 #[repr(C, align(16))]
 struct Align([usize; 2]);
 
@@ -120,9 +174,13 @@ pub struct ProcessorControlRegion {
     pub user_rsp_tmp: usize,
     // The GDT *must* be stored in the PCR! The paranoid interrupt handler, lacking a reliable way
     // to correctly obtain GSBASE, uses SGDT to calculate the PCR offset.
-    pub gdt: [GdtEntry; 8],
+    pub gdt: [GdtEntry; SEGMENT_COUNT],
     pub percpu: PercpuBlock,
+    #[cfg(target_arch = "x86_64")]
     _rsvd: Align,
+    #[cfg(target_arch = "x86")]
+    pub tss: TssWrapper,
+    #[cfg(target_arch = "x86_64")]
     pub tss: TaskStateSegment,
 
     // These two fields are read by the CPU, but not currently modified by the kernel. Instead, the
@@ -141,6 +199,12 @@ const _: () = {
     }
 };
 
+// NOTE: Despite not using #[repr(C, packed)], we do know that while there may be some padding
+// inserted before and after the TSS, the main TSS structure will remain intact.
+#[cfg(target_arch = "x86")]
+#[repr(C, align(16))]
+struct TssWrapper(TaskStateSegment);
+
 pub unsafe fn pcr() -> *mut ProcessorControlRegion {
     unsafe {
         // Primitive benchmarking of RDFSBASE and RDGSBASE in userspace, appears to indicate that
@@ -153,6 +217,17 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 }
 
 #[cfg(feature = "pti")]
+#[cfg(target_arch = "x86")]
+pub unsafe fn set_tss_stack(stack: usize) {
+    use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
+    core::ptr::addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+    core::ptr::addr_of_mut!((*pcr()).tss.0.esp0)
+        .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
+    PTI_CONTEXT_STACK = stack;
+}
+
+#[cfg(feature = "pti")]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
     core::ptr::addr_of_mut!((*pcr).tss.rsp[0])
@@ -161,6 +236,16 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
 }
 
 #[cfg(not(feature = "pti"))]
+#[cfg(target_arch = "x86")]
+pub unsafe fn set_tss_stack(stack: usize) {
+    unsafe {
+        core::ptr::addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+        core::ptr::addr_of_mut!((*pcr()).tss.0.esp0).write(stack as u32);
+    }
+}
+
+#[cfg(not(feature = "pti"))]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     unsafe {
         // TODO: If this increases performance, read gs:[offset] directly
@@ -168,6 +253,18 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     }
 }
 
+#[cfg(target_arch = "x86")]
+pub unsafe fn set_userspace_io_allowed(allowed: bool) {
+    unsafe {
+        core::ptr::addr_of_mut!((*pcr()).tss.0.iobp_offset).write(if allowed {
+            size_of::<TaskStateSegment>() as u16
+        } else {
+            0xFFFF
+        });
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed: bool) {
     unsafe {
         let offset = if allowed {
@@ -179,21 +276,36 @@ pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed
     }
 }
 
-// Initialize startup GDT
+/// Initialize a minimal GDT without configuring percpu.
 #[cold]
 pub unsafe fn init() {
     unsafe {
         // Before the kernel can remap itself, it needs to switch to a GDT it controls. Start with a
         // minimal kernel-only GDT.
+
         dtables::lgdt(&DescriptorTablePointer {
             limit: (INIT_GDT.len() * size_of::<GdtEntry>() - 1) as u16,
             base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
         });
 
+        #[cfg(target_arch = "x86")]
+        {
+            // Load the segment descriptors
+            segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+            segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+            segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+            segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+            segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+            segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+        }
+
+        #[cfg(target_arch = "x86_64")]
         load_segments();
     }
 }
+
 #[cold]
+#[cfg(target_arch = "x86_64")]
 unsafe fn load_segments() {
     unsafe {
         segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
@@ -209,51 +321,76 @@ unsafe fn load_segments() {
     }
 }
 
-/// Initialize GDT and PCR.
+/// Initialize GDT and configure percpu.
 #[cold]
 pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
+    let alloc_order = size_of::<ProcessorControlRegion>()
+        .div_ceil(PAGE_SIZE)
+        .next_power_of_two()
+        .trailing_zeros();
+
+    let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
+    let pcr = unsafe {
+        &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion)
+    };
+
+    pcr.self_ref = pcr as *const _ as usize;
+
+    // Setup the GDT.
+    pcr.gdt = BASE_GDT;
+    #[cfg(target_arch = "x86")]
+    pcr.gdt[GDT_KERNEL_PERCPU].set_offset(pcr as *const _ as u32);
+
+    let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
+        limit: const { (SEGMENT_COUNT * size_of::<GdtEntry>() - 1) as u16 },
+        base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
+    };
+
+    #[cfg(target_arch = "x86")]
     unsafe {
-        let alloc_order = size_of::<ProcessorControlRegion>()
-            .div_ceil(PAGE_SIZE)
-            .next_power_of_two()
-            .trailing_zeros();
-        let pcr_frame =
-            crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
-        let pcr =
-            &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion);
+        pcr._all_ones = 0xFF;
+        pcr.tss.0.iobp_offset = 0xFFFF;
+        let tss = &pcr.tss.0 as *const _ as usize as u32;
 
-        pcr.self_ref = pcr as *mut ProcessorControlRegion as usize;
+        pcr.gdt[GDT_TSS].set_offset(tss);
+        pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE as u32);
+    }
 
-        // Setup the GDT.
-        pcr.gdt = BASE_GDT;
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        pcr.tss.iomap_base = 0xFFFF;
+        pcr._all_ones = 0xFF;
 
-        let limit = (pcr.gdt.len() * size_of::<GdtEntry>() - 1)
-            .try_into()
-            .expect("main GDT way too large");
-        let base = pcr.gdt.as_ptr() as *const SegmentDescriptor;
+        let tss = &mut pcr.tss as *mut TaskStateSegment as usize as u64;
+        let tss_lo = (tss & 0xFFFF_FFFF) as u32;
+        let tss_hi = (tss >> 32) as u32;
 
-        let gdtr: DescriptorTablePointer<SegmentDescriptor> =
-            DescriptorTablePointer { limit, base };
+        pcr.gdt[GDT_TSS].set_offset(tss_lo);
+        pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
 
-        {
-            pcr.tss.iomap_base = 0xFFFF;
-            pcr._all_ones = 0xFF;
+        (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
+            .cast::<u32>()
+            .write(tss_hi);
+    }
 
-            let tss = &mut pcr.tss as *mut TaskStateSegment as usize as u64;
-            let tss_lo = (tss & 0xFFFF_FFFF) as u32;
-            let tss_hi = (tss >> 32) as u32;
+    // Load the new GDT, which is correctly located in thread local storage.
+    unsafe { dtables::lgdt(&gdtr) };
 
-            pcr.gdt[GDT_TSS].set_offset(tss_lo);
-            pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
+    #[cfg(target_arch = "x86")]
+    unsafe {
+        // Reload the segment descriptors
+        segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+        segmentation::load_ds(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
+        segmentation::load_es(SegmentSelector::new(GDT_USER_DATA as u16, Ring::Ring3));
+        segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
 
-            (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
-                .cast::<u32>()
-                .write(tss_hi);
-        }
+        // TODO: Use FS for kernel percpu on i686?
+        segmentation::load_fs(SegmentSelector::new(GDT_USER_FS as u16, Ring::Ring0));
+        segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_PERCPU as u16, Ring::Ring0));
+    }
 
-        // Load the new GDT, which is correctly located in thread local storage.
-        dtables::lgdt(&gdtr);
-
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
         // Load segments again, possibly resetting FSBASE and GSBASE.
         load_segments();
 
@@ -267,18 +404,24 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 
         // Set the userspace FSBASE to zero.
         x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
-
-        // Set the stack pointer to use when coming back from userspace.
-        set_tss_stack(pcr, stack_offset);
-
-        // Load the task register
-        task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
-
-        pcr.percpu = PercpuBlock::init(cpu_id);
-
-        crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu);
     }
+
+    // Set the stack pointer to use when coming back from userspace.
+    unsafe {
+        set_tss_stack(
+            #[cfg(target_arch = "x86_64")]
+            pcr,
+            stack_offset,
+        );
+    }
+
+    // Load the task register
+    unsafe { task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0)) };
+
+    pcr.percpu = PercpuBlock::init(cpu_id);
+    unsafe { crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu) };
 }
+
 #[derive(Copy, Clone, Debug)]
 #[repr(C, packed)]
 pub struct GdtEntry {
@@ -300,6 +443,11 @@ impl GdtEntry {
             flags_limith: flags & 0xF0 | ((limit >> 16) as u8) & 0x0F,
             offseth: (offset >> 24) as u8,
         }
+    }
+
+    #[cfg(target_arch = "x86")]
+    pub fn offset(&self) -> u32 {
+        (self.offsetl as u32) | ((self.offsetm as u32) << 16) | ((self.offseth as u32) << 24)
     }
 
     pub fn set_offset(&mut self, offset: u32) {

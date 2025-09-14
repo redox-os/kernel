@@ -8,9 +8,6 @@ pub mod macros;
 /// Constants like memory locations
 pub mod consts;
 
-/// Global descriptor table
-pub mod gdt;
-
 /// Interrupt instructions
 #[macro_use]
 pub mod interrupt;

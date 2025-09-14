@@ -7,6 +7,9 @@ pub mod debug;
 /// Devices
 pub mod device;
 
+/// Global descriptor table
+pub mod gdt;
+
 /// Interrupt descriptor table
 pub mod idt;
 
