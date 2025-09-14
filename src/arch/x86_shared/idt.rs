@@ -18,14 +18,14 @@ use crate::{cpu_set::LogicalCpuId, interrupt::*, ipi::IpiKind};
 
 use spin::RwLock;
 
-pub static INIT_IDT: SyncUnsafeCell<[IdtEntry; 32]> = SyncUnsafeCell::new([IdtEntry::new(); 32]);
+static INIT_IDT: SyncUnsafeCell<[IdtEntry; 32]> = SyncUnsafeCell::new([IdtEntry::new(); 32]);
 
-pub type IdtEntries = [IdtEntry; 256];
-pub type IdtReservations = [AtomicU32; 8];
+type IdtEntries = [IdtEntry; 256];
+type IdtReservations = [AtomicU32; 8];
 
 #[repr(C)]
 pub struct Idt {
-    pub(crate) entries: IdtEntries,
+    entries: IdtEntries,
     reservations: IdtReservations,
 }
 impl Idt {
@@ -36,7 +36,7 @@ impl Idt {
         }
     }
     #[inline]
-    pub fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
+    fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
         let byte_index = index / 32;
         let bit = index % 32;
 
