@@ -1,12 +1,16 @@
 //! Intrinsics for panic handling
 
-use core::{panic::PanicInfo, slice, sync::atomic::Ordering};
+use core::{panic::PanicInfo, slice};
 
 #[cfg(target_pointer_width = "32")]
-use object::read::elf::ElfFile32 as ElfFile;
+use object::elf::FileHeader32 as FileHeader;
 #[cfg(target_pointer_width = "64")]
-use object::read::elf::ElfFile64 as ElfFile;
-use object::{elf::STT_FUNC, NativeEndian, Object, ObjectSymbol};
+use object::elf::FileHeader64 as FileHeader;
+use object::{
+    elf,
+    read::elf::{FileHeader as _, Sym as _},
+    NativeEndian,
+};
 use rmm::VirtualAddress;
 use rustc_demangle::demangle;
 
@@ -14,7 +18,6 @@ use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
     context, cpu_id, interrupt,
     memory::KernelMapper,
-    start::KERNEL_SIZE,
     syscall,
 };
 
@@ -66,8 +69,25 @@ pub unsafe fn stack_trace() {
         let mapper = KernelMapper::lock();
 
         let kernel_ptr = crate::KERNEL_OFFSET as *const u8;
-        let kernel_slice = slice::from_raw_parts(kernel_ptr, KERNEL_SIZE.load(Ordering::SeqCst));
-        let obj = ElfFile::<NativeEndian>::parse(kernel_slice).unwrap();
+        let elf_header: &FileHeader<NativeEndian> = object::pod::from_bytes(slice::from_raw_parts(
+            kernel_ptr,
+            size_of::<FileHeader<NativeEndian>>(),
+        ))
+        .unwrap()
+        .0;
+
+        // This assumes that the linker places .shstrtab as last section. If it
+        // isn't, that just causes a recursive panic, not UB.
+        let kernel_size = elf_header.e_shoff(NativeEndian) as usize
+            + usize::from(elf_header.e_shnum(NativeEndian))
+                * usize::from(elf_header.e_shentsize(NativeEndian));
+        let kernel_slice = slice::from_raw_parts(kernel_ptr, kernel_size);
+
+        let symbols = elf_header
+            .sections(NativeEndian, kernel_slice)
+            .unwrap()
+            .symbols(NativeEndian, kernel_slice, elf::SHT_SYMTAB)
+            .unwrap();
 
         let mut frame = StackTrace::start();
 
@@ -97,21 +117,22 @@ pub unsafe fn stack_trace() {
 
             println!("  FP {:>016x}: PC {:>016x}", frame_.fp, pc);
 
-            for sym in obj.symbols() {
-                if sym.elf_symbol().st_type() != STT_FUNC {
+            for sym in symbols.iter() {
+                if sym.st_type() != elf::STT_FUNC {
                     continue;
                 }
-                if !(pc >= sym.address() as usize && pc < (sym.address() + sym.size()) as usize) {
+                let sym_addr = sym.st_value.get(NativeEndian) as usize;
+                if !(pc >= sym_addr && pc < sym_addr + sym.st_size.get(NativeEndian) as usize) {
                     continue;
                 }
 
-                println!(
-                    "    {:>016X}+{:>04X}",
-                    sym.address(),
-                    pc - sym.address() as usize
-                );
+                println!("    {:>016X}+{:>04X}", sym_addr, pc - sym_addr);
 
-                if let Ok(sym_name) = sym.name() {
+                if let Some(sym_name) = sym
+                    .name(NativeEndian, symbols.strings())
+                    .ok()
+                    .and_then(|name| core::str::from_utf8(name).ok())
+                {
                     println!("    {:#}", demangle(sym_name));
                 }
             }

@@ -5,7 +5,7 @@
 use core::{
     cell::SyncUnsafeCell,
     hint, slice,
-    sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 #[cfg(feature = "acpi")]
@@ -25,9 +25,6 @@ use crate::{
 static BSS_TEST_ZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(0);
 /// Test of non-zero values in data.
 static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::max_value());
-
-pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
-pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
 
 // TODO: This probably shouldn't be an atomic. Only the BSP starts APs.
 pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -74,9 +71,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 assert_eq!(BSS_TEST_ZERO.get().read(), 0);
                 assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
             }
-
-            KERNEL_BASE.store(args.kernel_base as usize, Ordering::SeqCst);
-            KERNEL_SIZE.store(args.kernel_size as usize, Ordering::SeqCst);
 
             // Convert env to slice
             let env = slice::from_raw_parts(

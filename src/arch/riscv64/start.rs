@@ -24,8 +24,6 @@ static mut BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
-pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
-pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
 pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static BOOT_HART_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -80,9 +78,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 assert_eq!(BSS_TEST_ZERO, 0);
                 assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
             }
-
-            KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
-            KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
             let env = slice::from_raw_parts(
                 (crate::PHYS_OFFSET + args.env_base) as *const u8,

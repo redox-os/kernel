@@ -4,7 +4,7 @@
 //! defined in other files inside of the `arch` module
 use core::{
     slice,
-    sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use fdt::Fdt;
@@ -25,8 +25,6 @@ static mut BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
-pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
-pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
 pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
@@ -63,9 +61,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 assert_eq!(BSS_TEST_ZERO, 0);
                 assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
             }
-
-            KERNEL_BASE.store(args.kernel_base, Ordering::SeqCst);
-            KERNEL_SIZE.store(args.kernel_size, Ordering::SeqCst);
 
             // Convert env to slice
             let env = slice::from_raw_parts(
