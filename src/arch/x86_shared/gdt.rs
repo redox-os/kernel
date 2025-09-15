@@ -161,9 +161,8 @@ const BASE_GDT: [GdtEntry; SEGMENT_COUNT] = [
     GdtEntry::new(0, 0, 0, 0),
 ];
 
-#[cfg(target_arch = "x86_64")]
 #[repr(C, align(16))]
-struct Align([usize; 2]);
+struct Align([u64; 2]);
 
 #[repr(C, align(4096))]
 pub struct ProcessorControlRegion {
@@ -176,11 +175,7 @@ pub struct ProcessorControlRegion {
     // to correctly obtain GSBASE, uses SGDT to calculate the PCR offset.
     pub gdt: [GdtEntry; SEGMENT_COUNT],
     pub percpu: PercpuBlock,
-    #[cfg(target_arch = "x86_64")]
     _rsvd: Align,
-    #[cfg(target_arch = "x86")]
-    pub tss: TssWrapper,
-    #[cfg(target_arch = "x86_64")]
     pub tss: TaskStateSegment,
 
     // These two fields are read by the CPU, but not currently modified by the kernel. Instead, the
@@ -199,12 +194,6 @@ const _: () = {
     }
 };
 
-// NOTE: Despite not using #[repr(C, packed)], we do know that while there may be some padding
-// inserted before and after the TSS, the main TSS structure will remain intact.
-#[cfg(target_arch = "x86")]
-#[repr(C, align(16))]
-struct TssWrapper(TaskStateSegment);
-
 pub unsafe fn pcr() -> *mut ProcessorControlRegion {
     unsafe {
         // Primitive benchmarking of RDFSBASE and RDGSBASE in userspace, appears to indicate that
@@ -220,8 +209,8 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 #[cfg(target_arch = "x86")]
 pub unsafe fn set_tss_stack(stack: usize) {
     use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
-    core::ptr::addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
-    core::ptr::addr_of_mut!((*pcr()).tss.0.esp0)
+    core::ptr::addr_of_mut!((*pcr()).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+    core::ptr::addr_of_mut!((*pcr()).tss.esp0)
         .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
     PTI_CONTEXT_STACK = stack;
 }
@@ -239,8 +228,8 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
 #[cfg(target_arch = "x86")]
 pub unsafe fn set_tss_stack(stack: usize) {
     unsafe {
-        core::ptr::addr_of_mut!((*pcr()).tss.0.ss0).write((GDT_KERNEL_DATA << 3) as u16);
-        core::ptr::addr_of_mut!((*pcr()).tss.0.esp0).write(stack as u32);
+        core::ptr::addr_of_mut!((*pcr()).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+        core::ptr::addr_of_mut!((*pcr()).tss.esp0).write(stack as u32);
     }
 }
 
@@ -256,7 +245,7 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
 #[cfg(target_arch = "x86")]
 pub unsafe fn set_userspace_io_allowed(allowed: bool) {
     unsafe {
-        core::ptr::addr_of_mut!((*pcr()).tss.0.iobp_offset).write(if allowed {
+        core::ptr::addr_of_mut!((*pcr()).tss.iobp_offset).write(if allowed {
             size_of::<TaskStateSegment>() as u16
         } else {
             0xFFFF
@@ -349,8 +338,8 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     #[cfg(target_arch = "x86")]
     unsafe {
         pcr._all_ones = 0xFF;
-        pcr.tss.0.iobp_offset = 0xFFFF;
-        let tss = &pcr.tss.0 as *const _ as usize as u32;
+        pcr.tss.iobp_offset = 0xFFFF;
+        let tss = &pcr.tss as *const _ as usize as u32;
 
         pcr.gdt[GDT_TSS].set_offset(tss);
         pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE as u32);
