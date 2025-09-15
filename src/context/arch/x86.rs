@@ -141,7 +141,7 @@ impl super::Context {
 
         if self.is_current_context() {
             unsafe {
-                crate::gdt::set_userspace_io_allowed(allowed);
+                crate::gdt::set_userspace_io_allowed(crate::gdt::pcr(), allowed);
             }
         }
     }
@@ -218,10 +218,12 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     unsafe {
+        let pcr = crate::gdt::pcr();
+
         if let Some(ref stack) = next.kstack {
-            crate::gdt::set_tss_stack(stack.initial_top() as usize);
+            crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
         }
-        crate::gdt::set_userspace_io_allowed(next.arch.userspace_io_allowed);
+        crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
         core::arch::asm!("
         fxsave [{prev_fx}]
@@ -231,7 +233,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         );
 
         {
-            let gdt = &mut (&mut *pcr()).gdt;
+            let gdt = &mut (*pcr).gdt;
 
             prev.arch.fsbase = gdt[GDT_USER_FS].offset() as usize;
             gdt[GDT_USER_FS].set_offset(next.arch.fsbase as u32);

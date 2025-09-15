@@ -206,61 +206,52 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 }
 
 #[cfg(feature = "pti")]
-#[cfg(target_arch = "x86")]
-pub unsafe fn set_tss_stack(stack: usize) {
-    use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
-    core::ptr::addr_of_mut!((*pcr()).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
-    core::ptr::addr_of_mut!((*pcr()).tss.esp0)
-        .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
-    PTI_CONTEXT_STACK = stack;
-}
-
-#[cfg(feature = "pti")]
-#[cfg(target_arch = "x86_64")]
 pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
-    core::ptr::addr_of_mut!((*pcr).tss.rsp[0])
-        .write_unaligned((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
-    PTI_CONTEXT_STACK = stack;
-}
 
-#[cfg(not(feature = "pti"))]
-#[cfg(target_arch = "x86")]
-pub unsafe fn set_tss_stack(stack: usize) {
+    #[cfg(target_arch = "x86")]
     unsafe {
-        core::ptr::addr_of_mut!((*pcr()).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
-        core::ptr::addr_of_mut!((*pcr()).tss.esp0).write(stack as u32);
+        core::ptr::addr_of_mut!((*pcr).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+        core::ptr::addr_of_mut!((*pcr).tss.esp0)
+            .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
     }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::ptr::addr_of_mut!((*pcr).tss.rsp[0])
+            .write_unaligned((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
+    }
+
+    unsafe { PTI_CONTEXT_STACK = stack };
 }
 
 #[cfg(not(feature = "pti"))]
-#[cfg(target_arch = "x86_64")]
 pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
+    #[cfg(target_arch = "x86")]
+    unsafe {
+        core::ptr::addr_of_mut!((*pcr).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
+        core::ptr::addr_of_mut!((*pcr).tss.esp0).write(stack as u32);
+    }
+
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         // TODO: If this increases performance, read gs:[offset] directly
         core::ptr::addr_of_mut!((*pcr).tss.rsp[0]).write_unaligned(stack as u64);
     }
 }
 
-#[cfg(target_arch = "x86")]
-pub unsafe fn set_userspace_io_allowed(allowed: bool) {
-    unsafe {
-        core::ptr::addr_of_mut!((*pcr()).tss.iobp_offset).write(if allowed {
-            size_of::<TaskStateSegment>() as u16
-        } else {
-            0xFFFF
-        });
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
 pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed: bool) {
+    let offset = if allowed {
+        u16::try_from(size_of::<TaskStateSegment>()).unwrap()
+    } else {
+        0xFFFF
+    };
+
     unsafe {
-        let offset = if allowed {
-            u16::try_from(size_of::<TaskStateSegment>()).unwrap()
-        } else {
-            0xFFFF
-        };
+        #[cfg(target_arch = "x86")]
+        core::ptr::addr_of_mut!((*pcr).tss.iobp_offset).write(offset);
+
+        #[cfg(target_arch = "x86_64")]
         core::ptr::addr_of_mut!((*pcr).tss.iomap_base).write(offset);
     }
 }
@@ -397,11 +388,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 
     // Set the stack pointer to use when coming back from userspace.
     unsafe {
-        set_tss_stack(
-            #[cfg(target_arch = "x86_64")]
-            pcr,
-            stack_offset,
-        );
+        set_tss_stack(pcr, stack_offset);
     }
 
     // Load the task register
