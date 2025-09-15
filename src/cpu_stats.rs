@@ -44,6 +44,19 @@ pub struct CpuStats {
     state: AtomicU8,
 }
 
+impl CpuStats {
+    pub const fn default() -> Self {
+        Self {
+            user: AtomicUsize::new(0),
+            nice: AtomicUsize::new(0),
+            kernel: AtomicUsize::new(0),
+            idle: AtomicUsize::new(0),
+            irq: AtomicUsize::new(0),
+            state: AtomicU8::new(0),
+        }
+    }
+}
+
 pub struct CpuStatsData {
     /// Number of ticks spent on userspace contexts
     pub user: usize,

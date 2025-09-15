@@ -81,9 +81,18 @@ pub unsafe fn init_ap() {
     }
 }
 
-#[derive(Default)]
 pub struct ArchPercpuMisc {
     pub apic_id_opt: Cell<Option<local_apic::ApicId>>,
     #[cfg(feature = "x86_kvm_pv")]
     pub tsc_info: tsc::TscPercpu,
+}
+
+impl ArchPercpuMisc {
+    pub const fn default() -> Self {
+        Self {
+            apic_id_opt: Cell::new(None),
+            #[cfg(feature = "x86_kvm_pv")]
+            tsc_info: tsc::TscPercpu::default(),
+        }
+    }
 }

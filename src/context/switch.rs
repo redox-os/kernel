@@ -315,7 +315,6 @@ pub fn switch() -> SwitchResult {
 ///
 /// This struct contains information such as the idle context, current context, and PIT tick counts,
 /// as well as fields required for managing ptrace sessions and signals.
-#[derive(Default)]
 pub struct ContextSwitchPercpu {
     switch_result: Cell<Option<SwitchResultInner>>,
     pit_ticks: Cell<usize>,
@@ -329,6 +328,16 @@ pub struct ContextSwitchPercpu {
 }
 
 impl ContextSwitchPercpu {
+    pub const fn default() -> Self {
+        Self {
+            switch_result: Cell::new(None),
+            pit_ticks: Cell::new(0),
+            current_ctxt: RefCell::new(None),
+            idle_ctxt: RefCell::new(None),
+            being_sigkilled: Cell::new(false),
+        }
+    }
+
     /// Applies a function to the current context, allowing controlled access.
     ///
     /// # Parameters

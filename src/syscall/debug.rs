@@ -196,12 +196,21 @@ pub struct SyscallDebugInfo {
     accumulated_time: u128,
     do_debug: bool,
 }
-#[cfg(feature = "syscall_debug")]
 impl SyscallDebugInfo {
+    pub const fn default() -> Self {
+        Self {
+            this_switch_time: 0,
+            accumulated_time: 0,
+            do_debug: false,
+        }
+    }
+
+    #[cfg(feature = "syscall_debug")]
     pub fn on_switch_from(&mut self) {
         let now = crate::time::monotonic();
         self.accumulated_time += now - core::mem::replace(&mut self.this_switch_time, now);
     }
+    #[cfg(feature = "syscall_debug")]
     pub fn on_switch_to(&mut self) {
         self.this_switch_time = crate::time::monotonic();
     }

@@ -101,5 +101,10 @@ pub unsafe fn init_noncore() {
     }
 }
 
-#[derive(Default)]
 pub struct ArchPercpuMisc;
+
+impl ArchPercpuMisc {
+    pub const fn default() -> Self {
+        Self
+    }
+}

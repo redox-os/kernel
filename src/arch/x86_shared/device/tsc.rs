@@ -46,8 +46,8 @@ pub struct TscPercpu {
     vcpu_page: Cell<*const PvclockVcpuTimeInfo>,
     prev: Cell<u128>,
 }
-impl Default for TscPercpu {
-    fn default() -> Self {
+impl TscPercpu {
+    pub const fn default() -> Self {
         Self {
             vcpu_page: Cell::new(core::ptr::null()),
             prev: Cell::new(0),

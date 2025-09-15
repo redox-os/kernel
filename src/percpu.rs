@@ -8,6 +8,7 @@ use rmm::Arch;
 use syscall::PtraceFlags;
 
 use crate::{
+    arch::device::ArchPercpuMisc,
     context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::CpuStats,
@@ -167,14 +168,14 @@ pub unsafe fn switch_arch_hook() {
     }
 }
 impl PercpuBlock {
-    pub fn init(cpu_id: LogicalCpuId) -> Self {
+    pub const fn init(cpu_id: LogicalCpuId) -> Self {
         Self {
             cpu_id,
-            switch_internals: Default::default(),
+            switch_internals: ContextSwitchPercpu::default(),
             current_addrsp: RefCell::new(None),
             new_addrsp_tmp: Cell::new(None),
             wants_tlb_shootdown: AtomicBool::new(false),
-            ptrace_flags: Cell::new(Default::default()),
+            ptrace_flags: Cell::new(PtraceFlags::empty()),
             ptrace_session: RefCell::new(None),
             inside_syscall: Cell::new(false),
 
@@ -183,7 +184,7 @@ impl PercpuBlock {
             #[cfg(feature = "profiling")]
             profiling: None,
 
-            misc_arch_info: Default::default(),
+            misc_arch_info: ArchPercpuMisc::default(),
 
             stats: CpuStats::default(),
         }
