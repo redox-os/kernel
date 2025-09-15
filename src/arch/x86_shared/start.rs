@@ -116,8 +116,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 { args.bootstrap_base } + { args.bootstrap_size }
             );
 
-            // Set up GDT before paging
-            gdt::init();
+            // Set up GDT
+            gdt::init_bsp(args.stack_base as usize + args.stack_size as usize);
 
             // Set up IDT before paging
             idt::init();
@@ -156,12 +156,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             // Initialize paging
             paging::init();
-
-            // Set up GDT after paging with TLS
-            gdt::init_paging(
-                args.stack_base as usize + args.stack_size as usize,
-                LogicalCpuId::BSP,
-            );
 
             // Set up IDT
             idt::init_paging_bsp();

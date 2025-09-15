@@ -1,5 +1,7 @@
 //! Global descriptor table
 
+use core::ptr;
+
 #[cfg(target_arch = "x86")]
 use x86::bits32::task::TaskStateSegment;
 #[cfg(target_arch = "x86_64")]
@@ -66,6 +68,8 @@ const SEGMENT_FLAGS: u8 = GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE;
 #[cfg(target_arch = "x86_64")]
 const SEGMENT_FLAGS: u8 = GDT_F_LONG_MODE;
 
+// Make sure that the entries we load as segments have the dirty flag set already!
+// INIT_GDT is read-only, but loading a segment would set the dirty flag if it isn't already.
 static INIT_GDT: [GdtEntry; 3] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
@@ -73,14 +77,19 @@ static INIT_GDT: [GdtEntry; 3] = [
     GdtEntry::new(
         0,
         SEGMENT_LIMIT,
-        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+        GDT_A_PRESENT
+            | GDT_A_DIRTY
+            | GDT_A_RING_0
+            | GDT_A_SYSTEM
+            | GDT_A_EXECUTABLE
+            | GDT_A_PRIVILEGE,
         SEGMENT_FLAGS,
     ),
     // Kernel data
     GdtEntry::new(
         0,
         SEGMENT_LIMIT,
-        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+        GDT_A_PRESENT | GDT_A_DIRTY | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
         SEGMENT_FLAGS,
     ),
 ];
@@ -168,7 +177,7 @@ struct Align([u64; 2]);
 pub struct ProcessorControlRegion {
     // TODO: When both KASLR and KPTI are implemented, the PCR may need to be split into two pages,
     // such that "secret" kernel addresses are only stored in the protected half.
-    pub self_ref: usize,
+    pub self_ref: *mut ProcessorControlRegion,
 
     pub user_rsp_tmp: usize,
     // The GDT *must* be stored in the PCR! The paranoid interrupt handler, lacking a reliable way
@@ -193,6 +202,21 @@ const _: () = {
         panic!("PCR is incorrectly defined, GDT alignment is too small");
     }
 };
+
+impl ProcessorControlRegion {
+    const fn new_partial_init(cpu_id: LogicalCpuId) -> Self {
+        Self {
+            self_ref: ptr::null_mut(),
+            user_rsp_tmp: 0,
+            gdt: BASE_GDT,
+            percpu: PercpuBlock::init(cpu_id),
+            _rsvd: Align([0; 2]),
+            tss: TaskStateSegment::new(),
+            _iobitmap: [0; IOBITMAP_SIZE as usize],
+            _all_ones: 0xFF,
+        }
+    }
+}
 
 pub unsafe fn pcr() -> *mut ProcessorControlRegion {
     unsafe {
@@ -301,20 +325,10 @@ unsafe fn load_segments() {
     }
 }
 
-/// Initialize GDT and configure percpu.
-#[cold]
-pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
-    let alloc_order = size_of::<ProcessorControlRegion>()
-        .div_ceil(PAGE_SIZE)
-        .next_power_of_two()
-        .trailing_zeros();
+unsafe fn init_and_install_pcr(pcr_ptr: *mut ProcessorControlRegion, stack_end: usize) {
+    let pcr = unsafe { &mut *pcr_ptr };
 
-    let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
-    let pcr = unsafe {
-        &mut *(RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion)
-    };
-
-    pcr.self_ref = pcr as *const _ as usize;
+    pcr.self_ref = pcr_ptr;
 
     // Setup the GDT.
     pcr.gdt = BASE_GDT;
@@ -327,8 +341,7 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     };
 
     #[cfg(target_arch = "x86")]
-    unsafe {
-        pcr._all_ones = 0xFF;
+    {
         pcr.tss.iobp_offset = 0xFFFF;
         let tss = &pcr.tss as *const _ as usize as u32;
 
@@ -337,9 +350,8 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
     }
 
     #[cfg(target_arch = "x86_64")]
-    unsafe {
+    {
         pcr.tss.iomap_base = 0xFFFF;
-        pcr._all_ones = 0xFF;
 
         let tss = &mut pcr.tss as *mut TaskStateSegment as usize as u64;
         let tss_lo = (tss & 0xFFFF_FFFF) as u32;
@@ -348,9 +360,11 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
         pcr.gdt[GDT_TSS].set_offset(tss_lo);
         pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
 
-        (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
-            .cast::<u32>()
-            .write(tss_hi);
+        unsafe {
+            (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
+                .cast::<u32>()
+                .write(tss_hi);
+        }
     }
 
     // Load the new GDT, which is correctly located in thread local storage.
@@ -388,14 +402,38 @@ pub unsafe fn init_paging(stack_offset: usize, cpu_id: LogicalCpuId) {
 
     // Set the stack pointer to use when coming back from userspace.
     unsafe {
-        set_tss_stack(pcr, stack_offset);
+        set_tss_stack(pcr, stack_end);
     }
 
     // Load the task register
     unsafe { task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0)) };
 
-    pcr.percpu = PercpuBlock::init(cpu_id);
-    unsafe { crate::percpu::init_tlb_shootdown(cpu_id, &mut pcr.percpu) };
+    unsafe { crate::percpu::init_tlb_shootdown(pcr.percpu.cpu_id, &mut pcr.percpu) };
+}
+
+/// Initialize GDT and configure percpu for the BSP.
+#[cold]
+pub unsafe fn init_bsp(stack_end: usize) {
+    static mut BSP_PCR: ProcessorControlRegion =
+        ProcessorControlRegion::new_partial_init(LogicalCpuId::BSP);
+
+    unsafe { init_and_install_pcr(ptr::addr_of_mut!(BSP_PCR), stack_end) };
+}
+
+/// Initialize GDT and configure percpu.
+#[cold]
+pub unsafe fn init_paging(stack_end: usize, cpu_id: LogicalCpuId) {
+    let alloc_order = size_of::<ProcessorControlRegion>()
+        .div_ceil(PAGE_SIZE)
+        .next_power_of_two()
+        .trailing_zeros();
+
+    let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
+    let pcr_ptr =
+        unsafe { RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion };
+    unsafe { core::ptr::write(pcr_ptr, ProcessorControlRegion::new_partial_init(cpu_id)) };
+
+    unsafe { init_and_install_pcr(pcr_ptr, stack_end) };
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -422,17 +460,17 @@ impl GdtEntry {
     }
 
     #[cfg(target_arch = "x86")]
-    pub fn offset(&self) -> u32 {
+    pub const fn offset(&self) -> u32 {
         (self.offsetl as u32) | ((self.offsetm as u32) << 16) | ((self.offseth as u32) << 24)
     }
 
-    pub fn set_offset(&mut self, offset: u32) {
+    pub const fn set_offset(&mut self, offset: u32) {
         self.offsetl = offset as u16;
         self.offsetm = (offset >> 16) as u8;
         self.offseth = (offset >> 24) as u8;
     }
 
-    pub fn set_limit(&mut self, limit: u32) {
+    pub const fn set_limit(&mut self, limit: u32) {
         self.limitl = limit as u16;
         self.flags_limith = self.flags_limith & 0xF0 | ((limit >> 16) as u8) & 0x0F;
     }
