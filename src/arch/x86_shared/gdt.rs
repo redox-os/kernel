@@ -255,23 +255,6 @@ pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed
 }
 
 #[cold]
-#[cfg(target_arch = "x86_64")]
-unsafe fn load_segments() {
-    unsafe {
-        segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
-        segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-
-        segmentation::load_ds(SegmentSelector::from_raw(0));
-        segmentation::load_es(SegmentSelector::from_raw(0));
-        segmentation::load_fs(SegmentSelector::from_raw(0));
-
-        // What happens when GS is loaded with a NULL selector, is undefined on Intel CPUs. However,
-        // GSBASE is set later.
-        segmentation::load_gs(SegmentSelector::from_raw(0));
-    }
-}
-
-#[cold]
 fn init_pcr(pcr: &mut ProcessorControlRegion, stack_end: usize) {
     pcr.self_ref = pcr as *mut _;
 
@@ -341,7 +324,16 @@ pub unsafe fn install_pcr(pcr_ptr: *mut ProcessorControlRegion) {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         // Load segments again, possibly resetting FSBASE and GSBASE.
-        load_segments();
+        segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
+        segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
+
+        segmentation::load_ds(SegmentSelector::from_raw(0));
+        segmentation::load_es(SegmentSelector::from_raw(0));
+        segmentation::load_fs(SegmentSelector::from_raw(0));
+
+        // What happens when GS is loaded with a NULL selector, is undefined on Intel CPUs. However,
+        // GSBASE is set later.
+        segmentation::load_gs(SegmentSelector::from_raw(0));
 
         // Ensure that GSBASE always points to the PCR in kernel space.
         x86::msr::wrmsr(x86::msr::IA32_GS_BASE, pcr as *mut _ as usize as u64);
