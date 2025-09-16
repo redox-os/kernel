@@ -64,6 +64,8 @@ pub(super) fn init(madt: Madt) {
                             // Increase CPU ID
                             CPU_COUNT.fetch_add(1, Ordering::SeqCst);
 
+                            let cpu_id = LogicalCpuId::new(ap_local_apic.processor.into());
+
                             // Allocate a stack
                             let stack_start = allocate_p2frame(4)
                                 .expect("no more frames in acpi stack_start")
@@ -72,10 +74,13 @@ pub(super) fn init(madt: Madt) {
                                 + crate::PHYS_OFFSET;
                             let stack_end = stack_start + (PAGE_SIZE << 4);
 
+                            let pcr_ptr =
+                                crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
+
                             let args = KernelArgsAp {
-                                cpu_id: LogicalCpuId::new(ap_local_apic.processor.into()),
+                                cpu_id,
                                 page_table: page_table_physaddr,
-                                stack_end: stack_end,
+                                pcr_ptr,
                             };
 
                             let ap_ready = (TRAMPOLINE + 8) as *mut u64;

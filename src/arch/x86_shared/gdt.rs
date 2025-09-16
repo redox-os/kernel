@@ -68,32 +68,6 @@ const SEGMENT_FLAGS: u8 = GDT_F_PAGE_SIZE | GDT_F_PROTECTED_MODE;
 #[cfg(target_arch = "x86_64")]
 const SEGMENT_FLAGS: u8 = GDT_F_LONG_MODE;
 
-// Make sure that the entries we load as segments have the dirty flag set already!
-// INIT_GDT is read-only, but loading a segment would set the dirty flag if it isn't already.
-static INIT_GDT: [GdtEntry; 3] = [
-    // Null
-    GdtEntry::new(0, 0, 0, 0),
-    // Kernel code
-    GdtEntry::new(
-        0,
-        SEGMENT_LIMIT,
-        GDT_A_PRESENT
-            | GDT_A_DIRTY
-            | GDT_A_RING_0
-            | GDT_A_SYSTEM
-            | GDT_A_EXECUTABLE
-            | GDT_A_PRIVILEGE,
-        SEGMENT_FLAGS,
-    ),
-    // Kernel data
-    GdtEntry::new(
-        0,
-        SEGMENT_LIMIT,
-        GDT_A_PRESENT | GDT_A_DIRTY | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
-        SEGMENT_FLAGS,
-    ),
-];
-
 #[cfg(target_arch = "x86")]
 const SEGMENT_COUNT: usize = 9;
 #[cfg(target_arch = "x86_64")]
@@ -280,34 +254,6 @@ pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed
     }
 }
 
-/// Initialize a minimal GDT without configuring percpu.
-#[cold]
-pub unsafe fn init() {
-    unsafe {
-        // Before the kernel can remap itself, it needs to switch to a GDT it controls. Start with a
-        // minimal kernel-only GDT.
-
-        dtables::lgdt(&DescriptorTablePointer {
-            limit: (INIT_GDT.len() * size_of::<GdtEntry>() - 1) as u16,
-            base: INIT_GDT.as_ptr() as *const SegmentDescriptor,
-        });
-
-        #[cfg(target_arch = "x86")]
-        {
-            // Load the segment descriptors
-            segmentation::load_cs(SegmentSelector::new(GDT_KERNEL_CODE as u16, Ring::Ring0));
-            segmentation::load_ds(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-            segmentation::load_es(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-            segmentation::load_fs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-            segmentation::load_gs(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-            segmentation::load_ss(SegmentSelector::new(GDT_KERNEL_DATA as u16, Ring::Ring0));
-        }
-
-        #[cfg(target_arch = "x86_64")]
-        load_segments();
-    }
-}
-
 #[cold]
 #[cfg(target_arch = "x86_64")]
 unsafe fn load_segments() {
@@ -320,25 +266,19 @@ unsafe fn load_segments() {
         segmentation::load_fs(SegmentSelector::from_raw(0));
 
         // What happens when GS is loaded with a NULL selector, is undefined on Intel CPUs. However,
-        // GSBASE is set later, and percpu is not used until gdt::init_paging().
+        // GSBASE is set later.
         segmentation::load_gs(SegmentSelector::from_raw(0));
     }
 }
 
-unsafe fn init_and_install_pcr(pcr_ptr: *mut ProcessorControlRegion, stack_end: usize) {
-    let pcr = unsafe { &mut *pcr_ptr };
-
-    pcr.self_ref = pcr_ptr;
+#[cold]
+fn init_pcr(pcr: &mut ProcessorControlRegion, stack_end: usize) {
+    pcr.self_ref = pcr as *mut _;
 
     // Setup the GDT.
     pcr.gdt = BASE_GDT;
     #[cfg(target_arch = "x86")]
     pcr.gdt[GDT_KERNEL_PERCPU].set_offset(pcr as *const _ as u32);
-
-    let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
-        limit: const { (SEGMENT_COUNT * size_of::<GdtEntry>() - 1) as u16 },
-        base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
-    };
 
     #[cfg(target_arch = "x86")]
     {
@@ -366,6 +306,21 @@ unsafe fn init_and_install_pcr(pcr_ptr: *mut ProcessorControlRegion, stack_end: 
                 .write(tss_hi);
         }
     }
+
+    // Set the stack pointer to use when coming back from userspace.
+    unsafe {
+        set_tss_stack(pcr, stack_end);
+    }
+}
+
+#[cold]
+pub unsafe fn install_pcr(pcr_ptr: *mut ProcessorControlRegion) {
+    let pcr = unsafe { &mut *pcr_ptr };
+
+    let gdtr: DescriptorTablePointer<SegmentDescriptor> = DescriptorTablePointer {
+        limit: const { (SEGMENT_COUNT * size_of::<GdtEntry>() - 1) as u16 },
+        base: pcr.gdt.as_ptr() as *const SegmentDescriptor,
+    };
 
     // Load the new GDT, which is correctly located in thread local storage.
     unsafe { dtables::lgdt(&gdtr) };
@@ -400,11 +355,6 @@ unsafe fn init_and_install_pcr(pcr_ptr: *mut ProcessorControlRegion, stack_end: 
         x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
     }
 
-    // Set the stack pointer to use when coming back from userspace.
-    unsafe {
-        set_tss_stack(pcr, stack_end);
-    }
-
     // Load the task register
     unsafe { task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0)) };
 
@@ -417,12 +367,16 @@ pub unsafe fn init_bsp(stack_end: usize) {
     static mut BSP_PCR: ProcessorControlRegion =
         ProcessorControlRegion::new_partial_init(LogicalCpuId::BSP);
 
-    unsafe { init_and_install_pcr(ptr::addr_of_mut!(BSP_PCR), stack_end) };
+    init_pcr(unsafe { &mut *ptr::addr_of_mut!(BSP_PCR) }, stack_end);
+
+    unsafe { install_pcr(ptr::addr_of_mut!(BSP_PCR)) };
 }
 
-/// Initialize GDT and configure percpu.
 #[cold]
-pub unsafe fn init_paging(stack_end: usize, cpu_id: LogicalCpuId) {
+pub fn allocate_and_init_pcr(
+    cpu_id: LogicalCpuId,
+    stack_end: usize,
+) -> *mut ProcessorControlRegion {
     let alloc_order = size_of::<ProcessorControlRegion>()
         .div_ceil(PAGE_SIZE)
         .next_power_of_two()
@@ -433,7 +387,9 @@ pub unsafe fn init_paging(stack_end: usize, cpu_id: LogicalCpuId) {
         unsafe { RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion };
     unsafe { core::ptr::write(pcr_ptr, ProcessorControlRegion::new_partial_init(cpu_id)) };
 
-    unsafe { init_and_install_pcr(pcr_ptr, stack_end) };
+    init_pcr(unsafe { &mut *pcr_ptr }, stack_end);
+
+    pcr_ptr
 }
 
 #[derive(Copy, Clone, Debug)]

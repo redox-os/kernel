@@ -224,7 +224,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 pub struct KernelArgsAp {
     pub cpu_id: LogicalCpuId,
     pub page_table: usize,
-    pub stack_end: usize,
+    pub pcr_ptr: *mut gdt::ProcessorControlRegion,
 }
 
 /// Entry to rust for an AP
@@ -235,8 +235,8 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             assert_eq!(BSS_TEST_ZERO.get().read(), 0);
             assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
 
-            // Set up GDT before paging
-            gdt::init();
+            // Set up GDT
+            gdt::install_pcr(args.pcr_ptr);
 
             // Set up IDT before paging
             idt::init();
@@ -244,9 +244,6 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             // Initialize paging
             RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(args.page_table));
             paging::init();
-
-            // Set up GDT with TLS
-            gdt::init_paging(args.stack_end, args.cpu_id);
 
             #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
             crate::profiling::init();
