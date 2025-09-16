@@ -9,9 +9,8 @@ trampoline:
     jmp short startup_ap
     times 8 - ($ - trampoline) nop
     .ready: dq 0
-    .cpu_id: dq 0
+    .args_ptr: dq 0
     .page_table: dq 0
-    .stack_start: dq 0
     .stack_end: dq 0
     .code: dq 0
 
@@ -79,7 +78,7 @@ long_mode_ap:
     mov rcx, [trampoline.stack_end]
     lea rsp, [rcx - 256]
 
-    mov rdi, trampoline.cpu_id
+    mov rdi, [trampoline.args_ptr]
 
     mov rax, [trampoline.code]
     mov qword [trampoline.ready], 1

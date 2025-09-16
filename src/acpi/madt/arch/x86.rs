@@ -4,6 +4,8 @@ use core::{
 };
 
 use crate::{
+    arch::start::KernelArgsAp,
+    cpu_set::LogicalCpuId,
     device::local_apic::the_local_apic,
     memory::{allocate_p2frame, Frame, KernelMapper},
     paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
@@ -70,19 +72,23 @@ pub(super) fn init(madt: Madt) {
                                 + crate::PHYS_OFFSET;
                             let stack_end = stack_start + (PAGE_SIZE << 4);
 
+                            let args = KernelArgsAp {
+                                cpu_id: LogicalCpuId::new(ap_local_apic.processor.into()),
+                                page_table: page_table_physaddr,
+                                stack_end: stack_end,
+                            };
+
                             let ap_ready = (TRAMPOLINE + 8) as *mut u64;
-                            let ap_cpu_id = unsafe { ap_ready.add(1) };
+                            let ap_args_ptr = unsafe { ap_ready.add(1) };
                             let ap_page_table = unsafe { ap_ready.add(2) };
-                            let ap_stack_start = unsafe { ap_ready.add(3) };
-                            let ap_stack_end = unsafe { ap_ready.add(4) };
-                            let ap_code = unsafe { ap_ready.add(5) };
+                            let ap_stack_end = unsafe { ap_ready.add(3) };
+                            let ap_code = unsafe { ap_ready.add(4) };
 
                             // Set the ap_ready to 0, volatile
                             unsafe {
                                 ap_ready.write(0);
-                                ap_cpu_id.write(ap_local_apic.processor.into());
+                                ap_args_ptr.write(&args as *const _ as u64);
                                 ap_page_table.write(page_table_physaddr as u64);
-                                ap_stack_start.write(stack_start as u64);
                                 ap_stack_end.write(stack_end as u64);
                                 ap_code.write(kstart_ap as u64);
 

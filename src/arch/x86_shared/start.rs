@@ -221,14 +221,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
     }
 }
 
-#[repr(C, packed)]
 pub struct KernelArgsAp {
-    // TODO: u32?
-    cpu_id: u64,
-
-    page_table: u64,
-    stack_start: u64,
-    stack_end: u64,
+    pub cpu_id: LogicalCpuId,
+    pub page_table: usize,
+    pub stack_end: usize,
 }
 
 /// Entry to rust for an AP
@@ -236,11 +232,6 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
     unsafe {
         let cpu_id = {
             let args = &*args_ptr;
-            let cpu_id = LogicalCpuId::new(args.cpu_id as u32);
-            let bsp_table = args.page_table as usize;
-            let _stack_start = args.stack_start as usize;
-            let stack_end = args.stack_end as usize;
-
             assert_eq!(BSS_TEST_ZERO.get().read(), 0);
             assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
 
@@ -251,17 +242,17 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             idt::init();
 
             // Initialize paging
-            RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(bsp_table));
+            RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(args.page_table));
             paging::init();
 
             // Set up GDT with TLS
-            gdt::init_paging(stack_end, cpu_id);
+            gdt::init_paging(args.stack_end, args.cpu_id);
 
             #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
             crate::profiling::init();
 
             // Set up IDT for AP
-            idt::init_paging_post_heap(cpu_id);
+            idt::init_paging_post_heap(args.cpu_id);
 
             #[cfg(target_arch = "x86_64")]
             crate::alternative::early_init(false);
@@ -271,14 +262,14 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
             // Initialize miscellaneous processor features
             #[cfg(target_arch = "x86_64")]
-            crate::misc::init(cpu_id);
+            crate::misc::init(args.cpu_id);
 
             // Initialize devices (for AP)
             device::init_ap();
 
             AP_READY.store(true, Ordering::SeqCst);
 
-            cpu_id
+            args.cpu_id
         };
 
         while !BSP_READY.load(Ordering::SeqCst) {
