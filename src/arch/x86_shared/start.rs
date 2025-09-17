@@ -119,8 +119,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             // Set up GDT
             gdt::init_bsp(args.stack_base as usize + args.stack_size as usize);
 
-            // Set up IDT before paging
-            idt::init();
+            // Set up IDT
+            idt::init_bsp();
 
             // Initialize RMM
             register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
@@ -157,9 +157,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             // Initialize paging
             paging::init();
 
-            // Set up IDT
-            idt::init_paging_bsp();
-
             #[cfg(target_arch = "x86_64")]
             crate::alternative::early_init(true);
 
@@ -179,8 +176,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             // Set up double buffer for graphical debug now that heap is available
             graphical_debug::init_heap();
-
-            idt::init_paging_post_heap(LogicalCpuId::BSP);
 
             // Activate memory logging
             crate::log::init();
@@ -225,6 +220,7 @@ pub struct KernelArgsAp {
     pub cpu_id: LogicalCpuId,
     pub page_table: usize,
     pub pcr_ptr: *mut gdt::ProcessorControlRegion,
+    pub idt_ptr: *mut idt::Idt,
 }
 
 /// Entry to rust for an AP
@@ -238,8 +234,8 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             // Set up GDT
             gdt::install_pcr(args.pcr_ptr);
 
-            // Set up IDT before paging
-            idt::init();
+            // Set up IDT
+            idt::install_idt(args.idt_ptr);
 
             // Initialize paging
             RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(args.page_table));
@@ -247,9 +243,6 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
 
             #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
             crate::profiling::init();
-
-            // Set up IDT for AP
-            idt::init_paging_post_heap(args.cpu_id);
 
             #[cfg(target_arch = "x86_64")]
             crate::alternative::early_init(false);

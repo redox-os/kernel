@@ -77,10 +77,13 @@ pub(super) fn init(madt: Madt) {
                             let pcr_ptr =
                                 crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
 
+                            let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
+
                             let args = KernelArgsAp {
                                 cpu_id,
                                 page_table: page_table_physaddr,
                                 pcr_ptr,
+                                idt_ptr,
                             };
 
                             let ap_ready = (TRAMPOLINE + 8) as *mut u64;
