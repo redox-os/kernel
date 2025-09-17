@@ -5,7 +5,7 @@ use core::{
 };
 
 use alloc::boxed::Box;
-use hashbrown::HashMap;
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 
 use x86::{
     dtables::{self, DescriptorTablePointer},
@@ -48,20 +48,15 @@ impl Idt {
 static INIT_BSP_IDT: SyncUnsafeCell<Idt> = SyncUnsafeCell::new(Idt::new());
 
 // TODO: VecMap?
-pub static IDTS: RwLock<Option<HashMap<LogicalCpuId, &'static mut Idt>>> = RwLock::new(None);
+static IDTS: RwLock<HashMap<LogicalCpuId, &'static mut Idt>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 #[inline]
 pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
     let byte_index = index / 32;
     let bit = index % 32;
 
-    IDTS.read()
-        .as_ref()
-        .unwrap()
-        .get(&cpu_id)
-        .unwrap()
-        .reservations[usize::from(byte_index)]
-    .load(Ordering::Acquire)
+    IDTS.read().get(&cpu_id).unwrap().reservations[usize::from(byte_index)].load(Ordering::Acquire)
         & (1 << bit)
         != 0
 }
@@ -71,13 +66,8 @@ pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
     let byte_index = index / 32;
     let bit = index % 32;
 
-    IDTS.read()
-        .as_ref()
-        .unwrap()
-        .get(&cpu_id)
-        .unwrap()
-        .reservations[usize::from(byte_index)]
-    .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
+    IDTS.read().get(&cpu_id).unwrap().reservations[usize::from(byte_index)]
+        .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
 }
 
 pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
@@ -152,8 +142,7 @@ const fn new_idt_reservations() -> [AtomicU32; 8] {
 /// Initialize the IDT for a processor
 pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
     unsafe {
-        let mut idts_guard = IDTS.write();
-        let idts_btree = idts_guard.get_or_insert_with(HashMap::new);
+        let mut idts_btree = IDTS.write();
 
         if cpu_id == LogicalCpuId::BSP {
             idts_btree.insert(cpu_id, &mut *INIT_BSP_IDT.get());
