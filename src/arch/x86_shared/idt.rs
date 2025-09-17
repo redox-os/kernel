@@ -20,21 +20,37 @@ use spin::RwLock;
 
 static INIT_IDT: SyncUnsafeCell<[IdtEntry; 32]> = SyncUnsafeCell::new([IdtEntry::new(); 32]);
 
-type IdtEntries = [IdtEntry; 256];
-type IdtReservations = [AtomicU32; 8];
-
 #[repr(C)]
-pub struct Idt {
-    entries: IdtEntries,
-    reservations: IdtReservations,
+struct Idt {
+    entries: [IdtEntry; 256],
+    reservations: [AtomicU32; 8],
 }
+
 impl Idt {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             entries: [IdtEntry::new(); 256],
-            reservations: new_idt_reservations(),
+            reservations: [const { AtomicU32::new(0) }; 8],
         }
     }
+
+    #[inline]
+    fn is_reserved(&self, index: u8) -> bool {
+        let byte_index = index / 32;
+        let bit = index % 32;
+
+        self.reservations[usize::from(byte_index)].load(Ordering::Acquire) & (1 << bit) != 0
+    }
+
+    #[inline]
+    fn set_reserved(&self, index: u8, reserved: bool) {
+        let byte_index = index / 32;
+        let bit = index % 32;
+
+        self.reservations[usize::from(byte_index)]
+            .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
+    }
+
     #[inline]
     fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
         let byte_index = index / 32;
@@ -53,21 +69,15 @@ static IDTS: RwLock<HashMap<LogicalCpuId, &'static mut Idt>> =
 
 #[inline]
 pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
-    let byte_index = index / 32;
-    let bit = index % 32;
-
-    IDTS.read().get(&cpu_id).unwrap().reservations[usize::from(byte_index)].load(Ordering::Acquire)
-        & (1 << bit)
-        != 0
+    IDTS.read().get(&cpu_id).unwrap().is_reserved(index)
 }
 
 #[inline]
 pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
-    let byte_index = index / 32;
-    let bit = index % 32;
-
-    IDTS.read().get(&cpu_id).unwrap().reservations[usize::from(byte_index)]
-        .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
+    IDTS.read()
+        .get(&cpu_id)
+        .unwrap()
+        .set_reserved(index, reserved);
 }
 
 pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
@@ -126,30 +136,17 @@ fn set_exceptions(idt: &mut [IdtEntry]) {
     // 31 reserved
 }
 
-const fn new_idt_reservations() -> [AtomicU32; 8] {
-    [
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-        AtomicU32::new(0),
-    ]
-}
-
 /// Initialize the IDT for a processor
 pub unsafe fn init_paging_post_heap(cpu_id: LogicalCpuId) {
-    unsafe {
-        let mut idts_btree = IDTS.write();
+    let mut idts_btree = IDTS.write();
 
-        if cpu_id == LogicalCpuId::BSP {
-            idts_btree.insert(cpu_id, &mut *INIT_BSP_IDT.get());
-        } else {
-            let idt = idts_btree
-                .entry(cpu_id)
-                .or_insert_with(|| Box::leak(Box::new(Idt::new())));
+    if cpu_id == LogicalCpuId::BSP {
+        idts_btree.insert(cpu_id, unsafe { &mut *INIT_BSP_IDT.get() });
+    } else {
+        let idt = idts_btree
+            .entry(cpu_id)
+            .or_insert_with(|| Box::leak(Box::new(Idt::new())));
+        unsafe {
             init_generic(cpu_id, idt);
         }
     }
@@ -164,7 +161,7 @@ pub unsafe fn init_paging_bsp() {
 }
 
 /// Initializes an IDT for any type of processor.
-pub unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
+unsafe fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     unsafe {
         let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
 
