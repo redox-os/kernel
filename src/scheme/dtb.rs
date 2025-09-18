@@ -40,12 +40,7 @@ impl DtbScheme {
         DATA.call_once(|| {
             data_init = true;
 
-            let dtb = match DTB_BINARY.get() {
-                Some(dtb) => dtb.as_slice(),
-                None => &[],
-            };
-
-            Box::from(dtb)
+            Box::from(DTB_BINARY.get().map(|&d| d).unwrap_or(&[]))
         });
 
         if !data_init {

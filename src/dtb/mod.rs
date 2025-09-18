@@ -4,7 +4,6 @@ use crate::{
     dtb::irqchip::IrqCell,
     startup::memory::{register_memory_region, BootloaderMemoryKind},
 };
-use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use core::slice;
 use fdt::{
@@ -14,19 +13,29 @@ use fdt::{
 };
 use spin::once::Once;
 
-pub static DTB_BINARY: Once<Vec<u8>> = Once::new();
+/// Represents the in-memory DTB (DeviceTree) binary.
+pub static DTB_BINARY: Once<&'static [u8]> = Once::new();
 
+/// Initializes the DTB from the provided base address and size.
+///
+/// # Safety
+///
+/// Caller must ensure the base address and size reference valid memory.
+///
+/// The referenced memory must contain a valid DTB for the underliying system.
+///
+/// The referenced memory must **not** be mutated for the duration of kernel run-time.
 pub unsafe fn init(dtb: Option<(usize, usize)>) {
     let mut initialized = false;
     DTB_BINARY.call_once(|| {
         initialized = true;
 
-        let mut binary = Vec::new();
         if let Some((dtb_base, dtb_size)) = dtb {
-            let data = unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) };
-            binary.extend(data);
-        };
-        binary
+            // SAFETY: `dtb_base` + `dtb_size` reference valid memory due to caller invariants
+            unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) }
+        } else {
+            &[]
+        }
     });
     if !initialized {
         println!("DTB_BINARY INIT TWICE!");
