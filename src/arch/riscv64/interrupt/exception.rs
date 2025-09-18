@@ -1,5 +1,5 @@
 use ::syscall::Exception;
-use core::{arch::global_asm, sync::atomic::Ordering};
+use core::{arch::naked_asm, sync::atomic::Ordering};
 use rmm::VirtualAddress;
 
 use crate::{
@@ -19,70 +19,73 @@ const STORE_PAGE_FAULT: usize = 15;
 
 use super::InterruptStack;
 
-global_asm!(concat!(
-    ".global exception_handler\n",
-    ".p2align 3\n",
-"exception_handler:\n",
-    "csrrw tp, sscratch, tp\n",
-    "beq   tp, x0, 3f\n", // exception before percpu data is available; got to be S mode
+#[naked]
+// FIXME use extern "custom"
+// FIXME use align(4)
+pub unsafe extern "C" fn exception_handler() {
+    unsafe {
+        naked_asm!(
+            "csrrw tp, sscratch, tp",
+            "beq   tp, x0, 3f", // exception before percpu data is available; got to be S mode
 
-    "sd    t0, 0(tp)\n",
-    "csrr  t0, sstatus\n",
-    "andi  t0, t0, 1<<8\n",// SPP bit
-    "bne   t0, x0, 2f\n",
+            "sd    t0, 0(tp)",
+            "csrr  t0, sstatus",
+            "andi  t0, t0, 1<<8",// SPP bit
+            "bne   t0, x0, 2f",
 
-    // trap/interrupt from U mode, switch stacks
-    "ld      t0, 0(tp)\n",
-    "sd      sp, 0(tp)\n",
-    "ld      sp, 8(tp)\n",
+            // trap/interrupt from U mode, switch stacks
+            "ld      t0, 0(tp)",
+            "sd      sp, 0(tp)",
+            "ld      sp, 8(tp)",
 
-    push_registers!(),
-    "ld      t0, 0(tp)\n",
-    "sd      t0, (1 * 8)(sp)\n", // save original SP
-    "csrrw   t0, sscratch, tp\n",
-    "sd      t0, (3 * 8)(sp)\n", // save original TP, and restore sscratch to handle double faults
+            push_registers!(),
+            "ld      t0, 0(tp)",
+            "sd      t0, (1 * 8)(sp)", // save original SP
+            "csrrw   t0, sscratch, tp",
+            "sd      t0, (3 * 8)(sp)", // save original TP, and restore sscratch to handle double faults
 
-    "mv      a0, sp\n",
-    "jal     {0}\n",
+            "mv      a0, sp",
+            "jal     {0}",
 
-    // save S mode stack to percpu
-    "addi    t0, sp, 32 * 8\n",
-    "sd      t0, 8(tp)\n",
-    "li      t0, 1 << 8\n", // return to U mode (sstatus might've been modified by nested trap or context switch)
-    "csrc    sstatus, t0\n",
-    "j       4f\n",
+            // save S mode stack to percpu
+            "addi    t0, sp, 32 * 8",
+            "sd      t0, 8(tp)",
+            "li      t0, 1 << 8", // return to U mode (sstatus might've been modified by nested trap or context switch)
+            "csrc    sstatus, t0",
+            "j       4f",
 
-"2:  ld      t0, 0(tp)\n", // S-mode
-"3:\n",                    // S mode early
+        "2:  ld      t0, 0(tp)", // S-mode
+        "3:",                    // S mode early
 
-    "addi    sp, sp, -2 * 8\n", // fake stack frame for the stack tracer
+            "addi    sp, sp, -2 * 8", // fake stack frame for the stack tracer
 
-    push_registers!(),
+            push_registers!(),
 
-    "addi    t1, sp, 34 * 8\n",
-    "sd      t1, (1 * 8)(sp)\n", // save original SP
-    "csrrw   t1, sscratch, tp\n",
-    "sd      t1, (3 * 8)(sp)\n", // save original TP, and restore sscratch to handle double faults
+            "addi    t1, sp, 34 * 8",
+            "sd      t1, (1 * 8)(sp)", // save original SP
+            "csrrw   t1, sscratch, tp",
+            "sd      t1, (3 * 8)(sp)", // save original TP, and restore sscratch to handle double faults
 
-    "sd      t0, (33 * 8)(sp)\n",  // fill the stack frame. t0 holds original pc after push_registers
-    "sd      fp, (32 * 8)(sp)\n",
-    "addi    fp, sp, 34 * 8\n",
+            "sd      t0, (33 * 8)(sp)",  // fill the stack frame. t0 holds original pc after push_registers
+            "sd      fp, (32 * 8)(sp)",
+            "addi    fp, sp, 34 * 8",
 
-    "mv      a0, sp\n",
-    "jal     {0}\n",
-    // return to S mode with interrupts disabled
-    // (sstatus might've been modified by nested trap or context switch)
-    "li      t0, 1 << 8\n",
-    "csrs   sstatus, t0\n",
-    "li      t0, 1 << 5\n",
-    "csrc   sstatus, t0\n",
+            "mv      a0, sp",
+            "jal     {0}",
+            // return to S mode with interrupts disabled
+            // (sstatus might've been modified by nested trap or context switch)
+            "li      t0, 1 << 8",
+            "csrs   sstatus, t0",
+            "li      t0, 1 << 5",
+            "csrc   sstatus, t0",
 
-"4:",
-    pop_registers!(),
-    "sret",
-),
-    sym exception_handler_inner
-);
+        "4:",
+            pop_registers!(),
+            "sret",
+            sym exception_handler_inner
+        );
+    }
+}
 
 unsafe fn exception_handler_inner(regs: &mut InterruptStack) {
     unsafe {

@@ -48,8 +48,9 @@ pub unsafe fn init() {
     unsafe {
         // Setup interrupt handlers
         asm!(
-            "la t0, exception_handler", // WARL=0 - direct mode combined handler
-            "csrw stvec, t0"
+            "la t0, {}", // WARL=0 - direct mode combined handler
+            "csrw stvec, t0",
+            sym exception::exception_handler,
         );
     }
 }
