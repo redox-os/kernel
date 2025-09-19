@@ -24,10 +24,10 @@ const PER_INT_CAP: u64 = 0x10;
 
 pub unsafe fn init(hpet: &mut Hpet) -> bool {
     unsafe {
-        println!("HPET @ {:#x}", { hpet.base_address.address });
+        info!("HPET @ {:#x}", { hpet.base_address.address });
         debug_caps(hpet);
 
-        println!("HPET Before Init");
+        trace!("HPET Before Init");
         debug_config(hpet);
 
         // Disable HPET
@@ -68,7 +68,7 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
             hpet.write_u64(GENERAL_CONFIG_OFFSET, config_word);
         }
 
-        println!("HPET After Init");
+        trace!("HPET After Init");
         debug_config(hpet);
 
         true
@@ -78,27 +78,27 @@ pub unsafe fn init(hpet: &mut Hpet) -> bool {
 unsafe fn debug_caps(hpet: &mut Hpet) {
     unsafe {
         let capability = hpet.read_u64(CAPABILITY_OFFSET);
-        println!("  caps: {:#x}", capability);
-        println!(
+        trace!("  caps: {:#x}", capability);
+        trace!(
             "    clock period: {:?}",
             Duration::from_nanos((capability >> 32) / 1_000_000)
         );
-        println!(
+        trace!(
             "    ID: {:#x} revision: {}",
             (capability >> 16) as u16,
             capability as u8
         );
-        println!(
+        trace!(
             "    LEG_RT_CAP: {} COUNT_SIZE_CAP: {}",
             capability & (1 << 15) == (1 << 15),
             capability & (1 << 13) == (1 << 13)
         );
         // The NUM_TIM_CAP field contains the index of the last timer.
         // Add 1 to get the amount of timers.
-        println!("    timers: {}", (capability >> 8) as u8 & 0x1F + 1);
+        trace!("    timers: {}", (capability >> 8) as u8 & 0x1F + 1);
 
         let t0_capabilities = hpet.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
-        println!(
+        trace!(
             "  T0 interrupt routing: {:#x}",
             (t0_capabilities >> 32) as u32
         );
@@ -108,18 +108,18 @@ unsafe fn debug_caps(hpet: &mut Hpet) {
 unsafe fn debug_config(hpet: &mut Hpet) {
     unsafe {
         let config_word = hpet.read_u64(GENERAL_CONFIG_OFFSET);
-        println!("  config: {:#x}", config_word);
+        trace!("  config: {:#x}", config_word);
 
         let interrupt_status = hpet.read_u64(GENERAL_INTERRUPT_OFFSET);
-        println!("  interrupt status: {:#x}", interrupt_status);
+        trace!("  interrupt status: {:#x}", interrupt_status);
 
         let counter = hpet.read_u64(MAIN_COUNTER_OFFSET);
-        println!("  counter: {:#x}", counter);
+        trace!("  counter: {:#x}", counter);
 
         let t0_capabilities = hpet.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
-        println!("  T0 flags: {:#x}", t0_capabilities as u32);
+        trace!("  T0 flags: {:#x}", t0_capabilities as u32);
 
         let t0_comparator = hpet.read_u64(T0_COMPARATOR_OFFSET);
-        println!("  T0 comparator: {:#x}", t0_comparator);
+        trace!("  T0 comparator: {:#x}", t0_comparator);
     }
 }
