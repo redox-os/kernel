@@ -22,7 +22,7 @@ pub static DTB_BINARY: Once<&'static [u8]> = Once::new();
 ///
 /// Caller must ensure the base address and size reference valid memory.
 ///
-/// The referenced memory must contain a valid DTB for the underliying system.
+/// The referenced memory must contain a valid DTB for the underlying system.
 ///
 /// The referenced memory must **not** be mutated for the duration of kernel run-time.
 pub unsafe fn init(dtb: Option<(usize, usize)>) {
