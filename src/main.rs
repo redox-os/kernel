@@ -114,8 +114,6 @@ mod externs;
 
 /// Logging
 mod log;
-use alloc::sync::Arc;
-use spinning_top::RwSpinlock;
 
 /// Memory management
 mod memory;
@@ -202,17 +200,15 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     let owner = None; // kmain not owned by any fd
     match context::spawn(true, owner, userspace_init) {
         Ok(context_lock) => {
-            {
-                let mut context = context_lock.write();
-                context.status = context::Status::Runnable;
-                context.name.clear();
-                context.name.push_str("[bootstrap]");
+            let mut context = context_lock.write();
+            context.status = context::Status::Runnable;
+            context.name.clear();
+            context.name.push_str("[bootstrap]");
 
-                // TODO: Remove these from kernel
-                context.ens = SchemeNamespace::from(1);
-                context.euid = 0;
-                context.egid = 0;
-            }
+            // TODO: Remove these from kernel
+            context.ens = SchemeNamespace::from(1);
+            context.euid = 0;
+            context.egid = 0;
         }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
