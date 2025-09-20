@@ -25,39 +25,35 @@ impl DebugDisplay {
         }
     }
 
-    fn write_char(&mut self, c: char) {
-        if self.x >= self.w || c == '\n' {
-            self.x = 0;
-            self.y += 1;
-        }
-
-        if self.y >= self.h {
-            let new_y = self.h - 1;
-            let d_y = self.y - new_y;
-
-            self.scroll(d_y * 16);
-
-            unsafe {
-                self.display.sync_screen();
-            }
-
-            self.y = new_y;
-        }
-
-        if c != '\n' {
-            self.char(self.x * 8, self.y * 16, c, 0xFFFFFF);
-
-            unsafe {
-                self.display.sync(self.x * 8, self.y * 16, 8, 16);
-            }
-
-            self.x += 1;
-        }
-    }
-
     pub fn write(&mut self, buf: &[u8]) {
         for &b in buf {
-            self.write_char(b as char);
+            if self.x >= self.w || b == b'\n' {
+                self.x = 0;
+                self.y += 1;
+            }
+
+            if self.y >= self.h {
+                let new_y = self.h - 1;
+                let d_y = self.y - new_y;
+
+                self.scroll(d_y * 16);
+
+                unsafe {
+                    self.display.sync_screen();
+                }
+
+                self.y = new_y;
+            }
+
+            if b != b'\n' {
+                self.char(self.x * 8, self.y * 16, b as char, 0xFFFFFF);
+
+                unsafe {
+                    self.display.sync(self.x * 8, self.y * 16, 8, 16);
+                }
+
+                self.x += 1;
+            }
         }
     }
 
