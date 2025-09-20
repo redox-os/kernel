@@ -68,13 +68,6 @@ pub fn init(env: &[u8]) {
 }
 
 #[allow(unused)]
-pub fn init_heap() {
-    if let Some(debug_display) = &mut *DEBUG_DISPLAY.lock() {
-        debug_display.display.heap_init();
-    }
-}
-
-#[allow(unused)]
 pub fn fini() {
     DEBUG_DISPLAY.lock().take();
 

@@ -170,9 +170,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
             crate::profiling::init();
 
-            // Set up double buffer for graphical debug now that heap is available
-            graphical_debug::init_heap();
-
             // Activate memory logging
             crate::log::init();
 
