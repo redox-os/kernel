@@ -4,17 +4,8 @@ use crate::{
 };
 use rmm::Flusher;
 
-#[cfg(not(feature = "slab"))]
 pub use self::linked_list::Allocator;
-
-#[cfg(feature = "slab")]
-pub use self::slab::Allocator;
-
-#[cfg(not(feature = "slab"))]
 mod linked_list;
-
-#[cfg(feature = "slab")]
-mod slab;
 
 unsafe fn map_heap(mapper: &mut KernelMapper, offset: usize, size: usize) {
     unsafe {
