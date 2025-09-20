@@ -1,4 +1,13 @@
-use super::Display;
+use core::ptr;
+
+pub(super) struct Display {
+    pub(super) width: usize,
+    pub(super) height: usize,
+    pub(super) stride: usize,
+    onscreen_ptr: *mut u32,
+}
+
+unsafe impl Send for Display {}
 
 static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
 
@@ -11,7 +20,19 @@ pub struct DebugDisplay {
 }
 
 impl DebugDisplay {
-    pub(super) fn new(display: Display) -> DebugDisplay {
+    pub(super) fn new(
+        width: usize,
+        height: usize,
+        stride: usize,
+        onscreen_ptr: *mut u32,
+    ) -> DebugDisplay {
+        let display = Display {
+            width,
+            height,
+            stride,
+            onscreen_ptr,
+        };
+
         let w = display.width / 8;
         let h = display.height / 16;
         DebugDisplay {
@@ -48,8 +69,8 @@ impl DebugDisplay {
     fn clear_row(&mut self, y: usize) {
         for row in y * 16..(y + 1) * 16 {
             unsafe {
-                core::ptr::write_bytes(
-                    self.display.data_mut().add(row * self.display.stride),
+                ptr::write_bytes(
+                    self.display.onscreen_ptr.add(row * self.display.stride),
                     0,
                     self.display.width,
                 );
@@ -63,7 +84,7 @@ impl DebugDisplay {
             let phys_y = y % self.display.height;
             let mut dst = unsafe {
                 self.display
-                    .data_mut()
+                    .onscreen_ptr
                     .add(phys_y * self.display.stride + x)
             };
 
@@ -82,7 +103,7 @@ impl DebugDisplay {
                     let next_phys_y = (phys_y + row + 1) % self.display.height;
                     dst = unsafe {
                         self.display
-                            .data_mut()
+                            .onscreen_ptr
                             .add(next_phys_y * self.display.stride + x)
                     };
                 }

@@ -2,10 +2,8 @@ use core::str;
 use spin::Mutex;
 
 pub use self::debug::DebugDisplay;
-use self::display::Display;
 
 pub mod debug;
-pub mod display;
 
 pub static DEBUG_DISPLAY: Mutex<Option<DebugDisplay>> = Mutex::new(None);
 
@@ -60,11 +58,8 @@ pub fn init(env: &[u8]) {
         width, height, stride, phys, virt
     );
 
-    {
-        let display = Display::new(width, height, stride, virt as *mut u32);
-        let debug_display = DebugDisplay::new(display);
-        *DEBUG_DISPLAY.lock() = Some(debug_display);
-    }
+    let debug_display = DebugDisplay::new(width, height, stride, virt as *mut u32);
+    *DEBUG_DISPLAY.lock() = Some(debug_display);
 }
 
 #[allow(unused)]
