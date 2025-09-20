@@ -3,9 +3,12 @@ use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
 
 use super::{gic::GicDistIf, InterruptController};
-use crate::dtb::{
-    get_mmio_address,
-    irqchip::{InterruptHandler, IrqCell, IrqDesc},
+use crate::{
+    dtb::{
+        get_mmio_address,
+        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+    },
+    sync::CleanLockToken,
 };
 use syscall::{
     error::{Error, EINVAL},
@@ -74,7 +77,7 @@ impl GicV3 {
 }
 
 impl InterruptHandler for GicV3 {
-    fn irq_handler(&mut self, _irq: u32) {}
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for GicV3 {

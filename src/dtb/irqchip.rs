@@ -1,12 +1,15 @@
 use super::travel_interrupt_ctrl;
-use crate::{arch::device::irqchip::new_irqchip, cpu_set::LogicalCpuId, scheme::irq::irq_trigger};
+use crate::{
+    arch::device::irqchip::new_irqchip, cpu_set::LogicalCpuId, scheme::irq::irq_trigger,
+    sync::CleanLockToken,
+};
 use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, BE};
 use fdt::{node::NodeProperty, Fdt};
 use syscall::{Error, Result, EINVAL};
 
 pub trait InterruptHandler {
-    fn irq_handler(&mut self, irq: u32);
+    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -294,18 +297,18 @@ impl IrqChipCore {
         self.irq_chip_list.chips[ic_idx].ic.irq_xlate(irq_data)
     }
 
-    pub fn trigger_virq(&mut self, virq: u32) {
+    pub fn trigger_virq(&mut self, virq: u32, token: &mut CleanLockToken) {
         if virq < 1024 {
             let desc = &mut self.irq_desc[virq as usize];
             match &mut desc.handler {
                 Some(handler) => {
-                    handler.irq_handler(virq);
+                    handler.irq_handler(virq, token);
                 }
                 _ => {
                     if let Some(ic_idx) = desc.basic.child_ic_idx {
-                        self.irq_chip_list.chips[ic_idx].ic.irq_handler(virq);
+                        self.irq_chip_list.chips[ic_idx].ic.irq_handler(virq, token);
                     } else {
-                        irq_trigger(virq as u8);
+                        irq_trigger(virq as u8, token);
                     }
                 }
             }

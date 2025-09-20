@@ -1,7 +1,10 @@
 use super::InterruptController;
-use crate::dtb::{
-    get_mmio_address,
-    irqchip::{InterruptHandler, IrqCell, IrqDesc},
+use crate::{
+    dtb::{
+        get_mmio_address,
+        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+    },
+    sync::CleanLockToken,
 };
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
@@ -75,7 +78,7 @@ impl GenericInterruptController {
 }
 
 impl InterruptHandler for GenericInterruptController {
-    fn irq_handler(&mut self, _irq: u32) {}
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for GenericInterruptController {

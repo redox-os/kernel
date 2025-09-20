@@ -4,6 +4,7 @@ use crate::{
         get_mmio_address,
         irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
     },
+    sync::CleanLockToken,
 };
 use core::{mem, num::NonZero, sync::atomic::Ordering};
 use fdt::Fdt;
@@ -93,12 +94,12 @@ impl Plic {
     }
 }
 impl InterruptHandler for Plic {
-    fn irq_handler(&mut self, _irq: u32) {
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
         unsafe {
             let irq = self.irq_ack();
             //println!("PLIC interrupt {}", irq);
             if let Some(virq) = self.irq_to_virq(irq) {
-                IRQ_CHIP.trigger_virq(virq as u32);
+                IRQ_CHIP.trigger_virq(virq as u32, token);
             } else {
                 error!("unexpected irq num {}", irq);
                 self.irq_eoi(irq);

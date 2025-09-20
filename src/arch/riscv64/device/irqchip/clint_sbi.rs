@@ -35,19 +35,17 @@ struct ClintConnector {
 }
 
 impl InterruptHandler for ClintConnector {
-    fn irq_handler(&mut self, _irq: u32) {
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
         CLINT
             .lock()
             .as_mut()
             .unwrap()
             .irq_handler(self.hart_id, self.irq);
         if self.irq == IRQ_TIMER {
-            //TODO: propogate lock token upwards?
-            let mut token = unsafe { CleanLockToken::new() };
             // a bit of hack, but it is a really bad idea to call scheduler
             // from inside clint irq handler
-            timeout::trigger(&mut token);
-            context::switch::tick(&mut token);
+            timeout::trigger(token);
+            context::switch::tick(token);
         }
     }
 }

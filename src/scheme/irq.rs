@@ -56,10 +56,7 @@ const INO_BSP: u64 = 0x8001_0000_0000_0000;
 const INO_PHANDLE: u64 = 0x8003_0000_0000_0000;
 
 /// Add to the input queue
-pub fn irq_trigger(irq: u8) {
-    //TODO: propogate lock token upwards (changes lots of arch-specific code)?
-    let mut token = unsafe { CleanLockToken::new() };
-
+pub fn irq_trigger(irq: u8, token: &mut CleanLockToken) {
     COUNTS.lock()[irq as usize] += 1;
 
     for (fd, _) in HANDLES

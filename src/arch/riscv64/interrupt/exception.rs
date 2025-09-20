@@ -147,10 +147,11 @@ unsafe fn handle_system_exception(scause: usize, regs: &InterruptStack) {
 
 unsafe fn handle_interrupt(interrupt: usize) {
     unsafe {
+        let mut token = CleanLockToken::new();
         // FIXME retrieve from percpu area
         // For now all the interrupts go to boot hart so this suffices...
         let hart: usize = BOOT_HART_ID.load(Ordering::Relaxed);
-        irqchip::hlic::interrupt(hart, interrupt);
+        irqchip::hlic::interrupt(hart, interrupt, &mut token);
     }
 }
 

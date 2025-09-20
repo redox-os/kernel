@@ -76,7 +76,8 @@ unsafe fn trigger(irq: u8) {
             }
             IrqMethod::Apic => ioapic_mask(irq),
         }
-        irq_trigger(irq);
+        let mut token = unsafe { CleanLockToken::new() };
+        irq_trigger(irq, &mut token);
     }
 }
 
@@ -331,7 +332,8 @@ macro_rules! allocatable_irq(
 #[cfg(target_arch = "x86")]
 pub unsafe fn allocatable_irq_generic(number: u8) {
     unsafe {
-        irq_trigger(number - 32);
+        let mut token = unsafe { CleanLockToken::new() };
+        irq_trigger(number - 32, &mut token);
         lapic_eoi();
     }
 }
@@ -341,10 +343,12 @@ default_irqs!((), allocatable_irq);
 
 #[cfg(target_arch = "x86_64")]
 interrupt_error!(generic_irq, |_stack, code| {
+    let mut token = unsafe { CleanLockToken::new() };
+
     // The reason why 128 is subtracted and added from the code, is that PUSH imm8 sign-extends the
     // value, and the longer PUSH imm32 would make the generic_interrupts table twice as large
     // (containing lots of useless NOPs).
-    irq_trigger((code as i32).wrapping_add(128) as u8);
+    irq_trigger((code as i32).wrapping_add(128) as u8, &mut token);
 
     unsafe { lapic_eoi() };
 });
