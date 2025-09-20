@@ -9,11 +9,10 @@ use core::{
 };
 
 use alloc::sync::Arc;
-use spinning_top::{guard::ArcRwSpinlockWriteGuard, RwSpinlock};
 use syscall::PtraceFlags;
 
 use crate::{
-    context::{arch, contexts, Context},
+    context::{arch, contexts, ArcContextLockWriteGuard, Context, ContextLock},
     cpu_set::LogicalCpuId,
     cpu_stats,
     percpu::PercpuBlock,
@@ -73,8 +72,8 @@ unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId) -> Update
 }
 
 struct SwitchResultInner {
-    _prev_guard: ArcRwSpinlockWriteGuard<Context>,
-    _next_guard: ArcRwSpinlockWriteGuard<Context>,
+    _prev_guard: ArcContextLockWriteGuard,
+    _next_guard: ArcContextLockWriteGuard,
 }
 
 /// Tick function to update PIT ticks and trigger a context switch if necessary.
@@ -236,7 +235,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             let percpu = PercpuBlock::current();
             unsafe {
                 percpu.switch_internals.set_current_context(Arc::clone(
-                    ArcRwSpinlockWriteGuard::rwlock(&next_context_guard),
+                    ArcContextLockWriteGuard::rwlock(&next_context_guard),
                 ));
             }
 
@@ -321,10 +320,10 @@ pub struct ContextSwitchPercpu {
     switch_result: Cell<Option<SwitchResultInner>>,
     pit_ticks: Cell<usize>,
 
-    current_ctxt: RefCell<Option<Arc<RwSpinlock<Context>>>>,
+    current_ctxt: RefCell<Option<Arc<ContextLock>>>,
 
     /// The idle process.
-    idle_ctxt: RefCell<Option<Arc<RwSpinlock<Context>>>>,
+    idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
 
     pub(crate) being_sigkilled: Cell<bool>,
 }
@@ -347,7 +346,7 @@ impl ContextSwitchPercpu {
     ///
     /// # Returns
     /// The result of applying `f` to the current context.
-    pub fn with_context<T>(&self, f: impl FnOnce(&Arc<RwSpinlock<Context>>) -> T) -> T {
+    pub fn with_context<T>(&self, f: impl FnOnce(&Arc<ContextLock>) -> T) -> T {
         f(self
             .current_ctxt
             .borrow()
@@ -362,7 +361,7 @@ impl ContextSwitchPercpu {
     ///
     /// # Returns
     /// The result of applying `f` to the current context if any.
-    pub fn try_with_context<T>(&self, f: impl FnOnce(Option<&Arc<RwSpinlock<Context>>>) -> T) -> T {
+    pub fn try_with_context<T>(&self, f: impl FnOnce(Option<&Arc<ContextLock>>) -> T) -> T {
         f(self.current_ctxt.borrow().as_ref())
     }
 
@@ -373,7 +372,7 @@ impl ContextSwitchPercpu {
     ///
     /// # Parameters
     /// - `new`: The new context to be set as the current context.
-    pub unsafe fn set_current_context(&self, new: Arc<RwSpinlock<Context>>) {
+    pub unsafe fn set_current_context(&self, new: Arc<ContextLock>) {
         *self.current_ctxt.borrow_mut() = Some(new);
     }
 
@@ -384,7 +383,7 @@ impl ContextSwitchPercpu {
     ///
     /// # Parameters
     /// - `new`: The new context to be set as the idle context.
-    pub unsafe fn set_idle_context(&self, new: Arc<RwSpinlock<Context>>) {
+    pub unsafe fn set_idle_context(&self, new: Arc<ContextLock>) {
         *self.idle_ctxt.borrow_mut() = Some(new);
     }
 
@@ -392,7 +391,7 @@ impl ContextSwitchPercpu {
     ///
     /// # Returns
     /// A reference to the idle context.
-    pub fn idle_context(&self) -> Arc<RwSpinlock<Context>> {
+    pub fn idle_context(&self) -> Arc<ContextLock> {
         Arc::clone(
             self.idle_ctxt
                 .borrow()

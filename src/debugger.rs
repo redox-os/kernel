@@ -1,15 +1,14 @@
 use crate::{
-    context::Context,
+    context::{Context, ContextLock},
     memory::{get_page_info, the_zeroed_frame, Frame, RefCount},
     paging::{RmmA, RmmArch, TableKind, PAGE_SIZE},
     sync::CleanLockToken,
 };
 use alloc::sync::Arc;
 use hashbrown::{HashMap, HashSet};
-use spinning_top::RwSpinlock;
 
 /// Super unsafe due to page table switching and raw pointers!
-pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>, token: &mut CleanLockToken) {
+pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanLockToken) {
     println!("DEBUGGER START");
     println!();
 

@@ -12,7 +12,6 @@ use core::{
 };
 use slab::Slab;
 use spin::{Mutex, RwLock};
-use spinning_top::RwSpinlock;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -29,7 +28,7 @@ use crate::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
         },
-        BorrowedHtBuf, Context, Status,
+        BorrowedHtBuf, Context, ContextLock, Status,
     },
     event,
     memory::Frame,
@@ -54,7 +53,7 @@ pub struct UserInner {
     pub scheme_id: SchemeId,
     v2: bool,
     supports_on_close: bool,
-    context: Weak<RwSpinlock<Context>>,
+    context: Weak<ContextLock>,
     todo: WaitQueue<Sqe>,
 
     // TODO: custom packed radix tree data structure
@@ -65,13 +64,13 @@ pub struct UserInner {
 
 enum State {
     Waiting {
-        context: Weak<RwSpinlock<Context>>,
+        context: Weak<ContextLock>,
         fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
     Responded(Response),
-    Fmap(Weak<RwSpinlock<Context>>),
+    Fmap(Weak<ContextLock>),
     Placeholder,
 }
 
@@ -211,7 +210,7 @@ impl UserInner {
         handle_id: usize,
         name: Box<str>,
         _flags: usize,
-        context: Weak<RwSpinlock<Context>>,
+        context: Weak<ContextLock>,
     ) -> UserInner {
         UserInner {
             root_id,
@@ -493,7 +492,7 @@ impl UserInner {
     // TODO: Hypothetical accept_head_leak, accept_tail_leak options might be useful for
     // libc-controlled buffer pools.
     fn capture_inner<const READ: bool, const WRITE: bool>(
-        context_weak: &Weak<RwSpinlock<Context>>,
+        context_weak: &Weak<ContextLock>,
         user_buf: UserSlice<READ, WRITE>,
     ) -> Result<CaptureGuard<READ, WRITE>> {
         let mut map_flags = MapFlags::empty();

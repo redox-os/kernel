@@ -4,7 +4,6 @@
 
 use alloc::{collections::BTreeSet, sync::Arc};
 use core::num::NonZeroUsize;
-use spinning_top::RwSpinlock;
 use syscall::ENOMEM;
 
 use crate::{
@@ -21,6 +20,9 @@ pub use self::{
     context::{BorrowedHtBuf, Context, Status},
     switch::switch,
 };
+
+pub type ContextLock = spinning_top::RwSpinlock<Context>;
+pub type ArcContextLockWriteGuard = spinning_top::guard::ArcRwSpinlockWriteGuard<Context>;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
@@ -94,7 +96,7 @@ pub fn init(token: &mut CleanLockToken) {
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
 
-    let context_lock = Arc::new(RwSpinlock::new(context));
+    let context_lock = Arc::new(ContextLock::new(context));
 
     contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
 
@@ -107,25 +109,25 @@ pub fn init(token: &mut CleanLockToken) {
     }
 }
 
-pub fn current() -> Arc<RwSpinlock<Context>> {
+pub fn current() -> Arc<ContextLock> {
     PercpuBlock::current()
         .switch_internals
         .with_context(|context| Arc::clone(context))
 }
-pub fn try_current() -> Option<Arc<RwSpinlock<Context>>> {
+pub fn try_current() -> Option<Arc<ContextLock>> {
     PercpuBlock::current()
         .switch_internals
         .try_with_context(|context| context.map(Arc::clone))
 }
-pub fn is_current(context: &Arc<RwSpinlock<Context>>) -> bool {
+pub fn is_current(context: &Arc<ContextLock>) -> bool {
     PercpuBlock::current()
         .switch_internals
         .with_context(|current| Arc::ptr_eq(context, current))
 }
 
-pub struct ContextRef(pub Arc<RwSpinlock<Context>>);
+pub struct ContextRef(pub Arc<ContextLock>);
 impl ContextRef {
-    pub fn upgrade(&self) -> Option<Arc<RwSpinlock<Context>>> {
+    pub fn upgrade(&self) -> Option<Arc<ContextLock>> {
         Some(Arc::clone(&self.0))
     }
 }
@@ -153,10 +155,10 @@ pub fn spawn(
     owner_proc_id: Option<NonZeroUsize>,
     func: extern "C" fn(),
     token: &mut CleanLockToken,
-) -> Result<Arc<RwSpinlock<Context>>> {
+) -> Result<Arc<ContextLock>> {
     let stack = Kstack::new()?;
 
-    let context_lock = Arc::try_new(RwSpinlock::new(Context::new(owner_proc_id)?))
+    let context_lock = Arc::try_new(ContextLock::new(Context::new(owner_proc_id)?))
         .map_err(|_| Error::new(ENOMEM))?;
 
     contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));

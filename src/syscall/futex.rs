@@ -8,14 +8,13 @@ use alloc::{
 };
 use core::sync::atomic::{AtomicU32, Ordering};
 use rmm::Arch;
-use spinning_top::RwSpinlock;
 use syscall::EINTR;
 
 use crate::{
     context::{
         self,
         memory::{AddrSpace, AddrSpaceWrapper},
-        Context,
+        Context, ContextLock,
     },
     memory::PhysicalAddress,
     paging::{Page, VirtualAddress},
@@ -42,7 +41,7 @@ pub struct FutexEntry {
     // TODO: FUTEX_REQUEUE
     target_virtaddr: VirtualAddress,
     // Context to wake up, and compare address spaces.
-    context_lock: Arc<RwSpinlock<Context>>,
+    context_lock: Arc<ContextLock>,
     // address space to check against if virt matches but not phys
     addr_space: Weak<AddrSpaceWrapper>,
 }

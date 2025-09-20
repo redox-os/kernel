@@ -5,7 +5,7 @@ use crate::{
         context::{HardBlockedReason, SignalState},
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
-        Context, Status,
+        Context, ContextLock, Status,
     },
     memory::{get_page_info, AddRefError, RefKind, PAGE_SIZE},
     ptrace,
@@ -40,7 +40,6 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use spinning_top::RwSpinlock;
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -51,7 +50,7 @@ fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
 }
 
 fn try_stop_context<T>(
-    context_ref: Arc<RwSpinlock<Context>>,
+    context_ref: Arc<ContextLock>,
     token: &mut CleanLockToken,
     callback: impl FnOnce(&mut Context) -> Result<T>,
 ) -> Result<T> {
@@ -147,7 +146,7 @@ enum ContextHandle {
 }
 #[derive(Clone)]
 struct Handle {
-    context: Arc<RwSpinlock<Context>>,
+    context: Arc<ContextLock>,
     kind: ContextHandle,
 }
 pub struct ProcScheme;
@@ -181,7 +180,7 @@ fn new_handle(
 }
 
 enum OpenTy {
-    Ctxt(Arc<RwSpinlock<Context>>),
+    Ctxt(Arc<ContextLock>),
     Auth,
 }
 
@@ -189,7 +188,7 @@ impl ProcScheme {
     fn openat_context(
         &self,
         path: &str,
-        context: Arc<RwSpinlock<Context>>,
+        context: Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<Option<(ContextHandle, bool)>> {
         Ok(Some(match path {
@@ -843,7 +842,7 @@ impl ContextHandle {
     fn kwriteoff(
         self,
         id: usize,
-        context: Arc<RwSpinlock<Context>>,
+        context: Arc<ContextLock>,
         buf: UserSliceRo,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -1200,7 +1199,7 @@ impl ContextHandle {
     fn kreadoff(
         &self,
         _id: usize,
-        context: Arc<RwSpinlock<Context>>,
+        context: Arc<ContextLock>,
         buf: UserSliceWo,
         offset: u64,
         token: &mut CleanLockToken,
@@ -1373,7 +1372,7 @@ impl ContextHandle {
 }
 
 fn write_env_regs(
-    context: Arc<RwSpinlock<Context>>,
+    context: Arc<ContextLock>,
     regs: EnvRegisters,
     token: &mut CleanLockToken,
 ) -> Result<()> {
@@ -1384,10 +1383,7 @@ fn write_env_regs(
     }
 }
 
-fn read_env_regs(
-    context: Arc<RwSpinlock<Context>>,
-    token: &mut CleanLockToken,
-) -> Result<EnvRegisters> {
+fn read_env_regs(context: Arc<ContextLock>, token: &mut CleanLockToken) -> Result<EnvRegisters> {
     if context::is_current(&context) {
         context::current().read().read_current_env_regs()
     } else {

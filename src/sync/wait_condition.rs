@@ -3,16 +3,15 @@ use alloc::{
     vec::Vec,
 };
 use spin::Mutex;
-use spinning_top::RwSpinlock;
 
 use crate::{
-    context::{self, Context},
+    context::{self, Context, ContextLock},
     sync::CleanLockToken,
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<Vec<Weak<RwSpinlock<Context>>>>,
+    contexts: Mutex<Vec<Weak<ContextLock>>>,
 }
 
 impl WaitCondition {
