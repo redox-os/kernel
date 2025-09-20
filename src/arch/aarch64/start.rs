@@ -17,7 +17,10 @@ use crate::{
     dtb,
     dtb::register_dev_memory_ranges,
     paging,
-    startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
+    startup::{
+        memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
+        KernelArgs,
+    },
 };
 
 /// Test of zero values in BSS.
@@ -27,26 +30,6 @@ static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
-
-#[derive(Debug)]
-#[repr(C, packed(8))]
-pub struct KernelArgs {
-    kernel_base: usize,
-    kernel_size: usize,
-    stack_base: usize,
-    stack_size: usize,
-    env_base: usize,
-    env_size: usize,
-    hwdesc_base: usize,
-    hwdesc_size: usize,
-    areas_base: usize,
-    areas_size: usize,
-
-    /// The physical base 64-bit pointer to the contiguous bootstrap/initfs.
-    bootstrap_base: usize,
-    /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
-    bootstrap_size: usize,
-}
 
 /// The entry to Rust, all things must be initialized
 #[unsafe(no_mangle)]
@@ -63,8 +46,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             // Convert env to slice
             let env = slice::from_raw_parts(
-                (crate::PHYS_OFFSET + args.env_base) as *const u8,
-                args.env_size,
+                (crate::PHYS_OFFSET + args.env_base as usize) as *const u8,
+                args.env_size as usize,
             );
 
             // Set up graphical debug
@@ -75,8 +58,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             let hwdesc_data = if args.hwdesc_base != 0 {
                 Some(unsafe {
                     slice::from_raw_parts(
-                        (crate::PHYS_OFFSET + args.hwdesc_base) as *const u8,
-                        args.hwdesc_size,
+                        (crate::PHYS_OFFSET + args.hwdesc_base as usize) as *const u8,
+                        args.hwdesc_size as usize,
                     )
                 })
             } else {
@@ -101,68 +84,39 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             }
 
             info!("Redox OS starting...");
-            info!(
-                "Kernel: {:X}:{:X}",
-                { args.kernel_base },
-                args.kernel_base + args.kernel_size
-            );
-            info!(
-                "Stack: {:X}:{:X}",
-                { args.stack_base },
-                args.stack_base + args.stack_size
-            );
-            info!(
-                "Env: {:X}:{:X}",
-                { args.env_base },
-                args.env_base + args.env_size
-            );
-            info!(
-                "HWDESC: {:X}:{:X}",
-                { args.hwdesc_base },
-                args.hwdesc_base + args.hwdesc_size
-            );
-            info!(
-                "Areas: {:X}:{:X}",
-                { args.areas_base },
-                args.areas_base + args.areas_size
-            );
-            info!(
-                "Bootstrap: {:X}:{:X}",
-                { args.bootstrap_base },
-                args.bootstrap_base + args.bootstrap_size
-            );
+            args.print();
 
             interrupt::init();
 
             // Initialize RMM
-            register_bootloader_areas(args.areas_base, args.areas_size);
+            register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
             if let Ok(dtb) = &dtb_res {
                 register_dev_memory_ranges(dtb);
             }
 
             register_memory_region(
-                args.kernel_base,
-                args.kernel_size,
+                args.kernel_base as usize,
+                args.kernel_size as usize,
                 BootloaderMemoryKind::Kernel,
             );
             register_memory_region(
-                args.stack_base,
-                args.stack_size,
+                args.stack_base as usize,
+                args.stack_size as usize,
                 BootloaderMemoryKind::IdentityMap,
             );
             register_memory_region(
-                args.env_base,
-                args.env_size,
+                args.env_base as usize,
+                args.env_size as usize,
                 BootloaderMemoryKind::IdentityMap,
             );
             register_memory_region(
-                args.hwdesc_base,
-                args.hwdesc_size,
+                args.hwdesc_base as usize,
+                args.hwdesc_size as usize,
                 BootloaderMemoryKind::IdentityMap,
             );
             register_memory_region(
-                args.bootstrap_base,
-                args.bootstrap_size,
+                args.bootstrap_base as usize,
+                args.bootstrap_size as usize,
                 BootloaderMemoryKind::IdentityMap,
             );
             crate::startup::memory::init(None, None);
@@ -203,9 +157,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             crate::Bootstrap {
                 base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
-                    args.bootstrap_base,
+                    args.bootstrap_base as usize,
                 )),
-                page_count: args.bootstrap_size / crate::memory::PAGE_SIZE,
+                page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
                 env,
             }
         };

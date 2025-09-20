@@ -18,7 +18,10 @@ use crate::{
     devices::graphical_debug,
     gdt, idt, interrupt,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
-    startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
+    startup::{
+        memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
+        KernelArgs,
+    },
 };
 
 /// Test of zero values in BSS.
@@ -28,33 +31,6 @@ static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::max
 
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
-
-#[repr(C, packed(8))]
-pub struct KernelArgs {
-    kernel_base: u64,
-    kernel_size: u64,
-    stack_base: u64,
-    stack_size: u64,
-    env_base: u64,
-    env_size: u64,
-
-    /// The base pointer to the saved RSDP.
-    ///
-    /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
-    /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
-    /// memory instead. On UEFI systems, searching is not guaranteed to actually work though.
-    acpi_rsdp_base: u64,
-    /// The size of the RSDP region.
-    acpi_rsdp_size: u64,
-
-    areas_base: u64,
-    areas_size: u64,
-
-    /// The physical base 64-bit pointer to the contiguous bootstrap/initfs.
-    bootstrap_base: u64,
-    /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
-    bootstrap_size: u64,
-}
 
 /// The entry to Rust, all things must be initialized
 #[unsafe(no_mangle)]
@@ -82,36 +58,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             graphical_debug::init(env);
 
             info!("Redox OS starting...");
-            info!(
-                "Kernel: {:X}:{:X}",
-                { args.kernel_base },
-                { args.kernel_base } + { args.kernel_size }
-            );
-            info!(
-                "Stack: {:X}:{:X}",
-                { args.stack_base },
-                { args.stack_base } + { args.stack_size }
-            );
-            info!(
-                "Env: {:X}:{:X}",
-                { args.env_base },
-                { args.env_base } + { args.env_size }
-            );
-            info!(
-                "RSDP: {:X}:{:X}",
-                { args.acpi_rsdp_base },
-                { args.acpi_rsdp_base } + { args.acpi_rsdp_size }
-            );
-            info!(
-                "Areas: {:X}:{:X}",
-                { args.areas_base },
-                { args.areas_base } + { args.areas_size }
-            );
-            info!(
-                "Bootstrap: {:X}:{:X}",
-                { args.bootstrap_base },
-                { args.bootstrap_base } + { args.bootstrap_size }
-            );
+            args.print();
 
             // Set up GDT
             gdt::init_bsp(args.stack_base as usize + args.stack_size as usize);
@@ -137,8 +84,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 BootloaderMemoryKind::IdentityMap,
             );
             register_memory_region(
-                args.acpi_rsdp_base as usize,
-                args.acpi_rsdp_size as usize,
+                args.hwdesc_base as usize,
+                args.hwdesc_size as usize,
                 BootloaderMemoryKind::IdentityMap,
             );
             register_memory_region(
@@ -183,8 +130,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             // Read ACPI tables, starts APs
             #[cfg(feature = "acpi")]
             {
-                acpi::init(if args.acpi_rsdp_base != 0 {
-                    Some((args.acpi_rsdp_base as usize + crate::PHYS_OFFSET) as *const u8)
+                acpi::init(if args.hwdesc_base != 0 {
+                    Some((args.hwdesc_base as usize + crate::PHYS_OFFSET) as *const u8)
                 } else {
                     None
                 });
